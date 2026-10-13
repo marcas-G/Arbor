@@ -208,3 +208,28 @@ suite at 28/28 PASS; it was not rerun during this integration.
 
 Integration validation: `pnpm typecheck` PASS; Biome on the shell source and
 test files PASS; `git diff --check` PASS. Heavy tests were not run.
+
+## Final CLI and core timeout updates
+
+Cherry-picked `172841ab` followed by `e70947bb` onto the sandbox-integrated
+HEAD. The CLI copy/reopen qualification reuses the validated P38 preview
+template when available, retains the digest/signature checks and self-contained
+preview fallback, and raises that case's bound to 1,200 seconds. The operator
+child-process cap remains 1,800,000 ms (30 minutes). No changes were made to the
+shell's shared sandbox environment projection.
+
+The core timeout repair gives the affected P5/MAC/P13/P14 suites and cleanup
+hooks bounded 120-second limits, the P40 schema-42 template setup a 300-second
+limit, and bounded retries for scratch-directory cleanup. Assertions and
+production semantics are unchanged. Both cherry-picks applied without
+conflicts.
+
+Imported result reports record the CLI copied-target reopen case PASS (1/1,
+157.74 seconds), the complete operator test file PASS (10/10, 1,334.69
+seconds), and focused core timeout qualifications PASS (10 files / 16 tests).
+These source-branch runs were not repeated on the integration branch and do
+not claim a full repository check.
+
+Integration validation: `pnpm typecheck` PASS; Biome on all 11 changed
+TypeScript/JavaScript/JSON files PASS; `git diff --check` PASS. No tests were
+rerun.
