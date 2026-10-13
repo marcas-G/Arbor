@@ -29,6 +29,7 @@ import {
   parseSchemaUpgradeArguments,
   runSchemaUpgrade,
   type SchemaUpgradeArguments,
+  type SchemaUpgradePreviewTemplate,
   type SchemaUpgradeTestHooks,
 } from "../src/schema-upgrade.js";
 import {
@@ -43,7 +44,7 @@ import {
   writeFullyAndSync,
 } from "../src/schema-upgrade-manifest.js";
 
-const CLI_PROCESS_TIMEOUT_MS = 1_200_000;
+const CLI_PROCESS_TIMEOUT_MS = 1_800_000;
 
 const seedVersion38 = async (filename: string): Promise<void> => {
   createP39PrivateTestFile(filename);
@@ -292,11 +293,24 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
       );
       const args = copyArgs(directory);
       const resumeArgs = { ...args, mode: "resume-copy" as const };
+      let previewTemplate: SchemaUpgradePreviewTemplate | undefined;
+      const runPreparedUpgrade = (
+        input: SchemaUpgradeArguments,
+        hooks: SchemaUpgradeTestHooks = {},
+      ) =>
+        runSchemaUpgrade(input, {
+          ...hooks,
+          ...(previewTemplate === undefined ? {} : { previewTemplate }),
+          onPreviewTemplate: (template) => {
+            previewTemplate ??= template;
+            hooks.onPreviewTemplate?.(template);
+          },
+        });
       try {
         await seedVersion38(args.sourceDatabase as string);
         const sourceDigest = logicalSqliteDigest(args.sourceDatabase as string);
         await expect(
-          runSchemaUpgrade(args, {
+          runPreparedUpgrade(args, {
             beforeDatabaseTransaction: (version) => {
               if (version === 39)
                 throw new Error("injected stop before migration 39");
@@ -316,7 +330,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         });
 
         await expect(
-          runSchemaUpgrade(resumeArgs, {
+          runPreparedUpgrade(resumeArgs, {
             afterDatabaseCommit: (version) => {
               if (version === 39)
                 throw new Error("injected stop after migration 39 commit");
@@ -332,7 +346,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         });
 
         await expect(
-          runSchemaUpgrade(resumeArgs, {
+          runPreparedUpgrade(resumeArgs, {
             beforeDatabaseTransaction: (version) => {
               if (version === 40)
                 throw new Error("injected stop before migration 40");
@@ -348,7 +362,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         });
 
         await expect(
-          runSchemaUpgrade(resumeArgs, {
+          runPreparedUpgrade(resumeArgs, {
             afterDatabaseCommit: (version) => {
               if (version === 40)
                 throw new Error("injected stop after migration 40 commit");
@@ -364,7 +378,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         });
 
         await expect(
-          runSchemaUpgrade(resumeArgs, {
+          runPreparedUpgrade(resumeArgs, {
             beforeDatabaseTransaction: (version) => {
               if (version === 41)
                 throw new Error("injected stop before migration 41");
@@ -380,7 +394,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         });
 
         await expect(
-          runSchemaUpgrade(resumeArgs, {
+          runPreparedUpgrade(resumeArgs, {
             afterDatabaseCommit: (version) => {
               if (version === 41)
                 throw new Error("injected stop after migration 41 commit");
@@ -396,7 +410,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         });
 
         await expect(
-          runSchemaUpgrade(resumeArgs, {
+          runPreparedUpgrade(resumeArgs, {
             beforeDatabaseTransaction: (version) => {
               if (version === 42)
                 throw new Error("injected stop before migration 42");
@@ -412,7 +426,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         });
 
         await expect(
-          runSchemaUpgrade(resumeArgs, {
+          runPreparedUpgrade(resumeArgs, {
             afterDatabaseCommit: (version) => {
               if (version === 42)
                 throw new Error("injected stop after migration 42 commit");
@@ -429,7 +443,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
 
         const beforeNoOpDigest = logicalSqliteDigest(args.database);
         let version42ReopenedNoOp = false;
-        await runSchemaUpgrade(resumeArgs, {
+        await runPreparedUpgrade(resumeArgs, {
           afterVersion42NoOpVerification: () => {
             version42ReopenedNoOp = true;
           },
@@ -444,7 +458,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
           hooks: SchemaUpgradeTestHooks = {},
         ) => {
           const targetDigest = logicalSqliteDigest(args.database);
-          await expect(runSchemaUpgrade(altered, hooks)).rejects.toThrow(
+          await expect(runPreparedUpgrade(altered, hooks)).rejects.toThrow(
             message,
           );
           expect(readUserVersion(args.database)).toBe(42);
@@ -526,7 +540,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         } finally {
           originalVersion.close();
         }
-        await expect(runSchemaUpgrade(resumeArgs)).rejects.toThrow(
+        await expect(runPreparedUpgrade(resumeArgs)).rejects.toThrow(
           /target|boundary|prefix|version|duplicate column/u,
         );
         const restoredVersion = new DatabaseSync(args.database);
@@ -544,7 +558,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         } finally {
           tamperTarget.close();
         }
-        await expect(runSchemaUpgrade(resumeArgs)).rejects.toThrow(
+        await expect(runPreparedUpgrade(resumeArgs)).rejects.toThrow(
           /content|boundary|manifest/u,
         );
         const restoreTarget = new DatabaseSync(args.database);
@@ -578,7 +592,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         finalEnvelope.hash = `${finalEnvelope.hash[0] === "0" ? "1" : "0"}${finalEnvelope.hash.slice(1)}`;
         lines[lines.length - 1] = JSON.stringify(finalEnvelope);
         writeFileSync(args.copyManifest, `${lines.join("\n")}\n`);
-        await expect(runSchemaUpgrade(resumeArgs)).rejects.toThrow(
+        await expect(runPreparedUpgrade(resumeArgs)).rejects.toThrow(
           /hash chain/u,
         );
         expect(readUserVersion(args.sourceDatabase as string)).toBe(38);

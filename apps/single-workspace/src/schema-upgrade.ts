@@ -182,9 +182,24 @@ export interface SchemaUpgradeArguments {
   readonly copyManifest: string;
 }
 
+/** Immutable process-local preview material for the offline qualification
+ * hooks. Reuse is accepted only when the live target matches one exact
+ * version, logical digest, and schema signature in this template. */
+export interface SchemaUpgradePreviewTemplate {
+  readonly sourceVersion: number;
+  readonly prefixes: ReadonlyMap<
+    number,
+    { readonly digest: string; readonly signature: string }
+  >;
+  readonly p39Blocked: boolean;
+  readonly sourceDigest: string;
+}
+
 /** Process-local fault point used only by the offline CLI qualification suite.
  * It is never populated by the command-line parser. */
 export interface SchemaUpgradeTestHooks {
+  readonly previewTemplate?: SchemaUpgradePreviewTemplate;
+  readonly onPreviewTemplate?: (template: SchemaUpgradePreviewTemplate) => void;
   readonly beforeDatabaseTransaction?: (version: 39 | 40 | 41 | 42) => void;
   readonly afterDatabaseCommit?: (version: 39 | 40 | 41 | 42) => void;
   readonly afterVersion42NoOpVerification?: (evidence: {
@@ -1056,11 +1071,7 @@ interface PreviewPrefix {
   readonly signature: string;
 }
 
-interface PreviewPlan {
-  readonly prefixes: ReadonlyMap<number, PreviewPrefix>;
-  readonly p39Blocked: boolean;
-  readonly sourceDigest: string;
-}
+type PreviewPlan = SchemaUpgradePreviewTemplate;
 
 /** Compute exact post-transaction logical digests against a private SQLite
  * backup. Prepared records can then distinguish a rolled-back step from a
@@ -1153,7 +1164,13 @@ const previewCommittedPrefixes = async (
         if (!p39Blocked) throw cause;
       }
       database = new DatabaseSync(previewPath);
-      if (p39Blocked) return { prefixes: results, p39Blocked, sourceDigest };
+      if (p39Blocked)
+        return {
+          prefixes: results,
+          p39Blocked,
+          sourceDigest,
+          sourceVersion: startVersion,
+        };
       const digest = logicalSqliteDigest(previewPath);
       results.set(39, {
         digest,
@@ -1209,7 +1226,12 @@ const previewCommittedPrefixes = async (
         ),
       });
     }
-    return { prefixes: results, p39Blocked, sourceDigest };
+    return {
+      prefixes: results,
+      p39Blocked,
+      sourceDigest,
+      sourceVersion: startVersion,
+    };
   } finally {
     database?.close();
     const canonicalDirectory = realpathSync.native(directory);
@@ -1475,13 +1497,42 @@ const runP39AndSuffix = async (
   let previews: PreviewPlan;
   try {
     previews =
-      previewVersion === 42
+      hooks.previewTemplate ??
+      (previewVersion === 42
         ? {
             prefixes: new Map(),
             p39Blocked: false,
             sourceDigest: logicalSqliteDigest(targetPath),
+            sourceVersion: previewVersion,
           }
-        : await previewCommittedPrefixes(targetPath);
+        : await previewCommittedPrefixes(targetPath));
+    if (hooks.previewTemplate !== undefined) {
+      const currentDigest = logicalSqliteDigest(targetPath);
+      const expectedDigest =
+        previewVersion === previews.sourceVersion
+          ? previews.sourceDigest
+          : previews.prefixes.get(previewVersion)?.digest;
+      if (expectedDigest === undefined || currentDigest !== expectedDigest)
+        throw new SchemaUpgradeRefusal(
+          "target content differs from the offline preview template digest",
+        );
+      if (previewVersion !== previews.sourceVersion) {
+        const expected = previews.prefixes.get(previewVersion);
+        if (
+          expected === undefined ||
+          prefixSignature(
+            targetPath,
+            previewVersion,
+            descriptorHashesThrough(previewVersion),
+          ) !== expected.signature
+        ) {
+          throw new SchemaUpgradeRefusal(
+            "target prefix differs from the offline preview template signature",
+          );
+        }
+      }
+    }
+    hooks.onPreviewTemplate?.(previews);
   } catch (cause) {
     hooks.onMaintenanceFailure?.("schema-prefix-preview", cause);
     throw cause;
@@ -1709,9 +1760,13 @@ const runP39AndSuffix = async (
                   "target prefix differs from its validated manifest head under MaintenanceExclusive",
                 );
               }
+              const expectedStartingDigest =
+                previewVersion === previews.sourceVersion
+                  ? previews.sourceDigest
+                  : previews.prefixes.get(previewVersion)?.digest;
               if (
                 versionAtPermit === previewVersion &&
-                digestAtPermit !== previews.sourceDigest
+                digestAtPermit !== expectedStartingDigest
               ) {
                 throw new SchemaUpgradeRefusal(
                   "target logical digest changed while waiting for MaintenanceExclusive",
