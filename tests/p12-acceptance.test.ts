@@ -275,7 +275,9 @@ const readRepoFile = (relative: string): string =>
   readFileSync(join(repoRoot, relative), "utf8");
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "p12-acceptance-"));
+const schema42Cleanups: Array<() => void> = [];
 afterAll(() => {
+  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
   rmSync(suiteTmp, { recursive: true, force: true });
 });
 
@@ -735,6 +737,7 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
     const database = await createSchema42TestDatabase({
       prefix: "p12-acceptance-secret-",
     });
+    schema42Cleanups.push(database.cleanup);
     const app = buildSingleWorkspaceLayer({
       databaseFile: database.databaseFilename,
       providerTurns: [
@@ -848,7 +851,6 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
       process.stdout.write = origOut as typeof process.stdout.write;
       process.stderr.write = origErr as typeof process.stderr.write;
       delete process.env[sentinelEnv];
-      database.cleanup();
     }
 
     expect(settlement).toBe("Completed");
@@ -1704,6 +1706,7 @@ const runSafetyScenario = async (
   const database = await createSchema42TestDatabase({
     prefix: "p12-acceptance-safety-",
   });
+  schema42Cleanups.push(database.cleanup);
   const app = buildSingleWorkspaceLayer({
     databaseFile: database.databaseFilename,
     providerTurns,
@@ -1789,7 +1792,6 @@ const runSafetyScenario = async (
       app,
     ) as unknown as Effect.Effect<SafetyScenario, unknown, never>,
   );
-  database.cleanup();
   return result;
 };
 
@@ -2126,8 +2128,10 @@ type TransportDbServices =
   | ConversationResponseJobStore
   | IdGenerator;
 
-const transportApp = (): Layer.Layer<TransportDbServices> => {
-  const base = layer({ filename: ":memory:" });
+const transportApp = (
+  databaseFile = ":memory:",
+): Layer.Layer<TransportDbServices> => {
+  const base = layer({ filename: databaseFile });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const deps = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
@@ -2174,7 +2178,9 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
 
 const transportRun = <A>(
   program: Effect.Effect<A, unknown, TransportDbServices>,
-): Promise<A> => Effect.runPromise(Effect.provide(program, transportApp()));
+  databaseFile?: string,
+): Promise<A> =>
+  Effect.runPromise(Effect.provide(program, transportApp(databaseFile)));
 
 describe("p12-acceptance story 11 — transport shells + daemons", () => {
   it("story 11: shells render the frozen DTOs, forward Commands, hold no canonical write, and Search stays deferred", async () => {
@@ -2255,10 +2261,12 @@ describe("p12-acceptance story 11 — transport shells + daemons", () => {
       ]);
     }
 
+    const database = await createSchema42TestDatabase({
+      prefix: "p12-acceptance-transport-",
+    });
+    schema42Cleanups.push(database.cleanup);
     const outcome = await transportRun(
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
-        yield* ensureLegacyProjectResourceSourceFixture();
         const submission = yield* makeExternalSubmissionFromServices({
           authenticatedHumans: [],
           directParentOf: [],
@@ -2278,6 +2286,7 @@ describe("p12-acceptance story 11 — transport shells + daemons", () => {
         );
         return { response, projects: Number(rows[0]?.count ?? 0) };
       }),
+      database.databaseFilename,
     );
     expect(outcome.response.ok).toBe(true);
     expect(outcome.projects).toBe(1);
