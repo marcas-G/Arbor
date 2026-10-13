@@ -2,6 +2,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    globalSetup: ["./tests/support/p39-windows-global-setup.ts"],
+    setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
     include: ["tests/capability/real-provider/**/*.test.ts"],
     exclude: ["**/node_modules/**"],
     // A real-provider case may legitimately span many model turns. The
