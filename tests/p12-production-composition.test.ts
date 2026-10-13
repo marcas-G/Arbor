@@ -50,7 +50,10 @@ import {
 } from "../packages/ports/src/index.js";
 import { UsageService } from "../packages/projection-runtime/src/index.js";
 import { p7Project, p7RootWorkspace, p7SeedProject } from "./support/p7-app.js";
-import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
+import {
+  createSchema42TestDatabaseFactory,
+  withSchema42TestDatabase,
+} from "./support/schema42-database.js";
 
 /**
  * B-6 / B-7 / B-8 — the production composition root is the single runtime:
@@ -64,7 +67,6 @@ import { createSchema42TestDatabaseFactory } from "./support/schema42-database.j
  */
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "p12-production-"));
-const schema42Cleanups: Array<() => void> = [];
 let schema42Factory: Awaited<
   ReturnType<typeof createSchema42TestDatabaseFactory>
 >;
@@ -72,18 +74,16 @@ beforeAll(async () => {
   schema42Factory = await createSchema42TestDatabaseFactory({
     prefix: "p12-production-template-",
   });
-});
+}, 120_000);
 afterAll(() => {
-  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
   schema42Factory.cleanup();
   rmSync(suiteTmp, { recursive: true, force: true });
 });
 
-const prepareSchema42Database = () => {
-  const fixture = schema42Factory.create();
-  schema42Cleanups.push(fixture.cleanup);
-  return fixture;
-};
+const itWithSchema42Database = (
+  name: string,
+  body: Parameters<typeof withSchema42TestDatabase>[1],
+) => it(name, () => withSchema42TestDatabase(schema42Factory, body), 120_000);
 
 const HUMAN = parse(Principal)("user:governance");
 const PROJECT = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789f1");
@@ -150,222 +150,231 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
     ).not.toThrow();
   });
 
-  it("B-6: production wires the P7 dependency-aware RunnableWorkSource (a waiting Open work is not runnable)", async () => {
-    const database = await prepareSchema42Database();
-    const outcome = await runWith(
-      database.databaseFilename,
-      Effect.gen(function* () {
-        yield* p7SeedProject;
-        // one Open work on the seeded root workspace
-        const gateway = yield* CommandGateway;
-        const workPayload = {
-          workId: WORK,
-          workspaceId: p7RootWorkspace,
-          expectedWorkspaceRevision: parse(Revision)(0),
-          objective: "b6",
-          why: "b6",
-          constraints: [],
-          completionExpectation: "green",
-          verificationMission: {
-            goal: "g",
-            criteria: [],
-            riskRequirements: [],
-          },
-          provenance: { predecessorWorkId: null, reason: "seed" },
-          revision: parse(WorkRevision)(0),
-        };
-        yield* gateway.execute(
-          {
-            commandType: "AssignWork",
-            commandId: parse(CommandId)(
-              "cmd_018f2b3c-4d5e-7abc-8def-0123456789f2",
-            ),
-            projectId: p7Project,
-            actor: ACTOR,
-            issuedAt: ISSUED_AT,
-            payload: workPayload,
-          },
-          { _tag: "External", principal: HUMAN },
-          {
-            _tag: "AssignWorkAuthority",
-            principal: HUMAN,
-            commandId: parse(CommandId)(
-              "cmd_018f2b3c-4d5e-7abc-8def-0123456789f2",
-            ),
-            semanticRequestFingerprint: semanticRequestFingerprint({
+  itWithSchema42Database(
+    "B-6: production wires the P7 dependency-aware RunnableWorkSource (a waiting Open work is not runnable)",
+    async (database) => {
+      const outcome = await runWith(
+        database.databaseFilename,
+        Effect.gen(function* () {
+          yield* p7SeedProject;
+          // one Open work on the seeded root workspace
+          const gateway = yield* CommandGateway;
+          const workPayload = {
+            workId: WORK,
+            workspaceId: p7RootWorkspace,
+            expectedWorkspaceRevision: parse(Revision)(0),
+            objective: "b6",
+            why: "b6",
+            constraints: [],
+            completionExpectation: "green",
+            verificationMission: {
+              goal: "g",
+              criteria: [],
+              riskRequirements: [],
+            },
+            provenance: { predecessorWorkId: null, reason: "seed" },
+            revision: parse(WorkRevision)(0),
+          };
+          yield* gateway.execute(
+            {
               commandType: "AssignWork",
+              commandId: parse(CommandId)(
+                "cmd_018f2b3c-4d5e-7abc-8def-0123456789f2",
+              ),
               projectId: p7Project,
               actor: ACTOR,
-              schemaVersion: "1",
+              issuedAt: ISSUED_AT,
               payload: workPayload,
+            },
+            { _tag: "External", principal: HUMAN },
+            {
+              _tag: "AssignWorkAuthority",
+              principal: HUMAN,
+              commandId: parse(CommandId)(
+                "cmd_018f2b3c-4d5e-7abc-8def-0123456789f2",
+              ),
+              semanticRequestFingerprint: semanticRequestFingerprint({
+                commandType: "AssignWork",
+                projectId: p7Project,
+                actor: ACTOR,
+                schemaVersion: "1",
+                payload: workPayload,
+              }),
+              projectId: p7Project,
+              targetWorkspaceId: p7RootWorkspace,
+            } as VerifiedCommandAuthority,
+          );
+
+          const source = yield* RunnableWorkSource;
+          const before = yield* source.classify(p7RootWorkspace);
+
+          // register an active wait on the Open work
+          const tx = yield* TransactionPort;
+          const waits = yield* WorkWaitStore;
+          yield* tx.transact(
+            waits.upsert({
+              workId: WORK,
+              waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+              registeredAt: "t",
+              updatedAt: "t",
             }),
-            projectId: p7Project,
-            targetWorkspaceId: p7RootWorkspace,
-          } as VerifiedCommandAuthority,
-        );
+          );
+          const after = yield* source.classify(p7RootWorkspace);
+          return { before, after };
+        }),
+      );
 
-        const source = yield* RunnableWorkSource;
-        const before = yield* source.classify(p7RootWorkspace);
+      expect(outcome.before.runnable).toContain(WORK);
+      // P7 semantics: a waiting Work is excluded from the runnable set (the P5
+      // provisional source would have kept it runnable).
+      expect(outcome.after.runnable).not.toContain(WORK);
+    },
+  );
 
-        // register an active wait on the Open work
-        const tx = yield* TransactionPort;
-        const waits = yield* WorkWaitStore;
-        yield* tx.transact(
-          waits.upsert({
-            workId: WORK,
-            waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
-            registeredAt: "t",
-            updatedAt: "t",
-          }),
-        );
-        const after = yield* source.classify(p7RootWorkspace);
-        return { before, after };
-      }),
-    );
+  itWithSchema42Database(
+    "B-7/B-8: the composition assembles resolver, transport, worker mediation, daemons, observability, health and catalog",
+    async (database) => {
+      const outcome = await runWith(
+        database.databaseFilename,
+        Effect.gen(function* () {
+          const health = yield* HealthPort;
+          const beforeStartup = yield* health.readiness();
 
-    expect(outcome.before.runnable).toContain(WORK);
-    // P7 semantics: a waiting Work is excluded from the runnable set (the P5
-    // provisional source would have kept it runnable).
-    expect(outcome.after.runnable).not.toContain(WORK);
-  });
+          const resolver = yield* AuthorityResolverPort;
+          const mediation = yield* RemoteWorkerMediationPort;
+          const query = yield* ProjectionQueryPort;
+          const boundary = yield* TransportBoundary;
+          const usage = yield* UsageService;
+          const catalog = yield* ToolCatalogPort;
+          const probe = yield* PersistenceHealthProbe;
+          const deployment = yield* ProductionDaemonService;
 
-  it("B-7/B-8: the composition assembles resolver, transport, worker mediation, daemons, observability, health and catalog", async () => {
-    const database = await prepareSchema42Database();
-    const outcome = await runWith(
-      database.databaseFilename,
-      Effect.gen(function* () {
-        const health = yield* HealthPort;
-        const beforeStartup = yield* health.readiness();
+          // T1 recovery runs exactly once at daemon start and flips readiness.
+          yield* deployment.daemon.start;
+          const afterRecovery = yield* health.readiness();
+          yield* deployment.daemon.pollConsumers;
+          yield* deployment.daemon.recoveryTick;
 
-        const resolver = yield* AuthorityResolverPort;
-        const mediation = yield* RemoteWorkerMediationPort;
-        const query = yield* ProjectionQueryPort;
-        const boundary = yield* TransportBoundary;
-        const usage = yield* UsageService;
-        const catalog = yield* ToolCatalogPort;
-        const probe = yield* PersistenceHealthProbe;
-        const deployment = yield* ProductionDaemonService;
+          // transport boundary: authenticated external command -> resolver ->
+          // gateway, then a real view query over the projection query face.
+          const createResponse = yield* boundary.http.handle({
+            method: "POST",
+            path: "/commands",
+            authorization: "Bearer test-token",
+            body: {
+              commandType: "CreateProject",
+              commandId: parse(CommandId)(
+                "cmd_018f2b3c-4d5e-7abc-8def-0123456789f3",
+              ),
+              projectId: PROJECT,
+              actor: ACTOR,
+              issuedAt: ISSUED_AT,
+              payload: createProjectPayload(),
+            },
+          });
+          const treeResponse = yield* boundary.http.handle({
+            method: "POST",
+            path: "/views/responsibility-tree",
+            authorization: "Bearer local-view-token",
+            body: { projectId: PROJECT },
+          });
 
-        // T1 recovery runs exactly once at daemon start and flips readiness.
-        yield* deployment.daemon.start;
-        const afterRecovery = yield* health.readiness();
-        yield* deployment.daemon.pollConsumers;
-        yield* deployment.daemon.recoveryTick;
+          return {
+            beforeStartup,
+            afterRecovery,
+            probe,
+            resolver,
+            mediation,
+            query,
+            usage,
+            catalog,
+            deployment,
+            createResponse,
+            treeResponse,
+          };
+        }),
+      );
 
-        // transport boundary: authenticated external command -> resolver ->
-        // gateway, then a real view query over the projection query face.
-        const createResponse = yield* boundary.http.handle({
-          method: "POST",
-          path: "/commands",
-          authorization: "Bearer test-token",
-          body: {
-            commandType: "CreateProject",
-            commandId: parse(CommandId)(
-              "cmd_018f2b3c-4d5e-7abc-8def-0123456789f3",
-            ),
-            projectId: PROJECT,
-            actor: ACTOR,
-            issuedAt: ISSUED_AT,
-            payload: createProjectPayload(),
-          },
-        });
-        const treeResponse = yield* boundary.http.handle({
-          method: "POST",
-          path: "/views/responsibility-tree",
-          authorization: "Bearer local-view-token",
-          body: { projectId: PROJECT },
-        });
+      // B-8 schema baseline and T1 startup recovery readiness.
+      expect(outcome.beforeStartup.dbOpen).toBe(true);
+      expect(outcome.beforeStartup.migrationBaseline).toBe(true);
+      expect(outcome.beforeStartup.t1RecoveryComplete).toBe(false);
+      expect(outcome.afterRecovery.t1RecoveryComplete).toBe(true);
+      expect(
+        outcome.afterRecovery.dbOpen &&
+          outcome.afterRecovery.migrationBaseline &&
+          outcome.afterRecovery.t1RecoveryComplete,
+      ).toBe(true);
+      expect(typeof outcome.probe.probe).toBe("function");
 
-        return {
-          beforeStartup,
-          afterRecovery,
-          probe,
-          resolver,
-          mediation,
-          query,
-          usage,
-          catalog,
-          deployment,
-          createResponse,
-          treeResponse,
+      // B-7 assembly
+      expect(typeof outcome.resolver.resolve).toBe("function");
+      expect(typeof outcome.resolver.resolveInvocation).toBe("function");
+      expect(typeof outcome.mediation.submit).toBe("function");
+      expect(typeof outcome.query.query).toBe("function");
+      expect(typeof outcome.usage.derive).toBe("function");
+      expect(typeof outcome.catalog.visibleRefs).toBe("function");
+      expect(outcome.deployment.consumers.length).toBeGreaterThan(0);
+      expect(typeof outcome.deployment.driftWatcher.trigger).toBe("function");
+      expect(outcome.deployment.daemon.start).toBeDefined();
+      expect(outcome.deployment.daemon.pollConsumers).toBeDefined();
+      expect(outcome.deployment.daemon.recoveryTick).toBeDefined();
+
+      // B-7 transport end-to-end: command committed + real view query rendered.
+      expect(outcome.createResponse.ok).toBe(true);
+      if (outcome.createResponse.ok) {
+        const body = outcome.createResponse.body as {
+          readonly resolution: string;
         };
-      }),
-    );
+        expect(body.resolution).toBe("Committed");
+      }
+      expect(
+        outcome.treeResponse.ok,
+        JSON.stringify(outcome.treeResponse),
+      ).toBe(true);
+      if (outcome.treeResponse.ok) {
+        const body = outcome.treeResponse.body as {
+          readonly value?: { readonly nodes: ReadonlyArray<unknown> };
+        };
+        expect(body.value?.nodes.length).toBeGreaterThan(0);
+      }
+    },
+  );
 
-    // B-8 schema baseline and T1 startup recovery readiness.
-    expect(outcome.beforeStartup.dbOpen).toBe(true);
-    expect(outcome.beforeStartup.migrationBaseline).toBe(true);
-    expect(outcome.beforeStartup.t1RecoveryComplete).toBe(false);
-    expect(outcome.afterRecovery.t1RecoveryComplete).toBe(true);
-    expect(
-      outcome.afterRecovery.dbOpen &&
-        outcome.afterRecovery.migrationBaseline &&
-        outcome.afterRecovery.t1RecoveryComplete,
-    ).toBe(true);
-    expect(typeof outcome.probe.probe).toBe("function");
-
-    // B-7 assembly
-    expect(typeof outcome.resolver.resolve).toBe("function");
-    expect(typeof outcome.resolver.resolveInvocation).toBe("function");
-    expect(typeof outcome.mediation.submit).toBe("function");
-    expect(typeof outcome.query.query).toBe("function");
-    expect(typeof outcome.usage.derive).toBe("function");
-    expect(typeof outcome.catalog.visibleRefs).toBe("function");
-    expect(outcome.deployment.consumers.length).toBeGreaterThan(0);
-    expect(typeof outcome.deployment.driftWatcher.trigger).toBe("function");
-    expect(outcome.deployment.daemon.start).toBeDefined();
-    expect(outcome.deployment.daemon.pollConsumers).toBeDefined();
-    expect(outcome.deployment.daemon.recoveryTick).toBeDefined();
-
-    // B-7 transport end-to-end: command committed + real view query rendered.
-    expect(outcome.createResponse.ok).toBe(true);
-    if (outcome.createResponse.ok) {
-      const body = outcome.createResponse.body as {
-        readonly resolution: string;
-      };
-      expect(body.resolution).toBe("Committed");
-    }
-    expect(outcome.treeResponse.ok, JSON.stringify(outcome.treeResponse)).toBe(
-      true,
-    );
-    if (outcome.treeResponse.ok) {
-      const body = outcome.treeResponse.body as {
-        readonly value?: { readonly nodes: ReadonlyArray<unknown> };
-      };
-      expect(body.value?.nodes.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("B-7: the production daemon entrypoint smoke-runs (migrate -> T1 -> scheduler/loop -> consumers -> sweep)", async () => {
-    const database = await prepareSchema42Database();
-    const outcome = await runWith(
-      database.databaseFilename,
-      Effect.gen(function* () {
-        yield* p7SeedProject;
-        const deployment = yield* ProductionDaemonService;
-        // the runnable entrypoint: start (migrations + T1 recovery), scheduler
-        // loop, consumer polls, recovery sweep.
-        yield* runDaemonOnce({
-          databaseFile: database.databaseFilename,
-          workspaceId: p7RootWorkspace,
-          principalRef: "runtime:system",
-        });
-        const health = yield* HealthPort;
-        return { readiness: yield* health.readiness(), deployment };
-      }),
-    );
-    expect(outcome.readiness.dbOpen).toBe(true);
-    expect(outcome.readiness.migrationBaseline).toBe(true);
-    expect(outcome.readiness.t1RecoveryComplete).toBe(true);
-    // Per-project formation/verification/completion stays behind one dynamic
-    // aggregator; the shared P10 Attention poller remains an independent
-    // consumer.
-    expect(
-      outcome.deployment.consumers
-        .map((consumer) => consumer.consumerId)
-        .sort(),
-    ).toEqual(["dynamic-project-consumers", P10_ATTENTION_CONSUMER_ID].sort());
-  });
+  itWithSchema42Database(
+    "B-7: the production daemon entrypoint smoke-runs (migrate -> T1 -> scheduler/loop -> consumers -> sweep)",
+    async (database) => {
+      const outcome = await runWith(
+        database.databaseFilename,
+        Effect.gen(function* () {
+          yield* p7SeedProject;
+          const deployment = yield* ProductionDaemonService;
+          // the runnable entrypoint: start (migrations + T1 recovery), scheduler
+          // loop, consumer polls, recovery sweep.
+          yield* runDaemonOnce({
+            databaseFile: database.databaseFilename,
+            workspaceId: p7RootWorkspace,
+            principalRef: "runtime:system",
+          });
+          const health = yield* HealthPort;
+          return { readiness: yield* health.readiness(), deployment };
+        }),
+      );
+      expect(outcome.readiness.dbOpen).toBe(true);
+      expect(outcome.readiness.migrationBaseline).toBe(true);
+      expect(outcome.readiness.t1RecoveryComplete).toBe(true);
+      // Per-project formation/verification/completion stays behind one dynamic
+      // aggregator; the shared P10 Attention poller remains an independent
+      // consumer.
+      expect(
+        outcome.deployment.consumers
+          .map((consumer) => consumer.consumerId)
+          .sort(),
+      ).toEqual(
+        ["dynamic-project-consumers", P10_ATTENTION_CONSUMER_ID].sort(),
+      );
+    },
+  );
 
   it("B-7: production no longer references the P5 provisional runnable source", () => {
     const source = readFileSync(

@@ -301,3 +301,16 @@ export const createSchema42TestDatabaseFactory = async (
     },
   };
 };
+
+/** Runs one test case with its own cloned database and always removes it. */
+export const withSchema42TestDatabase = async <A>(
+  factory: Schema42TestDatabaseFactory,
+  use: (database: Schema42TestDatabase) => Promise<A>,
+): Promise<A> => {
+  const database = factory.create();
+  try {
+    return await use(database);
+  } finally {
+    database.cleanup();
+  }
+};

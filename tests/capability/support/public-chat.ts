@@ -40,7 +40,7 @@ beforeAll(async () => {
   publicConversationFactory = await createSchema42TestDatabaseFactory({
     prefix: "public-conversation-template-",
   });
-});
+}, 120_000);
 
 afterAll(() => {
   for (const database of publicConversationDatabases.values()) {
