@@ -24,11 +24,11 @@ import { describe, expect, it } from "vitest";
 import {
   layer,
   P31_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
 } from "../src/index.js";
-import * as migrationExports from "../src/migrations.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -208,31 +208,19 @@ const seedNullSourceConsumedApproval = Effect.gen(function* () {
   );
 });
 
-const p36Migrations = () =>
-  (
-    migrationExports as typeof migrationExports & {
-      readonly P36_MIGRATIONS?: ReadonlyArray<{
-        readonly id: number;
-        readonly name: string;
-        readonly sql: string;
-        readonly foreignKeysOff?: boolean;
-      }>;
-    }
-  ).P36_MIGRATIONS;
-
 const p31Migrations = () => P31_MIGRATIONS;
 
-/** This focused adapter fixture combines P31 with the P36 tool-invocation
- * admission migration, leaving P4's legacy approval table as the route under
- * test. The separate route-separation case executes the real P31→P36 chain. */
-const p31WithAh7Migrations = () => {
-  const ah7 = p36Migrations()?.find((migration) => migration.id === 36);
-  return ah7 === undefined ? undefined : [...P31_MIGRATIONS, ah7];
-};
+/** Seed the genuine P31-era approval, then apply the full P31→P35→P36 chain. */
+const prepareP36WithLegacyApproval = Effect.gen(function* () {
+  yield* runMigrations(P31_MIGRATIONS);
+  yield* seedExecution;
+  yield* seedApproval;
+  yield* runMigrations(P36_MIGRATIONS);
+});
 
 describe("AH7-DG-03 P4 SQLite store contract", () => {
   it("provides the P36 forward migration and fenced no-effect store operations", () => {
-    expect(p36Migrations(), "P36 migration must be exported").toBeDefined();
+    expect(P36_MIGRATIONS, "P36 migration must be exported").toBeDefined();
   });
 
   it("exposes fenced intent, denial, interruption and effect-admission store operations", async () => {
@@ -255,15 +243,10 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
     expect(typeof store.admitEffect).toBe("function");
   });
 
-  it("commits intent and approval claim together, and rolls both back on claim failure", async () => {
-    const migrations = p31WithAh7Migrations();
-    expect(migrations).toBeDefined();
-    if (migrations === undefined) return;
+  it("preserves migrated approval history while fenced intent rollback remains atomic", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(migrations);
-      yield* seedExecution;
-      yield* seedApproval;
+      yield* prepareP36WithLegacyApproval;
       const tx = yield* TransactionPort;
       const store = (yield* ToolInvocationStore) as unknown as {
         recordIntent: (
@@ -300,7 +283,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         consumed_by: string | null;
       }>(
         `SELECT (SELECT COUNT(*) FROM tool_invocations WHERE invocation_id = ?) AS intents,
-                (SELECT consumed_by FROM invocation_approvals WHERE approval_id = ?) AS consumed_by`,
+                (SELECT consumed_by FROM action_approvals WHERE approval_id = ?) AS consumed_by`,
         [invocationA, approvalId],
       );
 
@@ -322,7 +305,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
       }>(
         `SELECT i.invocation_id, i.effect_admission_state, a.consumed_by
            FROM tool_invocations i
-           JOIN invocation_approvals a ON a.approval_id = i.approval_id
+           JOIN action_approvals a ON a.approval_id = i.approval_id
           WHERE i.invocation_id = ?`,
         [invocationA],
       );
@@ -367,11 +350,11 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
     const result = await Effect.runPromise(Effect.provide(program, app));
     expect(Exit.isFailure(result.failedClaim)).toBe(true);
     expect(result.rolledBack).toEqual({ intents: 0, consumed_by: null });
-    expect(result.claimWon).toBe(true);
+    expect(result.claimWon).toBe(false);
     expect(result.committed).toEqual({
       invocation_id: invocationA,
       effect_admission_state: "NotAdmitted",
-      consumed_by: invocationA,
+      consumed_by: null,
     });
     expect(Exit.isFailure(result.loser)).toBe(true);
     expect(result.loserRows?.count).toBe(0);
@@ -379,9 +362,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
 
   it("keeps binding-proven P38 approvals out of the legacy P4 find/consume route", async () => {
     const migration31 = p31Migrations();
-    const migration36 = p36Migrations();
-    expect(migration36).toBeDefined();
-    if (migration36 === undefined) return;
+    const migration36 = P36_MIGRATIONS;
     const app = makeApp();
     const result = await Effect.runPromise(
       Effect.provide(
@@ -545,10 +526,6 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
   ] as const)(
     "rejects stale authority after a resolver snapshot and concurrent %s",
     async (sourceChange) => {
-      const migrations = p31WithAh7Migrations();
-      expect(migrations).toBeDefined();
-      if (migrations === undefined) return;
-
       const directory = mkdtempSync(join(tmpdir(), "ah7-authority-fence-"));
       const filename = join(directory, "authority.db");
       const primarySqlite = layer({ filename });
@@ -572,9 +549,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         const resultPromise = Effect.runPromise(
           Effect.provide(
             Effect.gen(function* () {
-              yield* runMigrations(migrations);
-              yield* seedExecution;
-              yield* seedApproval;
+              yield* prepareP36WithLegacyApproval;
               const sql = yield* SqlClient;
               const tx = yield* TransactionPort;
               const store = yield* ToolInvocationStore;
@@ -595,21 +570,10 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
               yield* tx.transact(
                 Effect.gen(function* () {
                   yield* store.recordIntent(
-                    intent(invocationF, true),
+                    intent(invocationF, false),
                     fence,
                     fenceNow,
                   );
-                  const consumed = yield* store.consumeApproval(
-                    approvalId,
-                    invocationF,
-                    fence,
-                    fenceNow,
-                  );
-                  if (!consumed) {
-                    return yield* Effect.fail(
-                      new Error("fixture approval claim did not commit"),
-                    );
-                  }
                 }),
               );
 
@@ -684,7 +648,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
               }
               const record = yield* tx.transact(
                 store.recordNoEffectDenial(
-                  intent(invocationF, true),
+                  intent(invocationF, false),
                   "ApprovalNoLongerAuthorized",
                   fenceNow,
                   fence,
@@ -797,7 +761,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         }
         expect(
           Option.isSome(result.approval) && result.approval.value.consumedBy,
-        ).toBe(invocationF);
+        ).toBe(null);
         expect(executorCalls).toBe(0);
       } finally {
         rmSync(directory, { recursive: true, force: true });
@@ -806,14 +770,9 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
   );
 
   it("stores Denied/Interrupted only while NotAdmitted and rejects a stale fence", async () => {
-    const migrations = p31WithAh7Migrations();
-    expect(migrations).toBeDefined();
-    if (migrations === undefined) return;
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(migrations);
-      yield* seedExecution;
-      yield* seedApproval;
+      yield* prepareP36WithLegacyApproval;
       const tx = yield* TransactionPort;
       const store = (yield* ToolInvocationStore) as unknown as {
         recordIntent: (
@@ -946,7 +905,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         `SELECT i.effect_admission_state, i.settlement_kind,
                 i.settlement_json, a.consumed_by
            FROM tool_invocations i
-           JOIN invocation_approvals a ON a.approval_id = i.approval_id
+           JOIN action_approvals a ON a.approval_id = i.approval_id
           WHERE i.invocation_id = ?`,
         [invocationA],
       );

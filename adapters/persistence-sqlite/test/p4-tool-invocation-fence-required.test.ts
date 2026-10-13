@@ -10,7 +10,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   layer,
-  P4_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
@@ -36,7 +36,7 @@ describe("P4 SQLite ToolInvocationStore fence requirement", () => {
       Layer.provide(ToolInvocationStoreLive, base),
     );
     const program = Effect.gen(function* () {
-      yield* runMigrations(P4_MIGRATIONS);
+      yield* runMigrations(P36_MIGRATIONS);
       const store = yield* ToolInvocationStore;
       const tx = yield* TransactionPort;
       const capture = (effect: Parameters<typeof tx.transact>[0]) =>

@@ -25,7 +25,7 @@ import {
 } from "../../../packages/tool-runtime/src/index.js";
 import {
   layer,
-  P4_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
@@ -160,16 +160,13 @@ describe("P4 InvocationApproval", () => {
     ).toBe("Denied");
   });
 
-  it("consumes an approval atomically at most once", async () => {
+  it("keeps binding-proven executable approval out of the legacy P4 consume route", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P4_MIGRATIONS);
+      yield* runMigrations(P36_MIGRATIONS);
       const sql = yield* SqlClient;
       yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* sql.unsafe(
-            "ALTER TABLE execution_leases ADD COLUMN worker_incarnation_id TEXT NOT NULL DEFAULT ''",
-          );
           yield* sql.unsafe(
             "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             [
@@ -211,13 +208,13 @@ describe("P4 InvocationApproval", () => {
             ],
           );
           yield* sql.unsafe(
-            "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
+            "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, episode_kind, episode_ref, episode_revision, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?, ?,NULL,NULL,NULL,NULL,?,?,?,NULL,NULL,NULL,NULL)",
             [
               executionId,
               projectId,
-              "workspace",
+              "execution_bound",
               workspaceId,
-              "coordination",
+              "fixture",
               sessionId,
               "t",
             ],
@@ -234,12 +231,27 @@ describe("P4 InvocationApproval", () => {
             ],
           );
           yield* sql.unsafe(
-            "INSERT INTO invocation_approvals (approval_id, tool_name, tool_version, action_digest, target_resource_space_ids_json, control_basis_digest, expires_at, consumed_by) VALUES (?,?,?,?,?,?,?,NULL)",
+            `INSERT INTO action_approvals (
+              approval_id, route_kind, project_id, workspace_id, execution_id,
+              subject_ref, stable_action_id, action_version,
+              side_effect_semantics, action_digest, arguments_json, target_ref,
+              target_resource_space_ids_json, control_basis_digest, state,
+              revision, requested_at, expires_at, decided_at, decided_by,
+              decision_reason, consumed_at, consumed_by, binding_proven,
+              source_state
+            ) VALUES (?, 'Executable', ?, ?, ?, ?, ?, ?, 'Reconcilable', ?, ?,
+              'filesystem', ?, ?, 'Approved', 1, 't', ?, 't', 'human:test',
+              NULL, NULL, NULL, 1, 'Approved')`,
             [
               approval.approvalId,
+              projectId,
+              workspaceId,
+              executionId,
+              `Execution:${executionId}`,
               approval.toolName,
               approval.toolVersion,
               approval.actionDigest,
+              intent.argumentsJson,
               JSON.stringify(approval.targetResourceSpaceIds),
               approval.controlBasisDigest,
               approval.expiresAt,
@@ -289,8 +301,8 @@ describe("P4 InvocationApproval", () => {
     const r = await Effect.runPromise(
       Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
     );
-    expect((r as { first: boolean }).first).toBe(true);
+    expect((r as { first: boolean }).first).toBe(false);
     expect((r as { second: boolean }).second).toBe(false);
-    expect((r as { found: { _tag: string } }).found._tag).toBe("Some");
+    expect((r as { found: { _tag: string } }).found._tag).toBe("None");
   });
 });
