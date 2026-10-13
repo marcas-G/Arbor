@@ -1,3 +1,4 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { join } from "node:path";
 import { sha256Hex } from "@arbor/ports";
 import { Effect, Exit, Layer } from "effect";
@@ -16,6 +17,7 @@ import {
   P39_MAINTENANCE_MIGRATION_MANIFEST,
   P39_MAINTENANCE_MIGRATIONS,
   P39_RECONCILIATION_MIGRATION,
+  P39WriterLockClient,
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_FINGERPRINT,
@@ -381,7 +383,118 @@ const expectP39AdmissionGuard = (filename: string) =>
     }),
   ).then((count) => expect(count).toBe(1));
 
+const summarizeLockFailure = (cause: unknown, depth = 0): string => {
+  if (depth > 3) return "nested failure";
+  if (typeof cause !== "object" || cause === null) return "unknown failure";
+  const fields = cause as Record<string, unknown>;
+  const labels = [fields._tag, fields.code, fields.reasonCode].filter(
+    (value): value is string => typeof value === "string",
+  );
+  if (
+    typeof fields.message === "string" &&
+    /^(?:database (?:is )?(?:locked|busy)|sqlite_busy)$/iu.test(
+      fields.message.trim(),
+    )
+  ) {
+    labels.push(fields.message.trim());
+  }
+  if ("cause" in fields) {
+    labels.push(summarizeLockFailure(fields.cause, depth + 1));
+  }
+  return labels.join("/") || "unclassified structured failure";
+};
+
 describe("test-only P39 maintenance cumulative prefix qualification 0039–0042", () => {
+  it("applies the configured writer-lock busy timeout before initialization reads", async () => {
+    const directory = makeP39PrivateTestDirectory(
+      process.cwd(),
+      ".p39-writer-lock-timeout-",
+    );
+    let blocker: ChildProcess | undefined;
+    let blockerExit: Promise<void> | undefined;
+    try {
+      const primary = join(directory, "primary.sqlite");
+      createP39PrivateTestFile(primary);
+      const prepared = prepareP39PrimaryDatabasePath(primary);
+      if (!("writerLockFilename" in prepared)) {
+        throw new Error(`P39 test DB path rejected: ${prepared.code}`);
+      }
+      const acquireAndRelease = () =>
+        Effect.runPromise(
+          Effect.scoped(
+            Effect.provide(
+              Effect.gen(function* () {
+                const writerLock = yield* P39WriterLockClient;
+                const permit = yield* writerLock.acquire(
+                  "MaintenanceExclusive",
+                );
+                yield* writerLock.release(permit);
+              }),
+              p39WriterLockLayer(prepared.writerLockFilename, 20_000),
+            ),
+          ),
+        );
+
+      await acquireAndRelease();
+      const blockerScript = [
+        'import { DatabaseSync } from "node:sqlite";',
+        "const database = new DatabaseSync(process.argv[1]);",
+        'database.exec("BEGIN EXCLUSIVE");',
+        'process.stdout.write("LOCKED\\n");',
+        'setTimeout(() => { database.exec("ROLLBACK"); database.close(); }, 16_000);',
+      ].join("\n");
+      blocker = spawn(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          blockerScript,
+          prepared.writerLockFilename,
+        ],
+        { cwd: process.cwd(), windowsHide: true },
+      );
+      let blockerOutput = "";
+      blockerExit = new Promise((resolve) => {
+        blocker?.once("close", () => resolve());
+      });
+      const blockerReady = new Promise<void>((resolve, reject) => {
+        blocker?.stdout?.setEncoding("utf8");
+        blocker?.stdout?.on("data", (chunk: string) => {
+          blockerOutput += chunk;
+          if (blockerOutput.includes("LOCKED\n")) resolve();
+        });
+        blocker?.once("error", reject);
+        blocker?.once("close", (code) => {
+          if (!blockerOutput.includes("LOCKED\n")) {
+            reject(
+              new Error(`writer-lock blocker exited before ready: ${code}`),
+            );
+          }
+        });
+      });
+      await blockerReady;
+      const contender = acquireAndRelease().then(
+        () => ({ _tag: "Acquired" as const }),
+        (cause: unknown) => ({ _tag: "Failed" as const, cause }),
+      );
+      const result = await contender;
+      await blockerExit;
+      blocker = undefined;
+      expect(
+        result._tag,
+        result._tag === "Failed"
+          ? summarizeLockFailure(result.cause)
+          : "writer lock acquired after blocker release",
+      ).toBe("Acquired");
+    } finally {
+      if (blocker !== undefined) {
+        blocker.kill();
+        await blockerExit;
+      }
+      removeP39PrivateTestDirectory(directory);
+    }
+  }, 120_000);
+
   it("rolls back/restarts each exact descriptor and preserves the P38 Project/approval prefix through 0042", async () => {
     assertDescriptorPrefixAndFingerprint();
     const directory = makeP39PrivateTestDirectory(
