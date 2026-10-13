@@ -1,6 +1,3 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   CommandGateway,
   semanticRequestFingerprint,
@@ -26,13 +23,10 @@ import {
 import { SessionRepository, TransactionPort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import {
-  buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -51,6 +45,11 @@ const exe3 = parse(ExecutionId)(
 const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const principal = parse(Principal)("worker:a");
 const actor = parse(Actor)("user:test");
+const schema42Cleanups: Array<() => void> = [];
+
+afterEach(() => {
+  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
+});
 const context: CommandSubmissionContext = {
   _tag: "System",
   principal,
@@ -205,14 +204,16 @@ const readState = Effect.gen(function* () {
 
 describe("P5 restart continuity", () => {
   it("a fresh layer on the same database recovers and continues the session", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "p5-restart-"));
-    const databaseFile = join(dir, "slice.db");
+    const fixture = await createSchema42TestDatabase({
+      prefix: ".p5-restart-continuity-",
+    });
+    schema42Cleanups.push(fixture.cleanup);
+    const databaseFile = fixture.databaseFilename;
     const turns = [yieldTurn];
 
     const before = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           yield* seed;
           yield* ensureLegacyProjectResourceSourceFixture();
           yield* admit(
