@@ -118,10 +118,19 @@ export const runP39SqliteMaintenanceWithPermit = (
         | "writer-lock-acquisition"
         | "manifest-validation"
         | "p39-reservation-and-gate"
-        | "p40-p42-continuation",
+        | "p40-p42-continuation"
+        | "version42-closed-readonly-no-op",
     ) => void;
     readonly p39AlreadyCommitted?: boolean;
     readonly reportMustAlreadyExist?: boolean;
+    /** After a version-42 primary client has been closed, perform an explicit
+     * read-only no-op verification while MaintenanceExclusive is still held. */
+    readonly afterPrimaryClosedNoOp?: (
+      permit: P39DatabaseWriterPermit,
+    ) => Effect.Effect<
+      void,
+      P39MaintenanceFailure | SqliteAdapterError | SqlError
+    >;
     /** Runs after acquiring MaintenanceExclusive and before deciding whether
      * the P39 gate is needed. Used by resume-copy to validate and reconcile
      * the provenance head under the same cross-process permit as migrations. */
@@ -187,15 +196,11 @@ export const runP39SqliteMaintenanceWithPermit = (
       (phase) => settings.onPhase?.(phase),
     );
     settings.onPhase?.("report-database-validation");
-    if (settings.reportMustAlreadyExist === true) {
-      yield* validateP39ExistingReportSidecarDatabase(
-        primaryPath,
-        sidecarPath,
-        options.protectedStoreFilenames,
-        (phase) => settings.onPhase?.(phase),
-      );
-    }
-    yield* validateP39ReportSidecarDatabase(
+    const validateReportSidecar =
+      settings.reportMustAlreadyExist === true
+        ? validateP39ExistingReportSidecarDatabase
+        : validateP39ReportSidecarDatabase;
+    yield* validateReportSidecar(
       primaryPath,
       sidecarPath,
       options.protectedStoreFilenames,
@@ -211,41 +216,38 @@ export const runP39SqliteMaintenanceWithPermit = (
       ),
       SqliteClient.layer({ filename: primaryPath, disableWAL: true }),
     );
+    const reportSidecarLayer = Layer.provideMerge(
+      Layer.effectDiscard(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          yield* sql.unsafe("PRAGMA foreign_keys = ON");
+          yield* sql.unsafe("PRAGMA busy_timeout = 5000");
+          yield* sql.unsafe("PRAGMA synchronous = FULL");
+        }),
+      ),
+      SqliteClient.layer({ filename: sidecarPath, disableWAL: true }),
+    );
+    const writeReport = (report: P39MigrationBlockReport) =>
+      Effect.scoped(
+        Effect.provide(
+          writeP39BlockReportAndReadBack(report),
+          reportSidecarLayer,
+        ),
+      ).pipe(
+        Effect.mapError((cause) =>
+          typeof cause === "object" &&
+          cause !== null &&
+          "_tag" in cause &&
+          cause._tag === "P39MaintenanceFailure"
+            ? (cause as P39MaintenanceFailure)
+            : failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
+        ),
+      );
+    const readReports = () =>
+      Effect.scoped(Effect.provide(readP39BlockReports(), reportSidecarLayer));
     settings.onPhase?.("writer-lock-initialization");
     const maintenance = Effect.gen(function* () {
-      const primary = yield* P39PrimarySqlClient;
       const writerLock = yield* P39WriterLockClient;
-      const reportSidecarLayer = Layer.provideMerge(
-        Layer.effectDiscard(
-          Effect.gen(function* () {
-            const sql = yield* SqlClient;
-            yield* sql.unsafe("PRAGMA foreign_keys = ON");
-            yield* sql.unsafe("PRAGMA busy_timeout = 5000");
-            yield* sql.unsafe("PRAGMA synchronous = FULL");
-          }),
-        ),
-        SqliteClient.layer({ filename: sidecarPath, disableWAL: true }),
-      );
-      const writeReport = (report: P39MigrationBlockReport) =>
-        Effect.scoped(
-          Effect.provide(
-            writeP39BlockReportAndReadBack(report),
-            reportSidecarLayer,
-          ),
-        ).pipe(
-          Effect.mapError((cause) =>
-            typeof cause === "object" &&
-            cause !== null &&
-            "_tag" in cause &&
-            cause._tag === "P39MaintenanceFailure"
-              ? (cause as P39MaintenanceFailure)
-              : failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
-          ),
-        );
-      const readReports = () =>
-        Effect.scoped(
-          Effect.provide(readP39BlockReports(), reportSidecarLayer),
-        );
       settings.onPhase?.("writer-lock-acquisition");
       const permit = yield* writerLock
         .acquire("MaintenanceExclusive")
@@ -254,113 +256,151 @@ export const runP39SqliteMaintenanceWithPermit = (
             failure("P39_WRITER_LOCK_ACQUIRE_FAILED", cause),
           ),
         );
-      const port = makeP39SqliteMaintenancePort({
-        primary,
-        writerLock,
-        primaryFilename: primaryPath,
-        writerLockFilename: lockPath,
-        maintenancePermit: permit,
-        writeAndReadBackSidecarReport: (report) =>
-          Effect.gen(function* () {
-            const attempted = yield* Effect.result(writeReport(report));
-            if (attempted._tag === "Success") return attempted.success;
-            if (attempted.failure.code !== "P39_REPORT_COMMIT_UNRESOLVED") {
-              return yield* Effect.fail(attempted.failure);
-            }
-
-            // The write connection's scope is closed before this fresh
-            // connection resolves an uncertain COMMIT acknowledgement.
-            yield* validateP39ReportSidecarDatabase(
-              primaryPath,
-              sidecarPath,
-              options.protectedStoreFilenames,
-            );
-            const reports = yield* readReports().pipe(
-              Effect.mapError((cause) =>
-                failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
-              ),
-            );
-            const winner = reports.find(
-              ({ reportKey }) => reportKey === report.reportKey,
-            );
-            if (
-              winner !== undefined &&
-              winner.contentHash === report.contentHash &&
-              winner.reportJson === report.reportJson
-            ) {
-              return {
-                reportKey: winner.reportKey,
-                contentHash: winner.contentHash,
-              };
-            }
-            if (
-              reports.some(
-                ({ reportKey, contentHash }) =>
-                  reportKey === report.reportKey ||
-                  contentHash === report.contentHash,
-              )
-            ) {
-              return yield* Effect.fail(failure("P39_REPORT_KEY_CONFLICT"));
-            }
-            return yield* Effect.fail(
-              failure("P39_REPORT_COMMIT_UNRESOLVED", attempted.failure),
-            );
-          }).pipe(
-            Effect.mapError((cause) =>
-              typeof cause === "object" &&
-              cause !== null &&
-              "_tag" in cause &&
-              cause._tag === "P39MaintenanceFailure"
-                ? (cause as P39MaintenanceFailure)
-                : failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
-            ),
-          ),
-      });
       const operation = yield* Effect.exit(
         Effect.gen(function* () {
-          settings.onPhase?.("manifest-validation");
-          const p39AlreadyCommitted =
-            settings.beforeMaintenance === undefined
-              ? settings.p39AlreadyCommitted === true
-              : yield* settings.beforeMaintenance(primary, permit);
-          if (p39AlreadyCommitted) {
-            const version = yield* primary.unsafe<UserVersionRow>(
-              "PRAGMA user_version",
-            );
-            const userVersion = Number(version[0]?.user_version);
-            if (userVersion < 39 || userVersion > 42) {
+          const verifyVersion42AfterClose = yield* Effect.scoped(
+            Effect.provide(
+              Effect.gen(function* () {
+                const primary = yield* P39PrimarySqlClient;
+                const port = makeP39SqliteMaintenancePort({
+                  primary,
+                  writerLock,
+                  primaryFilename: primaryPath,
+                  writerLockFilename: lockPath,
+                  maintenancePermit: permit,
+                  writeAndReadBackSidecarReport: (report) =>
+                    Effect.gen(function* () {
+                      const attempted = yield* Effect.result(
+                        writeReport(report),
+                      );
+                      if (attempted._tag === "Success")
+                        return attempted.success;
+                      if (
+                        attempted.failure.code !==
+                        "P39_REPORT_COMMIT_UNRESOLVED"
+                      ) {
+                        return yield* Effect.fail(attempted.failure);
+                      }
+
+                      // The write connection's scope is closed before this fresh
+                      // connection resolves an uncertain COMMIT acknowledgement.
+                      yield* validateReportSidecar(
+                        primaryPath,
+                        sidecarPath,
+                        options.protectedStoreFilenames,
+                        (phase) => settings.onPhase?.(phase),
+                      );
+                      const reports = yield* readReports().pipe(
+                        Effect.mapError((cause) =>
+                          failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
+                        ),
+                      );
+                      const winner = reports.find(
+                        ({ reportKey }) => reportKey === report.reportKey,
+                      );
+                      if (
+                        winner !== undefined &&
+                        winner.contentHash === report.contentHash &&
+                        winner.reportJson === report.reportJson
+                      ) {
+                        return {
+                          reportKey: winner.reportKey,
+                          contentHash: winner.contentHash,
+                        };
+                      }
+                      if (
+                        reports.some(
+                          ({ reportKey, contentHash }) =>
+                            reportKey === report.reportKey ||
+                            contentHash === report.contentHash,
+                        )
+                      ) {
+                        return yield* Effect.fail(
+                          failure("P39_REPORT_KEY_CONFLICT"),
+                        );
+                      }
+                      return yield* Effect.fail(
+                        failure(
+                          "P39_REPORT_COMMIT_UNRESOLVED",
+                          attempted.failure,
+                        ),
+                      );
+                    }).pipe(
+                      Effect.mapError((cause) =>
+                        typeof cause === "object" &&
+                        cause !== null &&
+                        "_tag" in cause &&
+                        cause._tag === "P39MaintenanceFailure"
+                          ? (cause as P39MaintenanceFailure)
+                          : failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
+                      ),
+                    ),
+                });
+                settings.onPhase?.("manifest-validation");
+                const p39AlreadyCommitted =
+                  settings.beforeMaintenance === undefined
+                    ? settings.p39AlreadyCommitted === true
+                    : yield* settings.beforeMaintenance(primary, permit);
+                let userVersion: number | undefined;
+                if (p39AlreadyCommitted) {
+                  const version = yield* primary.unsafe<UserVersionRow>(
+                    "PRAGMA user_version",
+                  );
+                  userVersion = Number(version[0]?.user_version);
+                  if (userVersion < 39 || userVersion > 42) {
+                    return yield* Effect.fail(
+                      failure("P39_MIGRATION_PREFIX_INVALID"),
+                    );
+                  }
+                } else {
+                  if (settings.beforeP39 !== undefined) {
+                    yield* settings.beforeP39(primary, permit);
+                  }
+                  settings.onPhase?.("p39-reservation-and-gate");
+                  const p39Gate = yield* Effect.result(
+                    runP39MaintenanceGateWithLease(port, {
+                      token: permit.token,
+                    }),
+                  );
+                  if (p39Gate._tag === "Failure") {
+                    const cause = p39Gate.failure;
+                    if (
+                      typeof cause === "object" &&
+                      cause !== null &&
+                      "_tag" in cause &&
+                      cause._tag === "P39MaintenanceFailure" &&
+                      (cause as P39MaintenanceFailure).code ===
+                        "P39_LEGACY_DB_ISOLATED" &&
+                      settings.onP39Blocked !== undefined
+                    ) {
+                      yield* settings.onP39Blocked(primary, permit);
+                    }
+                    return yield* Effect.fail(cause);
+                  }
+                }
+                if (
+                  p39AlreadyCommitted &&
+                  userVersion === 42 &&
+                  settings.afterPrimaryClosedNoOp !== undefined
+                ) {
+                  return true;
+                }
+                settings.onPhase?.("p40-p42-continuation");
+                yield* continuation(primary, permit);
+                return false;
+              }),
+              primaryService,
+            ),
+          );
+          if (verifyVersion42AfterClose) {
+            settings.onPhase?.("version42-closed-readonly-no-op");
+            if (settings.afterPrimaryClosedNoOp === undefined) {
               return yield* Effect.fail(
                 failure("P39_MIGRATION_PREFIX_INVALID"),
               );
             }
-          } else {
-            if (settings.beforeP39 !== undefined) {
-              yield* settings.beforeP39(primary, permit);
-            }
-            settings.onPhase?.("p39-reservation-and-gate");
-            const p39Gate = yield* Effect.result(
-              runP39MaintenanceGateWithLease(port, {
-                token: permit.token,
-              }),
-            );
-            if (p39Gate._tag === "Failure") {
-              const cause = p39Gate.failure;
-              if (
-                typeof cause === "object" &&
-                cause !== null &&
-                "_tag" in cause &&
-                cause._tag === "P39MaintenanceFailure" &&
-                (cause as P39MaintenanceFailure).code ===
-                  "P39_LEGACY_DB_ISOLATED" &&
-                settings.onP39Blocked !== undefined
-              ) {
-                yield* settings.onP39Blocked(primary, permit);
-              }
-              return yield* Effect.fail(cause);
-            }
+            yield* settings.afterPrimaryClosedNoOp(permit);
           }
-          settings.onPhase?.("p40-p42-continuation");
-          yield* continuation(primary, permit);
         }),
       );
       const released = yield* Effect.exit(writerLock.release(permit));
@@ -376,13 +416,7 @@ export const runP39SqliteMaintenanceWithPermit = (
     yield* Effect.scoped(
       Effect.provide(
         maintenance,
-        Layer.mergeAll(
-          primaryService,
-          p39WriterLockLayer(
-            lockPath,
-            options.writerLockBusyTimeoutMs ?? 30_000,
-          ),
-        ),
+        p39WriterLockLayer(lockPath, options.writerLockBusyTimeoutMs ?? 30_000),
       ),
     ).pipe(
       Effect.mapError((cause) => {

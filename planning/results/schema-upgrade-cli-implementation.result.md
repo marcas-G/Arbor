@@ -38,6 +38,22 @@ Accepted plan SHA-256: `7509948A83D2D6AD2B1A3C090EE6548628EB46397ABFB9718EB48535
   filters absolute paths and secrets and omits arbitrary SQL/database error
   text. Test-only phase hooks identify report path/ACL/alias/identity/profile,
   writer-lock, manifest, P39 reservation, and P40–P42 continuation stages.
+- A resume that requires an existing P39 report now uses only the existing-file
+  validator; it cannot initialize or replace a deleted report. The report's
+  bound file identity and evidence are rechecked under the same exclusive
+  permit as manifest reconciliation. Deletion and valid-database replacement
+  between preflight and permit acquisition are both refused.
+- Version-42 resume holds the exclusive permit while explicitly closing the
+  migration connection, reopening the target read-only, and checking version,
+  foreign keys, required schema, row invariants, logical digest, provenance
+  head, and report identity. This proves the no-op path from a fresh connection.
+- Error rendering now removes Windows drive/UNC and Unix absolute-path
+  remainder text, including paths with spaces; regression assertions confirm
+  that neither path nor trailing fragments are rendered.
+- P39 Windows owner/ACL/local-filesystem PowerShell probes share a named
+  30-second timeout and remain fail-closed on timeout. The injected probe test
+  proves a simulated six-second success is accepted and a 30-second timeout is
+  rejected. This is committed separately as `251ef294` for cross-branch reuse.
 - P39 preview qualification runs through the trusted P39 maintenance entry
   point on a private SQLite backup. Scratch databases/reports stay under the
   protected worktree test directory and are removed only by their owning
@@ -49,8 +65,14 @@ Accepted plan SHA-256: `7509948A83D2D6AD2B1A3C090EE6548628EB46397ABFB9718EB48535
 ## Verification
 
 - `pnpm --filter @arbor/single-workspace build` — PASS.
+- P39 Windows security timeout injection test — PASS, 2/2 (6-second success;
+  30-second timeout refused).
 - Manifest short-write/zero-write focused test — PASS, 1/1.
-- Structured CLI failure rendering/filtering focused test — PASS, 1/1.
+- Structured CLI failure rendering/filtering focused test — PASS, 1/1,
+  including Windows/Unix paths containing spaces.
+- P39 report delete/replace TOCTOU, exact-prefix resume, and explicit
+  version-42 close/reopen read-only no-op qualification — PASS, 1/1 extended
+  test (`resumes exact prefixes`, 1163.18 seconds; 8 other tests filtered).
 - P39 writer-lock initialization contention adapter test — PASS, 1/1. A
   separate Node process holds an exclusive lock for 16 seconds; a competing
   writer layer configured for 20 seconds waits and acquires after release.
@@ -62,9 +84,12 @@ Accepted plan SHA-256: `7509948A83D2D6AD2B1A3C090EE6548628EB46397ABFB9718EB48535
   exactly one P42 `Committed` envelope is appended.
 - `git diff --check` — PASS.
 - The expanded complete CLI test file and full repository `pnpm check` were
-  not rerun after the final B1/race changes; earlier extended-file attempts
-  exposed and then fixed the Windows writer-lock initialization timeout. Do
-  not count those earlier failed attempts as qualification.
+  not run after these final-review fixes; the targeted extended-prefix run and
+  the staged adapter/build checks above are the evidence for this increment.
+  An earlier tampered-version fixture changes `user_version` to 41 without
+  changing the version-42 schema; SQLite then reports a duplicate
+  `resource_source_json` column during replay, which is accepted only as
+  fail-closed evidence that the manifest/database version binding is invalid.
 
 The Vitest run used the reviewed invocation-wide protected Windows TEMP and
 PowerShell module-path setup from `cafa95e91a1c2c85bd8047fa685207c9c310219d`

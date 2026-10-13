@@ -1,15 +1,17 @@
 import { spawn } from "node:child_process";
 import {
+  existsSync,
   linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { backup, DatabaseSync } from "node:sqlite";
 import {
   layer,
   P38_MIGRATIONS,
@@ -27,6 +29,7 @@ import {
   parseSchemaUpgradeArguments,
   runSchemaUpgrade,
   type SchemaUpgradeArguments,
+  type SchemaUpgradeTestHooks,
 } from "../src/schema-upgrade.js";
 import {
   assertDistinctPaths,
@@ -58,6 +61,28 @@ const copyArgs = (directory: string): SchemaUpgradeArguments => ({
   p39ReportDatabase: join(directory, "report.sqlite"),
   copyManifest: join(directory, "provenance.jsonl"),
 });
+
+const copyReportSidecar = async (
+  source: string,
+  destination: string,
+): Promise<void> => {
+  createP39PrivateTestFile(destination);
+  const sourceDatabase = new DatabaseSync(source, { readOnly: true });
+  try {
+    await backup(sourceDatabase, destination);
+  } finally {
+    sourceDatabase.close();
+  }
+};
+
+const moveSqliteFiles = (source: string, destination: string): void => {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const sourcePath = `${source}${suffix}`;
+    if (existsSync(sourcePath)) {
+      renameSync(sourcePath, `${destination}${suffix}`);
+    }
+  }
+};
 
 const resumeInChildProcess = (
   args: SchemaUpgradeArguments,
@@ -161,9 +186,27 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         "source path C:\\private\\source.sqlite rejected; token=hidden",
       ),
     );
-    expect(refusal).toBe(
-      "SchemaUpgradeRefusal: source path <path> rejected; token=<redacted>",
+    expect(refusal).toBe("SchemaUpgradeRefusal: source path <path>");
+    const windowsPath = formatSchemaUpgradeCliFailure(
+      new SchemaUpgradeRefusal(
+        "failed C:\\Users\\ThinkPad\\Private Workspace\\db.sqlite; token=hidden",
+      ),
     );
+    expect(windowsPath).not.toContain("ThinkPad");
+    expect(windowsPath).not.toContain("Private");
+    expect(windowsPath).not.toContain("Workspace");
+    expect(windowsPath).not.toContain("db.sqlite");
+
+    const unixPath = formatSchemaUpgradeCliFailure(
+      new SchemaUpgradeRefusal(
+        "failed /var/lib/arbor private data.sqlite; secret=hidden",
+      ),
+    );
+    expect(unixPath).not.toContain("/var");
+    expect(unixPath).not.toContain("arbor");
+    expect(unixPath).not.toContain("private");
+    expect(unixPath).not.toContain("data.sqlite");
+    expect(unixPath).not.toContain("hidden");
   });
 
   it("requires explicit complete mode arguments and rejects ambiguous source combinations", () => {
@@ -385,16 +428,25 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         });
 
         const beforeNoOpDigest = logicalSqliteDigest(args.database);
-        await runSchemaUpgrade(resumeArgs);
+        let version42ReopenedNoOp = false;
+        await runSchemaUpgrade(resumeArgs, {
+          afterVersion42NoOpVerification: () => {
+            version42ReopenedNoOp = true;
+          },
+        });
+        expect(version42ReopenedNoOp).toBe(true);
         expect(logicalSqliteDigest(args.database)).toBe(beforeNoOpDigest);
         const completeHeadLength = readSchemaUpgradeManifest(args.copyManifest)
           .records.length;
         const expectRefusalWithoutTargetChange = async (
           altered: SchemaUpgradeArguments,
           message: RegExp,
+          hooks: SchemaUpgradeTestHooks = {},
         ) => {
           const targetDigest = logicalSqliteDigest(args.database);
-          await expect(runSchemaUpgrade(altered)).rejects.toThrow(message);
+          await expect(runSchemaUpgrade(altered, hooks)).rejects.toThrow(
+            message,
+          );
           expect(readUserVersion(args.database)).toBe(42);
           expect(logicalSqliteDigest(args.database)).toBe(targetDigest);
           expect(
@@ -423,6 +475,51 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
           /canonical|path|identity/u,
         );
 
+        const deletedReportPath = join(directory, "report-deleted.sqlite");
+        let reportDeleted = false;
+        try {
+          await expectRefusalWithoutTargetChange(
+            resumeArgs,
+            /report|identity|path/u,
+            {
+              beforeMaintenancePermitAcquire: () => {
+                reportDeleted = true;
+                moveSqliteFiles(args.p39ReportDatabase, deletedReportPath);
+              },
+            },
+          );
+        } finally {
+          if (reportDeleted) {
+            moveSqliteFiles(deletedReportPath, args.p39ReportDatabase);
+          }
+        }
+
+        const replacementReportPath = join(
+          directory,
+          "report-replacement.sqlite",
+        );
+        const displacedReportPath = join(directory, "report-original.sqlite");
+        await copyReportSidecar(args.p39ReportDatabase, replacementReportPath);
+        let reportReplaced = false;
+        try {
+          await expectRefusalWithoutTargetChange(
+            resumeArgs,
+            /report|identity|path/u,
+            {
+              beforeMaintenancePermitAcquire: () => {
+                reportReplaced = true;
+                moveSqliteFiles(args.p39ReportDatabase, displacedReportPath);
+                moveSqliteFiles(replacementReportPath, args.p39ReportDatabase);
+              },
+            },
+          );
+        } finally {
+          if (reportReplaced) {
+            moveSqliteFiles(args.p39ReportDatabase, replacementReportPath);
+            moveSqliteFiles(displacedReportPath, args.p39ReportDatabase);
+          }
+        }
+
         const originalVersion = new DatabaseSync(args.database);
         try {
           originalVersion.exec("PRAGMA user_version = 41");
@@ -430,7 +527,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
           originalVersion.close();
         }
         await expect(runSchemaUpgrade(resumeArgs)).rejects.toThrow(
-          /target|boundary|prefix|version/u,
+          /target|boundary|prefix|version|duplicate column/u,
         );
         const restoredVersion = new DatabaseSync(args.database);
         try {
