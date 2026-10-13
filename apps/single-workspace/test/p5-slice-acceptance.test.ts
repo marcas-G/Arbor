@@ -37,7 +37,7 @@ import {
   TransactionPort,
   WorkWaitStore,
 } from "@arbor/ports";
-import { Effect, Option } from "effect";
+import { Cause, Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
@@ -192,46 +192,48 @@ const wait = (reason: string) => [
   { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
 ];
 
-const summarizeToolRuntimeFailure = (cause: unknown) => {
-  if (typeof cause !== "object" || cause === null) {
-    return { causeType: typeof cause };
+const summarizeToolRuntimeValue = (value: unknown) => {
+  if (typeof value !== "object" || value === null) {
+    return { valueType: typeof value };
   }
-  const value = cause as {
-    readonly _tag?: unknown;
-    readonly stage?: unknown;
-    readonly effectDisposition?: unknown;
-    readonly invocationRef?: unknown;
-    readonly cause?: unknown;
+  const record = value as Record<string, unknown>;
+  const textField = (...keys: ReadonlyArray<string>): string | null => {
+    for (const key of keys) {
+      const field = record[key];
+      if (typeof field === "string") return field.slice(0, 160);
+    }
+    return null;
   };
-  const nested = value.cause;
-  const nestedRecord =
-    typeof nested === "object" && nested !== null
-      ? (nested as { readonly _tag?: unknown; readonly message?: unknown })
-      : undefined;
   return {
-    tag: typeof value._tag === "string" ? value._tag : null,
-    stage: typeof value.stage === "string" ? value.stage : null,
-    effectDisposition:
-      typeof value.effectDisposition === "string"
-        ? value.effectDisposition
-        : null,
-    invocationRef:
-      typeof value.invocationRef === "string" ? value.invocationRef : null,
-    causeTag: typeof nestedRecord?._tag === "string" ? nestedRecord._tag : null,
-    causeMessage:
-      nested instanceof Error
-        ? nested.message.slice(0, 160)
-        : typeof nested === "string"
-          ? nested.slice(0, 160)
-          : typeof nestedRecord?.message === "string"
-            ? nestedRecord.message.slice(0, 160)
-            : null,
+    tag: textField("_tag"),
+    code: textField("code", "reasonCode"),
+    stage: textField("stage"),
+    effectDisposition: textField("effectDisposition"),
+    invocationRef: textField("invocationRef"),
+    message: textField("message"),
   };
 };
 
-const toolRuntimeFailures: Array<
-  ReturnType<typeof summarizeToolRuntimeFailure>
-> = [];
+const summarizeToolRuntimeCause = (cause: Cause.Cause<unknown>) => ({
+  reasons: cause.reasons.slice(0, 4).map((reason) => {
+    if (Cause.isFailReason(reason)) {
+      return {
+        kind: "TypedFailure",
+        failure: summarizeToolRuntimeValue(reason.error),
+      };
+    }
+    if (Cause.isDieReason(reason)) {
+      return {
+        kind: "Defect",
+        defect: summarizeToolRuntimeValue(reason.defect),
+      };
+    }
+    return { kind: "Interrupt", fiberId: String(reason.fiberId) };
+  }),
+});
+
+const toolRuntimeFailures: Array<ReturnType<typeof summarizeToolRuntimeCause>> =
+  [];
 const toolRuntimeBoundaries: Array<string> = [];
 
 const turns = [
@@ -296,20 +298,18 @@ describe("I0 executable/control vertical slice", () => {
           const scheduler = yield* ExecutionScheduler;
           const sql = yield* SqlClient;
           const toolRuntime = yield* ToolRuntimePort;
-          const observedToolRuntime = ToolRuntimePort.of({
-            invoke: (intent, toolContext) =>
-              toolRuntime
-                .invoke(intent, toolContext)
-                .pipe(
-                  Effect.tapError((cause) =>
-                    Effect.sync(() =>
-                      toolRuntimeFailures.push(
-                        summarizeToolRuntimeFailure(cause),
-                      ),
-                    ),
-                  ),
+          const mutableToolRuntime = toolRuntime as unknown as {
+            invoke: typeof toolRuntime.invoke;
+          };
+          const originalToolRuntimeInvoke = toolRuntime.invoke;
+          mutableToolRuntime.invoke = (intent, toolContext) =>
+            originalToolRuntimeInvoke(intent, toolContext).pipe(
+              Effect.tapCause((cause) =>
+                Effect.sync(() =>
+                  toolRuntimeFailures.push(summarizeToolRuntimeCause(cause)),
                 ),
-          });
+              ),
+            );
 
           const created = yield* gateway.execute(
             envelope("CreateProject", selectedProjectPayload, commandId("1")),
@@ -371,11 +371,12 @@ describe("I0 executable/control vertical slice", () => {
             principal,
           );
 
-          const firstSettlement = yield* Effect.provideService(
-            runExecution(exe1, { _tag: "WorkSelected" }, principal),
-            ToolRuntimePort,
-            observedToolRuntime,
+          const firstSettlement = yield* runExecution(
+            exe1,
+            { _tag: "WorkSelected" },
+            principal,
           );
+          mutableToolRuntime.invoke = originalToolRuntimeInvoke;
 
           const settlementRows = yield* sql.unsafe<{
             settlement_kind: string | null;
