@@ -14,9 +14,17 @@ import type { CanonicalProviderEvent } from "@arbor/ports";
 import { BlobStorePort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import { admitExecution, buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
@@ -43,17 +51,33 @@ const parentExecutionId = parse(ExecutionId)(
 const principal = parse(Principal)("worker:i0");
 const body = "The requested analysis is complete.";
 const invalidRootReportBody = "root-report-must-fail-closed-i0-20260927";
-let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
 
-beforeEach(async () => {
-  fixture = await createSchema42TestDatabase({
+beforeAll(async () => {
+  fixtureFactory = await createSchema42TestDatabaseFactory({
     prefix: ".i0-send-message-schema42-",
   });
 }, 120_000);
 
+beforeEach(() => {
+  if (fixtureFactory === undefined)
+    throw new Error("Schema 42 factory is missing");
+  fixture = fixtureFactory.create();
+});
+
 afterEach(() => {
   fixture?.cleanup();
   fixture = undefined;
+});
+
+afterAll(() => {
+  fixtureFactory?.cleanup();
+  fixtureFactory = undefined;
 });
 
 interface DurableIntegrationResult {

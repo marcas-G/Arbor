@@ -3,8 +3,16 @@ import { ProjectId, parse, SessionId, WorkspaceId } from "@arbor/domain";
 import { ProjectionQueryPort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789b1");
@@ -12,13 +20,40 @@ const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789b1",
 );
 const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789b1");
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
+
+beforeAll(async () => {
+  fixtureFactory = await createSchema42TestDatabaseFactory({
+    prefix: ".p14-conversation-history-schema42-",
+  });
+}, 120_000);
+
+beforeEach(() => {
+  if (fixtureFactory === undefined)
+    throw new Error("Schema 42 factory is missing");
+  fixture = fixtureFactory.create();
+});
+
+afterEach(() => {
+  fixture?.cleanup();
+  fixture = undefined;
+});
+
+afterAll(() => {
+  fixtureFactory?.cleanup();
+  fixtureFactory = undefined;
+});
 
 describe("P14 conversation history paging", () => {
   it("returns the latest chronological page, then older pages by stable cursor", async () => {
-    const fixture = await createSchema42TestDatabase({
-      prefix: ".p14-conversation-history-schema42-",
-    });
-    const databaseFile = fixture.databaseFilename;
+    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
+    const testFixture = fixture;
+    const databaseFile = testFixture.databaseFilename;
     const app = buildSingleWorkspaceLayer({ databaseFile, projectId });
     try {
       const pages = await Effect.runPromise(
@@ -154,7 +189,7 @@ describe("P14 conversation history paging", () => {
       expect(pages[0]?.entries.at(-1)?.kind).toBe("AssistantConversationTurn");
       expect(pages[2]?.nextCursor).toBeUndefined();
     } finally {
-      fixture.cleanup();
+      testFixture.cleanup();
     }
   }, 120_000);
 });
