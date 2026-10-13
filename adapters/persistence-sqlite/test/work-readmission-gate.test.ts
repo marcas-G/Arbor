@@ -62,12 +62,12 @@ let schema42Factory: Schema42TestDatabaseFactory | undefined;
 
 beforeAll(async () => {
   schema42Factory = await createSchema42TestDatabaseFactory();
-});
+}, 120_000);
 
 afterAll(() => {
   schema42Factory?.cleanup();
   schema42Factory = undefined;
-});
+}, 120_000);
 
 const runDb = <A>(
   program: Effect.Effect<
