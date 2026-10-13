@@ -28,5 +28,5 @@ Base: `b3322b735996664d19cd2bf9643909bef6704bfb`
 - Biome check for the 11 changed TypeScript files — PASS; `git diff --check` — PASS.
 - Earlier first collection attempt failed because this fresh worktree had not built `@arbor/ports`; after `pnpm build`, the final targeted runs above passed. Intermediate runtime-harness assertion/timeout failures were corrected by using structured error assertions, private ACL fixtures, and separate version cases.
 
-The runtime tests prove admission/refusal and the version-42 migration-hook no-op. A successful full `runDaemonOnce` against the centralized real schema-42 fixture remains pending its integration into this worktree; no full functional suite, deployment, or release qualification is claimed.
+The initial runtime batch proves admission/refusal and the version-42 migration-hook no-op. The centralized real schema-42 fixture is now integrated and `p38-runtime-schema-boundary.test.ts` includes a full `runDaemonOnce` plus Web-bind success case; that integration case awaits its targeted rerun because the CLI agent currently owns the test slot. No full functional suite, deployment, or release qualification is claimed.
 
