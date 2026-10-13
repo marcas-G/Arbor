@@ -195,3 +195,16 @@ applied without conflicts.
 Integration validation after this update: `pnpm typecheck` PASS; Biome on the
 changed operator source/test files PASS; `git diff --check` PASS. No heavy
 tests or full repository gates were run.
+
+## P4/P12 sandbox environment projection
+
+Cherry-picked `f1759a5b` onto the current integration HEAD without conflicts.
+The P4 shell executor now passes `sandboxEnvironment(process.env)` to its
+subprocess, so only the shared sandbox allow-list reaches the shell. The
+injected-spawn regression test checks allow-listed inheritance, secret
+exclusion, and preservation of cwd, timeout, and encoding. No OS sandbox or
+permission semantics changed. The source qualification reports the P4 shell
+suite at 28/28 PASS; it was not rerun during this integration.
+
+Integration validation: `pnpm typecheck` PASS; Biome on the shell source and
+test files PASS; `git diff --check` PASS. Heavy tests were not run.
