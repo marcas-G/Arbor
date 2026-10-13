@@ -1,7 +1,7 @@
 # Schema-42 current-runtime test fixtures
 
-Date: 2026-10-14  
-Base: `d0511ade`  
+Date: 2026-10-14
+Base: `d0511ade`
 Scope: test setup and fixture behavior only; no production semantics or design documents changed.
 
 ## Changes

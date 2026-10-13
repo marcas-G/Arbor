@@ -145,3 +145,32 @@ Focused verification: `pnpm exec vitest run
 tests/architecture/p10-boundaries.test.ts -t "P12 boundary"` — 1 passed, 3
 skipped; Biome on the renamed test — PASS; staged `git diff --check` — PASS.
 No additional tests or full gates were run.
+
+## Post-full-check fixture and timeout repairs
+
+Cherry-picked `99d6af06`, `f1388a4b`, and `41baaafe` in that order. The
+current-runtime fixtures now cover P34 daemon wiring, P5 registry, provider
+configuration, P7 wake pipeline, and the S1–S4 public black-box suite with a
+schema-42 template and isolated per-case databases. The S1–S4 scenarios create
+Projects through the public API; the recorded evidence includes a hard restart
+in S4. Historical P4 adapter fixtures use the complete P36 prefix and valid
+foreign-key parent rows before migration assertions. Slow schema-42 suites use
+bounded template/case timeouts; the cumulative P39–P42 test has a 300-second
+case bound. The P39 reality-proof tests stay on a real schema-39 fixture where
+P40 would change the constraint under test.
+
+These commits applied without conflicts. The imported records are
+`schema42-current-runtime-fixtures.result.md`,
+`P36-historical-migration-prefix-fixture-repair.result.md`, and
+`schema42-slow-test-timeout-repair.result.md`. Their focused evidence is
+retained with its limits: S1–S4 is 4/4 PASS; the P36 repair is 5 files / 14
+tests PASS; the adapter batch is reported as 6 files / 34 tests PASS, but the
+complete P39 reality-proof file was not rerun after its schema-39 fixture
+correction (the corrected case passed, with 18 other cases filtered out). P5 yield/wake
+is 1 test PASS at 51.25 seconds. The source records these as focused results,
+not full-suite qualification. No test suites were rerun during this
+integration. The incomplete CLI qualification branch was not included.
+
+Validation after these three commits: `pnpm typecheck` PASS; Biome on the 18
+changed TypeScript/JavaScript/JSON files PASS; `git diff --check` PASS. No
+Vitest or full check was run during this integration update.
