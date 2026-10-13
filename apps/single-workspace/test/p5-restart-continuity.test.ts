@@ -224,102 +224,105 @@ const readState = Effect.gen(function* () {
 describe("P5 restart continuity", () => {
   it("a fresh layer on the same database recovers and continues the session", async () => {
     const fixture = createSchema42Case();
-    schema42Cleanups.push(fixture.cleanup);
     const databaseFile = fixture.databaseFilename;
-    const turns = [yieldTurn];
+    try {
+      const turns = [yieldTurn];
 
-    const before = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seed;
-          yield* ensureLegacyProjectResourceSourceFixture();
-          yield* admit(
-            exe1,
-            parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-          );
-          yield* runExecution(exe1, { _tag: "WorkSelected" }, principal);
-          yield* admit(
-            exe2,
-            parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a2"),
-          );
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(
-            "UPDATE executions SET stop_requested_at = 't' WHERE execution_id = ?",
-            [exe2],
-          );
-          const tx = yield* TransactionPort;
-          const sessions = yield* SessionRepository;
-          yield* tx.transact(
-            sessions.appendEntry(sessionId, {
-              entryKind: "Input",
-              payload: { x: 1 },
-            }),
-          );
-          return yield* readState;
-        }),
-        buildSingleWorkspaceLayer({ databaseFile, providerTurns: turns }),
-      ) as unknown as Effect.Effect<
-        {
-          executions: ReadonlyArray<{
-            execution_id: string;
-            settlement_kind: string | null;
-          }>;
-          waits: number;
-          entries: number;
-        },
-        unknown,
-        never
-      >,
-    );
-
-    const after = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const recovery = yield* runRecovery(principal);
-          yield* admit(
-            exe3,
-            parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a3"),
-          );
-          const state = yield* readState;
-          return { recovery, state };
-        }),
-        buildSingleWorkspaceLayer({ databaseFile }),
-      ) as unknown as Effect.Effect<
-        {
-          recovery: { invalidated: number; settled: ReadonlyArray<string> };
-          state: {
+      const before = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* seed;
+            yield* ensureLegacyProjectResourceSourceFixture();
+            yield* admit(
+              exe1,
+              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+            );
+            yield* runExecution(exe1, { _tag: "WorkSelected" }, principal);
+            yield* admit(
+              exe2,
+              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a2"),
+            );
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(
+              "UPDATE executions SET stop_requested_at = 't' WHERE execution_id = ?",
+              [exe2],
+            );
+            const tx = yield* TransactionPort;
+            const sessions = yield* SessionRepository;
+            yield* tx.transact(
+              sessions.appendEntry(sessionId, {
+                entryKind: "Input",
+                payload: { x: 1 },
+              }),
+            );
+            return yield* readState;
+          }),
+          buildSingleWorkspaceLayer({ databaseFile, providerTurns: turns }),
+        ) as unknown as Effect.Effect<
+          {
             executions: ReadonlyArray<{
               execution_id: string;
               settlement_kind: string | null;
-              session_id: string;
             }>;
             waits: number;
             entries: number;
-          };
-        },
-        unknown,
-        never
-      >,
-    );
+          },
+          unknown,
+          never
+        >,
+      );
 
-    const kind = (id: string) =>
-      after.state.executions.find((e) => e.execution_id === id)
-        ?.settlement_kind;
-    expect(
-      before.executions.find((e) => e.execution_id === exe1)?.settlement_kind,
-    ).toBe("Completed");
-    expect(before.waits).toBe(1);
-    // SCRC: the settling wait call is paired with a sourced
-    // ControlResult, so the durable timeline now contains one additional
-    // entry beyond the pre-SCRC legacy count.
-    expect(before.entries).toBe(4);
-    expect(after.recovery.settled).toContain(exe2);
-    expect(kind(exe2)).toBe("Interrupted");
-    expect(kind(exe3)).toBeNull();
-    expect(after.state.waits).toBe(1);
-    expect(after.state.entries).toBe(4);
-    expect(new Set(after.state.executions.map((e) => e.session_id))).toEqual(
-      new Set([sessionId]),
-    );
-  });
+      const after = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            const recovery = yield* runRecovery(principal);
+            yield* admit(
+              exe3,
+              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a3"),
+            );
+            const state = yield* readState;
+            return { recovery, state };
+          }),
+          buildSingleWorkspaceLayer({ databaseFile }),
+        ) as unknown as Effect.Effect<
+          {
+            recovery: { invalidated: number; settled: ReadonlyArray<string> };
+            state: {
+              executions: ReadonlyArray<{
+                execution_id: string;
+                settlement_kind: string | null;
+                session_id: string;
+              }>;
+              waits: number;
+              entries: number;
+            };
+          },
+          unknown,
+          never
+        >,
+      );
+
+      const kind = (id: string) =>
+        after.state.executions.find((e) => e.execution_id === id)
+          ?.settlement_kind;
+      expect(
+        before.executions.find((e) => e.execution_id === exe1)?.settlement_kind,
+      ).toBe("Completed");
+      expect(before.waits).toBe(1);
+      // SCRC: the settling wait call is paired with a sourced
+      // ControlResult, so the durable timeline now contains one additional
+      // entry beyond the pre-SCRC legacy count.
+      expect(before.entries).toBe(4);
+      expect(after.recovery.settled).toContain(exe2);
+      expect(kind(exe2)).toBe("Interrupted");
+      expect(kind(exe3)).toBeNull();
+      expect(after.state.waits).toBe(1);
+      expect(after.state.entries).toBe(4);
+      expect(new Set(after.state.executions.map((e) => e.session_id))).toEqual(
+        new Set([sessionId]),
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  }, 120_000);
 });
