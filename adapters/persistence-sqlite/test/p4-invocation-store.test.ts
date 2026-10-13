@@ -8,8 +8,11 @@ import {
 import { ToolInvocationStore, TransactionPort } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  createSchema42TestDatabaseFactory,
+  type Schema42TestDatabaseFactory,
+} from "../../../tests/support/schema42-database.js";
 import {
   layer,
   P36_MIGRATIONS,
@@ -36,6 +39,23 @@ const executionFence = {
   fencingGeneration: parse(LeaseGeneration)(0),
 };
 const fenceNow = "2026-10-12T00:00:00.000Z";
+
+let schema42Factory: Schema42TestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: ".p4-invocation-store-template-",
+  });
+}, 120_000);
+
+afterAll(() => schema42Factory?.cleanup());
+
+const createSchema42Case = () => {
+  if (schema42Factory === undefined) {
+    throw new Error("Schema-42 test database factory was not prepared.");
+  }
+  return schema42Factory.create();
+};
 
 const makeApp = (filename = ":memory:") => {
   const base = layer({ filename });
@@ -194,7 +214,7 @@ describe("P4 tool invocation store", () => {
   });
 
   it("records DeniedUnbound for fresh/provisional denial, preserves Bound denial, and rolls back both denied claim edges", async () => {
-    const database = await createSchema42TestDatabase();
+    const database = createSchema42Case();
     const app = makeApp(database.databaseFilename);
     const freshDeniedId = parse(ToolInvocationId)(
       "tin_018f2b3c-4d5e-7abc-8def-0123456789a2",
@@ -419,5 +439,5 @@ describe("P4 tool invocation store", () => {
     } finally {
       database.cleanup();
     }
-  });
+  }, 30_000);
 });

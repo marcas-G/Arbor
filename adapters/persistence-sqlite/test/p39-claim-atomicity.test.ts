@@ -1,3 +1,4 @@
+import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   ExecutionId,
@@ -27,11 +28,12 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
+  setP39PrivateWindowsAcl,
 } from "../../../tests/support/p39-windows-deployment-test.js";
 import {
   CURRENT_MIGRATION_BASELINE,
@@ -67,6 +69,66 @@ const now = "2026-10-12T12:00:00.000Z";
 const expiresAt = "2026-10-13T12:00:00.000Z";
 const argumentsJson = '{"path":"claim.txt"}';
 const targetResourceSpaceIds = ["filesystem"];
+
+const checkpointSqlite = (filename: string) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{ busy: number }>(
+            "PRAGMA wal_checkpoint(TRUNCATE)",
+          );
+          if (Number(rows[0]?.busy ?? 0) !== 0) {
+            throw new Error("P39 claim test template WAL checkpoint is busy.");
+          }
+        }),
+        layer({ filename }),
+      ),
+    ),
+  );
+
+let p39TemplateDirectory: string | undefined;
+let p39TemplateFilename: string | undefined;
+let p39TemplateSidecarFilename: string | undefined;
+
+beforeAll(async () => {
+  p39TemplateDirectory = makeP39PrivateTestDirectory(
+    process.cwd(),
+    ".p39-claim-template-",
+  );
+  p39TemplateFilename = join(p39TemplateDirectory, "claim.sqlite");
+  p39TemplateSidecarFilename = join(
+    p39TemplateDirectory,
+    "claim-report.sqlite",
+  );
+  createP39PrivateTestFile(p39TemplateFilename);
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* runMigrations(P36_MIGRATIONS);
+        }),
+        layer({ filename: p39TemplateFilename }),
+      ),
+    ),
+  );
+  await Effect.runPromise(
+    runP39SqliteMaintenance({
+      primaryFilename: p39TemplateFilename,
+      sidecarFilename: p39TemplateSidecarFilename,
+      protectedStoreFilenames: [],
+    }),
+  );
+  await checkpointSqlite(p39TemplateFilename);
+  await checkpointSqlite(p39TemplateSidecarFilename);
+}, 120_000);
+
+afterAll(() => {
+  if (p39TemplateDirectory !== undefined) {
+    removeP39PrivateTestDirectory(p39TemplateDirectory);
+  }
+});
 
 type Scenario = {
   readonly suffix: string;
@@ -453,24 +515,16 @@ const withDb = async <A>(
   const sidecarFilename = join(directory, "claim-report.sqlite");
   const invocationId = invocationIdFor(scenario.suffix);
   try {
-    createP39PrivateTestFile(filename);
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.provide(
-          Effect.gen(function* () {
-            yield* runMigrations(P36_MIGRATIONS);
-          }),
-          layer({ filename }),
-        ),
-      ),
-    );
-    await Effect.runPromise(
-      runP39SqliteMaintenance({
-        primaryFilename: filename,
-        sidecarFilename,
-        protectedStoreFilenames: [],
-      }),
-    );
+    if (
+      p39TemplateFilename === undefined ||
+      p39TemplateSidecarFilename === undefined
+    ) {
+      throw new Error("P39 claim test template was not prepared.");
+    }
+    copyFileSync(p39TemplateFilename, filename);
+    setP39PrivateWindowsAcl(filename, "file");
+    copyFileSync(p39TemplateSidecarFilename, sidecarFilename);
+    setP39PrivateWindowsAcl(sidecarFilename, "file");
     return await run(filename, invocationId);
   } finally {
     removeP39PrivateTestDirectory(directory);

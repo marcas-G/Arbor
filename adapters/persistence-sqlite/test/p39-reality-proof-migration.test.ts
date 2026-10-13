@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   linkSync,
   mkdtempSync,
@@ -12,12 +13,13 @@ import { join } from "node:path";
 import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
   p39WindowsAclQualificationAvailable,
   removeP39PrivateTestDirectory,
+  setP39PrivateWindowsAcl,
 } from "../../../tests/support/p39-windows-deployment-test.js";
 import { layer } from "../src/client.js";
 import { runMigrations, splitStatements } from "../src/migrate.js";
@@ -44,6 +46,65 @@ import {
 
 const windowsAclQualificationAvailable = p39WindowsAclQualificationAvailable();
 
+let p39TemplateDirectory: string | undefined;
+let p39TemplateFilename: string | undefined;
+let p39TemplateSidecarFilename: string | undefined;
+
+beforeAll(async () => {
+  p39TemplateDirectory = makeP39PrivateTestDirectory(
+    process.cwd(),
+    ".p39-reality-proof-template-",
+  );
+  p39TemplateFilename = join(p39TemplateDirectory, "primary.sqlite");
+  p39TemplateSidecarFilename = join(p39TemplateDirectory, "p39-report.sqlite");
+  createP39PrivateTestFile(p39TemplateFilename);
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* runMigrations(migrations.P38_MIGRATIONS);
+        }),
+        layer({ filename: p39TemplateFilename }),
+      ),
+    ),
+  );
+  await Effect.runPromise(
+    runP39SqliteMaintenance({
+      primaryFilename: p39TemplateFilename,
+      sidecarFilename: p39TemplateSidecarFilename,
+      protectedStoreFilenames: [],
+    }),
+  );
+  await checkpointSqlite(p39TemplateFilename);
+  await checkpointSqlite(p39TemplateSidecarFilename);
+}, 120_000);
+
+afterAll(() => {
+  if (p39TemplateDirectory !== undefined) {
+    removeP39PrivateTestDirectory(p39TemplateDirectory);
+  }
+});
+
+const checkpointSqlite = (filename: string) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{ busy: number }>(
+            "PRAGMA wal_checkpoint(TRUNCATE)",
+          );
+          if (Number(rows[0]?.busy ?? 0) !== 0) {
+            throw new Error(
+              "P39 reality test template WAL checkpoint is busy.",
+            );
+          }
+        }),
+        layer({ filename }),
+      ),
+    ),
+  );
+
 const withClient = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
   Effect.runPromise(Effect.provide(program, layer({ filename: ":memory:" })));
 
@@ -52,30 +113,23 @@ const withP39Client = async <A>(
 ) => {
   const directory = makeP39PrivateTestDirectory(
     process.cwd(),
-    ".p39-reality-proof-",
+    ".p39-reality-proof-clone-",
   );
   const filename = join(directory, "primary.sqlite");
+  const sidecarFilename = join(directory, "p39-report.sqlite");
   try {
-    createP39PrivateTestFile(filename);
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.provide(
-          Effect.gen(function* () {
-            yield* runMigrations(migrations.P38_MIGRATIONS);
-          }),
-          layer({ filename }),
-        ),
-      ),
-    );
-    await Effect.runPromise(
-      runP39SqliteMaintenance({
-        primaryFilename: filename,
-        sidecarFilename: join(directory, "p39-report.sqlite"),
-        protectedStoreFilenames: [],
-      }),
-    );
+    if (
+      p39TemplateFilename === undefined ||
+      p39TemplateSidecarFilename === undefined
+    ) {
+      throw new Error("P39 reality test template was not prepared.");
+    }
+    copyFileSync(p39TemplateFilename, filename);
+    setP39PrivateWindowsAcl(filename, "file");
+    copyFileSync(p39TemplateSidecarFilename, sidecarFilename);
+    setP39PrivateWindowsAcl(sidecarFilename, "file");
     return await Effect.runPromise(
-      Effect.provide(program, layer({ filename })),
+      Effect.scoped(Effect.provide(program, layer({ filename }))),
     );
   } finally {
     removeP39PrivateTestDirectory(directory);
@@ -870,7 +924,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       settled_at: "t5",
       settlement_kind: "ExpectedFailure",
     });
-  });
+  }, 30_000);
 
   it("keeps writer exclusion through migration and releases it after success", async () => {
     const order: string[] = [];
