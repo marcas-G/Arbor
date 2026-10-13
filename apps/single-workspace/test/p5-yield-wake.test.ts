@@ -1,6 +1,3 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   CommandGateway,
   semanticRequestFingerprint,
@@ -29,13 +26,10 @@ import {
 } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import {
-  buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -53,6 +47,12 @@ const context: CommandSubmissionContext = {
   principal,
   causationRef: "c",
 };
+
+const schema42Cleanups: Array<() => void> = [];
+
+afterEach(() => {
+  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
+});
 
 const waitTurn = [
   {
@@ -180,15 +180,17 @@ const admit = (commandId: CommandId) =>
 
 describe("I0 Wait control route -> P2 WorkWait -> wake", () => {
   it("routes a typed Wait action into durable WorkWait settlement", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "p5-yw-"));
+    const fixture = await createSchema42TestDatabase({
+      prefix: ".p5-yield-wake-",
+    });
+    schema42Cleanups.push(fixture.cleanup);
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(dir, "slice.db"),
+      databaseFile: fixture.databaseFilename,
       providerTurns: [waitTurn],
     });
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           yield* seed;
           yield* ensureLegacyProjectResourceSourceFixture();
           yield* admit(

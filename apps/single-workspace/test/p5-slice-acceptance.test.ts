@@ -38,14 +38,13 @@ import {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import {
   admitExecution,
   buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
   evaluateAndSelect,
-  runMigrations,
 } from "../src/index.js";
 import {
   makeProjectResourceProfilePort,
@@ -67,6 +66,11 @@ const context: CommandSubmissionContext = {
   principal,
   causationRef: "c",
 };
+const schema42Cleanups: Array<() => void> = [];
+
+afterEach(() => {
+  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
+});
 
 const definition = {
   purpose: "p",
@@ -188,6 +192,10 @@ const turns = [
 describe("I0 executable/control vertical slice", () => {
   it("routes shell through ToolRuntime and Wait through ControlToolRegistry", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-accept-"));
+    const fixture = await createSchema42TestDatabase({
+      prefix: ".p5-slice-acceptance-",
+    });
+    schema42Cleanups.push(fixture.cleanup);
     const projectResourceProfiles = makeProjectResourceProfilePort(
       projectResourceProfilesFromEnvironment({ ARBOR_PROJECT_ROOT: dir }),
     );
@@ -212,7 +220,7 @@ describe("I0 executable/control vertical slice", () => {
       version: profile.version,
     });
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(dir, "slice.db"),
+      databaseFile: fixture.databaseFilename,
       providerTurns: turns,
       projectResourceProfiles,
     });
@@ -220,7 +228,6 @@ describe("I0 executable/control vertical slice", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           yield* ensureLegacyProjectResourceSourceFixture();
           const gateway = yield* CommandGateway;
           const scheduler = yield* ExecutionScheduler;
@@ -488,8 +495,7 @@ describe("I0 executable/control vertical slice", () => {
       false,
     );
 
-    // P12 composition: the slice runs the current full migration baseline
-    // (`CURRENT_MIGRATIONS`), so the P8 verification tables are installed.
+    // P8 verification tables remain available in the current schema fixture.
     expect([...result.verificationTables].sort()).toEqual([
       "verification_evidence",
       "verification_executions",
