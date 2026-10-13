@@ -7,7 +7,7 @@ import { BlobStorePortLive } from "../../blob-local/src/index.js";
 import {
   ArtifactMetadataRepositoryLive,
   layer,
-  P4_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
 } from "../src/index.js";
@@ -27,7 +27,7 @@ describe("P4 artifact service", () => {
   it("stores bytes as an artifact and loads them back", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P4_MIGRATIONS);
+      yield* runMigrations(P36_MIGRATIONS);
       const artifacts = yield* ArtifactService;
       const tx = yield* TransactionPort;
       const bytes = new TextEncoder().encode("hello artifact");
