@@ -10,8 +10,11 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  createSchema42TestDatabaseFactory,
+  type Schema42TestDatabaseFactory,
+} from "../../../tests/support/schema42-database.js";
 import {
   DomainEventJournalLive,
   IdGeneratorLive,
@@ -55,6 +58,17 @@ const makeApp = (filename: string) => {
   );
 };
 
+let schema42Factory: Schema42TestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory();
+});
+
+afterAll(() => {
+  schema42Factory?.cleanup();
+  schema42Factory = undefined;
+});
+
 const runDb = <A>(
   program: Effect.Effect<
     A,
@@ -68,7 +82,10 @@ const runDb = <A>(
   >,
 ) => {
   const run = async () => {
-    const database = await createSchema42TestDatabase();
+    if (schema42Factory === undefined) {
+      throw new Error("The schema-42 test database factory is not ready.");
+    }
+    const database = schema42Factory.create();
     try {
       return await Effect.runPromise(
         Effect.scoped(
@@ -442,6 +459,8 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("maps SQLite query failures to the shared semantic persistence error", () =>
     runDb(
       Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        yield* sql.unsafe("DROP TABLE works");
         const exit = yield* Effect.exit(query());
         expect(exit._tag).toBe("Failure");
         if (exit._tag === "Failure") {
