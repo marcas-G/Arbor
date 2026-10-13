@@ -77,6 +77,16 @@ beforeEach(() => {
   fixture = fixtureFactory.create();
 });
 
+const cleanupFixture = () => {
+  const current = fixture;
+  fixture = undefined;
+  try {
+    current?.cleanup();
+  } finally {
+    fixture = undefined;
+  }
+};
+
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;
   yield* sql.withTransaction(
@@ -806,7 +816,7 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     const { app } = setupApp([claimCompletionTurn]);
     const result = await Effect.runPromise(
       Effect.provide(runTurns([claimCompletionTurn]), app),
-    );
+    ).finally(cleanupFixture);
     expect(result.settlement).toEqual({
       _tag: "Completed",
       result: {
@@ -826,13 +836,28 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
       },
     ]);
     expect(result.workspaces).toHaveLength(1);
-  });
+  }, 120_000);
 
   it("MAC-P2 exposes governed ProposeChildWorkspace without creating the child before approval", async () => {
     const { app } = setupApp([proposeChildTurn]);
+    const databaseFilename =
+      fixture?.databaseFilename ?? "<fixture unavailable>";
     const result = await Effect.runPromise(
       Effect.provide(runTurns([proposeChildTurn]), app),
-    );
+    )
+      .finally(cleanupFixture)
+      .catch((cause: unknown) => {
+        let serializedCause: string;
+        try {
+          serializedCause = JSON.stringify(cause) ?? String(cause);
+        } catch {
+          serializedCause = String(cause);
+        }
+        throw new Error(
+          `MAC-P2 ProposeChildWorkspace failed for schema-42 primary ${databaseFilename}: ${serializedCause}`,
+          { cause },
+        );
+      });
     expect(result.settlement).toMatchObject({
       _tag: "Completed",
       result: { _tag: "Yielded" },
@@ -848,26 +873,26 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
       }),
     ]);
     expect(result.workspaces).toHaveLength(1);
-  });
+  }, 120_000);
 
   it("MAC-P1 hides legacy SpawnSpecialist from WorkEpisode new writes", async () => {
     const { app } = setupApp([spawnSpecialistTurn]);
     const result = await Effect.runPromise(
       Effect.provide(runTurns([spawnSpecialistTurn]), app),
-    );
+    ).finally(cleanupFixture);
     expect(result.settlement).toMatchObject({
       _tag: "Interrupted",
       result: { _tag: "ControlledInterruption" },
     });
     expect(result.specialists).toHaveLength(0);
     expect(result.workspaces).toHaveLength(1);
-  });
+  }, 120_000);
 
   it("MAC-P3 exposes DeclareDependency and persists an Unsatisfied exact contract", async () => {
     const { app } = setupApp([declareDependencyTurn]);
     const result = await Effect.runPromise(
       Effect.provide(runTurns([declareDependencyTurn]), app),
-    );
+    ).finally(cleanupFixture);
     expect(result.settlement).toMatchObject({
       _tag: "Completed",
       result: { _tag: "Yielded" },
@@ -877,13 +902,10 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     expect(dependency?.consumer_work_id).toBe(workId);
     expect(dependency?.state).toBe("Unsatisfied");
     expect(dependency?.dependency_id).toMatch(/^dep_/);
-  });
+  }, 120_000);
 });
 
-afterEach(() => {
-  fixture?.cleanup();
-  fixture = undefined;
-});
+afterEach(cleanupFixture);
 
 afterAll(() => {
   fixtureFactory?.cleanup();

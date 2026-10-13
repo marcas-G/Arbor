@@ -46,8 +46,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fixture?.cleanup();
+  const current = fixture;
   fixture = undefined;
+  try {
+    current?.cleanup();
+  } finally {
+    fixture = undefined;
+  }
 });
 
 afterAll(() => {
@@ -129,55 +134,67 @@ describe.skipIf(!windowsAclQualificationAvailable)(
   () => {
     it("global scheduler re-admits durable Parent Inbox after the source offset already advanced", async () => {
       const filename = databaseFile();
-      const outcome = await runWithDatabase(
-        filename,
-        Effect.gen(function* () {
-          yield* seedDurableBlockedState;
-          yield* runDaemonOnce({ principalRef: String(p7TestActor) });
-          return {
-            parentExecutions: yield* executionCount(p7RootWorkspace),
-          };
-        }),
-      );
-      expect(outcome.parentExecutions).toBeGreaterThan(0);
-    });
+      try {
+        const outcome = await runWithDatabase(
+          filename,
+          Effect.gen(function* () {
+            yield* seedDurableBlockedState;
+            yield* runDaemonOnce({ principalRef: String(p7TestActor) });
+            return {
+              parentExecutions: yield* executionCount(p7RootWorkspace),
+            };
+          }),
+        );
+        expect(outcome.parentExecutions).toBeGreaterThan(0);
+      } finally {
+        const current = fixture;
+        fixture = undefined;
+        current?.cleanup();
+      }
+    }, 120_000);
 
     it("child scope processes its own Open Work but preserves Parent Inbox until Parent/global scope runs", async () => {
       const filename = databaseFile();
-      const outcome = await runWithDatabase(
-        filename,
-        Effect.gen(function* () {
-          yield* seedDurableBlockedState;
-          yield* runDaemonOnce({
-            workspaceId: childWorkspaceId as never,
-            principalRef: String(p7TestActor),
-          });
-          const sql = yield* SqlClient;
-          const parentInboxBefore = yield* sql.unsafe<{
-            consumed_at: string | null;
-          }>(
-            "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = 'blocked:child-work'",
-            [p7RootWorkspace],
-          );
-          const childExecutions = yield* executionCount(childWorkspaceId);
-          const parentBefore = yield* executionCount(p7RootWorkspace);
+      try {
+        const outcome = await runWithDatabase(
+          filename,
+          Effect.gen(function* () {
+            yield* seedDurableBlockedState;
+            yield* runDaemonOnce({
+              workspaceId: childWorkspaceId as never,
+              principalRef: String(p7TestActor),
+            });
+            const sql = yield* SqlClient;
+            const parentInboxBefore = yield* sql.unsafe<{
+              consumed_at: string | null;
+            }>(
+              "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = 'blocked:child-work'",
+              [p7RootWorkspace],
+            );
+            const childExecutions = yield* executionCount(childWorkspaceId);
+            const parentBefore = yield* executionCount(p7RootWorkspace);
 
-          yield* runDaemonOnce({
-            workspaceId: p7RootWorkspace,
-            principalRef: String(p7TestActor),
-          });
-          return {
-            parentInboxBefore,
-            childExecutions,
-            parentBefore,
-            parentAfter: yield* executionCount(p7RootWorkspace),
-          };
-        }),
-      );
-      expect(outcome.childExecutions).toBeGreaterThan(0);
-      expect(outcome.parentBefore).toBe(0);
-      expect(outcome.parentInboxBefore).toEqual([{ consumed_at: null }]);
-      expect(outcome.parentAfter).toBeGreaterThan(0);
-    });
+            yield* runDaemonOnce({
+              workspaceId: p7RootWorkspace,
+              principalRef: String(p7TestActor),
+            });
+            return {
+              parentInboxBefore,
+              childExecutions,
+              parentBefore,
+              parentAfter: yield* executionCount(p7RootWorkspace),
+            };
+          }),
+        );
+        expect(outcome.childExecutions).toBeGreaterThan(0);
+        expect(outcome.parentBefore).toBe(0);
+        expect(outcome.parentInboxBefore).toEqual([{ consumed_at: null }]);
+        expect(outcome.parentAfter).toBeGreaterThan(0);
+      } finally {
+        const current = fixture;
+        fixture = undefined;
+        current?.cleanup();
+      }
+    }, 120_000);
   },
 );
