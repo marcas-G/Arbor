@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -23,13 +23,12 @@ import {
 } from "@arbor/provider-openai";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import {
   buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
   ProductionDaemonService,
-  runMigrations,
 } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ac");
@@ -44,6 +43,22 @@ const assistantAnswer =
   "根目录包含 apps、packages 和 adapters。建议先运行 pnpm check，再针对目标包运行 focused tests。";
 const liveHumanInputSentinelEnabled =
   process.env.ARBOR_WAVE1_LIVE_HUMAN_INPUT === "1";
+let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+const scratchDirectories: string[] = [];
+
+beforeEach(async () => {
+  fixture = await createSchema42TestDatabase({
+    prefix: ".p14-conversation-schema42-",
+  });
+});
+
+afterEach(() => {
+  fixture?.cleanup();
+  fixture = undefined;
+  for (const directory of scratchDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe("P14 production conversation model context", () => {
   it(
@@ -63,8 +78,9 @@ describe("P14 production conversation model context", () => {
           "ARBOR_OPENAI_BASE_URL and ARBOR_LLM_MODEL are required for the live Human Input sentinel",
         );
       }
-      const dir = mkdtempSync(join(tmpdir(), "wave1-human-input-"));
-      const databaseFile = join(dir, "slice.db");
+      if (fixture === undefined)
+        throw new Error("Schema 42 fixture is missing");
+      const databaseFile = fixture.databaseFilename;
       const currentHumanQuestion = liveHumanInput
         ? "Reply with exactly WAVE1_CURRENT_HUMAN_INPUT_RECEIVED as plain text. Do not emit a tool or function call."
         : humanQuestion;
@@ -222,7 +238,6 @@ describe("P14 production conversation model context", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(CURRENT_MIGRATIONS);
             const sql = yield* SqlClient;
             yield* sql.withTransaction(
               Effect.gen(function* () {
@@ -377,7 +392,9 @@ describe("P14 production conversation model context", () => {
   );
 
   it("sends only conversation history, excluding Work tool history, and persists its answer", async () => {
+    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
     const dir = mkdtempSync(join(tmpdir(), "p14-provider-conversation-"));
+    scratchDirectories.push(dir);
     const secretRoot = join(dir, "secrets");
     mkdirSync(secretRoot);
     writeFileSync(join(secretRoot, "test-api-key"), "integration-test-key\n", {
@@ -414,7 +431,7 @@ describe("P14 production conversation model context", () => {
       ],
     };
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(dir, "slice.db"),
+      databaseFile: fixture.databaseFilename,
       projectId,
       modelCatalog,
       modelRef: "integration-model",
@@ -444,7 +461,6 @@ describe("P14 production conversation model context", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* sql.withTransaction(
             Effect.gen(function* () {

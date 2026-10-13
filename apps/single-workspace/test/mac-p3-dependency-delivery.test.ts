@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { CommandGateway, semanticRequestFingerprint } from "@arbor/application";
 import {
   Actor,
@@ -30,17 +27,16 @@ import {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import {
   deliverHandler,
   produceDeliverableHandler,
 } from "../src/control-actions.js";
 import {
   buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
   ProductionDaemonService,
-  runMigrations,
 } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-012345678a31");
@@ -64,21 +60,25 @@ const executionId = parse(ExecutionId)(
 );
 const principal = parse(Principal)("runtime:producer-agent");
 const actor = parse(Actor)("runtime:producer-agent");
-const directories: string[] = [];
+let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+
+beforeEach(async () => {
+  fixture = await createSchema42TestDatabase({
+    prefix: ".mac-p3-delivery-schema42-",
+  });
+});
 
 describe("MAC-P3 cross-Work deliverable closure", () => {
   it("declares, produces, delivers, deterministically satisfies and wakes without a model satisfy action", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "mac-p3-delivery-"));
-    directories.push(directory);
+    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(directory, "slice.db"),
+      databaseFile: fixture.databaseFilename,
       projectId,
       providerTurns: [],
     });
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -332,7 +332,6 @@ describe("MAC-P3 cross-Work deliverable closure", () => {
 });
 
 afterEach(() => {
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  fixture?.cleanup();
+  fixture = undefined;
 });

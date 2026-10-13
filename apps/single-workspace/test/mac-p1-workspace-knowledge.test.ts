@@ -1,22 +1,22 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { ProjectId, parse, WorkspaceId } from "@arbor/domain";
 import { WorkspaceKnowledgePort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789f1");
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789f1",
 );
-const directories: string[] = [];
+let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+
+beforeEach(async () => {
+  fixture = await createSchema42TestDatabase({
+    prefix: ".mac-p1-knowledge-schema42-",
+  });
+});
 
 const seedWork = (
   workId: string,
@@ -80,17 +80,15 @@ const seedWork = (
 
 describe("MAC-P1 WorkspaceKnowledgeView", () => {
   it("includes only accepted PASS outcomes and rebuilds deterministically", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "mac-p1-knowledge-"));
-    directories.push(directory);
+    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(directory, "slice.db"),
+      databaseFile: fixture.databaseFilename,
       projectId,
       providerTurns: [],
     });
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -152,7 +150,6 @@ describe("MAC-P1 WorkspaceKnowledgeView", () => {
 });
 
 afterEach(() => {
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  fixture?.cleanup();
+  fixture = undefined;
 });
