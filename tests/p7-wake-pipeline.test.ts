@@ -1,9 +1,6 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   P7_MIGRATIONS,
   runMigrations,
@@ -37,6 +34,7 @@ import {
   p7SeedWork,
   runP7,
 } from "./support/p7-app.js";
+import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
 
 const WORK_CONSUMER = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789b1");
 const CMD_CONSUMER = parse(CommandId)(
@@ -124,7 +122,17 @@ const seedWakeFixture = Effect.gen(function* () {
 const waitOf = (deps: WakeSinkDependencies, workId: WorkId) =>
   deps.tx.transact(deps.waits.findByWork(workId));
 
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+
 describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
+  beforeAll(async () => {
+    schema42Factory = await createSchema42TestDatabaseFactory();
+  }, 120_000);
+
+  afterAll(() => schema42Factory?.cleanup(), 120_000);
+
   it("DependencySatisfied clears the exact wait without requiring revision advance and reevaluates", async () => {
     const { calls, app } = makeWakeApp();
     await runP7(
@@ -300,25 +308,38 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
     );
   });
 
-  it("composition smoke: buildSingleWorkspaceLayer builds and migrates a durable DB to v7 (P7_MIGRATIONS)", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "p7-wake-"));
-    const app = buildSingleWorkspaceLayer({
-      databaseFile: join(dir, "slice.db"),
-    });
-    const version = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* runMigrations(P7_MIGRATIONS);
-          yield* ExecutionScheduler;
-          const sql = yield* SqlClient;
-          const rows = yield* sql.unsafe<{ user_version: number }>(
-            "PRAGMA user_version",
-          );
-          return Number(rows[0]?.user_version);
-        }),
-        app,
-      ) as Effect.Effect<number, unknown, never>,
-    );
-    expect(version).toBe(7);
-  });
+  it("composition smoke: builds against a real schema-42 database", async () => {
+    const database = schema42Factory.create();
+    try {
+      const app = buildSingleWorkspaceLayer({
+        databaseFile: database.databaseFilename,
+      });
+      const result = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* ExecutionScheduler;
+            const sql = yield* SqlClient;
+            const version = yield* sql.unsafe<{ user_version: number }>(
+              "PRAGMA user_version",
+            );
+            const waits = yield* sql.unsafe<{ name: string }>(
+              "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'work_waits'",
+            );
+            return {
+              version: Number(version[0]?.user_version),
+              hasWorkWaits: waits.length === 1,
+            };
+          }),
+          app,
+        ) as Effect.Effect<
+          { readonly version: number; readonly hasWorkWaits: boolean },
+          unknown,
+          never
+        >,
+      );
+      expect(result).toEqual({ version: 42, hasWorkWaits: true });
+    } finally {
+      database.cleanup();
+    }
+  }, 120_000);
 });

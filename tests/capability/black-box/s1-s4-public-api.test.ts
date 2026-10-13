@@ -4,7 +4,16 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import { createSchema42TestDatabaseFactory } from "../../support/schema42-database.js";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
 const WEB_DIST = resolve("apps/web/dist");
@@ -294,14 +303,19 @@ const startProvider = () =>
           }
 
           if (toolNames.has("record_verification_evidence")) {
+            const successfulShellResult = call.messages.some(
+              (message) =>
+                message.role === "tool" &&
+                /"exitCode"\s*:\s*0/u.test(message.content ?? ""),
+            );
             const evidenceIds = [
               ...serialized.matchAll(/evd_[0-9a-f-]{36}/gu),
             ].map((match) => match[0]);
-            if (!serialized.includes("exitCode")) {
+            if (!successfulShellResult) {
               sse(
                 response,
                 toolDelta("shell", {
-                  command: "Write-Output BB_VERIFIED",
+                  command: "Write-Output 'BB_VERIFIED'",
                   cwd: { mount: "workspace", path: "." },
                 }),
                 "tool_calls",
@@ -399,6 +413,10 @@ let base: string;
 let provider: Awaited<ReturnType<typeof startProvider>>;
 let daemon: ChildProcess;
 const daemonErrors: string[] = [];
+let databaseFactory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+let databaseFixture: ReturnType<typeof databaseFactory.create>;
 
 const startDaemon = () => {
   const child = spawn("node", [DAEMON_ENTRY], {
@@ -608,71 +626,239 @@ const waitForDaemonReady = (timeoutMs = 30_000) =>
     timeoutMs,
   );
 
-const projectId = id("prj");
-const rootWorkspaceId = id("ws");
-const rootSessionId = id("ses");
-const childWorkspaceId = id("ws");
-let workId = id("wrk");
+let projectId: string;
+let rootWorkspaceId: string;
+let rootSessionId: string;
+let childWorkspaceId: string;
+let workId: string;
 const memoryCode = `BB-MEMORY-${randomUUID().slice(0, 8).toUpperCase()}`;
 
 beforeAll(async () => {
-  directory = mkdtempSync(join(tmpdir(), "arbor-scenario-black-box-"));
-  mkdirSync(join(directory, "workspace"), { recursive: true });
-  databaseFile = join(directory, "slice.db");
-  httpPort = await freePort();
-  base = `http://127.0.0.1:${httpPort}`;
-  provider = await startProvider();
-  daemon = startDaemon();
+  databaseFactory = await createSchema42TestDatabaseFactory();
+}, 120_000);
+
+const cleanupScenario = async () => {
   try {
-    await waitForDaemonReady(60_000);
+    if (daemon?.exitCode === null) {
+      daemon.kill("SIGKILL");
+      await new Promise<void>((resolveExit) =>
+        daemon.once("exit", () => resolveExit()),
+      );
+    }
+    if (provider !== undefined) {
+      await new Promise<void>((resolveClose) =>
+        provider.server.close(() => resolveClose()),
+      );
+    }
+  } finally {
+    try {
+      databaseFixture?.cleanup();
+    } finally {
+      if (directory !== undefined) {
+        rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
+      }
+    }
+  }
+};
+
+beforeEach(async () => {
+  try {
+    daemonErrors.length = 0;
+    directory = mkdtempSync(join(tmpdir(), "arbor-scenario-black-box-"));
+    mkdirSync(join(directory, "workspace"), { recursive: true });
+    databaseFixture = databaseFactory.create();
+    databaseFile = databaseFixture.databaseFilename;
+    projectId = id("prj");
+    rootWorkspaceId = id("ws");
+    rootSessionId = id("ses");
+    childWorkspaceId = id("ws");
+    workId = id("wrk");
+    httpPort = await freePort();
+    base = `http://127.0.0.1:${httpPort}`;
+    provider = await startProvider();
+    daemon = startDaemon();
+    try {
+      await waitForDaemonReady(60_000);
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; pid=${String(daemon?.pid)}; exit=${String(daemon?.exitCode)}; daemon=${daemonErrors.join(" | ")}; entry=${DAEMON_ENTRY}; cwd=${directory}`,
+      );
+    }
+  } catch (error) {
+    await cleanupScenario();
+    throw error;
+  }
+}, 120_000);
+
+afterEach(cleanupScenario, 120_000);
+
+afterAll(() => databaseFactory?.cleanup(), 120_000);
+
+const createPublicProject = async () => {
+  const resourceSelection = await readProjectProfileSelection();
+  await command(projectId, "CreateProject", {
+    name: "Scenario black-box",
+    revision: 0,
+    projectPolicy: { delegationCeiling: 1 },
+    projectPolicyRevision: 0,
+    defaultConfiguration: {},
+    environmentRef: "local",
+    rootWorkspaceId,
+    primarySession: { sessionId: rootSessionId, contextEpoch: 0 },
+    rootWorkspace: {
+      name: "root",
+      responsibilityDefinition: {
+        purpose: "black-box root",
+        ownedResponsibilities: [],
+        obligations: [],
+        includes: [],
+        excludes: [],
+        interfaces: [],
+      },
+      responsibilityRevision: 0,
+      resourceSelection,
+      agentBinding: {
+        _tag: "ResponsibilityBoundAgentBinding",
+        workspaceId: rootWorkspaceId,
+      },
+      workspacePolicy: { delegationCeiling: 1 },
+      workspacePolicyRevision: 0,
+      revision: 0,
+    },
+  });
+};
+
+const createAndAcceptRootGoal = async () => {
+  await command(projectId, "SubmitHumanMessage", {
+    messageId: id("msg"),
+    targetWorkspaceId: rootWorkspaceId,
+    bodyRef:
+      `请创建并执行正式目标 ${macRootGoalMarker}。` +
+      "约束：不要真实下单。完成标准：经过独立验证并被接受。信息充分，请直接调用 assign_work。",
+  });
+  const approvalEntry = await waitFor(
+    () =>
+      view<{
+        unconsumed: Array<{
+          entryKey: string;
+          kind: string;
+          summary: string;
+        }>;
+      }>("inbox-view", { workspaceId: rootWorkspaceId }),
+    (value) =>
+      value.unconsumed.some(
+        (entry) =>
+          entry.kind === "Governance" &&
+          /^cap:cap_[^:]+:\d+$/u.test(entry.entryKey) &&
+          entry.summary.includes(macRootGoalMarker),
+      ),
+  );
+  const pendingApproval = approvalEntry.unconsumed.find(
+    (entry) =>
+      entry.kind === "Governance" &&
+      /^cap:cap_[^:]+:\d+$/u.test(entry.entryKey) &&
+      entry.summary.includes(macRootGoalMarker),
+  );
+  if (pendingApproval === undefined) {
+    throw new Error("public Inbox exposed no exact pending approval");
+  }
+  const approvalMatch = /^cap:(cap_[^:]+):(\d+)$/u.exec(
+    pendingApproval.entryKey,
+  );
+  if (approvalMatch === null) {
+    throw new Error(`invalid public approval ref ${pendingApproval.entryKey}`);
+  }
+  const beforeApproval = await view<unknown>("current-work", {
+    workspaceId: rootWorkspaceId,
+  });
+  expect(beforeApproval).toBeNull();
+  await command(projectId, "ResolveControlApproval", {
+    approvalId: approvalMatch[1],
+    expectedRevision: Number(approvalMatch[2]),
+    decision: "Approve",
+    reason: "approve exact MAC-P1 black-box Work",
+  });
+  const createdWork = await waitFor(
+    () =>
+      view<{
+        workId?: string;
+        objective: string;
+        status: string;
+        revision: number;
+      } | null>("current-work", { workspaceId: rootWorkspaceId }),
+    (value) =>
+      value?.workId !== undefined &&
+      value.objective.includes(macRootGoalMarker) &&
+      value.status === "Open",
+    45_000,
+  );
+  if (createdWork?.workId === undefined) {
+    throw new Error("approved root goal produced no Work");
+  }
+  workId = createdWork.workId;
+  await waitFor(
+    async () => provider.calls,
+    (calls) =>
+      calls.some((call) => {
+        const context = JSON.stringify(call.messages);
+        return (
+          context.includes(macRootGoalMarker) &&
+          context.includes("do not place real orders")
+        );
+      }),
+  );
+  let verification: {
+    verificationId?: string;
+    targetWorkRevision?: number;
+    verdict?: string;
+    evidenceRefs: string[];
+  };
+  try {
+    verification = await waitFor(
+      () =>
+        view<{
+          verificationId?: string;
+          targetWorkRevision?: number;
+          verdict?: string;
+          evidenceRefs: string[];
+        }>("verification", { workId }),
+      (value) => value.verdict === "Pass" && value.evidenceRefs.length === 1,
+      45_000,
+    );
   } catch (error) {
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}; pid=${String(daemon.pid)}; exit=${String(daemon.exitCode)}; daemon=${daemonErrors.join(" | ")}; entry=${DAEMON_ENTRY}; cwd=${directory}`,
+      `${error instanceof Error ? error.message : String(error)}; daemon=${daemonErrors.join(" | ")}; providerTail=${JSON.stringify(provider.calls.slice(-6))}`,
     );
   }
-}, 75_000);
-
-afterAll(async () => {
-  if (daemon.exitCode === null) daemon.kill("SIGKILL");
-  await new Promise<void>((resolveClose) =>
-    provider.server.close(() => resolveClose()),
+  expect(verification.targetWorkRevision).toBe(0);
+  expect(
+    await view<{ workId?: string; status: string } | null>("current-work", {
+      workspaceId: rootWorkspaceId,
+    }),
+  ).toMatchObject({ workId, status: "Open" });
+  expect(
+    await view<{ acceptance?: unknown }>("verification", { workId }),
+  ).not.toHaveProperty("acceptance");
+  await command(projectId, "AcceptWorkOutcome", {
+    acceptanceId: id("acc"),
+    workId,
+    targetWorkRevision: 0,
+    verificationId: verification.verificationId,
+  });
+  await waitFor(
+    () => view<unknown>("current-work", { workspaceId: rootWorkspaceId }),
+    (value) => value === null,
   );
-  rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
-});
+  const accepted = await view<{ acceptance?: { acceptanceId: string } }>(
+    "verification",
+    { workId },
+  );
+  expect(accepted.acceptance?.acceptanceId).toMatch(/^acc_/u);
+};
 
 describe("S1-S4 public-process black-box", () => {
   it("S1/S3 creates a project and a visible first-layer responsibility tree", async () => {
-    const resourceSelection = await readProjectProfileSelection();
-    await command(projectId, "CreateProject", {
-      name: "Scenario black-box",
-      revision: 0,
-      projectPolicy: { delegationCeiling: 1 },
-      projectPolicyRevision: 0,
-      defaultConfiguration: {},
-      environmentRef: "local",
-      rootWorkspaceId,
-      primarySession: { sessionId: rootSessionId, contextEpoch: 0 },
-      rootWorkspace: {
-        name: "root",
-        responsibilityDefinition: {
-          purpose: "black-box root",
-          ownedResponsibilities: [],
-          obligations: [],
-          includes: [],
-          excludes: [],
-          interfaces: [],
-        },
-        responsibilityRevision: 0,
-        resourceSelection,
-        agentBinding: {
-          _tag: "ResponsibilityBoundAgentBinding",
-          workspaceId: rootWorkspaceId,
-        },
-        workspacePolicy: { delegationCeiling: 1 },
-        workspacePolicyRevision: 0,
-        revision: 0,
-      },
-    });
+    await createPublicProject();
 
     await expectExternalOriginDenied(projectId, "CreateChildWorkspace", {
       parentWorkspaceId: rootWorkspaceId,
@@ -813,9 +999,10 @@ describe("S1-S4 public-process black-box", () => {
         }),
       ]),
     );
-  });
+  }, 120_000);
 
   it("S1 keeps high-level conversation, verifies independently and clears current Work after acceptance", async () => {
+    await createPublicProject();
     await command(projectId, "SubmitHumanMessage", {
       messageId: id("msg"),
       targetWorkspaceId: rootWorkspaceId,
@@ -847,137 +1034,12 @@ describe("S1-S4 public-process black-box", () => {
       ]),
     );
 
-    await command(projectId, "SubmitHumanMessage", {
-      messageId: id("msg"),
-      targetWorkspaceId: rootWorkspaceId,
-      bodyRef:
-        `请创建并执行正式目标 ${macRootGoalMarker}。` +
-        "约束：不要真实下单。完成标准：经过独立验证并被接受。信息充分，请直接调用 assign_work。",
-    });
-    const approvalEntry = await waitFor(
-      () =>
-        view<{
-          unconsumed: Array<{
-            entryKey: string;
-            kind: string;
-            summary: string;
-          }>;
-        }>("inbox-view", { workspaceId: rootWorkspaceId }),
-      (value) =>
-        value.unconsumed.some(
-          (entry) =>
-            entry.kind === "Governance" &&
-            /^cap:cap_[^:]+:\d+$/u.test(entry.entryKey) &&
-            entry.summary.includes(macRootGoalMarker),
-        ),
-    );
-    const pendingApproval = approvalEntry.unconsumed.find(
-      (entry) =>
-        entry.kind === "Governance" &&
-        /^cap:cap_[^:]+:\d+$/u.test(entry.entryKey) &&
-        entry.summary.includes(macRootGoalMarker),
-    );
-    if (pendingApproval === undefined) {
-      throw new Error("public Inbox exposed no exact pending approval");
-    }
-    const approvalMatch = /^cap:(cap_[^:]+):(\d+)$/u.exec(
-      pendingApproval.entryKey,
-    );
-    if (approvalMatch === null) {
-      throw new Error(
-        `invalid public approval ref ${pendingApproval.entryKey}`,
-      );
-    }
-    const beforeApproval = await view<unknown>("current-work", {
-      workspaceId: rootWorkspaceId,
-    });
-    expect(beforeApproval).toBeNull();
-    await command(projectId, "ResolveControlApproval", {
-      approvalId: approvalMatch[1],
-      expectedRevision: Number(approvalMatch[2]),
-      decision: "Approve",
-      reason: "approve exact MAC-P1 black-box Work",
-    });
-    const createdWork = await waitFor(
-      () =>
-        view<{
-          workId?: string;
-          objective: string;
-          status: string;
-          revision: number;
-        } | null>("current-work", { workspaceId: rootWorkspaceId }),
-      (value) =>
-        value?.workId !== undefined &&
-        value.objective.includes(macRootGoalMarker) &&
-        value.status === "Open",
-      45_000,
-    );
-    if (createdWork?.workId === undefined) {
-      throw new Error("approved root goal produced no Work");
-    }
-    workId = createdWork.workId;
-    await waitFor(
-      async () => provider.calls,
-      (calls) =>
-        calls.some((call) => {
-          const context = JSON.stringify(call.messages);
-          return (
-            context.includes(macRootGoalMarker) &&
-            context.includes("do not place real orders")
-          );
-        }),
-    );
-    let verification: {
-      verificationId?: string;
-      targetWorkRevision?: number;
-      verdict?: string;
-      evidenceRefs: string[];
-    };
-    try {
-      verification = await waitFor(
-        () =>
-          view<{
-            verificationId?: string;
-            targetWorkRevision?: number;
-            verdict?: string;
-            evidenceRefs: string[];
-          }>("verification", { workId }),
-        (value) => value.verdict === "Pass" && value.evidenceRefs.length === 1,
-        45_000,
-      );
-    } catch (error) {
-      throw new Error(
-        `${error instanceof Error ? error.message : String(error)}; daemon=${daemonErrors.join(" | ")}; providerTail=${JSON.stringify(provider.calls.slice(-6))}`,
-      );
-    }
-    expect(verification.targetWorkRevision).toBe(0);
-    expect(
-      await view<{ workId?: string; status: string } | null>("current-work", {
-        workspaceId: rootWorkspaceId,
-      }),
-    ).toMatchObject({ workId, status: "Open" });
-    expect(
-      await view<{ acceptance?: unknown }>("verification", { workId }),
-    ).not.toHaveProperty("acceptance");
-
-    await command(projectId, "AcceptWorkOutcome", {
-      acceptanceId: id("acc"),
-      workId,
-      targetWorkRevision: 0,
-      verificationId: verification.verificationId,
-    });
-    await waitFor(
-      () => view<unknown>("current-work", { workspaceId: rootWorkspaceId }),
-      (value) => value === null,
-    );
-    const accepted = await view<{ acceptance?: { acceptanceId: string } }>(
-      "verification",
-      { workId },
-    );
-    expect(accepted.acceptance?.acceptanceId).toMatch(/^acc_/u);
-  }, 60_000);
+    await createAndAcceptRootGoal();
+  }, 120_000);
 
   it("S4 preserves accepted evidence after hard restart without provider replay", async () => {
+    await createPublicProject();
+    await createAndAcceptRootGoal();
     const callsBeforeRestart = provider.calls.length;
     daemon.kill("SIGKILL");
     await new Promise<void>((resolveExit) =>
@@ -1004,9 +1066,10 @@ describe("S1-S4 public-process black-box", () => {
     await new Promise((resolveWait) => setTimeout(resolveWait, 1_500));
     expect(provider.calls.length).toBe(callsBeforeRestart);
     expect(daemonErrors).toEqual([]);
-  }, 30_000);
+  }, 120_000);
 
   it("S2 applies a local steer through the public command face", async () => {
+    await createPublicProject();
     const rejectedWorkId = id("wrk");
     await expectExternalOriginDenied(projectId, "AssignWork", {
       workId: rejectedWorkId,
@@ -1153,5 +1216,5 @@ describe("S1-S4 public-process black-box", () => {
         ),
     );
     expect(daemonErrors).toEqual([]);
-  });
+  }, 120_000);
 });

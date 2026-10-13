@@ -1,24 +1,34 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ProjectId, parse } from "../../../packages/domain/src/index.js";
+import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
 } from "../src/index.js";
 
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+
 describe("P34 daemon migration wiring", () => {
+  beforeAll(async () => {
+    schema42Factory = await createSchema42TestDatabaseFactory();
+  }, 120_000);
+
+  afterAll(() => schema42Factory?.cleanup(), 120_000);
+
   it("creates Attention projection storage through real daemon startup", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "arbor-p34-daemon-"));
-    const databaseFile = join(directory, "daemon.sqlite");
+    const database = schema42Factory.create();
     const projectId = parse(ProjectId)(
       "prj_018f2b3c-4d5e-7abc-8def-0123456789ae",
     );
     try {
-      const app = buildSingleWorkspaceLayer({ databaseFile, projectId });
+      const app = buildSingleWorkspaceLayer({
+        databaseFile: database.databaseFilename,
+        projectId,
+      });
       const result = await Effect.runPromise(
         Effect.scoped(
           Effect.provide(
@@ -49,7 +59,7 @@ describe("P34 daemon migration wiring", () => {
         ),
       );
       expect(result).toEqual({
-        version: 38,
+        version: 42,
         tables: [
           "assign_work_binding_attention_facts",
           "assign_work_target_bindings",
@@ -57,7 +67,7 @@ describe("P34 daemon migration wiring", () => {
         ],
       });
     } finally {
-      rmSync(directory, { recursive: true, force: true });
+      database.cleanup();
     }
-  });
+  }, 120_000);
 });

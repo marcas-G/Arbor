@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SecretStorePort, secretRef } from "@arbor/ports";
 import { Effect, type Layer } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   type ArborProviderConfigFile,
@@ -17,6 +18,9 @@ import {
  */
 
 const tempDirs: string[] = [];
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
 const withConfig = (content: string): { dir: string; path: string } => {
   const dir = mkdtempSync(join(tmpdir(), "arbor-config-"));
   tempDirs.push(dir);
@@ -30,6 +34,12 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory();
+}, 120_000);
+
+afterAll(() => schema42Factory?.cleanup(), 120_000);
 
 describe("arbor.config.json — standard provider configuration", () => {
   it("a full env-secret config builds the ModelDeployment with SecretRef only", () => {
@@ -110,32 +120,36 @@ describe("arbor.config.json — standard provider configuration", () => {
   });
 
   it("the inline secret store rejects every ref except its sentinel", async () => {
-    const { dir } = withConfig("{}");
+    const database = schema42Factory.create();
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(dir, "slice.db"),
+      databaseFile: database.databaseFilename,
       secretRef: secretRef("arbor:inline-secret"),
       secretStore: {
         _tag: "Inline",
         material: "sk-test-inline-123",
       },
     }) as unknown as Layer.Layer<SecretStorePort>;
-    const failure = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const secrets = yield* SecretStorePort;
-          return yield* Effect.flip(
-            secrets.resolve(secretRef("another-provider-secret")),
-          );
-        }),
-        app,
-      ),
-    );
+    try {
+      const failure = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            const secrets = yield* SecretStorePort;
+            return yield* Effect.flip(
+              secrets.resolve(secretRef("another-provider-secret")),
+            );
+          }),
+          app,
+        ),
+      );
 
-    expect(failure).toEqual({
-      _tag: "SecretNotFound",
-      secretRef: "another-provider-secret",
-    });
-  });
+      expect(failure).toEqual({
+        _tag: "SecretNotFound",
+        secretRef: "another-provider-secret",
+      });
+    } finally {
+      database.cleanup();
+    }
+  }, 120_000);
 
   it("missing required fields produce a typed validation error", () => {
     const { path } = withConfig(
