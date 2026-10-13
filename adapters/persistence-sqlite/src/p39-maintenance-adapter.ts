@@ -24,6 +24,8 @@ import {
   writeP39BlockReportAndReadBack,
 } from "./p39-maintenance.js";
 import {
+  type P39ReportSidecarValidationPhase,
+  validateP39ExistingReportSidecarDatabase,
   validateP39ReportSidecarDatabase,
   validateP39ReportSidecarPath,
 } from "./p39-report-database.js";
@@ -105,8 +107,42 @@ export const runP39SqliteMaintenanceWithPermit = (
     P39MaintenanceFailure | SqliteAdapterError | SqlError
   >,
   settings: {
+    readonly onPhase?: (
+      phase:
+        | P39ReportSidecarValidationPhase
+        | "primary-path-validation"
+        | "writer-lock-path-validation"
+        | "report-path-validation"
+        | "report-database-validation"
+        | "writer-lock-initialization"
+        | "writer-lock-acquisition"
+        | "manifest-validation"
+        | "p39-reservation-and-gate"
+        | "p40-p42-continuation",
+    ) => void;
     readonly p39AlreadyCommitted?: boolean;
+    readonly reportMustAlreadyExist?: boolean;
+    /** Runs after acquiring MaintenanceExclusive and before deciding whether
+     * the P39 gate is needed. Used by resume-copy to validate and reconcile
+     * the provenance head under the same cross-process permit as migrations. */
+    readonly beforeMaintenance?: (
+      primary: P39MaintenanceSqlClient,
+      permit: P39DatabaseWriterPermit,
+    ) => Effect.Effect<
+      boolean,
+      P39MaintenanceFailure | SqliteAdapterError | SqlError
+    >;
     readonly beforeP39?: (
+      primary: P39MaintenanceSqlClient,
+      permit: P39DatabaseWriterPermit,
+    ) => Effect.Effect<
+      void,
+      P39MaintenanceFailure | SqliteAdapterError | SqlError
+    >;
+    /** Called after the immutable P39 blocker report is durable/read back and
+     * while the exclusive permit remains held, so the terminal provenance
+     * record is serialized with every resume attempt. */
+    readonly onP39Blocked?: (
       primary: P39MaintenanceSqlClient,
       permit: P39DatabaseWriterPermit,
     ) => Effect.Effect<
@@ -116,6 +152,7 @@ export const runP39SqliteMaintenanceWithPermit = (
   } = {},
 ): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError | SqlError> =>
   Effect.gen(function* () {
+    settings.onPhase?.("primary-path-validation");
     if (options.primaryFilename === ":memory:") {
       return yield* Effect.fail({
         _tag: "P39MaintenanceFailure" as const,
@@ -130,6 +167,7 @@ export const runP39SqliteMaintenanceWithPermit = (
       });
     }
     const primaryPath = realpathSync.native(resolvedPrimaryPath);
+    settings.onPhase?.("writer-lock-path-validation");
     const lockPath = p39WriterLockFilename(primaryPath);
     if (typeof lockPath !== "string") {
       return yield* Effect.fail(
@@ -141,15 +179,27 @@ export const runP39SqliteMaintenanceWithPermit = (
         ),
       );
     }
+    settings.onPhase?.("report-path-validation");
     const sidecarPath = yield* validateP39ReportSidecarPath(
       resolvedPrimaryPath,
       options.sidecarFilename,
       options.protectedStoreFilenames,
+      (phase) => settings.onPhase?.(phase),
     );
+    settings.onPhase?.("report-database-validation");
+    if (settings.reportMustAlreadyExist === true) {
+      yield* validateP39ExistingReportSidecarDatabase(
+        primaryPath,
+        sidecarPath,
+        options.protectedStoreFilenames,
+        (phase) => settings.onPhase?.(phase),
+      );
+    }
     yield* validateP39ReportSidecarDatabase(
       primaryPath,
       sidecarPath,
       options.protectedStoreFilenames,
+      (phase) => settings.onPhase?.(phase),
     );
     const primaryService = Layer.provide(
       Layer.effect(
@@ -161,6 +211,7 @@ export const runP39SqliteMaintenanceWithPermit = (
       ),
       SqliteClient.layer({ filename: primaryPath, disableWAL: true }),
     );
+    settings.onPhase?.("writer-lock-initialization");
     const maintenance = Effect.gen(function* () {
       const primary = yield* P39PrimarySqlClient;
       const writerLock = yield* P39WriterLockClient;
@@ -195,6 +246,7 @@ export const runP39SqliteMaintenanceWithPermit = (
         Effect.scoped(
           Effect.provide(readP39BlockReports(), reportSidecarLayer),
         );
+      settings.onPhase?.("writer-lock-acquisition");
       const permit = yield* writerLock
         .acquire("MaintenanceExclusive")
         .pipe(
@@ -266,7 +318,12 @@ export const runP39SqliteMaintenanceWithPermit = (
       });
       const operation = yield* Effect.exit(
         Effect.gen(function* () {
-          if (settings.p39AlreadyCommitted === true) {
+          settings.onPhase?.("manifest-validation");
+          const p39AlreadyCommitted =
+            settings.beforeMaintenance === undefined
+              ? settings.p39AlreadyCommitted === true
+              : yield* settings.beforeMaintenance(primary, permit);
+          if (p39AlreadyCommitted) {
             const version = yield* primary.unsafe<UserVersionRow>(
               "PRAGMA user_version",
             );
@@ -280,10 +337,29 @@ export const runP39SqliteMaintenanceWithPermit = (
             if (settings.beforeP39 !== undefined) {
               yield* settings.beforeP39(primary, permit);
             }
-            yield* runP39MaintenanceGateWithLease(port, {
-              token: permit.token,
-            });
+            settings.onPhase?.("p39-reservation-and-gate");
+            const p39Gate = yield* Effect.result(
+              runP39MaintenanceGateWithLease(port, {
+                token: permit.token,
+              }),
+            );
+            if (p39Gate._tag === "Failure") {
+              const cause = p39Gate.failure;
+              if (
+                typeof cause === "object" &&
+                cause !== null &&
+                "_tag" in cause &&
+                cause._tag === "P39MaintenanceFailure" &&
+                (cause as P39MaintenanceFailure).code ===
+                  "P39_LEGACY_DB_ISOLATED" &&
+                settings.onP39Blocked !== undefined
+              ) {
+                yield* settings.onP39Blocked(primary, permit);
+              }
+              return yield* Effect.fail(cause);
+            }
           }
+          settings.onPhase?.("p40-p42-continuation");
           yield* continuation(primary, permit);
         }),
       );

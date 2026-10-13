@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   openSync,
@@ -16,11 +17,25 @@ import {
   P39_MAINTENANCE_MIGRATION_MANIFEST,
   P39_REPORT_APPLICATION_ID,
   P39_REPORT_USER_VERSION,
+  type P39ReportSidecarValidationPhase,
   validateP39ProtectedDirectory,
   validateP39ProtectedFile,
 } from "@arbor/persistence-sqlite";
 
 export type SchemaUpgradeMode = "fresh" | "copy" | "resume-copy";
+
+export type SchemaUpgradeMaintenancePhase =
+  | P39ReportSidecarValidationPhase
+  | "schema-prefix-preview"
+  | "primary-path-validation"
+  | "writer-lock-path-validation"
+  | "report-path-validation"
+  | "report-database-validation"
+  | "writer-lock-initialization"
+  | "writer-lock-acquisition"
+  | "manifest-validation"
+  | "p39-reservation-and-gate"
+  | "p40-p42-continuation";
 
 export interface SchemaUpgradeFileIdentity {
   readonly device: string;
@@ -44,6 +59,7 @@ export interface SchemaUpgradeManifestHeader {
   readonly backupCompleted: boolean;
   readonly initialUserVersion: number;
   readonly initialPrefixSignature: string;
+  readonly initialSchemaSignature: string;
   readonly initialTargetDigest: string;
   readonly report: SchemaUpgradePathIdentity;
   readonly manifest: SchemaUpgradePathIdentity;
@@ -67,6 +83,18 @@ export interface SchemaUpgradeManifest {
 
 export class SchemaUpgradeRefusal extends Error {
   readonly _tag = "SchemaUpgradeRefusal";
+
+  constructor(
+    message: string,
+    readonly diagnostic?: {
+      readonly phase: SchemaUpgradeMaintenancePhase;
+      readonly code: string;
+      readonly reasonCode?: string;
+    },
+  ) {
+    super(message);
+    this.name = "SchemaUpgradeRefusal";
+  }
 }
 
 const refuse = (message: string): never => {
@@ -688,6 +716,7 @@ export const readSchemaUpgradeManifest = (
     (header.mode !== "copy" && header.mode !== "fresh") ||
     !/^[0-9a-f]{64}$/u.test(header.initialTargetDigest) ||
     !/^[0-9a-f]{64}$/u.test(header.initialPrefixSignature) ||
+    !/^[0-9a-f]{64}$/u.test(header.initialSchemaSignature) ||
     header.target === undefined ||
     header.report === undefined ||
     header.manifest === undefined ||
@@ -733,6 +762,27 @@ export const appendSchemaUpgradeRecord = (
   return { ...manifest, records: [...manifest.records, envelope] };
 };
 
+/** Retry short writes until the complete record is appended. A zero, invalid,
+ * or oversized result fails closed, and durability flush is attempted only
+ * after every byte has been accepted by the append writer. Exposed to the
+ * focused manifest test so short/zero-write behavior is deterministic. */
+export const writeFullyAndSync = (
+  bytes: Uint8Array,
+  write: (buffer: Uint8Array, offset: number, length: number) => number,
+  flush: () => void,
+): void => {
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    const remaining = bytes.byteLength - offset;
+    const written = write(bytes, offset, remaining);
+    if (!Number.isInteger(written) || written <= 0 || written > remaining) {
+      refuse("manifest append did not make valid forward progress");
+    }
+    offset += written;
+  }
+  flush();
+};
+
 const appendEnvelope = (
   filename: string,
   identity: SchemaUpgradePathIdentity,
@@ -743,8 +793,20 @@ const appendEnvelope = (
     refuse("manifest identity changed during append");
   const descriptor = openSync(filename, "a");
   try {
-    writeSync(descriptor, `${canonicalJson(envelope)}\n`, undefined, "utf8");
-    fsyncSync(descriptor);
+    const opened = fstatSync(descriptor, { bigint: true });
+    if (
+      !opened.isFile() ||
+      opened.dev.toString() !== identity.file.device ||
+      opened.ino.toString() !== identity.file.fileId ||
+      opened.nlink !== 1n
+    )
+      refuse("manifest append descriptor identity changed before write");
+    const bytes = Buffer.from(`${canonicalJson(envelope)}\n`, "utf8");
+    writeFullyAndSync(
+      bytes,
+      (buffer, offset, length) => writeSync(descriptor, buffer, offset, length),
+      () => fsyncSync(descriptor),
+    );
   } finally {
     closeSync(descriptor);
   }

@@ -44,6 +44,24 @@ const failure = (
   ...(cause === undefined ? {} : { cause }),
 });
 
+export type P39ReportSidecarValidationPhase =
+  | "report-path-absolute-network-check"
+  | "report-path-canonical-and-temp-check"
+  | "report-parent-filesystem-acl"
+  | "report-primary-sidecar-alias"
+  | "report-primary-file-identity"
+  | "report-sidecar-file-identity"
+  | "report-protected-store-path-and-alias"
+  | "report-database-path-revalidation"
+  | "report-existing-new-sidecar-policy"
+  | "report-initial-file-identity"
+  | "report-profile-open-init-readback"
+  | "report-final-path-and-identity";
+
+type ReportValidationPhaseObserver = (
+  phase: P39ReportSidecarValidationPhase,
+) => void;
+
 const canonicalExistingOrNewPath = (path: string): string => {
   if (existsSync(path)) return realpathSync.native(path);
   const parent = dirname(path);
@@ -151,7 +169,9 @@ export const validateP39ReportSidecarPath = (
   primaryFilename: string,
   sidecarFilename: string,
   protectedStoreFilenames: ReadonlyArray<string> = [],
+  onPhase?: ReportValidationPhaseObserver,
 ): Effect.Effect<string, P39MaintenanceFailure> => {
+  onPhase?.("report-path-absolute-network-check");
   if (
     !isAbsolute(primaryFilename) ||
     !isAbsolute(sidecarFilename) ||
@@ -166,6 +186,7 @@ export const validateP39ReportSidecarPath = (
     return Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
   }
   try {
+    onPhase?.("report-path-canonical-and-temp-check");
     const primary = canonicalExistingOrNewPath(resolve(primaryFilename));
     const sidecar = canonicalExistingOrNewPath(resolve(sidecarFilename));
     if (
@@ -184,6 +205,7 @@ export const validateP39ReportSidecarPath = (
     ) {
       return Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
     }
+    onPhase?.("report-parent-filesystem-acl");
     for (const path of [primary, sidecar]) {
       const filesystemFailure = validateLocalFilesystem(path);
       if (
@@ -195,14 +217,17 @@ export const validateP39ReportSidecarPath = (
         );
       }
     }
+    onPhase?.("report-primary-sidecar-alias");
     if (normalizedPath(primary) === normalizedPath(sidecar)) {
       return Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
     }
+    onPhase?.("report-primary-file-identity");
     const primaryIdentity = fileIdentity(primary);
     if (typeof primaryIdentity !== "string") {
       return Effect.fail(primaryIdentity);
     }
     if (existsSync(sidecar)) {
+      onPhase?.("report-sidecar-file-identity");
       const sidecarIdentity = fileIdentity(sidecar);
       if (
         typeof sidecarIdentity !== "string" ||
@@ -215,6 +240,7 @@ export const validateP39ReportSidecarPath = (
         );
       }
     }
+    onPhase?.("report-protected-store-path-and-alias");
     for (const protectedFilename of protectedStoreFilenames) {
       const protectedResolved = resolve(protectedFilename);
       if (!existsSync(protectedResolved)) {
@@ -304,76 +330,84 @@ const hasExactSchema = (objects: ReadonlyArray<SidecarObject>): boolean => {
   );
 };
 
-const p39ReportSetup = Effect.gen(function* () {
-  const sql = yield* SqlClient;
-  const identity = yield* sql.unsafe<SidecarIdentity>("PRAGMA application_id");
-  const version = yield* sql.unsafe<UserVersion>("PRAGMA user_version");
-  const journalBefore = yield* sql.unsafe<JournalMode>("PRAGMA journal_mode");
-  const objects = yield* sql.unsafe<SidecarObject>(
-    `SELECT type, name, sql FROM sqlite_master
+const p39ReportSetup = (allowInitialize: boolean) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const identity = yield* sql.unsafe<SidecarIdentity>(
+      "PRAGMA application_id",
+    );
+    const version = yield* sql.unsafe<UserVersion>("PRAGMA user_version");
+    const journalBefore = yield* sql.unsafe<JournalMode>("PRAGMA journal_mode");
+    const objects = yield* sql.unsafe<SidecarObject>(
+      `SELECT type, name, sql FROM sqlite_master
       WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
-  );
-  const appId = Number(identity[0]?.application_id ?? 0);
-  const userVersion = Number(version[0]?.user_version ?? 0);
-  if (appId === 0 && userVersion === 0 && objects.length === 0) {
-    const journal = yield* sql.unsafe<JournalMode>("PRAGMA journal_mode = WAL");
-    if (journal[0]?.journal_mode?.toLowerCase() !== "wal") {
-      return yield* Effect.fail(failure("P39_REPORT_DB_PRAGMA_MISMATCH"));
+    );
+    const appId = Number(identity[0]?.application_id ?? 0);
+    const userVersion = Number(version[0]?.user_version ?? 0);
+    if (appId === 0 && userVersion === 0 && objects.length === 0) {
+      if (!allowInitialize) {
+        return yield* Effect.fail(failure("P39_REPORT_DB_SCHEMA_UNSUPPORTED"));
+      }
+      const journal = yield* sql.unsafe<JournalMode>(
+        "PRAGMA journal_mode = WAL",
+      );
+      if (journal[0]?.journal_mode?.toLowerCase() !== "wal") {
+        return yield* Effect.fail(failure("P39_REPORT_DB_PRAGMA_MISMATCH"));
+      }
+      yield* sql.unsafe("PRAGMA synchronous = FULL");
+      yield* sql.unsafe("PRAGMA foreign_keys = ON");
+      yield* sql.unsafe("PRAGMA busy_timeout = 5000");
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          for (const statement of splitStatements(P39_REPORT_DATABASE_DDL)) {
+            yield* sql.unsafe(statement);
+          }
+          yield* sql.unsafe(
+            `PRAGMA application_id = ${P39_REPORT_APPLICATION_ID}`,
+          );
+          yield* sql.unsafe(`PRAGMA user_version = ${P39_REPORT_USER_VERSION}`);
+        }),
+      );
+    } else if (
+      appId !== P39_REPORT_APPLICATION_ID ||
+      userVersion !== P39_REPORT_USER_VERSION ||
+      journalBefore[0]?.journal_mode?.toLowerCase() !== "wal" ||
+      !hasExactSchema(objects)
+    ) {
+      return yield* Effect.fail(failure("P39_REPORT_DB_SCHEMA_UNSUPPORTED"));
     }
-    yield* sql.unsafe("PRAGMA synchronous = FULL");
+
+    const finalIdentity = yield* sql.unsafe<SidecarIdentity>(
+      "PRAGMA application_id",
+    );
+    const finalVersion = yield* sql.unsafe<UserVersion>("PRAGMA user_version");
+    const finalJournal = yield* sql.unsafe<JournalMode>("PRAGMA journal_mode");
+    const finalObjects = yield* sql.unsafe<SidecarObject>(
+      `SELECT type, name, sql FROM sqlite_master
+      WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
+    );
     yield* sql.unsafe("PRAGMA foreign_keys = ON");
     yield* sql.unsafe("PRAGMA busy_timeout = 5000");
-    yield* sql.withTransaction(
-      Effect.gen(function* () {
-        for (const statement of splitStatements(P39_REPORT_DATABASE_DDL)) {
-          yield* sql.unsafe(statement);
-        }
-        yield* sql.unsafe(
-          `PRAGMA application_id = ${P39_REPORT_APPLICATION_ID}`,
-        );
-        yield* sql.unsafe(`PRAGMA user_version = ${P39_REPORT_USER_VERSION}`);
-      }),
+    yield* sql.unsafe("PRAGMA synchronous = FULL");
+    const foreignKeys = yield* sql.unsafe<{ foreign_keys: number }>(
+      "PRAGMA foreign_keys",
     );
-  } else if (
-    appId !== P39_REPORT_APPLICATION_ID ||
-    userVersion !== P39_REPORT_USER_VERSION ||
-    journalBefore[0]?.journal_mode?.toLowerCase() !== "wal" ||
-    !hasExactSchema(objects)
-  ) {
-    return yield* Effect.fail(failure("P39_REPORT_DB_SCHEMA_UNSUPPORTED"));
-  }
-
-  const finalIdentity = yield* sql.unsafe<SidecarIdentity>(
-    "PRAGMA application_id",
-  );
-  const finalVersion = yield* sql.unsafe<UserVersion>("PRAGMA user_version");
-  const finalJournal = yield* sql.unsafe<JournalMode>("PRAGMA journal_mode");
-  const finalObjects = yield* sql.unsafe<SidecarObject>(
-    `SELECT type, name, sql FROM sqlite_master
-      WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
-  );
-  yield* sql.unsafe("PRAGMA foreign_keys = ON");
-  yield* sql.unsafe("PRAGMA busy_timeout = 5000");
-  yield* sql.unsafe("PRAGMA synchronous = FULL");
-  const foreignKeys = yield* sql.unsafe<{ foreign_keys: number }>(
-    "PRAGMA foreign_keys",
-  );
-  const busyTimeout = yield* sql.unsafe<{ timeout: number }>(
-    "PRAGMA busy_timeout",
-  );
-  const synchronous = yield* sql.unsafe<Synchronous>("PRAGMA synchronous");
-  if (
-    Number(finalIdentity[0]?.application_id) !== P39_REPORT_APPLICATION_ID ||
-    Number(finalVersion[0]?.user_version) !== P39_REPORT_USER_VERSION ||
-    finalJournal[0]?.journal_mode?.toLowerCase() !== "wal" ||
-    !hasExactSchema(finalObjects) ||
-    Number(foreignKeys[0]?.foreign_keys) !== 1 ||
-    Number(busyTimeout[0]?.timeout) !== 5000 ||
-    Number(synchronous[0]?.synchronous) !== 2
-  ) {
-    return yield* Effect.fail(failure("P39_REPORT_DB_PRAGMA_MISMATCH"));
-  }
-});
+    const busyTimeout = yield* sql.unsafe<{ timeout: number }>(
+      "PRAGMA busy_timeout",
+    );
+    const synchronous = yield* sql.unsafe<Synchronous>("PRAGMA synchronous");
+    if (
+      Number(finalIdentity[0]?.application_id) !== P39_REPORT_APPLICATION_ID ||
+      Number(finalVersion[0]?.user_version) !== P39_REPORT_USER_VERSION ||
+      finalJournal[0]?.journal_mode?.toLowerCase() !== "wal" ||
+      !hasExactSchema(finalObjects) ||
+      Number(foreignKeys[0]?.foreign_keys) !== 1 ||
+      Number(busyTimeout[0]?.timeout) !== 5000 ||
+      Number(synchronous[0]?.synchronous) !== 2
+    ) {
+      return yield* Effect.fail(failure("P39_REPORT_DB_PRAGMA_MISMATCH"));
+    }
+  });
 
 /** Initialize or validate the operator sidecar using the production SQLite
  * Node VFS. Call and close this layer before opening the primary connection. */
@@ -381,13 +415,51 @@ export const validateP39ReportSidecarDatabase = (
   primaryFilename: string,
   sidecarFilename: string,
   protectedStoreFilenames: ReadonlyArray<string> = [],
+  onPhase?: ReportValidationPhaseObserver,
+): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError> =>
+  validateP39ReportSidecarDatabaseInternal(
+    primaryFilename,
+    sidecarFilename,
+    protectedStoreFilenames,
+    true,
+    onPhase,
+  );
+
+/** Validate an already-created report sidecar without initializing or
+ * substituting missing/empty evidence. Intended for resume-copy admission. */
+export const validateP39ExistingReportSidecarDatabase = (
+  primaryFilename: string,
+  sidecarFilename: string,
+  protectedStoreFilenames: ReadonlyArray<string> = [],
+  onPhase?: ReportValidationPhaseObserver,
+): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError> =>
+  validateP39ReportSidecarDatabaseInternal(
+    primaryFilename,
+    sidecarFilename,
+    protectedStoreFilenames,
+    false,
+    onPhase,
+  );
+
+const validateP39ReportSidecarDatabaseInternal = (
+  primaryFilename: string,
+  sidecarFilename: string,
+  protectedStoreFilenames: ReadonlyArray<string>,
+  allowInitialize: boolean,
+  onPhase?: ReportValidationPhaseObserver,
 ): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError> =>
   Effect.gen(function* () {
+    onPhase?.("report-database-path-revalidation");
     const path = yield* validateP39ReportSidecarPath(
       primaryFilename,
       sidecarFilename,
       protectedStoreFilenames,
+      onPhase,
     );
+    onPhase?.("report-existing-new-sidecar-policy");
+    if (!existsSync(path) && !allowInitialize) {
+      return yield* Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
+    }
     if (!existsSync(path)) {
       try {
         const descriptor = openSync(path, "wx", 0o600);
@@ -406,13 +478,15 @@ export const validateP39ReportSidecarDatabase = (
         }
       }
     }
+    onPhase?.("report-initial-file-identity");
     const originalIdentity = fileIdentity(path);
     if (typeof originalIdentity !== "string") {
       return yield* Effect.fail(originalIdentity);
     }
+    onPhase?.("report-profile-open-init-readback");
     yield* Effect.scoped(
       Effect.provide(
-        p39ReportSetup.pipe(
+        p39ReportSetup(allowInitialize).pipe(
           Effect.mapError((cause: SqlError | P39MaintenanceFailure) =>
             typeof cause === "object" &&
             cause !== null &&
@@ -425,10 +499,12 @@ export const validateP39ReportSidecarDatabase = (
         SqliteClient.layer({ filename: path, disableWAL: true }),
       ),
     );
+    onPhase?.("report-final-path-and-identity");
     const finalPath = yield* validateP39ReportSidecarPath(
       primaryFilename,
       path,
       protectedStoreFilenames,
+      onPhase,
     );
     const finalIdentity = fileIdentity(finalPath);
     if (typeof finalIdentity !== "string") {

@@ -36,6 +36,7 @@ import {
   readSchemaUpgradeManifest,
   readUserVersion,
   reserveNewFile,
+  type SchemaUpgradeMaintenancePhase,
   type SchemaUpgradeManifest,
   type SchemaUpgradeMode,
   type SchemaUpgradePathIdentity,
@@ -52,6 +53,117 @@ const PINNED_DESCRIPTOR_HASHES: Readonly<Record<number, string>> = {
   40: "3b06ee795277152a3e09a97679c4017b5c7ad3d1009f8cd14b04329a2be002aa",
   41: "d3ad9133ea28150a271c9867ae390c1f6ba0692f9e6b449817b8aeae2aa1dfed",
   42: "a0294a5db440e402a6c32b5a2b596502e059642431157eadcb6be7212224e5aa",
+};
+
+/** Offline resume may hold the permit while checking trusted file provenance
+ * and applying several schema transactions. A competing resume can wait up to
+ * the CLI qualification window; lock timeout still fails closed. Runtime
+ * callers retain the P39 default. */
+const CLI_MAINTENANCE_PERMIT_BUSY_TIMEOUT_MS = 1_200_000;
+const MAX_CLI_FAILURE_DETAIL_LENGTH = 512;
+
+const safeErrorLabel = (value: unknown): string | undefined =>
+  typeof value === "string"
+    ? value.replace(/[^A-Za-z0-9_.-]/gu, "?").slice(0, 80)
+    : undefined;
+
+const safeSchemaRefusalMessage = (message: string): string =>
+  message
+    .replace(
+      /\b(secret|token|password|api[_-]?key|authorization)\b\s*[:=]\s*[^\s,;]+/giu,
+      "$1=<redacted>",
+    )
+    .replace(/(?:[A-Za-z]:[\\/]|\\\\)[^\s"'<>|]+/gu, "<path>")
+    .replace(/\/(?:[^/\s]+\/)*[^/\s]+/gu, "<path>")
+    .slice(0, 180);
+
+export const formatSchemaUpgradeCliFailure = (
+  cause: unknown,
+  depth = 0,
+): string => {
+  if (cause instanceof Error) {
+    const name =
+      safeErrorLabel(
+        cause instanceof SchemaUpgradeRefusal ? cause._tag : cause.name,
+      ) ?? "Error";
+    const message =
+      cause instanceof SchemaUpgradeRefusal
+        ? safeSchemaRefusalMessage(cause.message)
+        : undefined;
+    const diagnostic =
+      cause instanceof SchemaUpgradeRefusal ? cause.diagnostic : undefined;
+    const labels = [
+      name,
+      safeErrorLabel(diagnostic?.phase),
+      safeErrorLabel(diagnostic?.code),
+      safeErrorLabel(diagnostic?.reasonCode),
+    ].filter((field): field is string => field !== undefined);
+    const summary = labels.join("/");
+    return [summary, message]
+      .filter(Boolean)
+      .join(": ")
+      .slice(0, MAX_CLI_FAILURE_DETAIL_LENGTH);
+  }
+  if (depth > 4) return "[nested failure]";
+  if (typeof cause === "object" && cause !== null) {
+    const fields = cause as Record<string, unknown>;
+    const identity = [fields._tag, fields.code, fields.reasonCode]
+      .map(safeErrorLabel)
+      .filter((field): field is string => field !== undefined)
+      .join("/");
+    const message =
+      fields._tag === "SchemaUpgradeRefusal" &&
+      typeof fields.message === "string"
+        ? safeSchemaRefusalMessage(fields.message)
+        : undefined;
+    const nested =
+      "cause" in fields
+        ? formatSchemaUpgradeCliFailure(fields.cause, depth + 1)
+        : undefined;
+    return (
+      [identity || "structured failure", message, nested]
+        .filter((field): field is string => field !== undefined && field !== "")
+        .join(": ")
+        .slice(0, MAX_CLI_FAILURE_DETAIL_LENGTH) || "unknown structured failure"
+    );
+  }
+  return typeof cause === "string" ? "string failure" : String(cause);
+};
+
+const findP39FailureCode = (
+  cause: unknown,
+  depth = 0,
+): { code: string; reasonCode?: string } | undefined => {
+  if (depth > 4 || typeof cause !== "object" || cause === null) {
+    return undefined;
+  }
+  const fields = cause as Record<string, unknown>;
+  if (
+    fields._tag === "P39MaintenanceFailure" &&
+    typeof fields.code === "string" &&
+    /^P39_[A-Z0-9_]{1,72}$/u.test(fields.code)
+  ) {
+    const nested = findP39FailureCode(fields.cause, depth + 1);
+    return {
+      code: fields.code,
+      ...(nested?.reasonCode === undefined
+        ? {}
+        : { reasonCode: nested.reasonCode }),
+    };
+  }
+  if (
+    fields._tag === "P39UnsupportedDeploymentDiagnostic" &&
+    typeof fields.reasonCode === "string" &&
+    /^P39_[A-Z0-9_]{1,72}$/u.test(fields.reasonCode)
+  ) {
+    return {
+      code: "P39_UNSUPPORTED_DEPLOYMENT",
+      reasonCode: fields.reasonCode,
+    };
+  }
+  return "cause" in fields
+    ? findP39FailureCode(fields.cause, depth + 1)
+    : undefined;
 };
 
 const pinnedDescriptorHash = (version: number): string =>
@@ -73,7 +185,12 @@ export interface SchemaUpgradeArguments {
 /** Process-local fault point used only by the offline CLI qualification suite.
  * It is never populated by the command-line parser. */
 export interface SchemaUpgradeTestHooks {
+  readonly beforeDatabaseTransaction?: (version: 39 | 40 | 41 | 42) => void;
   readonly afterDatabaseCommit?: (version: 39 | 40 | 41 | 42) => void;
+  readonly onMaintenanceFailure?: (
+    phase: SchemaUpgradeMaintenancePhase,
+    cause: unknown,
+  ) => void;
 }
 
 export const parseSchemaUpgradeArguments = (
@@ -526,6 +643,7 @@ const createInitialManifest = (
       version,
       descriptorHashesThrough(version),
     ),
+    initialSchemaSignature: sqliteSchemaSignature(values.target.canonicalPath),
     initialTargetDigest: digest,
     report,
   });
@@ -791,7 +909,14 @@ const validateResume = async (
       );
     }
     assertSourcePrefix(sourceVersion);
-    await verifySourcePrefixSchema(source.canonicalPath, sourceVersion);
+    if (
+      sqliteSchemaSignature(source.canonicalPath) !==
+      header.initialSchemaSignature
+    ) {
+      throw new SchemaUpgradeRefusal(
+        "original copy source schema signature differs from the initial manifest",
+      );
+    }
   } finally {
     sourceDb.close();
   }
@@ -1235,6 +1360,7 @@ const runP40ToP42 = (
         preview.digest,
         preview.signature,
       );
+      hooks.beforeDatabaseTransaction?.(version as 40 | 41 | 42);
       yield* primary.withTransaction(
         Effect.gen(function* () {
           const check = yield* primary.unsafe<{ user_version: number }>(
@@ -1328,56 +1454,59 @@ const runP40ToP42 = (
 const runP39AndSuffix = async (
   targetPath: string,
   reportPath: string,
-  manifestInput: SchemaUpgradeManifest,
-  source?: {
-    readonly path: string;
-    readonly identity: SchemaUpgradePathIdentity;
-    readonly version: number;
-    readonly digest: string;
-  },
+  prepareUnderPermit: () => Promise<{
+    readonly manifest: SchemaUpgradeManifest;
+    readonly source?: {
+      readonly path: string;
+      readonly identity: SchemaUpgradePathIdentity;
+      readonly version: number;
+      readonly digest: string;
+    };
+  }>,
   hooks: SchemaUpgradeTestHooks = {},
-): Promise<SchemaUpgradeManifest> => {
-  const beforeVersion = readUserVersion(targetPath);
-  const previews: PreviewPlan =
-    beforeVersion === 42
-      ? {
-          prefixes: new Map(),
-          p39Blocked: false,
-          sourceDigest: logicalSqliteDigest(targetPath),
-        }
-      : await previewCommittedPrefixes(targetPath);
+  reportMustAlreadyExist = false,
+): Promise<void> => {
+  const previewVersion = readUserVersion(targetPath);
+  let previews: PreviewPlan;
+  try {
+    previews =
+      previewVersion === 42
+        ? {
+            prefixes: new Map(),
+            p39Blocked: false,
+            sourceDigest: logicalSqliteDigest(targetPath),
+          }
+        : await previewCommittedPrefixes(targetPath);
+  } catch (cause) {
+    hooks.onMaintenanceFailure?.("schema-prefix-preview", cause);
+    throw cause;
+  }
   const p39Hashes = P39_MAINTENANCE_MIGRATIONS.filter(
-    ({ id }) => id > beforeVersion && id <= 39,
+    ({ id }) => id > previewVersion && id <= 39,
   ).map(({ id }) => {
     validateDescriptorPin(id);
     return pinnedDescriptorHash(id);
   });
-  let prepared = manifestInput;
-  const stepId = "p39-0037-0039";
-  let p39PreparedRecord:
-    | {
-        readonly preview: PreviewPrefix;
-        readonly hashes: ReadonlyArray<string>;
-      }
-    | undefined;
-  if (beforeVersion < 39) {
-    const preview = previews.prefixes.get(39) ?? {
-      // The scratch P39 gate found the same blocker snapshot. This sentinel
-      // can only support retry from the untouched source prefix; the target's
-      // immutable P39 report permanently denies any advanced-state recovery.
-      digest: previews.sourceDigest,
-      signature: prefixSignatureForDigest(
-        39,
-        descriptorHashesThrough(39),
-        previews.sourceDigest,
-      ),
-    };
-    p39PreparedRecord = { preview, hashes: p39Hashes };
-  } else if (beforeVersion > 42) {
+  if (previewVersion > 42) {
     throw new SchemaUpgradeRefusal(
-      `offline schema version ${beforeVersion} is unsupported`,
+      `offline schema version ${previewVersion} is unsupported`,
     );
   }
+  let prepared: SchemaUpgradeManifest | undefined;
+  let source:
+    | {
+        readonly path: string;
+        readonly identity: SchemaUpgradePathIdentity;
+        readonly version: number;
+        readonly digest: string;
+      }
+    | undefined;
+  let versionAtPermit: number | undefined;
+  let skipP39 = false;
+  let isolationReportKey: string | undefined;
+  let failurePhase: SchemaUpgradeMaintenancePhase =
+    "writer-lock-initialization";
+  const stepId = "p39-0037-0039";
   try {
     await Effect.runPromise(
       runP39SqliteMaintenanceWithPermit(
@@ -1385,9 +1514,15 @@ const runP39AndSuffix = async (
           primaryFilename: targetPath,
           sidecarFilename: reportPath,
           protectedStoreFilenames: protectedApplicationDatabases(),
+          writerLockBusyTimeoutMs: CLI_MAINTENANCE_PERMIT_BUSY_TIMEOUT_MS,
         },
         (primary) => {
-          if (beforeVersion < 39) {
+          if (prepared === undefined || versionAtPermit === undefined) {
+            throw new SchemaUpgradeRefusal(
+              "manifest preparation did not complete under MaintenanceExclusive",
+            );
+          }
+          if (!skipP39) {
             const preview = previews.prefixes.get(39);
             if (preview === undefined)
               throw new SchemaUpgradeRefusal(
@@ -1408,7 +1543,7 @@ const runP39AndSuffix = async (
               prepared,
               targetPath,
               stepId,
-              beforeVersion,
+              versionAtPermit,
               39,
               p39Hashes,
             );
@@ -1430,78 +1565,163 @@ const runP39AndSuffix = async (
           );
         },
         {
-          p39AlreadyCommitted: beforeVersion >= 39,
-          ...(p39PreparedRecord === undefined
+          reportMustAlreadyExist,
+          onPhase: (phase) => {
+            failurePhase = phase;
+          },
+          beforeMaintenance: () =>
+            Effect.promise(async () => {
+              failurePhase = "manifest-validation";
+              const context = await prepareUnderPermit();
+              prepared = context.manifest;
+              source = context.source;
+              versionAtPermit = readUserVersion(targetPath);
+              const digestAtPermit = logicalSqliteDigest(targetPath);
+              const progress = manifestStepState(prepared);
+              if (
+                progress.isolated ||
+                versionAtPermit !== progress.version ||
+                digestAtPermit !== progress.lastDigest
+              ) {
+                throw new SchemaUpgradeRefusal(
+                  "target prefix differs from its validated manifest head under MaintenanceExclusive",
+                );
+              }
+              if (
+                versionAtPermit === previewVersion &&
+                digestAtPermit !== previews.sourceDigest
+              ) {
+                throw new SchemaUpgradeRefusal(
+                  "target logical digest changed while waiting for MaintenanceExclusive",
+                );
+              }
+              skipP39 = versionAtPermit >= 39;
+              return skipP39;
+            }),
+          ...(previewVersion >= 39
             ? {}
             : {
                 beforeP39: () =>
                   Effect.sync(() => {
-                    const currentVersion = readUserVersion(targetPath);
                     if (
-                      currentVersion !== beforeVersion ||
+                      prepared === undefined ||
+                      versionAtPermit !== previewVersion ||
                       logicalSqliteDigest(targetPath) !== previews.sourceDigest
                     )
                       throw new SchemaUpgradeRefusal(
-                        "target prefix changed while waiting for the maintenance-exclusive permit",
+                        "target prefix/manifest changed before P39 preparation",
                       );
-                    const { preview, hashes } = p39PreparedRecord as {
-                      readonly preview: PreviewPrefix;
-                      readonly hashes: ReadonlyArray<string>;
+                    const preview = previews.prefixes.get(39) ?? {
+                      digest: previews.sourceDigest,
+                      signature: prefixSignatureForDigest(
+                        39,
+                        descriptorHashesThrough(39),
+                        previews.sourceDigest,
+                      ),
                     };
                     prepared = appendPrepared(
                       prepared,
                       targetPath,
                       stepId,
-                      beforeVersion,
+                      previewVersion,
                       39,
-                      hashes,
+                      p39Hashes,
                       preview.digest,
                       preview.signature,
                     );
+                    hooks.beforeDatabaseTransaction?.(39);
+                  }),
+              }),
+          ...(previewVersion >= 39
+            ? {}
+            : {
+                onP39Blocked: () =>
+                  Effect.sync(() => {
+                    if (prepared === undefined) {
+                      throw new SchemaUpgradeRefusal(
+                        "P39 blocker has no prepared provenance record",
+                      );
+                    }
+                    const reportIdentity = existingPathIdentity(reportPath);
+                    const reports = verifyP39ReportEvidence(
+                      reportPath,
+                      reportIdentity,
+                    );
+                    const fingerprint = sha256Hex(resolve(targetPath));
+                    const blocker = reports.find((report) => {
+                      try {
+                        return (
+                          (
+                            JSON.parse(report.reportJson) as {
+                              databaseFingerprint?: string;
+                            }
+                          ).databaseFingerprint === fingerprint
+                        );
+                      } catch {
+                        return false;
+                      }
+                    });
+                    if (blocker === undefined) {
+                      throw new SchemaUpgradeRefusal(
+                        "P39 returned isolation without a matching durable report",
+                      );
+                    }
+                    appendSchemaUpgradeRecord(prepared, {
+                      kind: "Isolated",
+                      step: stepId,
+                      observedUserVersion: readUserVersion(targetPath),
+                      reportKey: blocker.reportKey,
+                      reportContentHash: blocker.contentHash,
+                      target: existingPathIdentity(targetPath),
+                    });
+                    isolationReportKey = blocker.reportKey;
                   }),
               }),
         },
       ),
     );
-    return prepared;
   } catch (cause) {
+    hooks.onMaintenanceFailure?.(failurePhase, cause);
     if (source !== undefined) assertSourceUnchanged(source);
-    let rows: ReturnType<typeof verifyP39ReportEvidence>;
-    try {
-      rows = verifyP39ReportEvidence(
-        reportPath,
-        existingPathIdentity(reportPath),
-      );
-    } catch {
-      throw cause;
-    }
-    const fingerprint = sha256Hex(resolve(targetPath));
-    const blocker = rows.find((row) => {
-      try {
-        return (
-          (JSON.parse(row.reportJson) as { databaseFingerprint?: string })
-            .databaseFingerprint === fingerprint
+    const p39Failure = findP39FailureCode(cause);
+    if (isolationReportKey !== undefined) {
+      if (p39Failure?.code === "P39_WRITER_LOCK_RELEASE_FAILED") {
+        throw new SchemaUpgradeRefusal(
+          "P39 maintenance permit release failed",
+          { phase: failurePhase, code: p39Failure.code },
         );
-      } catch {
-        return false;
       }
-    });
-    if (blocker !== undefined) {
-      const version = readUserVersion(targetPath);
-      appendSchemaUpgradeRecord(prepared, {
-        kind: "Isolated",
-        step: stepId,
-        observedUserVersion: version,
-        reportKey: blocker.reportKey,
-        reportContentHash: blocker.contentHash,
-        target: existingPathIdentity(targetPath),
-      });
       throw new SchemaUpgradeRefusal(
-        `P39 permanently isolated this disposable target (report ${blocker.reportKey})`,
+        `P39 permanently isolated this disposable target (report ${isolationReportKey})`,
+        {
+          phase: failurePhase,
+          code: "P39_LEGACY_DB_ISOLATED",
+          ...(p39Failure?.code === undefined
+            ? {}
+            : { reasonCode: p39Failure.code }),
+        },
+      );
+    }
+    if (p39Failure !== undefined) {
+      throw new SchemaUpgradeRefusal(
+        `P39 maintenance failed (${p39Failure.code})`,
+        {
+          phase: failurePhase,
+          code: p39Failure.code,
+          ...(p39Failure.reasonCode === undefined
+            ? {}
+            : { reasonCode: p39Failure.reasonCode }),
+        },
       );
     }
     throw cause;
   }
+  if (prepared === undefined) {
+    throw new SchemaUpgradeRefusal(
+      "schema upgrade completed without provenance evidence",
+    );
+  }
+  return;
 };
 
 export const runSchemaUpgrade = async (
@@ -1510,57 +1730,65 @@ export const runSchemaUpgrade = async (
 ): Promise<void> => {
   const paths = validatePathSet(args);
   if (args.mode === "resume-copy") {
-    const resumed = await validateResume(args, paths);
-    const sourceInfo = {
-      path: resumed.source.canonicalPath,
-      identity: resumed.source,
-      version: Number(resumed.manifest.header.sourceUserVersion),
-      digest: String(resumed.manifest.header.sourceDigest),
-    };
     await runP39AndSuffix(
-      resumed.target.canonicalPath,
-      resumed.report.canonicalPath,
-      resumed.manifest,
-      sourceInfo,
+      paths.targetPath,
+      paths.reportPath,
+      async () => {
+        const resumed = await validateResume(args, paths);
+        return {
+          manifest: resumed.manifest,
+          source: {
+            path: resumed.source.canonicalPath,
+            identity: resumed.source,
+            version: Number(resumed.manifest.header.sourceUserVersion),
+            digest: String(resumed.manifest.header.sourceDigest),
+          },
+        };
+      },
       testHooks,
+      true,
     );
     return;
   }
 
   const created = await createOrCopyTarget(args, paths);
-  let manifest = createInitialManifest(args, created);
-  if (args.mode === "copy") {
-    const source = created.source;
-    if (
-      source === null ||
-      created.sourceVersion === null ||
-      created.sourceDigest === null
-    )
-      throw new SchemaUpgradeRefusal("copy source evidence was not captured");
-    manifest = appendSchemaUpgradeRecord(manifest, {
-      kind: "BackupCompleted",
-      sourceDigest: created.sourceDigest,
-      targetDigest: logicalSqliteDigest(created.target.canonicalPath),
-      source: created.source,
-      target: created.target,
-    });
-  }
-  const sourceInfo =
-    created.source === null ||
-    created.sourceVersion === null ||
-    created.sourceDigest === null
-      ? undefined
-      : {
-          path: created.source.canonicalPath,
-          identity: created.source,
-          version: created.sourceVersion,
-          digest: created.sourceDigest,
-        };
   await runP39AndSuffix(
     created.target.canonicalPath,
     created.report.canonicalPath,
-    manifest,
-    sourceInfo,
+    async () => {
+      let manifest = createInitialManifest(args, created);
+      if (args.mode === "copy") {
+        const source = created.source;
+        if (
+          source === null ||
+          created.sourceVersion === null ||
+          created.sourceDigest === null
+        ) {
+          throw new SchemaUpgradeRefusal(
+            "copy source evidence was not captured",
+          );
+        }
+        manifest = appendSchemaUpgradeRecord(manifest, {
+          kind: "BackupCompleted",
+          sourceDigest: created.sourceDigest,
+          targetDigest: logicalSqliteDigest(created.target.canonicalPath),
+          source: created.source,
+          target: created.target,
+        });
+      }
+      const source =
+        created.source === null ||
+        created.sourceVersion === null ||
+        created.sourceDigest === null
+          ? undefined
+          : {
+              path: created.source.canonicalPath,
+              identity: created.source,
+              version: created.sourceVersion,
+              digest: created.sourceDigest,
+            };
+      return { manifest, ...(source === undefined ? {} : { source }) };
+    },
     testHooks,
   );
 };
@@ -1579,7 +1807,7 @@ const main = async (): Promise<void> => {
     await runSchemaUpgrade(args);
     process.stdout.write("Schema upgrade completed at version 42.\n");
   } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
+    const detail = formatSchemaUpgradeCliFailure(cause);
     process.stderr.write(`Schema upgrade refused or failed: ${detail}\n`);
     process.exitCode = 1;
   }

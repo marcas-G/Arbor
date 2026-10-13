@@ -12,7 +12,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { sha256Hex } from "@arbor/ports";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
-import { Context, Effect, Layer } from "effect";
+import { Context, Duration, Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqliteAdapterError } from "./errors.js";
 import { sqliteAdapterError } from "./errors.js";
@@ -404,9 +404,6 @@ export const p39WriterLockLayer = (
           ),
         );
       }
-      yield* sql.unsafe(
-        `PRAGMA busy_timeout = ${Math.max(0, Math.floor(busyTimeoutMs))}`,
-      );
       yield* sql.unsafe("PRAGMA synchronous = FULL");
       yield* sql.unsafe("PRAGMA foreign_keys = ON");
       const existing = yield* sql.unsafe<{ name: string }>(
@@ -519,7 +516,13 @@ export const p39WriterLockLayer = (
   );
   return Layer.provide(
     lockClient,
-    SqliteClient.layer({ filename, disableWAL: true }),
+    SqliteClient.layer({
+      filename,
+      disableWAL: true,
+      // SqliteClient applies this immediately after opening DatabaseSync,
+      // before journal/schema probes can encounter a competing exclusive lock.
+      busyTimeout: Duration.millis(Math.max(0, Math.floor(busyTimeoutMs))),
+    }),
   );
 };
 
