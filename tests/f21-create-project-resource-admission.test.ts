@@ -558,11 +558,9 @@ describe("F21 CreateProject v2 host resource admission", () => {
       expect(profileResolveCalls).toBe(3);
       expect(responses.forgedReplay).toEqual(responses.forged);
       expect(responses.repairedWithSameId).toMatchObject({
-        ok: true,
-        body: {
-          resolution: "TerminalRejected",
-          rejection: "IdempotencyConflict",
-        },
+        ok: false,
+        status: 409,
+        problem: { code: "command/idempotency-conflict" },
       });
     },
   );
@@ -777,11 +775,9 @@ describe("F21 CreateProject v2 host resource admission", () => {
       expect(outcome.before).toEqual(outcome.after);
       expect(outcome.rawV1).toMatchObject({ ok: false, status: 400 });
       expect(outcome.v2Candidate).toMatchObject({
-        ok: true,
-        body: {
-          resolution: "TerminalRejected",
-          rejection: "IdempotencyConflict",
-        },
+        ok: false,
+        status: 409,
+        problem: { code: "command/idempotency-conflict" },
       });
       expect(outcome.counts).toMatchObject({
         projects: 0,

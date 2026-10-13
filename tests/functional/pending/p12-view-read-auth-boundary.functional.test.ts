@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Cause, Effect, Exit } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -325,6 +325,7 @@ describe("pending P12 view read authentication boundary", () => {
               const remoteWithoutAuth = yield* start({
                 http: localHttp,
                 host: "0.0.0.0",
+                configuredAuthenticator: authenticator,
               });
               handles.push(remoteWithoutAuth);
               const remoteWithAuth = yield* start({
@@ -967,8 +968,19 @@ describe("pending P12 view read authentication boundary", () => {
                     pollIntervalMs: 60_000,
                   }),
                 );
-              const wildcard = yield* start("0.0.0.0");
-              handles.push(wildcard);
+              const wildcardAttempt = yield* Effect.exit(start("0.0.0.0"));
+              const wildcardCause = Exit.isFailure(wildcardAttempt)
+                ? Cause.squash(wildcardAttempt.cause)
+                : null;
+              const wildcardListenerRejection =
+                wildcardCause instanceof Error
+                  ? wildcardCause.message
+                  : wildcardCause === null
+                    ? null
+                    : String(wildcardCause);
+              if (Exit.isSuccess(wildcardAttempt)) {
+                yield* Effect.promise(() => wildcardAttempt.value.close());
+              }
               const loopback = yield* start("127.0.0.1");
               handles.push(loopback);
               const request = async (
@@ -1001,24 +1013,6 @@ describe("pending P12 view read authentication boundary", () => {
               };
 
               const observations = yield* Effect.promise(async () => {
-                const wildcardProjects = await request(
-                  wildcard.port,
-                  "/projects",
-                );
-                const wildcardViews = await request(
-                  wildcard.port,
-                  "/views/responsibility-tree",
-                  "POST",
-                  { projectId: p7Project },
-                );
-                const wildcardProgress = await request(
-                  wildcard.port,
-                  `/conversation-progress/${fallbackMessageId}`,
-                );
-                const wildcardCatalog = await request(
-                  wildcard.port,
-                  "/project-resources",
-                );
                 const wildcardSourceCalls = {
                   projectList: projectListCalls,
                   profileList: profileListCalls,
@@ -1044,20 +1038,6 @@ describe("pending P12 view read authentication boundary", () => {
                   loopback.port,
                   "/project-resources",
                 );
-                const wildcardSocket = await openWebSocket(wildcard.port);
-                let wildcardSocketFrame: ReturnType<
-                  typeof sanitizeWebSocketMessage
-                > | null = null;
-                if (wildcardSocket.opened) {
-                  const message = nextWebSocketMessage(wildcardSocket.socket);
-                  wildcard.fanout.publishWatermark(883);
-                  const rawMessage = await message;
-                  wildcardSocketFrame =
-                    rawMessage === null
-                      ? null
-                      : sanitizeWebSocketMessage(rawMessage);
-                  wildcardSocket.socket.close();
-                }
                 const loopbackSocket = await openWebSocket(loopback.port);
                 let loopbackSocketResponse: ReturnType<
                   typeof sanitizeWebSocketMessage
@@ -1091,19 +1071,11 @@ describe("pending P12 view read authentication boundary", () => {
                   loopbackSocket.socket.close();
                 }
                 return {
-                  wildcardProjects,
-                  wildcardViews,
-                  wildcardProgress,
-                  wildcardCatalog,
                   wildcardSourceCalls,
                   loopbackProjects,
                   loopbackViews,
                   loopbackProgress,
                   loopbackCatalog,
-                  wildcardSocket: {
-                    opened: wildcardSocket.opened,
-                    frame: wildcardSocketFrame,
-                  },
                   loopbackSocket: {
                     opened: loopbackSocket.opened,
                     response: loopbackSocketResponse,
@@ -1117,6 +1089,8 @@ describe("pending P12 view read authentication boundary", () => {
                   boundary.authenticator !== undefined,
                 compositionAuthenticatorConfigured:
                   boundary.authenticatorConfigured,
+                wildcardListenerRejected: Exit.isFailure(wildcardAttempt),
+                wildcardListenerRejection,
                 ...observations,
               };
             }),
@@ -1127,13 +1101,10 @@ describe("pending P12 view read authentication boundary", () => {
 
       expect(report.compositionFallbackAuthenticatorPresent).toBe(true);
       expect(report.compositionAuthenticatorConfigured).toBe(false);
-      expect(report.wildcardProjects.status).toBe(503);
-      expect(report.wildcardViews.status).toBe(503);
-      expect(report.wildcardProgress).toMatchObject({
-        status: 503,
-        eventStream: false,
-      });
-      expect(report.wildcardCatalog.status).toBe(503);
+      expect(report.wildcardListenerRejected).toBe(true);
+      expect(report.wildcardListenerRejection).toBe(
+        "web transport: a non-loopback listener requires an explicitly configured authenticator",
+      );
       expect(report.wildcardSourceCalls).toEqual({
         projectList: 0,
         profileList: 0,
@@ -1147,10 +1118,6 @@ describe("pending P12 view read authentication boundary", () => {
         eventStream: true,
       });
       expect(report.loopbackCatalog.status).toBe(200);
-      expect(report.wildcardSocket).toEqual({
-        opened: false,
-        frame: null,
-      });
       expect(report.loopbackSocket).toEqual({
         opened: true,
         response: { kind: "response", ok: true, status: 200 },
