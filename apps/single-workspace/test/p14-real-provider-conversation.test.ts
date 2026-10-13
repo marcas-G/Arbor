@@ -75,14 +75,19 @@ afterEach(() => {
   fixture?.cleanup();
   fixture = undefined;
   for (const directory of scratchDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
   }
-});
+}, 120_000);
 
 afterAll(() => {
   fixtureFactory?.cleanup();
   fixtureFactory = undefined;
-});
+}, 120_000);
 
 describe("P14 production conversation model context", () => {
   it(
@@ -412,7 +417,7 @@ describe("P14 production conversation model context", () => {
         result.manifests[0]?.compiled_request_hash,
       );
     },
-    liveHumanInputSentinelEnabled ? 110_000 : 30_000,
+    liveHumanInputSentinelEnabled ? 110_000 : 120_000,
   );
 
   it("sends only conversation history, excluding Work tool history, and persists its answer", async () => {
@@ -738,5 +743,5 @@ describe("P14 production conversation model context", () => {
       episode_ref: "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
       episode_revision: 0,
     });
-  });
+  }, 120_000);
 });

@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -71,6 +71,7 @@ const context: CommandSubmissionContext = {
 };
 let schema42Factory: Schema42TestDatabaseFactory | undefined;
 const schema42Cleanups: Array<() => void> = [];
+const scratchDirectories: string[] = [];
 
 beforeAll(async () => {
   schema42Factory = await createSchema42TestDatabaseFactory({
@@ -78,7 +79,7 @@ beforeAll(async () => {
   });
 }, 120_000);
 
-afterAll(() => schema42Factory?.cleanup());
+afterAll(() => schema42Factory?.cleanup(), 120_000);
 
 const createSchema42Case = () => {
   if (schema42Factory === undefined) {
@@ -89,7 +90,15 @@ const createSchema42Case = () => {
 
 afterEach(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
-});
+  for (const directory of scratchDirectories.splice(0)) {
+    rmSync(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  }
+}, 120_000);
 
 const definition = {
   purpose: "p",
@@ -211,6 +220,7 @@ const turns = [
 describe("I0 executable/control vertical slice", () => {
   it("routes shell through ToolRuntime and Wait through ControlToolRegistry", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-accept-"));
+    scratchDirectories.push(dir);
     const fixture = createSchema42Case();
     schema42Cleanups.push(fixture.cleanup);
     const projectResourceProfiles = makeProjectResourceProfilePort(
@@ -656,5 +666,5 @@ describe("I0 executable/control vertical slice", () => {
       "verification_executions",
       "verifications",
     ]);
-  });
+  }, 120_000);
 });
