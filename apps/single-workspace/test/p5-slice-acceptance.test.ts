@@ -316,6 +316,100 @@ describe("I0 executable/control vertical slice", () => {
             principal,
           );
 
+          const settlementRows = yield* sql.unsafe<{
+            settlement_kind: string | null;
+            settlement_tag: string | null;
+            reconciliation_tag: string | null;
+            invocation_ref_count: number | null;
+          }>(
+            `SELECT settlement_kind,
+                    json_extract(settlement_json, '$._tag') AS settlement_tag,
+                    json_extract(settlement_json, '$.reconciliation._tag') AS reconciliation_tag,
+                    json_array_length(settlement_json, '$.reconciliation.invocationRefs') AS invocation_ref_count
+               FROM executions WHERE execution_id = ?`,
+            [exe1],
+          );
+          const toolEvidenceRows = yield* sql.unsafe<{
+            invocation_id: string;
+            tool_name: string;
+            effect_admission_state: string;
+            settlement_kind: string | null;
+            settlement_tag: string | null;
+            observation_format_version: string | null;
+            observation_tag: string | null;
+            observation_body: string | null;
+          }>(
+            `SELECT invocation_id, tool_name, effect_admission_state,
+                    settlement_kind,
+                    json_extract(settlement_json, '$._tag') AS settlement_tag,
+                    observation_format_version,
+                    json_extract(CAST(observation_json AS TEXT), '$._tag') AS observation_tag,
+                    substr(json_extract(CAST(observation_json AS TEXT), '$.observation.text'), 1, 120) AS observation_body
+               FROM tool_invocations WHERE execution_id = ? ORDER BY invocation_id`,
+            [exe1],
+          );
+          const actionResultRows = yield* sql.unsafe<{
+            call_ref: string;
+            action_kind: string;
+            state: string;
+            result_ref: string | null;
+            settlement_ref: string | null;
+            observation_source_ref: string | null;
+            disposition_json: string | null;
+          }>(
+            `SELECT call_ref, action_kind, state, result_ref, settlement_ref,
+                    observation_source_ref, disposition_json
+               FROM agent_loop_step_actions WHERE execution_id = ?
+              ORDER BY logical_step_no, repair_attempt, action_index LIMIT 8`,
+            [exe1],
+          );
+          const timelineObservationRows = yield* sql.unsafe<{
+            entry_kind: string;
+            item_type: string;
+            source_kind: string | null;
+            source_ref: string | null;
+            item_tag: string | null;
+            call_ref: string | null;
+            observation_ref: string | null;
+            status: string | null;
+          }>(
+            `SELECT entry_kind, item_type, source_kind, source_ref,
+                    json_extract(payload_json, '$._tag') AS item_tag,
+                    json_extract(payload_json, '$.callRef') AS call_ref,
+                    json_extract(payload_json, '$.observationRef') AS observation_ref,
+                    json_extract(payload_json, '$.status') AS status
+               FROM session_entries
+              WHERE session_id = ? AND item_type IN ('ToolResult','ControlResult')
+              ORDER BY sequence LIMIT 8`,
+            [sessionId],
+          );
+          const readmissionDiagnostic = {
+            firstSettlement: {
+              tag: firstSettlement._tag,
+              resultTag:
+                firstSettlement._tag === "Completed"
+                  ? (firstSettlement.result?._tag ?? null)
+                  : null,
+            },
+            executionSettlement: settlementRows[0] ?? null,
+            toolInvocations: toolEvidenceRows.map((row) => ({
+              ...row,
+              observationBody: row.observation_body?.slice(0, 120) ?? null,
+            })),
+            actionResults: actionResultRows,
+            timelineObservations: timelineObservationRows,
+          };
+
+          if (
+            firstSettlement._tag !== "Completed" ||
+            firstSettlement.result?._tag !== "Yielded"
+          ) {
+            return yield* Effect.die({
+              _tag: "P5ExpectedYieldedBeforeReadmission",
+              ...readmissionDiagnostic,
+            });
+          }
+
           const waitsAfterYield = yield* sql.unsafe<{ count: number }>(
             "SELECT COUNT(*) AS count FROM work_waits",
           );
@@ -329,12 +423,43 @@ describe("I0 executable/control vertical slice", () => {
             "SELECT COUNT(*) AS count FROM work_waits",
           );
 
-          yield* admitExecution(
-            workspaceId,
-            exe2,
-            { _tag: "Work", workId },
-            principal,
+          const readmission = yield* Effect.match(
+            admitExecution(
+              workspaceId,
+              exe2,
+              { _tag: "Work", workId },
+              principal,
+            ),
+            {
+              onFailure: (failure) => ({ _tag: "Failure" as const, failure }),
+              onSuccess: () => ({ _tag: "Success" as const }),
+            },
           );
+          if (readmission._tag === "Failure") {
+            const failure =
+              typeof readmission.failure === "object" &&
+              readmission.failure !== null
+                ? {
+                    tag:
+                      "_tag" in readmission.failure
+                        ? String(readmission.failure._tag)
+                        : "Unknown",
+                    sourceKind:
+                      "sourceKind" in readmission.failure
+                        ? String(readmission.failure.sourceKind)
+                        : null,
+                    executionId:
+                      "executionId" in readmission.failure
+                        ? String(readmission.failure.executionId)
+                        : null,
+                  }
+                : String(readmission.failure).slice(0, 200);
+            return yield* Effect.die({
+              _tag: "P5ReadmissionBlockedAfterYield",
+              failure,
+              ...readmissionDiagnostic,
+            });
+          }
           const secondSettlement = yield* runExecution(
             exe2,
             { _tag: "WorkSelected" },
