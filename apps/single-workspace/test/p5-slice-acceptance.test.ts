@@ -217,6 +217,25 @@ const summarizeToolRuntimeValue = (value: unknown) => {
     }
     return null;
   };
+  const nestedEnumField = (
+    key: string,
+    allowed: ReadonlySet<string>,
+  ): string | null => {
+    const field = nestedCauseRecord?.[key];
+    return typeof field === "string" && allowed.has(field)
+      ? field.slice(0, 160)
+      : null;
+  };
+  const safeConstraintMessages = new Set([
+    "invalid P40 tool observation evidence",
+    "invalid or immutable P40 tool observation evidence",
+    "FOREIGN KEY constraint failed",
+    "UNIQUE constraint failed: tool_invocations.invocation_id",
+    "CHECK constraint failed: tool_invocations",
+    "CHECK constraint failed: observation_format_version",
+    "CHECK constraint failed: observation_json",
+    "CHECK constraint failed: observation_sha256",
+  ]);
   return {
     tag: textField("_tag"),
     code: textField("code", "reasonCode"),
@@ -234,6 +253,19 @@ const summarizeToolRuntimeValue = (value: unknown) => {
             code: nestedTextField("code"),
             reasonCode: nestedTextField("reasonCode"),
             message: nestedTextField("message"),
+            repository: nestedEnumField(
+              "repository",
+              new Set(["ToolObservationEvidenceStore"]),
+            ),
+            operation: nestedEnumField(
+              "operation",
+              new Set(["tool-observation-evidence"]),
+            ),
+            constraintKind: nestedEnumField(
+              "constraintKind",
+              new Set(["Constraint", "Unique"]),
+            ),
+            constraint: nestedEnumField("constraint", safeConstraintMessages),
           },
   };
 };
