@@ -199,14 +199,24 @@ const runStoreDb = <A>(
   );
 
 describe("P41 / 0041 submitted DecisionEpisode storage", () => {
-  it("keeps the exact descriptor standalone and fingerprints the corrected DDL", () => {
+  it("pins the P41 descriptor in the schema-42 prefix and fingerprints the corrected DDL", () => {
     expect(P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION).toEqual({
       id: 41,
       name: "p41_submitted_decision_binding_attention",
+      requiresUserVersion: 40,
       sql: P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL,
     });
     expect(P36_MIGRATIONS.some(({ id }) => id === 41)).toBe(false);
-    expect(CURRENT_MIGRATIONS.some(({ id }) => id === 41)).toBe(false);
+    expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
+    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-3)).toEqual([
+      40, 41, 42,
+    ]);
+    expect(CURRENT_MIGRATIONS.find(({ id }) => id === 41)).toMatchObject({
+      id: 41,
+      name: "p41_submitted_decision_binding_attention",
+      requiresUserVersion: 40,
+      sql: P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL,
+    });
 
     const sha256Hex = (value: string) =>
       createHash("sha256").update(value, "utf8").digest("hex");

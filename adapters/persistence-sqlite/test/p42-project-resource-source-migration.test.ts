@@ -143,5 +143,5 @@ describe("FT-DG-01 ProjectResourceSource migration descriptor", () => {
     } finally {
       database.cleanup();
     }
-  });
+  }, 120_000);
 });

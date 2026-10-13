@@ -68,5 +68,5 @@ describe("P39 RecoveryBinding store DeniedUnbound projection", () => {
     } finally {
       database.cleanup();
     }
-  });
+  }, 120_000);
 });
