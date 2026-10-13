@@ -33,11 +33,10 @@ import { runExecution } from "@arbor/execution-runtime";
 import {
   ExecutionScheduler,
   ResourceOwnershipRepository,
-  ToolRuntimePort,
   TransactionPort,
   WorkWaitStore,
 } from "@arbor/ports";
-import { Cause, Effect, Option } from "effect";
+import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
@@ -192,132 +191,6 @@ const wait = (reason: string) => [
   { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
 ];
 
-const summarizeToolRuntimeValue = (value: unknown) => {
-  if (typeof value !== "object" || value === null) {
-    return { valueType: typeof value };
-  }
-  const record = value as Record<string, unknown>;
-  const textField = (...keys: ReadonlyArray<string>): string | null => {
-    for (const key of keys) {
-      const field = record[key];
-      if (typeof field === "string") return field.slice(0, 160);
-    }
-    return null;
-  };
-  return {
-    tag: textField("_tag"),
-    code: textField("code", "reasonCode"),
-    stage: textField("stage"),
-    effectDisposition: textField("effectDisposition"),
-    invocationRef: textField("invocationRef"),
-    message: textField("message"),
-  };
-};
-
-const persistenceFailureFields = new Set([
-  "_tag",
-  "repository",
-  "operation",
-  "constraintKind",
-  "constraint",
-]);
-const safePersistenceRepositories = new Set([
-  "ToolObservationEvidenceStore",
-  "ToolInvocationStore",
-  "ArtifactMetadataRepository",
-]);
-const safePersistenceOperations = new Set([
-  "tool-observation-evidence",
-  "invocation",
-  "artifact-metadata",
-]);
-const safeConstraintMessages = new Set([
-  "invalid P40 tool observation evidence",
-  "invalid or immutable P40 tool observation evidence",
-  "terminal settlement and selected fact are immutable",
-  "recovery binding is immutable",
-  "reconciliation settlement requires matching authoritative fact",
-  "FOREIGN KEY constraint failed",
-  "UNIQUE constraint failed: tool_invocations.invocation_id",
-  "unknown",
-  "CHECK constraint failed: tool_invocations",
-  "CHECK constraint failed: observation_format_version",
-  "CHECK constraint failed: observation_json",
-  "CHECK constraint failed: observation_sha256",
-]);
-
-const summarizePersistenceConstraint = (cause: Cause.Cause<unknown>) => {
-  const failure = Cause.findErrorOption(cause);
-  if (Option.isNone(failure)) return null;
-
-  let current: unknown = failure.value;
-  for (let depth = 0; depth < 4; depth += 1) {
-    if (typeof current !== "object" || current === null) return null;
-    const record = current as Record<string, unknown>;
-    if (record._tag === "PersistenceConstraintViolation") {
-      const safeFieldNames = Object.keys(record)
-        .filter((key) => persistenceFailureFields.has(key))
-        .sort();
-      const safeValue = (key: string, allowed: ReadonlySet<string>) => {
-        const value = record[key];
-        return typeof value === "string" && allowed.has(value)
-          ? value.slice(0, 160)
-          : null;
-      };
-      return {
-        tag: "PersistenceConstraintViolation",
-        fields: safeFieldNames,
-        repository: safeValue("repository", safePersistenceRepositories),
-        operation: safeValue("operation", safePersistenceOperations),
-        constraintKind: safeValue(
-          "constraintKind",
-          new Set(["Constraint", "Unique"]),
-        ),
-        constraint: safeValue("constraint", safeConstraintMessages),
-      };
-    }
-    if (
-      record._tag !== "ToolRuntimeOperationalFailure" &&
-      record._tag !== "ToolRuntimeCleanupFailure" &&
-      record._tag !== "ArtifactError"
-    ) {
-      return null;
-    }
-    current = record.cause;
-  }
-  return null;
-};
-
-const summarizeToolRuntimeCause = (cause: Cause.Cause<unknown>) => ({
-  persistenceConstraint: summarizePersistenceConstraint(cause),
-  reasons: cause.reasons.slice(0, 4).map((reason) => {
-    if (Cause.isFailReason(reason)) {
-      return {
-        kind: "TypedFailure",
-        failure: summarizeToolRuntimeValue(reason.error),
-      };
-    }
-    if (Cause.isDieReason(reason)) {
-      return {
-        kind: "Defect",
-        defect: summarizeToolRuntimeValue(reason.defect),
-      };
-    }
-    return { kind: "Interrupt", fiberId: String(reason.fiberId) };
-  }),
-});
-
-const boundedDiagnosticJson = (value: unknown): string => {
-  const json = JSON.stringify(value);
-  return json.length <= 6_000
-    ? json
-    : JSON.stringify({ truncated: true, jsonPrefix: json.slice(0, 5_800) });
-};
-
-const toolRuntimeFailures: Array<ReturnType<typeof summarizeToolRuntimeCause>> =
-  [];
-const toolRuntimeBoundaries: Array<string> = [];
-
 const turns = [
   [
     {
@@ -367,9 +240,6 @@ describe("I0 executable/control vertical slice", () => {
       databaseFile: fixture.databaseFilename,
       providerTurns: turns,
       projectResourceProfiles,
-      toolQualificationProbe: async ({ boundary }) => {
-        toolRuntimeBoundaries.push(boundary);
-      },
     });
 
     const result = await Effect.runPromise(
@@ -379,19 +249,6 @@ describe("I0 executable/control vertical slice", () => {
           const gateway = yield* CommandGateway;
           const scheduler = yield* ExecutionScheduler;
           const sql = yield* SqlClient;
-          const toolRuntime = yield* ToolRuntimePort;
-          const mutableToolRuntime = toolRuntime as unknown as {
-            invoke: typeof toolRuntime.invoke;
-          };
-          const originalToolRuntimeInvoke = toolRuntime.invoke;
-          mutableToolRuntime.invoke = (intent, toolContext) =>
-            originalToolRuntimeInvoke(intent, toolContext).pipe(
-              Effect.tapCause((cause) =>
-                Effect.sync(() =>
-                  toolRuntimeFailures.push(summarizeToolRuntimeCause(cause)),
-                ),
-              ),
-            );
 
           const created = yield* gateway.execute(
             envelope("CreateProject", selectedProjectPayload, commandId("1")),
@@ -458,8 +315,6 @@ describe("I0 executable/control vertical slice", () => {
             { _tag: "WorkSelected" },
             principal,
           );
-          mutableToolRuntime.invoke = originalToolRuntimeInvoke;
-
           const settlementRows = yield* sql.unsafe<{
             settlement_kind: string | null;
             settlement_tag: string | null;
@@ -474,62 +329,41 @@ describe("I0 executable/control vertical slice", () => {
             [exe1],
           );
           const toolEvidenceRows = yield* sql.unsafe<{
-            invocation_id: string;
             tool_name: string;
             effect_admission_state: string;
+            recovery_binding_state: string;
             settlement_kind: string | null;
             settlement_tag: string | null;
             observation_format_version: string | null;
             observation_tag: string | null;
-            observation_body: string | null;
+            observation_storage_type: string | null;
+            observation_json_bytes: number | null;
+            observation_sha_length: number | null;
+            observation_sha_is_lower_hex: number | null;
+            binding_tool_definition_hash_length: number | null;
+            binding_tool_definition_hash_is_lower_hex: number | null;
           }>(
-            `SELECT invocation_id, tool_name, effect_admission_state,
+            `SELECT tool_name, effect_admission_state, recovery_binding_state,
                     settlement_kind,
                     json_extract(settlement_json, '$._tag') AS settlement_tag,
                     observation_format_version,
                     json_extract(CAST(observation_json AS TEXT), '$._tag') AS observation_tag,
-                    substr(json_extract(CAST(observation_json AS TEXT), '$.observation.text'), 1, 120) AS observation_body
+                    typeof(observation_json) AS observation_storage_type,
+                    length(observation_json) AS observation_json_bytes,
+                    length(observation_sha256) AS observation_sha_length,
+                    observation_sha256 NOT GLOB '*[^0-9a-f]*' AS observation_sha_is_lower_hex,
+                    (SELECT length(a.tool_definition_hash)
+                       FROM tool_invocation_effect_attempts AS a
+                      WHERE a.invocation_id = tool_invocations.invocation_id
+                        AND a.attempt_no = 0) AS binding_tool_definition_hash_length,
+                    (SELECT a.tool_definition_hash NOT GLOB '*[^0-9a-f]*'
+                       FROM tool_invocation_effect_attempts AS a
+                      WHERE a.invocation_id = tool_invocations.invocation_id
+                        AND a.attempt_no = 0) AS binding_tool_definition_hash_is_lower_hex
                FROM tool_invocations WHERE execution_id = ? ORDER BY invocation_id`,
             [exe1],
           );
-          const actionResultRows = yield* sql.unsafe<{
-            call_ref: string;
-            action_kind: string;
-            state: string;
-            result_ref: string | null;
-            settlement_ref: string | null;
-            observation_source_ref: string | null;
-            disposition_json: string | null;
-          }>(
-            `SELECT call_ref, action_kind, state, result_ref, settlement_ref,
-                    observation_source_ref, disposition_json
-               FROM agent_loop_step_actions WHERE execution_id = ?
-              ORDER BY logical_step_no, repair_attempt, action_index LIMIT 8`,
-            [exe1],
-          );
-          const timelineObservationRows = yield* sql.unsafe<{
-            entry_kind: string;
-            item_type: string;
-            source_kind: string | null;
-            source_ref: string | null;
-            item_tag: string | null;
-            call_ref: string | null;
-            observation_ref: string | null;
-            status: string | null;
-          }>(
-            `SELECT entry_kind, item_type, source_kind, source_ref,
-                    json_extract(payload_json, '$._tag') AS item_tag,
-                    json_extract(payload_json, '$.callRef') AS call_ref,
-                    json_extract(payload_json, '$.observationRef') AS observation_ref,
-                    json_extract(payload_json, '$.status') AS status
-               FROM session_entries
-              WHERE session_id = ? AND item_type IN ('ToolResult','ControlResult')
-              ORDER BY sequence LIMIT 8`,
-            [sessionId],
-          );
           const readmissionDiagnostic = {
-            toolRuntimeFailures: toolRuntimeFailures.slice(0, 8),
-            toolRuntimeBoundaries: toolRuntimeBoundaries.slice(0, 16),
             firstSettlement: {
               tag: firstSettlement._tag,
               resultTag:
@@ -538,12 +372,7 @@ describe("I0 executable/control vertical slice", () => {
                   : null,
             },
             executionSettlement: settlementRows[0] ?? null,
-            toolInvocations: toolEvidenceRows.map((row) => ({
-              ...row,
-              observationBody: row.observation_body?.slice(0, 120) ?? null,
-            })),
-            actionResults: actionResultRows,
-            timelineObservations: timelineObservationRows,
+            toolInvocations: toolEvidenceRows,
           };
           if (
             firstSettlement._tag !== "Completed" ||
@@ -551,7 +380,7 @@ describe("I0 executable/control vertical slice", () => {
           ) {
             return yield* Effect.die({
               _tag: "P5ExpectedYieldedBeforeReadmission",
-              diagnosticJson: boundedDiagnosticJson(readmissionDiagnostic),
+              diagnosticJson: JSON.stringify(readmissionDiagnostic),
             });
           }
 
@@ -601,10 +430,10 @@ describe("I0 executable/control vertical slice", () => {
                 : String(readmission.failure).slice(0, 200);
             return yield* Effect.die({
               _tag: "P5ReadmissionBlockedAfterYield",
-              diagnosticJson: boundedDiagnosticJson({
+              diagnostic: {
                 failure,
                 ...readmissionDiagnostic,
-              }),
+              },
             });
           }
           const secondSettlement = yield* runExecution(
@@ -665,6 +494,7 @@ describe("I0 executable/control vertical slice", () => {
             secondSettlement,
             waitsAfterYield: Number(waitsAfterYield[0]?.count ?? 0),
             invocations,
+            toolEvidenceRows,
             woken: woken._tag,
             waitsAfterWake: Number(waitsAfterWake[0]?.count ?? 0),
             works,
@@ -690,6 +520,21 @@ describe("I0 executable/control vertical slice", () => {
             arguments_json: string;
             resolved_regions_json: string;
             settlement_kind: string | null;
+          }>;
+          toolEvidenceRows: ReadonlyArray<{
+            tool_name: string;
+            effect_admission_state: string;
+            recovery_binding_state: string;
+            settlement_kind: string | null;
+            settlement_tag: string | null;
+            observation_format_version: string | null;
+            observation_tag: string | null;
+            observation_storage_type: string | null;
+            observation_json_bytes: number | null;
+            observation_sha_length: number | null;
+            observation_sha_is_lower_hex: number;
+            binding_tool_definition_hash_length: number | null;
+            binding_tool_definition_hash_is_lower_hex: number | null;
           }>;
           waitsAfterYield: number;
           woken: string;
@@ -729,6 +574,27 @@ describe("I0 executable/control vertical slice", () => {
     expect(result.woken).toBe("AdmitWork");
     expect(result.waitsAfterWake).toBe(0);
     expect(result.invocations).toHaveLength(1);
+    expect(result.toolEvidenceRows).toHaveLength(1);
+    expect(result.toolEvidenceRows[0]).toMatchObject({
+      tool_name: "shell",
+      effect_admission_state: "MayHaveStarted",
+      recovery_binding_state: "Bound",
+      settlement_kind: "Success",
+      settlement_tag: "Success",
+      observation_format_version: "p4-canonical-tool-observation-v1",
+      observation_tag: "Success",
+      observation_storage_type: "blob",
+      observation_sha_length: 64,
+      observation_sha_is_lower_hex: 1,
+      binding_tool_definition_hash_length: 64,
+      binding_tool_definition_hash_is_lower_hex: 1,
+    });
+    expect(result.toolEvidenceRows[0]?.observation_json_bytes).toBeGreaterThan(
+      0,
+    );
+    expect(
+      result.toolEvidenceRows[0]?.observation_json_bytes,
+    ).toBeLessThanOrEqual(16_384);
     expect(result.invocations[0]?.tool_name).toBe("shell");
     expect(
       JSON.parse(result.invocations[0]?.arguments_json ?? "{}"),
