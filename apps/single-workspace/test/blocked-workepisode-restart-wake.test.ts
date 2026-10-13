@@ -1,23 +1,14 @@
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../../../adapters/persistence-sqlite/src/index.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   p7Project,
   p7RootWorkspace,
   p7SeedProject,
   p7TestActor,
 } from "../../../tests/support/p7-app.js";
-import {
-  makeP39PrivateTestDirectory,
-  p39WindowsAclQualificationAvailable,
-  removeP39PrivateTestDirectory,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+import { p39WindowsAclQualificationAvailable } from "../../../tests/support/p39-windows-deployment-test.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { runDaemonOnce } from "../src/main.js";
 
@@ -27,25 +18,25 @@ const projectId = p7Project;
 const childWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789a2";
 const childSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789a2";
 const childWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789a2";
-const directories: string[] = [];
+let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+
+beforeEach(async () => {
+  fixture = await createSchema42TestDatabase({
+    prefix: ".blocked-workepisode-schema42-",
+  });
+});
 
 afterEach(() => {
-  for (const directory of directories.splice(0)) {
-    removeP39PrivateTestDirectory(directory);
-  }
+  fixture?.cleanup();
+  fixture = undefined;
 });
 
 const databaseFile = () => {
-  const directory = makeP39PrivateTestDirectory(
-    tmpdir(),
-    "blocked-workepisode-restart-",
-  );
-  directories.push(directory);
-  return join(directory, "slice.db");
+  if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
+  return fixture.databaseFilename;
 };
 
 const seedDurableBlockedState = Effect.gen(function* () {
-  yield* runMigrations(CURRENT_MIGRATIONS);
   yield* p7SeedProject;
   const sql = yield* SqlClient;
   yield* sql.withTransaction(

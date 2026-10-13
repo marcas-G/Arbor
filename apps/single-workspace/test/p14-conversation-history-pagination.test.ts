@@ -1,17 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { TranscriptReq, TranscriptRes } from "@arbor/api-contracts";
 import { ProjectId, parse, SessionId, WorkspaceId } from "@arbor/domain";
 import { ProjectionQueryPort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import {
-  buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789b1");
 const workspaceId = parse(WorkspaceId)(
@@ -21,14 +15,15 @@ const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789b1");
 
 describe("P14 conversation history paging", () => {
   it("returns the latest chronological page, then older pages by stable cursor", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "p14-conversation-history-"));
-    const databaseFile = join(dir, "history.db");
+    const fixture = await createSchema42TestDatabase({
+      prefix: ".p14-conversation-history-schema42-",
+    });
+    const databaseFile = fixture.databaseFilename;
     const app = buildSingleWorkspaceLayer({ databaseFile, projectId });
     try {
       const pages = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(CURRENT_MIGRATIONS);
             const sql = yield* SqlClient;
             yield* sql.withTransaction(
               Effect.gen(function* () {
@@ -159,7 +154,7 @@ describe("P14 conversation history paging", () => {
       expect(pages[0]?.entries.at(-1)?.kind).toBe("AssistantConversationTurn");
       expect(pages[2]?.nextCursor).toBeUndefined();
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      fixture.cleanup();
     }
   });
 });

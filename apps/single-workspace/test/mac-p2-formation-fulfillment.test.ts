@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { CommandGateway, semanticRequestFingerprint } from "@arbor/application";
 import {
   Actor,
@@ -13,13 +10,12 @@ import {
 } from "@arbor/domain";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import {
   buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
   ProductionDaemonService,
-  runMigrations,
 } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-012345678a21");
@@ -31,21 +27,25 @@ const proposalId = parse(FormationProposalId)(
 );
 const principal = parse(Principal)("user:mac-p2-governor");
 const actor = parse(Actor)("user:mac-p2-governor");
-const directories: string[] = [];
+let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+
+beforeEach(async () => {
+  fixture = await createSchema42TestDatabase({
+    prefix: ".mac-p2-formation-schema42-",
+  });
+});
 
 describe("MAC-P2 formation fulfillment", () => {
   it("separates Approved from asynchronously Applied and replays without duplicates", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "mac-p2-formation-"));
-    directories.push(directory);
+    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(directory, "slice.db"),
+      databaseFile: fixture.databaseFilename,
       projectId,
       providerTurns: [],
     });
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -194,7 +194,6 @@ describe("MAC-P2 formation fulfillment", () => {
 });
 
 afterEach(() => {
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  fixture?.cleanup();
+  fixture = undefined;
 });

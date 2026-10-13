@@ -1,7 +1,4 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { newUuid7 } from "@arbor/application";
 import {
   ExecutionId,
@@ -17,14 +14,10 @@ import type { CanonicalProviderEvent } from "@arbor/ports";
 import { BlobStorePort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import {
-  admitExecution,
-  buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { admitExecution, buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const parentWorkspaceId = parse(WorkspaceId)(
@@ -50,6 +43,18 @@ const parentExecutionId = parse(ExecutionId)(
 const principal = parse(Principal)("worker:i0");
 const body = "The requested analysis is complete.";
 const invalidRootReportBody = "root-report-must-fail-closed-i0-20260927";
+let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+
+beforeEach(async () => {
+  fixture = await createSchema42TestDatabase({
+    prefix: ".i0-send-message-schema42-",
+  });
+});
+
+afterEach(() => {
+  fixture?.cleanup();
+  fixture = undefined;
+});
 
 interface DurableIntegrationResult {
   readonly settlement: {
@@ -135,9 +140,9 @@ const rootRecoveryWaitTurn: ReadonlyArray<CanonicalProviderEvent> = [
 
 describe("I0 SendMessage durable integration", () => {
   it("persists valid SendMessage and returns an invalid root Report to the agent as useful feedback", async () => {
-    const root = mkdtempSync(join(tmpdir(), "i0-send-message-durable-"));
+    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(root, "slice.db"),
+      databaseFile: fixture.databaseFilename,
       providerTurns: [
         reportTurn,
         waitTurn,
@@ -149,7 +154,6 @@ describe("I0 SendMessage durable integration", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* sql.withTransaction(
             Effect.gen(function* () {

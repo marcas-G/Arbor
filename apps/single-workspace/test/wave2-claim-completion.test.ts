@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   CommandGateway,
   semanticRequestFingerprint,
@@ -25,14 +22,11 @@ import {
 import { Clock, TransactionPort, WorkspaceRepository } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import { assignWorkHandler } from "../src/control-actions.js";
-import {
-  buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const ids = {
   project: "prj_018f2b3c-4d5e-7abc-8def-0123456789b2",
@@ -56,7 +50,11 @@ const context: CommandSubmissionContext = {
   causationRef: "c",
 };
 
-const directories: string[] = [];
+let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+
+beforeEach(async () => {
+  fixture = await createSchema42TestDatabase({ prefix: ".wave2-schema42-" });
+});
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -187,7 +185,6 @@ const admitWorkExecution = Effect.gen(function* () {
 
 const runTurns = (_turns: ReadonlyArray<ReadonlyArray<unknown>>) =>
   Effect.gen(function* () {
-    yield* runMigrations(CURRENT_MIGRATIONS);
     yield* seed;
     yield* admitWorkExecution;
     const settlement = yield* runExecution(
@@ -358,11 +355,10 @@ const spawnSpecialistTurn = [
 ];
 
 const setupApp = (turns: ReadonlyArray<ReadonlyArray<unknown>>) => {
-  const dir = mkdtempSync(join(tmpdir(), "wave2-"));
-  directories.push(dir);
+  if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
   return {
     app: buildSingleWorkspaceLayer({
-      databaseFile: join(dir, "slice.db"),
+      databaseFile: fixture.databaseFilename,
       providerTurns: turns as never,
     }),
   };
@@ -399,7 +395,6 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           yield* seed;
           yield* admitWorkExecution;
           const first = yield* runExecution(
@@ -503,7 +498,6 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           yield* seed;
           yield* admitWorkExecution;
           const first = yield* runExecution(
@@ -582,7 +576,6 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           yield* seed;
           const handler = assignWorkHandler({
             gateway: yield* CommandGateway,
@@ -679,7 +672,6 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           yield* seed;
           const handler = assignWorkHandler({
             gateway: yield* CommandGateway,
@@ -868,7 +860,6 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
 });
 
 afterEach(() => {
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  fixture?.cleanup();
+  fixture = undefined;
 });

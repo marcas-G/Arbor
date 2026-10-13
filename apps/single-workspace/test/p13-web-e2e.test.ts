@@ -5,11 +5,8 @@ import { Principal, parse } from "@arbor/domain";
 import { Effect, Fiber } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../src/composition.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   ProductionDaemonService,
   TransportBoundary,
@@ -39,10 +36,16 @@ let dist: string;
 let runConsumers: (() => Promise<void>) | undefined;
 let startupError: unknown;
 let programFiber: ReturnType<typeof Effect.runFork> | undefined;
+let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+let schema42DatabaseFilename: string;
 
 const shutdown: Array<() => Promise<void>> = [];
 
 beforeAll(async () => {
+  fixture = await createSchema42TestDatabase({
+    prefix: ".p13-web-e2e-schema42-",
+  });
+  schema42DatabaseFilename = fixture.databaseFilename;
   dir = mkdtempSync(join(tmpdir(), "arbor-p13-e2e-"));
   dist = join(dir, "dist");
   mkdirSync(join(dist, "assets"), { recursive: true });
@@ -55,7 +58,6 @@ beforeAll(async () => {
   const program = Effect.scoped(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         const boundary = yield* TransportBoundary;
         const sql = yield* SqlClient;
         const deployment = yield* ProductionDaemonService;
@@ -67,7 +69,7 @@ beforeAll(async () => {
                 yield* deployment.daemon.pollConsumers;
               }),
               buildSingleWorkspaceLayer({
-                databaseFile: join(dir, "slice.db"),
+                databaseFile: schema42DatabaseFilename,
                 authenticator: makeStaticAuthenticator({
                   [TOKEN]: HUMAN,
                   [READ_TOKEN]: parse(Principal)("user:local"),
@@ -96,7 +98,7 @@ beforeAll(async () => {
         yield* Effect.promise(() => new Promise<never>(() => undefined));
       }),
       buildSingleWorkspaceLayer({
-        databaseFile: join(dir, "slice.db"),
+        databaseFile: schema42DatabaseFilename,
         authenticator: makeStaticAuthenticator({
           [TOKEN]: HUMAN,
           [READ_TOKEN]: parse(Principal)("user:local"),
@@ -129,6 +131,7 @@ afterAll(async () => {
   if (programFiber !== undefined) {
     await Effect.runPromise(Fiber.interrupt(programFiber));
   }
+  fixture?.cleanup();
   rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
 

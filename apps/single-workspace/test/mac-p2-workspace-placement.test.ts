@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { CommandGateway } from "@arbor/application";
 import {
   ExecutionId,
@@ -18,19 +15,22 @@ import {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import { assignWorkHandler } from "../src/control-actions.js";
-import {
-  buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-012345678a01");
 const rootWorkspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-012345678a01",
 );
-const directories: string[] = [];
+let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+
+beforeEach(async () => {
+  fixture = await createSchema42TestDatabase({
+    prefix: ".mac-p2-placement-schema42-",
+  });
+});
 
 const childId = (index: number): string =>
   `ws_018f2b3c-4d5e-7abc-8def-${String(12345678 + index).padStart(12, "0")}`;
@@ -39,17 +39,15 @@ const sessionId = (index: number): string =>
 
 describe("MAC-P2 WorkspacePlacementContext", () => {
   it("pages Active Direct Children, includes in-flight formation and rejects stale refs", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "mac-p2-placement-"));
-    directories.push(directory);
+    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(directory, "slice.db"),
+      databaseFile: fixture.databaseFilename,
       projectId,
       providerTurns: [],
     });
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(CURRENT_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -272,7 +270,6 @@ describe("MAC-P2 WorkspacePlacementContext", () => {
 });
 
 afterEach(() => {
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  fixture?.cleanup();
+  fixture = undefined;
 });
