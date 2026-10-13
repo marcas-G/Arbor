@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect } from "vitest";
 import { buildSingleWorkspaceLayer } from "../../../apps/single-workspace/src/composition.js";
 import {
   ProductionDaemonService,
@@ -17,7 +17,7 @@ import {
   parse,
 } from "../../../packages/domain/src/index.js";
 import type { ModelCatalog } from "../../../packages/model-context/src/index.js";
-import { createSchema42TestDatabase } from "../../support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "../../support/schema42-database.js";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
 import {
   makePublicProject,
@@ -51,6 +51,15 @@ const modelCatalog: ModelCatalog = {
 
 const directories: string[] = [];
 const schema42Cleanups: Array<() => void> = [];
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: "b01-public-conversation-template-",
+  });
+});
+afterAll(() => schema42Factory.cleanup());
 
 afterEach(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
@@ -66,9 +75,7 @@ describe("B01 L2 — public Human Input to durable transcript", () => {
     async () => {
       const directory = mkdtempSync(join(tmpdir(), "arbor-b01-public-"));
       directories.push(directory);
-      const database = await createSchema42TestDatabase({
-        prefix: "b01-public-conversation-",
-      });
+      const database = schema42Factory.create();
       schema42Cleanups.push(database.cleanup);
       const databaseFile = database.databaseFilename;
       const project = makePublicProject(

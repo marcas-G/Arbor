@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { P10_ATTENTION_CONSUMER_ID } from "../adapters/persistence-sqlite/src/index.js";
 import {
   buildSingleWorkspaceLayer,
@@ -50,7 +50,7 @@ import {
 } from "../packages/ports/src/index.js";
 import { UsageService } from "../packages/projection-runtime/src/index.js";
 import { p7Project, p7RootWorkspace, p7SeedProject } from "./support/p7-app.js";
-import { createSchema42TestDatabase } from "./support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
 
 /**
  * B-6 / B-7 / B-8 — the production composition root is the single runtime:
@@ -65,15 +65,22 @@ import { createSchema42TestDatabase } from "./support/schema42-database.js";
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "p12-production-"));
 const schema42Cleanups: Array<() => void> = [];
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: "p12-production-template-",
+  });
+});
 afterAll(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
+  schema42Factory.cleanup();
   rmSync(suiteTmp, { recursive: true, force: true });
 });
 
-const prepareSchema42Database = async () => {
-  const fixture = await createSchema42TestDatabase({
-    prefix: "p12-production-",
-  });
+const prepareSchema42Database = () => {
+  const fixture = schema42Factory.create();
   schema42Cleanups.push(fixture.cleanup);
   return fixture;
 };

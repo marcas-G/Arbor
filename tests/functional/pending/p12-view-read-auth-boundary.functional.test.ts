@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   buildSingleWorkspaceLayer,
   TransportBoundary,
@@ -45,7 +45,7 @@ import {
   p7RootWorkspace,
   p7SeedProject,
 } from "../../support/p7-app.js";
-import { createSchema42TestDatabase } from "../../support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "../../support/schema42-database.js";
 
 interface ViewObservation {
   readonly status: number;
@@ -76,6 +76,14 @@ interface WebSocketOpenObservation {
 const handles: WebTransportHandle[] = [];
 const directories: string[] = [];
 const schema42Cleanups: Array<() => void> = [];
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: "p12-view-auth-template-",
+  });
+});
 
 const openWebSocket = (port: number): Promise<WebSocketOpenObservation> =>
   new Promise((resolve) => {
@@ -166,6 +174,7 @@ afterEach(async () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+afterAll(() => schema42Factory.cleanup());
 
 describe("pending P12 view read authentication boundary", () => {
   it("denies remote unauthenticated/foreign reads without hiding local authorized paths", async () => {
@@ -183,9 +192,7 @@ describe("pending P12 view read authentication boundary", () => {
       "valid-local-token": localPrincipal,
       "foreign-user-token": foreignPrincipal,
     });
-    const database = await createSchema42TestDatabase({
-      prefix: "p12-view-auth-boundary-",
-    });
+    const database = schema42Factory.create();
     schema42Cleanups.push(database.cleanup);
     const app = buildSingleWorkspaceLayer({
       databaseFile: database.databaseFilename,
@@ -854,9 +861,7 @@ describe("pending P12 view read authentication boundary", () => {
   it("uses explicit local-single-user configuration, not Composition's fallback object, for wildcard reads", async () => {
     const directory = mkdtempSync(join(tmpdir(), "p12-composition-auth-mode-"));
     directories.push(directory);
-    const database = await createSchema42TestDatabase({
-      prefix: "p12-view-auth-mode-",
-    });
+    const database = schema42Factory.create();
     schema42Cleanups.push(database.cleanup);
     const app = buildSingleWorkspaceLayer({
       databaseFile: database.databaseFilename,

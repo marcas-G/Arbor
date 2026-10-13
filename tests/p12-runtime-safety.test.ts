@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   admitExecution,
   buildSingleWorkspaceLayer,
@@ -61,7 +61,17 @@ import {
   type AttentionReadDeps,
   loadAttentionFacts,
 } from "../packages/projection-runtime/src/index.js";
-import { createSchema42TestDatabase } from "./support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
+
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: "p12-runtime-safety-template-",
+  });
+});
+afterAll(() => schema42Factory.cleanup());
 
 const exe = parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const g1 = parse(LeaseGeneration)(1);
@@ -634,9 +644,7 @@ const runScenario = async (
     resourceProfileRef: profile.resourceProfileRef,
     version: profile.version,
   });
-  const database = await createSchema42TestDatabase({
-    prefix: "p12-runtime-safety-",
-  });
+  const database = schema42Factory.create();
   const app = buildSingleWorkspaceLayer({
     databaseFile: database.databaseFilename,
     providerTurns,

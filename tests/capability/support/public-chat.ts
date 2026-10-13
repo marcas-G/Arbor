@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Context, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterAll } from "vitest";
+import { afterAll, beforeAll } from "vitest";
 import type {
   OpenAISdkChunk,
   OpenAISdkClient,
@@ -28,17 +28,26 @@ import {
   type SecretRef,
 } from "../../../packages/ports/dist/provider.js";
 import {
-  createSchema42TestDatabase,
+  createSchema42TestDatabaseFactory,
   type Schema42TestDatabase,
+  type Schema42TestDatabaseFactory,
 } from "../../support/schema42-database.js";
 
 const publicConversationDatabases = new Map<string, Schema42TestDatabase>();
+let publicConversationFactory: Schema42TestDatabaseFactory;
+
+beforeAll(async () => {
+  publicConversationFactory = await createSchema42TestDatabaseFactory({
+    prefix: "public-conversation-template-",
+  });
+});
 
 afterAll(() => {
   for (const database of publicConversationDatabases.values()) {
     database.cleanup();
   }
   publicConversationDatabases.clear();
+  publicConversationFactory.cleanup();
 });
 
 export const capabilityHuman = parse(Principal)("user:capability-test");
@@ -352,9 +361,7 @@ export const withPublicConversationApp = async (
 ): Promise<void> => {
   let database = publicConversationDatabases.get(input.databaseFile);
   if (database === undefined) {
-    database = await createSchema42TestDatabase({
-      prefix: "public-conversation-",
-    });
+    database = publicConversationFactory.create();
     publicConversationDatabases.set(input.databaseFile, database);
   }
   const projectId = parse(ProjectId)(input.project.projectId);
