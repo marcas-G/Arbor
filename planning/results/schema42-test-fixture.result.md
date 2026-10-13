@@ -27,6 +27,11 @@ P43 store tests now apply their isolated 0043 descriptor on a real schema-42
 fixture instead of assigning `user_version = 42`. P39/P41/P42 migration-owned
 tests retain their version-specific setup.
 
+Review follow-up: private directory creation now retains ownership before ACL
+setup and removes that exact path if setup fails. The injected-failure test
+proves the directory is removed even when ACL preparation throws. Follow-up
+`pnpm typecheck` also passes.
+
 ## Verification
 
 - `pnpm build`: PASS.
@@ -34,6 +39,7 @@ tests retain their version-specific setup.
 - `pnpm exec vitest run adapters/persistence-sqlite/test/p40-observation-store-gates.test.ts tests/p40-p9-p10-production-recovery.test.ts`: PASS, 2 files / 9 tests.
 - `pnpm typecheck`: PASS, including test TypeScript.
 - Biome formatting and `git diff --check`: PASS.
+- Private-directory ACL fault test: PASS, 1/1.
 
 No production registry/runtime/CLI, migration SQL, `docs/design/**`, live or
 preserved database, deployment, or release was changed or operated.
