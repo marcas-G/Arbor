@@ -1,6 +1,6 @@
 # Schema-42 current-migration call-site classification
 
-Date: 2026-10-13  
+Date: 2026-10-13
 Base: `4e093afb9be038576f1d0e8a8628c32e502b2f57`
 
 ## Classification rule
