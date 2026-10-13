@@ -3,6 +3,7 @@ import {
   type SpawnSyncReturns,
   spawnSync,
 } from "node:child_process";
+import { sandboxEnvironment } from "@arbor/ports";
 import { Effect } from "effect";
 import {
   bounded,
@@ -178,6 +179,7 @@ export const createShellExecutor = (
           : ["-lc", args.command];
       const result = runSpawnSync(executable, shellArgs, {
         cwd,
+        env: sandboxEnvironment(process.env),
         timeout: args.timeoutMs ?? 10_000,
         encoding: "utf8",
       });
