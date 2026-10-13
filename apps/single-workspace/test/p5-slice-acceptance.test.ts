@@ -38,9 +38,12 @@ import {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import {
+  createSchema42TestDatabaseFactory,
+  type Schema42TestDatabaseFactory,
+} from "../../../tests/support/schema42-database.js";
 import {
   admitExecution,
   buildSingleWorkspaceLayer,
@@ -66,7 +69,23 @@ const context: CommandSubmissionContext = {
   principal,
   causationRef: "c",
 };
+let schema42Factory: Schema42TestDatabaseFactory | undefined;
 const schema42Cleanups: Array<() => void> = [];
+
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: ".p5-slice-acceptance-template-",
+  });
+});
+
+afterAll(() => schema42Factory?.cleanup());
+
+const createSchema42Case = () => {
+  if (schema42Factory === undefined) {
+    throw new Error("Schema-42 test database factory was not prepared.");
+  }
+  return schema42Factory.create();
+};
 
 afterEach(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
@@ -192,9 +211,7 @@ const turns = [
 describe("I0 executable/control vertical slice", () => {
   it("routes shell through ToolRuntime and Wait through ControlToolRegistry", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-accept-"));
-    const fixture = await createSchema42TestDatabase({
-      prefix: ".p5-slice-acceptance-",
-    });
+    const fixture = createSchema42Case();
     schema42Cleanups.push(fixture.cleanup);
     const projectResourceProfiles = makeProjectResourceProfilePort(
       projectResourceProfilesFromEnvironment({ ARBOR_PROJECT_ROOT: dir }),

@@ -2,15 +2,29 @@ import { CommandGateway } from "@arbor/application";
 import { ExecutionScheduler, RunnableWorkSource } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  createSchema42TestDatabaseFactory,
+  type Schema42TestDatabaseFactory,
+} from "../../../tests/support/schema42-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
+
+let schema42Factory: Schema42TestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: ".p5-composition-template-",
+  });
+});
+
+afterAll(() => schema42Factory?.cleanup());
 
 describe("P5 composition root", () => {
   it("builds the full slice layer over a prestarted schema-42 DB", async () => {
-    const fixture = await createSchema42TestDatabase({
-      prefix: ".p5-composition-",
-    });
+    const fixture = schema42Factory?.create();
+    if (fixture === undefined) {
+      throw new Error("Schema-42 test database factory was not prepared.");
+    }
     try {
       const result = await Effect.runPromise(
         Effect.provide(
