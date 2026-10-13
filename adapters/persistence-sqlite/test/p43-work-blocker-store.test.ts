@@ -23,14 +23,15 @@ import {
   TransactionPortLive,
   WorkBlockerStoreLive,
 } from "../src/index.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 
 const projectId = "prj_blocked_test";
 const workspaceId = "ws_blocked_test" as WorkspaceId;
 const sessionId = "ses_blocked_test";
 const workId = "wrk_blocked_test" as WorkId;
 const executionId = "exe_blocked_test";
-const appLayer = () => {
-  const base = layer({ filename: ":memory:" });
+const appLayer = (filename = ":memory:") => {
+  const base = layer({ filename });
   return Layer.mergeAll(
     base,
     Layer.provide(TransactionPortLive, base),
@@ -147,12 +148,7 @@ const baseBlocker: WorkBlocker = {
   revision: 0,
 };
 
-const migrateIsolatedTestDatabase = Effect.gen(function* () {
-  yield* runMigrations(P38_MIGRATIONS);
-  const sql = yield* SqlClient;
-  // The accepted prefix reserves 0039–0042. Skip those migrations in this
-  // isolated fixture; exercise only the unregistered 0043 descriptor here.
-  yield* sql.unsafe("PRAGMA user_version = 42");
+const applyP43AndSeed = Effect.gen(function* () {
   yield* runMigrations([
     {
       id: P43_BLOCKED_WORKEPISODE_MIGRATION.migrationVersion,
@@ -196,110 +192,129 @@ describe("unregistered P43 WorkBlocker and Inbox sequence adapters", () => {
   });
 
   it("opens, updates idempotently, reopens, resolves, and supersedes with revision guards", async () => {
-    const program = Effect.gen(function* () {
-      yield* migrateIsolatedTestDatabase;
-      const tx = yield* TransactionPort;
-      const store = yield* WorkBlockerStore;
+    const database = await createSchema42TestDatabase();
+    try {
+      const program = Effect.gen(function* () {
+        yield* applyP43AndSeed;
+        const tx = yield* TransactionPort;
+        const store = yield* WorkBlockerStore;
 
-      const opened = yield* tx.transact(store.openOrUpdate(baseBlocker));
-      const first = yield* tx.transact(store.findById(baseBlocker.blockerId));
-      const replayed = yield* tx.transact(store.openOrUpdate(baseBlocker));
-      const afterReplay = yield* tx.transact(
-        store.findById(baseBlocker.blockerId),
-      );
+        const opened = yield* tx.transact(store.openOrUpdate(baseBlocker));
+        const first = yield* tx.transact(store.findById(baseBlocker.blockerId));
+        const replayed = yield* tx.transact(store.openOrUpdate(baseBlocker));
+        const afterReplay = yield* tx.transact(
+          store.findById(baseBlocker.blockerId),
+        );
 
-      const refreshed = yield* tx.transact(
-        store.openOrUpdate({ ...baseBlocker, latestRequestRef: "blob:req-2" }),
-      );
-      const updated = yield* tx.transact(store.findById(baseBlocker.blockerId));
-      const resolution = {
-        blockerId: baseBlocker.blockerId,
-        workId,
-        targetWorkRevision: baseBlocker.targetWorkRevision,
-        successfulActionRefs: ["success:action-1"] as const,
-      };
-      yield* tx.transact(store.resolve(resolution));
-      yield* tx.transact(store.resolve(resolution));
-      const resolved = yield* tx.transact(
-        store.findById(baseBlocker.blockerId),
-      );
+        const refreshed = yield* tx.transact(
+          store.openOrUpdate({
+            ...baseBlocker,
+            latestRequestRef: "blob:req-2",
+          }),
+        );
+        const updated = yield* tx.transact(
+          store.findById(baseBlocker.blockerId),
+        );
+        const resolution = {
+          blockerId: baseBlocker.blockerId,
+          workId,
+          targetWorkRevision: baseBlocker.targetWorkRevision,
+          successfulActionRefs: ["success:action-1"] as const,
+        };
+        yield* tx.transact(store.resolve(resolution));
+        yield* tx.transact(store.resolve(resolution));
+        const resolved = yield* tx.transact(
+          store.findById(baseBlocker.blockerId),
+        );
 
-      const reopened = yield* tx.transact(
-        store.openOrUpdate({ ...refreshed, latestRequestRef: "blob:req-3" }),
+        const reopened = yield* tx.transact(
+          store.openOrUpdate({ ...refreshed, latestRequestRef: "blob:req-3" }),
+        );
+        yield* tx.transact(
+          store.supersede(workId, baseBlocker.targetWorkRevision),
+        );
+        const superseded = yield* tx.transact(
+          store.findById(baseBlocker.blockerId),
+        );
+        return {
+          opened,
+          replayed,
+          first,
+          afterReplay,
+          updated,
+          resolved,
+          reopened,
+          superseded,
+        };
+      });
+      const result = await Effect.runPromise(
+        Effect.provide(program, appLayer(database.databaseFilename)),
       );
-      yield* tx.transact(
-        store.supersede(workId, baseBlocker.targetWorkRevision),
+      expect(result.opened.revision).toBe(0);
+      expect(result.replayed.revision).toBe(0);
+      expect(Option.isSome(result.first)).toBe(true);
+      expect(Option.getOrThrow(result.first).revision).toBe(0);
+      expect(Option.getOrThrow(result.afterReplay).revision).toBe(0);
+      expect(Option.getOrThrow(result.updated).latestRequestRef).toBe(
+        "blob:req-2",
       );
-      const superseded = yield* tx.transact(
-        store.findById(baseBlocker.blockerId),
-      );
-      return {
-        opened,
-        replayed,
-        first,
-        afterReplay,
-        updated,
-        resolved,
-        reopened,
-        superseded,
-      };
-    });
-    const result = await Effect.runPromise(Effect.provide(program, appLayer()));
-    expect(result.opened.revision).toBe(0);
-    expect(result.replayed.revision).toBe(0);
-    expect(Option.isSome(result.first)).toBe(true);
-    expect(Option.getOrThrow(result.first).revision).toBe(0);
-    expect(Option.getOrThrow(result.afterReplay).revision).toBe(0);
-    expect(Option.getOrThrow(result.updated).latestRequestRef).toBe(
-      "blob:req-2",
-    );
-    expect(Option.getOrThrow(result.updated).revision).toBe(1);
-    expect(Option.getOrThrow(result.resolved).state).toBe("Resolved");
-    expect(Option.getOrThrow(result.resolved).revision).toBe(2);
-    expect(Option.getOrThrow(result.superseded).state).toBe("Superseded");
-    expect(Option.getOrThrow(result.superseded).revision).toBe(4);
-    expect(result.reopened.state).toBe("Open");
-    expect(result.reopened.revision).toBe(3);
-  });
+      expect(Option.getOrThrow(result.updated).revision).toBe(1);
+      expect(Option.getOrThrow(result.resolved).state).toBe("Resolved");
+      expect(Option.getOrThrow(result.resolved).revision).toBe(2);
+      expect(Option.getOrThrow(result.superseded).state).toBe("Superseded");
+      expect(Option.getOrThrow(result.superseded).revision).toBe(4);
+      expect(result.reopened.state).toBe("Open");
+      expect(result.reopened.revision).toBe(3);
+    } finally {
+      database.cleanup();
+    }
+  }, 120_000);
 
   it("advances Inbox sequence only on new admissions, and keeps it monotonic after consume", async () => {
-    const program = Effect.gen(function* () {
-      yield* migrateIsolatedTestDatabase;
-      const tx = yield* TransactionPort;
-      const inbox = yield* InboxProjectionStore;
-      const entry: InboxEntry = {
-        recipientWorkspaceId: workspaceId,
-        entryKey: "settlement:one",
-        kind: "WorkBlocked" as InboxEntry["kind"],
-        summary: "blocked",
-        admittedAt: "t1",
-      };
-      const before = yield* tx.transact(inbox.currentSequence(workspaceId));
-      yield* tx.transact(inbox.admitUpsertSequenced(entry));
-      const once = yield* tx.transact(inbox.currentSequence(workspaceId));
-      yield* tx.transact(inbox.admitUpsertSequenced(entry));
-      const replay = yield* tx.transact(inbox.currentSequence(workspaceId));
-      yield* tx.transact(inbox.markConsumed(workspaceId, "settlement:one"));
-      const afterConsume = yield* tx.transact(
-        inbox.currentSequence(workspaceId),
+    const database = await createSchema42TestDatabase();
+    try {
+      const program = Effect.gen(function* () {
+        yield* applyP43AndSeed;
+        const tx = yield* TransactionPort;
+        const inbox = yield* InboxProjectionStore;
+        const entry: InboxEntry = {
+          recipientWorkspaceId: workspaceId,
+          entryKey: "settlement:one",
+          kind: "WorkBlocked" as InboxEntry["kind"],
+          summary: "blocked",
+          admittedAt: "t1",
+        };
+        const before = yield* tx.transact(inbox.currentSequence(workspaceId));
+        yield* tx.transact(inbox.admitUpsertSequenced(entry));
+        const once = yield* tx.transact(inbox.currentSequence(workspaceId));
+        yield* tx.transact(inbox.admitUpsertSequenced(entry));
+        const replay = yield* tx.transact(inbox.currentSequence(workspaceId));
+        yield* tx.transact(inbox.markConsumed(workspaceId, "settlement:one"));
+        const afterConsume = yield* tx.transact(
+          inbox.currentSequence(workspaceId),
+        );
+        yield* tx.transact(
+          inbox.admitUpsertSequenced({
+            ...entry,
+            entryKey: "settlement:two",
+            admittedAt: "t2",
+          }),
+        );
+        const next = yield* tx.transact(inbox.currentSequence(workspaceId));
+        return { before, once, replay, afterConsume, next };
+      });
+      const result = await Effect.runPromise(
+        Effect.provide(program, appLayer(database.databaseFilename)),
       );
-      yield* tx.transact(
-        inbox.admitUpsertSequenced({
-          ...entry,
-          entryKey: "settlement:two",
-          admittedAt: "t2",
-        }),
-      );
-      const next = yield* tx.transact(inbox.currentSequence(workspaceId));
-      return { before, once, replay, afterConsume, next };
-    });
-    const result = await Effect.runPromise(Effect.provide(program, appLayer()));
-    expect(result).toEqual({
-      before: 0,
-      once: 1,
-      replay: 1,
-      afterConsume: 1,
-      next: 2,
-    });
-  });
+      expect(result).toEqual({
+        before: 0,
+        once: 1,
+        replay: 1,
+        afterConsume: 1,
+        next: 2,
+      });
+    } finally {
+      database.cleanup();
+    }
+  }, 120_000);
 });

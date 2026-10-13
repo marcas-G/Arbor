@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  createSchema42TestDatabase,
+  type Schema42TestDatabase,
+} from "./support/schema42-database.js";
 import {
   AttentionProjectionStoreLive,
   ClockLive,
@@ -13,12 +14,8 @@ import {
   IdGeneratorLive,
   layer,
   makeProjectAttentionProjectionStore,
-  P36_MIGRATIONS,
-  P39_MAINTENANCE_MIGRATIONS,
-  P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
   rebuildProjection,
   runConsumerBatch,
-  runMigrations,
   ToolInvocationStoreLive,
   ToolObservationReplayAttentionFactStoreLive,
   TransactionPortLive,
@@ -50,7 +47,7 @@ const incarnationId = "incarnation:p40-p9-p10";
 const consumerId = "p10:attention:p40-test";
 const now = "2026-10-12T00:00:01.000Z";
 const failureCode = "Missing" as const;
-const directories: string[] = [];
+const databases: Schema42TestDatabase[] = [];
 
 const fence = {
   executionId,
@@ -72,10 +69,8 @@ const intent = {
   intentAt: now,
 } as never;
 
-const makeFixture = () => {
-  const directory = mkdtempSync(join(tmpdir(), "p40-p9-p10-production-"));
-  directories.push(directory);
-  const sqlite = layer({ filename: join(directory, "recovery.db") });
+const makeFixture = (databaseFilename: string) => {
+  const sqlite = layer({ filename: databaseFilename });
   const infra = Layer.mergeAll(sqlite, ClockLive, IdGeneratorLive);
   const journal = Layer.provideMerge(DomainEventJournalLive, infra);
   const replayFacts = Layer.provideMerge(
@@ -93,16 +88,13 @@ const makeFixture = () => {
 };
 
 afterEach(() => {
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
+  for (const database of databases.splice(0)) {
+    database.cleanup();
   }
 });
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;
-  yield* runMigrations(P36_MIGRATIONS);
-  yield* runMigrations(P39_MAINTENANCE_MIGRATIONS);
-  yield* runMigrations([P40_TOOL_OBSERVATION_REPLAY_MIGRATION]);
   yield* sql.withTransaction(
     Effect.gen(function* () {
       yield* sql.unsafe(
@@ -156,6 +148,10 @@ const sourceFactsWithoutOtherP10Sources = {
   findDeliverReplayFailure: () => Effect.succeed(Option.none()),
   listDeliverReplayFailures: () => Effect.succeed([]),
   listPendingDeliverReplayAttention: () => Effect.succeed([]),
+  // Schema 42 exposes the P41 marker store; this no-facts test source reports
+  // the matching capability so P10 reset/rebuild can qualify its empty set.
+  isSubmittedDecisionBindingAvailable: () => Effect.succeed(true),
+  listSubmittedDecisionBindingFailures: () => Effect.succeed([]),
   acknowledgePendingDeliverReplayAttention: () => Effect.void,
 } as never;
 
@@ -196,7 +192,9 @@ const withTxFault = (
 
 describe("P40 P9/P10 durable replay-failure recovery", () => {
   it("keeps P9 fact/event atomic and projects exactly one P10 row through restart and rebuild", async () => {
-    const { app } = makeFixture();
+    const database = await createSchema42TestDatabase();
+    databases.push(database);
+    const { app } = makeFixture(database.databaseFilename);
     await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -386,5 +384,5 @@ describe("P40 P9/P10 durable replay-failure recovery", () => {
         "A terminal tool outcome could not be replayed from durable observation evidence; recovery is paused.",
       occurredAt: now,
     });
-  });
+  }, 120_000);
 });
