@@ -2,10 +2,6 @@ import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createSchema42TestDatabase,
-  type Schema42TestDatabase,
-} from "./support/schema42-database.js";
-import {
   AttentionProjectionStoreLive,
   ClockLive,
   ConsumerDeadLetterStoreLive,
@@ -33,6 +29,10 @@ import {
   type TransactionPortService,
 } from "../packages/ports/src/index.js";
 import { deriveProjectAttention } from "../packages/projection-runtime/src/attention-loader.js";
+import {
+  createSchema42TestDatabase,
+  type Schema42TestDatabase,
+} from "./support/schema42-database.js";
 
 const projectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789b1";
 const workspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789b1";

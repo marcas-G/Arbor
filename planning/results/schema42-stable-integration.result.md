@@ -120,3 +120,12 @@ Blocking/B1/B2 = 0.
   subprocess limits are 30 seconds. Static search also confirmed the TEMP
   cleanup guard, the F21 409 expectation, and the pending auth boundary.
 - Vitest and repository-wide gates were not run, as scoped for this integration.
+
+## Post-integration lint correction
+
+After the first `pnpm check` at the P5-integrated HEAD, lint reported one
+`organizeImports` issue in
+`tests/p40-p9-p10-production-recovery.test.ts`. Biome's safe fix moved the
+schema-42 fixture import to its sorted position; the diff contains import
+ordering only. Biome recheck of that file and `git diff --check` pass. No
+heavy tests or full gates were rerun.
