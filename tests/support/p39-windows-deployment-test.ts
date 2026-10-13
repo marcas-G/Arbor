@@ -25,6 +25,24 @@ export const p39WindowsTestEnvironment = (): NodeJS.ProcessEnv => {
 };
 
 let windowsAclModuleAvailable: boolean | undefined;
+let currentWindowsSid: string | undefined;
+
+/** The test process does not impersonate between fixture operations, so its
+ * Windows token SID is stable and can be safely reused for ACL cleanup. */
+const getCurrentWindowsSid = (): string => {
+  if (currentWindowsSid !== undefined) return currentWindowsSid;
+  const identity = execFileSync(
+    "whoami.exe",
+    ["/user", "/fo", "csv", "/nh"],
+    { encoding: "utf8", windowsHide: true },
+  );
+  const sid = identity.match(/S-\d-\d+(?:-\d+)+/u)?.[0];
+  if (sid === undefined) {
+    throw new Error("Could not resolve the current Windows test SID");
+  }
+  currentWindowsSid = sid;
+  return sid;
+};
 
 export interface P39PrivateTestTempRoot {
   readonly path: string;
@@ -39,18 +57,7 @@ export const createP39PrivateTestTempRoot =
     if (process.platform !== "win32") return null;
     const parent = tmpdir();
     const path = mkdtempSync(join(parent, "arbor-vitest-p39-"));
-    const identity = execFileSync(
-      "whoami.exe",
-      ["/user", "/fo", "csv", "/nh"],
-      {
-        encoding: "utf8",
-        windowsHide: true,
-      },
-    );
-    const currentSid = identity.match(/S-\d-\d+(?:-\d+)+/u)?.[0];
-    if (currentSid === undefined) {
-      throw new Error("Could not resolve the current Windows test SID");
-    }
+    const currentSid = getCurrentWindowsSid();
 
     execFileSync("icacls.exe", [path, "/inheritance:r", "/C", "/Q"], {
       encoding: "utf8",
@@ -199,21 +206,7 @@ export const createP39PrivateTestFile = (
  * tree. This keeps test teardown reliable after SQLite creates nested files. */
 export const removeP39PrivateTestDirectory = (directory: string): void => {
   if (process.platform === "win32") {
-    const currentSid = execFileSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
-      ],
-      {
-        encoding: "utf8",
-        timeout: 5000,
-        windowsHide: true,
-        env: p39WindowsTestEnvironment(),
-      },
-    ).trim();
+    const currentSid = getCurrentWindowsSid();
     execFileSync(
       "icacls.exe",
       [directory, "/grant:r", `*${currentSid}:(OI)(CI)F`, "/T", "/C", "/Q"],
