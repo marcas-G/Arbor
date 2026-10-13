@@ -13,17 +13,16 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import {
   CURRENT_MIGRATIONS,
   InboxProjectionStoreLive,
   layer,
-  P38_MIGRATIONS,
   P43_BLOCKED_WORKEPISODE_MIGRATION,
   runMigrations,
   TransactionPortLive,
   WorkBlockerStoreLive,
 } from "../src/index.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 
 const projectId = "prj_blocked_test";
 const workspaceId = "ws_blocked_test" as WorkspaceId;
@@ -159,11 +158,6 @@ const applyP43AndSeed = Effect.gen(function* () {
   yield* seed;
 });
 
-const migrateLegacyTestDatabase = Effect.gen(function* () {
-  yield* runMigrations(P38_MIGRATIONS);
-  yield* seed;
-});
-
 describe("unregistered P43 WorkBlocker and Inbox sequence adapters", () => {
   it("keeps the descriptor out of the production migration prefix", () => {
     expect(CURRENT_MIGRATIONS.some((migration) => migration.id === 43)).toBe(
@@ -172,23 +166,32 @@ describe("unregistered P43 WorkBlocker and Inbox sequence adapters", () => {
   });
 
   it("keeps legacy Inbox admission functional before P43", async () => {
-    const program = Effect.gen(function* () {
-      yield* migrateLegacyTestDatabase;
-      const tx = yield* TransactionPort;
-      const inbox = yield* InboxProjectionStore;
-      const entry: InboxEntry = {
-        recipientWorkspaceId: workspaceId,
-        entryKey: "legacy-entry",
-        kind: "Message",
-        summary: "legacy",
-        admittedAt: "t0",
-      };
-      yield* tx.transact(inbox.admitUpsert(entry));
-      return yield* tx.transact(inbox.countByKey(workspaceId, entry.entryKey));
-    });
-    expect(await Effect.runPromise(Effect.provide(program, appLayer()))).toBe(
-      1,
-    );
+    const database = await createSchema42TestDatabase();
+    try {
+      const program = Effect.gen(function* () {
+        yield* seed;
+        const tx = yield* TransactionPort;
+        const inbox = yield* InboxProjectionStore;
+        const entry: InboxEntry = {
+          recipientWorkspaceId: workspaceId,
+          entryKey: "legacy-entry",
+          kind: "Message",
+          summary: "legacy",
+          admittedAt: "t0",
+        };
+        yield* tx.transact(inbox.admitUpsert(entry));
+        return yield* tx.transact(
+          inbox.countByKey(workspaceId, entry.entryKey),
+        );
+      });
+      expect(
+        await Effect.runPromise(
+          Effect.provide(program, appLayer(database.databaseFilename)),
+        ),
+      ).toBe(1);
+    } finally {
+      database.cleanup();
+    }
   });
 
   it("opens, updates idempotently, reopens, resolves, and supersedes with revision guards", async () => {

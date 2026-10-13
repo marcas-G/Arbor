@@ -29,10 +29,9 @@ import {
   type Schema42TestDatabase,
 } from "../../../tests/support/schema42-database.js";
 import {
+  CURRENT_MIGRATIONS,
   DomainEventJournalLive,
   layer,
-  P36_MIGRATIONS,
-  runMigrations,
   ToolInvocationStoreLive,
   ToolObservationEvidenceStoreLive,
   ToolObservationReplayAttentionFactStoreLive,
@@ -251,23 +250,8 @@ describe("P40 P4 persistent observation admission gates", () => {
     for (const database of databases.splice(0)) database.cleanup();
   });
 
-  it("keeps a P39-only user_version out of the P36 runtime migration path", async () => {
-    // This is a version-boundary regression, not a post-activation fixture:
-    // the P36 runner must refuse a maintenance-only version-39 marker.
-    const sqlite = layer({ filename: ":memory:" });
-    const program = Effect.gen(function* () {
-      const sql = yield* SqlClient;
-      yield* runMigrations(P36_MIGRATIONS);
-      yield* sql.unsafe("PRAGMA user_version = 39");
-      const refused = yield* Effect.exit(runMigrations(P36_MIGRATIONS));
-      const version = yield* sql.unsafe<{ readonly user_version: number }>(
-        "PRAGMA user_version",
-      );
-      return { refused, version: version[0]?.user_version };
-    });
-    const result = await Effect.runPromise(Effect.provide(program, sqlite));
-    expect(Exit.isFailure(result.refused)).toBe(true);
-    expect(result.version).toBe(39);
+  it("keeps the maintenance-only P39 descriptor outside runtime migration prefixes", () => {
+    expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
   });
 
   it("rejects a NotAdmitted Success before artifact materialization or settlement writes", async () => {
