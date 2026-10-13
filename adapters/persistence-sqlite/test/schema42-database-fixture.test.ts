@@ -1,8 +1,13 @@
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import {
+  createSchema42PrivateTestDirectory,
+  createSchema42TestDatabase,
+} from "../../../tests/support/schema42-database.js";
 import {
   layer,
   runMigrations,
@@ -81,6 +86,28 @@ const runDatabase = <A>(
   );
 
 describe("central schema-42 test database fixture", () => {
+  it("removes the exact directory if private ACL setup fails", () => {
+    let createdDirectory: string | undefined;
+    expect(() =>
+      createSchema42PrivateTestDirectory(
+        tmpdir(),
+        "arbor-schema42-acl-failure-",
+        (directory) => {
+          createdDirectory = directory;
+          throw new Error("injected private ACL setup failure");
+        },
+        (directory) => rmSync(directory, { recursive: true, force: true }),
+      ),
+    ).toThrow("injected private ACL setup failure");
+    expect(createdDirectory).toBeDefined();
+    if (createdDirectory !== undefined) {
+      expect(existsSync(createdDirectory)).toBe(false);
+      expect(createdDirectory).toContain(
+        join(tmpdir(), "arbor-schema42-acl-failure-"),
+      );
+    }
+  });
+
   it("uses P38, privileged P39, standalone P40–P42 and reopens as a no-op", async () => {
     const database = await createSchema42TestDatabase({ seedP38 });
     try {

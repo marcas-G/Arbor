@@ -13,8 +13,8 @@ import {
 } from "../../adapters/persistence-sqlite/src/index.js";
 import {
   createP39PrivateTestFile,
-  makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
+  setP39PrivateWindowsAcl,
 } from "./p39-windows-deployment-test.js";
 
 const schema42StandaloneSuffix = [
@@ -52,6 +52,31 @@ export interface Schema42TestDatabaseOptions {
   readonly seedP38?: (databaseFilename: string) => Promise<void>;
   readonly prefix?: string;
 }
+
+/** Creates a directory whose path remains owned while P39 ACL setup runs. */
+export const createSchema42PrivateTestDirectory = (
+  parent: string,
+  prefix: string,
+  setPrivateDirectoryAcl: (directory: string) => void = (directory) =>
+    setP39PrivateWindowsAcl(directory, "directory"),
+  removeDirectory: (directory: string) => void = removeP39PrivateTestDirectory,
+): string => {
+  const directory = mkdtempSync(join(parent, prefix));
+  try {
+    setPrivateDirectoryAcl(directory);
+    return directory;
+  } catch (cause) {
+    try {
+      removeDirectory(directory);
+    } catch (cleanupCause) {
+      throw new AggregateError(
+        [cause, cleanupCause],
+        "Schema-42 private test directory setup and cleanup both failed.",
+      );
+    }
+    throw cause;
+  }
+};
 
 const runPrimary = <A>(
   filename: string,
@@ -92,7 +117,7 @@ const isUnsupportedP39Deployment = (value: unknown) =>
 export const createSchema42TestDatabase = async (
   options: Schema42TestDatabaseOptions = {},
 ): Promise<Schema42TestDatabase> => {
-  const directory = makeP39PrivateTestDirectory(
+  const directory = createSchema42PrivateTestDirectory(
     process.cwd(),
     options.prefix ?? "arbor-schema42-test-",
   );
