@@ -47,6 +47,11 @@ Accepted plan SHA-256: `7509948A83D2D6AD2B1A3C090EE6548628EB46397ABFB9718EB48535
   migration connection, reopening the target read-only, and checking version,
   foreign keys, required schema, row invariants, logical digest, provenance
   head, and report identity. This proves the no-op path from a fresh connection.
+- Fresh/copy migrations that reach version 42 during the same successful CLI
+  call now take that identical close/reopen verifier before releasing the
+  permit or returning. The verifier test hook carries `{ userVersion: 42,
+  reopenedReadOnly: true }` evidence only after the read-only reopen and checks
+  complete, and focused fresh and copied-source regressions assert the evidence.
 - Error rendering now removes Windows drive/UNC and Unix absolute-path
   remainder text, including paths with spaces; regression assertions confirm
   that neither path nor trailing fragments are rendered.
@@ -73,6 +78,10 @@ Accepted plan SHA-256: `7509948A83D2D6AD2B1A3C090EE6548628EB46397ABFB9718EB48535
 - P39 report delete/replace TOCTOU, exact-prefix resume, and explicit
   version-42 close/reopen read-only no-op qualification — PASS, 1/1 extended
   test (`resumes exact prefixes`, 1163.18 seconds; 8 other tests filtered).
+- Same-call version-42 close/reopen verification — PASS for fresh (1/1,
+  145.70 seconds) and copy from a disposable version-38 source (1/1,
+  211.56 seconds); both assert the read-only reopen evidence, and copy also
+  verifies the source remains at version 38.
 - P39 writer-lock initialization contention adapter test — PASS, 1/1. A
   separate Node process holds an exclusive lock for 16 seconds; a competing
   writer layer configured for 20 seconds waits and acquires after release.

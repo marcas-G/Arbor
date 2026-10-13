@@ -187,7 +187,10 @@ export interface SchemaUpgradeArguments {
 export interface SchemaUpgradeTestHooks {
   readonly beforeDatabaseTransaction?: (version: 39 | 40 | 41 | 42) => void;
   readonly afterDatabaseCommit?: (version: 39 | 40 | 41 | 42) => void;
-  readonly afterVersion42NoOpVerification?: () => void;
+  readonly afterVersion42NoOpVerification?: (evidence: {
+    readonly userVersion: 42;
+    readonly reopenedReadOnly: true;
+  }) => void;
   readonly beforeMaintenancePermitAcquire?: () => void;
   readonly onMaintenanceFailure?: (
     phase: SchemaUpgradeMaintenancePhase,
@@ -1683,7 +1686,10 @@ const runP39AndSuffix = async (
                   "read-only reopened target is not the exact committed version 42 manifest head",
                 );
               }
-              hooks.afterVersion42NoOpVerification?.();
+              hooks.afterVersion42NoOpVerification?.({
+                userVersion: 42,
+                reopenedReadOnly: true,
+              });
             }),
           beforeMaintenance: () =>
             Effect.promise(async () => {
