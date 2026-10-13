@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   SANDBOX_ENV_ALLOWLIST,
   sandboxEnvironment,
@@ -53,7 +53,17 @@ import {
   secretRef,
   TransactionPort,
 } from "../packages/ports/dist/index.js";
-import { createSchema42TestDatabase } from "./support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
+
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: "p12-secret-template-",
+  });
+});
+afterAll(() => schema42Factory.cleanup());
 
 const repoRoot = join(import.meta.dirname, "..");
 
@@ -308,9 +318,7 @@ describe("P12-003 sentinel no-leak", () => {
     const sentinelValue = `sentinel-value-${randomUUID()}`;
     process.env[sentinelEnv] = sentinelValue;
 
-    const database = await createSchema42TestDatabase({
-      prefix: "p12-secret-",
-    });
+    const database = schema42Factory.create();
     const app = buildSingleWorkspaceLayer({
       databaseFile: database.databaseFilename,
       providerTurns: turns,

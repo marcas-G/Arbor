@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   buildSingleWorkspaceLayer,
   type SingleWorkspaceServices,
@@ -39,16 +39,25 @@ import {
   TransactionPort,
   WorkspaceRepository,
 } from "../packages/ports/src/index.js";
-import { createSchema42TestDatabase } from "./support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
 
 const roots: string[] = [];
 const schema42Cleanups: Array<() => void> = [];
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: "f21-create-project-resource-template-",
+  });
+});
 afterEach(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
 });
+afterAll(() => schema42Factory.cleanup());
 
 const tempRoot = (): string => {
   const root = mkdtempSync(join(tmpdir(), "arbor-f21-create-project-"));
@@ -56,10 +65,8 @@ const tempRoot = (): string => {
   return root;
 };
 
-const currentSchemaDatabase = async (): Promise<string> => {
-  const fixture = await createSchema42TestDatabase({
-    prefix: "f21-create-project-resource-",
-  });
+const currentSchemaDatabase = (): string => {
+  const fixture = schema42Factory.create();
   schema42Cleanups.push(fixture.cleanup);
   return fixture.databaseFilename;
 };
@@ -200,7 +207,7 @@ const readCounts = Effect.gen(function* () {
 describe("F21 CreateProject v2 host resource admission", () => {
   it("rejects raw or mixed caller boundaries before receipt or aggregate writes", async () => {
     const root = tempRoot();
-    const databaseFile = await currentSchemaDatabase();
+    const databaseFile = currentSchemaDatabase();
     const outsidePath = join(root, "unregistered-host-path");
     mkdirSync(outsidePath);
     const request = ids("a1");
@@ -259,7 +266,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
     const root = tempRoot();
     const directory = join(root, "registered-workspace");
     mkdirSync(directory);
-    const databaseFile = await currentSchemaDatabase();
+    const databaseFile = currentSchemaDatabase();
     const requestProfile = ids("b1");
     const requestConversation = ids("b2");
     const profiles = makeProjectResourceProfilePort([
@@ -442,7 +449,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
     const available = join(root, "available");
     mkdirSync(available);
     const missing = join(root, "missing");
-    const databaseFile = await currentSchemaDatabase();
+    const databaseFile = currentSchemaDatabase();
     const forgedRequest = ids("c1");
     const staleRequest = ids("c2");
     const unavailableRequest = ids("c3");
@@ -557,7 +564,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
     const replacementDirectory = join(root, "replacement");
     mkdirSync(originalDirectory);
     mkdirSync(replacementDirectory);
-    const databaseFile = await currentSchemaDatabase();
+    const databaseFile = currentSchemaDatabase();
     const request = ids("c4");
     const originalPayload = payload(request, {
       _tag: "Profile",
@@ -697,7 +704,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
         resourceBoundaryRevision: 0,
       },
     };
-    const databaseFile = await currentSchemaDatabase();
+    const databaseFile = currentSchemaDatabase();
     const profileSnapshot = makeProjectResourceProfilePort([
       hostProfile(directory, "v1"),
     ]);

@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, Option, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EnvironmentResolverLocalLive } from "../adapters/environment-resolver-local/src/index.js";
 import {
   AcceptanceRepositoryLive,
@@ -263,7 +263,7 @@ import {
   ToolRuntimeLive,
 } from "../packages/tool-runtime/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
-import { createSchema42TestDatabase } from "./support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
 
 // P12-013 acceptance: the `14` §1 end-to-end story across contracts `01`–`10`,
 // `12`, `13`. Mechanical evidence only; the per-contract suites carry the
@@ -276,10 +276,25 @@ const readRepoFile = (relative: string): string =>
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "p12-acceptance-"));
 const schema42Cleanups: Array<() => void> = [];
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: "p12-acceptance-template-",
+  });
+});
 afterAll(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
+  schema42Factory.cleanup();
   rmSync(suiteTmp, { recursive: true, force: true });
 });
+
+const createSchema42CaseDatabase = () => {
+  const fixture = schema42Factory.create();
+  schema42Cleanups.push(fixture.cleanup);
+  return fixture;
+};
 
 const PROJECT = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const PLUGIN = parse(PluginId)("plg_018f2b3c-4d5e-7abc-8def-0123456789a1");
@@ -734,10 +749,7 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
     const sentinelEnv = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
     const sentinelValue = `sentinel-value-${randomUUID()}`;
     process.env[sentinelEnv] = sentinelValue;
-    const database = await createSchema42TestDatabase({
-      prefix: "p12-acceptance-secret-",
-    });
-    schema42Cleanups.push(database.cleanup);
+    const database = createSchema42CaseDatabase();
     const app = buildSingleWorkspaceLayer({
       databaseFile: database.databaseFilename,
       providerTurns: [
@@ -1703,10 +1715,7 @@ const runSafetyScenario = async (
     resourceProfileRef: profile.resourceProfileRef,
     version: profile.version,
   });
-  const database = await createSchema42TestDatabase({
-    prefix: "p12-acceptance-safety-",
-  });
-  schema42Cleanups.push(database.cleanup);
+  const database = createSchema42CaseDatabase();
   const app = buildSingleWorkspaceLayer({
     databaseFile: database.databaseFilename,
     providerTurns,
@@ -2261,10 +2270,7 @@ describe("p12-acceptance story 11 — transport shells + daemons", () => {
       ]);
     }
 
-    const database = await createSchema42TestDatabase({
-      prefix: "p12-acceptance-transport-",
-    });
-    schema42Cleanups.push(database.cleanup);
+    const database = createSchema42CaseDatabase();
     const outcome = await transportRun(
       Effect.gen(function* () {
         const submission = yield* makeExternalSubmissionFromServices({

@@ -2,7 +2,15 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import {
   AcceptanceRepositoryLive,
   ClockLive,
@@ -104,7 +112,7 @@ import type {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
-import { createSchema42TestDatabase } from "./support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
 
 /**
  * P12-010 (`10` §1–§5; EC-11). Mechanical evidence:
@@ -355,16 +363,25 @@ const run = <A>(
 ): Promise<A> =>
   Effect.runPromise(Effect.provide(program, makeApp(databaseFile)));
 
-const prepareSchema42Database = () =>
-  createSchema42TestDatabase({ prefix: "p12-transport-" }).then((fixture) => {
-    schema42Cleanups.push(fixture.cleanup);
-    return fixture;
-  });
-
 const schema42Cleanups: Array<() => void> = [];
+let schema42Factory: Awaited<
+  ReturnType<typeof createSchema42TestDatabaseFactory>
+>;
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: "p12-transport-template-",
+  });
+});
 afterEach(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
 });
+afterAll(() => schema42Factory.cleanup());
+
+const prepareSchema42Database = () => {
+  const fixture = schema42Factory.create();
+  schema42Cleanups.push(fixture.cleanup);
+  return fixture;
+};
 
 const countRows = (table: string) =>
   Effect.gen(function* () {
