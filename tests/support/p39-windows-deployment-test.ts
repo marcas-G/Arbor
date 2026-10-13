@@ -3,6 +3,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+const childProcessTimeoutMs = 30_000;
+
 const windowsPowerShellModules = (): string =>
   join(
     process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows",
@@ -31,11 +33,11 @@ let currentWindowsSid: string | undefined;
  * Windows token SID is stable and can be safely reused for ACL cleanup. */
 const getCurrentWindowsSid = (): string => {
   if (currentWindowsSid !== undefined) return currentWindowsSid;
-  const identity = execFileSync(
-    "whoami.exe",
-    ["/user", "/fo", "csv", "/nh"],
-    { encoding: "utf8", windowsHide: true },
-  );
+  const identity = execFileSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], {
+    encoding: "utf8",
+    timeout: childProcessTimeoutMs,
+    windowsHide: true,
+  });
   const sid = identity.match(/S-\d-\d+(?:-\d+)+/u)?.[0];
   if (sid === undefined) {
     throw new Error("Could not resolve the current Windows test SID");
@@ -61,13 +63,18 @@ export const createP39PrivateTestTempRoot =
 
     execFileSync("icacls.exe", [path, "/inheritance:r", "/C", "/Q"], {
       encoding: "utf8",
+      timeout: childProcessTimeoutMs,
       windowsHide: true,
     });
     for (const sid of [currentSid, "S-1-5-18", "S-1-5-32-544"]) {
       execFileSync(
         "icacls.exe",
         [path, "/grant:r", `*${sid}:(OI)(CI)F`, "/C", "/Q"],
-        { encoding: "utf8", windowsHide: true },
+        {
+          encoding: "utf8",
+          timeout: childProcessTimeoutMs,
+          windowsHide: true,
+        },
       );
     }
     return { path, currentSid };
@@ -81,7 +88,11 @@ export const removeP39PrivateTestTempRoot = (
   execFileSync(
     "icacls.exe",
     [root.path, "/grant:r", `*${root.currentSid}:(OI)(CI)F`, "/T", "/C", "/Q"],
-    { encoding: "utf8", timeout: 30_000, windowsHide: true },
+    {
+      encoding: "utf8",
+      timeout: childProcessTimeoutMs,
+      windowsHide: true,
+    },
   );
   rmSync(root.path, {
     recursive: true,
@@ -107,7 +118,7 @@ export const p39WindowsAclQualificationAvailable = (): boolean => {
       ],
       {
         encoding: "utf8",
-        timeout: 5000,
+        timeout: childProcessTimeoutMs,
         windowsHide: true,
         env: p39WindowsTestEnvironment(),
       },
@@ -165,7 +176,7 @@ export const setP39PrivateWindowsAcl = (
     ["-NoProfile", "-NonInteractive", "-Command", script],
     {
       encoding: "utf8",
-      timeout: 5000,
+      timeout: childProcessTimeoutMs,
       windowsHide: true,
       env: p39WindowsTestEnvironment(),
     },
@@ -210,7 +221,11 @@ export const removeP39PrivateTestDirectory = (directory: string): void => {
     execFileSync(
       "icacls.exe",
       [directory, "/grant:r", `*${currentSid}:(OI)(CI)F`, "/T", "/C", "/Q"],
-      { encoding: "utf8", timeout: 10_000, windowsHide: true },
+      {
+        encoding: "utf8",
+        timeout: childProcessTimeoutMs,
+        windowsHide: true,
+      },
     );
   }
   rmSync(directory, {

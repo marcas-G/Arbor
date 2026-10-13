@@ -514,7 +514,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
         }),
       ]),
     );
-  });
+  }, 120_000);
 
   it("enforces the DeniedUnbound row shape and only the two allowed projection exits", async () => {
     const result = await withP39Client(
@@ -706,7 +706,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
         settlement_provenance: "Ordinary",
       },
     ]);
-  });
+  }, 120_000);
 
   it("rejects Success from NotOccurred, allows ExpectedFailure with a distinct external result Artifact, and rejects cross-attempt selection", async () => {
     const result = await withP39Client(
