@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const childProcessTimeoutMs = 30_000;
 
@@ -216,6 +216,21 @@ export const createP39PrivateTestFile = (
 /** Re-establish owned-path cleanup access before removing a disposable test
  * tree. This keeps test teardown reliable after SQLite creates nested files. */
 export const removeP39PrivateTestDirectory = (directory: string): void => {
+  if (process.platform === "win32") {
+    const target = resolve(directory);
+    const protectedTempRoot = resolve(tmpdir());
+    const tempRootRelativeToTarget = relative(target, protectedTempRoot);
+    if (
+      tempRootRelativeToTarget === "" ||
+      (!tempRootRelativeToTarget.startsWith(`..${sep}`) &&
+        tempRootRelativeToTarget !== ".." &&
+        !isAbsolute(tempRootRelativeToTarget))
+    ) {
+      throw new Error(
+        `P39 test cleanup cannot remove the invocation TEMP root or one of its ancestors: ${directory}`,
+      );
+    }
+  }
   if (process.platform === "win32") {
     const currentSid = getCurrentWindowsSid();
     execFileSync(
