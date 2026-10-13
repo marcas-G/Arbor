@@ -65,6 +65,7 @@ import {
   ConversationResponseJobStoreLive,
   CURRENT_MIGRATION_BASELINE,
   CURRENT_MIGRATIONS,
+  CURRENT_SCHEMA_VERSION,
   DecisionRequestStoreLive,
   DeliverableRepositoryLive,
   DependencyRepositoryLive,
@@ -1022,16 +1023,17 @@ export const buildSingleWorkspaceLayer = (
           "PRAGMA user_version",
         );
         const current = Number(versions[0]?.user_version ?? 0);
-        if (current >= 39) {
-          return yield* Effect.die({
-            _tag: "P39MaintenanceFailure",
-            code: "P39_RUNTIME_START_REFUSED",
-          });
-        }
         if (current > latestSupportedSchema) {
           return yield* Effect.die(
             sqliteAdapterError(
               `database user_version ${current} is newer than latest migration ${latestSupportedSchema}`,
+            ),
+          );
+        }
+        if (current !== CURRENT_SCHEMA_VERSION) {
+          return yield* Effect.die(
+            sqliteAdapterError(
+              `database user_version ${current} requires an offline upgrade to schema ${CURRENT_SCHEMA_VERSION}`,
             ),
           );
         }

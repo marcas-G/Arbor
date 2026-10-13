@@ -1,6 +1,7 @@
 import type { MigrationFile } from "./migrate.js";
 import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "./p38-executable-approval-migration.js";
 import { P39_RECONCILIATION_DDL } from "./p39-reconciliation-ddl.js";
+import { P42_PROJECT_RESOURCE_SOURCE_MIGRATION } from "./p42-project-resource-source-migration.js";
 
 const DDL = `
 CREATE TABLE projects (
@@ -2089,8 +2090,8 @@ export const P38_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   },
 ];
 
-/** P41 / 0041 physical storage descriptor. Keep this standalone until the
- * complete 0036→0040 prefix has independently passed qualification. */
+/** P41 / 0041 physical storage descriptor; its exact cumulative predecessor
+ * is enforced by requiresUserVersion before the descriptor transaction. */
 export const P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL = `
 CREATE TABLE submitted_decision_binding_attention_facts (
   attention_fact_id TEXT NOT NULL PRIMARY KEY,
@@ -2150,16 +2151,10 @@ export const P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION: MigrationFile =
     id: 41,
     name: "p41_submitted_decision_binding_attention",
     sql: P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL,
+    requiresUserVersion: 40,
   };
-
-/** Current production schema registry and its exact readiness high-water mark. */
-export const CURRENT_MIGRATIONS = P38_MIGRATIONS;
-export const CURRENT_MIGRATION_BASELINE = Math.max(
-  ...CURRENT_MIGRATIONS.map((migration) => migration.id),
-);
 /** Trusted maintenance-only suffix. IDs and SQL pins are ordered after P36;
- * the ordinary P39 runtime still starts only through version 38 and refuses
- * schema 39 until the P40 implementation is available. */
+ * schema 39 is never part of ordinary runtime migration registration. */
 export const P39_MAINTENANCE_MIGRATIONS: ReadonlyArray<MigrationFile> =
   Object.freeze([
     ...P37_MIGRATIONS.filter(({ id }) => id === 37).map((migration) =>
@@ -2188,11 +2183,8 @@ export const P39_MAINTENANCE_MIGRATION_MANIFEST: Readonly<
     sha256: "6e791168987f23f5c282ce7d6bd2c5b5ad8361942dab968adbcca64aab753aec",
   }),
 });
-/**
- * AH7-DG-01 P40 is intentionally not part of any runnable migration list on
- * this P36 checkpoint. The cumulative P36→P39 chain and serialized startup
- * coordinator must be integrated before a caller can register this migration.
- */
+/** P40 owner DDL; the descriptor below is executable only after trusted P39
+ * maintenance has committed version 39. */
 const P40_VALID_ARTIFACT_REF_SQL = `
 length(NEW.result_ref) = 40 AND substr(NEW.result_ref, 1, 4) = 'art_' AND
 substr(NEW.result_ref, 13, 1) = '-' AND substr(NEW.result_ref, 18, 1) = '-' AND
@@ -2528,4 +2520,19 @@ export const P40_TOOL_OBSERVATION_REPLAY_MIGRATION: MigrationFile = {
   id: 40,
   name: "tool_observation_replay_evidence",
   sql: P40_TOOL_OBSERVATION_REPLAY_DDL,
+  requiresUserVersion: 39,
 };
+
+/**
+ * Schema 42 is the current runtime target. P39 remains an exact privileged
+ * maintenance-only step and is deliberately absent from this registry; the
+ * trusted offline coordinator applies it before this ordinary suffix.
+ */
+export const CURRENT_SCHEMA_VERSION = 42 as const;
+export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
+  ...P38_MIGRATIONS,
+  P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
+  P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
+  P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
+]);
+export const CURRENT_MIGRATION_BASELINE = CURRENT_SCHEMA_VERSION;

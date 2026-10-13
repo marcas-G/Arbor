@@ -75,6 +75,16 @@ export const runMigrations = (
   migrations: ReadonlyArray<MigrationFile>,
 ): Effect.Effect<number, SqlError | SqliteAdapterError, SqlClient> =>
   Effect.gen(function* () {
+    // Migration 0039 is only executable through the trusted P39 maintenance
+    // coordinator. The generic runner must refuse it before it reads the
+    // database version or executes any part of a caller-supplied chain.
+    if (migrations.some(({ id }) => id === 39)) {
+      return yield* Effect.fail(
+        sqliteAdapterError(
+          "migration 39 requires the trusted P39 maintenance coordinator",
+        ),
+      );
+    }
     const sql = yield* SqlClient;
     const versionRows = yield* sql.unsafe<{ user_version: number }>(
       "PRAGMA user_version",
@@ -94,18 +104,19 @@ export const runMigrations = (
     const pending = [...migrations]
       .filter((migration) => migration.id > current)
       .sort((a, b) => a.id - b.id);
-    const gatedMigration = pending.find(
-      (migration) => migration.requiresUserVersion !== undefined,
-    );
-    const requiredVersion = gatedMigration?.requiresUserVersion;
-    if (requiredVersion !== undefined && current !== requiredVersion) {
-      return yield* Effect.fail(
-        sqliteAdapterError(
-          `migration requires database user_version ${requiredVersion}, found ${current}`,
-        ),
-      );
-    }
     for (const migration of pending) {
+      const requiredVersion = migration.requiresUserVersion ?? migration.id - 1;
+      const actualRows = yield* sql.unsafe<{ user_version: number }>(
+        "PRAGMA user_version",
+      );
+      const actual = Number(actualRows[0]?.user_version ?? 0);
+      if (actual !== requiredVersion) {
+        return yield* Effect.fail(
+          sqliteAdapterError(
+            `migration ${migration.id} requires database user_version ${requiredVersion}, found ${actual}`,
+          ),
+        );
+      }
       const apply = Effect.gen(function* () {
         for (const statement of splitStatements(migration.sql)) {
           yield* sql.unsafe(statement);

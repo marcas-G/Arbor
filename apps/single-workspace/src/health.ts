@@ -1,4 +1,4 @@
-import { CURRENT_MIGRATION_BASELINE } from "@arbor/persistence-sqlite";
+import { CURRENT_SCHEMA_VERSION } from "@arbor/persistence-sqlite";
 import {
   HealthPort,
   PersistenceHealthProbe,
@@ -68,7 +68,7 @@ export const PersistenceHealthProbeSqliteLive: Layer.Layer<
             },
           );
           const dbOpen = userVersion !== null;
-          const migrationBaseline = userVersion === CURRENT_MIGRATION_BASELINE;
+          const migrationBaseline = userVersion === CURRENT_SCHEMA_VERSION;
           const t1RecoveryComplete = yield* recovery.complete;
           return {
             dbOpen,

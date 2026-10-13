@@ -1,5 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ExecutionId,
@@ -31,15 +29,21 @@ import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
+  createP39PrivateTestFile,
+  makeP39PrivateTestDirectory,
+  removeP39PrivateTestDirectory,
+} from "../../../tests/support/p39-windows-deployment-test.js";
+import {
   CURRENT_MIGRATION_BASELINE,
   CURRENT_MIGRATIONS,
+  CURRENT_SCHEMA_VERSION,
   ExecutableApprovalStoreLive,
   layer,
   P36_MIGRATIONS,
   P38_MIGRATIONS,
-  P39_MAINTENANCE_MIGRATIONS,
   P39RecoveryEvidenceStoreLive,
   runMigrations,
+  runP39SqliteMaintenance,
   ToolInvocationStoreLive,
   TransactionPortLive,
 } from "../src/index.js";
@@ -229,8 +233,15 @@ const seedActionAndApproval = (
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    expect(CURRENT_MIGRATION_BASELINE).toBe(38);
-    expect(CURRENT_MIGRATIONS).toBe(P38_MIGRATIONS);
+    expect(CURRENT_MIGRATION_BASELINE).toBe(CURRENT_SCHEMA_VERSION);
+    expect(CURRENT_SCHEMA_VERSION).toBe(42);
+    expect(CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual([
+      ...P38_MIGRATIONS.map(({ id }) => id),
+      40,
+      41,
+      42,
+    ]);
+    expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
     const binding = immutableApprovalBinding(
       invocationId,
       scenario.logicalStepNo,
@@ -367,8 +378,6 @@ const transactionProgram = (
     const approvals = yield* ExecutableApprovalStore;
     const recovery = yield* P39RecoveryEvidenceStore;
     const sql = yield* SqlClient;
-    yield* runMigrations(P36_MIGRATIONS);
-    yield* runMigrations(P39_MAINTENANCE_MIGRATIONS);
     yield* seedProjectExecution;
     const seeded = yield* seedActionAndApproval(scenario, invocationId);
     const invocation = {
@@ -439,13 +448,32 @@ const withDb = async <A>(
     invocationId: ReturnType<typeof invocationIdFor>,
   ) => Promise<A>,
 ) => {
-  const directory = mkdtempSync(join(tmpdir(), "arbor-p39-claim-"));
+  const directory = makeP39PrivateTestDirectory(process.cwd(), ".p39-claim-");
   const filename = join(directory, "claim.sqlite");
+  const sidecarFilename = join(directory, "claim-report.sqlite");
   const invocationId = invocationIdFor(scenario.suffix);
   try {
+    createP39PrivateTestFile(filename);
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* runMigrations(P36_MIGRATIONS);
+          }),
+          layer({ filename }),
+        ),
+      ),
+    );
+    await Effect.runPromise(
+      runP39SqliteMaintenance({
+        primaryFilename: filename,
+        sidecarFilename,
+        protectedStoreFilenames: [],
+      }),
+    );
     return await run(filename, invocationId);
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    removeP39PrivateTestDirectory(directory);
   }
 };
 
@@ -544,7 +572,7 @@ describe("P39 P38-receipt plus RecoveryBinding claim atomicity", () => {
         expect(afterReplay).toEqual(committed);
       },
     );
-  });
+  }, 120_000);
 
   it("rolls back intent, P38 receipt, binding and attempt-0 at each precommit fault boundary", async () => {
     for (const [suffix, fault] of [
@@ -582,5 +610,5 @@ describe("P39 P38-receipt plus RecoveryBinding claim atomicity", () => {
         },
       );
     }
-  });
+  }, 120_000);
 });
