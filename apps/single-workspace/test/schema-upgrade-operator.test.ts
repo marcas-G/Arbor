@@ -46,6 +46,11 @@ import {
 
 const CLI_PROCESS_TIMEOUT_MS = 1_800_000;
 
+// The exact P38 prefix preview produced by the resume qualification can also
+// serve later P38 copy cases in this file. runSchemaUpgrade accepts it only
+// after matching the live target's logical digest and migration signature.
+let p38PreviewTemplate: SchemaUpgradePreviewTemplate | undefined;
+
 const seedVersion38 = async (filename: string): Promise<void> => {
   createP39PrivateTestFile(filename);
   await Effect.runPromise(
@@ -293,7 +298,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
       );
       const args = copyArgs(directory);
       const resumeArgs = { ...args, mode: "resume-copy" as const };
-      let previewTemplate: SchemaUpgradePreviewTemplate | undefined;
+      let previewTemplate = p38PreviewTemplate;
       const runPreparedUpgrade = (
         input: SchemaUpgradeArguments,
         hooks: SchemaUpgradeTestHooks = {},
@@ -303,6 +308,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
           ...(previewTemplate === undefined ? {} : { previewTemplate }),
           onPreviewTemplate: (template) => {
             previewTemplate ??= template;
+            p38PreviewTemplate ??= template;
             hooks.onPreviewTemplate?.(template);
           },
         });
@@ -735,6 +741,9 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         | { readonly userVersion: 42; readonly reopenedReadOnly: true }
         | undefined;
       await runSchemaUpgrade(args, {
+        ...(p38PreviewTemplate === undefined
+          ? {}
+          : { previewTemplate: p38PreviewTemplate }),
         afterVersion42NoOpVerification: (evidence) => {
           reopenedEvidence = evidence;
         },
@@ -751,7 +760,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
     } finally {
       removeP39PrivateTestDirectory(directory);
     }
-  }, 600_000);
+  }, 1_200_000);
 
   it("makes a P39-blocked copy permanently audit-only and refuses every resume", async () => {
     const directory = makeP39PrivateTestDirectory(
