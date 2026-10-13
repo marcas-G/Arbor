@@ -46,7 +46,7 @@ beforeAll(async () => {
   schema42Factory = await createSchema42TestDatabaseFactory({
     prefix: ".p5-session-continuity-template-",
   });
-});
+}, 120_000);
 
 afterAll(() => schema42Factory?.cleanup());
 
