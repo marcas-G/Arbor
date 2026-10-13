@@ -71,11 +71,48 @@ timeout fix. It also records that the broader P12/F21 batch was not entirely
 green in one run and that several app-backed/capability cases were not rerun;
 this integration does not claim a full P12/F21 gate pass.
 
+## P5 production wiring and fixture extension
+
+Imported the P5 current-schema fixtures for all seven P5 suites. Each suite
+builds one schema-42 template, clones a separate SQLite file per case, uses a
+120-second setup/test bound, and cleans up its clone. The migration call-site
+classification is retained at
+`schema42-current-migration-callsite-classification.result.md`.
+
+The production single-workspace layer now provides both
+`P39RecoveryEvidenceStoreLive` and `ToolObservationEvidenceStoreLive` from its
+existing SQLite infrastructure layer. ToolRuntime derives the RecoveryBinding
+SHA-256 projection with `toolDefinitionIdentityDigestV1` while retaining the
+stable tool-definition token. P5 acceptance verifies successful shell
+settlement, bound P39 evidence, and canonical P40 observation persistence; an
+architecture test guards the production wiring.
+
+Imported the final P5 changes in `a5a39f95`, `a39f2726`, `e0925ef6`,
+`f115c627`, `8ead3d8f`, `02701de7`, `1184dd7a`, `b7059c12`, `11715d28`,
+`c84bd460`, `ebe3f6b4`, `b46de477`, and `fdfed38d`. The intermediate P5
+diagnostic commits were carried in order so the final test cleanup applies
+against its reviewed source state.
+
+Skipped duplicate P39/shared fixture commits: `3fd48a3f` and `aff60a5b`
+(global test setup already present from `cafa95e9` / `fa04f315`), `99bd8549`
+(schema-42 clone factory already present from `54fd6815`), `f6b0b0de`
+(cached SID already present from `e80f189b`), and `bdeda0a1` (P39 Windows
+security timeout already present from `251ef294`). No P5 production design or
+schema change was made.
+
+The imported source result records focused PASS for the RecoveryBinding
+vectors, ToolRuntime digest projection and P5 slice (3 files / 7 tests); all
+seven migrated P5 suites (7 files / 7 tests); and the P39/P40 composition
+architecture checks (2 tests). It also records successful typecheck, Biome
+and whitespace checks. The supplied independent review status was
+Blocking/B1/B2 = 0.
+
 ## Verification
 
-- `pnpm typecheck` — PASS.
-- Biome on 54 changed TypeScript/JavaScript/JSON files — PASS.
-- `git diff --check` — PASS after the whitespace cleanup.
+- `pnpm typecheck` — PASS after the P5 integration.
+- Biome on 13 files changed by the P5 integration — PASS. The preceding
+  P12/F21 integration had checked 54 changed TypeScript/JavaScript/JSON files.
+- `git diff --check` — PASS after the whitespace cleanups.
 - Static search confirmed the shared global P39 setup is registered in all
   five configured Vitest entrypoints; schema-42 factory cloning is used by the
   adapter readmission suite and all 12 migrated single-workspace suites; the
