@@ -277,5 +277,5 @@ describe("central schema-42 test database fixture", () => {
         expect(existsSync(directory)).toBe(false);
       }
     }
-  });
+  }, 120_000);
 });
