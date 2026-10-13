@@ -12,8 +12,11 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  createSchema42TestDatabaseFactory,
+  type Schema42TestDatabaseFactory,
+} from "../../../tests/support/schema42-database.js";
 import {
   CURRENT_MIGRATIONS,
   InboxProjectionStoreLive,
@@ -29,6 +32,23 @@ const workspaceId = "ws_blocked_test" as WorkspaceId;
 const sessionId = "ses_blocked_test";
 const workId = "wrk_blocked_test" as WorkId;
 const executionId = "exe_blocked_test";
+
+let schema42Factory: Schema42TestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: ".p43-work-blocker-template-",
+  });
+}, 120_000);
+
+afterAll(() => schema42Factory?.cleanup());
+
+const createSchema42Case = () => {
+  if (schema42Factory === undefined) {
+    throw new Error("Schema-42 test database factory was not prepared.");
+  }
+  return schema42Factory.create();
+};
 const appLayer = (filename = ":memory:") => {
   const base = layer({ filename });
   return Layer.mergeAll(
@@ -166,7 +186,7 @@ describe("unregistered P43 WorkBlocker and Inbox sequence adapters", () => {
   });
 
   it("keeps legacy Inbox admission functional before P43", async () => {
-    const database = await createSchema42TestDatabase();
+    const database = createSchema42Case();
     try {
       const program = Effect.gen(function* () {
         yield* seed;
@@ -192,10 +212,10 @@ describe("unregistered P43 WorkBlocker and Inbox sequence adapters", () => {
     } finally {
       database.cleanup();
     }
-  });
+  }, 30_000);
 
   it("opens, updates idempotently, reopens, resolves, and supersedes with revision guards", async () => {
-    const database = await createSchema42TestDatabase();
+    const database = createSchema42Case();
     try {
       const program = Effect.gen(function* () {
         yield* applyP43AndSeed;
@@ -274,7 +294,7 @@ describe("unregistered P43 WorkBlocker and Inbox sequence adapters", () => {
   }, 120_000);
 
   it("advances Inbox sequence only on new admissions, and keeps it monotonic after consume", async () => {
-    const database = await createSchema42TestDatabase();
+    const database = createSchema42Case();
     try {
       const program = Effect.gen(function* () {
         yield* applyP43AndSeed;

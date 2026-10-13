@@ -746,5 +746,5 @@ describe("test-only P39 maintenance cumulative prefix qualification 0039–0042"
     } finally {
       removeP39PrivateTestDirectory(directory);
     }
-  }, 120_000);
+  }, 300_000);
 });

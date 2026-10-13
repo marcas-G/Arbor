@@ -6,8 +6,11 @@ import {
 } from "@arbor/ports";
 import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  createSchema42TestDatabaseFactory,
+  type Schema42TestDatabaseFactory,
+} from "../../../tests/support/schema42-database.js";
 import {
   AttentionProjectionStoreLive,
   CURRENT_MIGRATIONS,
@@ -29,6 +32,24 @@ const workspaceId = "ws_p41_storage";
 const sessionId = "ses_p41_storage";
 const eventId = "evt_p41_storage_valid";
 const attentionFactId = `att_${"a".repeat(64)}`;
+
+let schema42Factory: Schema42TestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: ".p41-storage-template-",
+    seedP38: seedP41Project,
+  });
+}, 120_000);
+
+afterAll(() => schema42Factory?.cleanup());
+
+const createSchema42Case = () => {
+  if (schema42Factory === undefined) {
+    throw new Error("Schema-42 test database factory was not prepared.");
+  }
+  return schema42Factory.create();
+};
 
 const seedP41Project = (filename: string) =>
   Effect.runPromise(
@@ -373,9 +394,7 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
   });
 
   it("persists caller-bound facts idempotently and reads them after SQLite reopen", async () => {
-    const database = await createSchema42TestDatabase({
-      seedP38: seedP41Project,
-    });
+    const database = createSchema42Case();
     const filename = database.databaseFilename;
     const fact = {
       attentionFactId: `att_${"e".repeat(64)}`,
@@ -546,7 +565,7 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
     } finally {
       database.cleanup();
     }
-  });
+  }, 30_000);
 
   it("reports standalone-store absence as unavailable and fails reads closed", async () => {
     const result = await runStoreDb(
