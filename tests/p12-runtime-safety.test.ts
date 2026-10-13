@@ -63,6 +63,7 @@ import {
   type AttentionReadDeps,
   loadAttentionFacts,
 } from "../packages/projection-runtime/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 const exe = parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const g1 = parse(LeaseGeneration)(1);
@@ -646,6 +647,7 @@ const runScenario = async (
     Effect.provide(
       Effect.gen(function* () {
         yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const gateway = yield* CommandGateway;
         yield* gateway.execute(
           envelope("CreateProject", selectedProjectPayload, commandId("1")),

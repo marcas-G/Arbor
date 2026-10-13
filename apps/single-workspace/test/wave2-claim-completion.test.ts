@@ -26,6 +26,7 @@ import { Clock, TransactionPort, WorkspaceRepository } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import { assignWorkHandler } from "../src/control-actions.js";
 import {
   buildSingleWorkspaceLayer,
@@ -132,6 +133,7 @@ const seed = Effect.gen(function* () {
       );
     }),
   );
+  yield* ensureLegacyProjectResourceSourceFixture();
 });
 
 const admitWorkExecution = Effect.gen(function* () {

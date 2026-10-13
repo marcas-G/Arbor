@@ -55,6 +55,7 @@ import {
   secretRef,
   TransactionPort,
 } from "../packages/ports/dist/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 const repoRoot = join(import.meta.dirname, "..");
 
@@ -338,6 +339,7 @@ describe("P12-003 sentinel no-leak", () => {
         Effect.provide(
           Effect.gen(function* () {
             yield* runMigrations(CURRENT_MIGRATIONS);
+            yield* ensureLegacyProjectResourceSourceFixture();
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               envelope("CreateProject", projectPayload, commandId("1")),

@@ -21,6 +21,7 @@ import {
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
@@ -151,6 +152,7 @@ describe("OBSOLETE_CONTRACT_TEST — DirectiveUnsupported universal envelope", (
         Effect.gen(function* () {
           yield* runMigrations(CURRENT_MIGRATIONS);
           yield* seed;
+          yield* ensureLegacyProjectResourceSourceFixture();
           const tx = yield* TransactionPort;
           const leases = yield* LeaseService;
           yield* tx.transact(leases.acquire(executionId, "worker:a", "inc-a"));
