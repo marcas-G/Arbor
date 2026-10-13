@@ -228,9 +228,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
       database.databaseFilename,
       Effect.gen(function* () {
         const health = yield* HealthPort;
-        const beforeMigration = yield* health.readiness();
-
-        const afterMigration = yield* health.readiness();
+        const beforeStartup = yield* health.readiness();
 
         const resolver = yield* AuthorityResolverPort;
         const mediation = yield* RemoteWorkerMediationPort;
@@ -272,8 +270,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
         });
 
         return {
-          beforeMigration,
-          afterMigration,
+          beforeStartup,
           afterRecovery,
           probe,
           resolver,
@@ -288,11 +285,10 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
       }),
     );
 
-    // B-8 readiness transitions
-    expect(outcome.beforeMigration.dbOpen).toBe(true);
-    expect(outcome.beforeMigration.migrationBaseline).toBe(true);
-    expect(outcome.afterMigration.migrationBaseline).toBe(true);
-    expect(outcome.afterMigration.t1RecoveryComplete).toBe(false);
+    // B-8 schema baseline and T1 startup recovery readiness.
+    expect(outcome.beforeStartup.dbOpen).toBe(true);
+    expect(outcome.beforeStartup.migrationBaseline).toBe(true);
+    expect(outcome.beforeStartup.t1RecoveryComplete).toBe(false);
     expect(outcome.afterRecovery.t1RecoveryComplete).toBe(true);
     expect(
       outcome.afterRecovery.dbOpen &&
