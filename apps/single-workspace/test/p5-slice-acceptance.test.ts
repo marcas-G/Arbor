@@ -204,41 +204,6 @@ const summarizeToolRuntimeValue = (value: unknown) => {
     }
     return null;
   };
-  const nestedCause = record.cause;
-  const nestedCauseRecord =
-    typeof nestedCause === "object" && nestedCause !== null
-      ? (nestedCause as Record<string, unknown>)
-      : undefined;
-  const nestedTextField = (...keys: ReadonlyArray<string>): string | null => {
-    if (nestedCauseRecord === undefined) return null;
-    for (const key of keys) {
-      const field = nestedCauseRecord[key];
-      if (typeof field === "string") return field.slice(0, 160);
-    }
-    return null;
-  };
-  const nestedEnumField = (
-    key: string,
-    allowed: ReadonlySet<string>,
-  ): string | null => {
-    const field = nestedCauseRecord?.[key];
-    return typeof field === "string" && allowed.has(field)
-      ? field.slice(0, 160)
-      : null;
-  };
-  const safeConstraintMessages = new Set([
-    "invalid P40 tool observation evidence",
-    "invalid or immutable P40 tool observation evidence",
-    "terminal settlement and selected fact are immutable",
-    "recovery binding is immutable",
-    "reconciliation settlement requires matching authoritative fact",
-    "FOREIGN KEY constraint failed",
-    "UNIQUE constraint failed: tool_invocations.invocation_id",
-    "CHECK constraint failed: tool_invocations",
-    "CHECK constraint failed: observation_format_version",
-    "CHECK constraint failed: observation_json",
-    "CHECK constraint failed: observation_sha256",
-  ]);
   return {
     tag: textField("_tag"),
     code: textField("code", "reasonCode"),
@@ -246,34 +211,84 @@ const summarizeToolRuntimeValue = (value: unknown) => {
     effectDisposition: textField("effectDisposition"),
     invocationRef: textField("invocationRef"),
     message: textField("message"),
-    cause:
-      nestedCauseRecord === undefined
-        ? typeof nestedCause === "string"
-          ? nestedCause.slice(0, 160)
-          : null
-        : {
-            tag: nestedTextField("_tag"),
-            code: nestedTextField("code"),
-            reasonCode: nestedTextField("reasonCode"),
-            message: nestedTextField("message"),
-            repository: nestedEnumField(
-              "repository",
-              new Set(["ToolObservationEvidenceStore"]),
-            ),
-            operation: nestedEnumField(
-              "operation",
-              new Set(["tool-observation-evidence"]),
-            ),
-            constraintKind: nestedEnumField(
-              "constraintKind",
-              new Set(["Constraint", "Unique"]),
-            ),
-            constraint: nestedEnumField("constraint", safeConstraintMessages),
-          },
   };
 };
 
+const persistenceFailureFields = new Set([
+  "_tag",
+  "repository",
+  "operation",
+  "constraintKind",
+  "constraint",
+]);
+const safePersistenceRepositories = new Set([
+  "ToolObservationEvidenceStore",
+  "ToolInvocationStore",
+  "ArtifactMetadataRepository",
+]);
+const safePersistenceOperations = new Set([
+  "tool-observation-evidence",
+  "invocation",
+  "artifact-metadata",
+]);
+const safeConstraintMessages = new Set([
+  "invalid P40 tool observation evidence",
+  "invalid or immutable P40 tool observation evidence",
+  "terminal settlement and selected fact are immutable",
+  "recovery binding is immutable",
+  "reconciliation settlement requires matching authoritative fact",
+  "FOREIGN KEY constraint failed",
+  "UNIQUE constraint failed: tool_invocations.invocation_id",
+  "CHECK constraint failed: tool_invocations",
+  "CHECK constraint failed: observation_format_version",
+  "CHECK constraint failed: observation_json",
+  "CHECK constraint failed: observation_sha256",
+]);
+
+const summarizePersistenceConstraint = (cause: Cause.Cause<unknown>) => {
+  const failure = Cause.findErrorOption(cause);
+  if (Option.isNone(failure)) return null;
+
+  let current: unknown = failure.value;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (typeof current !== "object" || current === null) return null;
+    const record = current as Record<string, unknown>;
+    if (record._tag === "PersistenceConstraintViolation") {
+      const safeFieldNames = Object.keys(record)
+        .filter((key) => persistenceFailureFields.has(key))
+        .sort();
+      const safeValue = (key: string, allowed: ReadonlySet<string>) => {
+        const value = record[key];
+        return typeof value === "string" && allowed.has(value)
+          ? value.slice(0, 160)
+          : null;
+      };
+      return {
+        tag: "PersistenceConstraintViolation",
+        fields: safeFieldNames,
+        repository: safeValue("repository", safePersistenceRepositories),
+        operation: safeValue("operation", safePersistenceOperations),
+        constraintKind: safeValue(
+          "constraintKind",
+          new Set(["Constraint", "Unique"]),
+        ),
+        constraint: safeValue("constraint", safeConstraintMessages),
+      };
+    }
+    if (
+      record._tag !== "ToolRuntimeOperationalFailure" &&
+      record._tag !== "ToolRuntimeCleanupFailure" &&
+      record._tag !== "ArtifactError"
+    ) {
+      return null;
+    }
+    current = record.cause;
+  }
+  return null;
+};
+
 const summarizeToolRuntimeCause = (cause: Cause.Cause<unknown>) => ({
+  persistenceConstraint: summarizePersistenceConstraint(cause),
   reasons: cause.reasons.slice(0, 4).map((reason) => {
     if (Cause.isFailReason(reason)) {
       return {
