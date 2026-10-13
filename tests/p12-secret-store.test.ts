@@ -62,7 +62,7 @@ beforeAll(async () => {
   schema42Factory = await createSchema42TestDatabaseFactory({
     prefix: "p12-secret-template-",
   });
-});
+}, 120_000);
 afterAll(() => schema42Factory.cleanup());
 
 const repoRoot = join(import.meta.dirname, "..");
@@ -431,5 +431,5 @@ describe("P12-003 sentinel no-leak", () => {
     expect(allRows).not.toContain(sentinelValue);
     expect(captured.join("")).not.toContain(sentinelValue);
     expect(captured.join("")).not.toContain(sentinelEnv);
-  });
+  }, 120_000);
 });

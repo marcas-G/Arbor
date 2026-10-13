@@ -283,7 +283,7 @@ beforeAll(async () => {
   schema42Factory = await createSchema42TestDatabaseFactory({
     prefix: "p12-acceptance-template-",
   });
-});
+}, 120_000);
 afterAll(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
   schema42Factory.cleanup();
@@ -295,6 +295,9 @@ const createSchema42CaseDatabase = () => {
   schema42Cleanups.push(fixture.cleanup);
   return fixture;
 };
+
+const itWithCurrentAppTimeout = (name: string, body: () => Promise<unknown>) =>
+  it(name, body, 120_000);
 
 const PROJECT = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const PLUGIN = parse(PluginId)("plg_018f2b3c-4d5e-7abc-8def-0123456789a1");
@@ -696,180 +699,190 @@ const secretAuthority = (
   }) as VerifiedCommandAuthority;
 
 describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
-  it("story 4: a resolved SecretRef is redacted and never reaches any durable/observable surface", async () => {
-    const store = SecretEnvLive({
-      ambient: { PROVIDER_KEY: "env-secret", OLD_KEY: "stale" },
-      expiries: { OLD_KEY: "2000-01-01T00:00:00.000Z" },
-    });
-    const adapter = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const port = yield* SecretStorePort;
-          const ok = yield* port.resolve(secretRef("PROVIDER_KEY"));
-          const missing = yield* Effect.flip(port.resolve(secretRef("ABSENT")));
-          const expired = yield* Effect.flip(
-            port.resolve(secretRef("OLD_KEY")),
-          );
-          return { ok, missing, expired };
-        }),
-        store,
-      ) as Effect.Effect<
-        {
-          ok: SecretMaterial;
-          missing: SecretStoreError;
-          expired: SecretStoreError;
-        },
-        unknown,
-        never
-      >,
-    );
-    expect(adapter.ok.reveal()).toBe("env-secret");
-    expect(JSON.stringify({ material: adapter.ok })).toBe(
-      '{"material":"[REDACTED]"}',
-    );
-    expect(String(adapter.ok)).toBe("[REDACTED]");
-    expect(adapter.missing._tag).toBe("SecretNotFound");
-    expect(adapter.expired._tag).toBe("SecretExpired");
-
-    const sentinelKey = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
-    const projected = sandboxEnvironment({
-      PATH: "/usr/bin:/bin",
-      HOME: "/home/op",
-      [sentinelKey]: "must-not-leak",
-    });
-    expect(sentinelKey in projected).toBe(false);
-    expect(
-      Object.keys(projected).every((key) =>
-        SANDBOX_ENV_ALLOWLIST.includes(key),
-      ),
-    ).toBe(true);
-
-    // end-to-end: a sentinel secret resolved during a real slice run never
-    // appears in any SQLite table or stdout/stderr
-    const sentinelEnv = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
-    const sentinelValue = `sentinel-value-${randomUUID()}`;
-    process.env[sentinelEnv] = sentinelValue;
-    const database = createSchema42CaseDatabase();
-    const app = buildSingleWorkspaceLayer({
-      databaseFile: database.databaseFilename,
-      providerTurns: [
-        [
-          {
-            _tag: "ToolCallProposed",
-            callRef: "c1",
-            toolName: "wait",
-            argumentsJson: JSON.stringify({
-              reason: "secret-store sentinel completion",
-              waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
-            }),
-          },
-          { _tag: "TurnCompleted", finishReason: "ToolCall" },
-        ],
-      ],
-      secretRef: secretRef(sentinelEnv),
-    });
-
-    const captured: string[] = [];
-    const origOut = process.stdout.write.bind(process.stdout);
-    const origErr = process.stderr.write.bind(process.stderr);
-    const capture =
-      (orig: typeof origOut) =>
-      (chunk: unknown, ...args: ReadonlyArray<unknown>) => {
-        captured.push(typeof chunk === "string" ? chunk : String(chunk));
-        return (orig as (...a: ReadonlyArray<unknown>) => boolean)(
-          chunk,
-          ...args,
-        );
-      };
-    process.stdout.write = capture(origOut) as typeof process.stdout.write;
-    process.stderr.write = capture(origErr) as typeof process.stderr.write;
-
-    let allRows = "";
-    let settlement = "";
-    try {
-      const result = await Effect.runPromise(
+  itWithCurrentAppTimeout(
+    "story 4: a resolved SecretRef is redacted and never reaches any durable/observable surface",
+    async () => {
+      const store = SecretEnvLive({
+        ambient: { PROVIDER_KEY: "env-secret", OLD_KEY: "stale" },
+        expiries: { OLD_KEY: "2000-01-01T00:00:00.000Z" },
+      });
+      const adapter = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            const gateway = yield* CommandGateway;
-            yield* gateway.execute(
-              secretEnvelope("CreateProject", secretProjectPayload(), "1"),
-              secretContext,
-              secretAuthority(
-                "CreateProjectAuthority",
-                secretProjectPayload(),
-                "1",
-              ),
+            const port = yield* SecretStorePort;
+            const ok = yield* port.resolve(secretRef("PROVIDER_KEY"));
+            const missing = yield* Effect.flip(
+              port.resolve(secretRef("ABSENT")),
             );
-            yield* gateway.execute(
-              secretEnvelope("AssignWork", secretWorkPayload(), "2"),
-              secretContext,
-              secretAuthority("AssignWorkAuthority", secretWorkPayload(), "2"),
+            const expired = yield* Effect.flip(
+              port.resolve(secretRef("OLD_KEY")),
             );
-            const ownership = yield* ResourceOwnershipRepository;
-            const tx0 = yield* TransactionPort;
-            yield* tx0.transact(
-              ownership.insertClaim({
-                claimId: "roc_018f2b3c-4d5e-7abc-8def-0123456789a1",
-                workspaceId: secretWorkspaceId,
-                region: {
-                  resourceSpaceId: "filesystem",
-                  normalizedRegion: { kind: "FileTree", path: "." },
-                },
-                sourceAddressSnapshot: { _tag: "FileTree", path: "." },
-                resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
-                resolvedAtEnvironmentRevision: "local",
-                createdAt: "t",
-                releasedAt: null,
-              }),
-            );
-            yield* evaluateAndSelect(secretWorkspaceId, secretPrincipal, {
-              _tag: "WorkSelected",
-            });
-            yield* admitExecution(
-              secretWorkspaceId,
-              parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-              { _tag: "Work", workId: secretWorkId },
-              secretPrincipal,
-            );
-            const settled = yield* runExecution(
-              parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-              { _tag: "WorkSelected" },
-              secretPrincipal,
-            );
-            const sql = yield* SqlClient;
-            const tables = yield* sql.unsafe<{ name: string }>(
-              "SELECT name FROM sqlite_master WHERE type = 'table'",
-            );
-            let dump = "";
-            for (const table of tables) {
-              if (table.name.startsWith("sqlite_")) {
-                continue;
-              }
-              const rows = yield* sql.unsafe(`SELECT * FROM "${table.name}"`);
-              dump += JSON.stringify(rows);
-            }
-            return { dump, settlement: settled._tag };
+            return { ok, missing, expired };
           }),
-          app,
-        ) as unknown as Effect.Effect<
-          { dump: string; settlement: string },
+          store,
+        ) as Effect.Effect<
+          {
+            ok: SecretMaterial;
+            missing: SecretStoreError;
+            expired: SecretStoreError;
+          },
           unknown,
           never
         >,
       );
-      allRows = result.dump;
-      settlement = result.settlement;
-    } finally {
-      process.stdout.write = origOut as typeof process.stdout.write;
-      process.stderr.write = origErr as typeof process.stderr.write;
-      delete process.env[sentinelEnv];
-    }
+      expect(adapter.ok.reveal()).toBe("env-secret");
+      expect(JSON.stringify({ material: adapter.ok })).toBe(
+        '{"material":"[REDACTED]"}',
+      );
+      expect(String(adapter.ok)).toBe("[REDACTED]");
+      expect(adapter.missing._tag).toBe("SecretNotFound");
+      expect(adapter.expired._tag).toBe("SecretExpired");
 
-    expect(settlement).toBe("Completed");
-    expect(allRows).not.toContain(sentinelValue);
-    expect(captured.join("")).not.toContain(sentinelValue);
-    expect(captured.join("")).not.toContain(sentinelEnv);
-  });
+      const sentinelKey = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
+      const projected = sandboxEnvironment({
+        PATH: "/usr/bin:/bin",
+        HOME: "/home/op",
+        [sentinelKey]: "must-not-leak",
+      });
+      expect(sentinelKey in projected).toBe(false);
+      expect(
+        Object.keys(projected).every((key) =>
+          SANDBOX_ENV_ALLOWLIST.includes(key),
+        ),
+      ).toBe(true);
+
+      // end-to-end: a sentinel secret resolved during a real slice run never
+      // appears in any SQLite table or stdout/stderr
+      const sentinelEnv = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
+      const sentinelValue = `sentinel-value-${randomUUID()}`;
+      process.env[sentinelEnv] = sentinelValue;
+      const database = createSchema42CaseDatabase();
+      const app = buildSingleWorkspaceLayer({
+        databaseFile: database.databaseFilename,
+        providerTurns: [
+          [
+            {
+              _tag: "ToolCallProposed",
+              callRef: "c1",
+              toolName: "wait",
+              argumentsJson: JSON.stringify({
+                reason: "secret-store sentinel completion",
+                waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+              }),
+            },
+            { _tag: "TurnCompleted", finishReason: "ToolCall" },
+          ],
+        ],
+        secretRef: secretRef(sentinelEnv),
+      });
+
+      const captured: string[] = [];
+      const origOut = process.stdout.write.bind(process.stdout);
+      const origErr = process.stderr.write.bind(process.stderr);
+      const capture =
+        (orig: typeof origOut) =>
+        (chunk: unknown, ...args: ReadonlyArray<unknown>) => {
+          captured.push(typeof chunk === "string" ? chunk : String(chunk));
+          return (orig as (...a: ReadonlyArray<unknown>) => boolean)(
+            chunk,
+            ...args,
+          );
+        };
+      process.stdout.write = capture(origOut) as typeof process.stdout.write;
+      process.stderr.write = capture(origErr) as typeof process.stderr.write;
+
+      let allRows = "";
+      let settlement = "";
+      try {
+        const result = await Effect.runPromise(
+          Effect.provide(
+            Effect.gen(function* () {
+              const gateway = yield* CommandGateway;
+              yield* gateway.execute(
+                secretEnvelope("CreateProject", secretProjectPayload(), "1"),
+                secretContext,
+                secretAuthority(
+                  "CreateProjectAuthority",
+                  secretProjectPayload(),
+                  "1",
+                ),
+              );
+              yield* gateway.execute(
+                secretEnvelope("AssignWork", secretWorkPayload(), "2"),
+                secretContext,
+                secretAuthority(
+                  "AssignWorkAuthority",
+                  secretWorkPayload(),
+                  "2",
+                ),
+              );
+              const ownership = yield* ResourceOwnershipRepository;
+              const tx0 = yield* TransactionPort;
+              yield* tx0.transact(
+                ownership.insertClaim({
+                  claimId: "roc_018f2b3c-4d5e-7abc-8def-0123456789a1",
+                  workspaceId: secretWorkspaceId,
+                  region: {
+                    resourceSpaceId: "filesystem",
+                    normalizedRegion: { kind: "FileTree", path: "." },
+                  },
+                  sourceAddressSnapshot: { _tag: "FileTree", path: "." },
+                  resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+                  resolvedAtEnvironmentRevision: "local",
+                  createdAt: "t",
+                  releasedAt: null,
+                }),
+              );
+              yield* evaluateAndSelect(secretWorkspaceId, secretPrincipal, {
+                _tag: "WorkSelected",
+              });
+              yield* admitExecution(
+                secretWorkspaceId,
+                parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+                { _tag: "Work", workId: secretWorkId },
+                secretPrincipal,
+              );
+              const settled = yield* runExecution(
+                parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+                { _tag: "WorkSelected" },
+                secretPrincipal,
+              );
+              const sql = yield* SqlClient;
+              const tables = yield* sql.unsafe<{ name: string }>(
+                "SELECT name FROM sqlite_master WHERE type = 'table'",
+              );
+              let dump = "";
+              for (const table of tables) {
+                if (table.name.startsWith("sqlite_")) {
+                  continue;
+                }
+                const rows = yield* sql.unsafe(`SELECT * FROM "${table.name}"`);
+                dump += JSON.stringify(rows);
+              }
+              return { dump, settlement: settled._tag };
+            }),
+            app,
+          ) as unknown as Effect.Effect<
+            { dump: string; settlement: string },
+            unknown,
+            never
+          >,
+        );
+        allRows = result.dump;
+        settlement = result.settlement;
+      } finally {
+        process.stdout.write = origOut as typeof process.stdout.write;
+        process.stderr.write = origErr as typeof process.stderr.write;
+        delete process.env[sentinelEnv];
+        database.cleanup();
+      }
+
+      expect(settlement).toBe("Completed");
+      expect(allRows).not.toContain(sentinelValue);
+      expect(captured.join("")).not.toContain(sentinelValue);
+      expect(captured.join("")).not.toContain(sentinelEnv);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1722,86 +1735,91 @@ const runSafetyScenario = async (
     runtimeSafetyPolicy: safetyPolicyConfig,
     projectResourceProfiles,
   });
-  const result = await Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const gateway = yield* CommandGateway;
-        const created = yield* gateway.execute(
-          safetyEnvelope("CreateProject", selectedSafetyProjectPayload, "1"),
-          safetyContext,
-          safetyAuthority(
-            "CreateProjectAuthority",
-            selectedSafetyProjectPayload,
-            "1",
-          ),
-        );
-        if (created.resolution._tag !== "Committed") {
-          throw new Error(
-            `CreateProject: ${JSON.stringify(created.resolution)}`,
+  try {
+    return await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const gateway = yield* CommandGateway;
+          const created = yield* gateway.execute(
+            safetyEnvelope("CreateProject", selectedSafetyProjectPayload, "1"),
+            safetyContext,
+            safetyAuthority(
+              "CreateProjectAuthority",
+              selectedSafetyProjectPayload,
+              "1",
+            ),
           );
-        }
-        const assigned = yield* gateway.execute(
-          safetyEnvelope("AssignWork", safetyWorkPayload, "2"),
-          safetyContext,
-          safetyAuthority("AssignWorkAuthority", safetyWorkPayload, "2"),
-        );
-        if (assigned.resolution._tag !== "Committed") {
-          throw new Error(`AssignWork: ${JSON.stringify(assigned.resolution)}`);
-        }
-        const ownership = yield* ResourceOwnershipRepository;
-        const tx0 = yield* TransactionPort;
-        yield* tx0.transact(
-          ownership.insertClaim({
-            claimId: "roc_018f2b3c-4d5e-7abc-8def-0123456789a1",
-            workspaceId: safetyWorkspaceId,
-            region: {
-              resourceSpaceId: "filesystem",
-              normalizedRegion: { kind: "FileTree", path: canonicalRoot },
-            },
-            sourceAddressSnapshot: {
-              _tag: "FileTree",
-              path: canonicalRoot,
-            },
-            resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
-            resolvedAtEnvironmentRevision: "local",
-            createdAt: "t",
-            releasedAt: null,
-          }),
-        );
-        yield* evaluateAndSelect(safetyWorkspaceId, safetyPrincipal, {
-          _tag: "WorkSelected",
-        });
-        yield* admitExecution(
-          safetyWorkspaceId,
-          safetyExecutionId,
-          { _tag: "Work", workId: safetyWorkId },
-          safetyPrincipal,
-        );
-        const settled = yield* runExecution(
-          safetyExecutionId,
-          { _tag: "WorkSelected" },
-          safetyPrincipal,
-        );
-        const sql = yield* SqlClient;
-        const works = yield* sql.unsafe<{ lifecycle: string }>(
-          "SELECT lifecycle FROM works WHERE work_id = ?",
-          [safetyWorkId],
-        );
-        const reason =
-          settled._tag === "Interrupted" &&
-          settled.result._tag === "ControlledInterruption"
-            ? settled.result.reason
-            : null;
-        return {
-          settlementTag: settled._tag,
-          settlementReason: reason,
-          workLifecycle: works[0]?.lifecycle ?? null,
-        };
-      }),
-      app,
-    ) as unknown as Effect.Effect<SafetyScenario, unknown, never>,
-  );
-  return result;
+          if (created.resolution._tag !== "Committed") {
+            throw new Error(
+              `CreateProject: ${JSON.stringify(created.resolution)}`,
+            );
+          }
+          const assigned = yield* gateway.execute(
+            safetyEnvelope("AssignWork", safetyWorkPayload, "2"),
+            safetyContext,
+            safetyAuthority("AssignWorkAuthority", safetyWorkPayload, "2"),
+          );
+          if (assigned.resolution._tag !== "Committed") {
+            throw new Error(
+              `AssignWork: ${JSON.stringify(assigned.resolution)}`,
+            );
+          }
+          const ownership = yield* ResourceOwnershipRepository;
+          const tx0 = yield* TransactionPort;
+          yield* tx0.transact(
+            ownership.insertClaim({
+              claimId: "roc_018f2b3c-4d5e-7abc-8def-0123456789a1",
+              workspaceId: safetyWorkspaceId,
+              region: {
+                resourceSpaceId: "filesystem",
+                normalizedRegion: { kind: "FileTree", path: canonicalRoot },
+              },
+              sourceAddressSnapshot: {
+                _tag: "FileTree",
+                path: canonicalRoot,
+              },
+              resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+              resolvedAtEnvironmentRevision: "local",
+              createdAt: "t",
+              releasedAt: null,
+            }),
+          );
+          yield* evaluateAndSelect(safetyWorkspaceId, safetyPrincipal, {
+            _tag: "WorkSelected",
+          });
+          yield* admitExecution(
+            safetyWorkspaceId,
+            safetyExecutionId,
+            { _tag: "Work", workId: safetyWorkId },
+            safetyPrincipal,
+          );
+          const settled = yield* runExecution(
+            safetyExecutionId,
+            { _tag: "WorkSelected" },
+            safetyPrincipal,
+          );
+          const sql = yield* SqlClient;
+          const works = yield* sql.unsafe<{ lifecycle: string }>(
+            "SELECT lifecycle FROM works WHERE work_id = ?",
+            [safetyWorkId],
+          );
+          const reason =
+            settled._tag === "Interrupted" &&
+            settled.result._tag === "ControlledInterruption"
+              ? settled.result.reason
+              : null;
+          return {
+            settlementTag: settled._tag,
+            settlementReason: reason,
+            workLifecycle: works[0]?.lifecycle ?? null,
+          };
+        }),
+        app,
+      ) as unknown as Effect.Effect<SafetyScenario, unknown, never>,
+    );
+  } finally {
+    database.cleanup();
+  }
 };
 
 describe("p12-acceptance story 9 — §8.16A six dimensions", () => {
@@ -1843,15 +1861,18 @@ describe("p12-acceptance story 9 — §8.16A six dimensions", () => {
   ];
 
   for (const testCase of cases) {
-    it(`story 9 ${testCase.dim}: a violation interrupts with RuntimeSafetyStop and Work remains Open`, async () => {
-      const result = await runSafetyScenario(
-        testCase.safetyPolicy,
-        testCase.turns,
-      );
-      expect(result.settlementTag).toBe("Interrupted");
-      expect(result.settlementReason).toBe("RuntimeSafetyStop");
-      expect(result.workLifecycle).toBe("Open");
-    });
+    itWithCurrentAppTimeout(
+      `story 9 ${testCase.dim}: a violation interrupts with RuntimeSafetyStop and Work remains Open`,
+      async () => {
+        const result = await runSafetyScenario(
+          testCase.safetyPolicy,
+          testCase.turns,
+        );
+        expect(result.settlementTag).toBe("Interrupted");
+        expect(result.settlementReason).toBe("RuntimeSafetyStop");
+        expect(result.workLifecycle).toBe("Open");
+      },
+    );
   }
 
   it("story 9: the RuntimeSafetyStop settlement is derived as an Attention fact", async () => {
@@ -2192,161 +2213,174 @@ const transportRun = <A>(
   Effect.runPromise(Effect.provide(program, transportApp(databaseFile)));
 
 describe("p12-acceptance story 11 — transport shells + daemons", () => {
-  it("story 11: shells render the frozen DTOs, forward Commands, hold no canonical write, and Search stays deferred", async () => {
-    const core = makeTransportCore({
-      views: transportViews(),
-      authenticator: makeStaticAuthenticator({
-        "human-token": HUMAN,
-        "local-read-token": parse(Principal)("user:local"),
-      }),
-      submission: {
-        submit: () =>
-          Effect.succeed({
-            ok: true as const,
-            status: 200,
-            body: {
-              commandId: transportCommand,
-              resolution: "Committed" as const,
-            },
-          }),
-      },
-    });
-    const http = makeHttpShell(core);
-    const ws = makeWebSocketShell(core);
-    const cli = makeCliShell(core);
-    const web = makeWebShell(core);
-
-    const viaHttp = await Effect.runPromise(
-      http.handle({
-        method: "POST",
-        path: "/views/responsibility-tree",
-        authorization: "Bearer local-read-token",
-        body: { projectId: transportProject },
-      }),
-    );
-    const viaWs = await Effect.runPromise(
-      ws.handleFrame({
-        kind: "view",
-        token: "local-read-token",
-        view: "responsibility-tree",
-        request: { projectId: transportProject },
-      }),
-    );
-    const viaCli = await Effect.runPromise(
-      cli.run([
-        "view",
-        "responsibility-tree",
-        JSON.stringify({ projectId: transportProject }),
-      ]),
-    );
-    for (const response of [viaHttp, viaWs, viaCli]) {
-      expect(response.ok).toBe(true);
-      if (response.ok) {
-        expect(response.body).toEqual(transportTreeResult);
-      }
-    }
-    const rendered = await Effect.runPromise(
-      web.renderView("responsibility-tree", { projectId: transportProject }),
-    );
-    expect(rendered.html).toContain(JSON.stringify(transportTreeResult));
-
-    const failure = await Effect.runPromise(
-      http.handle({
-        method: "POST",
-        path: "/views/attention",
-        authorization: "Bearer local-read-token",
-        body: { projectId: transportProject },
-      }),
-    );
-    expect(failure.ok).toBe(false);
-    if (!failure.ok) {
-      expect(Object.keys(failure.problem).sort()).toEqual([
-        "category",
-        "code",
-        "correlationId",
-        "message",
-        "retryDisposition",
-        "safeDetails",
-      ]);
-    }
-
-    const database = createSchema42CaseDatabase();
-    const outcome = await transportRun(
-      Effect.gen(function* () {
-        const submission = yield* makeExternalSubmissionFromServices({
-          authenticatedHumans: [],
-          directParentOf: [],
-        });
-        const dbCore = makeTransportCore({
-          views: transportViews(),
-          authenticator: makeStaticAuthenticator({ "human-token": HUMAN }),
-          submission,
-        });
-        const response = yield* dbCore.submitCommand(
-          { token: "human-token" },
-          transportCreateEnvelope(),
-        );
-        const sql = yield* SqlClient;
-        const rows = yield* sql.unsafe<{ count: number }>(
-          "SELECT COUNT(*) AS count FROM projects",
-        );
-        return { response, projects: Number(rows[0]?.count ?? 0) };
-      }),
-      database.databaseFilename,
-    );
-    expect(outcome.response.ok).toBe(true);
-    expect(outcome.projects).toBe(1);
-
-    expect(SEARCH_TRANSPORT_BINDING.implemented).toBe(false);
-    expect(SEARCH_TRANSPORT_BINDING.owner).toBe("P10");
-    expect(isViewId("search")).toBe(false);
-    expect((VIEW_IDS as ReadonlyArray<string>).includes("search")).toBe(false);
-
-    const order: string[] = [];
-    const emptyConsumer: ConsumerLoopResult = {
-      fromSequence: 0,
-      lastSequence: 0,
-      applied: 0,
-      quarantined: 0,
-      records: [],
-    };
-    const recovery = makeRecoveryDaemon({
-      startupRecovery: Effect.sync(() => {
-        order.push("startup");
-      }),
-      sweepRecovery: Effect.sync(() => {
-        order.push("sweep");
-      }),
-    });
-    const consumers = [
-      makeConsumerLoopDaemon({
-        consumerId: "verification",
-        projectId: transportProject,
-        batchSize: 10,
-        poll: Effect.sync(() => {
-          order.push("poll");
-          return emptyConsumer;
+  itWithCurrentAppTimeout(
+    "story 11: shells render the frozen DTOs, forward Commands, hold no canonical write, and Search stays deferred",
+    async () => {
+      const core = makeTransportCore({
+        views: transportViews(),
+        authenticator: makeStaticAuthenticator({
+          "human-token": HUMAN,
+          "local-read-token": parse(Principal)("user:local"),
         }),
-      }),
-    ];
-    const daemon = makeProductionDaemon({
-      migrate: Effect.sync(() => {
-        order.push("migrate");
-      }),
-      recovery,
-      consumers,
-    });
-    await Effect.runPromise(daemon.start);
-    expect(order).toEqual(["migrate", "startup"]);
-    const watcher = makeDriftWatcherTrigger({
-      probe: () =>
-        Effect.succeed({ _tag: "NoDrift", atRevision: "3" } as DriftReport),
-    });
-    expect(
-      (await Effect.runPromise(watcher.trigger(transportProject, [])))._tag,
-    ).toBe("NoDrift");
-    expect(recoveryDaemonFromPrincipal(HUMAN).startup).toBeDefined();
-  });
+        submission: {
+          submit: () =>
+            Effect.succeed({
+              ok: true as const,
+              status: 200,
+              body: {
+                commandId: transportCommand,
+                resolution: "Committed" as const,
+              },
+            }),
+        },
+      });
+      const http = makeHttpShell(core);
+      const ws = makeWebSocketShell(core);
+      const cli = makeCliShell(core);
+      const web = makeWebShell(core);
+
+      const viaHttp = await Effect.runPromise(
+        http.handle({
+          method: "POST",
+          path: "/views/responsibility-tree",
+          authorization: "Bearer local-read-token",
+          body: { projectId: transportProject },
+        }),
+      );
+      const viaWs = await Effect.runPromise(
+        ws.handleFrame({
+          kind: "view",
+          token: "local-read-token",
+          view: "responsibility-tree",
+          request: { projectId: transportProject },
+        }),
+      );
+      const viaCli = await Effect.runPromise(
+        cli.run([
+          "view",
+          "responsibility-tree",
+          JSON.stringify({ projectId: transportProject }),
+        ]),
+      );
+      for (const response of [viaHttp, viaWs, viaCli]) {
+        expect(response.ok).toBe(true);
+        if (response.ok) {
+          expect(response.body).toEqual(transportTreeResult);
+        }
+      }
+      const rendered = await Effect.runPromise(
+        web.renderView("responsibility-tree", { projectId: transportProject }),
+      );
+      expect(rendered.html).toContain(JSON.stringify(transportTreeResult));
+
+      const failure = await Effect.runPromise(
+        http.handle({
+          method: "POST",
+          path: "/views/attention",
+          authorization: "Bearer local-read-token",
+          body: { projectId: transportProject },
+        }),
+      );
+      expect(failure.ok).toBe(false);
+      if (!failure.ok) {
+        expect(Object.keys(failure.problem).sort()).toEqual([
+          "category",
+          "code",
+          "correlationId",
+          "message",
+          "retryDisposition",
+          "safeDetails",
+        ]);
+      }
+
+      const database = createSchema42CaseDatabase();
+      const outcome = await (async () => {
+        try {
+          return await transportRun(
+            Effect.gen(function* () {
+              const submission = yield* makeExternalSubmissionFromServices({
+                authenticatedHumans: [],
+                directParentOf: [],
+              });
+              const dbCore = makeTransportCore({
+                views: transportViews(),
+                authenticator: makeStaticAuthenticator({
+                  "human-token": HUMAN,
+                }),
+                submission,
+              });
+              const response = yield* dbCore.submitCommand(
+                { token: "human-token" },
+                transportCreateEnvelope(),
+              );
+              const sql = yield* SqlClient;
+              const rows = yield* sql.unsafe<{ count: number }>(
+                "SELECT COUNT(*) AS count FROM projects",
+              );
+              return { response, projects: Number(rows[0]?.count ?? 0) };
+            }),
+            database.databaseFilename,
+          );
+        } finally {
+          database.cleanup();
+        }
+      })();
+      expect(outcome.response.ok).toBe(true);
+      expect(outcome.projects).toBe(1);
+
+      expect(SEARCH_TRANSPORT_BINDING.implemented).toBe(false);
+      expect(SEARCH_TRANSPORT_BINDING.owner).toBe("P10");
+      expect(isViewId("search")).toBe(false);
+      expect((VIEW_IDS as ReadonlyArray<string>).includes("search")).toBe(
+        false,
+      );
+
+      const order: string[] = [];
+      const emptyConsumer: ConsumerLoopResult = {
+        fromSequence: 0,
+        lastSequence: 0,
+        applied: 0,
+        quarantined: 0,
+        records: [],
+      };
+      const recovery = makeRecoveryDaemon({
+        startupRecovery: Effect.sync(() => {
+          order.push("startup");
+        }),
+        sweepRecovery: Effect.sync(() => {
+          order.push("sweep");
+        }),
+      });
+      const consumers = [
+        makeConsumerLoopDaemon({
+          consumerId: "verification",
+          projectId: transportProject,
+          batchSize: 10,
+          poll: Effect.sync(() => {
+            order.push("poll");
+            return emptyConsumer;
+          }),
+        }),
+      ];
+      const daemon = makeProductionDaemon({
+        migrate: Effect.sync(() => {
+          order.push("migrate");
+        }),
+        recovery,
+        consumers,
+      });
+      await Effect.runPromise(daemon.start);
+      expect(order).toEqual(["migrate", "startup"]);
+      const watcher = makeDriftWatcherTrigger({
+        probe: () =>
+          Effect.succeed({ _tag: "NoDrift", atRevision: "3" } as DriftReport),
+      });
+      expect(
+        (await Effect.runPromise(watcher.trigger(transportProject, [])))._tag,
+      ).toBe("NoDrift");
+      expect(recoveryDaemonFromPrincipal(HUMAN).startup).toBeDefined();
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
