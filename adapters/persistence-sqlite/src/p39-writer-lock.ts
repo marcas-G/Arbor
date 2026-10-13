@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -16,6 +15,7 @@ import { Context, Duration, Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqliteAdapterError } from "./errors.js";
 import { sqliteAdapterError } from "./errors.js";
+import { executeP39WindowsSecurityQuery } from "./p39-windows-security.js";
 
 export const P39_WRITER_LOCK_DDL = `
 CREATE TABLE IF NOT EXISTS p39_writer_lock (
@@ -95,13 +95,8 @@ const validateP39ProtectedPath = (
         "if(!$g){exit 4}",
         "Write-Output ($o+'|'+$u)",
       ].join(";");
-      const [ownerIdentity, processIdentity] = execFileSync(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-Command", script],
-        { encoding: "utf8", timeout: 5000, windowsHide: true },
-      )
-        .trim()
-        .split("|");
+      const [ownerIdentity, processIdentity] =
+        executeP39WindowsSecurityQuery(script).split("|");
       return p39SameOperatingSystemIdentity(
         ownerIdentity ?? "",
         processIdentity ?? "",
@@ -325,11 +320,7 @@ const isSupportedLocalFilesystem = (path: string): boolean => {
         "$d=[IO.DriveInfo]::new($r)",
         "Write-Output ($d.DriveType.ToString()+'|'+$d.DriveFormat)",
       ].join(";");
-      const output = execFileSync(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-Command", script],
-        { encoding: "utf8", timeout: 5000, windowsHide: true },
-      ).trim();
+      const output = executeP39WindowsSecurityQuery(script);
       const [driveType, driveFormat] = output.split("|");
       return (
         (driveType === "Fixed" || driveType === "Removable") &&
