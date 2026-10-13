@@ -31,11 +31,16 @@ import {
   ToolRuntimeLive,
 } from "../../../packages/tool-runtime/src/index.js";
 import {
+  fileTreeBoundaryJson,
+  resolveFileTreeBoundaryAddresses,
+} from "../../../tests/support/resource-boundary-fixture.js";
+import {
   layer,
   P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
+  WorkspaceRepositoryLive,
 } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
@@ -110,7 +115,7 @@ const seed = Effect.gen(function* () {
           "w",
           "{}",
           0,
-          "{}",
+          fileTreeBoundaryJson(),
           0,
           "{}",
           sessionId,
@@ -201,6 +206,9 @@ describe("P4 settlement fence expiry time", () => {
       now: beforeExpiry,
       observeNextTransaction: false,
     };
+    const testClock = Layer.succeed(Clock, {
+      now: () => Effect.succeed(control.now),
+    });
     let resolveSettlementTimestampSampled: (() => void) | undefined;
     const settlementTimestampSampled = new Promise<void>((resolve) => {
       resolveSettlementTimestampSampled = resolve;
@@ -273,9 +281,8 @@ describe("P4 settlement fence expiry time", () => {
       baseTransactionAlias,
       gatedTransactions,
       Layer.provide(ToolInvocationStoreLive, sqlite),
-      Layer.succeed(Clock, {
-        now: () => Effect.succeed(control.now),
-      }),
+      Layer.provide(WorkspaceRepositoryLive, Layer.merge(sqlite, testClock)),
+      testClock,
       Layer.succeed(ToolDefinitionStore, {
         definition: () => Effect.succeed(Option.some(definition)),
         all: () => Effect.succeed([definition]),
@@ -293,9 +300,9 @@ describe("P4 settlement fence expiry time", () => {
         admit: () => Effect.succeed({ _tag: "Admitted" as const }),
       }),
       Layer.succeed(ProjectEnvironmentPort, {
-        resolve: () =>
+        resolve: (_projectId, addresses) =>
           Effect.succeed({
-            regions: [],
+            regions: resolveFileTreeBoundaryAddresses(addresses),
             observedEnvironmentRevision: "p4-expiry-env",
           }),
       }),

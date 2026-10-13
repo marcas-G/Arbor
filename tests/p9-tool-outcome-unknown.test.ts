@@ -65,6 +65,7 @@ import {
   ToolRuntimeLive,
 } from "../packages/tool-runtime/src/index.js";
 import { labeled } from "./support/p9-harness-api.js";
+import { fileTreeBoundaryJson } from "./support/resource-boundary-fixture.js";
 
 /**
  * P9-009 — tool four-tier injection (T1–T4 / 02 §5 + 04 §3, invariant 35)
@@ -290,8 +291,8 @@ const seed = Effect.gen(function* () {
         [sessionId, executionId],
       );
       yield* sql.unsafe(
-        "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'w','{}',0,'{}',0,'{}',?,NULL,'{}',0,0,'Active','t','t')",
-        [workspaceId, projectId, sessionId],
+        "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'w','{}',0,?,0,'{}',?,NULL,'{}',0,0,'Active','t','t')",
+        [workspaceId, projectId, fileTreeBoundaryJson(), sessionId],
       );
       yield* sql.unsafe(
         "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",

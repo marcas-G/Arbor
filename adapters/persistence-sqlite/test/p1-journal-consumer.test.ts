@@ -156,7 +156,12 @@ describe("journal consumer", () => {
         "DELETE FROM domain_events WHERE project_id = ? AND sequence = 1",
         [projectId],
       );
-      yield* tx.transact(offsets.advance(consumerId, projectId, 1));
+      // The offset adapter is monotonic; model this recovery fixture's lost
+      // canonical offset directly so it truly sits below floor-1.
+      yield* sql.unsafe(
+        "UPDATE consumer_offsets SET last_sequence = 0 WHERE consumer_id = ? AND project_id = ?",
+        [consumerId, projectId],
+      );
       const refused = yield* rebuildProjection(consumerId, projectId).pipe(
         Effect.flip,
       );

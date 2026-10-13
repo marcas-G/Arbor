@@ -507,9 +507,41 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
         : {
             listProjectedSubmittedDecisionBindingFailures: (projectId) =>
               inTx(
-                attentionProjection.listSubmittedDecisionBindingFailures?.(
-                  projectId,
-                ) ?? Effect.succeed([]),
+                Effect.gen(function* () {
+                  const factsReady =
+                    bindingAttention.isSubmittedDecisionBindingAvailable;
+                  const markersReady =
+                    attentionProjection.isSubmittedDecisionBindingAvailable;
+                  if (factsReady === undefined || markersReady === undefined) {
+                    return yield* Effect.fail({
+                      _tag: "PersistenceUnavailable" as const,
+                      repository: "AttentionProjectionStore" as const,
+                      operation: "submitted-decision-binding-readiness",
+                      retryDisposition: "non-retryable" as const,
+                      sourceTag: "P41AvailabilityProbeUnavailable",
+                      cause:
+                        "P41 fact and marker availability probes are required before projection reads",
+                    });
+                  }
+                  const [factsAvailable, markersAvailable] = yield* Effect.all([
+                    factsReady(),
+                    markersReady(),
+                  ]);
+                  if (factsAvailable !== markersAvailable) {
+                    return yield* Effect.fail({
+                      _tag: "PersistenceCorruption" as const,
+                      repository: "AttentionProjectionStore" as const,
+                      operation: "submitted-decision-binding-readiness",
+                      reason:
+                        "P41 RecoveryAttentionFactStore and AttentionProjectionStore availability differs",
+                    });
+                  }
+                  if (!factsAvailable) return [];
+                  const listSubmitted =
+                    attentionProjection.listSubmittedDecisionBindingFailures;
+                  if (listSubmitted === undefined) return [];
+                  return yield* listSubmitted(projectId);
+                }),
               ),
           }),
       listProjectedWorkspaceResourceActivations: (projectId) =>
