@@ -323,7 +323,7 @@ describe("pending P12 view read authentication boundary", () => {
                 );
 
               const remoteWithoutAuth = yield* start({
-                http: localHttp,
+                http: authenticatedHttp,
                 host: "0.0.0.0",
                 configuredAuthenticator: authenticator,
               });
@@ -771,7 +771,7 @@ describe("pending P12 view read authentication boundary", () => {
         projectIdReturned: true,
       });
       expect(report.noAuthCatalog).toMatchObject({
-        status: 503,
+        status: 401,
         denied: true,
         canonicalPathReturned: false,
       });
@@ -819,7 +819,7 @@ describe("pending P12 view read authentication boundary", () => {
         configuredDeniedViewSourceCalls: 0,
         configuredDeniedProjectSourceCalls: 0,
         wildcardProgress: {
-          status: 503,
+          status: 401,
           denied: true,
           eventStream: false,
           sourceCalls: 0,
