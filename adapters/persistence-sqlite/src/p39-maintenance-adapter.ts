@@ -387,6 +387,15 @@ export const runP39SqliteMaintenanceWithPermit = (
                 }
                 settings.onPhase?.("p40-p42-continuation");
                 yield* continuation(primary, permit);
+                const completedVersion = yield* primary.unsafe<UserVersionRow>(
+                  "PRAGMA user_version",
+                );
+                if (
+                  Number(completedVersion[0]?.user_version) === 42 &&
+                  settings.afterPrimaryClosedNoOp !== undefined
+                ) {
+                  return true;
+                }
                 return false;
               }),
               primaryService,

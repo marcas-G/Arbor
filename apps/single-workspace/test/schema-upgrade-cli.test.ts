@@ -685,11 +685,52 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
       copyManifest: join(directory, "fresh-manifest.jsonl"),
     };
     try {
-      await runSchemaUpgrade(args);
+      let reopenedEvidence:
+        | { readonly userVersion: 42; readonly reopenedReadOnly: true }
+        | undefined;
+      await runSchemaUpgrade(args, {
+        afterVersion42NoOpVerification: (evidence) => {
+          reopenedEvidence = evidence;
+        },
+      });
+      expect(reopenedEvidence).toEqual({
+        userVersion: 42,
+        reopenedReadOnly: true,
+      });
       expect(readUserVersion(args.database)).toBe(42);
       expect(readSchemaUpgradeManifest(args.copyManifest).header.mode).toBe(
         "fresh",
       );
+      expect(
+        readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
+      ).toMatchObject({ kind: "Committed", step: "0042", toVersion: 42 });
+    } finally {
+      removeP39PrivateTestDirectory(directory);
+    }
+  }, 600_000);
+
+  it("closes and read-only reopens a copied target before successful return", async () => {
+    const directory = makeP39PrivateTestDirectory(
+      process.cwd(),
+      ".schema-upgrade-copy-reopen-",
+    );
+    const args = copyArgs(directory);
+    try {
+      await seedVersion38(args.sourceDatabase as string);
+      let reopenedEvidence:
+        | { readonly userVersion: 42; readonly reopenedReadOnly: true }
+        | undefined;
+      await runSchemaUpgrade(args, {
+        afterVersion42NoOpVerification: (evidence) => {
+          reopenedEvidence = evidence;
+        },
+      });
+      expect(reopenedEvidence).toEqual({
+        userVersion: 42,
+        reopenedReadOnly: true,
+      });
+      expect(readUserVersion(args.database)).toBe(42);
+      expect(readUserVersion(args.sourceDatabase as string)).toBe(38);
       expect(
         readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
       ).toMatchObject({ kind: "Committed", step: "0042", toVersion: 42 });
