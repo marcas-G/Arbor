@@ -41,6 +41,7 @@ import {
   ToolRuntimePort,
   TransactionPort,
   targetResourceIdentityDigestV1,
+  toolDefinitionIdentityDigestV1,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -381,7 +382,7 @@ const makeRecoveryBindingV1 = (input: {
     callRef: input.intent.callRef,
     toolName: input.intent.toolName,
     toolVersion: input.intent.toolVersion,
-    toolDefinitionHash: input.definition.hash,
+    toolDefinitionHash: recoveryBindingToolDefinitionHashV1(input.definition),
     sideEffectSemantics: input.definition.sideEffectSemantics,
     canonicalArgumentsDigest: canonicalArgumentsDigestV1(argumentsValue),
     targetResourceIdentityDigest: targetResourceIdentityDigestV1(input.regions),
@@ -412,6 +413,12 @@ const makeRecoveryBindingV1 = (input: {
     effectKey: null,
   };
 };
+
+/** P39 projection of a ToolDefinition's stable identity token into the
+ * SHA-256-only RecoveryBindingV1 field. */
+export const recoveryBindingToolDefinitionHashV1 = (
+  definition: ToolDefinition,
+): string => toolDefinitionIdentityDigestV1(definition.hash);
 
 const P39_RESOURCE_RESOLUTION_STALE = {
   _tag: "P39ResourceResolutionStale",

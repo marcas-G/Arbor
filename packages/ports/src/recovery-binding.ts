@@ -286,6 +286,18 @@ export const canonicalizeRecoveryBindingV1 = (
 export const recoveryBindingV1Digest = (value: RecoveryBindingV1): string =>
   sha256Hex(canonicalizeRecoveryBindingV1(value));
 
+/** P39 stores the registry's stable definition identity token as a SHA-256
+ * digest in the closed RecoveryBindingV1 field. This preserves the token's
+ * identity without treating registry-specific tokens as digest bytes. */
+export const toolDefinitionIdentityDigestV1 = (
+  identityToken: string,
+): string => {
+  if (identityToken.trim().length === 0) {
+    throw new TypeError("Tool definition identity token is empty");
+  }
+  return sha256Hex(identityToken);
+};
+
 export const canonicalArgumentsDigestV1 = (value: unknown): string =>
   sha256Hex(canonicalJsonV1(value));
 

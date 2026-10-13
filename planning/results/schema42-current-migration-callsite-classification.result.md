@@ -64,5 +64,42 @@ production daemon. Existing explicit P12/P35/etc. test prefixes remain intact.
 for production's `runMigrations(CURRENT_MIGRATIONS)` wiring. It does not
 initialize a database and is not a migration fixture call site.
 
-The classification changes no production runtime/registry behavior, P39
-policy, or frozen design documents.
+The original call-site classification changes no production runtime/registry
+behavior, P39 policy, or frozen design documents.
+
+## P5 schema-42 settlement follow-up
+
+The production composition now provides both `P39RecoveryEvidenceStoreLive`
+and `ToolObservationEvidenceStoreLive` from its existing SQLite `infra` layer.
+The low-level ToolRuntime still retains its optional service/fallback behavior;
+the schema-42 production composition no longer omits either service.
+
+The P5 slice initially exposed two composition/P39 integration defects:
+
+1. The current composition omitted the P39 RecoveryBinding and P40 canonical
+   ToolObservationEvidence store projections.
+2. After wiring the P39 store, builtin `ToolDefinition.hash` values such as
+   `shell-v2-mount-relative-cwd` failed the closed RecoveryBindingV1 SHA-256
+   field validation. Runtime now hashes the unchanged stable definition token
+   through `toolDefinitionIdentityDigestV1`; the catalog token, P39 schema, and
+   admission/settlement guards are unchanged.
+
+The P5 slice now asserts a successful shell invocation is `Bound`, has a
+terminal `Success`, and durably stores canonical P40 observation bytes/hash;
+it also checks the P39 attempt-0 definition identity is a 64-character
+lowercase SHA-256 without pinning a digest value. The architecture test asserts
+the production P39/P40 wiring while preserving the optional low-level
+fail-safe path.
+
+Verification on the updated branch:
+
+- Ports RecoveryBinding vectors, ToolRuntime definition-hash projection, and
+  P5 slice: **3 files / 7 tests passed**.
+- The seven migrated P5 suites: **7 files / 7 tests passed** (322.97s,
+  single worker).
+- P39/P40 production-composition architecture suite: **2 tests passed**.
+- `pnpm typecheck`, Biome, and `git diff --check`: passed after final diagnostic
+  cleanup.
+
+No design document, P39 schema, generic migration registry, or safety gate was
+changed.

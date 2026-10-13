@@ -10,6 +10,7 @@ import {
   type RecoveryBindingV1,
   recoveryBindingV1Digest,
   targetResourceIdentityDigestV1,
+  toolDefinitionIdentityDigestV1,
   verifyRecoveryBindingV1,
 } from "../src/recovery-binding.js";
 
@@ -107,6 +108,13 @@ describe("RecoveryBindingV1 canonical bytes and target projections", () => {
       approvalTargetDigestV1(["space-a", "space-a", "space-b"]),
     );
     expect(approvalTargetDigestV1([])).not.toBe(forward);
+  });
+
+  it("projects stable definition identity tokens to SHA-256 V1 values", () => {
+    expect(toolDefinitionIdentityDigestV1("abc")).toBe(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    );
+    expect(() => toolDefinitionIdentityDigestV1("  ")).toThrow(TypeError);
   });
 
   it("hashes the resolver region array only while full binding includes revisions", () => {
