@@ -9,6 +9,7 @@ import {
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
 } from "../../../tests/support/p39-windows-deployment-test.js";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   PersistenceHealthProbeSqliteLive,
@@ -179,6 +180,37 @@ describe("schema 42 runtime startup boundary", () => {
     expect(result).toBe(0);
     expect(await readVersion(filename)).toBe(42);
   });
+
+  it("completes a real --once daemon startup and Web bind from the schema-42 fixture", async () => {
+    const fixture = await createSchema42TestDatabase({
+      prefix: ".schema-42-runtime-once-",
+    });
+    let listeningPort: number | undefined;
+    try {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.provide(
+            Effect.timeout(Duration.seconds(45))(
+              runDaemonOnce({
+                databaseFile: fixture.databaseFilename,
+                webTransport: { host: "127.0.0.1", port: 0 },
+                onWebTransportListening: (port) => {
+                  listeningPort = port;
+                },
+              }),
+            ),
+            buildSingleWorkspaceLayer({
+              databaseFile: fixture.databaseFilename,
+            }),
+          ),
+        ),
+      );
+      expect(listeningPort).toBeGreaterThan(0);
+      expect(await readVersion(fixture.databaseFilename)).toBe(42);
+    } finally {
+      fixture.cleanup();
+    }
+  }, 120_000);
 
   it("rejects schemas newer than the explicit runtime target", async () => {
     const filename = databaseFile();
