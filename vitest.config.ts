@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    globalSetup: ["./tests/support/p39-windows-global-setup.ts"],
     setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
     // The architecture suites shell out to `git` and walk/read the whole
     // source tree; under the containerized multi-worker runner that can exceed

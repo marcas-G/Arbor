@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    globalSetup: ["./tests/support/p39-windows-global-setup.ts"],
     setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
     include: [
       "tests/capability/black-box/s1-s4-public-api.test.ts",

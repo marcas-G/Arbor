@@ -31,7 +31,7 @@ export interface P39PrivateTestTempRoot {
   readonly currentSid: string;
 }
 
-/** Create a per-test temp root without relying on Microsoft.PowerShell.Security.
+/** Create an invocation-wide temp root without relying on Microsoft.PowerShell.Security.
  * Its protected DACL grants FullControl only to the current SID, SYSTEM, and
  * Administrators, and descendants inherit exactly those grants. */
 export const createP39PrivateTestTempRoot =
@@ -76,7 +76,12 @@ export const removeP39PrivateTestTempRoot = (
     [root.path, "/grant:r", `*${root.currentSid}:(OI)(CI)F`, "/T", "/C", "/Q"],
     { encoding: "utf8", timeout: 30_000, windowsHide: true },
   );
-  rmSync(root.path, { recursive: true, force: true });
+  rmSync(root.path, {
+    recursive: true,
+    force: true,
+    maxRetries: 8,
+    retryDelay: 250,
+  });
 };
 
 /** Missing PowerShell ACL support means Windows deployment qualification
@@ -215,5 +220,10 @@ export const removeP39PrivateTestDirectory = (directory: string): void => {
       { encoding: "utf8", timeout: 10_000, windowsHide: true },
     );
   }
-  rmSync(directory, { recursive: true, force: true });
+  rmSync(directory, {
+    recursive: true,
+    force: true,
+    maxRetries: 8,
+    retryDelay: 250,
+  });
 };

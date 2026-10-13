@@ -356,6 +356,15 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     }
   });
 
+  it("inherits the invocation-wide private TEMP ACL for worker-created directories", () => {
+    const directory = mkdtempSync(join(tmpdir(), "arbor-p39-inherited-temp-"));
+    try {
+      expect(validateP39ProtectedDirectory(directory)).toBe(true);
+    } finally {
+      removeP39PrivateTestDirectory(directory);
+    }
+  });
+
   it("checks a primary parent before creating a missing database file", () => {
     if (process.platform === "win32") return;
     const directory = mkdtempSync(
