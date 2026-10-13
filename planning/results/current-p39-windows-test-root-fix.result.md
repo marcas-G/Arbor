@@ -1,6 +1,6 @@
 # Current P39 Windows test-root fix
 
-Date: 2026-10-13  
+Date: 2026-10-13
 Base: `80ba7d1208b03164aa24c6e5eec87e64b6b73f92`
 
 ## Root cause
