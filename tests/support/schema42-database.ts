@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, realpathSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { Cause, Effect, Exit, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -7,9 +7,9 @@ import {
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
   P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
-  layer as sqliteLayer,
   runMigrations,
   runP39SqliteMaintenance,
+  layer as sqliteLayer,
 } from "../../adapters/persistence-sqlite/src/index.js";
 import {
   createP39PrivateTestFile,
@@ -51,6 +51,13 @@ export interface Schema42TestDatabaseOptions {
   /** Seeds test-owned legacy rows after the real P38 prefix and before P39. */
   readonly seedP38?: (databaseFilename: string) => Promise<void>;
   readonly prefix?: string;
+}
+
+export interface Schema42TestDatabaseFactory {
+  /** Copies the closed trusted template into a new, independent SQLite file. */
+  readonly create: () => Schema42TestDatabase;
+  /** Removes the trusted template after all clones have been cleaned up. */
+  readonly cleanup: () => void;
 }
 
 /** Creates a directory whose path remains owned while P39 ACL setup runs. */
@@ -95,6 +102,20 @@ const readUserVersion = (filename: string) =>
         "PRAGMA user_version",
       );
       return Number(rows[0]?.user_version ?? 0);
+    }),
+  );
+
+const checkpointSqlite = (filename: string) =>
+  runPrimary(
+    filename,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<{ busy: number }>(
+        "PRAGMA wal_checkpoint(TRUNCATE)",
+      );
+      if (Number(rows[0]?.busy ?? 0) !== 0) {
+        throw new Error("SQLite WAL checkpoint remained busy.");
+      }
     }),
   );
 
@@ -191,6 +212,8 @@ export const createSchema42TestDatabase = async (
         version,
       );
     }
+    await checkpointSqlite(databaseFilename);
+    await checkpointSqlite(p39ReportFilename);
 
     retained = true;
     return {
@@ -213,4 +236,68 @@ export const createSchema42TestDatabase = async (
   } finally {
     if (!retained) removeP39PrivateTestDirectory(directory);
   }
+};
+
+/**
+ * Builds the trusted schema-42/P39 template once for a test suite. Each case
+ * gets a separate real SQLite file and P39 report sidecar copied only after
+ * the template connections have closed. This avoids repeating privileged P39
+ * setup without manufacturing user_version or migration SQL.
+ */
+export const createSchema42TestDatabaseFactory = async (
+  options: Schema42TestDatabaseOptions = {},
+): Promise<Schema42TestDatabaseFactory> => {
+  const template = await createSchema42TestDatabase({
+    ...options,
+    prefix: options.prefix ?? "arbor-schema42-template-",
+  });
+  let cleanedUp = false;
+  const cloneDirectories = new Set<string>();
+
+  return {
+    create: () => {
+      if (cleanedUp) {
+        throw new Error(
+          "Cannot create a schema-42 test database after its factory was cleaned up.",
+        );
+      }
+      const directory = createSchema42PrivateTestDirectory(
+        process.cwd(),
+        "arbor-schema42-clone-",
+      );
+      const databaseFilename = join(directory, "primary.sqlite");
+      const p39ReportFilename = join(directory, "p39-report.sqlite");
+      try {
+        copyFileSync(template.databaseFilename, databaseFilename);
+        setP39PrivateWindowsAcl(databaseFilename, "file");
+        copyFileSync(template.p39ReportFilename, p39ReportFilename);
+        setP39PrivateWindowsAcl(p39ReportFilename, "file");
+        cloneDirectories.add(directory);
+        let cloneCleanedUp = false;
+        return {
+          directory,
+          databaseFilename,
+          p39ReportFilename,
+          cleanup: () => {
+            if (cloneCleanedUp) return;
+            cloneCleanedUp = true;
+            cloneDirectories.delete(directory);
+            removeP39PrivateTestDirectory(directory);
+          },
+        };
+      } catch (cause) {
+        removeP39PrivateTestDirectory(directory);
+        throw cause;
+      }
+    },
+    cleanup: () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      for (const directory of cloneDirectories) {
+        removeP39PrivateTestDirectory(directory);
+      }
+      cloneDirectories.clear();
+      template.cleanup();
+    },
+  };
 };
