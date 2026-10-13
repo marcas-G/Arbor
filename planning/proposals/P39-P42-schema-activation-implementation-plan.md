@@ -79,7 +79,9 @@ database/report paths; do not overload normal daemon startup. The public modes
 are `fresh`, `copy`, and `resume-copy`. `fresh` and `copy` always create a new
 target. `resume-copy` is the only mode that may open an existing target, and it
 accepts only an explicitly selected, previously-created disposable copy. No
-mode upgrades or replaces its source.
+mode upgrades or replaces its source. Only a target created by `copy` is
+eligible for `resume-copy`; an interrupted `fresh` target remains untouched,
+and a later fresh attempt uses a different new target.
 
 ### Mode and path contract
 
@@ -87,7 +89,7 @@ mode upgrades or replaces its source.
   SQLite sidecars/lock artifacts must not exist. Create it with exclusive
   create semantics, bootstrap only the ordinary migration prefix through P38,
   then proceed to P39. P39 cannot be invoked at version 0.
-- `copy --source <existing-db> --database <new-target>` opens the source
+- `copy --source-database <existing-db> --database <new-target>` opens the source
   read-only, validates its expected version (36–38), and creates the target
   exclusively using SQLite's online backup API. This captures a consistent
   SQLite snapshot including WAL-visible committed state. Do not use a raw file
@@ -96,14 +98,15 @@ mode upgrades or replaces its source.
   digest matches the source snapshot digest and record backup completion. The
   source stays read-only for the entire command and is verified unchanged
   afterward; all migrations are applied only to the new target.
-- `resume-copy --database <existing-disposable-copy>` is an explicit operator
-  choice to continue a prior interrupted, provenance-valid target. It rejects
-  any target isolated by a P39 blocker report. It never accepts the source as
-  target and never creates/replaces a source. Revalidate target
-  identity and schema-prefix evidence before applying anything. It must also
-  receive `--copy-manifest <existing-manifest>` and validate the manifest
-  provenance described below. The original source remains read-only and is
-  not needed for migration execution.
+- `resume-copy --source-database <original-source> --database <existing-copy>`
+  is an explicit operator choice to continue a prior interrupted,
+  provenance-valid target created by `copy` mode. It rejects any target isolated by a P39 blocker
+  report. Re-open the original source read-only and require the exact original
+  `--copy-manifest` and `--p39-report-db` paths. Verify source canonical path,
+  file identity, and logical content digest against the manifest; verify target
+  identity, digest, and prefix against the same manifest; and verify the report
+  sidecar as specified below. Missing or mismatched source/target/manifest/
+  report evidence fails closed. The source is never the migration target.
 - Resolve canonical paths before opening files; compare both canonical path
   and stable file identity (device/volume plus inode/file ID) for every existing
   database. For new destinations, resolve the real parent and reserve the final
@@ -112,17 +115,21 @@ mode upgrades or replaces its source.
   component, non-local/network filesystems, and unsupported ACL/locking
   profiles. Apply P39's established protected-path and OS-identity checks to
   the primary, lock, and report database. In `fresh`/`copy`, the report path
-  must be a distinct new sidecar; in `resume-copy`, an existing report is
-  accepted only after its path, file identity, P39 schema, and report rows are
-  validated, and a new report path is still created exclusively. No report
-  path may alias the source, target, writer-lock DB, or any protected
+  must be a distinct new sidecar created with exclusive-create semantics. In
+  `resume-copy`, the report path must be the same existing file recorded by the
+  manifest; validate its canonical path, file identity, P39 schema, durability
+  settings, and every report row/hash. A missing report sidecar is a hard
+  refusal; resume never creates or substitutes a report file. No report path
+  may alias the source, target, writer-lock DB, manifest, or any protected
   application store. Fail closed on identity/path uncertainty.
 - `fresh` and `copy` also require a new, separate `--copy-manifest` path.
   Reject manifest aliases to source, target, P39 report, writer-lock database,
   or protected application stores by canonical path and file identity. In
-  `resume-copy`, require the existing manifest plus its recorded target
-  identity; never infer provenance merely because the operator supplied an
-  existing database path.
+  `resume-copy`, require the existing manifest plus its recorded source,
+  target, report, and manifest-file identities; never infer provenance merely
+  because the operator supplied an existing database path. Exclusive-create
+  applies only to `fresh`/`copy` initialization; resume never creates or
+  replaces the manifest or report sidecar.
 - Never delete, truncate, overwrite, or silently substitute a conflicting
   source, target, report, or lock file. Alias/path validation failure leaves
   all caller-owned inputs untouched. Generated targets/reports are operator
@@ -131,9 +138,10 @@ mode upgrades or replaces its source.
 ### Ordered execution and lock lifetime
 
 1. Require the source to be offline: the operator has stopped every daemon and
-   no writer is active. In copy mode, open it read-only and take the backup API
-   snapshot. Verify the source version and capture its canonical path/file
-   identity before creating the target.
+   no writer is active. In `copy`, open it read-only and take the backup API
+   snapshot. In `resume-copy`, re-open `--source-database` read-only to validate
+   its original identity and digest. Verify the source version and capture its
+   canonical path/file identity before creating a new target.
 2. Open the new target and verify the exact supported prefix. For `fresh`, run
    the ordinary P1–P38 prefix before the privileged maintenance phase. For
    `copy`, accepted input is exactly version 36, 37, or 38. `resume-copy` accepts
@@ -158,8 +166,9 @@ mode upgrades or replaces its source.
    reads/applies a pending chain. Preserve P39's WAL requirement, manifest/hash
    checks, blocker preflight and report read-back, rollback, foreign-key check,
    and typed refusal behavior. A blocker report is a separate immutable audit
-   artifact, not a backup or a reason to force migration; the target remains
-   resumable only if it still matches an eligible fully committed prefix.
+   artifact, not a backup or a reason to force migration. A P39-isolated target
+   is permanently audit-only under the frozen DID contract; no matching
+   version/prefix state makes it resumable.
 5. After P39 commits at 39, apply exact descriptors 0040, 0041, and 0042 in
    order, each in its own transaction with a per-step predecessor check and
    no fabricated migration-history rows or SQL/fingerprint bypass. Keep
@@ -176,18 +185,61 @@ mode upgrades or replaces its source.
 
 `fresh`/`copy` create a separate, OS-protected, append-only manifest at the
 operator-selected `--copy-manifest` path. It is evidence for this one target,
-not a new schema contract or an authorization token. It has a random 256-bit
-nonce and a hash-chained sequence of canonical records. The initial record
+not a new schema contract or an authorization token. Threat model: the
+authorized OS operator identity is the trust root. The protected ACL/path
+profile excludes other identities, and the application writes append-only
+records. This manifest is not a signed artifact and does not claim resistance
+to malicious alteration by that same authorized identity, which can rewrite
+the database and manifest. Its purpose is to detect accidental misuse,
+path/file aliases, stale or wrong copies, and targets created outside the
+authorized CLI flow. It has a random 256-bit nonce and a hash-chained sequence
+of canonical records. The initial record
 binds the manifest to mode, target canonical path and stable file identity
 (volume/device plus file ID), source canonical path/file identity and
 read-only source content digest (copy mode; null for fresh), backup completion
 (copy mode), initial `user_version`/prefix, initial target content digest,
-and the distinct P39 report path/file identity or reserved destination. The
-target content digest is over a deterministic logical SQLite snapshot
-(`sqlite_master`, `user_version`, and table contents in canonical table/row/
-value order), not the database filename or mutable WAL bytes. The manifest's
-file identity, ACL/profile, record sequence, nonce, and hash chain are checked
-on every resume.
+and the distinct P39 report path/file identity, plus the manifest's own
+canonical path and file identity. The record is written only after the
+exclusive-created manifest file identity is known. Source, target, and
+manifest are revalidated at resume as described below.
+
+The deterministic logical SQLite digest uses an unambiguous typed,
+length-prefixed encoding and SHA-256 over: `application_id`, `user_version`;
+schema objects from `sqlite_schema` sorted by `(type,name,tbl_name)` with exact
+stored SQL text and object names; each table's columns in `cid` order with
+name, declared type, nullability, default, and primary-key ordinal; and every
+row's typed values. Rowid tables include the rowid as a value and sort by
+signed rowid; `WITHOUT ROWID` tables sort by their declared primary-key tuple
+in primary-key ordinal order. Virtual tables fail closed until their module
+provides a canonical snapshot encoding. Rows are encoded individually, so identical
+rows remain a counted multiset and are never deduplicated. Values retain
+SQLite storage class: NULL has its own tag; INTEGER is signed 64-bit
+two's-complement big-endian; REAL is its IEEE-754 binary64 bit pattern; TEXT is
+exact UTF-8 bytes; BLOB is exact bytes. Every tag and payload has an explicit
+byte length. REAL encoding preserves the exact IEEE-754 bits, including
+infinities and signed zero; NaN is accepted only if the SQLite binding exposes
+a stable bit representation, otherwise it fails closed. The encoding must
+avoid lossy JavaScript number conversion; unsupported or non-canonical values
+fail closed.
+
+Include `sqlite_sequence` rows as typed `(name,seq)` tuples sorted by name
+because AUTOINCREMENT state affects later row allocation. Exclude
+`sqlite_stat1`/`sqlite_stat4` and other planner-statistics objects, including
+their schema entries and contents, as derived query-planning metadata. Exclude
+`sqlite_schema`'s internal rowid and physical page/freelist/journal/WAL bytes,
+which are not logical application state. Any SQLite internal object outside
+these explicit inclusion/exclusion rules fails closed until its digest
+treatment is defined.
+
+`resume-copy` requires that the manifest origin mode is `copy`, and must
+explicitly re-supply `--source-database`, `--database`,
+`--copy-manifest`, and `--p39-report-db`. It verifies the source canonical
+path, file identity, and logical digest against the initial manifest record,
+then verifies target identity/digest/prefix against the latest committed
+record. The report must be the same existing path/file identity recorded by
+the manifest; validate its P39 schema and all rows/hashes. Missing source,
+manifest, or report evidence is a refusal, never a trigger to create
+replacement evidence.
 
 Before each migration transaction, append and durably flush a `Prepared`
 record binding the from/to versions and exact descriptor SQL hash. After the
@@ -261,8 +313,8 @@ Proposed command shape (illustrative only; no such command exists yet):
 
 ```text
 pnpm build
-node apps/single-workspace/dist/schema-upgrade.js --mode copy --source <offline-source.db> --database <new-copy.db> --p39-report-db <new-separate-report.db>
-node apps/single-workspace/dist/schema-upgrade.js --mode resume-copy --database <same-disposable-copy.db> --p39-report-db <same-separate-report.db> --copy-manifest <same-manifest.json>
+node apps/single-workspace/dist/schema-upgrade.js --mode copy --source-database <offline-source.db> --database <new-copy.db> --p39-report-db <new-separate-report.db> --copy-manifest <new-manifest.json>
+node apps/single-workspace/dist/schema-upgrade.js --mode resume-copy --source-database <same-offline-source.db> --database <same-disposable-copy.db> --p39-report-db <same-separate-report.db> --copy-manifest <same-manifest.json>
 ```
 
 The CLI must also expose `--mode fresh --database <new-target.db>
@@ -307,7 +359,9 @@ The qualification boundary is limited to:
   exclusivity, path/file-identity alias denials (including hard links,
   symlinks/junctions and network filesystems), report/manifest alias denial,
   manifest provenance and exact prepared/committed continuation, isolated
-  target denial, and explicit mode validation;
+  target denial, explicit mode validation, and digest test vectors covering
+  typed values, duplicate-row multiplicity, rowid/primary-key ordering,
+  `sqlite_sequence`, and excluded planner/physical state;
 - a centralized
   `adapters/persistence-sqlite/test/fixtures/schema-42.ts` fixture (new) as the
   sole standard post-activation test setup. Migrate consumers that currently
