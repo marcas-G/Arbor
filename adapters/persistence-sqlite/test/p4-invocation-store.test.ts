@@ -9,10 +9,10 @@ import { ToolInvocationStore, TransactionPort } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import {
   layer,
   P36_MIGRATIONS,
-  P39_RECONCILIATION_MIGRATION,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
@@ -37,8 +37,8 @@ const executionFence = {
 };
 const fenceNow = "2026-10-12T00:00:00.000Z";
 
-const makeApp = () => {
-  const base = layer({ filename: ":memory:" });
+const makeApp = (filename = ":memory:") => {
+  const base = layer({ filename });
   const infra = Layer.mergeAll(base);
   return Layer.mergeAll(
     infra,
@@ -194,7 +194,8 @@ describe("P4 tool invocation store", () => {
   });
 
   it("records DeniedUnbound for fresh/provisional denial, preserves Bound denial, and rolls back both denied claim edges", async () => {
-    const app = makeApp();
+    const database = await createSchema42TestDatabase();
+    const app = makeApp(database.databaseFilename);
     const freshDeniedId = parse(ToolInvocationId)(
       "tin_018f2b3c-4d5e-7abc-8def-0123456789a2",
     );
@@ -221,8 +222,6 @@ describe("P4 tool invocation store", () => {
       intentAt: "t1",
     });
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      yield* runMigrations([...P36_MIGRATIONS, P39_RECONCILIATION_MIGRATION]);
       yield* seed;
       const tx = yield* TransactionPort;
       const store = yield* ToolInvocationStore;
@@ -361,60 +360,64 @@ describe("P4 tool invocation store", () => {
         rows,
       };
     });
-    const result = await Effect.runPromise(
-      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
-    );
-    const value = result as {
-      freshDenied: { readonly settlement: { readonly _tag: string } };
-      provisionalRollback: string;
-      provisionalAfterRollback: {
-        readonly value: { readonly settlement: unknown };
+    try {
+      const result = await Effect.runPromise(
+        Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+      );
+      const value = result as {
+        freshDenied: { readonly settlement: { readonly _tag: string } };
+        provisionalRollback: string;
+        provisionalAfterRollback: {
+          readonly value: { readonly settlement: unknown };
+        };
+        provisionalDenied: { readonly settlement: { readonly _tag: string } };
+        boundDenied: { readonly settlement: { readonly _tag: string } };
+        insertRollback: string;
+        rolledBackInsert: { readonly _tag: string };
+        rows: ReadonlyArray<{
+          readonly invocation_id: string;
+          readonly recovery_binding_state: string;
+          readonly recovery_binding_sha256: string | null;
+          readonly settlement_kind: string | null;
+          readonly settlement_provenance: string | null;
+          readonly result_ref: string | null;
+        }>;
       };
-      provisionalDenied: { readonly settlement: { readonly _tag: string } };
-      boundDenied: { readonly settlement: { readonly _tag: string } };
-      insertRollback: string;
-      rolledBackInsert: { readonly _tag: string };
-      rows: ReadonlyArray<{
-        readonly invocation_id: string;
-        readonly recovery_binding_state: string;
-        readonly recovery_binding_sha256: string | null;
-        readonly settlement_kind: string | null;
-        readonly settlement_provenance: string | null;
-        readonly result_ref: string | null;
-      }>;
-    };
-    expect(value.freshDenied.settlement._tag).toBe("Denied");
-    expect(value.provisionalRollback).toBe("simulated-precommit-crash");
-    expect(value.provisionalAfterRollback.value.settlement).toBeNull();
-    expect(value.provisionalDenied.settlement._tag).toBe("Denied");
-    expect(value.boundDenied.settlement._tag).toBe("Denied");
-    expect(value.insertRollback).toBe("simulated-precommit-crash");
-    expect(value.rolledBackInsert._tag).toBe("None");
-    expect(value.rows).toEqual([
-      {
-        invocation_id: "tin_018f2b3c-4d5e-7abc-8def-0123456789a2",
-        recovery_binding_state: "DeniedUnbound",
-        recovery_binding_sha256: null,
-        settlement_kind: "Denied",
-        settlement_provenance: "Ordinary",
-        result_ref: null,
-      },
-      {
-        invocation_id: "tin_018f2b3c-4d5e-7abc-8def-0123456789a3",
-        recovery_binding_state: "DeniedUnbound",
-        recovery_binding_sha256: null,
-        settlement_kind: "Denied",
-        settlement_provenance: "Ordinary",
-        result_ref: null,
-      },
-      {
-        invocation_id: "tin_018f2b3c-4d5e-7abc-8def-0123456789a4",
-        recovery_binding_state: "Bound",
-        recovery_binding_sha256: bindingSha,
-        settlement_kind: "Denied",
-        settlement_provenance: "Ordinary",
-        result_ref: null,
-      },
-    ]);
+      expect(value.freshDenied.settlement._tag).toBe("Denied");
+      expect(value.provisionalRollback).toBe("simulated-precommit-crash");
+      expect(value.provisionalAfterRollback.value.settlement).toBeNull();
+      expect(value.provisionalDenied.settlement._tag).toBe("Denied");
+      expect(value.boundDenied.settlement._tag).toBe("Denied");
+      expect(value.insertRollback).toBe("simulated-precommit-crash");
+      expect(value.rolledBackInsert._tag).toBe("None");
+      expect(value.rows).toEqual([
+        {
+          invocation_id: "tin_018f2b3c-4d5e-7abc-8def-0123456789a2",
+          recovery_binding_state: "DeniedUnbound",
+          recovery_binding_sha256: null,
+          settlement_kind: "Denied",
+          settlement_provenance: "Ordinary",
+          result_ref: null,
+        },
+        {
+          invocation_id: "tin_018f2b3c-4d5e-7abc-8def-0123456789a3",
+          recovery_binding_state: "DeniedUnbound",
+          recovery_binding_sha256: null,
+          settlement_kind: "Denied",
+          settlement_provenance: "Ordinary",
+          result_ref: null,
+        },
+        {
+          invocation_id: "tin_018f2b3c-4d5e-7abc-8def-0123456789a4",
+          recovery_binding_state: "Bound",
+          recovery_binding_sha256: bindingSha,
+          settlement_kind: "Denied",
+          settlement_provenance: "Ordinary",
+          result_ref: null,
+        },
+      ]);
+    } finally {
+      database.cleanup();
+    }
   });
 });

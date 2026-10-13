@@ -11,16 +11,15 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import {
   DomainEventJournalLive,
   IdGeneratorLive,
   layer,
   makeRecoveryAttentionFactStoreLive,
-  runMigrations,
   TransactionPortLive,
   WorkReadmissionGateStoreLive,
 } from "../src/index.js";
-import { CURRENT_MIGRATIONS } from "../src/migrations.js";
 
 const projectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789c1";
 const workspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789c1";
@@ -40,8 +39,8 @@ const otherProjectWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789c3";
 const otherProjectSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789c3";
 const otherProjectExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789c3";
 
-const makeApp = () => {
-  const sqlite = layer({ filename: ":memory:" });
+const makeApp = (filename: string) => {
+  const sqlite = layer({ filename });
   const infra = Layer.mergeAll(sqlite, IdGeneratorLive);
   const journal = Layer.provide(DomainEventJournalLive, infra);
   return Layer.mergeAll(
@@ -67,7 +66,21 @@ const runDb = <A>(
     | DomainEventJournal
     | IdGenerator
   >,
-) => Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp())));
+) => {
+  const run = async () => {
+    const database = await createSchema42TestDatabase();
+    try {
+      return await Effect.runPromise(
+        Effect.scoped(
+          Effect.provide(program, makeApp(database.databaseFilename)),
+        ),
+      );
+    } finally {
+      database.cleanup();
+    }
+  };
+  return run();
+};
 
 const seed = (
   settlement: unknown = null,
@@ -443,7 +456,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("reads a durable RuntimeSafetyStop hold for the exact Work revision and releases only after revision advance", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed({
           _tag: "Interrupted",
           result: {
@@ -472,7 +484,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("derives a hold from the P9 fact and its exact event witness without waiting for settlement", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         const tx = yield* TransactionPort;
         const facts = yield* RecoveryAttentionFactStore;
@@ -512,7 +523,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed on malformed durable episode binding with bounded integrity details", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed({
           _tag: "Interrupted",
           result: {
@@ -543,7 +553,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("holds exact Work on the canonical OutcomeUnknown reconciliation settlement", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed({
           _tag: "OutcomeUnknown",
           reconciliation: {
@@ -566,7 +575,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   ])("fails closed for malformed Interrupted settlement result %j", (result) =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed({ _tag: "Interrupted", result });
         const exit = yield* Effect.exit(query());
         expect(exit._tag).toBe("Failure");
@@ -582,7 +590,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("keeps StopRequested settlement outside the gate even without Episode state", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed({ _tag: "Interrupted", result: { _tag: "StopRequested" } });
         const sql = yield* SqlClient;
         const tx = yield* TransactionPort;
@@ -599,7 +606,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed when StopRequested settlement has no stop request fact", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed(
           { _tag: "Interrupted", result: { _tag: "StopRequested" } },
           null,
@@ -617,7 +623,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed when a RuntimeSafetyStop source has no Episode state", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed({
           _tag: "Interrupted",
           result: {
@@ -646,7 +651,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed when ReconciliationEscalated aggregate and payload bind different Executions", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherWorkspaceExecution;
         yield* appendReconciliationEvent(executionId, otherExecutionId);
@@ -666,7 +670,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("does not let a B/C mismatch block A, while each referenced Workspace fails closed", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherWorkspaceExecution;
         yield* seedThirdWorkspaceExecution;
@@ -698,7 +701,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed when a ReconciliationEscalated payload binds this Workspace but aggregate_ref points elsewhere", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherWorkspaceExecution;
         yield* appendReconciliationEvent(otherExecutionId, executionId);
@@ -718,7 +720,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed when ReconciliationEscalated payload points to a missing Execution", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* appendReconciliationEvent(
           executionId,
@@ -737,7 +738,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("lets unrelated A skip aggregate B with a missing payload identity, while B rejects it", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherWorkspaceExecution;
         yield* appendReconciliationEvent(otherExecutionId);
@@ -759,7 +759,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("lets unrelated A skip aggregate B with a foreign-project payload, while B rejects it", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherWorkspaceExecution;
         yield* seedOtherProjectExecution;
@@ -785,7 +784,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed when both ReconciliationEscalated identities match but the Execution is missing", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         const missingExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789fe";
         yield* appendReconciliationEvent(
@@ -808,7 +806,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed when aggregate Execution is missing but payload binds the requested Workspace", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         const missingExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789fd";
         yield* appendReconciliationEvent(missingExecutionId, executionId);
@@ -825,7 +822,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed when both ReconciliationEscalated identities match an Execution in another Project", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherProjectExecution;
         yield* appendReconciliationEvent(
@@ -845,7 +841,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed for A and B when aggregate is missing even if payload points to B", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherWorkspaceExecution;
         const missingExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789fc";
@@ -870,7 +865,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed for A and B when aggregate belongs to another Project even if payload points to B", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherWorkspaceExecution;
         yield* seedOtherProjectExecution;
@@ -898,7 +892,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("fails closed when an in-scope ReconciliationEscalated event omits its Execution binding", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* appendReconciliationEvent(executionId);
         const exit = yield* Effect.exit(query());
@@ -914,7 +907,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("ignores a valid ReconciliationEscalated event whose exact Execution belongs to another Workspace", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherWorkspaceExecution;
         yield* appendReconciliationEvent(otherExecutionId, otherExecutionId);
@@ -925,7 +917,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("scopes a missing ReconciliationEscalated payload identity to its aggregate Workspace", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherWorkspaceExecution;
         yield* appendReconciliationEvent(otherExecutionId);
@@ -947,7 +938,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("scopes an unparseable ReconciliationEscalated payload by aggregate Execution", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         yield* seedOtherWorkspaceExecution;
         yield* appendMalformedReconciliationEvent(otherExecutionId);
@@ -969,7 +959,6 @@ describe("P2 WorkReadmissionGateStore", () => {
   it("recognizes every closed DeliverReplay and AssignWork binding failure code", () =>
     runDb(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed();
         const sql = yield* SqlClient;
         const tx = yield* TransactionPort;

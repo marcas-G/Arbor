@@ -113,31 +113,30 @@ describe("sqlite adapter migration runner", () => {
   });
 
   it("checks each gated descriptor against the version immediately before its transaction", async () => {
-    const after39: MigrationFile = {
-      id: 40,
-      name: "after-p39",
-      requiresUserVersion: 39,
-      sql: "CREATE TABLE applied_after_39 (id INTEGER)",
+    const after1: MigrationFile = {
+      id: 2,
+      name: "after-step-one",
+      requiresUserVersion: 1,
+      sql: "CREATE TABLE applied_after_step_one (id INTEGER)",
     };
-    const after41: MigrationFile = {
-      id: 42,
-      name: "after-p41",
-      requiresUserVersion: 41,
-      sql: "CREATE TABLE must_not_apply_after_40 (id INTEGER)",
+    const after3: MigrationFile = {
+      id: 4,
+      name: "after-missing-step-three",
+      requiresUserVersion: 3,
+      sql: "CREATE TABLE must_not_apply_after_step_two (id INTEGER)",
     };
     const result = await withClient(
       Effect.gen(function* () {
         const sql = yield* SqlClient;
-        yield* sql.unsafe("PRAGMA user_version = 39");
-        const exit = yield* Effect.exit(runMigrations([after39, after41]));
+        const exit = yield* Effect.exit(runMigrations([init, after1, after3]));
         const version = yield* sql.unsafe<{ user_version: number }>(
           "PRAGMA user_version",
         );
         const appliedTable = yield* sql.unsafe<{ count: number }>(
-          "SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = 'applied_after_39'",
+          "SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = 'applied_after_step_one'",
         );
         const skippedTable = yield* sql.unsafe<{ count: number }>(
-          "SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = 'must_not_apply_after_40'",
+          "SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name = 'must_not_apply_after_step_two'",
         );
         return {
           exit,
@@ -149,9 +148,9 @@ describe("sqlite adapter migration runner", () => {
     );
     expect(Exit.isFailure(result.exit)).toBe(true);
     expect(JSON.stringify(result.exit)).toContain(
-      "migration 42 requires database user_version 41, found 40",
+      "migration 4 requires database user_version 3, found 2",
     );
-    expect(result.version).toBe(40);
+    expect(result.version).toBe(2);
     expect(result.appliedTableCount).toBe(1);
     expect(result.skippedTableCount).toBe(0);
   });

@@ -30,6 +30,7 @@ import {
   validateP39MigrationPrefix,
   writeP39BlockReportAndReadBack,
 } from "../src/p39-maintenance.js";
+import { runP39SqliteMaintenance } from "../src/p39-maintenance-adapter.js";
 import {
   validateP39ReportSidecarDatabase,
   validateP39ReportSidecarPath,
@@ -45,6 +46,41 @@ const windowsAclQualificationAvailable = p39WindowsAclQualificationAvailable();
 
 const withClient = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
   Effect.runPromise(Effect.provide(program, layer({ filename: ":memory:" })));
+
+const withP39Client = async <A>(
+  program: Effect.Effect<A, unknown, SqlClient>,
+) => {
+  const directory = makeP39PrivateTestDirectory(
+    process.cwd(),
+    ".p39-reality-proof-",
+  );
+  const filename = join(directory, "primary.sqlite");
+  try {
+    createP39PrivateTestFile(filename);
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* runMigrations(migrations.P38_MIGRATIONS);
+          }),
+          layer({ filename }),
+        ),
+      ),
+    );
+    await Effect.runPromise(
+      runP39SqliteMaintenance({
+        primaryFilename: filename,
+        sidecarFilename: join(directory, "p39-report.sqlite"),
+        protectedStoreFilenames: [],
+      }),
+    );
+    return await Effect.runPromise(
+      Effect.provide(program, layer({ filename })),
+    );
+  } finally {
+    removeP39PrivateTestDirectory(directory);
+  }
+};
 
 const getP39Migration = () =>
   (
@@ -413,14 +449,8 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
   });
 
   it("creates the immutable fact ledger and defers selected-fact provenance to COMMIT", async () => {
-    const migration = getP39Migration();
-    expect(migration, "P39 migration module is missing").toBeDefined();
-    if (!migration) return;
-
-    const result = await withClient(
+    const result = await withP39Client(
       Effect.gen(function* () {
-        yield* runMigrations(migrations.P36_MIGRATIONS);
-        yield* runMigrations([...migrations.P36_MIGRATIONS, migration]);
         const sql = yield* SqlClient;
         const version = yield* sql.unsafe<{ user_version: number }>(
           "PRAGMA user_version",
@@ -487,14 +517,8 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
   });
 
   it("enforces the DeniedUnbound row shape and only the two allowed projection exits", async () => {
-    const migration = getP39Migration();
-    expect(migration, "P39 migration module is missing").toBeDefined();
-    if (!migration) return;
-
-    const result = await withClient(
+    const result = await withP39Client(
       Effect.gen(function* () {
-        yield* runMigrations(migrations.P36_MIGRATIONS);
-        yield* runMigrations([...migrations.P36_MIGRATIONS, migration]);
         const sql = yield* SqlClient;
         yield* sql.unsafe("PRAGMA foreign_keys = OFF");
 
@@ -685,13 +709,8 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
   });
 
   it("rejects Success from NotOccurred, allows ExpectedFailure with a distinct external result Artifact, and rejects cross-attempt selection", async () => {
-    const migration = getP39Migration();
-    expect(migration, "P39 migration module is missing").toBeDefined();
-    if (!migration) return;
-    const result = await withClient(
+    const result = await withP39Client(
       Effect.gen(function* () {
-        yield* runMigrations(migrations.P36_MIGRATIONS);
-        yield* runMigrations([...migrations.P36_MIGRATIONS, migration]);
         const sql = yield* SqlClient;
         yield* sql.unsafe("PRAGMA foreign_keys = OFF");
         const invocationId = "tin_p39_selected_fact";
