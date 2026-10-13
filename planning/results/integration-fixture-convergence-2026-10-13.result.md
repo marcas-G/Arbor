@@ -64,10 +64,41 @@ or preserved database was changed.
 - `pnpm typecheck`: PASS; Biome on all 15 touched TypeScript files: PASS;
   `git diff --check`: PASS.
 
-Full `pnpm check` has not yet been run on this convergence; it is the next
-single full-check step after these changes are committed. The P39 writer target
-left one untracked integration-root sidecar,
+## Final full-check result
+
+One full `pnpm check` ran at HEAD
+`2710df42bdf9a7f1a5227764318e01b55fe2cb80`; it exited 1 at root Vitest.
+
+- Lint/Biome: PASS, 1,140 files.
+- Typecheck: PASS.
+- Architecture: PASS, 31 files / 159 tests.
+- Root Vitest: 392 files; 371 passed, 21 failed. Tests: 2,101 passed,
+  54 failed, 3 skipped. Web typecheck/build/test stages were not run because the
+  check chain stopped at Vitest.
+- `P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT` appeared **zero** times in the
+  final log (it had been the dominant prior failure). Remaining failures now
+  center on older test schemas and fixtures:
+  - Invalid `ProjectResourceSource` decode: 19 failure blocks across 12 files,
+    including P5/P14/MAC/Wave2 and P9-related app tests.
+  - `PersistenceUnavailable` in P12 acceptance/runtime-safety/secret-store and
+    P5 slice acceptance: 22 blocks, chiefly tests still applying old P12
+    schemas before CreateProject v2 reads/writes the F21 field.
+  - F21 resource-admission: four CreateProject response/idempotency failures.
+  - Additional P13/B01 public-process, Blocked restart cleanup/timeout, and
+    black-box authority issues are retained with exact diagnostics in the raw
+    log.
+
+The raw log is at
+`C:\Users\ThinkPad\.codex\worktrees\full-code-convergence-release\Arbor\planning\results\integration-pnpm-check-2026-10-13-final.log`.
+It is ignored by the repository's `*.log` rule and was not force-added.
+SHA-256: `CF2977ED9D99800C78C1DF06BF99D4787257C3983138B190F261A7B2566DC27C`
+(409,036 bytes).
+
+The test run changed only the generated timestamp/hash in
+`planning/results/P12.restore-drill.json`; both were restored to the exact
+pre-run values. The P39 writer test left one untracked integration-root sidecar,
 `.arbor-p39-writer-650dffe795249f18518b610197aee7e4be03ac33c51c5534dae26d499e2ea7aa.sqlite`.
-After test completion it was confirmed to be a single untracked, non-ignored
-file under the integration root with no Vitest process active, then removed by
-literal path. `planning/results/P12.restore-drill.json` is unchanged.
+After confirming the test process had exited and the sidecar was a single
+untracked, non-ignored file under the integration root, it was removed by
+literal path. No existing DB, migration state, deployment, or live service was
+changed.
