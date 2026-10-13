@@ -233,3 +233,15 @@ not claim a full repository check.
 Integration validation: `pnpm typecheck` PASS; Biome on all 11 changed
 TypeScript/JavaScript/JSON files PASS; `git diff --check` PASS. No tests were
 rerun.
+
+## Web attention fixture revision correction
+
+The full check at the final-timeout HEAD had one Web test failure: the
+forbidden-control source scan flagged a bare numeric `targetWorkRevision` in
+the attention page fixture. Reused the existing typed `workDetailCurrent`
+fixture's revision instead. The source-scan rule and coverage were left intact,
+and no command or production behavior changed.
+
+Focused verification: `no-forbidden-controls.test.tsx` — 8/8 PASS; Biome on
+`apps/web/src/pages/attention/fixtures.ts` — PASS; Web typecheck — PASS;
+`git diff --check` — PASS. No full check was rerun.
