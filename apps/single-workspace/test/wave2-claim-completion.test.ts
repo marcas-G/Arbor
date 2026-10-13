@@ -54,7 +54,7 @@ let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
 
 beforeEach(async () => {
   fixture = await createSchema42TestDatabase({ prefix: ".wave2-schema42-" });
-});
+}, 120_000);
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;

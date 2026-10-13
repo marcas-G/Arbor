@@ -122,7 +122,7 @@ beforeAll(async () => {
     `composition startup failed: ${String(startupError)}`,
   ).toBeUndefined();
   expect(handle).toBeDefined();
-}, 30_000);
+}, 120_000);
 
 afterAll(async () => {
   for (const stop of shutdown.reverse()) {

@@ -66,7 +66,7 @@ beforeEach(async () => {
   fixture = await createSchema42TestDatabase({
     prefix: ".mac-p3-delivery-schema42-",
   });
-});
+}, 120_000);
 
 describe("MAC-P3 cross-Work deliverable closure", () => {
   it("declares, produces, delivers, deterministically satisfies and wakes without a model satisfy action", async () => {

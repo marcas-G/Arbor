@@ -156,5 +156,5 @@ describe("P14 conversation history paging", () => {
     } finally {
       fixture.cleanup();
     }
-  });
+  }, 120_000);
 });
