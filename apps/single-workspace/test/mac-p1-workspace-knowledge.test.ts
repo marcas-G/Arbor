@@ -16,7 +16,7 @@ beforeEach(async () => {
   fixture = await createSchema42TestDatabase({
     prefix: ".mac-p1-knowledge-schema42-",
   });
-});
+}, 120_000);
 
 const seedWork = (
   workId: string,

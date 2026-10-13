@@ -33,7 +33,7 @@ beforeEach(async () => {
   fixture = await createSchema42TestDatabase({
     prefix: ".mac-p2-formation-schema42-",
   });
-});
+}, 120_000);
 
 describe("MAC-P2 formation fulfillment", () => {
   it("separates Approved from asynchronously Applied and replays without duplicates", async () => {

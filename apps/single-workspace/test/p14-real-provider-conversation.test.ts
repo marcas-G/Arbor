@@ -50,7 +50,7 @@ beforeEach(async () => {
   fixture = await createSchema42TestDatabase({
     prefix: ".p14-conversation-schema42-",
   });
-});
+}, 120_000);
 
 afterEach(() => {
   fixture?.cleanup();

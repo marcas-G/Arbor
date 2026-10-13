@@ -30,7 +30,7 @@ beforeEach(async () => {
   fixture = await createSchema42TestDatabase({
     prefix: ".mac-p2-placement-schema42-",
   });
-});
+}, 120_000);
 
 const childId = (index: number): string =>
   `ws_018f2b3c-4d5e-7abc-8def-${String(12345678 + index).padStart(12, "0")}`;

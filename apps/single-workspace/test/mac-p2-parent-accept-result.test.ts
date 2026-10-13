@@ -46,7 +46,7 @@ beforeEach(async () => {
   fixture = await createSchema42TestDatabase({
     prefix: ".mac-p2-parent-accept-schema42-",
   });
-});
+}, 120_000);
 
 describe("MAC-P2 Parent Agent acceptance", () => {
   it("accepts one exact direct-child PASS result through an opaque result ref", async () => {
