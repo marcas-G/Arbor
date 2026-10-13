@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -30,6 +29,7 @@ import {
   P39_REPORT_USER_VERSION,
   type P39MaintenanceFailure,
 } from "./p39-maintenance.js";
+import { executeP39WindowsSecurityQuery } from "./p39-windows-security.js";
 import {
   validateP39ProtectedDirectory,
   validateP39ProtectedFile,
@@ -129,11 +129,7 @@ const validateLocalFilesystem = (
         "$d=[IO.DriveInfo]::new($r)",
         "Write-Output ($d.DriveType.ToString()+'|'+$d.DriveFormat)",
       ].join(";");
-      const output = execFileSync(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-Command", script],
-        { encoding: "utf8", timeout: 5000, windowsHide: true },
-      ).trim();
+      const output = executeP39WindowsSecurityQuery(script);
       const [driveType, driveFormat] = output.split("|");
       if (
         (driveType !== "Fixed" && driveType !== "Removable") ||
