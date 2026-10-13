@@ -106,3 +106,27 @@ and `fa04f315f9761c500d770e28dc3af9c5497b8d74`; no ACL check was bypassed.
 All databases were newly created temporary fixtures under the worktree. No
 online/retained database or deployment was accessed. The functional suite and
 full repository `pnpm check` were not run in this subtask.
+
+## Qualification timeout follow-up (2026-10-14)
+
+The 20-minute exact-prefix test was changed to reuse one immutable offline
+preview template across its before/after and provenance-resume calls. The test
+hook accepts the template only after checking the live target's version and
+logical digest; versions 39–42 also require the exact prepared schema-prefix
+signature. The normal CLI path still computes its own preview. The test timeout
+is bounded at 30 minutes.
+
+- `pnpm exec biome check apps/single-workspace/src/schema-upgrade.ts apps/single-workspace/test/schema-upgrade-operator.test.ts` — PASS.
+- `pnpm typecheck` — PASS.
+- `pnpm build` — PASS.
+- Focused `resumes exact prefixes` qualification — PASS, 1/1 in 804.77 seconds
+  (13m 24s). The earlier 1,163.18-second focused result is reduced by 358.41
+  seconds (31%). During development, one run exposed and fixed a stale
+  source-digest assumption in the template path; the subsequent completed
+  focused run passed.
+- Full `schema-upgrade-operator.test.ts` — PASS, 10/10 in 1,250.75 seconds
+  (20m 51s). This includes the exact-prefix case and the independent CLI race,
+  fresh/copy reopen, isolation, and path-alias cases.
+- Final process and fixture audit found no remaining CLI/Vitest process or
+  `.schema-upgrade-*` temporary directory. Full repository `pnpm check` was not
+  run for this test-focused change.
