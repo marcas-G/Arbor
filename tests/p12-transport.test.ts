@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AcceptanceRepositoryLive,
   ClockLive,
@@ -356,7 +356,15 @@ const run = <A>(
   Effect.runPromise(Effect.provide(program, makeApp(databaseFile)));
 
 const prepareSchema42Database = () =>
-  createSchema42TestDatabase({ prefix: "p12-transport-" });
+  createSchema42TestDatabase({ prefix: "p12-transport-" }).then((fixture) => {
+    schema42Cleanups.push(fixture.cleanup);
+    return fixture;
+  });
+
+const schema42Cleanups: Array<() => void> = [];
+afterEach(() => {
+  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
+});
 
 const countRows = (table: string) =>
   Effect.gen(function* () {
@@ -518,7 +526,6 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
       }),
       database.databaseFilename,
     );
-    database.cleanup();
     expect(outcome.response.ok).toBe(true);
     if (outcome.response.ok) {
       expect(outcome.response.body.resolution).toBe("Committed");
@@ -712,7 +719,6 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
       }),
       database.databaseFilename,
     );
-    database.cleanup();
     expect(outcome.created.ok).toBe(true);
     expect(outcome.missingTarget.ok).toBe(true);
     if (outcome.missingTarget.ok)
@@ -828,7 +834,6 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
       }),
       database.databaseFilename,
     );
-    database.cleanup();
     expect(outcome.created.ok).toBe(true);
     for (const denied of [outcome.rename, outcome.close]) {
       expect(denied.ok).toBe(false);
