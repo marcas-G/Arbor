@@ -6,7 +6,11 @@ import {
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolExecutionContext, ToolIntent } from "@arbor/ports";
+import {
+  SANDBOX_ENV_ALLOWLIST,
+  type ToolExecutionContext,
+  type ToolIntent,
+} from "@arbor/ports";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { createShellExecutor, shellPolicy } from "../src/tools/shell.js";
@@ -184,5 +188,74 @@ describe("P4 shell tool + policy", () => {
     );
     expect(failed.settlement._tag).toBe("ExpectedFailure");
     expect(JSON.parse(failed.observation.text).exitCode).toBe(7);
+  });
+
+  it("passes only the shared sandbox environment projection to the shell process", async () => {
+    const previous = {
+      LANG: process.env.LANG,
+      SECRET: process.env.SECRET,
+      API_KEY: process.env.API_KEY,
+    };
+    process.env.LANG = "p4-shell-test-locale";
+    process.env.SECRET = "must-not-leak";
+    process.env.API_KEY = "must-not-leak-either";
+    let captured:
+      | {
+          readonly executable: string;
+          readonly options: SpawnSyncOptionsWithStringEncoding;
+        }
+      | undefined;
+    const executor = createShellExecutor((executable, _args, options) => {
+      captured = { executable, options };
+      return {
+        pid: 1,
+        output: [null, "ok", ""],
+        stdout: "ok",
+        stderr: "",
+        status: 0,
+        signal: null,
+      };
+    });
+
+    try {
+      const result = await Effect.runPromise(
+        executor.execute({
+          intent: {
+            ...intent("echo hi"),
+            argumentsJson: JSON.stringify({
+              command: "echo hi",
+              cwd: { mount: "workspace", path: "." },
+              timeoutMs: 3210,
+            }),
+          },
+          definition: {} as never,
+          context,
+          sandbox,
+          regions: [],
+        }),
+      );
+
+      expect(result.settlement._tag).toBe("Success");
+      expect(captured).toBeDefined();
+      if (captured === undefined) throw new Error("spawn was not called");
+      const env = captured.options.env ?? {};
+      expect(env.LANG).toBe("p4-shell-test-locale");
+      expect(env.SECRET).toBeUndefined();
+      expect(env.API_KEY).toBeUndefined();
+      expect(
+        Object.keys(env).every((key) => SANDBOX_ENV_ALLOWLIST.includes(key)),
+      ).toBe(true);
+      expect(captured.options).toMatchObject({
+        cwd: root,
+        timeout: 3210,
+        encoding: "utf8",
+      });
+      expect(["pwsh", "bash"]).toContain(captured.executable);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });
