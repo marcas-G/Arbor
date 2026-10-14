@@ -8,6 +8,9 @@ import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
+import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
+
+const onWebTransportListening = createFunctionalDaemonListenReporter();
 
 const boundary = process.env.F21_ACTIVATION_PROBE_BOUNDARY;
 const markerFile = process.env.F21_ACTIVATION_MARKER;
@@ -25,6 +28,7 @@ const profiles = makeProjectResourceProfilePort(
 );
 const daemonConfig = {
   projectResourceProfiles: profiles,
+  onWebTransportListening,
   ...(process.env.ARBOR_HTTP_PORT !== undefined
     ? {
         webTransport: {
