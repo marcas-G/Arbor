@@ -431,6 +431,19 @@ export const executeAgentLoopActions = (
     }> = [];
     let durableProgress = false;
 
+    // This state is committed only after the accepted output's action cursor
+    // has reached the end. Recovery must hand that same output to step
+    // completion so it can create the successor, without re-dispatching any
+    // already Applied executable or control actions.
+    if (currentLoopStep?.state === "StepEffectsCommitted") {
+      return {
+        _tag: "Completed",
+        loopStep: currentLoopStep,
+        observations,
+        durableProgress,
+      };
+    }
+
     for (const [
       actionIndex,
       invocation,

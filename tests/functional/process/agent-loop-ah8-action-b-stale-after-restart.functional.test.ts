@@ -20,8 +20,15 @@ import {
 const fixtures: ProductionFixture[] = [];
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
 const ah8Boundary = "AH7AfterActionResultCommit";
+let activePhase: string | undefined;
+let activeDiagnosticTimer: ReturnType<typeof setTimeout> | undefined;
 
 afterEach(async () => {
+  if (activeDiagnosticTimer !== undefined) {
+    clearTimeout(activeDiagnosticTimer);
+    activeDiagnosticTimer = undefined;
+  }
+  activePhase = undefined;
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
 
@@ -171,6 +178,43 @@ describe("AH8 action A commit followed by stale action B", () => {
       },
     });
     fixtures.push(fixture);
+    activePhase = "fixture-ready";
+    activeDiagnosticTimer = setTimeout(() => {
+      let diagnostic: unknown = "<snapshot unavailable>";
+      try {
+        const snapshot = durableSnapshot(fixture.databaseFile);
+        const unsettledExecutions = snapshot.executions.filter(
+          (execution) => execution.settled_at === null,
+        );
+        const executionIds = new Set(
+          unsettledExecutions.map((execution) => execution.execution_id),
+        );
+        diagnostic = {
+          works: snapshot.works,
+          executions: unsettledExecutions,
+          steps: snapshot.steps.filter((step) =>
+            executionIds.has(step.execution_id),
+          ),
+          actions: snapshot.actions.filter((action) =>
+            executionIds.has(action.execution_id),
+          ),
+          providerCalls: fixture.providerCalls.slice(-6).map((call) => ({
+            tools: call.tools.map((tool) => tool.function?.name),
+            messages: call.messages.slice(-3).map((message) => ({
+              role: message.role,
+              content: message.content?.slice(0, 120),
+            })),
+          })),
+          daemon: fixture.daemonProcessSnapshot(),
+          daemonErrors: fixture.daemonErrors,
+        };
+      } catch (error) {
+        diagnostic = error instanceof Error ? error.message : String(error);
+      }
+      console.error(
+        `AH8 phase diagnostic: ${JSON.stringify({ phase: activePhase, diagnostic })}`,
+      );
+    }, 70_000);
 
     const client = makePublicClient(fixture.baseUrl);
     const project = await createFunctionalProject(
@@ -183,7 +227,9 @@ describe("AH8 action A commit followed by stale action B", () => {
       project,
       `请创建工作目标 Exercise AH8 action recovery ${marker}.`,
     );
+    activePhase = "root-submitted";
     const approval = await waitForApproval(client, project, marker);
+    activePhase = "root-approval-ready";
     expect(
       await client.view("current-work", {
         workspaceId: project.rootWorkspaceId,
@@ -195,6 +241,7 @@ describe("AH8 action A commit followed by stale action B", () => {
       decision: "Approve",
       reason: "AH8 public Work admission",
     });
+    activePhase = "work-approved";
     const currentWork = await waitForPublic(
       () =>
         client.view<{
@@ -213,6 +260,7 @@ describe("AH8 action A commit followed by stale action B", () => {
       async () => seedWorkProviderCalls,
       (count) => count >= 1,
     );
+    activePhase = "seed-work-idle";
     await waitForPublic(
       () =>
         client.view<{
@@ -241,12 +289,14 @@ describe("AH8 action A commit followed by stale action B", () => {
     // The seed ProviderTurn only enters a safe Manual wait. Install the AH8
     // probe before a new public SteerWork resumes the measured A/B batch.
     await fixture.crash();
+    activePhase = "seed-daemon-exited";
     probeArmed = true;
     const targetProviderCallStart = fixture.providerCalls.length;
     await fixture.restart({
       entry: crashChild,
       daemonEnvironment: { ARBOR_AH_BOUNDARY: ah8Boundary },
     });
+    activePhase = "probe-daemon-ready";
     await client.command(project.projectId, "SteerWork", {
       workId,
       workspaceId: project.rootWorkspaceId,
@@ -254,6 +304,7 @@ describe("AH8 action A commit followed by stale action B", () => {
       steer: { severity: "Normal", guidance: `AH8 probe armed ${marker}` },
       provenance: { source: "HumanInput" },
     });
+    activePhase = "measured-work-steered";
 
     const atActionACommit = await waitForPublic(
       async () => ({ hits, targetProviderCalls }),
@@ -276,6 +327,8 @@ describe("AH8 action A commit followed by stale action B", () => {
         candidate.actionIndex === 0 &&
         candidate.callRef !== undefined,
     );
+    activePhase =
+      hit === undefined ? "action-a-probe-missing" : "action-a-committed";
     if (hit === undefined) {
       await fixture.crash();
       throw new Error(
@@ -337,10 +390,13 @@ describe("AH8 action A commit followed by stale action B", () => {
       (work) => work?.workId === workId && work.revision === 2,
       10_000,
     );
+    activePhase = "post-action-steer-committed";
     expect(steered?.status).toBe("Open");
 
     await fixture.crash();
+    activePhase = "probe-daemon-exited";
     await fixture.restart();
+    activePhase = "recovery-daemon-ready";
 
     let recovered: ReturnType<typeof durableSnapshot>;
     try {
@@ -367,10 +423,24 @@ describe("AH8 action A commit followed by stale action B", () => {
         45_000,
       );
     } catch (error) {
+      const snapshot = durableSnapshot(fixture.databaseFile);
       throw new Error(
-        `AH8 recovery did not persist stale B/successor: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; calls=${JSON.stringify(fixture.providerCalls.slice(-3))}; snapshot=${JSON.stringify(durableSnapshot(fixture.databaseFile))}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        `AH8 recovery did not persist stale B/successor: ${error instanceof Error ? error.message : String(error)}; phase=${activePhase}; targetProviderCalls=${targetProviderCalls}; calls=${JSON.stringify(fixture.providerCalls.slice(-6).map((call) => ({ tools: call.tools.map((tool) => tool.function?.name), messages: call.messages.slice(-3).map((message) => ({ role: message.role, content: message.content?.slice(0, 120) })) })))}; snapshot=${JSON.stringify(
+          {
+            executions: snapshot.executions.filter(
+              (execution) => execution.execution_id === hit.executionId,
+            ),
+            steps: snapshot.steps.filter(
+              (step) => step.execution_id === hit.executionId,
+            ),
+            actions: snapshot.actions.filter(
+              (action) => action.execution_id === hit.executionId,
+            ),
+          },
+        )}; daemon=${JSON.stringify(fixture.daemonProcessSnapshot())}; errors=${fixture.daemonErrors.join(" | ")}`,
       );
     }
+    activePhase = "recovery-state-ready";
 
     const originalStep = recovered.steps.find(
       (step) =>
@@ -429,5 +499,6 @@ describe("AH8 action A commit followed by stale action B", () => {
         ).length,
     ).toBeLessThanOrEqual(3);
     expect(fixture.daemonErrors).toEqual([]);
+    activePhase = "final-assertions-passed";
   }, 90_000);
 });
