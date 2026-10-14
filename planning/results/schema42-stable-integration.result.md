@@ -610,3 +610,34 @@ restored to the committed contents. The 8KB P39 writer-lock sidecar was
 verified to have no process references and moved, without deletion, to the
 recoverable path
 `C:\Users\ThinkPad\AppData\Local\Temp\Arbor-test-artifacts\.arbor-p39-writer-4fc3f9f4a3b4ef590fde1f83f3f1943aefe82e1fcbccd5c542e176c1c1140273-pnpm-check-813f9ce2.sqlite`.
+
+## Test-layering and Provider TestClock integration
+
+On clean base `0fd386929f149e2c86c8eb9613a4d87ff8af6a2d`, patch audit showed
+the requested commits were independent and in-order: test-layering
+`dd2c6575` → manifest path/glob hardening `6459bb07`, and Provider TestClock
+`a7270a7d` → timer-order assertions `8a9c2c33`. Cherry-picks completed without
+conflicts as `c9493d04` → `2e8c7a6c` → `0457e734` → `fe289568`. The first
+chain splits architecture from core Vitest and validates no core/functional
+overlap; the Provider chain makes timeout phase/timer ordering deterministic.
+No production source or S1–S4/runner manifest entries were changed.
+
+On `fe289568`:
+
+- `pnpm typecheck` — PASS.
+- Biome on changed source/config/test files — PASS (7 files checked).
+- `pnpm test:manifest` — PASS, 9/9; inventory validation reports 48 functional
+  Vitest files, 6 UI files, and 57 manifest paths.
+- `pnpm architecture` — PASS, 32 files / 162 tests.
+- `tests/provider-runtime-phase1.integration.test.ts` — PASS, 25/25.
+- `pnpm exec vitest list --config vitest.config.ts --filesOnly` — PASS; core
+  discovery lists module suites and excludes architecture, functional
+  journeys, and S1–S4 (367 output lines; listing only, no tests executed).
+- `git diff --check` — PASS.
+
+No cherry-pick conflict resolution was required. A process check before the
+requested full check found no test/runner processes; the only matching process
+was the PowerShell process performing the inspection. P12 restore-drill state
+was clean, and no new sidecar was present after these checks. A unique full
+`pnpm check` on the committed integration SHA is the next validation step; no
+release profile is authorized by this result.
