@@ -84,6 +84,7 @@ import {
   layer,
   MessageStoreLive,
   makeAttentionProjectionStoreLive,
+  makeP39RecoveryEvidenceStoreLive,
   makeRecoveryAttentionFactStoreLive,
   OwnershipWriteServiceLive,
   OwnershipWriteServiceWithQualificationProbe,
@@ -93,7 +94,7 @@ import {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P39RecoveryEvidenceStoreLive,
+  type P39RecoveryBindingQualificationProbe,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -208,6 +209,7 @@ import {
 import {
   ExecutableToolHandler,
   ExecutableToolHandlerLive,
+  type ExecutableToolHandlerQualificationProbe,
 } from "./executable-tool-handler.js";
 import {
   PersistenceHealthProbeSqliteLive,
@@ -368,6 +370,10 @@ export interface SingleWorkspaceConfig {
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
   readonly toolQualificationProbe?: ToolRuntimeQualificationProbe;
+  /** Test-only catalog visibility diagnostic; ordinary startup leaves absent. */
+  readonly executableToolQualificationProbe?: ExecutableToolHandlerQualificationProbe;
+  /** Test-only P39 claim branch trace; ordinary startup leaves absent. */
+  readonly p39RecoveryBindingQualificationProbe?: P39RecoveryBindingQualificationProbe;
   readonly providerQualificationProbe?: ProviderRuntimeConfig["qualificationProbe"];
 }
 
@@ -637,7 +643,12 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(AgentLoopStepStoreLive, infra),
     Layer.provide(ProviderTurnStoreLive, infra),
     Layer.provide(ToolInvocationStoreLive, infra),
-    Layer.provide(P39RecoveryEvidenceStoreLive, infra),
+    Layer.provide(
+      makeP39RecoveryEvidenceStoreLive(
+        config.p39RecoveryBindingQualificationProbe,
+      ),
+      infra,
+    ),
     Layer.provide(ToolObservationEvidenceStoreLive, infra),
     Layer.provide(ArtifactMetadataRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
@@ -785,7 +796,10 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(repos, infra),
   );
   const executableInvocation = Layer.provide(
-    ExecutableToolHandlerLive(governance),
+    ExecutableToolHandlerLive(
+      governance,
+      config.executableToolQualificationProbe,
+    ),
     Layer.mergeAll(toolRuntime, infra, toolCatalog, repos, authorityResolver),
   );
   const turnProfiles = Layer.provide(

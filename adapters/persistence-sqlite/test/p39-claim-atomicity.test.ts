@@ -29,6 +29,7 @@ import {
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { actionDigestOf } from "../../../packages/tool-runtime/src/approval.js";
 import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
@@ -211,7 +212,14 @@ const immutableApprovalBinding = (
   toolVersion: "2",
   sideEffectSemantics: "ReadOnly",
   argumentsJson,
-  actionDigest: sha256Hex(`action:${logicalStepNo}`),
+  actionDigest: actionDigestOf({
+    callRef: `call-p39-claim-${logicalStepNo}`,
+    toolName: "read",
+    toolVersion: "2",
+    argumentsJson,
+    invocationId,
+    approvalId: null,
+  }),
   targetResourceSpaceIds,
   controlBasisDigest: "d".repeat(64),
 });

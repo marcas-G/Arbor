@@ -27,12 +27,21 @@ if (databaseFile === undefined) {
 const gateDirectory = join(dirname(databaseFile), "p4-fence-gates");
 const explicitExecutionTarget =
   process.env.ARBOR_P4_FENCE_EXPLICIT_EXECUTION_ID;
+const targetWorkspaceId = process.env.ARBOR_P4_FENCE_TARGET_WORKSPACE_ID;
+const targetWorkId = process.env.ARBOR_P4_FENCE_TARGET_WORK_ID;
 const explicitExecutionIds = new Set();
 const reportedLiveLeaseSkips = new Set();
+let schedulerDiagnosticCount = 0;
 
 const emit = (event) =>
   process.stdout.write(
-    `${JSON.stringify({ tag: "P4_FENCE_PROBE", role, pid: process.pid, ...event })}\n`,
+    `${JSON.stringify({
+      tag: "P4_FENCE_PROBE",
+      role,
+      pid: process.pid,
+      observedAt: new Date().toISOString(),
+      ...event,
+    })}\n`,
   );
 
 const waitForGate = async (name, event) => {
@@ -53,6 +62,18 @@ if (process.env.ARBOR_P4_FENCE_NON_IDEMPOTENT === "1") {
   SHELL_DEFINITION.sideEffectSemantics = "NonIdempotent";
 }
 
+emit({
+  boundary: "P4ShellDefinitionSnapshot",
+  definition: {
+    name: SHELL_DEFINITION.name,
+    version: SHELL_DEFINITION.version,
+    hash: SHELL_DEFINITION.hash,
+    sideEffectSemantics: SHELL_DEFINITION.sideEffectSemantics,
+    capabilityMetadata: SHELL_DEFINITION.capabilityMetadata,
+    source: SHELL_DEFINITION.source,
+  },
+});
+
 const toolQualificationProbe = async (event) => {
   if (
     role === "old" &&
@@ -64,18 +85,26 @@ const toolQualificationProbe = async (event) => {
   }
   if (
     role === "old" &&
-    event.boundary === "AH7AfterToolEffectBeforeSettlement"
+    [
+      "AH7AfterToolIntentCommit",
+      "AH7AfterEffectAuthorityResolvedBeforeAdmission",
+      "AH7BeforeEffectAdmission",
+      "AH7AfterEffectAdmissionCommit",
+      "AH7AfterToolEffectBeforeSettlement",
+      "AH7BeforeToolSettlementTransaction",
+      "AH7BeforeToolSettlementCommit",
+      "AH7AfterToolSettlementCommit",
+      "AH7ToolSettlementFenceRejected",
+    ].includes(event.boundary)
   ) {
     emit(event);
-    await waitForGate("tool-effect", event);
-    return;
   }
   if (
     role === "old" &&
-    (event.boundary === "AH7AfterToolSettlementCommit" ||
-      event.boundary === "AH7ToolSettlementFenceRejected")
+    event.boundary === "AH7AfterToolEffectBeforeSettlement"
   ) {
-    emit(event);
+    await waitForGate("tool-effect", event);
+    return;
   }
 };
 
@@ -103,16 +132,79 @@ const executionLeaseQualificationProbe = async (event) => {
     }
     return;
   }
-  if (
-    role === "old" &&
-    event.boundary === "AH10BeforeLeaseRenewal" &&
-    existsSync(join(gateDirectory, "old-freeze-renewal.request"))
-  ) {
-    emit(event);
-    await waitForGate("old-renewal", event);
+  if (role === "old" && event.boundary === "AH10BeforeLeaseRenewal") {
+    const pauseRenewal = existsSync(
+      join(gateDirectory, "old-freeze-renewal.request"),
+    );
+    if (
+      pauseRenewal ||
+      process.env.ARBOR_P4_LEASE_RENEWAL_DIAGNOSTICS === "1"
+    ) {
+      emit(event);
+    }
+    if (pauseRenewal) await waitForGate("old-renewal", event);
   }
 };
 
+const schedulerQualificationProbe = (event) => {
+  const targetExecutionId = explicitExecutionTarget;
+  if (
+    process.env.ARBOR_P4_SCHEDULER_DIAGNOSTICS !== "1" ||
+    role !== "new" ||
+    targetExecutionId === undefined ||
+    schedulerDiagnosticCount >= 256
+  ) {
+    return;
+  }
+  schedulerDiagnosticCount += 1;
+  const candidateExecutionId =
+    event.candidate?.executionId ?? event.executionId;
+  const selectionRejectionReason =
+    event.boundary === "WorkspaceScanComplete" &&
+    targetWorkspaceId !== undefined &&
+    !event.workspaceIds?.includes(targetWorkspaceId)
+      ? "TargetWorkspaceNotScanned"
+      : event.boundary !== "ActiveCandidateSummary"
+        ? undefined
+        : candidateExecutionId === undefined
+          ? (event.selectionRejectionReason ?? "NoActiveMainExecution")
+          : event.workspaceId !== targetWorkspaceId
+            ? "DifferentWorkspaceCandidate"
+            : candidateExecutionId !== targetExecutionId
+              ? "DifferentActiveExecutionSelected"
+              : targetWorkId !== undefined &&
+                  event.candidate?.workId !== targetWorkId
+                ? "TargetWorkNotBoundToSelectedExecution"
+                : event.candidate?.currentWorkMatchesEpisode === false
+                  ? "TargetWorkNotCurrent"
+                  : undefined;
+  process.stdout.write(
+    `${JSON.stringify({
+      tag: "P4_SCHEDULER_PROBE",
+      role,
+      pid: process.pid,
+      targetExecutionId,
+      targetWorkspaceId,
+      targetWorkId,
+      candidateExecutionId,
+      matchesTargetExecution: candidateExecutionId === targetExecutionId,
+      ...(selectionRejectionReason !== undefined
+        ? { selectionRejectionReason }
+        : {}),
+      ...event,
+    })}\n`,
+  );
+};
+
+const executableToolQualificationProbe = async (event) => {
+  if (role === "old" && event.toolName === "shell") {
+    emit(event);
+  }
+};
+
+const p39RecoveryBindingQualificationProbe = async (event) => {
+  if (role === "old") emit(event);
+};
 const port = Number(process.env.ARBOR_HTTP_PORT);
 const config = {
   tickIntervalMs: 25,
@@ -126,7 +218,10 @@ const config = {
   },
   onWebTransportListening,
   toolQualificationProbe,
+  executableToolQualificationProbe,
+  p39RecoveryBindingQualificationProbe,
   executionLeaseQualificationProbe,
+  schedulerQualificationProbe,
 };
 
 if (role === "new" && explicitExecutionTarget !== undefined) {

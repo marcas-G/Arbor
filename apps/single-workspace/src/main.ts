@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { inspect } from "node:util";
-import { Principal, parse, WorkspaceId } from "@arbor/domain";
+import { Principal, parse, WorkspaceId, workEpisode } from "@arbor/domain";
 import {
   consumeWorkspaceWake,
   preDispatchCheck,
@@ -27,6 +27,8 @@ import {
   type ProviderExecutionPolicyOverrides,
   secretRef,
   TransactionPort,
+  WorkRepository,
+  WorkspaceRepository,
 } from "@arbor/ports";
 import type { Scope } from "effect";
 import { Duration, Effect, Option } from "effect";
@@ -209,6 +211,40 @@ export interface ProductionDaemonRunConfig
    * The reported port is the actual bound port (including when configured as
    * zero). Observer failures must not change daemon startup semantics. */
   readonly onWebTransportListening?: (port: number) => void;
+  /** Test-only scheduler trace; absent in ordinary production composition. */
+  readonly schedulerQualificationProbe?: (event: {
+    readonly boundary:
+      | "SchedulerTickEnter"
+      | "WorkspaceScanComplete"
+      | "ActiveCandidateSummary"
+      | "ActiveExecutionSelected"
+      | "PreDispatchLeaseCheck";
+    readonly tickSequence: number;
+    readonly workspaceId?: string;
+    readonly workspaceIds?: ReadonlyArray<string>;
+    readonly executionId?: string;
+    readonly lease?: {
+      readonly workerId: string;
+      readonly workerIncarnationId: string;
+      readonly generation: number;
+      readonly expiresAt: string;
+    };
+    readonly dispatchable?: boolean;
+    readonly candidate?: {
+      readonly executionId: string;
+      readonly workspaceId: string;
+      readonly episodeType: string;
+      readonly episodeRef?: string;
+      readonly episodeRevision?: number;
+      readonly executionStatus: string;
+      readonly workId?: string;
+      readonly workLifecycle?: string;
+      readonly workRevision?: number;
+      readonly currentWorkId?: string | null;
+      readonly currentWorkMatchesEpisode?: boolean;
+    };
+    readonly selectionRejectionReason?: "NoActiveMainExecution";
+  }) => void;
 }
 
 /** P5 `01` §3: migrate, then run one scheduler loop step for a workspace.
@@ -268,12 +304,57 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
   Effect.gen(function* () {
     const deployment = yield* ProductionDaemonService;
     const principal = parse(Principal)(config.principalRef ?? "runtime:system");
+    let schedulerTickSequence = 0;
+    const reportSchedulerEvent = (event: {
+      readonly boundary:
+        | "SchedulerTickEnter"
+        | "WorkspaceScanComplete"
+        | "ActiveCandidateSummary"
+        | "ActiveExecutionSelected"
+        | "PreDispatchLeaseCheck";
+      readonly tickSequence: number;
+      readonly workspaceId?: string;
+      readonly workspaceIds?: ReadonlyArray<string>;
+      readonly executionId?: string;
+      readonly lease?: {
+        readonly workerId: string;
+        readonly workerIncarnationId: string;
+        readonly generation: number;
+        readonly expiresAt: string;
+      };
+      readonly dispatchable?: boolean;
+      readonly candidate?: {
+        readonly executionId: string;
+        readonly workspaceId: string;
+        readonly episodeType: string;
+        readonly episodeRef?: string;
+        readonly episodeRevision?: number;
+        readonly executionStatus: string;
+        readonly workId?: string;
+        readonly workLifecycle?: string;
+        readonly workRevision?: number;
+        readonly currentWorkId?: string | null;
+        readonly currentWorkMatchesEpisode?: boolean;
+      };
+      readonly selectionRejectionReason?: "NoActiveMainExecution";
+    }) => {
+      try {
+        config.schedulerQualificationProbe?.(event);
+      } catch {
+        // Test scheduler observation is non-authoritative.
+      }
+    };
     // The scheduler tick drives EVERY open project's root workspace (the
     // same product-shape fix the conversation tick received): a configured
     // workspace stays as an explicit fast path. Legacy non-v7 workspace ids
     // are skipped defensively — they predate the id schema and must not
     // crash the loop.
     const schedulerTick = Effect.gen(function* () {
+      const tickSequence = ++schedulerTickSequence;
+      reportSchedulerEvent({
+        boundary: "SchedulerTickEnter",
+        tickSequence,
+      });
       const resumeActiveExecution = (workspaceId: WorkspaceId) =>
         Effect.gen(function* () {
           const tx = yield* TransactionPort;
@@ -281,9 +362,124 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           const active = yield* tx.transact(
             executions.findActiveMainByWorkspace(workspaceId),
           );
-          if (Option.isNone(active)) return;
+          if (Option.isNone(active)) {
+            if (config.schedulerQualificationProbe !== undefined) {
+              reportSchedulerEvent({
+                boundary: "ActiveCandidateSummary",
+                tickSequence,
+                workspaceId,
+                selectionRejectionReason: "NoActiveMainExecution",
+              });
+            }
+            reportSchedulerEvent({
+              boundary: "ActiveExecutionSelected",
+              tickSequence,
+              workspaceId,
+            });
+            return;
+          }
           const executionId = active.value.executionId;
-          if (!(yield* preDispatchCheck(executionId))) {
+          if (config.schedulerQualificationProbe !== undefined) {
+            const workspaces = yield* WorkspaceRepository;
+            const works = yield* WorkRepository;
+            const workspace = yield* tx.transact(
+              workspaces.findById(workspaceId),
+            );
+            const boundWork = workEpisode(active.value);
+            const work =
+              boundWork === null
+                ? Option.none()
+                : yield* tx.transact(works.findById(boundWork.workId));
+            const episode =
+              active.value.binding._tag === "WorkspaceExecution" &&
+              "episode" in active.value.binding
+                ? active.value.binding.episode
+                : undefined;
+            const episodeRef =
+              episode === undefined
+                ? undefined
+                : episode._tag === "WorkEpisode"
+                  ? episode.workId
+                  : episode._tag === "ConversationResponseEpisode"
+                    ? episode.messageId
+                    : episode._tag === "InboxEpisode"
+                      ? episode.entryKey
+                      : episode.decisionId;
+            const currentWorkId = Option.isSome(workspace)
+              ? workspace.value.currentWorkId
+              : undefined;
+            reportSchedulerEvent({
+              boundary: "ActiveCandidateSummary",
+              tickSequence,
+              workspaceId,
+              candidate: {
+                executionId,
+                workspaceId: active.value.workspaceId,
+                episodeType:
+                  episode?._tag ??
+                  (boundWork === null
+                    ? "LegacyOrBoundAgentEpisode"
+                    : "LegacyWorkEpisode"),
+                ...(episodeRef !== undefined ? { episodeRef } : {}),
+                ...(episode !== undefined && "targetWorkRevision" in episode
+                  ? { episodeRevision: episode.targetWorkRevision }
+                  : episode !== undefined && "responseJobRevision" in episode
+                    ? { episodeRevision: episode.responseJobRevision }
+                    : episode !== undefined && "requestRevision" in episode
+                      ? { episodeRevision: episode.requestRevision }
+                      : {}),
+                executionStatus: active.value.state.status,
+                ...(boundWork !== null
+                  ? {
+                      workId: boundWork.workId,
+                      ...(Option.isSome(work)
+                        ? {
+                            workLifecycle: work.value.lifecycle,
+                            workRevision: work.value.revision,
+                          }
+                        : {}),
+                      ...(currentWorkId !== undefined
+                        ? {
+                            currentWorkId,
+                            currentWorkMatchesEpisode:
+                              currentWorkId === boundWork.workId,
+                          }
+                        : {}),
+                    }
+                  : currentWorkId !== undefined
+                    ? { currentWorkId }
+                    : {}),
+              },
+            });
+          }
+          reportSchedulerEvent({
+            boundary: "ActiveExecutionSelected",
+            tickSequence,
+            workspaceId,
+            executionId,
+          });
+          const lease = yield* tx.transact(
+            executions.currentLease(executionId),
+          );
+          const dispatchable = yield* preDispatchCheck(executionId);
+          reportSchedulerEvent({
+            boundary: "PreDispatchLeaseCheck",
+            tickSequence,
+            workspaceId,
+            executionId,
+            ...(Option.isSome(lease)
+              ? {
+                  lease: {
+                    workerId: lease.value.workerId,
+                    workerIncarnationId: lease.value.workerIncarnationId,
+                    generation: lease.value.generation,
+                    expiresAt: lease.value.expiresAt,
+                  },
+                }
+              : {}),
+            dispatchable,
+          });
+          if (!dispatchable) {
             const leaseProbe = config.executionLeaseQualificationProbe;
             if (leaseProbe !== undefined)
               yield* Effect.promise(() =>
@@ -330,7 +526,13 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           UNION
          SELECT root_workspace_id AS workspace_id FROM projects WHERE lifecycle = 'Open'`,
       );
-      for (const workspaceId of schedulerWorkspaceTargets(rows)) {
+      const workspaceIds = schedulerWorkspaceTargets(rows);
+      reportSchedulerEvent({
+        boundary: "WorkspaceScanComplete",
+        tickSequence,
+        workspaceIds,
+      });
+      for (const workspaceId of workspaceIds) {
         yield* consumeWorkspaceWake(
           workspaceId,
           { _tag: "Recovery" },
