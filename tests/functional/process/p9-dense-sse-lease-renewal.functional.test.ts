@@ -15,6 +15,7 @@ import {
   layer,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
+  RecoveryAttentionFactStoreLive,
   RuntimeClockLive,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -328,6 +329,11 @@ const makeApp = (providerBaseUrl: string, fetcher: OpenAICompatibleFetch) => {
     RuntimeClockLive,
     IdGeneratorLive,
   );
+  const domainEventJournal = Layer.provide(DomainEventJournalLive, infra);
+  const recoveryAttentionFactStore = Layer.provide(
+    RecoveryAttentionFactStoreLive,
+    Layer.mergeAll(infra, domainEventJournal),
+  );
   const transaction = Layer.provide(TransactionPortLive, infra);
   const repository = Layer.provide(ExecutionRepositoryLive, infra);
   const fence = Layer.provide(
@@ -337,7 +343,7 @@ const makeApp = (providerBaseUrl: string, fetcher: OpenAICompatibleFetch) => {
   const repos = Layer.mergeAll(
     transaction,
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    domainEventJournal,
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
@@ -345,6 +351,7 @@ const makeApp = (providerBaseUrl: string, fetcher: OpenAICompatibleFetch) => {
     Layer.provide(AgentExecutionStateStoreLive, infra),
     repository,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repository)),
+    recoveryAttentionFactStore,
   );
   const providerTurnStore = Layer.provide(ProviderTurnStoreLive, infra);
   const providerRuntime = Layer.provide(
