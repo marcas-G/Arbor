@@ -1,10 +1,16 @@
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer } from "effect";
 import {
+  ExecutableApprovalStoreLive,
   layer,
   ToolInvocationStoreLive,
   TransactionPortLive,
 } from "../../../adapters/persistence-sqlite/dist/index.js";
 import {
+  DomainEventJournal,
+  ExecutableApprovalStore,
+  IdGenerator,
+  InboxProjectionStore,
+  sha256Hex,
   ToolInvocationStore,
   TransactionPort,
 } from "../../../packages/ports/dist/index.js";
@@ -20,6 +26,7 @@ const mode = required("ARBOR_AH7_STORE_MODE");
 const boundary = process.env.ARBOR_AH7_STORE_BOUNDARY ?? "none";
 const invocationId = required("ARBOR_AH7_STORE_INVOCATION_ID");
 const approvalId = required("ARBOR_AH7_STORE_APPROVAL_ID");
+const projectId = required("ARBOR_AH7_STORE_PROJECT_ID");
 const executionId = required("ARBOR_AH7_STORE_EXECUTION_ID");
 const workspaceId = required("ARBOR_AH7_STORE_WORKSPACE_ID");
 const workerId = required("ARBOR_AH7_STORE_WORKER_ID");
@@ -43,10 +50,43 @@ const intent = {
   approvalId,
   intentAt: now,
 };
+const step = Number(invocationId.slice(-12));
+const executableBinding = {
+  executionId,
+  logicalStepNo: step,
+  repairAttempt: 0,
+  actionIndex: 0,
+  logicalActionId: `action-ah7-p4-store-${step}`,
+  projectId,
+  workspaceId,
+  subject: "user:ah7-p4-store",
+  callRef: `call-ah7-p4-store-${step}`,
+  toolInvocationId: invocationId,
+  toolName: "read",
+  toolVersion: "1",
+  sideEffectSemantics: "Idempotent",
+  argumentsJson: "{}",
+  actionDigest: sha256Hex(`action:${invocationId}`),
+  targetResourceSpaceIds: ["filesystem"],
+  controlBasisDigest: sha256Hex(`basis:${invocationId}`),
+};
 
 const sqlite = layer({ filename: databaseFile });
+const ids = Layer.succeed(IdGenerator, {
+  generate: (_kind) => Effect.succeed("event-ah7-p4-store"),
+});
+const inbox = Layer.succeed(InboxProjectionStore, {});
+const journal = Layer.succeed(DomainEventJournal, {});
+const approvals = Layer.provide(
+  ExecutableApprovalStoreLive,
+  Layer.mergeAll(sqlite, ids, inbox, journal),
+);
 const app = Layer.mergeAll(
   sqlite,
+  ids,
+  inbox,
+  journal,
+  approvals,
   Layer.provide(TransactionPortLive, sqlite),
   Layer.provide(ToolInvocationStoreLive, sqlite),
 );
@@ -73,41 +113,31 @@ const pause = async () => {
 const program = Effect.gen(function* () {
   const tx = yield* TransactionPort;
   const store = yield* ToolInvocationStore;
+  const executableApprovals = yield* ExecutableApprovalStore;
 
   if (mode === "claim") {
     yield* tx.transact(
       Effect.gen(function* () {
-        const prior = yield* store.findById(invocationId);
-        const approval = yield* store.findApproval(approvalId);
-        if (
-          Option.isSome(prior) &&
-          prior.value.executionId === executionId &&
-          prior.value.workspaceId === workspaceId &&
-          prior.value.toolName === intent.toolName &&
-          prior.value.toolVersion === intent.toolVersion &&
-          prior.value.argumentsJson === intent.argumentsJson &&
-          prior.value.approvalId === approvalId &&
-          prior.value.effectAdmissionState === "NotAdmitted" &&
-          prior.value.settlement === null &&
-          Option.isSome(approval) &&
-          approval.value.consumedBy === invocationId
-        ) {
-          return;
-        }
-
         const intentResult = yield* store.recordIntent(intent, fence, now);
         if (intentResult === "ExecutionStopping") {
           return yield* Effect.fail(
             new Error("claim rejected by StopExecution"),
           );
         }
-        const consumed = yield* store.consumeApproval(
+        const consumed = yield* executableApprovals.consumeApproved({
           approvalId,
-          invocationId,
-          fence,
-          now,
-        );
-        if (!consumed) {
+          expectedRevision: 1,
+          consumedBy: invocationId,
+          consumedAt: now,
+          binding: executableBinding,
+          executionFence: fence,
+        });
+        if (
+          consumed === false ||
+          consumed === "ExecutionStopping" ||
+          consumed.approvalId !== approvalId ||
+          consumed.consumedBy !== invocationId
+        ) {
           return yield* Effect.fail(new Error("approval claim CAS lost"));
         }
         if (boundary === "beforeCommit") yield* Effect.promise(pause);

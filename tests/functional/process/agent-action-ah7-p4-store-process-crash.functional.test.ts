@@ -8,14 +8,21 @@ import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  ExecutableApprovalStoreLive,
   layer,
-  P36_MIGRATIONS,
+  P38_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import type { ToolInvocationId } from "../../../packages/domain/src/index.js";
 import {
+  DomainEventJournal,
+  type ExecutableApprovalBinding,
+  ExecutableApprovalStore,
+  IdGenerator,
+  InboxProjectionStore,
+  sha256Hex,
   type ToolInvocationIntent,
   ToolInvocationStore,
   TransactionPort,
@@ -68,20 +75,70 @@ const makeIntent = (
   intentAt: now,
 });
 
+const bindingFor = (invocationId: string): ExecutableApprovalBinding => {
+  const step = Number(invocationId.slice(-12));
+  return {
+    executionId: executionId as never,
+    logicalStepNo: step,
+    repairAttempt: 0,
+    actionIndex: 0,
+    logicalActionId: `action-ah7-p4-store-${step}`,
+    projectId: projectId as never,
+    workspaceId: workspaceId as never,
+    subject: "user:ah7-p4-store" as never,
+    callRef: `call-ah7-p4-store-${step}`,
+    toolInvocationId: invocationId as ToolInvocationId,
+    toolName: "read",
+    toolVersion: "1",
+    sideEffectSemantics: "Idempotent",
+    argumentsJson: "{}",
+    actionDigest: sha256Hex(`action:${invocationId}`),
+    targetResourceSpaceIds: ["filesystem"],
+    controlBasisDigest: sha256Hex(`basis:${invocationId}`),
+  };
+};
+
+const consumeApproved = (
+  approvals: typeof ExecutableApprovalStore.Service,
+  invocationId: string,
+  approvalId: string,
+) =>
+  approvals.consumeApproved({
+    approvalId,
+    expectedRevision: 1,
+    consumedBy: invocationId as ToolInvocationId,
+    consumedAt: now,
+    binding: bindingFor(invocationId),
+    executionFence: fence,
+  });
+
 const makeFixture = async () => {
   const directory = mkdtempSync(join(tmpdir(), "ah7-p4-store-crash-"));
   directories.push(directory);
   const databaseFile = join(directory, "store-crash.db");
   const sqlite = layer({ filename: databaseFile });
+  const ids = Layer.succeed(IdGenerator, {
+    generate: <T>(_kind: string) => Effect.succeed("event-ah7-p4-store" as T),
+  });
+  const inbox = Layer.succeed(InboxProjectionStore, {} as never);
+  const journal = Layer.succeed(DomainEventJournal, {} as never);
+  const approvals = Layer.provide(
+    ExecutableApprovalStoreLive,
+    Layer.mergeAll(sqlite, ids, inbox, journal),
+  );
   const app = Layer.mergeAll(
     sqlite,
+    ids,
+    inbox,
+    journal,
+    approvals,
     Layer.provide(TransactionPortLive, sqlite),
     Layer.provide(ToolInvocationStoreLive, sqlite),
   );
   await Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P36_MIGRATIONS);
+        yield* runMigrations(P38_MIGRATIONS);
         const sql = yield* SqlClient;
         yield* sql.withTransaction(
           Effect.gen(function* () {
@@ -133,32 +190,76 @@ const makeFixture = async () => {
               [executionId, workerId, workerIncarnationId],
             );
             for (let index = 101; index <= 106; index += 1) {
-              const suffix = String(index).padStart(12, "0");
-              const approvalId = `apr_018f2b3c-4d5e-7abc-8def-${suffix}`;
+              const invocationId = invocationFor(index);
+              const approvalId = approvalFor(index);
+              const binding = bindingFor(invocationId);
+              yield* sql.unsafe(
+                `INSERT INTO agent_loop_steps (
+                   execution_id,logical_step_no,repair_attempt,provider_turn_id,
+                   predecessor_logical_step_no,predecessor_repair_attempt,manifest_id,state,
+                   decoder_version,provider_failure_json,repair_disposition_json,successor_json,
+                   next_step_reason,decoded_output_hash,model_output_session_sequence,
+                   next_action_index,settlement_json,migration_provenance_json,revision,updated_at
+                 ) VALUES (?,?,0,?,NULL,NULL,NULL,'ActionsInProgress',NULL,NULL,NULL,NULL,
+                           NULL,NULL,NULL,1,NULL,NULL,0,?)`,
+                [
+                  executionId,
+                  binding.logicalStepNo,
+                  `ptn-ah7-p4-store-${binding.logicalStepNo}`,
+                  now,
+                ],
+              );
+              yield* sql.unsafe(
+                `INSERT INTO agent_loop_step_actions (
+                   execution_id,logical_step_no,repair_attempt,action_index,
+                   logical_action_id,call_ref,route_kind,action_kind,input_hash,
+                   state,result_ref,settlement_ref,disposition_json,
+                   observation_source_ref,revision,updated_at
+                 ) VALUES (?,?,0,0,?,?,'Executable','read',?,'Pending',
+                           NULL,NULL,NULL,NULL,0,?)`,
+                [
+                  executionId,
+                  binding.logicalStepNo,
+                  binding.logicalActionId,
+                  binding.callRef,
+                  sha256Hex(binding.argumentsJson),
+                  now,
+                ],
+              );
               yield* sql.unsafe(
                 `INSERT INTO action_approvals (
-                   approval_id, route_kind, project_id, workspace_id,
-                   execution_id, subject_ref, stable_action_id,
-                   action_version, side_effect_semantics, action_digest,
-                   arguments_json, target_ref,
-                   target_resource_space_ids_json, control_basis_digest,
-                   state, revision, requested_at, expires_at, decided_at,
-                   decided_by, decision_reason, consumed_at, consumed_by,
-                   binding_proven, source_state
-                 ) VALUES (?, 'Executable', ?, ?, ?, ?, 'read', '1',
-                           'Idempotent', ?, '{}',
-                           'workspace', '[]', ?,
-                           'Approved', 1, 't0',
-                           '2999-01-01T00:00:00.000Z', 't1',
-                           'user:test', NULL, NULL, NULL, 1, 'Approved')`,
+                   approval_id,route_kind,project_id,workspace_id,execution_id,
+                   subject_ref,stable_action_id,action_version,side_effect_semantics,
+                   action_digest,arguments_json,target_ref,target_resource_space_ids_json,
+                   control_basis_digest,state,revision,requested_at,expires_at,
+                   decided_at,decided_by,decision_reason,consumed_at,consumed_by,
+                   binding_proven,source_state,logical_step_no,repair_attempt,
+                   action_index,logical_action_id,call_ref,tool_invocation_id,
+                   cancelled_at,cancelled_by,cancellation_reason
+                 ) VALUES (?,'Executable',?,?,?,?,?,?,?,?,?,?,?,?, 'Approved',1,
+                           ?,? ,?, ?,NULL,NULL,NULL,1,NULL,?,0,0,?,?,?,NULL,NULL,NULL)`,
                 [
                   approvalId,
                   projectId,
                   workspaceId,
                   executionId,
-                  `Execution:${executionId}`,
-                  `ah7-action-digest-${index}`,
-                  `ah7-control-basis-${index}`,
+                  binding.subject,
+                  binding.toolName,
+                  binding.toolVersion,
+                  binding.sideEffectSemantics,
+                  binding.actionDigest,
+                  binding.argumentsJson,
+                  JSON.stringify(binding.targetResourceSpaceIds),
+                  JSON.stringify(binding.targetResourceSpaceIds),
+                  binding.controlBasisDigest,
+                  now,
+                  "2999-01-01T00:00:00.000Z",
+                  now,
+                  binding.subject,
+                  binding.logicalStepNo,
+                  binding.logicalActionId,
+                  binding.callRef,
+                  invocationId,
                 ],
               );
             }
@@ -205,6 +306,7 @@ const startStoreChild = (input: {
       ARBOR_AH7_STORE_BOUNDARY: input.boundary ?? "none",
       ARBOR_AH7_STORE_INVOCATION_ID: input.invocationId,
       ARBOR_AH7_STORE_APPROVAL_ID: input.approvalId,
+      ARBOR_AH7_STORE_PROJECT_ID: projectId,
       ARBOR_AH7_STORE_EXECUTION_ID: executionId,
       ARBOR_AH7_STORE_WORKSPACE_ID: workspaceId,
       ARBOR_AH7_STORE_WORKER_ID: workerId,
@@ -323,6 +425,12 @@ interface InvocationSnapshot {
   readonly approval_id: string | null;
 }
 
+interface ApprovalSnapshot {
+  readonly state: string;
+  readonly revision: number;
+  readonly consumed_by: string | null;
+}
+
 const snapshot = (
   databaseFile: string,
   invocationId: string,
@@ -347,9 +455,9 @@ const snapshot = (
       ).count,
       approval: db
         .prepare(
-          "SELECT consumed_by FROM action_approvals WHERE approval_id = ?",
+          "SELECT state, revision, consumed_by FROM action_approvals WHERE approval_id = ?",
         )
-        .get(approvalId) as { consumed_by: string | null } | undefined,
+        .get(approvalId) as ApprovalSnapshot | undefined,
       stopRequestedAt: (
         db
           .prepare(
@@ -393,7 +501,7 @@ describe("AH7 P4 store process crash boundaries", () => {
     ).toMatchObject({
       invocation: undefined,
       invocationCount: 0,
-      approval: { consumed_by: null },
+      approval: { state: "Approved", revision: 1, consumed_by: null },
     });
     await runStoreChild({
       databaseFile,
@@ -412,7 +520,7 @@ describe("AH7 P4 store process crash boundaries", () => {
         approval_id: claimBeforeApproval,
       },
       invocationCount: 1,
-      approval: { consumed_by: claimBeforeId },
+      approval: { state: "Consumed", revision: 2, consumed_by: claimBeforeId },
     });
 
     const afterClaim = startStoreChild({
@@ -438,7 +546,7 @@ describe("AH7 P4 store process crash boundaries", () => {
         approval_id: claimAfterApproval,
       },
       invocationCount: 1,
-      approval: { consumed_by: claimAfterId },
+      approval: { state: "Consumed", revision: 2, consumed_by: claimAfterId },
     });
     await runStoreChild({
       databaseFile,
@@ -464,7 +572,7 @@ describe("AH7 P4 store process crash boundaries", () => {
     ).toMatchObject({
       invocation: undefined,
       invocationCount: 0,
-      approval: { consumed_by: null },
+      approval: { state: "Approved", revision: 1, consumed_by: null },
     });
     await runStoreChild({
       databaseFile,
@@ -483,7 +591,7 @@ describe("AH7 P4 store process crash boundaries", () => {
         approval_id: denialBeforeApproval,
       },
       invocationCount: 1,
-      approval: { consumed_by: null },
+      approval: { state: "Approved", revision: 1, consumed_by: null },
     });
 
     const afterDenial = startStoreChild({
@@ -525,6 +633,7 @@ describe("AH7 P4 store process crash boundaries", () => {
         Effect.gen(function* () {
           const tx = yield* TransactionPort;
           const store = yield* ToolInvocationStore;
+          const approvals = yield* ExecutableApprovalStore;
           const claims = [
             [interruptBeforeId, interruptBeforeApproval],
             [interruptAfterId, interruptAfterApproval],
@@ -537,13 +646,12 @@ describe("AH7 P4 store process crash boundaries", () => {
                   fence,
                   now,
                 );
-                const consumed = yield* store.consumeApproval(
-                  approvalId,
+                const consumed = yield* consumeApproved(
+                  approvals,
                   invocationId,
-                  fence,
-                  now,
+                  approvalId,
                 );
-                if (!consumed) {
+                if (consumed === false || consumed === "ExecutionStopping") {
                   return yield* Effect.fail(
                     new Error("interruption fixture claim did not commit"),
                   );
@@ -579,7 +687,11 @@ describe("AH7 P4 store process crash boundaries", () => {
         settled_at: null,
         settlement_kind: null,
       },
-      approval: { consumed_by: interruptBeforeId },
+      approval: {
+        state: "Consumed",
+        revision: 2,
+        consumed_by: interruptBeforeId,
+      },
       stopRequestedAt: now,
     });
     await runStoreChild({
@@ -595,7 +707,11 @@ describe("AH7 P4 store process crash boundaries", () => {
         effect_admission_state: "NotAdmitted",
         settlement_kind: "Interrupted",
       },
-      approval: { consumed_by: interruptBeforeId },
+      approval: {
+        state: "Consumed",
+        revision: 2,
+        consumed_by: interruptBeforeId,
+      },
       stopRequestedAt: now,
     });
 
@@ -618,7 +734,11 @@ describe("AH7 P4 store process crash boundaries", () => {
         effect_admission_state: "NotAdmitted",
         settlement_kind: "Interrupted",
       },
-      approval: { consumed_by: interruptAfterId },
+      approval: {
+        state: "Consumed",
+        revision: 2,
+        consumed_by: interruptAfterId,
+      },
     });
     await runStoreChild({
       databaseFile,

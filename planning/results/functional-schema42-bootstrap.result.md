@@ -123,3 +123,34 @@ will be run in disjoint, ordered shards on the next clean commit, with each
 shard's exact file list and exit code recorded before one later complete
 `pnpm test:functional` run. Neither this partial run nor the focused passes are
 a release qualification.
+
+## MAC-P4 unified approval crash-case correction
+
+On the later clean SHA `1ce7ffc7f22a5e641ef45e0ef5fda2b2c08e9db9`, the first
+G01 two-worker shard found that `agent-action-ah7-p4-store-process-crash` still
+called legacy `ToolInvocationStore.consumeApproval` against the current unified
+`action_approvals` ledger. The method deliberately returns false when that
+ledger exists, so the child failed before its crash boundary with
+`approval claim CAS lost`; the same failure reproduced standalone. This was a
+test/fixture mismatch, not a production CAS failure.
+
+The test fixture now runs P38 and seeds an exact current Executable approval,
+Pending `agent_loop_step_actions` row and `ActionsInProgress` step per
+invocation. The child uses the production P4 claim order—
+`ToolInvocationStore.recordIntent` followed by
+`ExecutableApprovalStore.consumeApproved`—inside one `TransactionScope`, with
+the same invocation, approval, action, callRef, tool and lease identities.
+Before-commit kill still proves neither intent nor consumption commits;
+after-commit kill proves exactly one `NotAdmitted` invocation and one
+revision-2 `Consumed` approval, and exact retry is idempotent. Denied and
+Interrupted no-effect settlement assertions remain intact.
+
+The P4 process-crash file passed focused 1/1 after the correction (26.901s test;
+96.22s invocation). `pnpm build`, `pnpm typecheck`, and Biome on the changed
+test/child files passed. No shards or full functional suite were run after this
+correction.
+
+The separately requested clean-checkout case on the same SHA `1ce7ffc7` ended
+at 396.171s with nested black-box Vitest `SIGTERM` (status absent); its S1/S3
+cases had passed before termination. This is recorded as the L4 package-runner
+budget issue per owner direction and was not rerun.
