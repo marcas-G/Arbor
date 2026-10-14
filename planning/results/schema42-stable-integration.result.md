@@ -387,3 +387,23 @@ Post-integration checks on HEAD `1e35ad70cd1efefe47d5974bec3b91ec93800364`:
 No process, quick, smoke, crash-sentinel, or full/release profile was run for
 this increment. The imported focused evidence is not a substitute for those
 profiles, and no release-readiness claim is made.
+
+## 2026-10-14 UI run interruption record
+
+Run `2026-10-14T11-44-22-397Z-24864` on `93ed979b6bfc340460c99828ebc4b1b29e883716`
+reached the first three of eight Playwright tests. The F21 attention-view
+assertion failed because the test expected obsolete wording. The operator
+stopped the run after reviewing the failure; the child process exit code and
+signal were not captured, and the remaining five tests have no run evidence.
+
+After confirming that no runner, Playwright, or fixture process remained, the
+operator made a one-time update to that local result manifest: `running` became
+`interrupted`, coverage stayed false, the last heartbeat was preserved, and
+the recovery note records the missing child exit evidence. This is a manual
+historical correction, not a product command or supported manifest-repair
+feature. Future hard interruptions remain visible as `running` unless the
+runner itself captured a terminal state; the startup PID, host, and estimated
+start time are audit metadata only.
+
+The F21 assertion was corrected afterward. This run does not qualify that
+change or the remaining UI tests.
