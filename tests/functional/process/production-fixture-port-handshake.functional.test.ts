@@ -8,6 +8,9 @@ import {
 const invalidChild = resolve(
   "tests/functional/support/invalid-handshake-child.mjs",
 );
+const wrongPortChild = resolve(
+  "tests/functional/support/wrong-port-daemon-child.mjs",
+);
 const fixtures: ProductionFixture[] = [];
 
 afterEach(async () => {
@@ -118,6 +121,28 @@ describe("production fixture port-zero startup handshake", () => {
       originalPort,
       originalPort,
     ]);
+  }, 180_000);
+
+  it("rejects and stops a custom restart child bound to a different port", async () => {
+    const lines: string[] = [];
+    const fixture = await startFixture((line) => lines.push(line));
+    fixtures.push(fixture);
+    const requestedPort = Number(new URL(fixture.baseUrl).port);
+
+    await expect(fixture.restart({ entry: wrongPortChild })).rejects.toThrow(
+      new RegExp(`requested=${requestedPort} reported=\\d+`, "u"),
+    );
+
+    const stoppedChild = fixture.daemonProcessSnapshot();
+    expect(stoppedChild?.requestedPort).toBe(requestedPort);
+    expect(stoppedChild?.alive).toBe(false);
+    const reports = lifecycleReports(lines);
+    const listening = reports.filter(
+      (report) => report.tag === "FUNCTIONAL_DAEMON_LISTENING",
+    );
+    expect(listening).toHaveLength(2);
+    expect(listening[0]?.port).toBe(requestedPort);
+    expect(listening[1]?.port).not.toBe(requestedPort);
   }, 180_000);
 
   it.each([
