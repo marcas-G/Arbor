@@ -700,3 +700,28 @@ Post-integration checks on `0d8789ff`:
 The source branch's prior focused production-fixture handshake evidence was
 11/11 PASS, but it was not rerun on this integration SHA. No full or other
 process test was started.
+
+## F21 copy assertion and repair-runner patch audit
+
+On `5576af5f`, the requested `a28c7ef5` patch is not directly an ancestor, but
+its F21 UI-spec change is already present through the integrated F21 follow-up
+and later strict-locator revision. The current spec waits for the 503 Attention
+response; asserts the exact unknown activation message; separately scopes the
+`status` notice and `alert` problem card; checks service-unavailable/retry
+content; and rules out normal ready-state wording and repeat project creation.
+This preserves the stricter count-one status locator.
+
+The same old commit also adds a mutable `repair-results` command. It was
+intentionally removed later by `319855d9` (“remove mutable test result repair
+tool”), so no repair CLI/library/tests were restored. Current runner PID/host/
+start-time metadata remains intact. This preserves the later deletion and
+redaction/path-hardening decisions; no UI test was run.
+
+Lightweight verification on `5576af5f`:
+
+- `pnpm typecheck` — PASS.
+- Biome on `f21-project-resource.spec.ts` — PASS.
+- `pnpm test:manifest` — PASS, 9/9; 48 functional Vitest files and 6 UI files.
+
+No file patch was needed for the F21 spec; the result record is the only change
+in this follow-up.
