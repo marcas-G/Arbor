@@ -14,21 +14,45 @@ The baseline reproduced both failures at
 no Artifact at `AH7BeforeToolSettlementTransaction` and
 `AH7BeforeToolSettlementCommit`. Runtime materializes this read Artifact in the
 P4 observation settlement transaction, so it is not durable before that
-transaction commits. The boundary table now expects no Artifact at either
-pre-commit point, and one Artifact after the settlement commit. Recovery still
-requires exactly one Artifact on every path; action, P4 intent/settlement,
-ToolResult, Observation, identity, and provider uniqueness assertions remain.
+transaction commits. The test now encodes every boundary explicitly:
 
-The two real pre-settlement crash cases have a 180-second outer case budget
-because one run reached 113.6 seconds and a second hit the old 120-second outer
-limit; all inner deadlines and behavioral assertions are unchanged. A
-test-local 90-second diagnostic records the active phase and target durable
-snapshot for the commit-boundary case.
+| Boundary | Action / cursor | P4 intent | ToolResult | Artifact |
+|---|---|---|---:|---:|
+| `AH7AfterActionIntentCommit` | Pending / 0 | absent | 0 | 0 |
+| `AH7AfterToolIntentCommit` | Pending / 0 | Pending | 0 | 0 |
+| `AH7BeforeToolSettlementTransaction` | Pending / 0 | Pending | 0 | 0 |
+| `AH7BeforeToolSettlementCommit` | Pending / 0 | Pending (uncommitted settlement rolls back) | 0 | 0 |
+| `AH7AfterToolSettlementCommit` | Pending / 0 | Success | 0 | 1 |
+| `AH7BeforeActionResultCommit` | Pending / 0 | Success | 0 | 1 |
+| `AH7AfterActionResultCommit` | Applied / 1 | Success | 1 | 1 |
 
-- Red baseline: both selected boundaries failed at the Artifact count assertion.
-- `AH7BeforeToolSettlementTransaction`: PASS, 1/1 (113.585s).
-- `AH7BeforeToolSettlementCommit`: PASS, 1/1 after the budget change (85.684s).
-- Biome on the changed file: PASS.
+After recovery, every boundary must converge to the same Action identity, one
+P4 Success result and Artifact, one ToolResult/Observation, and one measured
+provider decision. Where a P4 intent existed before the crash, its
+ToolInvocationId must be preserved; a pending intent may advance to Success,
+while an already committed Success row must remain identical. The two
+pre-settlement cases have a 180-second outer case budget because one run reached
+113.6 seconds and a second hit the old 120-second outer limit. Inner deadlines
+and qualification assertions are unchanged. The per-boundary table includes
+probe identity and timeout. A test-local 90-second diagnostic records phase and
+durable state for the commit-boundary case.
+
+- Initial focused red: both settlement-before-commit boundaries failed at the
+  Artifact count assertion. A later first whole-file run exposed four remaining
+  oracle errors: ActionIntent recovery filtered Artifact by an absent
+  pre-crash invocation ID, and three pending-intent boundaries compared the
+  pending P4 row to its legitimate recovered Success row.
+- Final focused file: **7/7 PASS**, total Vitest wall time **577.55s**.
+
+| Boundary | Result | Case time |
+|---|---:|---:|
+| `AH7AfterActionIntentCommit` | PASS | 73.796s |
+| `AH7AfterToolIntentCommit` | PASS | 76.627s |
+| `AH7BeforeToolSettlementTransaction` | PASS | 89.470s |
+| `AH7BeforeToolSettlementCommit` | PASS | 75.300s |
+| `AH7AfterToolSettlementCommit` | PASS | 86.406s |
+| `AH7BeforeActionResultCommit` | PASS | 73.849s |
+| `AH7AfterActionResultCommit` | PASS | 71.278s |
 
 ## AH11 StepEffectsCommitted recovery
 
