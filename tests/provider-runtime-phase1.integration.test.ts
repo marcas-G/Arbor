@@ -1395,7 +1395,9 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
   ] as const)(
     "%s timeout aborts the Adapter and has a distinct durable terminal outcome",
     async (_label, mode, phase) => {
-      const adapterStarted = deferred<AbortSignal>();
+      const sdkDispatched = deferred<AbortSignal>();
+      const phaseStarted = deferred<AbortSignal>();
+      const timeoutRegistered = deferred();
       let adapterCalls = 0;
       const policy: ProviderRuntimeExecutionPolicy = {
         connectTimeoutMs: mode === "connect" ? 35 : 400,
@@ -1407,65 +1409,69 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       };
       const harness = makeHarness(
         client({
-          onCall: () => {
+          onCall: ({ context }) => {
             adapterCalls += 1;
+            sdkDispatched.resolve(context.cancellationSignal as AbortSignal);
           },
           stream: async function* ({ context }) {
             if (mode !== "connect") yield { type: "response_started" };
             if (mode === "stream-idle") {
               yield { type: "text", text: "first data" };
             }
-            adapterStarted.resolve(context.cancellationSignal as AbortSignal);
+            phaseStarted.resolve(context.cancellationSignal as AbortSignal);
             await waitForSignal(context.cancellationSignal as AbortSignal);
           },
         }),
         policy,
-        { controlledClock: mode === "turn-deadline" },
+        {
+          controlledClock: true,
+          onClockSleep: () => timeoutRegistered.resolve(),
+        },
       );
       try {
-        const failure = (await (mode === "turn-deadline"
-          ? harness.run(
-              Effect.gen(function* () {
-                yield* runMigrations(P16_MIGRATIONS);
-                yield* seed;
-                yield* TestClock.setTime(Date.now());
-                const fiber = yield* Effect.forkChild(
-                  Effect.flip(runtimeEffect()),
-                );
-                const adapterSignal = yield* Effect.promise(() =>
-                  withWatchdog(
-                    adapterStarted.promise,
-                    "provider adapter start",
-                  ),
-                );
-                expect(readAttempt(harness.databaseFile)).toMatchObject({
-                  outcome: "InProgress",
-                });
-                yield* TestClock.adjust(policy.turnTimeoutMs + 1);
-                return { result: yield* Fiber.join(fiber), adapterSignal };
-              }),
-            )
-          : (async () => {
-              await initialize(harness);
-              const result = await harness.run(
-                Effect.flip(runtimeEffect()) as never,
-              );
-              return { result, adapterSignal: undefined };
-            })())) as {
+        const timeout = (await harness.run(
+          Effect.gen(function* () {
+            yield* runMigrations(P16_MIGRATIONS);
+            yield* seed;
+            yield* TestClock.setTime(Date.now());
+            const fiber = yield* Effect.forkChild(Effect.flip(runtimeEffect()));
+            const adapterSignal = yield* Effect.promise(() =>
+              withWatchdog(sdkDispatched.promise, "provider SDK dispatch"),
+            );
+            const phaseSignal = yield* Effect.promise(() =>
+              withWatchdog(phaseStarted.promise, "provider timeout phase"),
+            );
+            expect(phaseSignal).toBe(adapterSignal);
+            yield* Effect.promise(() =>
+              withWatchdog(timeoutRegistered.promise, "timeout registration"),
+            );
+            expect(readAttempt(harness.databaseFile)).toMatchObject({
+              outcome: "InProgress",
+            });
+            const timeoutMs =
+              phase === "ConnectTimeout"
+                ? policy.connectTimeoutMs
+                : phase === "FirstEventTimeout"
+                  ? policy.firstEventTimeoutMs
+                  : phase === "StreamIdleTimeout"
+                    ? policy.streamIdleTimeoutMs
+                    : policy.turnTimeoutMs;
+            yield* TestClock.adjust(timeoutMs + 1);
+            return {
+              result: yield* Fiber.join(fiber),
+              adapterSignal,
+            };
+          }),
+        )) as {
           readonly result: { readonly _tag: string; readonly phase?: string };
-          readonly adapterSignal: AbortSignal | undefined;
+          readonly adapterSignal: AbortSignal;
         };
-        const timeout = failure.result;
-        expect(timeout).toMatchObject({
+        expect(timeout.result).toMatchObject({
           _tag: "ProviderExecutionTimeout",
           phase,
         });
-        if (mode === "turn-deadline") {
-          expect(failure.adapterSignal?.aborted).toBe(true);
-          expect(adapterCalls).toBe(1);
-        } else {
-          await withWatchdog(adapterStarted.promise, "provider adapter start");
-        }
+        expect(timeout.adapterSignal.aborted).toBe(true);
+        expect(adapterCalls).toBe(1);
         const attempt = readAttempt(harness.databaseFile);
         expect(attempt?.outcome).toBe("TimedOut");
         expect(attempt?.retry_decision).toBe("Stop");
