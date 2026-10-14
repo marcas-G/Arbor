@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   findCoreFunctionalOverlap,
+  globToRegExp,
   validateManifest,
+  validateRepoRelativePath,
 } from "./check-manifest.mjs";
 
 const manifest = JSON.parse(
@@ -32,10 +34,69 @@ test("validator rejects missing files and duplicates within a profile group", ()
     result.errors.some((error) => error.includes("contains duplicate path")),
   );
   assert.ok(
-    result.errors.some((error) =>
-      error.includes("manifest path does not exist"),
-    ),
+    result.errors.some((error) => error.includes("contains an invalid path")),
   );
+});
+
+test("manifest paths must be POSIX repository-relative file paths", () => {
+  for (const path of [
+    "",
+    "/outside/package.json",
+    "C:/Arbor/package.json",
+    "C:\\Arbor\\package.json",
+    "tests/D:outside/package.json",
+    "\\\\server\\share\\package.json",
+    "..\\Arbor\\package.json",
+    "tests/../package.json",
+    "tests//package.json",
+    "tests/./package.json",
+  ]) {
+    assert.notEqual(validateRepoRelativePath(path), null, path);
+    const invalid = structuredClone(manifest);
+    invalid.groups.quick[0] = path;
+    const result = validateManifest(invalid);
+    assert.equal(result.ok, false, path);
+    assert.ok(
+      result.errors.some((error) => error.includes("contains an invalid path")),
+      path,
+    );
+  }
+});
+
+test("glob parser accepts only the documented wildcard subset", () => {
+  assert.equal(
+    globToRegExp("tests/functional/process/**/*.functional.test.ts").test(
+      "tests/functional/process/agent.functional.test.ts",
+    ),
+    true,
+  );
+  assert.equal(
+    globToRegExp("tests/functional/process/**/*.functional.test.ts").test(
+      "tests/functional/process/nested/agent.functional.test.ts",
+    ),
+    true,
+  );
+  assert.equal(
+    globToRegExp("tests/case?.test.ts").test("tests/case1.test.ts"),
+    true,
+  );
+  assert.equal(
+    globToRegExp("tests/case?.test.ts").test("tests/case12.test.ts"),
+    false,
+  );
+  for (const pattern of [
+    "!tests/**/*.test.ts",
+    "tests/[ab]/**/*.test.ts",
+    "tests/{functional,core}/**/*.test.ts",
+    "tests/@(functional|core)/**/*.test.ts",
+    "tests/!(pending)/**/*.test.ts",
+  ]) {
+    assert.throws(
+      () => globToRegExp(pattern),
+      /unsupported glob syntax/,
+      pattern,
+    );
+  }
 });
 
 test("release completeness requires the full Vitest and browser sets", () => {

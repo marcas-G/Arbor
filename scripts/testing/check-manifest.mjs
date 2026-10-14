@@ -1,8 +1,9 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const realRoot = realpathSync(root);
 const manifestPath = join(root, "planning/testing/manifest.json");
 
 function fail(message) {
@@ -25,7 +26,79 @@ function walk(directory) {
 
 const repositoryFiles = walk(root);
 
-function globToRegExp(glob) {
+export function validateRepoRelativePath(path) {
+  if (typeof path !== "string" || path.length === 0)
+    return "path must be a non-empty string";
+  if (path.includes("\\") || path.startsWith("/") || /^[A-Za-z]:/.test(path)) {
+    return "path must use POSIX separators and be repository-relative";
+  }
+  const segments = path.split("/");
+  if (segments.some((segment) => segment.length === 0))
+    return "path must not contain empty segments";
+  if (segments.some((segment) => /^[A-Za-z]:/.test(segment)))
+    return "path must not contain drive-prefixed segments";
+  if (segments.some((segment) => segment === "." || segment === ".."))
+    return "path must not contain . or .. segments";
+
+  const absolutePath = resolve(root, ...segments);
+  const rootRelative = relative(root, absolutePath);
+  if (
+    isAbsolute(rootRelative) ||
+    rootRelative === ".." ||
+    rootRelative.startsWith("..")
+  ) {
+    return "path resolves outside the repository root";
+  }
+  return null;
+}
+
+function isWithinRoot(candidate) {
+  const rootRelative = relative(realRoot, candidate);
+  return (
+    !isAbsolute(rootRelative) &&
+    rootRelative !== ".." &&
+    !rootRelative.startsWith("..")
+  );
+}
+
+function resolveRepoPath(path) {
+  const validationError = validateRepoRelativePath(path);
+  if (validationError) return { error: validationError };
+  const absolutePath = resolve(root, ...path.split("/"));
+  const stats = statSync(absolutePath, { throwIfNoEntry: false });
+  if (!stats) return { error: "path does not exist" };
+  const realPath = realpathSync(absolutePath);
+  if (!isWithinRoot(realPath))
+    return { error: "path resolves outside the repository root" };
+  return { absolutePath, stats };
+}
+
+function resolveRepoFile(path) {
+  const resolved = resolveRepoPath(path);
+  if (resolved.error) return resolved;
+  if (!resolved.stats.isFile())
+    return { error: "path does not exist as a file" };
+  return { absolutePath: resolved.absolutePath };
+}
+
+function resolveRepoDirectory(path) {
+  const resolved = resolveRepoPath(path);
+  if (resolved.error) return resolved;
+  if (!resolved.stats.isDirectory())
+    return { error: "path does not exist as a directory" };
+  return { absolutePath: resolved.absolutePath };
+}
+
+export function globToRegExp(glob) {
+  if (typeof glob !== "string" || glob.length === 0)
+    fail(`glob must be a non-empty string: ${glob}`);
+  if (["!", "[", "]", "{", "}", "(", ")"].some((char) => glob.includes(char)))
+    fail(
+      `unsupported glob syntax (only *, **, and ? wildcards are supported): ${glob}`,
+    );
+  const pathError = validateRepoRelativePath(glob);
+  if (pathError) fail(`invalid repository-relative glob ${glob}: ${pathError}`);
+
   let source = "^";
   for (let index = 0; index < glob.length; index += 1) {
     const char = glob[index];
@@ -108,11 +181,17 @@ export function validateManifest(
       if (
         typeof path !== "string" ||
         path.includes("*") ||
-        isAbsolute(path) ||
-        path.split("/").includes("..")
+        path.includes("?")
       ) {
         report(
           `group ${groupName} contains a non-exact or unsafe path: ${path}`,
+        );
+        continue;
+      }
+      const resolvedPath = resolveRepoFile(path);
+      if (resolvedPath.error) {
+        report(
+          `group ${groupName} contains an invalid path ${path}: ${resolvedPath.error}`,
         );
         continue;
       }
@@ -120,9 +199,6 @@ export function validateManifest(
         report(`group ${groupName} contains duplicate path ${path}`);
       seen.add(path);
       allPaths.add(path);
-      if (!statSync(resolve(root, path), { throwIfNoEntry: false })?.isFile()) {
-        report(`manifest path does not exist: ${path}`);
-      }
     }
   }
 
@@ -146,15 +222,12 @@ export function validateManifest(
       );
   }
 
-  const functionalConfigPath = resolve(root, functional?.config ?? "");
-  if (
-    !functional?.config ||
-    !statSync(functionalConfigPath, { throwIfNoEntry: false })?.isFile()
-  ) {
+  const functionalConfig = resolveRepoFile(functional?.config);
+  if (!functional?.config || functionalConfig.error) {
     report("functional Vitest config is missing");
   } else {
     const actualPatterns = readConfigStrings(
-      readFileSync(functionalConfigPath, "utf8"),
+      readFileSync(functionalConfig.absolutePath, "utf8"),
       "include",
     );
     if (!sameSet(sorted(actualPatterns), sorted(functional.include ?? []))) {
@@ -183,14 +256,12 @@ export function validateManifest(
   }
 
   const ui = manifest.configuredSuites?.functionalUi;
-  const uiConfigPath = resolve(root, ui?.config ?? "");
-  if (
-    !ui?.config ||
-    !statSync(uiConfigPath, { throwIfNoEntry: false })?.isFile()
-  ) {
+  const uiConfig = resolveRepoFile(ui?.config);
+  const uiDirectory = resolveRepoDirectory(ui?.testDir);
+  if (!ui?.config || !ui?.testDir || uiConfig.error || uiDirectory.error) {
     report("functional Playwright config is missing");
   } else {
-    const configText = readFileSync(uiConfigPath, "utf8");
+    const configText = readFileSync(uiConfig.absolutePath, "utf8");
     const actualTestDir = configText
       .match(/testDir:\s*["']([^"']+)["']/)?.[1]
       ?.replaceAll("\\", "/");
