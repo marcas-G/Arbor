@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { validateManifest } from "./check-manifest.mjs";
+import {
+  findCoreFunctionalOverlap,
+  validateManifest,
+} from "./check-manifest.mjs";
 
 const manifest = JSON.parse(
   readFileSync(
@@ -45,4 +48,22 @@ test("release completeness requires the full Vitest and browser sets", () => {
       error.includes("must require complete functional Vitest and UI groups"),
     ),
   );
+});
+
+test("core and functional Vitest inventories must not overlap", () => {
+  const overlap = findCoreFunctionalOverlap({
+    repositoryFiles: [
+      "tests/capability/black-box/s1-s4-public-api.test.ts",
+      "tests/functional/process/example.functional.test.ts",
+    ],
+    coreIncludes: ["tests/**/*.test.ts"],
+    coreExcludes: ["tests/functional/**"],
+    functionalFiles: [
+      "tests/capability/black-box/s1-s4-public-api.test.ts",
+      "tests/functional/process/example.functional.test.ts",
+    ],
+  });
+  assert.deepEqual(overlap, [
+    "tests/capability/black-box/s1-s4-public-api.test.ts",
+  ]);
 });

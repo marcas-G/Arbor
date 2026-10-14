@@ -67,6 +67,26 @@ function readConfigStrings(configText, field) {
   return [...block.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]);
 }
 
+export function findCoreFunctionalOverlap({
+  repositoryFiles: files,
+  coreIncludes,
+  coreExcludes,
+  functionalFiles,
+}) {
+  const exclusionMatchers = coreExcludes.map(globToRegExp);
+  const coreFiles = new Set(
+    coreIncludes.flatMap((pattern) => {
+      const expression = globToRegExp(pattern);
+      return files.filter(
+        (path) =>
+          expression.test(path) &&
+          !exclusionMatchers.some((excluded) => excluded.test(path)),
+      );
+    }),
+  );
+  return functionalFiles.filter((path) => coreFiles.has(path));
+}
+
 export function validateManifest(
   manifest = JSON.parse(readFileSync(manifestPath, "utf8")),
 ) {
@@ -107,6 +127,25 @@ export function validateManifest(
   }
 
   const functional = manifest.configuredSuites?.functionalVitest;
+  const coreConfigPath = resolve(root, "vitest.config.ts");
+  if (!statSync(coreConfigPath, { throwIfNoEntry: false })?.isFile()) {
+    report("core Vitest config is missing");
+  } else {
+    const coreConfigText = readFileSync(coreConfigPath, "utf8");
+    const coreIncludes = readConfigStrings(coreConfigText, "include");
+    const coreExcludes = readConfigStrings(coreConfigText, "exclude");
+    const overlap = findCoreFunctionalOverlap({
+      repositoryFiles,
+      coreIncludes,
+      coreExcludes,
+      functionalFiles: groups.functionalVitest ?? [],
+    });
+    if (overlap.length > 0)
+      report(
+        `core and functional Vitest suites overlap: ${overlap.join(", ")}`,
+      );
+  }
+
   const functionalConfigPath = resolve(root, functional?.config ?? "");
   if (
     !functional?.config ||

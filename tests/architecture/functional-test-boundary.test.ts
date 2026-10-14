@@ -6,6 +6,34 @@ const root = join(import.meta.dirname, "..", "..");
 const source = (path: string) => readFileSync(join(root, path), "utf8");
 
 describe("functional-test trust boundary", () => {
+  it("keeps architecture and public-process suites out of core Vitest", () => {
+    const coreConfig = source("vitest.config.ts");
+    const architectureConfig = source("vitest.architecture.config.ts");
+    const functionalConfig = source("vitest.functional.config.ts");
+    const packageJson = source("package.json");
+    const manifest = JSON.parse(source("planning/testing/manifest.json")) as {
+      groups: { functionalVitest: string[] };
+    };
+    const s1S4Path = "tests/capability/black-box/s1-s4-public-api.test.ts";
+
+    expect(coreConfig).toContain('"tests/architecture/**"');
+    expect(coreConfig).toContain(`"${s1S4Path}"`);
+    expect(coreConfig).toContain('"tests/functional/**"');
+    expect(packageJson).toContain(
+      '"architecture": "vitest run --config vitest.architecture.config.ts"',
+    );
+    expect(architectureConfig).toContain('"tests/architecture/**/*.test.ts"');
+    expect(functionalConfig).toContain(`"${s1S4Path}"`);
+    expect(manifest.groups.functionalVitest).toContain(s1S4Path);
+
+    const coreExcludesFunctionalPath = manifest.groups.functionalVitest.filter(
+      (path) => path.startsWith("tests/functional/") || path === s1S4Path,
+    );
+    expect(coreExcludesFunctionalPath).toEqual(
+      manifest.groups.functionalVitest,
+    );
+  });
+
   it("the release journey drives a built process through public HTTP only", () => {
     const journey = source(
       "tests/capability/black-box/s1-s4-public-api.test.ts",

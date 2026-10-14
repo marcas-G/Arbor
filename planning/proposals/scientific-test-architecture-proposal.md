@@ -1,38 +1,39 @@
 # Arbor scientific test architecture proposal
 
 Date: 2026-10-14
-Audit base: `1ce7ffc7f22a5e641ef45e0ef5fda2b2c08e9db9`
+Audit base: `0fd386929f149e2c86c8eb9613a4d87ff8af6a2d`
 Scope: test architecture and runner proposal only. No design contract or product behavior changes.
 
 ## Decision sought
 
 Adopt four execution tiers that preserve the existing contract inventory while moving combinatorial state coverage to deterministic SQLite tests and keeping a small, explicit set of OS-process crash and real-time lease sentinels.
 
-The existing `pnpm test:functional` remains the unfiltered final functional gate: all 46 Vitest functional files (45 process + 1 packaged clean-checkout) and all 6 Playwright files. It must use fresh results, execute serially as today, stop on the first failed stage, and retain the current public-process/browser oracles. This proposal does not claim that the current 46 files all belong in fast tiers; it defines their destination and the work needed to relocate redundant permutations without deleting assertions.
+The existing `pnpm test:functional` remains the unfiltered final functional gate: all 48 configured Vitest files (46 process + 1 packaged clean-checkout + S1–S4) and all 6 Playwright files. It must use fresh results, execute serially as today, stop on the first failed stage, and retain the current public-process/browser oracles. This proposal does not claim that all 48 files belong in fast tiers; it defines their destination and the work needed to relocate redundant permutations without deleting assertions.
 
 ## Audited baseline
 
-- HEAD is the requested `1ce7ffc7f22a5e641ef45e0ef5fda2b2c08e9db9`; the worktree was clean at audit start.
-- `vitest.functional.config.ts` includes `tests/capability/black-box/s1-s4-public-api.test.ts`, `tests/functional/process/**/*.functional.test.ts`, and `tests/functional/package/**/*.functional.test.ts`; process files count 45, package files count 1. The capability S1–S4 file is also in the configuration and should be explicitly counted in the manifest as a pre-existing additional file (the stated “46 Vitest” count refers to the 45+1 functional files). Before implementation, settle this inventory count in the manifest rather than silently omitting it.
+- The audited integration baseline is `0fd386929f149e2c86c8eb9613a4d87ff8af6a2d`.
+- `vitest.functional.config.ts` includes `tests/capability/black-box/s1-s4-public-api.test.ts`, `tests/functional/process/**/*.functional.test.ts`, and `tests/functional/package/**/*.functional.test.ts`; the exact inventory is 46 process files, 1 package file, and the S1–S4 file, for 48 total. `planning/testing/manifest.json` lists all 48 exact paths. S1–S4 remains here because it is a public-HTTP, real-process lifecycle journey even though its path is under `tests/capability/`.
+- The root `vitest.config.ts` excludes `tests/functional/**`, `tests/architecture/**`, and the exact S1–S4 path. `pnpm architecture` uses `vitest.architecture.config.ts`; `pnpm check` runs that suite once, then runs the remaining root core tests through `pnpm test`. `pnpm test:functional` separately runs the full 48-file process/package inventory plus all 6 browser files. `pnpm check:release` composes those distinct stages.
 - Playwright has exactly 6 files under `tests/functional/ui/`, with `workers: 1`, `retries: 0`, trace and screenshot on failure.
 - Current `test:functional` builds the root and Web production artifacts, then runs the complete functional Vitest config and Playwright config. `test:functional:process` and `:ui` are separate invocations and each repeats builds. `check:release` runs `check` plus `test:functional`.
 - `tests/functional/` presently mixes public journeys, crash qualification, deterministic integration material, infrastructure qualification, pending design-gap evidence, and long recovery scenarios. One tier must not confer another tier's evidence claim.
 - Existing process results have been very slow and variable: the recorded full functional run on `3ffb17a` took 1501.85 seconds for Vitest and 44.1 seconds for Playwright. The F20 clean-checkout case alone has recorded 44–66 seconds. The dense SSE P9 case takes about 10.7 seconds in isolation. These are measured anchors, not promises for the audited HEAD.
 
-### Inventory count correction
+### Inventory count
 
-The user-specified “46 Vitest” count appears to mean 45 process files plus the package clean-checkout file. The actual config also includes `tests/capability/black-box/s1-s4-public-api.test.ts`, making the configured Vitest inventory 47 files if that path is present and runnable. The manifest must enumerate it and report counts from the manifest/config consistency check. Do not drop it to make the count equal 46. The matrix below lists all 46 files under `tests/functional` plus the S1–S4 configured file as an additional row.
+The configured functional Vitest set contains 48 files: 46 process files, 1 package clean-checkout file, and `tests/capability/black-box/s1-s4-public-api.test.ts`. The manifest and its validator enforce that count and exact path coverage. Keep S1–S4 in the functional release set and optional smoke group; exclude it from core Vitest because it is a real-process public journey. The matrix below lists all 47 files under `tests/functional` plus S1–S4.
 
 ## Four tiers and evidence boundary
 
 | Tier | Proposed command | Contents | Evidence it may claim |
 |---|---|---|---|
-| L1 Quick | `pnpm test:quick` | TypeScript build/type checks, architecture contracts, fast focused module suites, web type check; no browser, live provider, lease wait, or daemon crash | Types, architecture rules, module contracts |
+| L1 Quick | `pnpm test:quick` / `pnpm check` | Architecture contracts run once via `pnpm architecture`; root `pnpm test` collects core module suites only and excludes architecture, functional journeys, and S1–S4. The full check also runs TypeScript and Web checks; no browser, live provider, lease wait, or daemon crash | Types, architecture rules, module contracts |
 | L2 Smoke | `pnpm test:smoke` | L1 plus deterministic SQLite state-machine/transaction tests; injected fixed Clock and ID source; public deterministic API smoke may be retained where it is already fast | Transition tables, receipts, replay, rollback, consumer offsets, restart-from-DB behavior in one process; not OS crash evidence |
 | L3 Crash | `pnpm test:crash` | L1+L2 plus named real-daemon crash/restart and real-time lease sentinels in a fresh database; no UI or real model | Actual process death, same-database restart, OS/SQLite lock behavior, real cross-process lease timing |
-| L4 Release | `pnpm test:release` and existing `pnpm test:functional` | Full `pnpm check`, full 46/47 functional Vitest inventory, all 6 browser files, package/clean-clone journey, and separately gated live-provider qualification when release policy requires provider credentials | Release candidate validation; provider-specific report separately records live model/deployment details |
+| L4 Release | `pnpm check:release` plus existing `pnpm test:functional` | Full `pnpm check` followed by all 48 functional Vitest files and all 6 browser files, including the package/clean-clone journey; live-provider qualification remains separately gated when release policy requires provider credentials | Release candidate validation; provider-specific report separately records live model/deployment details |
 
-`pnpm test:functional` remains the final deterministic functional command and must never become a changed-file subset. `test:release` is the broader release entrypoint. Do not make live-provider qualification an implicit side effect of `test:functional`; expose it as a named L4 step (`pnpm test:capability:real`) with its existing credential/deployment prerequisites and explicit evidence artifact.
+`pnpm test:functional` remains the final deterministic functional command and must never become a changed-file subset. At this baseline, `pnpm test:release` is an alias for that functional release set; `pnpm check:release` is the broader entrypoint that runs `pnpm check` followed by the complete functional set. Do not make live-provider qualification an implicit side effect of `test:functional`; expose it as a named L4 step (`pnpm test:capability:real`) with its existing credential/deployment prerequisites and explicit evidence artifact.
 
 ## Exact coverage matrix: all functional Vitest files
 
@@ -145,7 +146,7 @@ Additional fields: `dependencies` (source/package/test helper paths), `requires`
 
 Add a small `scripts/testing/run-suite.mjs` and `scripts/testing/check-manifest.mjs`:
 
-1. Validate every active manifest entry resolves to exactly one test path/case; validate every included Vitest/Playwright test file is listed. The configured S1–S4 file is included. Fail on omissions, duplicate IDs, invalid tier ordering, pending case included as passing, or a test title/path not represented in the manifest.
+1. Validate every active manifest entry resolves to exactly one test path/case; validate every included Vitest/Playwright test file is listed. The configured S1–S4 file is included in the 48-file functional inventory and excluded from core. Fail on omissions, duplicate IDs, invalid tier ordering, pending case included as passing, or a test title/path not represented in the manifest.
 2. Resolve the requested tier to a deterministic ordered list. Run one command at a time and stop immediately at the first non-zero result. Capture command, HEAD/dirty state, OS, Node/pnpm versions, manifest digest, start/end time, selected case IDs, exit code and artifact links into `.test-results/<run-id>/summary.json` and human-readable Markdown.
 3. `quick` executes L1; `smoke` executes L1 then L2; `crash` executes L1, L2, then L3; `release` executes L1→L4 and mandatory `pnpm test:functional`. Fail fast means later stages do not run after failure; always run cleanup in `finally` and preserve logs/traces.
 4. Existing direct commands remain callable. `pnpm test:functional` invokes production builds once, verifies manifest consistency, then runs all functional Vitest files and all 6 UI files with retries zero and cache disabled. It does not delegate to changed-file selection.
@@ -185,7 +186,7 @@ Track median/p95 per manifest case and per tier for 20 successful runs. Do not s
 
 ## Phased implementation order
 
-1. **Inventory and runner contract (no test deletion).** Add manifest with all 47 configured Vitest paths and 6 UI paths, stable IDs for cases, current status and source evidence. Add validator and report only; compare actual config discovery with manifest. Resolve 46-versus-47 count discrepancy explicitly.
+1. **Inventory and runner contract (no test deletion).** Keep the manifest with all 48 configured functional Vitest paths and 6 UI paths, stable IDs for cases, current status and source evidence. The validator compares config discovery with the manifest and rejects core/functional overlap.
 2. **L1 command and baseline timings.** Add `test:quick`, selecting only existing fast module/type/architecture suites. Establish environment fingerprint and fail-fast report. Do not change `test:functional`.
 3. **Clock/test harness extraction.** Add test-only `Clock` and `RuntimeClock` layers and deterministic SQLite state-machine harness. Prove fake epoch and monotonic advance independently; add cases for current slow `wait`/expiry paths as in-scope module tests.
 4. **Migrate matrix permutations to L2.** Start AH10 receipts, AH7 action/status combinations, P37 receipt/Inbox states, P38 approval outcomes, P10 rebuild offsets, AH18/AH19 binding matrices. Keep all existing L3 files running until same-case L2 assertions pass and are linked through `preserves`.
@@ -195,7 +196,7 @@ Track median/p95 per manifest case and per tier for 20 successful runs. Do not s
 
 ## Acceptance criteria for implementation
 
-- Manifest/config file counts reconcile and enumerate every configured suite; current 46 functional Vitest + 1 configured S1–S4 + 6 UI are visible.
+- Manifest/config file counts reconcile and enumerate every configured suite: 46 process + 1 package + 1 S1–S4 = 48 functional Vitest files, plus 6 UI files.
 - Every legacy core case has at least one `preserves` mapping. No pending design-gap reproduction moves into a passing count.
 - L2 covers every moved branch tuple and runs on SQLite without a real daemon process or real 30-second wait.
 - L3 contains one pre/post process sentinel for each unique persistence boundary class plus all necessary cross-process/OS/real-TTL sentinels. Evidence records same DB path, PIDs, boundary reached, generation, provider/action counts and final public state.
