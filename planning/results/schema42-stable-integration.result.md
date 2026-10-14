@@ -725,3 +725,18 @@ Lightweight verification on `5576af5f`:
 
 No file patch was needed for the F21 spec; the result record is the only change
 in this follow-up.
+
+## UI profile after F21 patch audit
+
+On clean code SHA `421b6deb01e8b843b215dfe461506eb8f1b8393c`,
+`pnpm test:functional:ui` reached terminal **PASS**: six selected Playwright
+files, 8/8 tests, 0 failed, 0 skipped, with `--retries=0`. Root and Web builds
+passed. Playwright group duration was 221,952ms; total runner duration was
+224,468ms. The manifest records `completeCoverage: false`, as this is the UI
+profile only, not full functional/release qualification.
+
+Manifest: `.test-results/2026-10-14T18-07-58-398Z-26972/result-manifest.json`;
+summary: `.test-results/2026-10-14T18-07-58-398Z-26972/summary.md`. The runner
+recorded `gitDirty: false` and the selected six UI files. No UI/Playwright
+process remained afterward; the worktree stayed clean before recording this
+result. No P4 or full profile was started.
