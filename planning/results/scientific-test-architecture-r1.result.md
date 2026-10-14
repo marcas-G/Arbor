@@ -29,10 +29,11 @@ The quick/smoke/crash profiles are explicit subsets of the current suites. They 
 
 - Initial JSON and Markdown artifacts are written as a staged directory and atomically renamed into the result directory before Git, pnpm, or test commands start. The runner refreshes them atomically as commands progress and records caught SIGINT/SIGTERM, uncaught exceptions, or unhandled rejections as `interrupted`, with `completeCoverage: false` and the active command's exit/signal when available.
 - Windows commands now use a resolved native pnpm executable or Node plus its pnpm JavaScript CLI with `spawn` argument arrays and `shell: false`. A temporary workspace whose path contains spaces verifies argument and cwd preservation.
+- When `npm_execpath` is absent, Windows resolution enumerates `where.exe pnpm` results before scanning PATH. It resolves the fnm `SET dp0=%~dp0` shim by expanding batch variables, validates the referenced `pnpm.exe`, and never invokes a shell. The Windows runner test uses the active shim to run `pnpm --version` and a Vitest help command with a spaced `--outputFile` value.
 - The curated profile is named `crash-sentinels`; its description states that it does not qualify every AH10 handler or all AH1–AH19 coverage. The old ambiguous `test:crash` command was removed.
 - Build log names include a monotonically increasing stage index and stage/command labels, for example `01-build-root.log` and `02-build-web.log`.
 - `planning/testing/README.md` states that F20 creates a separate clean clone, installs frozen dependencies, then builds and runs inside that clone; those nested operations remain part of package qualification.
-- Follow-up checks: `pnpm typecheck` PASS; targeted Biome PASS; `pnpm test:manifest` PASS (5/5, including an injected CLI failure proving both initial artifacts exist before the first pnpm command, plus a Windows argument-array test using a real temporary workspace path containing spaces); Node syntax checks and `git diff --check` PASS. Heavy profiles were not run.
+- Follow-up checks: `pnpm typecheck` PASS; targeted Biome PASS; `pnpm test:manifest` PASS (6/6, including an injected CLI failure proving both initial artifacts exist before the first pnpm command, Windows argument-array coverage using a temporary workspace path with spaces, and an active fnm shim integration); Node syntax checks and `git diff --check` PASS. Heavy profiles were not run.
 
 ## Qualification boundary
 
