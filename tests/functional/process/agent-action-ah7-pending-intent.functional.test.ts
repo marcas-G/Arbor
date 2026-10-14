@@ -19,6 +19,90 @@ import {
 
 const fixtures: ProductionFixture[] = [];
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
+const ah7PendingIntentBoundaries = [
+  "AH7AfterActionIntentCommit",
+  "AH7AfterToolIntentCommit",
+  "AH7BeforeToolSettlementTransaction",
+  "AH7BeforeToolSettlementCommit",
+  "AH7AfterToolSettlementCommit",
+  "AH7BeforeActionResultCommit",
+  "AH7AfterActionResultCommit",
+] as const;
+type Ah7PendingIntentBoundary = (typeof ah7PendingIntentBoundaries)[number];
+type Ah7CrashSnapshotExpectation = {
+  readonly actionState: "Pending" | "Applied";
+  readonly actionCursor: 0 | 1;
+  readonly p4Intent: "Absent" | "Pending" | "Success";
+  readonly toolResultCount: 0 | 1;
+  readonly artifactCount: 0 | 1;
+  readonly probeIdentity: "Action" | "Invocation";
+  readonly timeoutMs: 120_000 | 180_000;
+};
+const ah7CrashSnapshotExpectations = {
+  AH7AfterActionIntentCommit: {
+    actionState: "Pending",
+    actionCursor: 0,
+    p4Intent: "Absent",
+    toolResultCount: 0,
+    artifactCount: 0,
+    probeIdentity: "Action",
+    timeoutMs: 120_000,
+  },
+  AH7AfterToolIntentCommit: {
+    actionState: "Pending",
+    actionCursor: 0,
+    p4Intent: "Pending",
+    toolResultCount: 0,
+    artifactCount: 0,
+    probeIdentity: "Invocation",
+    timeoutMs: 120_000,
+  },
+  AH7BeforeToolSettlementTransaction: {
+    actionState: "Pending",
+    actionCursor: 0,
+    p4Intent: "Pending",
+    toolResultCount: 0,
+    artifactCount: 0,
+    probeIdentity: "Invocation",
+    timeoutMs: 180_000,
+  },
+  AH7BeforeToolSettlementCommit: {
+    actionState: "Pending",
+    actionCursor: 0,
+    p4Intent: "Pending",
+    toolResultCount: 0,
+    artifactCount: 0,
+    probeIdentity: "Invocation",
+    timeoutMs: 180_000,
+  },
+  AH7AfterToolSettlementCommit: {
+    actionState: "Pending",
+    actionCursor: 0,
+    p4Intent: "Success",
+    toolResultCount: 0,
+    artifactCount: 1,
+    probeIdentity: "Invocation",
+    timeoutMs: 120_000,
+  },
+  AH7BeforeActionResultCommit: {
+    actionState: "Pending",
+    actionCursor: 0,
+    p4Intent: "Success",
+    toolResultCount: 0,
+    artifactCount: 1,
+    probeIdentity: "Action",
+    timeoutMs: 120_000,
+  },
+  AH7AfterActionResultCommit: {
+    actionState: "Applied",
+    actionCursor: 1,
+    p4Intent: "Success",
+    toolResultCount: 1,
+    artifactCount: 1,
+    probeIdentity: "Action",
+    timeoutMs: 120_000,
+  },
+} satisfies Record<Ah7PendingIntentBoundary, Ah7CrashSnapshotExpectation>;
 let activePhase: string | undefined;
 let activeExecutionId: string | undefined;
 let activeDiagnosticTimer: ReturnType<typeof setTimeout> | undefined;
@@ -34,21 +118,9 @@ afterEach(async () => {
 });
 
 describe("AH7 AgentLoop and P4 tool intent process crash", () => {
-  for (const boundary of [
-    "AH7AfterActionIntentCommit",
-    "AH7AfterToolIntentCommit",
-    "AH7BeforeToolSettlementTransaction",
-    "AH7BeforeToolSettlementCommit",
-    "AH7AfterToolSettlementCommit",
-    "AH7BeforeActionResultCommit",
-    "AH7AfterActionResultCommit",
-  ] as const) {
+  for (const boundary of ah7PendingIntentBoundaries) {
     const testName = `reuses the same action and tool identity after ${boundary}`;
-    const timeout =
-      boundary === "AH7BeforeToolSettlementTransaction" ||
-      boundary === "AH7BeforeToolSettlementCommit"
-        ? 180_000
-        : 120_000;
+    const expectedCrash = ah7CrashSnapshotExpectations[boundary];
     it(
       testName,
       async () => {
@@ -268,9 +340,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         expect(hit).toMatchObject({
           executionId: expect.stringMatching(/^exe_/u),
           callRef: expect.any(String),
-          ...(boundary === "AH7AfterActionIntentCommit" ||
-          boundary === "AH7BeforeActionResultCommit" ||
-          boundary === "AH7AfterActionResultCommit"
+          ...(expectedCrash.probeIdentity === "Action"
             ? {
                 providerTurnId: expect.stringMatching(/^ptn_/u),
                 logicalActionId: expect.stringMatching(/^lac_/u),
@@ -299,27 +369,13 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         const targetArtifacts = crashed.artifacts.filter(
           (artifact) => artifact.invocation_id === targetInvocationId,
         );
-        const p4SettlementCommitted =
-          boundary === "AH7AfterToolSettlementCommit" ||
-          boundary === "AH7BeforeActionResultCommit" ||
-          boundary === "AH7AfterActionResultCommit";
-        // The successful read's Artifact is materialized as part of the P4
-        // observation settlement. It is not durable at either probe before that
-        // transaction commits, even though the tool effect has already returned.
-        const artifactDurableAtCrash =
-          boundary === "AH7AfterToolSettlementCommit" ||
-          boundary === "AH7BeforeActionResultCommit" ||
-          boundary === "AH7AfterActionResultCommit";
         expect(targetSteps).toEqual([
           expect.objectContaining({
             execution_id: hit?.executionId,
             provider_turn_id:
-              boundary === "AH7AfterActionIntentCommit"
-                ? hit?.providerTurnId
-                : expect.stringMatching(/^ptn_/u),
+              hit?.providerTurnId ?? expect.stringMatching(/^ptn_/u),
             state: "ActionsInProgress",
-            next_action_index:
-              boundary === "AH7AfterActionResultCommit" ? 1 : 0,
+            next_action_index: expectedCrash.actionCursor,
           }),
         ]);
         expect(targetActions).toEqual([
@@ -329,29 +385,41 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
             logical_action_id: expect.stringMatching(/^lac_/u),
             call_ref: hit?.callRef,
             action_kind: "read",
-            state:
-              boundary === "AH7AfterActionResultCommit" ? "Applied" : "Pending",
+            state: expectedCrash.actionState,
           }),
         ]);
-        expect(targetInvocations).toEqual(
-          boundary === "AH7AfterActionIntentCommit"
-            ? []
-            : [
-                expect.objectContaining({
-                  execution_id: hit?.executionId,
-                  tool_name: "read",
-                  side_effect_semantics: "ReadOnly",
-                  settled_at: p4SettlementCommitted ? expect.any(String) : null,
-                }),
-              ],
+        expect(targetInvocations).toHaveLength(
+          expectedCrash.p4Intent === "Absent" ? 0 : 1,
         );
-        expect(targetToolResults).toHaveLength(
-          boundary === "AH7AfterActionResultCommit" ? 1 : 0,
-        );
-        if (artifactDurableAtCrash) {
-          expect(targetArtifacts).toHaveLength(1);
-        } else {
-          expect(targetArtifacts).toEqual([]);
+        if (expectedCrash.p4Intent === "Pending") {
+          expect(targetInvocations).toEqual([
+            expect.objectContaining({
+              execution_id: hit?.executionId,
+              tool_name: "read",
+              side_effect_semantics: "ReadOnly",
+              settled_at: null,
+              settlement_kind: null,
+              result_ref: null,
+            }),
+          ]);
+        } else if (expectedCrash.p4Intent === "Success") {
+          expect(targetInvocations).toEqual([
+            expect.objectContaining({
+              execution_id: hit?.executionId,
+              tool_name: "read",
+              side_effect_semantics: "ReadOnly",
+              settled_at: expect.any(String),
+              settlement_kind: "Success",
+              result_ref: expect.any(String),
+            }),
+          ]);
+        }
+        expect(targetToolResults).toHaveLength(expectedCrash.toolResultCount);
+        expect(targetArtifacts).toHaveLength(expectedCrash.artifactCount);
+        if (expectedCrash.p4Intent === "Success") {
+          expect(targetInvocations[0]?.result_ref).toBe(
+            targetArtifacts[0]?.artifact_id,
+          );
         }
         const logicalActionId = (
           targetActions[0] as { logical_action_id?: string } | undefined
@@ -364,24 +432,39 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         activePhase = "recovery-daemon-ready";
         const recovered = await waitForPublic(
           async () => durableSnapshot(fixture.databaseFile),
-          (value) =>
-            value.actions.some(
-              (action) =>
-                action.logical_action_id === logicalActionId &&
-                action.state === "Applied",
-            ) &&
-            value.toolInvocations.some(
-              (invocation) =>
-                invocation.execution_id === hit?.executionId &&
-                invocation.tool_name === "read" &&
-                invocation.settled_at !== null,
-            ) &&
-            (boundary !== "AH7AfterActionResultCommit" ||
-              value.steps.some(
-                (step) =>
-                  step.execution_id === hit?.executionId &&
-                  step.state !== "ActionsInProgress",
-              )),
+          (value) => {
+            const actions = value.actions.filter(
+              (action) => action.execution_id === hit?.executionId,
+            );
+            const invocations = value.toolInvocations.filter(
+              (invocation) => invocation.execution_id === hit?.executionId,
+            );
+            const toolResults = value.toolResults.filter((result) =>
+              JSON.stringify(result).includes(hit?.callRef ?? ""),
+            );
+            const invocationId = invocations[0]?.invocation_id;
+            const artifacts = value.artifacts.filter(
+              (artifact) => artifact.invocation_id === invocationId,
+            );
+            return (
+              actions.length === 1 &&
+              actions[0]?.logical_action_id === logicalActionId &&
+              actions[0]?.call_ref === hit?.callRef &&
+              actions[0]?.state === "Applied" &&
+              invocations.length === 1 &&
+              invocations[0]?.tool_name === "read" &&
+              invocations[0]?.settlement_kind === "Success" &&
+              invocations[0]?.result_ref === artifacts[0]?.artifact_id &&
+              toolResults.length === 1 &&
+              artifacts.length === 1 &&
+              (expectedCrash.actionState !== "Applied" ||
+                value.steps.some(
+                  (step) =>
+                    step.execution_id === hit?.executionId &&
+                    step.state !== "ActionsInProgress",
+                ))
+            );
+          },
           45_000,
         ).catch((error: unknown) => {
           throw new Error(
@@ -395,11 +478,13 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         const recoveredTargetInvocations = recovered.toolInvocations.filter(
           (invocation) => invocation.execution_id === hit?.executionId,
         );
+        const recoveredInvocationId =
+          targetInvocationId ?? recoveredTargetInvocations[0]?.invocation_id;
         const recoveredTargetToolResults = recovered.toolResults.filter(
           (result) => JSON.stringify(result).includes(hit?.callRef ?? ""),
         );
         const recoveredTargetArtifacts = recovered.artifacts.filter(
-          (artifact) => artifact.invocation_id === targetInvocationId,
+          (artifact) => artifact.invocation_id === recoveredInvocationId,
         );
         expect(recoveredTargetActions).toEqual([
           expect.objectContaining({
@@ -440,10 +525,13 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         }
         expect(recoveredTargetToolResults).toHaveLength(1);
         expect(recoveredTargetArtifacts).toHaveLength(1);
-        if (artifactDurableAtCrash) {
+        expect(recoveredTargetInvocations[0]?.result_ref).toBe(
+          recoveredTargetArtifacts[0]?.artifact_id,
+        );
+        if (expectedCrash.artifactCount === 1) {
           expect(recoveredTargetArtifacts).toEqual(targetArtifacts);
         }
-        if (p4SettlementCommitted) {
+        if (expectedCrash.p4Intent === "Success") {
           expect(recoveredTargetInvocations).toEqual(targetInvocations);
         }
         expect(recoveredTargetToolResults[0]).toMatchObject({
@@ -487,7 +575,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         expect(fixture.daemonErrors).toEqual([]);
         activePhase = "final-assertions-passed";
       },
-      timeout,
+      expectedCrash.timeoutMs,
     );
   }
 });
