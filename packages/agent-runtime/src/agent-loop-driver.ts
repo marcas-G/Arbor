@@ -381,6 +381,7 @@ export const AgentLoopDriverLive = (
               turn,
               ...(currentLoopStep === undefined ? {} : { currentLoopStep }),
               ...(loopSteps === undefined ? {} : { loopSteps }),
+              ...(providerTurns === undefined ? {} : { providerTurns }),
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
               sessions,
