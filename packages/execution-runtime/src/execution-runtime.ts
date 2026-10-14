@@ -66,7 +66,13 @@ export type ExecutionLeaseQualificationProbe = (
     | {
         readonly boundary: "AH10BeforeLeaseRenewal" | "AH10AfterLeaseAcquired";
         readonly executionId: ExecutionId;
+        readonly workerId?: string;
+        readonly workerIncarnationId?: string;
         readonly fencingGeneration: LeaseGeneration;
+      }
+    | {
+        readonly boundary: "AH10BeforeLeaseAcquired";
+        readonly executionId: ExecutionId;
       }
     | {
         /** Scheduler observed a live lease and skipped before runExecution. */
@@ -314,6 +320,14 @@ export const runExecution = (
       workspaceId: execution.value.workspaceId,
       workerKind: "Agent",
     });
+    if (leaseQualificationProbe !== undefined) {
+      yield* Effect.promise(() =>
+        leaseQualificationProbe({
+          boundary: "AH10BeforeLeaseAcquired",
+          executionId,
+        }),
+      );
+    }
     const { lease, agentExecutionState } = yield* tx.transact(
       Effect.gen(function* () {
         const lease = yield* leases
@@ -362,6 +376,8 @@ export const runExecution = (
         leaseQualificationProbe({
           boundary: "AH10AfterLeaseAcquired",
           executionId,
+          workerId: WORKER_ID,
+          workerIncarnationId: WORKER_INCARNATION_ID,
           fencingGeneration: lease.generation,
         }),
       );

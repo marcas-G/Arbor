@@ -124,6 +124,19 @@ const toolQualificationProbe = async (event) => {
 };
 
 const executionLeaseQualificationProbe = async (event) => {
+  if (
+    role === "old" &&
+    event.boundary === "AH10BeforeLeaseAcquired" &&
+    process.env.ARBOR_P4_FENCE_PAUSE_OLD_ACQUIRE === "1" &&
+    existsSync(join(gateDirectory, "old-acquire.request"))
+  ) {
+    emit({
+      boundary: "AH10BeforeLeaseAcquiredPaused",
+      executionId: event.executionId,
+    });
+    await waitForGate("old-acquire", event);
+    return;
+  }
   if (event.boundary === "AH10LeaseAcquisitionRejected") {
     emit({
       ...event,
