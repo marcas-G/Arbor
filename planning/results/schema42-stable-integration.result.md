@@ -448,3 +448,19 @@ fixture process remained, the stale manifest was manually terminalized for
 this run only; no reusable repair tool was added. The owned schema-42 fixture
 was validated against its marker and cleaned through the existing P39 cleanup
 helper. Total runner wall time: 183.358s. No UI test was rerun.
+
+## Focused F21 selector correction
+
+The F21 unknown-resource notice now uses a canonical-text-scoped `role=status`
+locator with an exact count of one. The unavailable ProblemCard checks are
+scoped separately under `role=alert`, including its heading, network category,
+and retry control. This avoids conflating the notice with the second status
+message that reports stale Attention data.
+
+Biome and `git diff --check` passed. A single grep-scoped Playwright run on
+`a42ffeb5` executed only the F21 browser Profile-selection journey with
+`--retries=0`: **1/1 PASS**, 58.883s. JSON report:
+`.test-results/f21-focused-c5a1a51.json`. The JSON reporter reached terminal
+PASS; no failure trace is expected for this passing run. The rest of the UI
+profile was not run, so this is focused evidence only, not a UI-profile or
+release qualification.
