@@ -705,6 +705,12 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     }> = [];
     let manualWaitCalls = 0;
     let targetToolCalls = 0;
+    const daemonReadyEvents: Array<{
+      readonly tag: "FUNCTIONAL_DAEMON_LISTENING";
+      readonly nonce: string;
+      readonly pid: number;
+      readonly port: number;
+    }> = [];
 
     const fixture = await startProductionFixture({
       admitWorkspaceDirectory: true,
@@ -718,7 +724,27 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       setupProbe: (event) => {
         if (startupDiagnostics.length < 8) startupDiagnostics.push(event);
       },
-      onDaemonStdout: (line) => recordProbe(events, line),
+      onDaemonStdout: (line) => {
+        recordProbe(events, line);
+        try {
+          const report = JSON.parse(line) as Record<string, unknown>;
+          if (
+            report.tag === "FUNCTIONAL_DAEMON_LISTENING" &&
+            typeof report.nonce === "string" &&
+            typeof report.pid === "number" &&
+            typeof report.port === "number"
+          ) {
+            daemonReadyEvents.push({
+              tag: "FUNCTIONAL_DAEMON_LISTENING",
+              nonce: report.nonce,
+              pid: report.pid,
+              port: report.port,
+            });
+          }
+        } catch {
+          // Keep non-JSON daemon output in ProductionFixture diagnostics.
+        }
+      },
       onResponseSent: (call, callIndex) => {
         const context = JSON.stringify(call.messages);
         if (context.includes(marker) && context.includes(steerMarker)) {
@@ -825,6 +851,11 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       throw error;
     });
     fixtures.push(fixture);
+    expect(daemonReadyEvents[0]).toMatchObject({
+      tag: "FUNCTIONAL_DAEMON_LISTENING",
+      pid: fixture.daemonProcessSnapshot()?.pid,
+      port: Number(new URL(fixture.baseUrl).port),
+    });
     probeLogFile = join(fixture.directory, "p4-live-lease-probes.ndjson");
     const gateDirectory = join(fixture.directory, "p4-fence-gates");
     mkdirSync(gateDirectory, { recursive: true });

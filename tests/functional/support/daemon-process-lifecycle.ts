@@ -149,9 +149,17 @@ export const waitForDaemonListening = (
       settled = true;
       clearTimeout(timeout);
       child.removeListener("exit", onExit);
-      child.stdout?.removeListener("data", readStdout);
-      if ("error" in result) rejectPort(result.error);
-      else resolvePort(result.port);
+      if ("error" in result) {
+        child.stdout?.removeListener("data", readStdout);
+        rejectPort(result.error);
+      } else {
+        // Keep forwarding stdout after the nonce-bound port is accepted.
+        // Runtime qualification probes arrive after the listening marker.
+        child.stdout?.once("close", () => {
+          child.stdout?.removeListener("data", readStdout);
+        });
+        resolvePort(result.port);
+      }
     };
     const timeout = setTimeout(
       () =>
