@@ -19,8 +19,17 @@ import {
 
 const fixtures: ProductionFixture[] = [];
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
+let activePhase: string | undefined;
+let activeExecutionId: string | undefined;
+let activeDiagnosticTimer: ReturnType<typeof setTimeout> | undefined;
 
 afterEach(async () => {
+  if (activeDiagnosticTimer !== undefined) {
+    clearTimeout(activeDiagnosticTimer);
+    activeDiagnosticTimer = undefined;
+  }
+  activePhase = undefined;
+  activeExecutionId = undefined;
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
 
@@ -34,378 +43,451 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
     "AH7BeforeActionResultCommit",
     "AH7AfterActionResultCommit",
   ] as const) {
-    it(`reuses the same action and tool identity after ${boundary}`, async () => {
-      const marker = `AH7-${crypto.randomUUID().slice(0, 8)}`;
-      const hits: AhProbeHit[] = [];
-      const daemonOutput: string[] = [];
-      let targetProviderCalls = 0;
-      let probeArmed = false;
-      let latestToolResult = "<none>";
-      const fixture = await startProductionFixture({
-        admitWorkspaceDirectory: true,
-        reply: (call) => {
-          const context = JSON.stringify(call.messages);
-          const available = new Set(
-            call.tools
-              .map((tool) => tool.function?.name)
-              .filter((name): name is string => name !== undefined),
-          );
-          const targetWorkTurn = available.has("read");
-          if (context.includes(marker) && targetWorkTurn) {
-            if (!probeArmed) {
-              return { _tag: "HttpError", status: 503 };
-            }
-            targetProviderCalls += 1;
-            latestToolResult =
-              [...call.messages]
-                .reverse()
-                .find((message) => message.role === "tool")?.content ??
-              "<no tool result in request>";
-            if (targetProviderCalls > 5) {
-              return { _tag: "HttpError", status: 429 };
-            }
-          }
-          if (
-            context.includes(marker) &&
-            available.has("assign_work") &&
-            !targetWorkTurn &&
-            !context.includes("WorkAssigned(")
-          ) {
-            return {
-              _tag: "ToolCall",
-              name: "assign_work",
-              arguments: {
-                objective: `Read proof.txt for ${marker}.`,
-                why: "qualify action intent recovery before P4 ToolRuntime",
-                constraints: [],
-                completionExpectation: "the Agent has observed proof.txt",
-                verificationMission: {
-                  goal: `Verify the read result for ${marker}`,
-                  criteria: [
-                    {
-                      criterionId: "proof-read",
-                      requirement: "proof.txt contains FUNCTIONAL_VERIFIED",
-                      required: true,
-                    },
-                  ],
-                  riskRequirements: [],
-                },
-                reason: "AH7 functional test",
-              },
-            };
-          }
-          if (context.includes(marker) && targetWorkTurn) {
-            const readResult = call.messages.some(
-              (message) =>
-                message.role === "tool" &&
-                message.content?.includes("FUNCTIONAL_VERIFIED") === true,
+    const testName = `reuses the same action and tool identity after ${boundary}`;
+    const timeout =
+      boundary === "AH7BeforeToolSettlementTransaction" ||
+      boundary === "AH7BeforeToolSettlementCommit"
+        ? 180_000
+        : 120_000;
+    it(
+      testName,
+      async () => {
+        const marker = `AH7-${crypto.randomUUID().slice(0, 8)}`;
+        const hits: AhProbeHit[] = [];
+        const daemonOutput: string[] = [];
+        let targetProviderCalls = 0;
+        let probeArmed = false;
+        let latestToolResult = "<none>";
+        const fixture = await startProductionFixture({
+          admitWorkspaceDirectory: true,
+          reply: (call) => {
+            const context = JSON.stringify(call.messages);
+            const available = new Set(
+              call.tools
+                .map((tool) => tool.function?.name)
+                .filter((name): name is string => name !== undefined),
             );
-            return readResult
-              ? { _tag: "Text", text: `Read evidence for ${marker}` }
-              : {
-                  _tag: "ToolCall",
-                  name: "read",
-                  arguments: {
-                    target: { mount: "workspace", path: "proof.txt" },
-                    limit: 200,
-                  },
-                };
-          }
-          return { _tag: "Text", text: `Waiting for Work ${marker}` };
-        },
-        onDaemonStdout: (line) => {
-          daemonOutput.push(line);
-          recordAhProbeLine(hits, line);
-        },
-      });
-      fixtures.push(fixture);
-      const client = makePublicClient(fixture.baseUrl);
-      const project = await createFunctionalProject(
-        client,
-        fixture.workspaceDirectory,
-        "AH7 Pending action intent",
-        { resourceSelection: "Profile" },
-      );
-      await submitHumanMessage(
-        client,
-        project,
-        `请创建并执行一个读取 proof.txt 的目标 ${marker}`,
-      );
-      const approval = await waitForApproval(client, project, marker).catch(
-        (error: unknown) => {
-          throw new Error(
-            `AH7 public Work approval absent: ${error instanceof Error ? error.message : String(error)}; provider=${JSON.stringify(fixture.providerCalls)}; daemon=${fixture.daemonErrors.join(" | ")}`,
-          );
-        },
-      );
-      expect(
-        await client.view("current-work", {
-          workspaceId: project.rootWorkspaceId,
-        }),
-      ).toBeNull();
-
-      await client.command(project.projectId, "ResolveControlApproval", {
-        approvalId: approval.approvalId,
-        expectedRevision: approval.revision,
-        decision: "Approve",
-        reason: "AH7 public Work admission",
-      });
-      const currentWork = await waitForPublic(
-        () =>
-          client.view<{
-            workId?: string;
-            objective?: string;
-            status: string;
-          } | null>("current-work", {
-            workspaceId: project.rootWorkspaceId,
-          }),
-        (value) => value?.workId !== undefined,
-      );
-      expect(currentWork).toMatchObject({
-        objective: expect.stringContaining(marker),
-        status: "Open",
-      });
-      // Keep the seed conversation outside the AH7 probe. If the normal daemon
-      // reaches the new Work first, the fake provider returns a transport
-      // failure (never a ToolCall/P4 effect); killing it now lets recovery
-      // redispatch the same Open Work under the selected probe.
-      await fixture.crash();
-      probeArmed = true;
-      const targetProviderCallStart = fixture.providerCalls.length;
-      await fixture.restart({
-        entry: crashChild,
-        daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
-      });
-
-      const observed = await waitForPublic(
-        async () => ({ hits, targetProviderCalls }),
-        (value) =>
-          value.hits.some((hit) => hit.boundary === boundary) ||
-          value.targetProviderCalls >= 5,
-        15_000,
-      ).catch((error: unknown) => {
-        throw new Error(
-          `AH7 Pending-action probe absent: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; daemonOutput=${daemonOutput.slice(-10).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
-        );
-      });
-      if (!observed.hits.some((candidate) => candidate.boundary === boundary)) {
-        await fixture.crash();
-        throw new Error(
-          `AH7 provider-call cap reached before action-intent probe; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; calls=${JSON.stringify(fixture.providerCalls.slice(-2))}; daemonOutput=${daemonOutput.slice(-10).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
-        );
-      }
-      const hit = observed.hits.find(
-        (candidate) => candidate.boundary === boundary,
-      );
-      expect(hit).toMatchObject({
-        executionId: expect.stringMatching(/^exe_/u),
-        callRef: expect.any(String),
-        ...(boundary === "AH7AfterActionIntentCommit" ||
-        boundary === "AH7BeforeActionResultCommit" ||
-        boundary === "AH7AfterActionResultCommit"
-          ? {
-              providerTurnId: expect.stringMatching(/^ptn_/u),
-              logicalActionId: expect.stringMatching(/^lac_/u),
-              actionIndex: 0,
+            const targetWorkTurn = available.has("read");
+            if (context.includes(marker) && targetWorkTurn) {
+              if (!probeArmed) {
+                return { _tag: "HttpError", status: 503 };
+              }
+              targetProviderCalls += 1;
+              latestToolResult =
+                [...call.messages]
+                  .reverse()
+                  .find((message) => message.role === "tool")?.content ??
+                "<no tool result in request>";
+              if (targetProviderCalls > 5) {
+                return { _tag: "HttpError", status: 429 };
+              }
             }
-          : { invocationId: expect.stringMatching(/^tin_/u) }),
-      });
-
-      await fixture.crash();
-      const crashed = durableSnapshot(fixture.databaseFile);
-      const targetSteps = crashed.steps.filter(
-        (step) => step.execution_id === hit?.executionId,
-      );
-      const targetActions = crashed.actions.filter(
-        (action) => action.execution_id === hit?.executionId,
-      );
-      const targetInvocations = crashed.toolInvocations.filter(
-        (invocation) => invocation.execution_id === hit?.executionId,
-      );
-      const targetToolResults = crashed.toolResults.filter((result) =>
-        JSON.stringify(result).includes(hit?.callRef ?? ""),
-      );
-      const targetInvocationId = targetInvocations[0]?.invocation_id;
-      const targetArtifacts = crashed.artifacts.filter(
-        (artifact) => artifact.invocation_id === targetInvocationId,
-      );
-      const p4SettlementCommitted =
-        boundary === "AH7AfterToolSettlementCommit" ||
-        boundary === "AH7BeforeActionResultCommit" ||
-        boundary === "AH7AfterActionResultCommit";
-      const resultArtifactCommitted =
-        boundary !== "AH7AfterActionIntentCommit" &&
-        boundary !== "AH7AfterToolIntentCommit";
-      expect(targetSteps).toEqual([
-        expect.objectContaining({
-          execution_id: hit?.executionId,
-          provider_turn_id:
-            boundary === "AH7AfterActionIntentCommit"
-              ? hit?.providerTurnId
-              : expect.stringMatching(/^ptn_/u),
-          state: "ActionsInProgress",
-          next_action_index: boundary === "AH7AfterActionResultCommit" ? 1 : 0,
-        }),
-      ]);
-      expect(targetActions).toEqual([
-        expect.objectContaining({
-          execution_id: hit?.executionId,
-          action_index: 0,
-          logical_action_id: expect.stringMatching(/^lac_/u),
-          call_ref: hit?.callRef,
-          action_kind: "read",
-          state:
-            boundary === "AH7AfterActionResultCommit" ? "Applied" : "Pending",
-        }),
-      ]);
-      expect(targetInvocations).toEqual(
-        boundary === "AH7AfterActionIntentCommit"
-          ? []
-          : [
-              expect.objectContaining({
-                execution_id: hit?.executionId,
-                tool_name: "read",
-                side_effect_semantics: "ReadOnly",
-                settled_at: p4SettlementCommitted ? expect.any(String) : null,
-              }),
-            ],
-      );
-      expect(targetToolResults).toHaveLength(
-        boundary === "AH7AfterActionResultCommit" ? 1 : 0,
-      );
-      if (resultArtifactCommitted) {
-        expect(targetArtifacts).toHaveLength(1);
-      } else {
-        expect(targetArtifacts).toEqual([]);
-      }
-      const logicalActionId = (
-        targetActions[0] as { logical_action_id?: string } | undefined
-      )?.logical_action_id;
-      if (logicalActionId === undefined) {
-        throw new Error("AH7 committed action identity absent");
-      }
-
-      await fixture.restart();
-      const recovered = await waitForPublic(
-        async () => durableSnapshot(fixture.databaseFile),
-        (value) =>
-          value.actions.some(
-            (action) =>
-              action.logical_action_id === logicalActionId &&
-              action.state === "Applied",
-          ) &&
-          value.toolInvocations.some(
-            (invocation) =>
-              invocation.execution_id === hit?.executionId &&
-              invocation.tool_name === "read" &&
-              invocation.settled_at !== null,
-          ) &&
-          (boundary !== "AH7AfterActionResultCommit" ||
-            value.steps.some(
-              (step) =>
-                step.execution_id === hit?.executionId &&
-                step.state !== "ActionsInProgress",
-            )),
-        45_000,
-      ).catch((error: unknown) => {
-        throw new Error(
-          `AH7 restart did not resume the committed Pending action: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; daemonOutput=${daemonOutput.slice(-10).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
-        );
-      });
-      const recoveredTargetActions = recovered.actions.filter(
-        (action) => action.execution_id === hit?.executionId,
-      );
-      const recoveredTargetInvocations = recovered.toolInvocations.filter(
-        (invocation) => invocation.execution_id === hit?.executionId,
-      );
-      const recoveredTargetToolResults = recovered.toolResults.filter(
-        (result) => JSON.stringify(result).includes(hit?.callRef ?? ""),
-      );
-      const recoveredTargetArtifacts = recovered.artifacts.filter(
-        (artifact) => artifact.invocation_id === targetInvocationId,
-      );
-      expect(recoveredTargetActions).toEqual([
-        expect.objectContaining({
-          execution_id: hit?.executionId,
-          action_index: 0,
-          logical_action_id: logicalActionId,
-          call_ref: hit?.callRef,
-          action_kind: "read",
-          state: "Applied",
-          result_ref: expect.stringMatching(/^result_/u),
-          observation_source_ref: expect.stringMatching(/^observation_/u),
-        }),
-      ]);
-      const recoveredActionRecord = recovered.actions.find(
-        (action) => action.logical_action_id === logicalActionId,
-      );
-      const recoveredActionStep = recovered.steps.find(
-        (step) =>
-          step.execution_id === hit?.executionId &&
-          step.logical_step_no === recoveredActionRecord?.logical_step_no,
-      );
-      expect(recoveredActionStep?.provider_turn_id).toBe(
-        targetSteps[0]?.provider_turn_id,
-      );
-      expect(recoveredTargetInvocations).toEqual([
-        expect.objectContaining({
-          execution_id: hit?.executionId,
-          tool_name: "read",
-          side_effect_semantics: "ReadOnly",
-          settlement_kind: "Success",
-          result_ref: expect.any(String),
-        }),
-      ]);
-      if (targetInvocationId !== undefined) {
-        expect(recoveredTargetInvocations[0]?.invocation_id).toBe(
-          targetInvocationId,
-        );
-      }
-      expect(recoveredTargetToolResults).toHaveLength(1);
-      if (resultArtifactCommitted) {
-        expect(recoveredTargetArtifacts).toEqual(targetArtifacts);
-      }
-      if (p4SettlementCommitted) {
-        expect(recoveredTargetInvocations).toEqual(targetInvocations);
-      }
-      expect(recoveredTargetToolResults[0]).toMatchObject({
-        source_kind: "AgentLoopAction",
-      });
-      const recoveredToolResult = JSON.parse(
-        String(recoveredTargetToolResults[0]?.payload_json),
-      ) as { callRef?: string; observationRef?: string };
-      expect(recoveredToolResult).toMatchObject({
-        callRef: hit?.callRef,
-        observationRef: recoveredTargetActions[0]?.observation_source_ref,
-      });
-      expect(recoveredTargetToolResults[0]?.source_ref).toBe(
-        recoveredToolResult.observationRef,
-      );
-      expect(
-        recovered.toolResults.filter(
-          (result) => result.source_ref === recoveredToolResult.observationRef,
-        ),
-      ).toHaveLength(1);
-      expect(
-        JSON.stringify(recoveredTargetToolResults[0]).includes(
-          hit?.callRef ?? "",
-        ),
-      ).toBe(true);
-      expect(
-        fixture.providerCalls
-          .slice(targetProviderCallStart)
-          .filter(
-            (call) =>
-              JSON.stringify(call.messages).includes(marker) &&
-              call.tools.some((tool) => tool.function?.name === "read") &&
-              !call.messages.some(
+            if (
+              context.includes(marker) &&
+              available.has("assign_work") &&
+              !targetWorkTurn &&
+              !context.includes("WorkAssigned(")
+            ) {
+              return {
+                _tag: "ToolCall",
+                name: "assign_work",
+                arguments: {
+                  objective: `Read proof.txt for ${marker}.`,
+                  why: "qualify action intent recovery before P4 ToolRuntime",
+                  constraints: [],
+                  completionExpectation: "the Agent has observed proof.txt",
+                  verificationMission: {
+                    goal: `Verify the read result for ${marker}`,
+                    criteria: [
+                      {
+                        criterionId: "proof-read",
+                        requirement: "proof.txt contains FUNCTIONAL_VERIFIED",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                  reason: "AH7 functional test",
+                },
+              };
+            }
+            if (context.includes(marker) && targetWorkTurn) {
+              const readResult = call.messages.some(
                 (message) =>
                   message.role === "tool" &&
                   message.content?.includes("FUNCTIONAL_VERIFIED") === true,
-              ),
+              );
+              return readResult
+                ? { _tag: "Text", text: `Read evidence for ${marker}` }
+                : {
+                    _tag: "ToolCall",
+                    name: "read",
+                    arguments: {
+                      target: { mount: "workspace", path: "proof.txt" },
+                      limit: 200,
+                    },
+                  };
+            }
+            return { _tag: "Text", text: `Waiting for Work ${marker}` };
+          },
+          onDaemonStdout: (line) => {
+            daemonOutput.push(line);
+            recordAhProbeLine(hits, line);
+          },
+        });
+        fixtures.push(fixture);
+        activePhase = "fixture-ready";
+        if (boundary === "AH7BeforeToolSettlementCommit") {
+          activeDiagnosticTimer = setTimeout(() => {
+            let snapshot: unknown = "<snapshot unavailable>";
+            try {
+              const durable = durableSnapshot(fixture.databaseFile);
+              snapshot = {
+                executions: durable.executions,
+                steps:
+                  activeExecutionId === undefined
+                    ? durable.steps
+                    : durable.steps.filter(
+                        (step) => step.execution_id === activeExecutionId,
+                      ),
+                actions:
+                  activeExecutionId === undefined
+                    ? durable.actions
+                    : durable.actions.filter(
+                        (action) => action.execution_id === activeExecutionId,
+                      ),
+                toolInvocations:
+                  activeExecutionId === undefined
+                    ? durable.toolInvocations
+                    : durable.toolInvocations.filter(
+                        (invocation) =>
+                          invocation.execution_id === activeExecutionId,
+                      ),
+              };
+            } catch (error) {
+              snapshot = error instanceof Error ? error.message : String(error);
+            }
+            console.error(
+              `AH7 ${boundary} diagnostic: ${JSON.stringify({
+                phase: activePhase,
+                executionId: activeExecutionId ?? null,
+                providerCalls: targetProviderCalls,
+                daemonErrors: fixture.daemonErrors,
+                daemon: fixture.daemonProcessSnapshot(),
+                snapshot,
+              })}`,
+            );
+          }, 90_000);
+        }
+        const client = makePublicClient(fixture.baseUrl);
+        const project = await createFunctionalProject(
+          client,
+          fixture.workspaceDirectory,
+          "AH7 Pending action intent",
+          { resourceSelection: "Profile" },
+        );
+        await submitHumanMessage(
+          client,
+          project,
+          `请创建并执行一个读取 proof.txt 的目标 ${marker}`,
+        );
+        activePhase = "root-submitted";
+        const approval = await waitForApproval(client, project, marker).catch(
+          (error: unknown) => {
+            throw new Error(
+              `AH7 public Work approval absent: ${error instanceof Error ? error.message : String(error)}; provider=${JSON.stringify(fixture.providerCalls)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+            );
+          },
+        );
+        expect(
+          await client.view("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        ).toBeNull();
+
+        await client.command(project.projectId, "ResolveControlApproval", {
+          approvalId: approval.approvalId,
+          expectedRevision: approval.revision,
+          decision: "Approve",
+          reason: "AH7 public Work admission",
+        });
+        activePhase = "work-approved";
+        const currentWork = await waitForPublic(
+          () =>
+            client.view<{
+              workId?: string;
+              objective?: string;
+              status: string;
+            } | null>("current-work", {
+              workspaceId: project.rootWorkspaceId,
+            }),
+          (value) => value?.workId !== undefined,
+        );
+        expect(currentWork).toMatchObject({
+          objective: expect.stringContaining(marker),
+          status: "Open",
+        });
+        // Keep the seed conversation outside the AH7 probe. If the normal daemon
+        // reaches the new Work first, the fake provider returns a transport
+        // failure (never a ToolCall/P4 effect); killing it now lets recovery
+        // redispatch the same Open Work under the selected probe.
+        await fixture.crash();
+        activePhase = "seed-daemon-exited";
+        probeArmed = true;
+        const targetProviderCallStart = fixture.providerCalls.length;
+        await fixture.restart({
+          entry: crashChild,
+          daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
+        });
+        activePhase = "probe-daemon-ready";
+
+        const observed = await waitForPublic(
+          async () => ({ hits, targetProviderCalls }),
+          (value) =>
+            value.hits.some((hit) => hit.boundary === boundary) ||
+            value.targetProviderCalls >= 5,
+          15_000,
+        ).catch((error: unknown) => {
+          throw new Error(
+            `AH7 Pending-action probe absent: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; daemonOutput=${daemonOutput.slice(-10).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
+          );
+        });
+        if (
+          !observed.hits.some((candidate) => candidate.boundary === boundary)
+        ) {
+          await fixture.crash();
+          throw new Error(
+            `AH7 provider-call cap reached before action-intent probe; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; calls=${JSON.stringify(fixture.providerCalls.slice(-2))}; daemonOutput=${daemonOutput.slice(-10).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
+          );
+        }
+        const hit = observed.hits.find(
+          (candidate) => candidate.boundary === boundary,
+        );
+        activeExecutionId = hit?.executionId;
+        activePhase = "boundary-reached";
+        expect(hit).toMatchObject({
+          executionId: expect.stringMatching(/^exe_/u),
+          callRef: expect.any(String),
+          ...(boundary === "AH7AfterActionIntentCommit" ||
+          boundary === "AH7BeforeActionResultCommit" ||
+          boundary === "AH7AfterActionResultCommit"
+            ? {
+                providerTurnId: expect.stringMatching(/^ptn_/u),
+                logicalActionId: expect.stringMatching(/^lac_/u),
+                actionIndex: 0,
+              }
+            : { invocationId: expect.stringMatching(/^tin_/u) }),
+        });
+
+        await fixture.crash();
+        activePhase = "probe-daemon-exited";
+        const crashed = durableSnapshot(fixture.databaseFile);
+        activePhase = "kill-snapshot-read";
+        const targetSteps = crashed.steps.filter(
+          (step) => step.execution_id === hit?.executionId,
+        );
+        const targetActions = crashed.actions.filter(
+          (action) => action.execution_id === hit?.executionId,
+        );
+        const targetInvocations = crashed.toolInvocations.filter(
+          (invocation) => invocation.execution_id === hit?.executionId,
+        );
+        const targetToolResults = crashed.toolResults.filter((result) =>
+          JSON.stringify(result).includes(hit?.callRef ?? ""),
+        );
+        const targetInvocationId = targetInvocations[0]?.invocation_id;
+        const targetArtifacts = crashed.artifacts.filter(
+          (artifact) => artifact.invocation_id === targetInvocationId,
+        );
+        const p4SettlementCommitted =
+          boundary === "AH7AfterToolSettlementCommit" ||
+          boundary === "AH7BeforeActionResultCommit" ||
+          boundary === "AH7AfterActionResultCommit";
+        // The successful read's Artifact is materialized as part of the P4
+        // observation settlement. It is not durable at either probe before that
+        // transaction commits, even though the tool effect has already returned.
+        const artifactDurableAtCrash =
+          boundary === "AH7AfterToolSettlementCommit" ||
+          boundary === "AH7BeforeActionResultCommit" ||
+          boundary === "AH7AfterActionResultCommit";
+        expect(targetSteps).toEqual([
+          expect.objectContaining({
+            execution_id: hit?.executionId,
+            provider_turn_id:
+              boundary === "AH7AfterActionIntentCommit"
+                ? hit?.providerTurnId
+                : expect.stringMatching(/^ptn_/u),
+            state: "ActionsInProgress",
+            next_action_index:
+              boundary === "AH7AfterActionResultCommit" ? 1 : 0,
+          }),
+        ]);
+        expect(targetActions).toEqual([
+          expect.objectContaining({
+            execution_id: hit?.executionId,
+            action_index: 0,
+            logical_action_id: expect.stringMatching(/^lac_/u),
+            call_ref: hit?.callRef,
+            action_kind: "read",
+            state:
+              boundary === "AH7AfterActionResultCommit" ? "Applied" : "Pending",
+          }),
+        ]);
+        expect(targetInvocations).toEqual(
+          boundary === "AH7AfterActionIntentCommit"
+            ? []
+            : [
+                expect.objectContaining({
+                  execution_id: hit?.executionId,
+                  tool_name: "read",
+                  side_effect_semantics: "ReadOnly",
+                  settled_at: p4SettlementCommitted ? expect.any(String) : null,
+                }),
+              ],
+        );
+        expect(targetToolResults).toHaveLength(
+          boundary === "AH7AfterActionResultCommit" ? 1 : 0,
+        );
+        if (artifactDurableAtCrash) {
+          expect(targetArtifacts).toHaveLength(1);
+        } else {
+          expect(targetArtifacts).toEqual([]);
+        }
+        const logicalActionId = (
+          targetActions[0] as { logical_action_id?: string } | undefined
+        )?.logical_action_id;
+        if (logicalActionId === undefined) {
+          throw new Error("AH7 committed action identity absent");
+        }
+
+        await fixture.restart();
+        activePhase = "recovery-daemon-ready";
+        const recovered = await waitForPublic(
+          async () => durableSnapshot(fixture.databaseFile),
+          (value) =>
+            value.actions.some(
+              (action) =>
+                action.logical_action_id === logicalActionId &&
+                action.state === "Applied",
+            ) &&
+            value.toolInvocations.some(
+              (invocation) =>
+                invocation.execution_id === hit?.executionId &&
+                invocation.tool_name === "read" &&
+                invocation.settled_at !== null,
+            ) &&
+            (boundary !== "AH7AfterActionResultCommit" ||
+              value.steps.some(
+                (step) =>
+                  step.execution_id === hit?.executionId &&
+                  step.state !== "ActionsInProgress",
+              )),
+          45_000,
+        ).catch((error: unknown) => {
+          throw new Error(
+            `AH7 restart did not resume the committed Pending action: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; daemonOutput=${daemonOutput.slice(-10).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
+          );
+        });
+        const recoveredTargetActions = recovered.actions.filter(
+          (action) => action.execution_id === hit?.executionId,
+        );
+        activePhase = "recovery-snapshot-ready";
+        const recoveredTargetInvocations = recovered.toolInvocations.filter(
+          (invocation) => invocation.execution_id === hit?.executionId,
+        );
+        const recoveredTargetToolResults = recovered.toolResults.filter(
+          (result) => JSON.stringify(result).includes(hit?.callRef ?? ""),
+        );
+        const recoveredTargetArtifacts = recovered.artifacts.filter(
+          (artifact) => artifact.invocation_id === targetInvocationId,
+        );
+        expect(recoveredTargetActions).toEqual([
+          expect.objectContaining({
+            execution_id: hit?.executionId,
+            action_index: 0,
+            logical_action_id: logicalActionId,
+            call_ref: hit?.callRef,
+            action_kind: "read",
+            state: "Applied",
+            result_ref: expect.stringMatching(/^result_/u),
+            observation_source_ref: expect.stringMatching(/^observation_/u),
+          }),
+        ]);
+        const recoveredActionRecord = recovered.actions.find(
+          (action) => action.logical_action_id === logicalActionId,
+        );
+        const recoveredActionStep = recovered.steps.find(
+          (step) =>
+            step.execution_id === hit?.executionId &&
+            step.logical_step_no === recoveredActionRecord?.logical_step_no,
+        );
+        expect(recoveredActionStep?.provider_turn_id).toBe(
+          targetSteps[0]?.provider_turn_id,
+        );
+        expect(recoveredTargetInvocations).toEqual([
+          expect.objectContaining({
+            execution_id: hit?.executionId,
+            tool_name: "read",
+            side_effect_semantics: "ReadOnly",
+            settlement_kind: "Success",
+            result_ref: expect.any(String),
+          }),
+        ]);
+        if (targetInvocationId !== undefined) {
+          expect(recoveredTargetInvocations[0]?.invocation_id).toBe(
+            targetInvocationId,
+          );
+        }
+        expect(recoveredTargetToolResults).toHaveLength(1);
+        expect(recoveredTargetArtifacts).toHaveLength(1);
+        if (artifactDurableAtCrash) {
+          expect(recoveredTargetArtifacts).toEqual(targetArtifacts);
+        }
+        if (p4SettlementCommitted) {
+          expect(recoveredTargetInvocations).toEqual(targetInvocations);
+        }
+        expect(recoveredTargetToolResults[0]).toMatchObject({
+          source_kind: "AgentLoopAction",
+        });
+        const recoveredToolResult = JSON.parse(
+          String(recoveredTargetToolResults[0]?.payload_json),
+        ) as { callRef?: string; observationRef?: string };
+        expect(recoveredToolResult).toMatchObject({
+          callRef: hit?.callRef,
+          observationRef: recoveredTargetActions[0]?.observation_source_ref,
+        });
+        expect(recoveredTargetToolResults[0]?.source_ref).toBe(
+          recoveredToolResult.observationRef,
+        );
+        expect(
+          recovered.toolResults.filter(
+            (result) =>
+              result.source_ref === recoveredToolResult.observationRef,
           ),
-      ).toHaveLength(1);
-      expect(fixture.daemonErrors).toEqual([]);
-    }, 120_000);
+        ).toHaveLength(1);
+        expect(
+          JSON.stringify(recoveredTargetToolResults[0]).includes(
+            hit?.callRef ?? "",
+          ),
+        ).toBe(true);
+        expect(
+          fixture.providerCalls
+            .slice(targetProviderCallStart)
+            .filter(
+              (call) =>
+                JSON.stringify(call.messages).includes(marker) &&
+                call.tools.some((tool) => tool.function?.name === "read") &&
+                !call.messages.some(
+                  (message) =>
+                    message.role === "tool" &&
+                    message.content?.includes("FUNCTIONAL_VERIFIED") === true,
+                ),
+            ),
+        ).toHaveLength(1);
+        expect(fixture.daemonErrors).toEqual([]);
+        activePhase = "final-assertions-passed";
+      },
+      timeout,
+    );
   }
 });

@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
 import {
@@ -19,13 +20,28 @@ import {
 
 const fixtures: ProductionFixture[] = [];
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
+let activePhase: string | undefined;
+let activeExecutionId: string | undefined;
+let activeDiagnosticTimer: ReturnType<typeof setTimeout> | undefined;
+let activeDiagnosticWriter: (() => void) | undefined;
 const boundaries = [
   "AH11BeforeStepEffectsCommit",
   "AH11AfterStepEffectsCommit",
 ] as const;
 
 afterEach(async () => {
+  if (activeDiagnosticTimer !== undefined) {
+    clearTimeout(activeDiagnosticTimer);
+    activeDiagnosticTimer = undefined;
+  }
+  activePhase = "cleanup-started";
+  activeDiagnosticWriter?.();
   for (const fixture of fixtures.splice(0)) await fixture.stop();
+  activePhase = "cleanup-complete";
+  activeDiagnosticWriter?.();
+  activeDiagnosticWriter = undefined;
+  activePhase = undefined;
+  activeExecutionId = undefined;
 });
 
 describe("AH11 Observation to StepEffectsCommitted process crash", () => {
@@ -114,7 +130,18 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
                 },
               };
             }
-            return { _tag: "Text", text: `Read evidence for ${marker}` };
+            activePhase = "successor-wait-requested";
+            return {
+              _tag: "ToolCall",
+              name: "wait",
+              arguments: {
+                reason: `AH11 read evidence observed for ${marker}`,
+                waitSpec: {
+                  mode: "Any",
+                  conditions: [{ _tag: "Manual" }],
+                },
+              },
+            };
           }
           return { _tag: "Text", text: `Read evidence for ${marker}` };
         },
@@ -124,6 +151,83 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
         },
       });
       fixtures.push(fixture);
+      activePhase = "fixture-ready";
+      const diagnosticPath = join(
+        process.cwd(),
+        ".test-results",
+        "ah11-phase-diagnostics",
+        `${marker}-${boundary}.ndjson`,
+      );
+      const writeDiagnostic = () => {
+        let snapshot: unknown = "<snapshot unavailable>";
+        try {
+          const durable = durableSnapshot(fixture.databaseFile);
+          snapshot = {
+            executions:
+              activeExecutionId === undefined
+                ? durable.executions.filter(
+                    (execution) => execution.settled_at === null,
+                  )
+                : durable.executions.filter(
+                    (execution) => execution.execution_id === activeExecutionId,
+                  ),
+            steps:
+              activeExecutionId === undefined
+                ? durable.steps
+                : durable.steps.filter(
+                    (step) => step.execution_id === activeExecutionId,
+                  ),
+            actions:
+              activeExecutionId === undefined
+                ? durable.actions
+                : durable.actions.filter(
+                    (action) => action.execution_id === activeExecutionId,
+                  ),
+            toolInvocations:
+              activeExecutionId === undefined
+                ? []
+                : durable.toolInvocations.filter(
+                    (invocation) =>
+                      invocation.execution_id === activeExecutionId,
+                  ),
+          };
+        } catch (error) {
+          snapshot = error instanceof Error ? error.message : String(error);
+        }
+        const diagnostic = {
+          phase: activePhase,
+          boundary,
+          marker,
+          executionId: activeExecutionId ?? null,
+          seedWorkProviderCalls,
+          targetProviderCalls,
+          providerCalls: fixture.providerCalls.slice(-6).map((call) => ({
+            tools: call.tools.map((tool) => tool.function?.name),
+            messages: call.messages.slice(-3).map((message) => ({
+              role: message.role,
+              content: message.content?.slice(0, 120),
+            })),
+          })),
+          daemon: fixture.daemonProcessSnapshot(),
+          daemonErrors: fixture.daemonErrors,
+          snapshot,
+        };
+        mkdirSync(dirname(diagnosticPath), { recursive: true });
+        writeFileSync(diagnosticPath, `${JSON.stringify(diagnostic)}\n`, {
+          flag: "a",
+        });
+        console.error(
+          `AH11 phase diagnostic file=${diagnosticPath}: ${JSON.stringify({
+            phase: activePhase,
+            boundary,
+            executionId: activeExecutionId ?? null,
+            targetProviderCalls,
+            daemon: diagnostic.daemon,
+          })}`,
+        );
+      };
+      activeDiagnosticWriter = writeDiagnostic;
+      activeDiagnosticTimer = setTimeout(writeDiagnostic, 90_000);
       const client = makePublicClient(fixture.baseUrl);
       const project = await createFunctionalProject(
         client,
@@ -136,7 +240,9 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
         project,
         `请创建读取 proof.txt 的目标 ${marker}`,
       );
+      activePhase = "root-submitted";
       const approval = await waitForApproval(client, project, marker);
+      activePhase = "root-approval-ready";
       expect(
         await client.view("current-work", {
           workspaceId: project.rootWorkspaceId,
@@ -148,6 +254,7 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
         decision: "Approve",
         reason: "AH11 public Work admission",
       });
+      activePhase = "work-approved";
       const currentWork = await waitForPublic(
         () =>
           client.view<{
@@ -162,6 +269,7 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
       );
       const workId = currentWork?.workId;
       if (workId === undefined) throw new Error("AH11 public Work absent");
+      activePhase = "work-open";
       expect(currentWork).toMatchObject({
         objective: expect.stringContaining(marker),
         revision: 0,
@@ -171,6 +279,7 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
         async () => seedWorkProviderCalls,
         (count) => count >= 1,
       );
+      activePhase = "seed-manual-wait";
       await waitForPublic(
         () =>
           client.view<{
@@ -199,11 +308,13 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
       // The seed Work only enters a legal Manual wait. Install the Observation
       // crash probe before public SteerWork starts the measured read action.
       await fixture.crash();
+      activePhase = "seed-daemon-exited";
       probeArmed = true;
       await fixture.restart({
         entry: crashChild,
         daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
       });
+      activePhase = "probe-daemon-ready";
       await client.command(project.projectId, "SteerWork", {
         workId,
         workspaceId: project.rootWorkspaceId,
@@ -214,6 +325,7 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
         },
         provenance: { source: "HumanInput" },
       });
+      activePhase = "measured-work-steered";
 
       const observed = await waitForPublic(
         async () => ({ hits, targetProviderCalls }),
@@ -225,6 +337,8 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
       const hit = observed.hits.find(
         (candidate) => candidate.boundary === boundary,
       );
+      activeExecutionId = hit?.executionId;
+      activePhase = "boundary-reached";
       if (hit === undefined) {
         await fixture.crash();
         throw new Error(
@@ -236,7 +350,9 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
       expect(seedExecutionIds.has(hit.executionId)).toBe(false);
 
       await fixture.crash();
+      activePhase = "probe-daemon-exited";
       const killed = durableSnapshot(fixture.databaseFile);
+      activePhase = "kill-snapshot-read";
       const killedTargetSteps = killed.steps.filter(
         (step) => step.execution_id === hit.executionId,
       );
@@ -291,7 +407,9 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
         }),
       ]);
 
+      activePhase = "pre-restart-snapshot-validated";
       await fixture.restart();
+      activePhase = "recovery-daemon-ready";
       const recovered = await waitForPublic(
         async () => durableSnapshot(fixture.databaseFile),
         (value) =>
@@ -307,7 +425,38 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
               step.logical_step_no === 1,
           ),
         45_000,
-      );
+      ).catch((error: unknown) => {
+        const latest = durableSnapshot(fixture.databaseFile);
+        const latestCalls = fixture.providerCalls.slice(-8).map((call) => ({
+          tools: call.tools.map((tool) => tool.function?.name),
+          messages: call.messages.slice(-4).map((message) => ({
+            role: message.role,
+            content: message.content?.slice(0, 160),
+          })),
+        }));
+        throw new Error(
+          `AH11 recovery timed out: ${error instanceof Error ? error.message : String(error)}; diagnostic=${JSON.stringify(
+            {
+              executionId: hit.executionId,
+              steps: latest.steps.filter(
+                (step) => step.execution_id === hit.executionId,
+              ),
+              actions: latest.actions.filter(
+                (action) => action.execution_id === hit.executionId,
+              ),
+              toolInvocations: latest.toolInvocations.filter(
+                (invocation) => invocation.execution_id === hit.executionId,
+              ),
+              providerCalls: fixture.providerCalls.length,
+              targetProviderCalls,
+              latestCalls,
+              daemon: fixture.daemonProcessSnapshot(),
+              daemonErrors: fixture.daemonErrors,
+            },
+          )}`,
+        );
+      });
+      activePhase = "step-effects-committed-successor-ready";
       const recoveredTargetActions = recovered.actions.filter(
         (action) => action.execution_id === hit.executionId,
       );
@@ -326,6 +475,7 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
       expect(recoveredTargetArtifacts).toEqual(killedTargetArtifacts);
       expect(targetProviderCalls).toBe(1);
       expect(fixture.daemonErrors).toEqual([]);
+      activePhase = "final-assertions-passed";
     },
     120_000,
   );
