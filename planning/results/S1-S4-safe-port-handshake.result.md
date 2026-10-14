@@ -60,3 +60,23 @@ Focused verification after this follow-up:
 - Biome on the five changed TypeScript/JavaScript files — PASS.
 
 The full S1–S4 suite was not rerun for this cleanup-only increment, per scope.
+
+## Shared signal-safe cleanup follow-up
+
+Date: 2026-10-15.
+
+S1–S4 and the production fixture now both use the shared
+`createSignalSafeCleanup` controller for SIGINT/SIGTERM registration,
+interruption diagnostics, one memoized cleanup promise, and visible cleanup
+errors. The conflicting duplicate STARTED fault now sends a second nonce and a
+LISTENING marker with that nonce; the shared parser rejects the duplicate
+instead of accepting the changed identity.
+
+Focused verification after this follow-up:
+
+- `production-fixture-port-handshake.functional.test.ts` — PASS, 11/11.
+- `pnpm typecheck` with `GOMAXPROCS=2` — PASS.
+- Biome on the five changed TypeScript/JavaScript files — PASS.
+- `git diff --check` — PASS.
+
+The complete S1–S4 suite was not rerun for this focused B1 change.

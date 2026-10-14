@@ -17,6 +17,7 @@ import {
   childExitDiagnostic,
   childHasExited,
   closeServerBounded,
+  createSignalSafeCleanup,
   stopChildBounded,
   waitForDaemonListening,
 } from "../../functional/support/daemon-process-lifecycle.js";
@@ -676,79 +677,69 @@ let rootSessionId: string;
 let childWorkspaceId: string;
 let workId: string;
 const memoryCode = `BB-MEMORY-${randomUUID().slice(0, 8).toUpperCase()}`;
-let cleanupPromise: Promise<void> | undefined;
+let cleanupController: ReturnType<typeof createSignalSafeCleanup> | undefined;
 let primaryTestErrors: ReadonlyArray<unknown> = [];
-
-const cleanupOnSignal = (signal: "SIGINT" | "SIGTERM") => {
-  daemonLifecycleDiagnostics.push(
-    `scenario interrupted by ${signal}; bounded cleanup requested`,
-  );
-  void cleanupScenario().catch((error: unknown) => {
-    daemonErrors.push(
-      `signal cleanup failed: ${error instanceof Error ? error.message : String(error)}; ${processSnapshot(daemon)}`,
-    );
-  });
-};
-const onSigint = () => cleanupOnSignal("SIGINT");
-const onSigterm = () => cleanupOnSignal("SIGTERM");
 
 beforeAll(async () => {
   databaseFactory = await createSchema42TestDatabaseFactory();
 }, 120_000);
 
-const cleanupScenario = () => {
-  if (cleanupPromise !== undefined) return cleanupPromise;
-  cleanupPromise = (async () => {
-    process.removeListener("SIGINT", onSigint);
-    process.removeListener("SIGTERM", onSigterm);
-    const failures: Array<unknown> = [];
-    try {
-      await stopDaemon(daemon);
-    } catch (error) {
-      failures.push(error);
-    }
-    try {
-      if (provider !== undefined) {
-        await closeServerBounded(provider.server);
-        daemonLifecycleDiagnostics.push(
-          `provider stop completed: port=${provider.port}; listening=${provider.server.listening}`,
-        );
-      }
-    } catch (error) {
-      const diagnostic = `provider stop failed; port=${String(provider?.port)}; ${error instanceof Error ? error.message : String(error)}`;
-      daemonErrors.push(diagnostic);
-      failures.push(new Error(diagnostic, { cause: error }));
-    }
-    try {
-      databaseFixture?.cleanup();
-    } catch (error) {
-      failures.push(error);
-    }
-    try {
-      if (directory !== undefined) {
-        rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
-      }
-    } catch (error) {
-      failures.push(error);
-    }
-    if (failures.length > 0) {
-      throw new AggregateError(
-        failures,
-        `black-box scenario cleanup failed; ${processSnapshot(daemon)}`,
+const cleanupScenarioBody = async () => {
+  const failures: Array<unknown> = [];
+  try {
+    await stopDaemon(daemon);
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    if (provider !== undefined) {
+      await closeServerBounded(provider.server);
+      daemonLifecycleDiagnostics.push(
+        `provider stop completed: port=${provider.port}; listening=${provider.server.listening}`,
       );
     }
-  })();
-  return cleanupPromise;
+  } catch (error) {
+    const diagnostic = `provider stop failed; port=${String(provider?.port)}; ${error instanceof Error ? error.message : String(error)}`;
+    daemonErrors.push(diagnostic);
+    failures.push(new Error(diagnostic, { cause: error }));
+  }
+  try {
+    databaseFixture?.cleanup();
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    if (directory !== undefined) {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
+    }
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `black-box scenario cleanup failed; ${processSnapshot(daemon)}`,
+    );
+  }
 };
 
+const cleanupScenario = () => cleanupController?.stop() ?? Promise.resolve();
+
 beforeEach(async (context) => {
-  cleanupPromise = undefined;
   primaryTestErrors = [];
   context.onTestFailed(({ task }) => {
     primaryTestErrors = task.result?.errors ?? [];
   });
-  process.once("SIGINT", onSigint);
-  process.once("SIGTERM", onSigterm);
+  cleanupController = createSignalSafeCleanup(cleanupScenarioBody, {
+    onInterrupted: (signal) =>
+      daemonLifecycleDiagnostics.push(
+        `scenario interrupted by ${signal}; bounded cleanup requested`,
+      ),
+    onFailure: (signal, error) =>
+      daemonErrors.push(
+        `signal cleanup failed after ${signal}: ${error instanceof Error ? error.message : String(error)}; ${processSnapshot(daemon)}`,
+      ),
+  });
   try {
     daemonErrors.length = 0;
     daemonLifecycleDiagnostics.length = 0;
