@@ -34,8 +34,12 @@ a pending intent it compares the preserved invocation ID and every immutable
 P4 binding column: execution/workspace, tool name/version, arguments, resolved
 regions, approval ID, side-effect semantics, and intent time. A P4 row already
 settled Success at crash time must remain byte-for-byte equal after recovery.
-The crash snapshot's mutable effect-admission and settlement fields are checked
-against the per-boundary state table. This proves durable row/result/artifact
+At the crash snapshot, the P4 row-count assertion uses the raw `SELECT *` rows;
+the per-boundary settlement assertions use the durable snapshot projection of
+`settled_at`, `settlement_kind`, and `result_ref`. Pending rows require those
+projected values to be null; committed rows require Success/non-null, and
+committed `result_ref` must equal the unique Artifact ID. ToolResult and Artifact
+counts are asserted separately. This proves durable row/result/artifact
 uniqueness; it does not claim the physical ReadOnly executor runs only once,
 since a pending ReadOnly invocation may be executed again during recovery. The
 two pre-settlement cases have a 180-second outer case budget because one run
