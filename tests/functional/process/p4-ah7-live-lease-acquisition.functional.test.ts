@@ -71,6 +71,9 @@ interface ExecutionRow {
 interface PendingExecutableApprovalRow {
   readonly approval_id: string;
   readonly execution_id: string;
+  readonly execution_workspace_id: string;
+  readonly episode_kind: string;
+  readonly episode_ref: string;
   readonly logical_step_no: number;
   readonly repair_attempt: number;
   readonly action_index: number;
@@ -80,9 +83,17 @@ interface PendingExecutableApprovalRow {
   readonly side_effect_semantics: string;
   readonly state: string;
   readonly revision: number;
+  readonly decided_at: string | null;
+  readonly consumed_at: string | null;
+  readonly consumed_by: string | null;
   readonly provider_turn_id: string;
+  readonly bound_logical_step_no: number;
+  readonly bound_repair_attempt: number;
   readonly step_state: string;
+  readonly bound_action_index: number;
+  readonly action_logical_action_id: string;
   readonly action_state: string;
+  readonly action_call_ref: string;
 }
 
 const fixtures: ProductionFixture[] = [];
@@ -376,13 +387,22 @@ const pendingExecutableApproval = (
   try {
     return db
       .prepare(
-        `SELECT ap.approval_id, ap.execution_id, ap.logical_step_no,
+        `SELECT ap.approval_id, ap.execution_id,
+                e.workspace_id AS execution_workspace_id,
+                e.episode_kind, e.episode_ref, ap.logical_step_no,
                 ap.repair_attempt,
                 ap.action_index, ap.logical_action_id, ap.call_ref,
                 ap.tool_invocation_id, ap.side_effect_semantics, ap.state,
-                ap.revision, s.provider_turn_id, s.state AS step_state,
-                a.state AS action_state
+                ap.revision, ap.decided_at, ap.consumed_at, ap.consumed_by,
+                s.provider_turn_id,
+                s.logical_step_no AS bound_logical_step_no,
+                s.repair_attempt AS bound_repair_attempt,
+                s.state AS step_state,
+                a.action_index AS bound_action_index,
+                a.logical_action_id AS action_logical_action_id,
+                a.state AS action_state, a.call_ref AS action_call_ref
            FROM action_approvals ap
+           JOIN executions e ON e.execution_id = ap.execution_id
            JOIN agent_loop_steps s
              ON s.execution_id = ap.execution_id
             AND s.logical_step_no = ap.logical_step_no
@@ -393,10 +413,65 @@ const pendingExecutableApproval = (
             AND a.repair_attempt = ap.repair_attempt
             AND a.action_index = ap.action_index
             AND a.logical_action_id = ap.logical_action_id
+            AND a.call_ref = ap.call_ref
           WHERE ap.approval_id = ? AND ap.route_kind = 'Executable'
-            AND ap.binding_proven = 1`,
+            AND ap.binding_proven = 1 AND a.route_kind = 'Executable'`,
       )
       .get(approvalId) as PendingExecutableApprovalRow | undefined;
+  } finally {
+    db.close();
+  }
+};
+
+const consumedExecutableApprovalSnapshot = (
+  databaseFile: string,
+  approvalId: string,
+): PendingExecutableApprovalRow | undefined => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    db.exec("BEGIN");
+    const row = db
+      .prepare(
+        `SELECT ap.approval_id, ap.execution_id,
+                e.workspace_id AS execution_workspace_id,
+                e.episode_kind, e.episode_ref, ap.logical_step_no,
+                ap.repair_attempt, ap.action_index, ap.logical_action_id,
+                ap.call_ref, ap.tool_invocation_id, ap.side_effect_semantics,
+                ap.state, ap.revision, ap.decided_at, ap.consumed_at,
+                ap.consumed_by, s.provider_turn_id,
+                s.logical_step_no AS bound_logical_step_no,
+                s.repair_attempt AS bound_repair_attempt,
+                s.state AS step_state,
+                a.action_index AS bound_action_index,
+                a.logical_action_id AS action_logical_action_id,
+                a.state AS action_state, a.call_ref AS action_call_ref
+           FROM action_approvals ap
+           JOIN executions e ON e.execution_id = ap.execution_id
+           JOIN agent_loop_steps s
+             ON s.execution_id = ap.execution_id
+            AND s.logical_step_no = ap.logical_step_no
+            AND s.repair_attempt = ap.repair_attempt
+           JOIN agent_loop_step_actions a
+             ON a.execution_id = ap.execution_id
+            AND a.logical_step_no = ap.logical_step_no
+            AND a.repair_attempt = ap.repair_attempt
+            AND a.action_index = ap.action_index
+            AND a.logical_action_id = ap.logical_action_id
+            AND a.call_ref = ap.call_ref
+          WHERE ap.approval_id = ? AND ap.route_kind = 'Executable'
+            AND ap.binding_proven = 1
+            AND a.route_kind = 'Executable'`,
+      )
+      .get(approvalId) as PendingExecutableApprovalRow | undefined;
+    db.exec("COMMIT");
+    return row;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Preserve the original read failure.
+    }
+    throw error;
   } finally {
     db.close();
   }
@@ -680,7 +755,6 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       executionRows(fixture.databaseFile, executionId).invocations,
     ).toEqual([]);
 
-    const approvalResolveStartedAt = Date.now();
     const resolution = await client.command(
       project.projectId,
       "ResolveExecutableApproval",
@@ -692,16 +766,34 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       },
     );
     expect(resolution).toMatchObject({ body: { resolution: "Committed" } });
-    const oldAcquired = await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "old" &&
-            event.boundary === "AH10AfterLeaseAcquired" &&
-            event.executionId === executionId &&
-            Date.parse(event.observedAt) >= approvalResolveStartedAt,
-        ),
-      (event) => event !== undefined,
+    const approvalResume = await waitForPublic(
+      async () => {
+        const persistedApproval = consumedExecutableApprovalSnapshot(
+          fixture.databaseFile,
+          approvalId,
+        );
+        const decidedAt =
+          persistedApproval?.decided_at === null ||
+          persistedApproval?.decided_at === undefined
+            ? Number.NaN
+            : Date.parse(persistedApproval.decided_at);
+        return {
+          approval: persistedApproval,
+          oldAcquired: events.find(
+            (event) =>
+              event.role === "old" &&
+              event.boundary === "AH10AfterLeaseAcquired" &&
+              event.executionId === executionId &&
+              Number.isFinite(decidedAt) &&
+              Date.parse(event.observedAt) >= decidedAt,
+          ),
+        };
+      },
+      (value) =>
+        value.approval?.state === "Consumed" &&
+        value.approval.decided_at !== null &&
+        value.approval.consumed_at !== null &&
+        value.oldAcquired !== undefined,
     ).catch((error: unknown) => {
       const failure = error instanceof Error ? error.message : String(error);
       const evidenceDirectory = resolve(".test-results");
@@ -714,55 +806,98 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
         fixture.databaseFile,
         executionId,
       );
+      const approvalSnapshot = consumedExecutableApprovalSnapshot(
+        fixture.databaseFile,
+        approvalId,
+      );
       const builtinCatalog = events.find(
         (event) => event.boundary === "P4BuiltinCatalogSnapshot",
       );
-      writeFileSync(
-        evidencePath,
-        JSON.stringify(
-          {
-            failure,
-            approvalResolveStartedAt: new Date(
-              approvalResolveStartedAt,
-            ).toISOString(),
-            publicApproval: {
-              approvalId,
-              expectedRevision: approvalRevision,
-              resolution,
-              binding: approval,
-            },
-            currentLease: executionRows(fixture.databaseFile, executionId)
-              .lease,
-            executionSnapshot,
-            derivedCatalog: deriveCatalogSnapshot(
-              executionSnapshot,
-              builtinCatalog,
-            ),
-            shellDefinition: events.find(
-              (event) => event.boundary === "P4ShellDefinitionSnapshot",
-            ),
-            builtinCatalog,
-            catalogProbes: events.filter(
-              (event) => event.boundary === "P4ExecutableCatalogRefs",
-            ),
-            probeEvents: events.slice(0, maximumP4DiagnosticLines),
-            providerTimeline,
-            oldDaemon: fixture.daemonProcessSnapshot(),
-            daemonErrors: fixture.daemonErrors,
-          },
-          null,
-          2,
+      const evidence = {
+        failure,
+        fixtureDirectory: fixture.directory,
+        databaseFile: fixture.databaseFile,
+        targetExecutionId: executionId,
+        persistedApprovalDecision: approvalSnapshot,
+        publicApproval: {
+          approvalId,
+          expectedRevision: approvalRevision,
+          resolution,
+          binding: approval,
+        },
+        currentLease: executionRows(fixture.databaseFile, executionId).lease,
+        executionSnapshot,
+        derivedCatalog: deriveCatalogSnapshot(
+          executionSnapshot,
+          builtinCatalog,
         ),
-        "utf8",
-      );
+        shellDefinition: events.find(
+          (event) => event.boundary === "P4ShellDefinitionSnapshot",
+        ),
+        builtinCatalog,
+        catalogProbes: events.filter(
+          (event) => event.boundary === "P4ExecutableCatalogRefs",
+        ),
+        probeEvents: events.slice(0, maximumP4DiagnosticLines),
+        providerTimeline,
+        oldDaemon: fixture.daemonProcessSnapshot(),
+        daemonErrors: fixture.daemonErrors,
+      };
+      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), "utf8");
+      pendingP4FailureEvidence = {
+        fixture,
+        path: evidencePath,
+        executionId,
+        report: evidence,
+        daemonSnapshots: () => ({
+          old: fixture.daemonProcessSnapshot(),
+          errors: [...fixture.daemonErrors],
+        }),
+      };
       throw new Error(
-        `Old daemon did not expose a lease reacquisition after executable approval request began; failureEvidence=${evidencePath}`,
+        `Old daemon did not reacquire the approved Execution at or after the persisted executable approval decision; failureEvidence=${evidencePath}`,
         { cause: error },
       );
     });
-    if (oldAcquired === undefined) {
+    const consumedApproval = approvalResume.approval;
+    const oldAcquired = approvalResume.oldAcquired;
+    if (consumedApproval === undefined || oldAcquired === undefined) {
       throw new Error(
-        "Old daemon did not reacquire the approved Execution after public resolution",
+        "P4 approval resume wait returned no exact approval/probe",
+      );
+    }
+    expect(consumedApproval).toMatchObject({
+      approval_id: approvalId,
+      execution_id: executionId,
+      execution_workspace_id: project.rootWorkspaceId,
+      episode_kind: "WorkEpisode",
+      episode_ref: currentWork.workId,
+      logical_step_no: approval.logical_step_no,
+      repair_attempt: approval.repair_attempt,
+      action_index: approval.action_index,
+      bound_logical_step_no: approval.logical_step_no,
+      bound_repair_attempt: approval.repair_attempt,
+      bound_action_index: approval.action_index,
+      logical_action_id: approval.logical_action_id,
+      action_logical_action_id: approval.logical_action_id,
+      call_ref: approval.call_ref,
+      action_call_ref: approval.call_ref,
+      tool_invocation_id: approval.tool_invocation_id,
+      provider_turn_id: approval.provider_turn_id,
+      side_effect_semantics: "NonIdempotent",
+      state: "Consumed",
+      revision: approvalRevision + 2,
+      consumed_by: approval.tool_invocation_id,
+    });
+    if (consumedApproval.decided_at === null) {
+      throw new Error(
+        `P4 approval ${approvalId} has no persisted decision timestamp`,
+      );
+    }
+    const approvalDecidedAt = Date.parse(consumedApproval.decided_at);
+    if (!Number.isFinite(approvalDecidedAt)) {
+      throw new Error(
+        `P4 approval ${approvalId} has invalid decided_at ${consumedApproval.decided_at}`,
       );
     }
 
