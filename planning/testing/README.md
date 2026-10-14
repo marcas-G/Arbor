@@ -6,8 +6,8 @@
 |---|---|---|
 | `pnpm test:functional:quick` / `pnpm test:quick` | Three named module tests plus root/Web build and Web typecheck | Focused L1 check only |
 | `pnpm test:functional:smoke` / `pnpm test:smoke` | S1–S4, three named public journeys, and safe daemon-startup handshake | Selected smoke evidence only |
-| `pnpm test:crash-sentinels` | Curated process, lease, and provider handoff sentinels | Named sentinels only; not all AH10 handlers or AH1–AH19 qualification |
-| `pnpm test:package` | Clean committed-checkout F20 case | Package boundary only |
+| `pnpm test:functional:crash-sentinels` / `pnpm test:crash-sentinels` | Curated process, lease, and provider handoff sentinels | Named sentinels only; not all AH10 handlers or AH1–AH19 qualification |
+| `pnpm test:functional:package` / `pnpm test:package` | Clean committed-checkout F20 case | Package boundary only |
 | `pnpm test:ui` | All six configured browser files | Browser suite only |
 | `pnpm test:functional` / `pnpm test:release` / `pnpm test:all` | All 48 configured Vitest files and all 6 UI files | Full configured deterministic functional inventory |
 
