@@ -12,6 +12,9 @@ import {
 import { Principal, parse } from "../../../packages/domain/dist/index.js";
 import { runExecution } from "../../../packages/execution-runtime/dist/index.js";
 import { SHELL_DEFINITION } from "../../../packages/tool-runtime/dist/catalog.js";
+import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
+
+const onWebTransportListening = createFunctionalDaemonListenReporter();
 
 const role = process.env.ARBOR_P4_FENCE_ROLE;
 if (role !== "old" && role !== "new") {
@@ -121,6 +124,7 @@ const config = {
     port,
     host: "127.0.0.1",
   },
+  onWebTransportListening,
   toolQualificationProbe,
   executionLeaseQualificationProbe,
 };

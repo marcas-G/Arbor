@@ -3,6 +3,9 @@ import {
   main,
   runDaemonForever,
 } from "../../../apps/single-workspace/dist/main.js";
+import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
+
+const onWebTransportListening = createFunctionalDaemonListenReporter();
 
 const targetBoundary = process.env.ARBOR_AH17_BOUNDARY;
 if (
@@ -25,6 +28,7 @@ const config = {
     port: Number(process.env.ARBOR_HTTP_PORT),
     host: "127.0.0.1",
   },
+  onWebTransportListening,
   qualificationProbe,
 };
 

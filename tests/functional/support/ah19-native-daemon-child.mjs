@@ -15,6 +15,10 @@ const [ports, effect, composition, app] = await Promise.all([
   load("../../../apps/single-workspace/dist/composition.js"),
   load("../../../apps/single-workspace/dist/main.js"),
 ]);
+const { createFunctionalDaemonListenReporter } = await import(
+  "./functional-daemon-lifecycle.mjs"
+);
+const onWebTransportListening = createFunctionalDaemonListenReporter();
 const { ProviderPort } = ports;
 const { resolvedModelBindingFingerprint, resolveModelBinding } = ports;
 const { Effect, Layer, Stream } = effect;
@@ -454,6 +458,7 @@ const config = {
     port: Number(process.env.ARBOR_HTTP_PORT),
     host: "127.0.0.1",
   },
+  onWebTransportListening,
   qualificationProbe: async (event) => {
     if (event.boundary === "AH19NativeCheckpointRecovery") {
       process.stdout.write(

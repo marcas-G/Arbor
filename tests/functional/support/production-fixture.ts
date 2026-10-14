@@ -83,10 +83,12 @@ export interface ProductionFixture {
   } | null;
   readonly crash: () => Promise<void>;
   readonly restart: (options?: {
+    /** Custom entries must emit the PID/nonce/listening handshake. */
     readonly entry?: string;
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
   }) => Promise<void>;
   readonly startAdditionalDaemon: (options: {
+    /** Custom entries must emit the PID/nonce/listening handshake. */
     readonly entry: string;
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
     readonly onStdout?: (line: string) => void;
@@ -99,21 +101,7 @@ export interface ProductionFixture {
   readonly stop: () => Promise<void>;
 }
 
-const freePort = () =>
-  new Promise<number>((resolvePort) => {
-    const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port =
-        typeof address === "object" && address !== null ? address.port : -1;
-      server.close(() => resolvePort(port));
-    });
-  });
-
-const waitForNonceBoundPort = (
-  child: ChildProcess,
-  onLine?: (line: string) => void,
-): Promise<number> =>
+const waitForNonceBoundPort = (child: ChildProcess): Promise<number> =>
   new Promise<number>((resolvePort, rejectPort) => {
     let settled = false;
     let startedNonce: string | undefined;
@@ -143,7 +131,6 @@ const waitForNonceBoundPort = (
       });
     const readLine = (line: string) => {
       if (line.length === 0) return;
-      onLine?.(line);
       let event: {
         readonly tag?: unknown;
         readonly nonce?: unknown;
@@ -473,12 +460,12 @@ export const startProductionFixture = async (input: {
   readonly admitWorkspaceDirectory?: boolean;
   /** Preserve isolated DB/process diagnostics after the test fixture is stopped. */
   readonly preserveDirectoryOnStop?: boolean;
-  /** Test-only entrypoint for the first daemon incarnation. Restarts use the
-   * ordinary production binary so recovery is never run with a fault hook. */
+  /** Test-only entrypoint for the first daemon incarnation. It must emit the
+   * PID/nonce/listening handshake. Restarts default to the ordinary production
+   * binary so recovery is never run with a fault hook. */
   readonly firstDaemonEntry?: string;
-  /** Opt in to an OS-selected port and a child-PID/nonce-bound listen report.
-   * This first-wave path supports the ordinary daemon entry; custom crash
-   * children remain on the legacy startup path until migrated explicitly. */
+  /** Deprecated compatibility flag. All fixture daemons now use an
+   * OS-selected port and a child-PID/nonce-bound listen report. */
   readonly isolatedPortHandshake?: boolean;
   readonly daemonEnvironment?: Readonly<Record<string, string>>;
   readonly onDaemonStdout?: (line: string) => void;
@@ -525,7 +512,7 @@ export const startProductionFixture = async (input: {
     throw new Error("Functional provider did not start.");
   }
   const activeProvider = provider;
-  let httpPort = input.isolatedPortHandshake === true ? 0 : await freePort();
+  let httpPort = 0;
   let baseUrl = `http://127.0.0.1:${httpPort}`;
   const daemonErrors: string[] = [];
   const recordDaemonError = (message: string) => {
@@ -554,8 +541,7 @@ export const startProductionFixture = async (input: {
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
   }) => {
     const isFirstDaemon = daemonStarts === 0;
-    const requestedPort =
-      input.isolatedPortHandshake === true && isFirstDaemon ? 0 : httpPort;
+    const requestedPort = isFirstDaemon ? 0 : httpPort;
     const daemonEnv: NodeJS.ProcessEnv = {
       ...process.env,
       ARBOR_DB: databaseFile,
@@ -578,46 +564,37 @@ export const startProductionFixture = async (input: {
     }
     delete daemonEnv.FORCE_COLOR;
     delete daemonEnv.NO_COLOR;
+    const requestedEntry =
+      override?.entry ??
+      (isFirstDaemon && input.firstDaemonEntry !== undefined
+        ? input.firstDaemonEntry
+        : DAEMON_ENTRY);
     const entry =
-      input.isolatedPortHandshake === true
-        ? (override?.entry ??
-          (isFirstDaemon && input.firstDaemonEntry !== undefined
-            ? input.firstDaemonEntry
-            : NONCE_DAEMON_ENTRY))
-        : (override?.entry ??
-          (isFirstDaemon && input.firstDaemonEntry !== undefined
-            ? input.firstDaemonEntry
-            : DAEMON_ENTRY));
+      resolve(requestedEntry) === DAEMON_ENTRY
+        ? NONCE_DAEMON_ENTRY
+        : requestedEntry;
     daemonStarts += 1;
     daemon = spawn(process.execPath, [entry], {
       cwd: directory,
       env: daemonEnv,
-      stdio: [
-        "ignore",
-        input.isolatedPortHandshake === true || input.onDaemonStdout
-          ? "pipe"
-          : "ignore",
-        "pipe",
-      ],
+      stdio: ["ignore", "pipe", "pipe"],
     });
     lastDaemonLaunch = {
       child: daemon,
       requestedPort,
       environmentKeys: Object.keys(daemonEnv).sort(),
     };
-    if (input.isolatedPortHandshake !== true) {
-      let stdoutBuffer = "";
-      daemon.stdout?.on("data", (chunk: Buffer) => {
-        stdoutBuffer += chunk.toString("utf8");
-        let newline = stdoutBuffer.indexOf("\n");
-        while (newline >= 0) {
-          const line = stdoutBuffer.slice(0, newline).trim();
-          stdoutBuffer = stdoutBuffer.slice(newline + 1);
-          if (line.length > 0) input.onDaemonStdout?.(line);
-          newline = stdoutBuffer.indexOf("\n");
-        }
-      });
-    }
+    let stdoutBuffer = "";
+    daemon.stdout?.on("data", (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString("utf8");
+      let newline = stdoutBuffer.indexOf("\n");
+      while (newline >= 0) {
+        const line = stdoutBuffer.slice(0, newline).trim();
+        stdoutBuffer = stdoutBuffer.slice(newline + 1);
+        if (line.length > 0) input.onDaemonStdout?.(line);
+        newline = stdoutBuffer.indexOf("\n");
+      }
+    });
     daemon.stderr?.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8").trim();
       if (text.length > 0 && !text.includes("ExperimentalWarning")) {
@@ -627,18 +604,16 @@ export const startProductionFixture = async (input: {
     daemon.on("error", (error) => {
       recordDaemonError(`spawn error=${error.message}`);
     });
-    if (input.isolatedPortHandshake === true) {
-      try {
-        httpPort = await waitForNonceBoundPort(daemon, input.onDaemonStdout);
-      } catch (error) {
-        await stopChild(daemon);
-        throw new Error(
-          `functional daemon startup handshake failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon.exitCode)}; signal=${String(daemon.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}`,
-          { cause: error },
-        );
-      }
-      baseUrl = `http://127.0.0.1:${httpPort}`;
+    try {
+      httpPort = await waitForNonceBoundPort(daemon);
+    } catch (error) {
+      await stopChild(daemon);
+      throw new Error(
+        `functional daemon startup handshake failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon.exitCode)}; signal=${String(daemon.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}`,
+        { cause: error },
+      );
     }
+    baseUrl = `http://127.0.0.1:${httpPort}`;
     try {
       await waitFor(
         () => fetch(baseUrl),
@@ -702,8 +677,7 @@ export const startProductionFixture = async (input: {
       await startDaemon(override);
     },
     startAdditionalDaemon: async (options) => {
-      let additionalPort =
-        input.isolatedPortHandshake === true ? 0 : await freePort();
+      let additionalPort = 0;
       let additionalBaseUrl = `http://127.0.0.1:${additionalPort}`;
       const additionalErrors: string[] = [];
       const daemonEnv: NodeJS.ProcessEnv = {
@@ -729,7 +703,6 @@ export const startProductionFixture = async (input: {
       delete daemonEnv.FORCE_COLOR;
       delete daemonEnv.NO_COLOR;
       const childEntry =
-        input.isolatedPortHandshake === true &&
         resolve(options.entry) === DAEMON_ENTRY
           ? NONCE_DAEMON_ENTRY
           : options.entry;
@@ -739,19 +712,17 @@ export const startProductionFixture = async (input: {
         stdio: ["ignore", "pipe", "pipe"],
       });
       additionalDaemons.push(child);
-      if (input.isolatedPortHandshake !== true) {
-        let stdoutBuffer = "";
-        child.stdout?.on("data", (chunk: Buffer) => {
-          stdoutBuffer += chunk.toString("utf8");
-          let newline = stdoutBuffer.indexOf("\n");
-          while (newline >= 0) {
-            const line = stdoutBuffer.slice(0, newline).trim();
-            stdoutBuffer = stdoutBuffer.slice(newline + 1);
-            if (line.length > 0) options.onStdout?.(line);
-            newline = stdoutBuffer.indexOf("\n");
-          }
-        });
-      }
+      let stdoutBuffer = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        stdoutBuffer += chunk.toString("utf8");
+        let newline = stdoutBuffer.indexOf("\n");
+        while (newline >= 0) {
+          const line = stdoutBuffer.slice(0, newline).trim();
+          stdoutBuffer = stdoutBuffer.slice(newline + 1);
+          if (line.length > 0) options.onStdout?.(line);
+          newline = stdoutBuffer.indexOf("\n");
+        }
+      });
       child.stderr?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf8").trim();
         if (text.length > 0 && !text.includes("ExperimentalWarning")) {
@@ -765,10 +736,8 @@ export const startProductionFixture = async (input: {
         additionalErrors.push(`spawn error=${error.message}`);
       });
       try {
-        if (input.isolatedPortHandshake === true) {
-          additionalPort = await waitForNonceBoundPort(child, options.onStdout);
-          additionalBaseUrl = `http://127.0.0.1:${additionalPort}`;
-        }
+        additionalPort = await waitForNonceBoundPort(child);
+        additionalBaseUrl = `http://127.0.0.1:${additionalPort}`;
         await waitFor(
           () => fetch(additionalBaseUrl),
           (response) => response.ok && child.exitCode === null,
