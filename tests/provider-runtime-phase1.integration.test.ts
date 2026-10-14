@@ -2,7 +2,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect, Clock as EffectClock, Exit, Fiber, Layer } from "effect";
+import {
+  Duration,
+  Effect,
+  Clock as EffectClock,
+  Exit,
+  Fiber,
+  Layer,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -212,12 +219,13 @@ const makeHarness = (
   policy: ProviderRuntimeExecutionPolicy = SEMANTIC_TEST_POLICY,
   options: {
     readonly controlledClock?: boolean;
-    readonly onClockSleep?: () => void;
+    readonly onClockSleep?: (durationMs: number, sequence: number) => void;
   } = {},
 ) => {
   const root = mkdtempSync(join(tmpdir(), "provider-runtime-phase1-"));
   const databaseFile = join(root, "provider.db");
   const base = layer({ filename: databaseFile });
+  let clockSleepSequence = 0;
   const controlledClock = options.controlledClock
     ? Layer.provideMerge(
         Layer.effect(
@@ -227,7 +235,11 @@ const makeHarness = (
             return {
               ...clock,
               sleep: (duration: Parameters<typeof clock.sleep>[0]) => {
-                options.onClockSleep?.();
+                clockSleepSequence += 1;
+                options.onClockSleep?.(
+                  Duration.toMillis(duration),
+                  clockSleepSequence,
+                );
                 return clock.sleep(duration);
               },
             };
@@ -1395,9 +1407,30 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
   ] as const)(
     "%s timeout aborts the Adapter and has a distinct durable terminal outcome",
     async (_label, mode, phase) => {
-      const sdkDispatched = deferred<AbortSignal>();
-      const phaseStarted = deferred<AbortSignal>();
-      const timeoutRegistered = deferred();
+      const sdkDispatched = deferred<{
+        readonly signal: AbortSignal;
+        readonly order: number;
+      }>();
+      const phaseStarted = deferred<{
+        readonly signal: AbortSignal;
+        readonly stage: string;
+        readonly order: number;
+      }>();
+      const timeoutRegistered = deferred<{
+        readonly durationMs: number;
+        readonly sequence: number;
+        readonly stage: string;
+        readonly order: number;
+      }>();
+      const sleepRegistrations: Array<{
+        readonly durationMs: number;
+        readonly sequence: number;
+        readonly stage: string;
+        readonly order: number;
+      }> = [];
+      let order = 0;
+      let stage = "pre-dispatch";
+      let controlledTime = 0;
       let adapterCalls = 0;
       const policy: ProviderRuntimeExecutionPolicy = {
         connectTimeoutMs: mode === "connect" ? 35 : 400,
@@ -1407,25 +1440,74 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
         maxAttempts: 2,
         retryBackoffMs: 0,
       };
+      const timerExpectation =
+        phase === "ConnectTimeout"
+          ? {
+              durationMs: policy.connectTimeoutMs,
+              sequence: 1,
+              stage: "connect-wait",
+            }
+          : phase === "FirstEventTimeout"
+            ? {
+                durationMs: policy.firstEventTimeoutMs,
+                sequence: 2,
+                stage: "response-started",
+              }
+            : phase === "StreamIdleTimeout"
+              ? {
+                  durationMs: policy.streamIdleTimeoutMs,
+                  sequence: 3,
+                  stage: "text-delta",
+                }
+              : {
+                  durationMs: policy.turnTimeoutMs,
+                  sequence: 1,
+                  stage: "sdk-dispatched",
+                };
       const harness = makeHarness(
         client({
           onCall: ({ context }) => {
             adapterCalls += 1;
-            sdkDispatched.resolve(context.cancellationSignal as AbortSignal);
+            stage = "sdk-dispatched";
+            sdkDispatched.resolve({
+              signal: context.cancellationSignal as AbortSignal,
+              order: ++order,
+            });
           },
           stream: async function* ({ context }) {
             if (mode !== "connect") yield { type: "response_started" };
+            if (mode !== "connect") stage = "response-started";
             if (mode === "stream-idle") {
               yield { type: "text", text: "first data" };
+              stage = "text-delta";
             }
-            phaseStarted.resolve(context.cancellationSignal as AbortSignal);
+            if (mode === "connect") stage = "connect-wait";
+            phaseStarted.resolve({
+              signal: context.cancellationSignal as AbortSignal,
+              stage,
+              order: ++order,
+            });
             await waitForSignal(context.cancellationSignal as AbortSignal);
           },
         }),
         policy,
         {
           controlledClock: true,
-          onClockSleep: () => timeoutRegistered.resolve(),
+          onClockSleep: (durationMs, sequence) => {
+            const registration = {
+              durationMs,
+              sequence,
+              stage,
+              order: ++order,
+            };
+            sleepRegistrations.push(registration);
+            if (
+              registration.durationMs === timerExpectation.durationMs &&
+              registration.stage === timerExpectation.stage
+            ) {
+              timeoutRegistered.resolve(registration);
+            }
+          },
         },
       );
       try {
@@ -1433,34 +1515,72 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
           Effect.gen(function* () {
             yield* runMigrations(P16_MIGRATIONS);
             yield* seed;
-            yield* TestClock.setTime(Date.now());
+            controlledTime = Date.now();
+            yield* TestClock.setTime(controlledTime);
             const fiber = yield* Effect.forkChild(Effect.flip(runtimeEffect()));
-            const adapterSignal = yield* Effect.promise(() =>
-              withWatchdog(sdkDispatched.promise, "provider SDK dispatch"),
-            );
-            const phaseSignal = yield* Effect.promise(() =>
-              withWatchdog(phaseStarted.promise, "provider timeout phase"),
-            );
-            expect(phaseSignal).toBe(adapterSignal);
-            yield* Effect.promise(() =>
-              withWatchdog(timeoutRegistered.promise, "timeout registration"),
-            );
-            expect(readAttempt(harness.databaseFile)).toMatchObject({
-              outcome: "InProgress",
-            });
-            const timeoutMs =
-              phase === "ConnectTimeout"
-                ? policy.connectTimeoutMs
-                : phase === "FirstEventTimeout"
-                  ? policy.firstEventTimeoutMs
-                  : phase === "StreamIdleTimeout"
-                    ? policy.streamIdleTimeoutMs
-                    : policy.turnTimeoutMs;
-            yield* TestClock.adjust(timeoutMs + 1);
-            return {
-              result: yield* Fiber.join(fiber),
-              adapterSignal,
-            };
+            try {
+              const dispatch = yield* Effect.promise(() =>
+                withWatchdog(sdkDispatched.promise, "provider SDK dispatch"),
+              );
+              const phaseHandshake = yield* Effect.promise(() =>
+                withWatchdog(phaseStarted.promise, "provider timeout phase"),
+              );
+              expect(phaseHandshake.signal).toBe(dispatch.signal);
+              expect(dispatch.order).toBeLessThan(phaseHandshake.order);
+              const timer = yield* Effect.promise(() =>
+                withWatchdog(timeoutRegistered.promise, "timeout registration"),
+              );
+              if (phase === "TurnDeadline") {
+                expect(dispatch.order).toBeLessThan(timer.order);
+                const turnDeadlineAt = readTurn(
+                  harness.databaseFile,
+                )?.turn_deadline_at;
+                expect(turnDeadlineAt).toBeDefined();
+                expect(Date.parse(turnDeadlineAt as string)).toBe(
+                  controlledTime + policy.turnTimeoutMs,
+                );
+              } else {
+                expect(phaseHandshake.order).toBeLessThan(timer.order);
+              }
+              expect(readAttempt(harness.databaseFile)).toMatchObject({
+                outcome: "InProgress",
+              });
+              expect(readTurn(harness.databaseFile)?.finish_reason).toBeNull();
+              expect(dispatch.signal.aborted).toBe(false);
+              expect(
+                sleepRegistrations.filter(
+                  (registration) =>
+                    registration.sequence === timerExpectation.sequence &&
+                    registration.durationMs === timerExpectation.durationMs &&
+                    registration.stage === timerExpectation.stage,
+                ),
+              ).toHaveLength(1);
+              yield* TestClock.adjust(timerExpectation.durationMs + 1);
+              const joined = yield* Effect.raceFirst(
+                Fiber.join(fiber),
+                Effect.callback<never, Error>((resume) => {
+                  const timer = setTimeout(
+                    () =>
+                      resume(
+                        Effect.fail(
+                          new Error(
+                            "Timed out waiting for provider runtime join after timeout",
+                          ),
+                        ),
+                      ),
+                    5_000,
+                  );
+                  return Effect.sync(() => clearTimeout(timer));
+                }),
+              );
+              expect(timer).toMatchObject(timerExpectation);
+              return {
+                result: joined,
+                adapterSignal: dispatch.signal,
+              };
+            } finally {
+              yield* Fiber.interrupt(fiber);
+            }
           }),
         )) as {
           readonly result: { readonly _tag: string; readonly phase?: string };
