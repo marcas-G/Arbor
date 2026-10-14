@@ -851,6 +851,7 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       throw error;
     });
     fixtures.push(fixture);
+    expect(daemonReadyEvents).toHaveLength(1);
     expect(daemonReadyEvents[0]).toMatchObject({
       tag: "FUNCTIONAL_DAEMON_LISTENING",
       pid: fixture.daemonProcessSnapshot()?.pid,
