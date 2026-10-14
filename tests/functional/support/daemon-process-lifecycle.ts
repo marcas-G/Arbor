@@ -302,3 +302,40 @@ export const closeServerBounded = async (
     throw error;
   }
 };
+
+export interface SignalSafeCleanup {
+  readonly stop: () => Promise<void>;
+  readonly dispose: () => void;
+}
+
+export const createSignalSafeCleanup = (
+  cleanup: () => Promise<void>,
+  options: {
+    readonly onInterrupted: (signal: "SIGINT" | "SIGTERM") => void;
+    readonly onFailure: (signal: "SIGINT" | "SIGTERM", error: unknown) => void;
+  },
+): SignalSafeCleanup => {
+  let cleanupPromise: Promise<void> | undefined;
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigterm);
+  };
+  const stop = () => {
+    if (cleanupPromise !== undefined) return cleanupPromise;
+    dispose();
+    cleanupPromise = Promise.resolve().then(cleanup);
+    return cleanupPromise;
+  };
+  const onSignal = (signal: "SIGINT" | "SIGTERM") => {
+    options.onInterrupted(signal);
+    void stop().catch((error: unknown) => options.onFailure(signal, error));
+  };
+  const onSigint = () => onSignal("SIGINT");
+  const onSigterm = () => onSignal("SIGTERM");
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
+  return { stop, dispose };
+};

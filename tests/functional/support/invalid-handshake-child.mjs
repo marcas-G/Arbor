@@ -13,11 +13,12 @@ if (mode === "early-exit") {
 }
 
 if (mode === "duplicate-started") {
+  const conflictingNonce = randomUUID();
   process.stdout.write(
     `${[
       ["FUNCTIONAL_DAEMON_STARTED", nonce, process.pid],
-      ["FUNCTIONAL_DAEMON_STARTED", nonce, process.pid],
-      ["FUNCTIONAL_DAEMON_LISTENING", nonce, process.pid, 43210],
+      ["FUNCTIONAL_DAEMON_STARTED", conflictingNonce, process.pid],
+      ["FUNCTIONAL_DAEMON_LISTENING", conflictingNonce, process.pid, 43210],
     ]
       .map(([tag, eventNonce, pid, port]) =>
         JSON.stringify({

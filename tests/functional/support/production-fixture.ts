@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import {
   childHasExited,
   closeServerBounded,
+  createSignalSafeCleanup,
   stopChildBounded as stopChild,
   waitForDaemonListening as waitForNonceBoundPort,
 } from "./daemon-process-lifecycle.js";
@@ -449,7 +450,7 @@ export const startProductionFixture = async (input: {
         readonly environmentKeys: ReadonlyArray<string>;
       }
     | undefined;
-  let stopPromise: Promise<void> | undefined;
+  let signalSafeCleanup: ReturnType<typeof createSignalSafeCleanup> | undefined;
   let daemonStarts = 0;
 
   const startDaemon = async (override?: {
@@ -710,65 +711,51 @@ export const startProductionFixture = async (input: {
         crash: () => stopChild(child),
       };
     },
-    stop: () => {
-      if (stopPromise !== undefined) return stopPromise;
-      process.removeListener("SIGINT", stopOnInterrupt);
-      process.removeListener("SIGTERM", stopOnTerminate);
-      stopPromise = (async () => {
-        const failures: Array<unknown> = [];
-        for (const child of [daemon, ...additionalDaemons]) {
-          try {
-            await stopChild(child);
-          } catch (error) {
-            const diagnostic = `daemon cleanup failed: ${error instanceof Error ? error.message : String(error)}; ${child === undefined ? "pid=undefined" : `pid=${String(child.pid)} exitCode=${String(child.exitCode)} signal=${String(child.signalCode)}`}`;
-            recordDaemonError(diagnostic);
-            failures.push(new Error(diagnostic, { cause: error }));
-          }
-        }
+    stop: () => signalSafeCleanup?.stop() ?? Promise.resolve(),
+  };
+  signalSafeCleanup = createSignalSafeCleanup(
+    async () => {
+      const failures: Array<unknown> = [];
+      for (const child of [daemon, ...additionalDaemons]) {
         try {
-          await closeServerBounded(activeProvider.server);
+          await stopChild(child);
         } catch (error) {
-          const diagnostic = `provider cleanup failed: port=${activeProvider.port}; ${error instanceof Error ? error.message : String(error)}`;
+          const diagnostic = `daemon cleanup failed: ${error instanceof Error ? error.message : String(error)}; ${child === undefined ? "pid=undefined" : `pid=${String(child.pid)} exitCode=${String(child.exitCode)} signal=${String(child.signalCode)}`}`;
           recordDaemonError(diagnostic);
           failures.push(new Error(diagnostic, { cause: error }));
         }
-        try {
-          if (input.preserveDirectoryOnStop !== true) {
-            removeFunctionalFixtureDirectory(directory);
-          }
-        } catch (error) {
-          failures.push(error);
+      }
+      try {
+        await closeServerBounded(activeProvider.server);
+      } catch (error) {
+        const diagnostic = `provider cleanup failed: port=${activeProvider.port}; ${error instanceof Error ? error.message : String(error)}`;
+        recordDaemonError(diagnostic);
+        failures.push(new Error(diagnostic, { cause: error }));
+      }
+      try {
+        if (input.preserveDirectoryOnStop !== true) {
+          removeFunctionalFixtureDirectory(directory);
         }
-        if (failures.length > 0) {
-          throw new AggregateError(
-            failures,
-            `production fixture stop failed; daemon=${daemonErrorSummary() || "<empty>"}`,
-          );
-        }
-      })();
-      return stopPromise;
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(
+          failures,
+          `production fixture stop failed; daemon=${daemonErrorSummary() || "<empty>"}`,
+        );
+      }
     },
-  };
-  const stopOnSignal = () => {
-    void fixture.stop().catch((error: unknown) => {
-      recordDaemonError(
-        `interrupted fixture cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
-  };
-  const stopOnInterrupt = () => {
-    recordDaemonError(
-      "fixture interrupted by SIGINT; bounded cleanup requested",
-    );
-    stopOnSignal();
-  };
-  const stopOnTerminate = () => {
-    recordDaemonError(
-      "fixture interrupted by SIGTERM; bounded cleanup requested",
-    );
-    stopOnSignal();
-  };
-  process.once("SIGINT", stopOnInterrupt);
-  process.once("SIGTERM", stopOnTerminate);
+    {
+      onInterrupted: (signal) =>
+        recordDaemonError(
+          `fixture interrupted by ${signal}; bounded cleanup requested`,
+        ),
+      onFailure: (signal, error) =>
+        recordDaemonError(
+          `interrupted fixture cleanup failed after ${signal}: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+    },
+  );
   return fixture;
 };
