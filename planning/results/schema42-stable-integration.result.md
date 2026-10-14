@@ -464,3 +464,48 @@ Biome and `git diff --check` passed. A single grep-scoped Playwright run on
 PASS; no failure trace is expected for this passing run. The rest of the UI
 profile was not run, so this is focused evidence only, not a UI-profile or
 release qualification.
+
+## P4/P39 approved-action digest integration
+
+Integrated independently reviewed commit `fd45aa24` as `3d1a0a1e` on
+`53220f47`. The exact commit patch touched the RecoveryBinding/P39 store and
+claim tests, executable-handler qualification probes, the P4 live-lease test
+and child, and scheduler-candidate diagnostics. It did not change any
+`packages/agent-runtime` file; the lease fork/join refactor was not included.
+The current runner/P9/UI files remain unchanged by this commit. No
+`docs/design/**` or sandbox files were changed.
+
+The P38 executable approval action digest is an exact eight-character
+lowercase FNV-1a token. P39 RecoveryBinding now validates and preserves that
+raw receipt value as `approvalActionDigest`, while the complete binding and
+other SHA fields remain SHA-256. The P39 atomicity fixture now uses P38's
+`actionDigestOf` producer. The P4 live-lease journey now follows the exact
+public pending-approval flow before observing the old owner effect and the
+new owner's rejected acquisition.
+
+Conflict disposition:
+
+- `apps/single-workspace/src/main.ts`: merged optional scheduler candidate
+  diagnostics with the existing `executionLeaseQualificationProbe` and
+  pre-dispatch live-lease guard; no lease policy or timeout changed.
+- `tests/functional/process/p4-ah7-live-lease-acquisition.functional.test.ts`
+  and `tests/functional/support/p4-tool-lease-fencing-child.mjs`: retained the
+  current lease-fencing probes and added exact public P38 approval, bounded
+  P39/scheduler evidence, and scheduler probe wiring for the focused case.
+- `planning/results/functional-crash-handshake-diagnostics.result.md` was a
+  modify/delete conflict. Kept it absent because it is source-only P37
+  startup-diagnostic evidence from an unimported predecessor; those claims
+  are not part of this integration.
+
+Validation on the integrated build:
+
+- `pnpm typecheck` — PASS.
+- `pnpm build` — PASS.
+- Biome on the nine changed TS/MJS files — PASS; `git diff --check` — PASS.
+- RecoveryBinding ports unit — PASS, 7 tests; P39 atomicity unit — PASS, 2
+  tests (combined run: 2 files / 9 tests).
+- One grep-scoped P4 live-lease focused run — PASS, 1/1; case duration
+  63.279s, file duration 64.935s. Terminal Vitest JSON:
+  `.test-results/p4-live-lease-integrated.json` (1 passed, 0 failed).
+
+No other profile or UI/process test was run for this increment.
