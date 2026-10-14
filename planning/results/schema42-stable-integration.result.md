@@ -556,3 +556,28 @@ Manifest: `.test-results/2026-10-14T14-26-54-606Z-13548/result-manifest.json`.
 The manifest records `gitDirty: false` and `completeCoverage: false`; this is
 the UI profile result only, not full release qualification. No release/full
 profile was started.
+
+## S1–S4 safe daemon handshake follow-up
+
+Integrated S1–S4 handshake chain `10e65aec` → `338825c3` → `2a91bdaf` as
+`c92daa43` → `6054de8d` → `88d429cf` on `4daf3bc8`. The exact patch is
+limited to the S1–S4 public black-box, shared daemon lifecycle helper,
+production functional-fixture cleanup/port-handshake, one focused handshake
+test, and its result record. It retains the current R2 actual-port/nonce
+checks and existing P9/runner code; no production semantics changed. No
+cherry-pick conflicts occurred.
+
+Before this chain, the sole architecture-stage `pnpm check` attempt on
+`0c972875` passed lint, typecheck, and architecture after the P39 factory
+oracle correction, then failed in core Vitest: 399 files passed, one failed
+(`S1-S4 ... S4 preserves accepted evidence after hard restart without provider
+replay`, `fetch-failed` at `waitFor`), and 3 were skipped. The check stopped
+before Web checks. The handshake chain addresses the daemon-start/port
+coordination surface implicated by that failure; a new full `pnpm check` is
+pending on the clean integration SHA.
+
+Focused R2 port-zero handshake validation on `88d429cf`: **11/11 PASS**,
+Vitest file duration 108.939s, zero retries. JSON report:
+`.test-results/r2-port-handshake-11.json`. Post-integration `pnpm typecheck`,
+Biome on five changed code files, and `git diff --check` passed. No test
+processes remained after the focused run.
