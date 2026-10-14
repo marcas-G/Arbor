@@ -309,3 +309,24 @@ have not been run as a complete profile.
 Post-RAI static checks: `pnpm typecheck` PASS; Biome on the three changed
 fixture/test files PASS; `pnpm test:manifest` PASS (6/6, 48 Vitest + 6 UI);
 `git diff --check` PASS.
+
+## New-runner quick and smoke profiles
+
+The runner now exposes `pnpm test:functional:quick` and
+`pnpm test:functional:smoke` aliases to the existing quick/smoke profiles; the
+shorter `pnpm test:quick` and `pnpm test:smoke` aliases remain available. On
+clean HEAD `ca24dda7bb7a1727797f3eaf667b0d773cd2dc3c`, the profiles ran
+sequentially, each reached terminal status, and both runner manifests report
+`gitDirty: false`:
+
+- Quick: PASS, 3 files / 16 tests; root build, Web build, and Web typecheck
+  passed. Total runner wall time 13.897s. Manifest:
+  `.test-results/2026-10-14T08-35-13-936Z-16704/result-manifest.json`.
+- Smoke: PASS, 5 files / 20 tests, including S1–S4, the selected public
+  journeys, and safe port-handshake coverage. Root/Web builds passed. Total
+  runner wall time 521.325s (8m 41s). Manifest:
+  `.test-results/2026-10-14T08-36-31-288Z-11292/result-manifest.json`.
+
+Both profiles keep `completeCoverage: false`; neither is a release
+qualification. Quick completed before smoke started. No full/release profile
+was run.
