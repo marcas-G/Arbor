@@ -611,6 +611,42 @@ verified to have no process references and moved, without deletion, to the
 recoverable path
 `C:\Users\ThinkPad\AppData\Local\Temp\Arbor-test-artifacts\.arbor-p39-writer-4fc3f9f4a3b4ef590fde1f83f3f1943aefe82e1fcbccd5c542e176c1c1140273-pnpm-check-813f9ce2.sqlite`.
 
+## Incremental patch audit and interrupted check follow-up
+
+On `d9988d5ded37348b2a29241460eefb1bd91fbc83`, patch audit confirmed the
+requested `6459bb07` and `8a9c2c33` changes are already present as the
+earlier cherry-picks `2e8c7a6c` and `fe289568`. AH7 wording commit `b558eef8`
+is already represented by `967ac67c`; S1–S4 cleanup commit `2a91bdaf` is
+already represented by `88d429cf`. These patches were not duplicated. The
+S1–S4 boundary-audit commit `813f9ce2` and safe startup/shared lifecycle helper
+chain are already in this HEAD's ancestry; no additional signal/shared-helper
+patch was available in this step. No conflict resolution was needed and no
+sandbox V6 proposal/landing was integrated.
+
+The unique `pnpm check` started on `d9988d5d` was stopped after task
+interruption. Before stopping, Biome passed (1171 files), typecheck passed,
+architecture passed (32 files / 162 tests), and root Vitest had started but
+produced no terminal summary. Therefore root core counts, total wall time, and
+Web gates are unknown/not run; this is not a full-check PASS or FAIL result.
+The check's remaining Vitest process tree exited after SIGINT. No S4 test was
+started in this worktree by that check; an unrelated S1–S4 focused run in a
+separate worktree was left untouched.
+
+After interruption, four untracked private test artifact directories were
+verified under the exact worktree root, with only SQLite/P39 files (and the
+schema-upgrade test provenance log), no Git metadata, no process references,
+and successful exclusive read checks. They were cleaned one-by-one with the
+existing `removeP39PrivateTestDirectory` helper:
+
+- `.schema-upgrade-cli-OaDyy4`
+- `arbor-schema42-clone-YAf80r`
+- `arbor-schema42-test-nYLSQN`
+- `p12-runtime-safety-template-suPjYH`
+
+The tracked P12 restore-drill result remained unchanged; the previously moved
+P39 sidecar remains recoverable at the Temp path recorded above. No heavy test
+was started as part of this follow-up.
+
 ## Test-layering and Provider TestClock integration
 
 On clean base `0fd386929f149e2c86c8eb9613a4d87ff8af6a2d`, patch audit showed
