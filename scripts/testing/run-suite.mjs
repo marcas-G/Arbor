@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
-  existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -10,10 +9,10 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, dirname, join, resolve, win32 } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateManifest } from "./check-manifest.mjs";
-import { buildProcessSpec } from "./runner-utils.mjs";
+import { buildProcessSpec, resolvePnpmInvocation } from "./runner-utils.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const manifestPath = join(root, "planning/testing/manifest.json");
@@ -202,49 +201,6 @@ function installInterruptionHandlers() {
     process.off("uncaughtException", uncaught);
     process.off("unhandledRejection", rejection);
   };
-}
-
-function findPnpmInvocation() {
-  if (process.env.npm_execpath && /\.m?js$/i.test(process.env.npm_execpath)) {
-    return {
-      executable: process.execPath,
-      prefixArgs: [process.env.npm_execpath],
-    };
-  }
-  if (process.platform !== "win32")
-    return { executable: "pnpm", prefixArgs: [] };
-
-  const pathEntries = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
-  for (const directory of pathEntries) {
-    const directExe = join(directory, "pnpm.exe");
-    if (existsSync(directExe)) return { executable: directExe, prefixArgs: [] };
-    const cmdPath = join(directory, "pnpm.cmd");
-    if (!existsSync(cmdPath)) continue;
-    const wrapper = readFileSync(cmdPath, "utf8");
-    const exeMatch = wrapper.match(/["']?(%~?dp0%[^"\r\n]*?\.exe)["']?\s+%\*/i);
-    if (exeMatch) {
-      const executable = expandBatchDirectory(exeMatch[1], directory);
-      if (existsSync(executable)) return { executable, prefixArgs: [] };
-    }
-    const jsMatch = wrapper.match(
-      /(?:node(?:\.exe)?)\s+["'](%~?dp0%[^"\r\n]*?\.m?js)["']/i,
-    );
-    if (jsMatch) {
-      const script = expandBatchDirectory(jsMatch[1], directory);
-      if (existsSync(script))
-        return { executable: process.execPath, prefixArgs: [script] };
-    }
-  }
-  throw new Error(
-    "Could not resolve pnpm.cmd to a native executable or JavaScript CLI; refusing shell invocation.",
-  );
-}
-
-function expandBatchDirectory(value, directory) {
-  const expanded = value
-    .replaceAll(/%~?dp0%/gi, `${directory}\\`)
-    .replaceAll("/", "\\");
-  return win32.normalize(expanded);
 }
 
 let pnpmInvocation = null;
@@ -567,7 +523,7 @@ try {
   console.log(
     `Running ${profileName}; initial result: ${join(resultDirectory, "summary.md")}`,
   );
-  pnpmInvocation = findPnpmInvocation();
+  pnpmInvocation = resolvePnpmInvocation({ cwd: root });
   result.gitSha = await captureMetadata("metadata", "git-rev", "git", [
     "rev-parse",
     "HEAD",
