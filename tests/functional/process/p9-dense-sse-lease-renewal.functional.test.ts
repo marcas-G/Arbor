@@ -1,8 +1,5 @@
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -16,11 +13,9 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P32_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RuntimeClockLive,
-  runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
   WorkspaceRepositoryLive,
@@ -78,6 +73,11 @@ import {
   NoPendingControlApprovalStoreLive,
   NoPendingExecutableApprovalStoreLive,
 } from "../../../packages/testkit/src/index.js";
+import {
+  cloneFunctionalSchema42Database,
+  createFunctionalFixtureDirectory,
+  removeFunctionalFixtureDirectory,
+} from "../support/schema42-bootstrap.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const workspaceId = parse(WorkspaceId)(
@@ -133,8 +133,15 @@ const denseState: DenseState = {
   driverError: undefined,
 };
 
-const databaseDirectory = mkdtempSync(join(tmpdir(), "p9-dense-sse-"));
-const databaseFile = join(databaseDirectory, "lease-renewal.db");
+const databaseDirectory = createFunctionalFixtureDirectory();
+const databaseFile = (() => {
+  try {
+    return cloneFunctionalSchema42Database(databaseDirectory).databaseFile;
+  } catch (error) {
+    removeFunctionalFixtureDirectory(databaseDirectory);
+    throw error;
+  }
+})();
 let providerServer: Server | undefined;
 let running:
   | Promise<
@@ -160,14 +167,7 @@ afterEach(async () => {
     );
     providerServer = undefined;
   }
-  const resolvedDirectory = resolve(databaseDirectory);
-  if (
-    dirname(resolvedDirectory) !== resolve(tmpdir()) ||
-    !basename(resolvedDirectory).startsWith("p9-dense-sse-")
-  ) {
-    throw new Error(`unexpected P9 test directory: ${resolvedDirectory}`);
-  }
-  rmSync(resolvedDirectory, { recursive: true, force: true, maxRetries: 3 });
+  removeFunctionalFixtureDirectory(databaseDirectory);
   denseState.requestCount = 0;
   denseState.activeResponses = 0;
   denseState.framesWritten = 0;
@@ -444,7 +444,7 @@ const seed = Effect.gen(function* () {
   yield* sql.withTransaction(
     Effect.gen(function* () {
       yield* sql.unsafe(
-        "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, resource_source_json, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           projectId,
           "p9-dense-sse",
@@ -453,6 +453,7 @@ const seed = Effect.gen(function* () {
           0,
           "{}",
           "local",
+          JSON.stringify({ _tag: "LegacyUnknown" }),
           "Open",
           0,
           "t",
@@ -770,10 +771,9 @@ describe("P9 dense SSE lease renewal qualification", () => {
         return { ok: response.ok, status: response.status, body };
       };
       const app = makeApp(providerBaseUrl, fetcher);
-      phase = "run migrations, seed, and admit execution";
+      phase = "seed and admit execution on a schema-42 clone";
       await run(
         Effect.gen(function* () {
-          yield* runMigrations(P32_MIGRATIONS);
           yield* seed;
           yield* admit;
         }),
