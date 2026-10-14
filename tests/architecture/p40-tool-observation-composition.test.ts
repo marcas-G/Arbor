@@ -9,10 +9,28 @@ const sourceOf = (relative: string) =>
 describe("P39/P40 production tool-runtime composition", () => {
   it("injects recovery binding and canonical observation stores", () => {
     const composition = sourceOf("apps/single-workspace/src/composition.ts");
+    const recoveryBindingStore = sourceOf(
+      "adapters/persistence-sqlite/src/recovery-binding-store.ts",
+    );
 
-    expect(composition).toContain("P39RecoveryEvidenceStoreLive");
-    expect(composition).toContain(
-      "Layer.provide(P39RecoveryEvidenceStoreLive, infra)",
+    expect(composition).toMatch(
+      /readonly p39RecoveryBindingQualificationProbe\?: P39RecoveryBindingQualificationProbe/u,
+    );
+    expect(composition).toMatch(
+      /Layer\.provide\(\s*makeP39RecoveryEvidenceStoreLive\(\s*config\.p39RecoveryBindingQualificationProbe,\s*\),\s*infra,\s*\)/u,
+    );
+    expect(recoveryBindingStore).toMatch(
+      /export const makeP39RecoveryEvidenceStoreLive = \(\s*qualificationProbe\?: P39RecoveryBindingQualificationProbe,/u,
+    );
+    expect(recoveryBindingStore).toContain(
+      "if (qualificationProbe !== undefined)",
+    );
+    expect(recoveryBindingStore).toContain(
+      "export const P39RecoveryEvidenceStoreLive = makeP39RecoveryEvidenceStoreLive();",
+    );
+    expect(recoveryBindingStore).toContain('} from "@arbor/ports"');
+    expect(recoveryBindingStore).not.toMatch(
+      /from ["']@arbor\/(?:application|single-workspace)/u,
     );
     expect(composition).toContain("ToolObservationEvidenceStoreLive");
     expect(composition).toContain(
