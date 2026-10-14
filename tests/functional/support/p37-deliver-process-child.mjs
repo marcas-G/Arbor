@@ -23,6 +23,7 @@ import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
+import { DEFAULT_RUNTIME_SAFETY_POLICY } from "../../../packages/execution-runtime/dist/index.js";
 import {
   Clock,
   DeliverableRepository,
@@ -308,8 +309,72 @@ const attentionPollQualificationProbe = async (event) => {
   }
 };
 
+const executionSettlementQualificationProbe = async (event) => {
+  if (event.boundary !== "AH12AfterSettleCommandCommit") return;
+  const targetExecutionId = process.env.ARBOR_P37_SETTLEMENT_EXECUTION_ID;
+  const targetWorkId = process.env.ARBOR_P37_SETTLEMENT_WORK_ID;
+  const targetWorkRevision = process.env.ARBOR_P37_SETTLEMENT_EPISODE_REVISION;
+  if (
+    (targetExecutionId !== undefined &&
+      targetExecutionId !== event.executionId) ||
+    (targetExecutionId === undefined && targetWorkId === undefined)
+  ) {
+    return;
+  }
+
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  let execution;
+  try {
+    execution = db
+      .prepare(
+        `SELECT episode_kind, episode_ref, episode_revision, settlement_json
+           FROM executions WHERE execution_id = ?`,
+      )
+      .get(event.executionId);
+  } finally {
+    db.close();
+  }
+  if (
+    execution === undefined ||
+    (targetWorkId !== undefined &&
+      (execution.episode_kind !== "WorkEpisode" ||
+        execution.episode_ref !== targetWorkId ||
+        (targetWorkRevision !== undefined &&
+          Number(execution.episode_revision) !==
+            Number(targetWorkRevision)))) ||
+    !String(execution.settlement_json ?? "").includes("RuntimeSafetyStop")
+  ) {
+    return;
+  }
+
+  const boundary = "P37AfterSettlementCommit";
+  emit({
+    boundary,
+    executionId: event.executionId,
+    commandId: event.commandId,
+    fencingGeneration: event.fencingGeneration,
+  });
+  await holdConfiguredBoundary(boundary, {
+    executionId: event.executionId,
+    commandId: event.commandId,
+    fencingGeneration: event.fencingGeneration,
+  });
+};
+
 const config = {
   tickIntervalMs: 25,
+  runtimeSafetyPolicy: {
+    ...DEFAULT_RUNTIME_SAFETY_POLICY,
+    ...(Number.isSafeInteger(
+      Number(process.env.ARBOR_P37_MAX_NO_PROGRESS_TURNS),
+    ) && Number(process.env.ARBOR_P37_MAX_NO_PROGRESS_TURNS) >= 0
+      ? {
+          maxNoProgressTurns: Number(
+            process.env.ARBOR_P37_MAX_NO_PROGRESS_TURNS,
+          ),
+        }
+      : {}),
+  },
   onWebTransportListening: createFunctionalDaemonListenReporter(),
   projectResourceProfiles: makeProjectResourceProfilePort(
     projectResourceProfilesFromEnvironment(),
@@ -327,6 +392,7 @@ const config = {
   // This test-only child installs the post-commit probe explicitly;
   // production startup omits it.
   attentionPollQualificationProbe,
+  executionSettlementQualificationProbe,
 };
 
 await Effect.runPromise(
