@@ -352,3 +352,38 @@ manifest:
 The dependent F20 clean-checkout/package profile was not started because this
 sentinel profile did not pass. The profile failures are recorded for follow-up;
 no test files were modified or rerun as a result of this attempt.
+
+## Reviewed execution and P9/observability repairs
+
+Integrated the independently reviewed execution chain
+(`11acda43` → `1e1398df`) and observability/P9 chain (`11f98482` → `22a07844`
+→ `c3f7fcbf` → `168759b4` → `d2db02af` → `23169a6b`) onto clean HEAD
+`52e0b477`. No cherry-pick conflicts occurred. The changes retain the current
+48+6 runner inventory, safe reporter redaction, schema-42 fixture, AH11 exact
+binding, and P4 unified-approval semantics. They do not include the separate
+`0b04`/P4 investigation worktree or sandbox changes.
+
+The imported focused evidence records AH7 pending-intent boundary cases as
+passing (each 1/1), AH8 stale-after-restart as passing (1/1), and AH11
+StepEffects commit-boundary cases as passing (1/1 each). Note that the AH11
+process cases predate the later B2 verification-strengthening increment and
+were not rerun after that increment. P9 dense-SSE has prior focused passing
+evidence in its dedicated result, but this integration turn did not rerun a
+process qualification. P37 standalone handshake evidence remains evidence
+only; no P37 standalone commit was imported here. P4 remains open; no P4
+process test was run in this turn.
+
+Post-integration checks on HEAD `1e35ad70cd1efefe47d5974bec3b91ec93800364`:
+
+- `pnpm typecheck` — PASS.
+- Biome on the 11 changed files — PASS.
+- `pnpm test:manifest` — PASS, 6/6; inventory remains 48 functional Vitest
+  files + 6 UI files.
+- Reporter unit — PASS, 1 file / 4 tests.
+- Lease unit — PASS, 2 files / 9 tests.
+- P3 unit — PASS, 1 file / 48 tests.
+- `git diff --check` — PASS.
+
+No process, quick, smoke, crash-sentinel, or full/release profile was run for
+this increment. The imported focused evidence is not a substitute for those
+profiles, and no release-readiness claim is made.
