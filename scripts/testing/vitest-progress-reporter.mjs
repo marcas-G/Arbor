@@ -4,38 +4,81 @@ import {
   mkdirSync,
   openSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { inspect } from "node:util";
 
-const sensitiveEnvironmentValues = Object.entries(process.env)
-  .filter(
-    ([key, value]) =>
-      /secret|token|authorization|password|api.?key|credential|cookie/i.test(
-        key,
-      ) &&
-      typeof value === "string" &&
-      value.length >= 4,
-  )
-  .map(([, value]) => value)
-  .sort((left, right) => right.length - left.length);
+const sensitiveEnvironmentName =
+  /secret|token|authorization|password|api.?key|credential|cookie/i;
+
+export const collectEnvironmentRedactionValues = (environment) =>
+  Object.entries(environment)
+    .filter(([key, value]) => {
+      if (typeof value !== "string" || value.length === 0) return false;
+      if (sensitiveEnvironmentName.test(key)) return true;
+      if (/^[A-Za-z]:$/.test(value)) return false;
+      return value.length >= 4 && !/[\\/:\s]/.test(value);
+    })
+    .map(([, value]) => value)
+    .sort((left, right) => right.length - left.length);
+
+const sensitiveEnvironmentValues = collectEnvironmentRedactionValues(
+  process.env,
+);
+
+const redactEnvironmentValues = (value, secrets) => {
+  let redacted = String(value);
+  for (const secret of secrets) {
+    let cursor = 0;
+    let output = "";
+    while (cursor < redacted.length) {
+      const index = redacted.indexOf(secret, cursor);
+      if (index < 0) {
+        output += redacted.slice(cursor);
+        break;
+      }
+      const before = index > 0 ? redacted[index - 1] : "";
+      const after = redacted[index + secret.length] ?? "";
+      const isIdentifier = (character) =>
+        /[A-Za-z0-9._-]/.test(character) ||
+        character === "/" ||
+        character === "\\";
+      if (
+        (!before || !isIdentifier(before)) &&
+        (!after || !isIdentifier(after))
+      ) {
+        output += `${redacted.slice(cursor, index)}[REDACTED]`;
+        cursor = index + secret.length;
+      } else {
+        output += redacted.slice(cursor, index + 1);
+        cursor = index + 1;
+      }
+    }
+    redacted = output;
+  }
+  return redacted;
+};
 
 const redactText = (value) => {
-  let redacted = String(value)
+  const redacted = String(value)
     .replace(/\b(Bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
     .replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{12,}\b/g, "$1-[REDACTED]")
     .replace(
       /((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization|cookie)\s*[:=]\s*)([^\s,;]+)/gi,
       "$1[REDACTED]",
     );
-  for (const secret of sensitiveEnvironmentValues) {
-    redacted = redacted.split(secret).join("[REDACTED]");
-  }
-  return redacted;
+  return redactEnvironmentValues(redacted, sensitiveEnvironmentValues);
 };
 
-export const redactTextForOutput = redactText;
+export const redactTextForOutput = (value, environmentOrValues = process.env) =>
+  redactEnvironmentValues(
+    redactText(value),
+    Array.isArray(environmentOrValues)
+      ? environmentOrValues
+      : collectEnvironmentRedactionValues(environmentOrValues),
+  );
 
 const normalizedPath = (path) => String(path).replaceAll("\\", "/");
 
@@ -129,9 +172,11 @@ export const serializeErrorForReport = (error) => {
   };
 };
 
+let atomicWriteSequence = 0;
+
 const atomicWrite = (path, contents) => {
   mkdirSync(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.tmp-${process.pid}`;
+  const temporaryPath = `${path}.tmp-${process.pid}-${atomicWriteSequence++}`;
   writeFileSync(temporaryPath, contents, "utf8");
   const descriptor = openSync(temporaryPath, "r+");
   try {
@@ -139,7 +184,24 @@ const atomicWrite = (path, contents) => {
   } finally {
     closeSync(descriptor);
   }
-  renameSync(temporaryPath, path);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      renameSync(temporaryPath, path);
+      return;
+    } catch (error) {
+      const code = error && typeof error === "object" ? error.code : undefined;
+      if (!["EPERM", "EACCES", "EBUSY"].includes(code) || attempt >= 7) {
+        rmSync(temporaryPath, { force: true });
+        throw error;
+      }
+      Atomics.wait(
+        new Int32Array(new SharedArrayBuffer(4)),
+        0,
+        0,
+        10 * (attempt + 1),
+      );
+    }
+  }
 };
 
 const elapsed = (start, end) => Math.max(0, end - start);
