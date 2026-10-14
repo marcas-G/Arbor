@@ -4,14 +4,25 @@ Arbor is a local, single-user work system organized around Projects and long-liv
 
 ## Install, start, stop, restart
 
-Use Node.js 24.21.0 and pnpm 12.4.2:
+Use Node.js 24.21.0 and pnpm 12.4.2. Install dependencies and build the operator and application:
 
 ```powershell
 pnpm install --frozen-lockfile
+pnpm build
+```
+
+Before the first start, create a schema 42 database with `fresh` (or upgrade an existing stopped database with `copy` as shown below). Then set `ARBOR_DB` to that completed database and start Arbor:
+
+```powershell
+node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
+  --database 'C:\Arbor Data\arbor-v42.db' `
+  --p39-report-db 'C:\Arbor Data\arbor-v42-p39-report.db' `
+  --copy-manifest 'C:\Arbor Data\arbor-v42-manifest.jsonl'
+$env:ARBOR_DB = 'C:\Arbor Data\arbor-v42.db'
 pnpm start
 ```
 
-`pnpm start` builds the TypeScript workspaces and Web client, then runs the daemon in the foreground. Press `Ctrl+C` to stop it; run `pnpm start` again to restart. Set `ARBOR_HTTP_PORT` before starting to select another port. The default database is `.\arbor-slice.db`; set `ARBOR_DB` to choose another path. Keep the daemon stopped while copying or upgrading its database.
+Startup requires the selected database to already be exactly at schema 42. The daemon does not upgrade it on startup. `pnpm start` builds the Web client and runs the daemon in the foreground. Press `Ctrl+C` to stop it; run `pnpm start` again to restart. Set `ARBOR_HTTP_PORT` before starting to select another port. Keep the daemon stopped while copying or upgrading its database. For an existing database, stop Arbor and complete the `copy` operation below before pointing `ARBOR_DB` to its upgraded copy and starting.
 
 PowerShell accepts quoted paths with spaces. For example:
 
@@ -23,9 +34,9 @@ pnpm start
 
 ## Database schema 42
 
-The current runtime uses schema version 42. Ordinary startup applies its current migration sequence, but it does not run the privileged P39 migration or complete an upgrade from an older database. An older database can fail at the P39 prerequisite after earlier compatible migrations have run; stop there and use the offline `schema:upgrade` operator on a stopped, disposable copy.
+The current runtime requires schema version 42 before startup. It does not apply migrations at startup. An older database must first be upgraded offline; do not start Arbor against a database at any other version.
 
-The examples below assume the repository root is the current directory. They use separate target, P39 report, and copy-manifest paths. Choose new, unused paths for each attempt; keep the source daemon stopped and the source database unchanged through completion, including any `resume-copy` invocation. Never point the operator at a live database or use the upgraded copy until the command reports success. The command validates the report and manifest chain as part of its operation. Keep the original database as the rollback point; on success, explicitly point `ARBOR_DB` at the upgraded copy before restarting Arbor.
+The examples below assume the repository root is the current directory. For each new `fresh` or `copy` job, use separate, new target, P39 report, and copy-manifest paths. A `resume-copy` job must reuse the exact source, target, report, and manifest paths from its interrupted `copy`; do not allocate replacement paths for a resume. `copy` accepts source schema versions 36, 37, or 38 only. Keep the source daemon stopped and the source database unchanged through completion. Never point the operator at a live database or use the upgraded copy until the command reports success. The command validates the report and manifest chain as part of its operation. The manifest records local path metadata: retain it on the machine where the upgrade ran and redact it before sharing. Keep the original database as the rollback point; on success, explicitly point `ARBOR_DB` at the upgraded copy before restarting Arbor.
 
 First build the CLI:
 
@@ -84,7 +95,7 @@ pnpm start
 
 The supported alternative is a key file: `"secret": { "kind": "file", "ref": "C:\\Users\\Example User\\.config\\arbor\\provider.key" }`. Restrict access to that file to your user. The config file supports env and file SecretRefs; do not put a real key in config, source control, a command argument, shell history, or logs. Keep the key only in the environment or private key file.
 
-Config lookup order is `ARBOR_CONFIG`, `.\arbor.config.json`, then `$HOME\.config\arbor\arbor.config.json`. Legacy `ARBOR_MODEL_*` environment configuration is also supported; the standard config file is the preferred source.
+On Windows, explicitly set `ARBOR_CONFIG` to the private config file (or keep the untracked `arbor.config.json` at the repository root); do not rely on the `$HOME` fallback. For example: `$env:ARBOR_CONFIG = (Resolve-Path '.\arbor.config.json').Path`. Legacy `ARBOR_MODEL_*` environment configuration is also supported; the standard config file is the preferred source.
 
 ## Projects, files, and approvals
 
@@ -95,7 +106,7 @@ $env:ARBOR_PROJECT_ROOT = 'C:\Users\Example User\Arbor Work'
 pnpm start
 ```
 
-In the app, open the project switcher and choose **新建项目**. Choose an available project resource and submit the name; a configured host directory is available as a resource profile. To begin work, open the Project's root Workspace and create or assign Work through the available controls. Actions requiring human approval appear in the Queue/Inbox; inspect the specific action and approve or reject it there. A successful Provider verification is not itself human acceptance of the Work.
+In the app, open the project switcher and choose **新建项目**. Choose an available project resource and submit the name; a configured host directory is available as a resource profile. To begin work, open the Project's root Workspace and create or assign Work through the available controls. Human approvals are handled in the Project's **待处理** queue at `/p/{projectId}/queue`; open the exact item and approve or reject it there. A Workspace **收件箱** is not the approval queue. A successful Provider verification is not itself human acceptance of the Work.
 
 The current local sandbox binds approved paths/mounts and projects a restricted environment into subprocesses. It is not OS-level process isolation: the current process runs with the user's operating-system permissions. Native OS Sandbox support is accepted in governance but has not been implemented.
 
