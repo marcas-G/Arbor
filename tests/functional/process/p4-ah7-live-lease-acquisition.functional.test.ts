@@ -33,6 +33,15 @@ interface LeaseProbe {
   readonly invocationId?: string;
   readonly source?: string;
   readonly toolName?: string;
+  readonly definitionCount?: number;
+  readonly definitionsTruncated?: boolean;
+  readonly definitions?: ReadonlyArray<{
+    readonly name: string;
+    readonly version: string;
+    readonly hash: string;
+    readonly sideEffectSemantics?: string;
+    readonly source?: string;
+  }>;
   readonly matchingRefs?: ReadonlyArray<{
     readonly name: string;
     readonly version: string;
@@ -312,10 +321,10 @@ const p4FailureSnapshot = (databaseFile: string, executionId: string) => {
             ORDER BY requested_at`,
         )
         .all(executionId),
-      projectToolRegistrations: db
+      projectToolRegistryRows: db
         .prepare(
-          `SELECT plugin_id, plugin_version, content_hash, definitions_json,
-                  registered_at
+          `SELECT project_id, plugin_id, plugin_version, content_hash,
+                  definitions_json, registered_at
              FROM project_tool_registry
             WHERE project_id = (
               SELECT project_id FROM executions WHERE execution_id = ?
@@ -327,6 +336,36 @@ const p4FailureSnapshot = (databaseFile: string, executionId: string) => {
   } finally {
     db.close();
   }
+};
+
+const deriveCatalogSnapshot = (
+  executionSnapshot: ReturnType<typeof p4FailureSnapshot>,
+  builtinCatalog: LeaseProbe | undefined,
+) => {
+  type CatalogDefinition = {
+    readonly name: string;
+    readonly version: string;
+    readonly hash: string;
+    readonly sideEffectSemantics?: string;
+    readonly source?: string;
+  };
+  const builtinDefinitions = builtinCatalog?.definitions ?? [];
+  const registeredDefinitions = (
+    executionSnapshot.projectToolRegistryRows as Array<{
+      readonly definitions_json: string;
+    }>
+  ).flatMap(
+    (row) => JSON.parse(row.definitions_json) as Array<CatalogDefinition>,
+  );
+  const visibleRefs = [...builtinDefinitions, ...registeredDefinitions].map(
+    ({ name, version, hash }) => ({ name, version, hash }),
+  );
+  return {
+    source: "BUILTIN_TOOLS plus project_tool_registry definitions_json",
+    visibleRefCount: visibleRefs.length,
+    visibleRefs: visibleRefs.slice(0, 32),
+    visibleRefsTruncated: visibleRefs.length > 32,
+  };
 };
 
 const pendingExecutableApproval = (
@@ -379,6 +418,11 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       readonly at: string;
       readonly callIndex?: number;
     }> = [];
+    const startupDiagnostics: Array<{
+      readonly stage: "after-clone" | "provider-started";
+      readonly directory: string;
+      readonly providerPort?: number;
+    }> = [];
     const leaseExpiryHistory: Array<{
       readonly observedAt: string;
       readonly generation: number;
@@ -394,6 +438,9 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       daemonEnvironment: {
         ARBOR_P4_FENCE_ROLE: "old",
         ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
+      },
+      setupProbe: (event) => {
+        if (startupDiagnostics.length < 8) startupDiagnostics.push(event);
       },
       onDaemonStdout: (line) => recordProbe(events, line),
       onResponseSent: (call, callIndex) => {
@@ -463,7 +510,9 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
             return {
               _tag: "ToolCall",
               name: "claim_completion",
-              arguments: { claim: `The one-time effect ${marker} is present.` },
+              arguments: {
+                claim: `The one-time effect ${marker} is present.`,
+              },
             };
           }
           targetToolCalls += 1;
@@ -482,6 +531,24 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
         }
         return { _tag: "Text", text: `Waiting for ${marker}` };
       },
+    }).catch((error: unknown) => {
+      const resultDirectory = resolve(".test-results");
+      mkdirSync(resultDirectory, { recursive: true });
+      const failure = error instanceof Error ? error.message : String(error);
+      writeFileSync(
+        join(resultDirectory, "p4-live-lease-startup-failure.json"),
+        JSON.stringify(
+          {
+            failure,
+            startupDiagnostics,
+            daemonStdoutProbes: events.slice(0, maximumP4DiagnosticLines),
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+      throw error;
     });
     fixtures.push(fixture);
     probeLogFile = join(fixture.directory, "p4-live-lease-probes.ndjson");
@@ -613,6 +680,7 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       executionRows(fixture.databaseFile, executionId).invocations,
     ).toEqual([]);
 
+    const approvalResolveStartedAt = Date.now();
     const resolution = await client.command(
       project.projectId,
       "ResolveExecutableApproval",
@@ -624,7 +692,6 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       },
     );
     expect(resolution).toMatchObject({ body: { resolution: "Committed" } });
-    const approvalResolvedAt = Date.now();
     const oldAcquired = await waitForPublic(
       async () =>
         events.find(
@@ -632,10 +699,67 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
             event.role === "old" &&
             event.boundary === "AH10AfterLeaseAcquired" &&
             event.executionId === executionId &&
-            Date.parse(event.observedAt) >= approvalResolvedAt,
+            Date.parse(event.observedAt) >= approvalResolveStartedAt,
         ),
       (event) => event !== undefined,
-    );
+    ).catch((error: unknown) => {
+      const failure = error instanceof Error ? error.message : String(error);
+      const evidenceDirectory = resolve(".test-results");
+      mkdirSync(evidenceDirectory, { recursive: true });
+      const evidencePath = join(
+        evidenceDirectory,
+        "p4-live-lease-approval-resume-failure.json",
+      );
+      const executionSnapshot = p4FailureSnapshot(
+        fixture.databaseFile,
+        executionId,
+      );
+      const builtinCatalog = events.find(
+        (event) => event.boundary === "P4BuiltinCatalogSnapshot",
+      );
+      writeFileSync(
+        evidencePath,
+        JSON.stringify(
+          {
+            failure,
+            approvalResolveStartedAt: new Date(
+              approvalResolveStartedAt,
+            ).toISOString(),
+            publicApproval: {
+              approvalId,
+              expectedRevision: approvalRevision,
+              resolution,
+              binding: approval,
+            },
+            currentLease: executionRows(fixture.databaseFile, executionId)
+              .lease,
+            executionSnapshot,
+            derivedCatalog: deriveCatalogSnapshot(
+              executionSnapshot,
+              builtinCatalog,
+            ),
+            shellDefinition: events.find(
+              (event) => event.boundary === "P4ShellDefinitionSnapshot",
+            ),
+            builtinCatalog,
+            catalogProbes: events.filter(
+              (event) => event.boundary === "P4ExecutableCatalogRefs",
+            ),
+            probeEvents: events.slice(0, maximumP4DiagnosticLines),
+            providerTimeline,
+            oldDaemon: fixture.daemonProcessSnapshot(),
+            daemonErrors: fixture.daemonErrors,
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+      throw new Error(
+        `Old daemon did not expose a lease reacquisition after executable approval request began; failureEvidence=${evidencePath}`,
+        { cause: error },
+      );
+    });
     if (oldAcquired === undefined) {
       throw new Error(
         "Old daemon did not reacquire the approved Execution after public resolution",
@@ -664,6 +788,9 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
         fixture.databaseFile,
         executionId,
       );
+      const builtinCatalog = events.find(
+        (event) => event.boundary === "P4BuiltinCatalogSnapshot",
+      );
       const evidence = {
         failure,
         fixtureDirectory: fixture.directory,
@@ -679,9 +806,15 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
         oldAcquired,
         currentLease: executionRows(fixture.databaseFile, executionId).lease,
         executionSnapshot,
+        derivedCatalog: deriveCatalogSnapshot(
+          executionSnapshot,
+          builtinCatalog,
+        ),
         shellDefinition: events.find(
           (event) => event.boundary === "P4ShellDefinitionSnapshot",
         ),
+        builtinCatalog,
+        projectToolRegistryRows: executionSnapshot.projectToolRegistryRows,
         catalogRefs: events.filter(
           (event) => event.boundary === "P4ExecutableCatalogRefs",
         ),

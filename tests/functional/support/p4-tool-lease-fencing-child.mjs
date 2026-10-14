@@ -11,7 +11,10 @@ import {
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
 import { Principal, parse } from "../../../packages/domain/dist/index.js";
 import { runExecution } from "../../../packages/execution-runtime/dist/index.js";
-import { SHELL_DEFINITION } from "../../../packages/tool-runtime/dist/catalog.js";
+import {
+  BUILTIN_TOOLS,
+  SHELL_DEFINITION,
+} from "../../../packages/tool-runtime/dist/catalog.js";
 import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
 
 const onWebTransportListening = createFunctionalDaemonListenReporter();
@@ -72,6 +75,18 @@ emit({
     capabilityMetadata: SHELL_DEFINITION.capabilityMetadata,
     source: SHELL_DEFINITION.source,
   },
+});
+emit({
+  boundary: "P4BuiltinCatalogSnapshot",
+  definitionCount: BUILTIN_TOOLS.length,
+  definitionsTruncated: BUILTIN_TOOLS.length > 32,
+  definitions: BUILTIN_TOOLS.slice(0, 32).map((definition) => ({
+    name: definition.name,
+    version: definition.version,
+    hash: definition.hash,
+    sideEffectSemantics: definition.sideEffectSemantics,
+    source: definition.source,
+  })),
 });
 
 const toolQualificationProbe = async (event) => {
@@ -267,6 +282,35 @@ if (role === "new" && explicitExecutionTarget !== undefined) {
   });
 }
 
-await Effect.runPromise(
-  Effect.provide(Effect.scoped(runDaemonForever(config)), main(config)),
-);
+emit({ boundary: "P4ChildBeforeDaemonMain" });
+try {
+  await Effect.runPromise(
+    Effect.provide(Effect.scoped(runDaemonForever(config)), main(config)),
+  );
+  emit({ boundary: "P4ChildDaemonMainResolved" });
+} catch (error) {
+  const errorObject =
+    typeof error === "object" && error !== null ? error : undefined;
+  const stack = error instanceof Error ? error.stack : undefined;
+  const errorName =
+    errorObject !== undefined &&
+    "name" in errorObject &&
+    typeof errorObject.name === "string"
+      ? errorObject.name
+      : "Unknown";
+  const sourceTag =
+    errorObject !== undefined &&
+    "_tag" in errorObject &&
+    typeof errorObject._tag === "string"
+      ? errorObject._tag
+      : undefined;
+  emit({
+    boundary: "P4ChildDaemonMainRejected",
+    errorName,
+    ...(sourceTag === undefined ? {} : { sourceTag }),
+    ...(stack === undefined
+      ? {}
+      : { stackTail: stack.split("\n").slice(-8).join("\n").slice(-1600) }),
+  });
+  throw error;
+}
