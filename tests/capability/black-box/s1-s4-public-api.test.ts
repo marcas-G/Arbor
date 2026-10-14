@@ -13,6 +13,13 @@ import {
   expect,
   it,
 } from "vitest";
+import {
+  childExitDiagnostic,
+  childHasExited,
+  closeServerBounded,
+  stopChildBounded,
+  waitForDaemonListening,
+} from "../../functional/support/daemon-process-lifecycle.js";
 import { createSchema42TestDatabaseFactory } from "../../support/schema42-database.js";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
@@ -406,132 +413,30 @@ let provider: Awaited<ReturnType<typeof startProvider>>;
 let daemon: ChildProcess | undefined;
 const daemonErrors: string[] = [];
 const daemonMarkers: string[] = [];
+const daemonLifecycleDiagnostics: string[] = [];
 let databaseFactory: Awaited<
   ReturnType<typeof createSchema42TestDatabaseFactory>
 >;
 let databaseFixture: ReturnType<typeof databaseFactory.create>;
 
 const processSnapshot = (child: ChildProcess | undefined) =>
-  `pid=${String(child?.pid)}; exit=${String(child?.exitCode)}; signal=${String(child?.signalCode)}; stderr=${daemonErrors.slice(-8).join(" | ") || "<empty>"}; markers=${daemonMarkers.slice(-8).join(" | ") || "<empty>"}`;
-
-const childHasExited = (child: ChildProcess) =>
-  child.exitCode !== null || child.signalCode !== null;
+  `${child === undefined ? "pid=undefined exitCode=undefined signal=undefined" : childExitDiagnostic(child)}; stderr=${daemonErrors.slice(-8).join(" | ") || "<empty>"}; markers=${daemonMarkers.slice(-8).join(" | ") || "<empty>"}; lifecycle=${daemonLifecycleDiagnostics.slice(-8).join(" | ") || "<empty>"}`;
 
 const stopDaemon = async (child: ChildProcess | undefined) => {
-  if (child === undefined || childHasExited(child)) return;
-  await new Promise<void>((resolveExit) => {
-    child.once("exit", () => resolveExit());
-    child.kill("SIGKILL");
-  });
-};
-
-const waitForDaemonListening = (
-  child: ChildProcess,
-  requestedPort: number,
-): Promise<number> =>
-  new Promise<number>((resolvePort, rejectPort) => {
-    let startedNonce: string | undefined;
-    let stdoutBuffer = "";
-    let settled = false;
-    const finish = (
-      result: { readonly port: number } | { readonly error: Error },
-    ) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      child.removeListener("exit", onExit);
-      if ("error" in result) rejectPort(result.error);
-      else resolvePort(result.port);
-    };
-    const timeout = setTimeout(
-      () =>
-        finish({
-          error: new Error("daemon PID/nonce/listening handshake timed out"),
-        }),
-      60_000,
-    );
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
-      finish({
-        error: new Error(
-          `daemon exited before listening handshake: exit=${String(code)} signal=${String(signal)}`,
-        ),
-      });
-    const readLine = (line: string) => {
-      if (line.length === 0) return;
-      daemonMarkers.push(line);
-      let event: {
-        readonly tag?: unknown;
-        readonly nonce?: unknown;
-        readonly pid?: unknown;
-        readonly port?: unknown;
-      };
-      try {
-        event = JSON.parse(line) as typeof event;
-      } catch {
-        return;
-      }
-      if (event.tag === "FUNCTIONAL_DAEMON_STARTED") {
-        if (
-          typeof event.nonce !== "string" ||
-          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
-            event.nonce,
-          ) ||
-          event.pid !== child.pid ||
-          childHasExited(child)
-        ) {
-          finish({
-            error: new Error("daemon start PID/nonce handshake mismatch"),
-          });
-          return;
-        }
-        startedNonce = event.nonce;
-        return;
-      }
-      if (event.tag !== "FUNCTIONAL_DAEMON_LISTENING") return;
-      if (
-        startedNonce === undefined ||
-        event.nonce !== startedNonce ||
-        event.pid !== child.pid ||
-        typeof event.port !== "number" ||
-        !Number.isInteger(event.port) ||
-        event.port < 1 ||
-        event.port > 65_535 ||
-        childHasExited(child)
-      ) {
-        finish({
-          error: new Error(
-            "daemon listening PID/nonce/port handshake mismatch",
-          ),
-        });
-        return;
-      }
-      if (requestedPort !== 0 && event.port !== requestedPort) {
-        finish({
-          error: new Error(
-            `daemon bound unexpected port: requested=${requestedPort} reported=${event.port}`,
-          ),
-        });
-        return;
-      }
-      finish({ port: event.port });
-    };
-    child.once("exit", onExit);
-    if (child.stdout === null) {
-      finish({
-        error: new Error("daemon stdout is required for startup handshake"),
-      });
-      return;
+  try {
+    await stopChildBounded(child);
+    if (child !== undefined) {
+      daemonLifecycleDiagnostics.push(
+        `daemon stop completed: ${childExitDiagnostic(child)}`,
+      );
     }
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString("utf8");
-      let newline = stdoutBuffer.indexOf("\n");
-      while (newline >= 0) {
-        readLine(stdoutBuffer.slice(0, newline).trim());
-        stdoutBuffer = stdoutBuffer.slice(newline + 1);
-        newline = stdoutBuffer.indexOf("\n");
-      }
-    });
-  });
+  } catch (error) {
+    daemonErrors.push(
+      `daemon stop failed: ${error instanceof Error ? error.message : String(error)}; ${processSnapshot(child)}`,
+    );
+    throw error;
+  }
+};
 
 const startDaemon = async (requestedPort: number) => {
   const child = spawn(process.execPath, [DAEMON_HANDSHAKE_ENTRY], {
@@ -561,7 +466,11 @@ const startDaemon = async (requestedPort: number) => {
     daemonErrors.push(`spawn error=${error.message}`);
   });
   try {
-    const listeningPort = await waitForDaemonListening(child, requestedPort);
+    const listeningPort = await waitForDaemonListening(child, requestedPort, {
+      onStdoutLine: (line) => {
+        if (line.includes("FUNCTIONAL_DAEMON_")) daemonMarkers.push(line);
+      },
+    });
     if (childHasExited(child)) {
       throw new Error("daemon exited after listening report");
     }
@@ -767,33 +676,72 @@ let rootSessionId: string;
 let childWorkspaceId: string;
 let workId: string;
 const memoryCode = `BB-MEMORY-${randomUUID().slice(0, 8).toUpperCase()}`;
+let cleanupPromise: Promise<void> | undefined;
+
+const cleanupOnSignal = () => {
+  void cleanupScenario().catch((error: unknown) => {
+    daemonErrors.push(
+      `signal cleanup failed: ${error instanceof Error ? error.message : String(error)}; ${processSnapshot(daemon)}`,
+    );
+  });
+};
 
 beforeAll(async () => {
   databaseFactory = await createSchema42TestDatabaseFactory();
 }, 120_000);
 
-const cleanupScenario = async () => {
-  try {
-    await stopDaemon(daemon);
-    if (provider !== undefined) {
-      await new Promise<void>((resolveClose) =>
-        provider.server.close(() => resolveClose()),
-      );
+const cleanupScenario = () => {
+  if (cleanupPromise !== undefined) return cleanupPromise;
+  cleanupPromise = (async () => {
+    process.removeListener("SIGINT", cleanupOnSignal);
+    process.removeListener("SIGTERM", cleanupOnSignal);
+    const failures: Array<unknown> = [];
+    try {
+      await stopDaemon(daemon);
+    } catch (error) {
+      failures.push(error);
     }
-  } finally {
+    try {
+      if (provider !== undefined) {
+        await closeServerBounded(provider.server);
+        daemonLifecycleDiagnostics.push(
+          `provider stop completed: port=${provider.port}; listening=${provider.server.listening}`,
+        );
+      }
+    } catch (error) {
+      const diagnostic = `provider stop failed; port=${String(provider?.port)}; ${error instanceof Error ? error.message : String(error)}`;
+      daemonErrors.push(diagnostic);
+      failures.push(new Error(diagnostic, { cause: error }));
+    }
     try {
       databaseFixture?.cleanup();
-    } finally {
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
       if (directory !== undefined) {
         rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
       }
+    } catch (error) {
+      failures.push(error);
     }
-  }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `black-box scenario cleanup failed; ${processSnapshot(daemon)}`,
+      );
+    }
+  })();
+  return cleanupPromise;
 };
 
 beforeEach(async () => {
+  cleanupPromise = undefined;
+  process.once("SIGINT", cleanupOnSignal);
+  process.once("SIGTERM", cleanupOnSignal);
   try {
     daemonErrors.length = 0;
+    daemonLifecycleDiagnostics.length = 0;
     directory = mkdtempSync(join(tmpdir(), "arbor-scenario-black-box-"));
     mkdirSync(join(directory, "workspace"), { recursive: true });
     databaseFixture = databaseFactory.create();

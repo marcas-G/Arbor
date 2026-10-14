@@ -4,6 +4,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join, resolve } from "node:path";
 import {
+  childHasExited,
+  stopChildBounded as stopChild,
+  waitForDaemonListening as waitForNonceBoundPort,
+} from "./daemon-process-lifecycle.js";
+import {
   cloneFunctionalSchema42Database,
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
@@ -107,143 +112,6 @@ export interface ProductionFixture {
   }>;
   readonly stop: () => Promise<void>;
 }
-
-const waitForNonceBoundPort = (
-  child: ChildProcess,
-  requestedPort: number,
-): Promise<number> =>
-  new Promise<number>((resolvePort, rejectPort) => {
-    let settled = false;
-    let startedNonce: string | undefined;
-    let stdoutBuffer = "";
-    let stdoutLineCount = 0;
-    const lifecycleMarkers: Array<{
-      readonly tag: string;
-      readonly pid?: unknown;
-      readonly nonce?: unknown;
-      readonly port?: unknown;
-    }> = [];
-    const handshakeDiagnostic = () =>
-      JSON.stringify({
-        pid: child.pid,
-        exitCode: child.exitCode,
-        signalCode: child.signalCode,
-        startedNonce: startedNonce ?? null,
-        stdoutLineCount,
-        lifecycleMarkers,
-      });
-    const finish = (
-      result: { readonly port: number } | { readonly error: Error },
-    ) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      child.removeListener("exit", onExit);
-      if ("error" in result) rejectPort(result.error);
-      else resolvePort(result.port);
-    };
-    const timeout = setTimeout(
-      () =>
-        finish({
-          error: new Error(
-            `functional daemon startup handshake timed out; observed=${handshakeDiagnostic()}`,
-          ),
-        }),
-      60_000,
-    );
-    const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
-      finish({
-        error: new Error(
-          `functional daemon exited before listening report: code=${String(code)} signal=${String(signal)}; observed=${handshakeDiagnostic()}`,
-        ),
-      });
-    const readLine = (line: string) => {
-      if (line.length === 0) return;
-      stdoutLineCount += 1;
-      let event: {
-        readonly tag?: unknown;
-        readonly nonce?: unknown;
-        readonly pid?: unknown;
-        readonly port?: unknown;
-      };
-      try {
-        event = JSON.parse(line) as typeof event;
-      } catch {
-        return;
-      }
-      if (
-        event.tag === "FUNCTIONAL_DAEMON_STARTED" ||
-        event.tag === "FUNCTIONAL_DAEMON_LISTENING"
-      ) {
-        lifecycleMarkers.push({
-          tag: event.tag,
-          pid: event.pid,
-          nonce: event.nonce,
-          port: event.port,
-        });
-        if (lifecycleMarkers.length > 8) lifecycleMarkers.shift();
-      }
-      if (event.tag === "FUNCTIONAL_DAEMON_STARTED") {
-        if (
-          typeof event.nonce !== "string" ||
-          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
-            event.nonce,
-          ) ||
-          event.pid !== child.pid ||
-          child.exitCode !== null
-        ) {
-          finish({
-            error: new Error("invalid functional daemon start identity"),
-          });
-          return;
-        }
-        startedNonce = event.nonce;
-        return;
-      }
-      if (event.tag !== "FUNCTIONAL_DAEMON_LISTENING") return;
-      if (
-        startedNonce === undefined ||
-        event.nonce !== startedNonce ||
-        event.pid !== child.pid ||
-        typeof event.port !== "number" ||
-        !Number.isInteger(event.port) ||
-        event.port < 1 ||
-        event.port > 65_535 ||
-        child.exitCode !== null
-      ) {
-        finish({
-          error: new Error("functional daemon listening identity mismatch"),
-        });
-        return;
-      }
-      if (requestedPort !== 0 && event.port !== requestedPort) {
-        finish({
-          error: new Error(
-            `functional daemon bound unexpected port: requested=${requestedPort} reported=${event.port}`,
-          ),
-        });
-        return;
-      }
-      finish({ port: event.port });
-    };
-    const readStdout = (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString("utf8");
-      let newline = stdoutBuffer.indexOf("\n");
-      while (newline >= 0) {
-        readLine(stdoutBuffer.slice(0, newline).trim());
-        stdoutBuffer = stdoutBuffer.slice(newline + 1);
-        newline = stdoutBuffer.indexOf("\n");
-      }
-    };
-    child.once("exit", onExit);
-    if (child.stdout === null) {
-      finish({
-        error: new Error("functional daemon stdout is required for handshake"),
-      });
-      return;
-    }
-    child.stdout.on("data", readStdout);
-  });
 
 const waitFor = async <A>(
   read: () => Promise<A>,
@@ -466,35 +334,6 @@ const startProvider = (
     server.listen(0, "127.0.0.1", onListening);
   });
 
-const stopChild = async (child: ChildProcess | undefined): Promise<void> => {
-  if (child === undefined || child.exitCode !== null) return;
-  const exited = new Promise<void>((resolveExit) => {
-    child.once("exit", () => resolveExit());
-  });
-  if (process.platform === "win32" && child.pid !== undefined) {
-    await new Promise<void>((resolveKill, rejectKill) => {
-      const killer = spawn(
-        "taskkill.exe",
-        ["/PID", String(child.pid), "/T", "/F"],
-        { stdio: "ignore", windowsHide: true },
-      );
-      killer.once("error", rejectKill);
-      killer.once("exit", () => resolveKill());
-    });
-  } else {
-    child.kill("SIGKILL");
-  }
-  await Promise.race([
-    exited,
-    new Promise<void>((_, rejectTimeout) =>
-      setTimeout(
-        () => rejectTimeout(new Error("Arbor process did not exit")),
-        5_000,
-      ),
-    ),
-  ]);
-};
-
 export const startProductionFixture = async (input: {
   readonly reply: (
     call: CapturedProviderCall,
@@ -633,17 +472,6 @@ export const startProductionFixture = async (input: {
       requestedPort,
       environmentKeys: Object.keys(daemonEnv).sort(),
     };
-    let stdoutBuffer = "";
-    daemon.stdout?.on("data", (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString("utf8");
-      let newline = stdoutBuffer.indexOf("\n");
-      while (newline >= 0) {
-        const line = stdoutBuffer.slice(0, newline).trim();
-        stdoutBuffer = stdoutBuffer.slice(newline + 1);
-        if (line.length > 0) input.onDaemonStdout?.(line);
-        newline = stdoutBuffer.indexOf("\n");
-      }
-    });
     daemon.stderr?.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8").trim();
       if (text.length > 0 && !text.includes("ExperimentalWarning")) {
@@ -654,7 +482,9 @@ export const startProductionFixture = async (input: {
       recordDaemonError(`spawn error=${error.message}`);
     });
     try {
-      httpPort = await waitForNonceBoundPort(daemon, requestedPort);
+      httpPort = await waitForNonceBoundPort(daemon, requestedPort, {
+        onStdoutLine: (line) => input.onDaemonStdout?.(line),
+      });
     } catch (error) {
       await stopChild(daemon);
       throw new Error(
@@ -666,7 +496,8 @@ export const startProductionFixture = async (input: {
     try {
       await waitFor(
         () => fetch(baseUrl),
-        (response) => response.ok && daemon?.exitCode === null,
+        (response) =>
+          response.ok && daemon !== undefined && !childHasExited(daemon),
         60_000,
       );
     } catch (error) {
@@ -789,7 +620,7 @@ export const startProductionFixture = async (input: {
         additionalBaseUrl = `http://127.0.0.1:${additionalPort}`;
         await waitFor(
           () => fetch(additionalBaseUrl),
-          (response) => response.ok && child.exitCode === null,
+          (response) => response.ok && !childHasExited(child),
           60_000,
         );
       } catch (error) {
