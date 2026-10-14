@@ -67,6 +67,13 @@ test("runner atomically persists both running artifacts before invoking pnpm", (
     );
     assert.equal(finalManifest.status, "interrupted");
     assert.equal(finalManifest.completeCoverage, false);
+    assert.ok(Number.isSafeInteger(finalManifest.runner.pid));
+    assert.equal(typeof finalManifest.runner.hostName, "string");
+    assert.ok(
+      Number.isFinite(
+        Date.parse(finalManifest.runner.processStartedAtEstimate),
+      ),
+    );
     assert.equal(finalManifest.current.group, "metadata");
     assert.equal(finalManifest.current.exitCode, 27);
     assert.ok(finalManifest.current.command.includes(fakePnpmCli));

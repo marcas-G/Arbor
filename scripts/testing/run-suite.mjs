@@ -9,6 +9,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
+import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateManifest } from "./check-manifest.mjs";
@@ -59,6 +60,13 @@ const result = {
   profile: profileName,
   completeCoverage: false,
   manifestSha256,
+  runner: {
+    pid: process.pid,
+    hostName: hostname(),
+    processStartedAtEstimate: new Date(
+      Date.now() - process.uptime() * 1000,
+    ).toISOString(),
+  },
   selectedFiles,
   groups,
   current: null,
