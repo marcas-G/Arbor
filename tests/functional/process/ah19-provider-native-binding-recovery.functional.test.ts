@@ -143,17 +143,128 @@ const reportServers: Server[] = [];
 const probes: Ah19Probe[] = [];
 const providerRequests: Ah19ProviderRequest[] = [];
 
+interface Ah19PhaseDiagnostic {
+  readonly testName: string;
+  readonly startedAt: number;
+  readonly phases: string[];
+  timer: ReturnType<typeof setInterval> | undefined;
+  snapshot: (() => unknown) | undefined;
+  childOutput: ReadonlyArray<string>;
+  fixture: ProductionFixture | undefined;
+  render: (() => string) | undefined;
+}
+
+let activePhaseDiagnostic: Ah19PhaseDiagnostic | undefined;
+
+const beginAh19PhaseDiagnostics = (testName: string, marker: string) => {
+  if (activePhaseDiagnostic?.timer !== undefined)
+    clearInterval(activePhaseDiagnostic.timer);
+  const diagnostic: Ah19PhaseDiagnostic = {
+    testName,
+    startedAt: Date.now(),
+    phases: [`${new Date().toISOString()} start marker=${marker}`],
+    timer: undefined,
+    snapshot: undefined,
+    childOutput: [],
+    fixture: undefined,
+    render: undefined,
+  };
+  const describeState = () => {
+    let snapshot: unknown;
+    try {
+      snapshot = diagnostic.snapshot?.();
+    } catch (error) {
+      snapshot = {
+        snapshotError: error instanceof Error ? error.stack : String(error),
+      };
+    }
+    return JSON.stringify({
+      testName: diagnostic.testName,
+      elapsedMs: Date.now() - diagnostic.startedAt,
+      phases: diagnostic.phases,
+      childOutput: diagnostic.childOutput,
+      providerCalls: diagnostic.fixture?.providerCalls ?? [],
+      daemonStderr: diagnostic.fixture?.daemonErrors ?? [],
+      providerRequests,
+      snapshot,
+    });
+  };
+  diagnostic.render = describeState;
+  diagnostic.timer = setInterval(() => {
+    process.stderr.write(`[AH19 heartbeat] ${describeState()}\n`);
+  }, 10_000);
+  diagnostic.timer.unref();
+  activePhaseDiagnostic = diagnostic;
+  return {
+    attach: (
+      fixture: ProductionFixture,
+      childOutput: ReadonlyArray<string>,
+    ) => {
+      diagnostic.fixture = fixture;
+      diagnostic.childOutput = childOutput;
+    },
+    setSnapshot: (snapshot: () => unknown) => {
+      diagnostic.snapshot = snapshot;
+    },
+    phase: (name: string, details?: unknown) => {
+      diagnostic.phases.push(
+        `${new Date().toISOString()} ${name}${details === undefined ? "" : ` ${JSON.stringify(details)}`}`,
+      );
+    },
+    failure: (phase: string, error: unknown) => {
+      diagnostic.phases.push(
+        `${new Date().toISOString()} TIMEOUT/FAILURE ${phase}`,
+      );
+      const original =
+        error instanceof Error ? error : new Error(String(error));
+      return new Error(
+        `${original.message}; AH19 diagnostics=${describeState()}`,
+        { cause: original },
+      );
+    },
+    stop: () => {
+      if (diagnostic.timer !== undefined) clearInterval(diagnostic.timer);
+      diagnostic.timer = undefined;
+      if (activePhaseDiagnostic === diagnostic)
+        activePhaseDiagnostic = undefined;
+    },
+  };
+};
+
+const recordAh19Phase = (name: string, details?: unknown) => {
+  activePhaseDiagnostic?.phases.push(
+    `${new Date().toISOString()} ${name}${details === undefined ? "" : ` ${JSON.stringify(details)}`}`,
+  );
+};
+
+const ah19Failure = (phase: string, error: unknown) => {
+  const diagnostic = activePhaseDiagnostic;
+  if (diagnostic === undefined) return error;
+  diagnostic.phases.push(
+    `${new Date().toISOString()} TIMEOUT/FAILURE ${phase}`,
+  );
+  const original = error instanceof Error ? error : new Error(String(error));
+  return new Error(
+    `${original.message}; AH19 diagnostics=${diagnostic.render?.() ?? "unavailable"}`,
+    { cause: original },
+  );
+};
+
 const startReportServer = async () => {
   const server = createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       try {
-        providerRequests.push(
-          JSON.parse(
-            Buffer.concat(chunks).toString("utf8"),
-          ) as Ah19ProviderRequest,
-        );
+        const call = JSON.parse(
+          Buffer.concat(chunks).toString("utf8"),
+        ) as Ah19ProviderRequest;
+        providerRequests.push(call);
+        if (call.operationKind === "CompactionNative")
+          recordAh19Phase("Native request", {
+            providerTurnId: call.providerTurnId,
+            bindingVariant: call.bindingVariant,
+          });
         response.writeHead(204);
         response.end();
       } catch (error) {
@@ -458,7 +569,9 @@ const seedRootWorkViaPublicApproval = async (
   heldRequest?: HeldProviderRequest,
   diagnostics?: RootSeedDiagnostics,
 ): Promise<string> => {
+  recordAh19Phase("Work seed public submit", { marker });
   await submitHumanMessage(client, project, `请创建并开始目标 ${marker}。`);
+  recordAh19Phase("Work seed public message committed", { marker });
   const approval = await waitForApproval(client, project, marker).catch(
     (error: unknown) => {
       let databaseSnapshot: unknown;
@@ -490,6 +603,10 @@ const seedRootWorkViaPublicApproval = async (
       reason: "AH19 checkpoint Work seed",
     },
   );
+  recordAh19Phase("Work seed approval resolved", {
+    marker,
+    approvalResolution,
+  });
   const current = await waitForPublic(
     () =>
       client.view<{
@@ -533,6 +650,7 @@ const seedRootWorkViaPublicApproval = async (
     throw new Error(`AH19 approved Work is not current: ${marker}`);
   }
   const workId = current.workId;
+  recordAh19Phase("Work seed public Current Work", { marker, workId });
   expect(current).toMatchObject({ revision: 0, status: "Open" });
 
   const firstWorkCall =
@@ -563,6 +681,10 @@ const seedRootWorkViaPublicApproval = async (
   if (workExecutionId === undefined) {
     throw new Error(`AH19 WorkEpisode Execution is not active: ${workId}`);
   }
+  recordAh19Phase("Work seed WorkEpisode active", {
+    workId,
+    executionId: workExecutionId,
+  });
   const preNative =
     heldRequest === undefined
       ? await waitForPublic(
@@ -608,6 +730,11 @@ const seedRootWorkViaPublicApproval = async (
       });
     }
   }
+  recordAh19Phase("Work seed initial public provider step observed", {
+    workId,
+    executionId: workExecutionId,
+    providerCalls: fixture.providerCalls.length,
+  });
   expect(providerRequests).toEqual([]);
   expect(probes).toEqual([]);
 
@@ -1551,6 +1678,10 @@ const startAtCheckpointBoundary = async (
     daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
     onDaemonStdout: (line) => {
       childOutput.push(line);
+      if (line.includes("AH19_CHILD_START"))
+        recordAh19Phase("child START", line);
+      if (/listening|LISTEN/iu.test(line))
+        recordAh19Phase("child LISTEN", line);
       try {
         const event = JSON.parse(line) as Ah19Probe;
         if (event.tag === "AH19_PROBE") probes.push(event);
@@ -1751,6 +1882,10 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
     daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
     onDaemonStdout: (line) => {
       childOutput.push(line);
+      if (line.includes("AH19_CHILD_START"))
+        recordAh19Phase("child START", line);
+      if (/listening|LISTEN/iu.test(line))
+        recordAh19Phase("child LISTEN", line);
       try {
         const event = JSON.parse(line) as Ah19Probe;
         if (event.tag === "AH19_PROBE") probes.push(event);
@@ -1868,15 +2003,32 @@ const expireLeaseAfterOldDaemonExit = (
 };
 
 afterEach(async () => {
-  for (const fixture of fixtures.splice(0)) await fixture.stop();
+  if (activePhaseDiagnostic?.timer !== undefined)
+    clearInterval(activePhaseDiagnostic.timer);
+  activePhaseDiagnostic = undefined;
+  for (const fixture of fixtures.splice(0)) {
+    try {
+      await fixture.stop();
+    } catch (error) {
+      process.stderr.write(
+        `[AH19 cleanup warning] fixture stop failed without replacing test result: ${error instanceof Error ? error.stack : String(error)}\n`,
+      );
+    }
+  }
   for (const server of reportServers.splice(0)) {
     if (!server.listening) continue;
-    await new Promise<void>((resolveClose, rejectClose) => {
-      server.close((error) => {
-        if (error !== undefined) rejectClose(error);
-        else resolveClose();
+    try {
+      await new Promise<void>((resolveClose, rejectClose) => {
+        server.close((error) => {
+          if (error !== undefined) rejectClose(error);
+          else resolveClose();
+        });
       });
-    });
+    } catch (error) {
+      process.stderr.write(
+        `[AH19 cleanup warning] report server close failed without replacing test result: ${error instanceof Error ? error.stack : String(error)}\n`,
+      );
+    }
   }
 });
 
@@ -1886,6 +2038,10 @@ describe("AH19 ProviderNative binding recovery", () => {
     providerRequests.length = 0;
     const reportUrl = await startReportServer();
     const seedMarker = `AH19-WORK-HISTORY-${crypto.randomUUID()}`;
+    const diagnostic = beginAh19PhaseDiagnostics(
+      "enters ordinary Native compaction from public Work Session history",
+      seedMarker,
+    );
     const workSeed: ApprovedWorkSeed = {
       objective: `Build real Workspace Session history through public Work input. ${seedMarker}`,
       why: "qualify ordinary Native compaction after repeated Work turns",
@@ -1904,11 +2060,17 @@ describe("AH19 ProviderNative binding recovery", () => {
       },
     };
     const heldWorkRequest = holdFirstWorkProviderRequest(workSeed);
+    const childOutput: string[] = [];
     const fixture = await startProductionFixture({
       reply: approvedRootWorkReply(seedMarker, workSeed),
       beforeResponse: heldWorkRequest.beforeResponse,
       daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
       onDaemonStdout: (line) => {
+        childOutput.push(line);
+        if (line.includes("AH19_CHILD_START"))
+          recordAh19Phase("child START", line);
+        if (/listening|LISTEN/iu.test(line))
+          recordAh19Phase("child LISTEN", line);
         try {
           const event = JSON.parse(line) as Ah19Probe;
           if (event.tag === "AH19_PROBE") probes.push(event);
@@ -1918,6 +2080,7 @@ describe("AH19 ProviderNative binding recovery", () => {
       },
     });
     fixtures.push(fixture);
+    diagnostic.attach(fixture, childOutput);
     const client = makePublicClient(fixture.baseUrl);
     const project = await createFunctionalProject(
       client,
@@ -1938,6 +2101,21 @@ describe("AH19 ProviderNative binding recovery", () => {
       },
       heldWorkRequest,
     );
+    diagnostic.setSnapshot(() => {
+      const executionId = readWorkExecutionId(
+        fixture.databaseFile,
+        project,
+        workId,
+      );
+      return executionId === undefined
+        ? { workId, executionId: null }
+        : readSnapshot(fixture.databaseFile, {
+            sessionId: project.rootSessionId,
+            executionId,
+            workId,
+          });
+    });
+    diagnostic.phase("Work seed public step complete", { workId });
 
     await waitForPublic(
       async () => ({
@@ -1948,7 +2126,9 @@ describe("AH19 ProviderNative binding recovery", () => {
       }),
       (state) => state.count >= 2 || state.native !== undefined,
       60_000,
-    );
+    ).catch((error: unknown) => {
+      throw ah19Failure("initial Work provider request", error);
+    });
 
     for (let index = 0; index < 10; index += 1) {
       const observed = await waitForPublic(
@@ -1968,6 +2148,11 @@ describe("AH19 ProviderNative binding recovery", () => {
         60_000,
       );
       if (observed.native !== undefined) break;
+      diagnostic.phase("Work remains Open; steer public history", {
+        turn: index,
+        revision: observed.current?.revision,
+        providerRequests: providerRequests.length,
+      });
       if (observed.current?.workId !== workId) {
         throw new Error(
           "public Work stopped being current during history fixture",
@@ -1993,7 +2178,9 @@ describe("AH19 ProviderNative binding recovery", () => {
         }),
         (state) => state.count >= before + 2 || state.native !== undefined,
         60_000,
-      );
+      ).catch((error: unknown) => {
+        throw ah19Failure(`public Work history turn ${index}`, error);
+      });
       if (
         providerRequests.some(
           (request) => request.operationKind === "CompactionNative",
@@ -2006,6 +2193,10 @@ describe("AH19 ProviderNative binding recovery", () => {
     const ordinaryNative = providerRequests.find(
       (request) => request.operationKind === "CompactionNative",
     );
+    diagnostic.phase("Native request observed", {
+      providerTurnId: ordinaryNative?.providerTurnId,
+      operationKind: ordinaryNative?.operationKind,
+    });
     expect(
       providerRequests.some((request) => request.operationKind === "Inference"),
     ).toBe(true);
@@ -2070,7 +2261,9 @@ describe("AH19 ProviderNative binding recovery", () => {
         ),
       (request) => request !== undefined,
       45_000,
-    );
+    ).catch((error: unknown) => {
+      throw ah19Failure("Native checkpoint inference after compaction", error);
+    });
     expect(resumedInference?.workActionHistoryCount).toBe(0);
     expect(resumedInference?.items).toContainEqual(
       expect.objectContaining({
@@ -4421,6 +4614,10 @@ describe("AH19 restart binding qualification", () => {
   }, 150_000);
 
   it("fails closed when a Native manifest claims a different source logical step", async () => {
+    const diagnostic = beginAh19PhaseDiagnostics(
+      "fails closed when a Native manifest claims a different source logical step",
+      "manifest-source-step-mismatch",
+    );
     const scenario = await startAtCheckpointBoundary(
       "AH17AfterCheckpointEpochCommit",
     );
@@ -4428,6 +4625,9 @@ describe("AH19 restart binding qualification", () => {
     const executionId = probe.executionId;
     const nativeTurnId = `ptn_${executionId}_1_native_compact_0`;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
+    diagnostic.attach(fixture, scenario.childOutput);
+    diagnostic.setSnapshot(() => readSnapshot(fixture.databaseFile, ids));
+    diagnostic.phase("child START/LISTEN gen0 complete", { executionId });
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
     expect(beforeKill.session?.context_epoch).toBe(1);
     expect(beforeKill.providerTurns).toEqual(
@@ -4457,12 +4657,16 @@ describe("AH19 restart binding qualification", () => {
     ]);
 
     await fixture.crash();
+    diagnostic.phase("crash gen0 complete");
     await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
       workId,
     );
+    diagnostic.phase("lease expired after old daemon exit", {
+      leases: readSnapshot(fixture.databaseFile, ids).leases,
+    });
     corruptNativeManifestLogicalStepNo(fixture.databaseFile, nativeTurnId, 0);
     const corrupted = readSnapshot(fixture.databaseFile, ids);
     const corruptedNative = corrupted.providerTurns.find(
@@ -4472,6 +4676,14 @@ describe("AH19 restart binding qualification", () => {
       JSON.parse(corruptedNative?.manifest_json ?? "{}").logicalStepNo,
     ).toBe(0);
     expect(nativeTurnId).toContain("_1_native_compact_0");
+    diagnostic.phase("manifest mutated", {
+      providerTurnId: nativeTurnId,
+      logicalStepNo: 0,
+      manifestRefs: corrupted.providerTurns.map((turn) => ({
+        providerTurnId: turn.provider_turn_id,
+        manifestId: turn.manifest_id,
+      })),
+    });
 
     const restartFailure = await fixture
       .restart({
@@ -4487,6 +4699,15 @@ describe("AH19 restart binding qualification", () => {
         (error: unknown) => error,
       );
     expect(restartFailure).not.toBeNull();
+    diagnostic.phase("gen1 listening/restart returned", {
+      restartFailure:
+        restartFailure instanceof Error
+          ? restartFailure.message
+          : String(restartFailure),
+      childStart: scenario.childOutput.filter((line) =>
+        line.includes("AH19_CHILD_START"),
+      ),
+    });
     const childFailure = scenario.childOutput
       .map((line) => {
         try {
@@ -4502,6 +4723,10 @@ describe("AH19 restart binding qualification", () => {
     expect(childFailure?.error?.reason).toBe(
       "AgentLoopStepReplayBindingMismatch",
     );
+    diagnostic.phase("failclosed marker observed", {
+      reason: childFailure?.error?.reason,
+      childFailure,
+    });
     const rejected = readSnapshot(fixture.databaseFile, ids);
     expect(rejected.session?.context_epoch).toBe(1);
     expect(rejected.checkpoints).toEqual(beforeKill.checkpoints);
@@ -4633,6 +4858,10 @@ describe("AH19 restart binding qualification", () => {
   );
 
   it("rebuilds through portable Summary after a committed Native checkpoint's binding changes", async () => {
+    const diagnostic = beginAh19PhaseDiagnostics(
+      "rebuilds through portable Summary after a committed Native checkpoint's binding changes",
+      "binding-change-portable-summary",
+    );
     const scenario = await startAtCheckpointBoundary(
       "AH17AfterCheckpointEpochCommit",
     );
@@ -4641,6 +4870,9 @@ describe("AH19 restart binding qualification", () => {
     const executionId = probe.executionId;
     const nativeTurnId = `ptn_${executionId}_1_native_compact_0`;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
+    diagnostic.attach(fixture, childOutput);
+    diagnostic.setSnapshot(() => readSnapshot(fixture.databaseFile, ids));
+    diagnostic.phase("child START/LISTEN gen0 complete", { executionId });
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
     const nativeCheckpoint = JSON.parse(
       beforeKill.checkpoints[0]?.payload_json ?? "{}",
@@ -4659,6 +4891,7 @@ describe("AH19 restart binding qualification", () => {
     ).toHaveLength(1);
 
     await fixture.crash();
+    diagnostic.phase("crash gen0 complete", { nativeTurnId });
     const afterKill = readSnapshot(fixture.databaseFile, ids);
     expect(afterKill.session).toEqual(beforeKill.session);
     expect(afterKill.checkpoints).toEqual(beforeKill.checkpoints);
@@ -4668,6 +4901,9 @@ describe("AH19 restart binding qualification", () => {
       executionId,
       workId,
     );
+    diagnostic.phase("lease expired after old daemon exit", {
+      leases: readSnapshot(fixture.databaseFile, ids).leases,
+    });
     await fixture
       .restart({
         entry: childEntry,
@@ -4682,6 +4918,11 @@ describe("AH19 restart binding qualification", () => {
           `AH19 gen1 daemon failed startup: ${error instanceof Error ? error.message : String(error)}; child=${childOutput.join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}; snapshot=${JSON.stringify(readSnapshot(fixture.databaseFile, ids))}`,
         );
       });
+    diagnostic.phase("gen1 LISTEN complete", {
+      childStart: childOutput.filter((line) =>
+        line.includes("AH19_CHILD_START"),
+      ),
+    });
 
     await waitForPublic(
       async () =>
@@ -4693,9 +4934,12 @@ describe("AH19 restart binding qualification", () => {
       (seen) => seen,
       20_000,
     ).catch((error: unknown) => {
-      throw new Error(
-        `AH19 mismatch never requested portable Summary: ${error instanceof Error ? error.message : String(error)}; snapshot=${JSON.stringify(readSnapshot(fixture.databaseFile, ids))}; requests=${JSON.stringify(providerRequests)}; daemon=${fixture.daemonErrors.join(" | ")}`,
-      );
+      throw ah19Failure("gen1 CompactionSummary request", error);
+    });
+    diagnostic.phase("gen1 portable Summary request observed", {
+      requests: providerRequests.filter(
+        (event) => event.bindingVariant === "B",
+      ),
     });
     const recovered = await waitForPublic(
       async () => readSnapshot(fixture.databaseFile, ids),
@@ -4706,9 +4950,16 @@ describe("AH19 restart binding qualification", () => {
         snapshot.workWait !== undefined,
       75_000,
     ).catch((error: unknown) => {
-      throw new Error(
-        `AH19 portable rebase did not converge: ${error instanceof Error ? error.message : String(error)}; snapshot=${JSON.stringify(readSnapshot(fixture.databaseFile, ids))}; requests=${JSON.stringify(providerRequests)}; child=${childOutput.join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
-      );
+      throw ah19Failure("portable Summary rebase settlement", error);
+    });
+    diagnostic.phase("portable Summary work settled", {
+      contextEpoch: recovered.session?.context_epoch,
+      execution: recovered.execution,
+      stepCursor: recovered.steps.map((step) => ({
+        logicalStepNo: step.logical_step_no,
+        state: step.state,
+        cursor: step.next_action_index,
+      })),
     });
 
     const summaryCheckpoint = JSON.parse(
