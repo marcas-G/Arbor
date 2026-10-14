@@ -1,14 +1,13 @@
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  P32_MIGRATIONS,
-  runMigrations,
-  layer as sqliteLayer,
-} from "../../../adapters/persistence-sqlite/src/index.js";
 import { newUuid7 } from "../../../packages/application/src/formation-plan.js";
+import {
+  createP32HistoricalTestImage,
+  createP32MigrationBaseline,
+  upgradeSchema42TestDatabase,
+} from "../../support/schema42-database.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -296,181 +295,12 @@ const schemaSnapshot = (db: DatabaseSync) => {
 const makePreBindingP32Copy = async (
   source: string,
   target: string,
-  committedCommandId: string,
-  baselineFile: string,
 ): Promise<string> => {
-  const sourceDb = new DatabaseSync(source);
-  try {
-    sourceDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-  } finally {
-    sourceDb.close();
-  }
-  copyFileSync(source, target);
-  const db = new DatabaseSync(target);
-  try {
-    db.exec("PRAGMA foreign_keys = OFF");
-    for (const index of [
-      "commands_id_project",
-      "executions_id_project_workspace",
-      "workspaces_id_project_parent",
-      "works_id_project",
-      "permission_grants_id_project",
-      "action_approvals_id_project",
-    ]) {
-      db.exec(`DROP INDEX IF EXISTS ${index}`);
-    }
-    db.exec("DROP INDEX IF EXISTS attention_projection_target");
-    db.exec("DROP TABLE IF EXISTS attention_projection_rows");
-    db.exec("DROP TABLE IF EXISTS assign_work_binding_attention_facts");
-    db.exec("DROP TABLE IF EXISTS assign_work_target_bindings");
-    // The copied live fixture is currently at P35. An equivalent P32 image
-    // must remove the later activation schema as well as the P33/P34 objects.
-    // Dropping the attention child before its intent parent also drops each
-    // table's migration-owned index.
-    db.exec(
-      "DROP TABLE IF EXISTS workspace_resource_activation_attention_rows",
-    );
-    db.exec("DROP TABLE IF EXISTS workspace_resource_activation_intents");
-    db.exec("PRAGMA user_version = 32");
-    db.exec("PRAGMA foreign_keys = ON");
-    const version = db.prepare("PRAGMA user_version").get() as {
-      user_version: number;
-    };
-    if (Number(version.user_version) !== 32) {
-      throw new Error(
-        "test fixture did not materialize a P32 database baseline",
-      );
-    }
-    const p33Objects = db
-      .prepare(
-        `SELECT name FROM sqlite_master
-          WHERE name IN ('assign_work_target_bindings',
-                         'assign_work_binding_attention_facts')`,
-      )
-      .all();
-    if (p33Objects.length !== 0) {
-      throw new Error("P32 fixture still contains migration 0033 tables");
-    }
-    const p34Objects = db
-      .prepare(
-        `SELECT name FROM sqlite_master
-          WHERE name = 'attention_projection_rows'
-             OR name = 'attention_projection_target'`,
-      )
-      .all();
-    if (p34Objects.length !== 0) {
-      throw new Error("P32 fixture still contains migration 0034 objects");
-    }
-    const p35Objects = db
-      .prepare(
-        `SELECT name FROM sqlite_master
-          WHERE name IN (
-            'workspace_resource_activation_intents',
-            'idx_workspace_resource_activation_pending',
-            'workspace_resource_activation_attention_rows',
-            'workspace_resource_activation_attention_target'
-          )
-          ORDER BY name`,
-      )
-      .all();
-    if (p35Objects.length !== 0) {
-      throw new Error("P32 fixture still contains migration 0035 objects");
-    }
-
-    // The live source is at P36, while this compatibility image is P32.
-    // Rebuild only tool_invocations from the independently migrated P32
-    // schema instead of leaving P36's effect-admission column and constraints
-    // behind when lowering user_version. Copy the common historical columns
-    // and preserve their rows; P36-only Denied rows cannot exist in a P32 image.
-    const baselineLayer = sqliteLayer({ filename: baselineFile });
-    await Effect.runPromise(
-      Effect.provide(runMigrations(P32_MIGRATIONS), baselineLayer),
-    );
-    const p32SchemaDb = new DatabaseSync(baselineFile, { readOnly: true });
-    try {
-      const baselineInvocationTable = p32SchemaDb
-        .prepare(
-          `SELECT sql FROM sqlite_master
-            WHERE type = 'table' AND name = 'tool_invocations'`,
-        )
-        .get() as { sql?: string | null } | undefined;
-      if (baselineInvocationTable?.sql == null) {
-        throw new Error("P32 baseline has no tool_invocations table DDL");
-      }
-      const invocationColumns = p32SchemaDb
-        .prepare('PRAGMA table_info("tool_invocations")')
-        .all() as Array<{ name: string }>;
-      if (invocationColumns.length === 0) {
-        throw new Error("P32 baseline tool_invocations has no columns");
-      }
-      const columnList = invocationColumns
-        .map(({ name }) => `"${name.replaceAll('"', '""')}"`)
-        .join(", ");
-      const p36OnlyDenied = db
-        .prepare(
-          "SELECT COUNT(*) AS count FROM tool_invocations WHERE settlement_kind = 'Denied'",
-        )
-        .get() as { count: number };
-      if (p36OnlyDenied.count !== 0) {
-        throw new Error(
-          "P32 fixture cannot preserve P36-only Denied ToolInvocation rows",
-        );
-      }
-      db.exec("PRAGMA foreign_keys = OFF");
-      db.exec(
-        `CREATE TEMP TABLE p32_tool_invocations_rows AS
-          SELECT ${columnList} FROM tool_invocations`,
-      );
-      db.exec("DROP TABLE tool_invocations");
-      db.exec(baselineInvocationTable.sql);
-      db.exec(
-        `INSERT INTO tool_invocations (${columnList})
-          SELECT ${columnList} FROM p32_tool_invocations_rows`,
-      );
-      db.exec("DROP TABLE p32_tool_invocations_rows");
-      const baselineInvocationIndexes = p32SchemaDb
-        .prepare(
-          `SELECT sql FROM sqlite_master
-            WHERE type = 'index' AND tbl_name = 'tool_invocations'
-              AND sql IS NOT NULL
-            ORDER BY name`,
-        )
-        .all() as Array<{ sql: string }>;
-      for (const index of baselineInvocationIndexes) {
-        db.exec(index.sql);
-      }
-      db.exec("PRAGMA foreign_keys = ON");
-    } finally {
-      p32SchemaDb.close();
-    }
-
-    const receipt = db
-      .prepare("SELECT resolution FROM commands WHERE command_id = ?")
-      .get(committedCommandId) as { resolution?: string } | undefined;
-    if (receipt?.resolution !== "Committed") {
-      throw new Error(
-        "equivalent P32 fixture lost its Committed AssignWork receipt",
-      );
-    }
-    const cloneSchema = schemaSnapshot(db);
-    const baselineDb = new DatabaseSync(baselineFile, { readOnly: true });
-    try {
-      const baselineVersion = baselineDb
-        .prepare("PRAGMA user_version")
-        .get() as { user_version: number };
-      expect(Number(baselineVersion.user_version)).toBe(32);
-      expect(cloneSchema).toEqual(schemaSnapshot(baselineDb));
-    } finally {
-      baselineDb.close();
-    }
-    return target;
-  } finally {
-    try {
-      db.close();
-    } catch {
-      // The schema comparison closes the clone connection before creating the baseline.
-    }
-  }
+  await createP32HistoricalTestImage({
+    sourceFilename: source,
+    targetFilename: target,
+  });
+  return target;
 };
 
 const readRows = (databaseFile: string) => {
@@ -1762,10 +1592,13 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         recoveryDatabaseFile = await makePreBindingP32Copy(
           fixture.databaseFile,
           resolve(fixture.directory, "p32-pre-binding.db"),
-          priorCommittedCommandId ?? "",
-          resolve(fixture.directory, "p32-baseline.db"),
         );
+        const baselineFile = resolve(fixture.directory, "p32-baseline.db");
+        await createP32MigrationBaseline(baselineFile);
         const baseline = new DatabaseSync(recoveryDatabaseFile, {
+          readOnly: true,
+        });
+        const pristineP32 = new DatabaseSync(baselineFile, {
           readOnly: true,
         });
         try {
@@ -1790,9 +1623,18 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
               )
               .all(),
           ).toHaveLength(0);
+          expect(schemaSnapshot(baseline)).toEqual(schemaSnapshot(pristineP32));
         } finally {
           baseline.close();
+          pristineP32.close();
         }
+        await upgradeSchema42TestDatabase({
+          databaseFilename: recoveryDatabaseFile,
+          p39ReportFilename: resolve(
+            fixture.directory,
+            "p32-upgrade-p39-report.db",
+          ),
+        });
       }
 
       const newDaemon = await fixture.startAdditionalDaemon({
@@ -1833,9 +1675,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       }
       if (crashSide === "legacy-p32-upgrade") {
         const upgraded = readRows(recoveryDatabaseFile);
-        // The P32 pre-binding image upgrades through P36, whose accepted
-        // ToolInvocation admission migration is the current version 36.
-        expect(upgraded.schemaVersion).toBe(36);
+        expect(upgraded.schemaVersion).toBe(42);
         expect(upgraded.assignWorkTargetBindings).toHaveLength(0);
         expect(
           upgraded.commands.find(

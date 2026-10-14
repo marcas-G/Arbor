@@ -115,7 +115,16 @@ const qualificationProbe = async (event) => {
 const executionLeaseQualificationProbe = async (event) => {
   if (event.boundary === "AH10AfterLeaseAcquired") emit(event);
   if (event.boundary === "AH10BeforeLeaseRenewal") {
-    emit(event);
+    const delayedPause =
+      role === "old" &&
+      process.env.ARBOR_AH10_DELAY_LEASE_RENEWAL_PAUSE === "1";
+    const pauseRequested =
+      !delayedPause ||
+      existsSync(join(gateDirectory, "old-lease-renewal.pause"));
+    emit({ ...event, pauseRequested });
+    if (delayedPause && !pauseRequested) {
+      return;
+    }
     await waitForGate("lease-renewal", event);
   }
 };

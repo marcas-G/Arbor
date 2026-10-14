@@ -1,8 +1,10 @@
 import { copyFileSync, existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Cause, Effect, Exit, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
+  P32_MIGRATIONS,
   P38_MIGRATIONS,
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
@@ -51,6 +53,8 @@ export interface Schema42TestDatabaseOptions {
   /** Seeds test-owned legacy rows after the real P38 prefix and before P39. */
   readonly seedP38?: (databaseFilename: string) => Promise<void>;
   readonly prefix?: string;
+  /** Optional private parent used by invocation-wide functional templates. */
+  readonly parentDirectory?: string;
 }
 
 export interface Schema42TestDatabaseFactory {
@@ -119,6 +123,103 @@ const checkpointSqlite = (filename: string) =>
     }),
   );
 
+const quoteSqliteIdentifier = (identifier: string) =>
+  `"${identifier.replaceAll('"', '""')}"`;
+
+/** Creates an exact P32 schema from its accepted migration prefix and carries
+ * forward only rows/columns that exist in both images. This is for disposable
+ * historical qualification fixtures; it never reverse-edits a newer schema
+ * or rewrites user_version. */
+export const createP32HistoricalTestImage = async (input: {
+  readonly sourceFilename: string;
+  readonly targetFilename: string;
+}): Promise<void> => {
+  const source = new DatabaseSync(input.sourceFilename, { readOnly: true });
+  try {
+    const version = Number(
+      (
+        source.prepare("PRAGMA user_version").get() as {
+          user_version: number;
+        }
+      ).user_version,
+    );
+    if (version !== 42) {
+      throw new Schema42TestDatabaseSetupError(
+        "SCHEMA42_SETUP_FAILED",
+        `Historical P32 seed source is schema ${version}; expected the schema-42 production fixture.`,
+        version,
+      );
+    }
+  } finally {
+    source.close();
+  }
+
+  await runPrimary(
+    input.targetFilename,
+    Effect.gen(function* () {
+      yield* runMigrations(P32_MIGRATIONS);
+    }),
+  );
+
+  const target = new DatabaseSync(input.targetFilename);
+  try {
+    target.exec("PRAGMA foreign_keys = OFF");
+    target
+      .prepare("ATTACH DATABASE ? AS historical_source")
+      .run(input.sourceFilename);
+    const tables = target
+      .prepare(
+        `SELECT name FROM main.sqlite_master
+          WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+          ORDER BY name`,
+      )
+      .all() as Array<{ name: string }>;
+    for (const { name } of tables) {
+      const quotedName = quoteSqliteIdentifier(name);
+      const targetColumns = target
+        .prepare(`PRAGMA main.table_info(${quotedName})`)
+        .all() as Array<{ name: string }>;
+      const sourceColumns = target
+        .prepare(`PRAGMA historical_source.table_info(${quotedName})`)
+        .all() as Array<{ name: string }>;
+      const sourceColumnNames = new Set(sourceColumns.map(({ name }) => name));
+      const commonColumns = targetColumns
+        .map(({ name }) => name)
+        .filter((column) => sourceColumnNames.has(column));
+      if (commonColumns.length === 0) continue;
+      const columnList = commonColumns.map(quoteSqliteIdentifier).join(", ");
+      target.exec(
+        `INSERT INTO main.${quotedName} (${columnList})
+          SELECT ${columnList} FROM historical_source.${quotedName}`,
+      );
+    }
+    target.exec("DETACH DATABASE historical_source");
+  } finally {
+    target.close();
+  }
+
+  const copiedVersion = await readUserVersion(input.targetFilename);
+  if (copiedVersion !== 32) {
+    throw new Schema42TestDatabaseSetupError(
+      "SCHEMA42_SETUP_FAILED",
+      `Historical P32 migration prefix ended at user_version ${copiedVersion}; expected 32.`,
+      copiedVersion,
+    );
+  }
+};
+
+/** Builds a pristine P32 migration-prefix database for exact schema checks. */
+export const createP32MigrationBaseline = async (
+  filename: string,
+): Promise<void> => {
+  await runPrimary(
+    filename,
+    Effect.gen(function* () {
+      yield* runMigrations(P32_MIGRATIONS);
+    }),
+  );
+};
+
 const failureValue = (exit: Exit.Failure<unknown, unknown>) =>
   Option.getOrNull(Cause.findErrorOption(exit.cause));
 
@@ -127,6 +228,85 @@ const isUnsupportedP39Deployment = (value: unknown) =>
   value !== null &&
   "code" in value &&
   value.code === "P39_UNSUPPORTED_DEPLOYMENT";
+
+/** Offline-upgrades an owned, disposable historical image to the exact
+ * production schema-42 shape. P39 remains a separate maintenance step; this
+ * helper never changes user_version directly or runs from the daemon. */
+export const upgradeSchema42TestDatabase = async (input: {
+  readonly databaseFilename: string;
+  readonly p39ReportFilename: string;
+}): Promise<void> => {
+  await runPrimary(
+    input.databaseFilename,
+    Effect.gen(function* () {
+      yield* runMigrations(P38_MIGRATIONS);
+    }),
+  );
+  const version38 = await readUserVersion(input.databaseFilename);
+  if (version38 !== 38) {
+    throw new Schema42TestDatabaseSetupError(
+      "SCHEMA42_SETUP_FAILED",
+      `Schema-42 offline upgrade prefix ended at user_version ${version38}; expected 38.`,
+      version38,
+    );
+  }
+
+  const p39 = await Effect.runPromiseExit(
+    runP39SqliteMaintenance({
+      primaryFilename: input.databaseFilename,
+      sidecarFilename: input.p39ReportFilename,
+      protectedStoreFilenames: [],
+    }),
+  );
+  if (Exit.isFailure(p39)) {
+    const reason = failureValue(p39);
+    if (isUnsupportedP39Deployment(reason)) {
+      throw new Schema42TestDatabaseSetupError(
+        "P39_UNSUPPORTED_DEPLOYMENT",
+        `P39 maintenance is unsupported for this test environment; the disposable database remains at schema 38 and schema 42 was not fabricated.`,
+        38,
+        { cause: Cause.squash(p39.cause) },
+      );
+    }
+    throw Cause.squash(p39.cause);
+  }
+  if (!existsSync(input.p39ReportFilename)) {
+    throw new Schema42TestDatabaseSetupError(
+      "SCHEMA42_SETUP_FAILED",
+      "P39 maintenance completed without creating its separate report database.",
+      39,
+    );
+  }
+  if (
+    realpathSync.native(input.databaseFilename) ===
+    realpathSync.native(input.p39ReportFilename)
+  ) {
+    throw new Schema42TestDatabaseSetupError(
+      "SCHEMA42_SETUP_FAILED",
+      "P39 report database aliases the primary database.",
+      39,
+    );
+  }
+
+  for (const migration of schema42StandaloneSuffix) {
+    await runPrimary(
+      input.databaseFilename,
+      Effect.gen(function* () {
+        yield* runMigrations([migration]);
+      }),
+    );
+  }
+  const version42 = await readUserVersion(input.databaseFilename);
+  if (version42 !== 42) {
+    throw new Schema42TestDatabaseSetupError(
+      "SCHEMA42_SETUP_FAILED",
+      `Schema-42 offline upgrade ended at user_version ${version42}, expected 42.`,
+      version42,
+    );
+  }
+  await checkpointSqlite(input.databaseFilename);
+  await checkpointSqlite(input.p39ReportFilename);
+};
 
 /**
  * Creates a disposable, real SQLite database through the only approved test
@@ -139,7 +319,7 @@ export const createSchema42TestDatabase = async (
   options: Schema42TestDatabaseOptions = {},
 ): Promise<Schema42TestDatabase> => {
   const directory = createSchema42PrivateTestDirectory(
-    process.cwd(),
+    options.parentDirectory ?? process.cwd(),
     options.prefix ?? "arbor-schema42-test-",
   );
   const databaseFilename = join(directory, "primary.sqlite");
@@ -158,62 +338,13 @@ export const createSchema42TestDatabase = async (
       await options.seedP38(databaseFilename);
     }
 
-    const p39 = await Effect.runPromiseExit(
-      runP39SqliteMaintenance({
-        primaryFilename: databaseFilename,
-        sidecarFilename: p39ReportFilename,
-        protectedStoreFilenames: [],
-      }),
-    );
-    if (Exit.isFailure(p39)) {
-      const reason = failureValue(p39);
-      if (isUnsupportedP39Deployment(reason)) {
-        const version = await readUserVersion(databaseFilename);
-        throw new Schema42TestDatabaseSetupError(
-          "P39_UNSUPPORTED_DEPLOYMENT",
-          `P39 maintenance is unsupported for this test environment; the disposable database remains at schema ${version} and schema 42 was not fabricated.`,
-          version,
-          { cause: Cause.squash(p39.cause) },
-        );
-      }
-      throw Cause.squash(p39.cause);
-    }
-    if (!existsSync(p39ReportFilename)) {
-      throw new Schema42TestDatabaseSetupError(
-        "SCHEMA42_SETUP_FAILED",
-        "P39 maintenance completed without creating its separate report database.",
-        39,
-      );
-    }
-    if (
-      realpathSync.native(databaseFilename) ===
-      realpathSync.native(p39ReportFilename)
-    ) {
-      throw new Schema42TestDatabaseSetupError(
-        "SCHEMA42_SETUP_FAILED",
-        "P39 report database aliases the primary database.",
-        39,
-      );
-    }
-
-    for (const migration of schema42StandaloneSuffix) {
-      await runPrimary(
-        databaseFilename,
-        Effect.gen(function* () {
-          yield* runMigrations([migration]);
-        }),
-      );
-    }
+    await upgradeSchema42TestDatabase({
+      databaseFilename,
+      p39ReportFilename,
+    });
     const version = await readUserVersion(databaseFilename);
-    if (version !== 42) {
-      throw new Schema42TestDatabaseSetupError(
-        "SCHEMA42_SETUP_FAILED",
-        `Schema-42 test fixture ended at user_version ${version}, expected 42.`,
-        version,
-      );
-    }
-    await checkpointSqlite(databaseFilename);
-    await checkpointSqlite(p39ReportFilename);
+    if (version !== 42)
+      throw new Error("Schema-42 upgrade verification failed.");
 
     retained = true;
     return {
