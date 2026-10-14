@@ -154,6 +154,16 @@ const canonicalJsonV1 = (value: unknown): string => {
 const isSha256 = (value: unknown): value is string =>
   typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 
+/**
+ * P38's accepted `InvocationApproval.actionDigest` codec is the exact
+ * eight-character lowercase FNV-1a token produced by Tool Runtime. The
+ * accepted P38/P39 projection stores this receipt value verbatim in
+ * `approvalActionDigest`; it is not a SHA-256 projection.
+ */
+export const isP38InvocationApprovalActionDigestV1 = (
+  value: unknown,
+): value is string => typeof value === "string" && /^[0-9a-f]{8}$/.test(value);
+
 const isNullableString = (value: unknown): value is string | null =>
   value === null || typeof value === "string";
 
@@ -235,7 +245,7 @@ const isRecoveryBindingV1 = (value: unknown): value is RecoveryBindingV1 => {
     (record.approvalTargetDigest === null ||
       isSha256(record.approvalTargetDigest)) &&
     (record.approvalActionDigest === null ||
-      isSha256(record.approvalActionDigest)) &&
+      isP38InvocationApprovalActionDigestV1(record.approvalActionDigest)) &&
     isNullableString(record.approvalConsumedBy) &&
     isNullableString(record.profileId) &&
     isNullableString(record.profileVersion) &&

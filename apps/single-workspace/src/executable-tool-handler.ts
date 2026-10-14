@@ -22,6 +22,7 @@ import {
   sha256Hex,
   ToolCatalogPort,
   type ToolCatalogPortService,
+  type ToolDefinitionRef,
   type ToolExecutionContext,
   type ToolIntent,
   type ToolInvocationRecord,
@@ -36,6 +37,42 @@ export class ExecutableToolHandler extends Context.Service<
   ExecutableToolHandler,
   ExecutableInvocationHandler
 >()("arbor/ExecutableToolHandler") {}
+
+/** Test-only catalog visibility probe. Production composition leaves this
+ * absent; it observes the candidate refs immediately before the unchanged
+ * exact-one handler gate. */
+export type ExecutableToolHandlerQualificationProbe = (event: {
+  readonly boundary:
+    | "P4ExecutableCatalogRefs"
+    | "P4ExecutableToolRuntimeOutcome";
+  readonly executionId: string;
+  readonly toolName: string;
+  readonly invocationId?: string;
+  readonly callRef?: string;
+  readonly providerTurnId?: string;
+  readonly logicalActionId?: string;
+  readonly actionIndex?: number;
+  readonly matchingRefs?: ReadonlyArray<ToolDefinitionRef>;
+  readonly outcomeTag?: string;
+  readonly errorTag?: string;
+  readonly causeTag?: string;
+  readonly stage?: string;
+  readonly operation?: string;
+  readonly causeRepository?: string;
+  readonly causeOperation?: string;
+  readonly nestedStage?: string;
+  readonly safeDetailsSourceTag?: string;
+  readonly approvalId?: string;
+  readonly recoveryBindingIdentity?: {
+    readonly executionId: string;
+    readonly providerTurnId: string;
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly logicalActionId: string;
+    readonly actionIndex: number;
+    readonly callRef: string;
+  };
+}) => Promise<void>;
 
 const bounded = (text: string, limit = 2000): BoundedObservation => ({
   text: text.length > limit ? text.slice(0, limit) : text,
@@ -172,6 +209,7 @@ export const makeExecutableToolHandler = (
       unknown
     >;
   },
+  qualificationProbe?: ExecutableToolHandlerQualificationProbe,
 ): ExecutableInvocationHandler => ({
   handle: ({
     invocation,
@@ -205,13 +243,26 @@ export const makeExecutableToolHandler = (
           cause: "active ExecutionOrigin is missing its lease-holder triple",
         });
       }
-      const matchingRefs = (yield* catalog.visibleRefs().pipe(
+      const visibleRefs = yield* catalog.visibleRefs().pipe(
         Effect.mapError((cause) => ({
           _tag: "AgentActionOperationalFailure" as const,
           operation: "ToolCatalog.visibleRefs",
           cause,
         })),
-      )).filter((ref) => ref.name === invocation.toolName);
+      );
+      const matchingRefs = visibleRefs.filter(
+        (ref) => ref.name === invocation.toolName,
+      );
+      if (qualificationProbe !== undefined) {
+        yield* Effect.promise(() =>
+          qualificationProbe({
+            boundary: "P4ExecutableCatalogRefs",
+            executionId: execution.executionId,
+            toolName: invocation.toolName,
+            matchingRefs,
+          }),
+        );
+      }
       if (matchingRefs.length !== 1) {
         return yield* Effect.fail({
           _tag: "AgentActionRejected" as const,
@@ -323,6 +374,80 @@ export const makeExecutableToolHandler = (
         onFailure: (cause) => ({ ok: false as const, cause }),
         onSuccess: (value) => ({ ok: true as const, value }),
       });
+      if (qualificationProbe !== undefined) {
+        const identity = {
+          boundary: "P4ExecutableToolRuntimeOutcome" as const,
+          executionId: execution.executionId,
+          invocationId: String(intent.invocationId),
+          callRef: invocation.callRef,
+          toolName: invocation.toolName,
+          ...(providerTurnId === undefined ? {} : { providerTurnId }),
+          ...(logicalActionId === undefined ? {} : { logicalActionId }),
+          ...(action === undefined ? {} : { actionIndex: action.actionIndex }),
+          ...(currentApproval === undefined
+            ? {}
+            : { approvalId: currentApproval.approvalId }),
+          ...(recoveryBindingIdentity === undefined
+            ? {}
+            : { recoveryBindingIdentity }),
+        };
+        const outcome = invoked.ok
+          ? {
+              ...identity,
+              outcomeTag: invoked.value._tag,
+            }
+          : (() => {
+              const cause = invoked.cause as unknown as Record<string, unknown>;
+              const nestedCause =
+                typeof cause.cause === "object" && cause.cause !== null
+                  ? (cause.cause as Record<string, unknown>)
+                  : undefined;
+              const safeDetails =
+                typeof cause.safeDetails === "object" &&
+                cause.safeDetails !== null
+                  ? (cause.safeDetails as Record<string, unknown>)
+                  : undefined;
+              const safeSourceTag = [
+                safeDetails?.sourceTag,
+                cause.sourceTag,
+                nestedCause?.sourceTag,
+              ].find(
+                (value): value is string =>
+                  typeof value === "string" &&
+                  /^[A-Za-z0-9_.:-]{1,96}$/u.test(value),
+              );
+              const nestedStage =
+                typeof nestedCause?.stage === "string"
+                  ? nestedCause.stage
+                  : undefined;
+              return {
+                ...identity,
+                ...(typeof cause._tag === "string"
+                  ? { errorTag: cause._tag }
+                  : {}),
+                ...(typeof nestedCause?._tag === "string"
+                  ? { causeTag: nestedCause._tag }
+                  : {}),
+                ...(typeof cause.stage === "string"
+                  ? { stage: cause.stage }
+                  : {}),
+                ...(typeof cause.operation === "string"
+                  ? { operation: cause.operation }
+                  : {}),
+                ...(typeof nestedCause?.repository === "string"
+                  ? { causeRepository: nestedCause.repository }
+                  : {}),
+                ...(typeof nestedCause?.operation === "string"
+                  ? { causeOperation: nestedCause.operation }
+                  : {}),
+                ...(nestedStage === undefined ? {} : { nestedStage }),
+                ...(safeSourceTag === undefined
+                  ? {}
+                  : { safeDetailsSourceTag: safeSourceTag }),
+              };
+            })();
+        yield* Effect.promise(() => qualificationProbe(outcome));
+      }
       if (!invoked.ok) {
         if (invoked.cause._tag === "ToolObservationRecoveryBlocked") {
           return yield* Effect.fail({
@@ -463,6 +588,7 @@ export const ExecutableToolHandlerLive = (
     authenticatedHumans: [],
     directParentOf: [],
   },
+  qualificationProbe?: ExecutableToolHandlerQualificationProbe,
 ): Layer.Layer<
   ExecutableToolHandler,
   never,
@@ -552,6 +678,7 @@ export const ExecutableToolHandlerLive = (
                 };
               }),
           },
+          qualificationProbe,
         ),
       );
     }),

@@ -24,6 +24,7 @@ interface LeaseProbe {
   readonly tag: "P4_FENCE_PROBE";
   readonly role: "old" | "new";
   readonly pid: number;
+  readonly observedAt: string;
   readonly boundary: string;
   readonly executionId: string;
   readonly fencingGeneration?: number;
@@ -31,6 +32,12 @@ interface LeaseProbe {
   readonly workerIncarnationId?: string;
   readonly invocationId?: string;
   readonly source?: string;
+  readonly toolName?: string;
+  readonly matchingRefs?: ReadonlyArray<{
+    readonly name: string;
+    readonly version: string;
+    readonly hash: string;
+  }>;
 }
 
 interface LeaseRow {
@@ -52,6 +59,23 @@ interface ExecutionRow {
   readonly settlement_kind: string | null;
 }
 
+interface PendingExecutableApprovalRow {
+  readonly approval_id: string;
+  readonly execution_id: string;
+  readonly logical_step_no: number;
+  readonly repair_attempt: number;
+  readonly action_index: number;
+  readonly logical_action_id: string;
+  readonly call_ref: string;
+  readonly tool_invocation_id: string;
+  readonly side_effect_semantics: string;
+  readonly state: string;
+  readonly revision: number;
+  readonly provider_turn_id: string;
+  readonly step_state: string;
+  readonly action_state: string;
+}
+
 const fixtures: ProductionFixture[] = [];
 const fenceChild = resolve(
   "tests/functional/support/p4-tool-lease-fencing-child.mjs",
@@ -59,25 +83,77 @@ const fenceChild = resolve(
 let probeLogFile: string | undefined;
 let workExecutionId: string | undefined;
 let effectObserved = false;
+const schedulerDiagnosticLines: string[] = [];
+let probeLogLinesWritten = 0;
+const maximumP4DiagnosticLines = 512;
+let pendingP4FailureEvidence:
+  | {
+      readonly fixture: ProductionFixture;
+      readonly path: string;
+      readonly executionId: string;
+      readonly report: Record<string, unknown>;
+      readonly daemonSnapshots: () => Readonly<Record<string, unknown>>;
+    }
+  | undefined;
+
+const appendProbeLine = (line: string) => {
+  if (
+    probeLogFile === undefined ||
+    probeLogLinesWritten >= maximumP4DiagnosticLines
+  ) {
+    return;
+  }
+  appendFileSync(probeLogFile, `${line}\n`);
+  probeLogLinesWritten += 1;
+};
 
 afterEach(async () => {
-  for (const fixture of fixtures.splice(0)) await fixture.stop();
+  for (const fixture of fixtures.splice(0)) {
+    try {
+      await fixture.stop();
+    } finally {
+      const pending = pendingP4FailureEvidence;
+      if (pending?.fixture === fixture) {
+        const completedEvidence = {
+          ...pending.report,
+          afterStopExecutionSnapshot: p4FailureSnapshot(
+            fixture.databaseFile,
+            pending.executionId,
+          ),
+          afterStopDaemonSnapshots: pending.daemonSnapshots(),
+        };
+        writeFileSync(
+          pending.path,
+          JSON.stringify(completedEvidence, null, 2),
+          "utf8",
+        );
+        pendingP4FailureEvidence = undefined;
+      }
+    }
+  }
 });
 
 const recordProbe = (events: LeaseProbe[], line: string) => {
   try {
-    const probe = JSON.parse(line) as LeaseProbe;
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    if (parsed.tag === "P4_SCHEDULER_PROBE") {
+      if (schedulerDiagnosticLines.length < 64) {
+        const safe = JSON.stringify(parsed);
+        schedulerDiagnosticLines.push(safe);
+        appendProbeLine(safe);
+      }
+      return;
+    }
+    const probe = parsed as unknown as LeaseProbe;
     if (probe.tag === "P4_FENCE_PROBE") {
-      events.push(probe);
+      if (events.length < maximumP4DiagnosticLines) events.push(probe);
       if (
         probe.boundary === "AH7AfterToolEffectBeforeSettlement" &&
         probe.executionId === workExecutionId
       ) {
         effectObserved = true;
       }
-      if (probeLogFile !== undefined) {
-        appendFileSync(probeLogFile, `${JSON.stringify(probe)}\n`);
-      }
+      appendProbeLine(JSON.stringify(probe));
     }
   } catch {
     // Keep non-probe daemon output in ProductionFixture diagnostics.
@@ -131,6 +207,162 @@ const executionRows = (databaseFile: string, executionId: string) => {
   }
 };
 
+const p4FailureSnapshot = (databaseFile: string, executionId: string) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return {
+      execution: db
+        .prepare(
+          `SELECT execution_id, workspace_id, binding_kind, episode_kind,
+                  episode_ref, episode_revision, settled_at, settlement_kind
+             FROM executions WHERE execution_id = ?`,
+        )
+        .get(executionId),
+      workspace: db
+        .prepare(
+          `SELECT workspace_id, lifecycle, current_work_id, revision
+             FROM workspaces
+            WHERE workspace_id = (
+              SELECT workspace_id FROM executions WHERE execution_id = ?
+            )`,
+        )
+        .get(executionId),
+      work: db
+        .prepare(
+          `SELECT work_id, workspace_id, lifecycle, revision
+             FROM works
+            WHERE work_id = (
+              SELECT episode_ref FROM executions
+               WHERE execution_id = ? AND episode_kind = 'WorkEpisode'
+            )`,
+        )
+        .get(executionId),
+      lease: db
+        .prepare(
+          `SELECT execution_id, worker_id, worker_incarnation_id, generation,
+                  expires_at FROM execution_leases WHERE execution_id = ?`,
+        )
+        .get(executionId),
+      steps: db
+        .prepare(
+          `SELECT logical_step_no, repair_attempt, provider_turn_id, state,
+                  next_action_index, revision, updated_at
+             FROM agent_loop_steps WHERE execution_id = ?
+            ORDER BY logical_step_no, repair_attempt`,
+        )
+        .all(executionId),
+      actions: db
+        .prepare(
+          `SELECT logical_step_no, repair_attempt, action_index,
+                  logical_action_id, call_ref, route_kind, action_kind,
+                  input_hash, state, observation_source_ref, revision, updated_at
+             FROM agent_loop_step_actions WHERE execution_id = ?
+            ORDER BY logical_step_no, repair_attempt, action_index`,
+        )
+        .all(executionId),
+      invocations: db
+        .prepare(
+          `SELECT invocation_id, tool_name, tool_version, side_effect_semantics,
+                  arguments_json, resolved_regions_json, approval_id,
+                  effect_admission_state, intent_at, settled_at,
+                  settlement_kind, settlement_json, result_ref
+             FROM tool_invocations WHERE execution_id = ? ORDER BY intent_at`,
+        )
+        .all(executionId),
+      providerAttempts: db
+        .prepare(
+          `SELECT pt.provider_turn_id, pa.attempt_no, pa.outcome,
+                  pa.provider_error_kind, pa.settled_at
+             FROM provider_turns pt
+             JOIN provider_attempts pa USING (provider_turn_id)
+            WHERE pt.execution_id = ?
+            ORDER BY pt.started_at, pa.attempt_no`,
+        )
+        .all(executionId),
+      providerTurns: db
+        .prepare(
+          `SELECT provider_turn_id, started_at, settled_at, finish_reason
+             FROM provider_turns WHERE execution_id = ? ORDER BY started_at`,
+        )
+        .all(executionId),
+      sessionTimeline: db
+        .prepare(
+          `SELECT se.sequence, se.item_type, se.source_kind, se.source_ref,
+                  se.payload_json, se.content_hash, se.created_at
+             FROM session_entries se
+             JOIN executions e ON e.session_id = se.session_id
+            WHERE e.execution_id = ?
+            ORDER BY se.sequence`,
+        )
+        .all(executionId),
+      executableApprovals: db
+        .prepare(
+          `SELECT approval_id, route_kind, project_id, workspace_id,
+                  execution_id, subject_ref, stable_action_id, action_version,
+                  side_effect_semantics, action_digest, arguments_json,
+                  target_ref, target_resource_space_ids_json,
+                  control_basis_digest, state, revision, requested_at,
+                  expires_at, decided_at, decided_by, decision_reason,
+                  consumed_at, consumed_by, binding_proven, source_state,
+                  logical_step_no, repair_attempt, action_index,
+                  logical_action_id, call_ref, tool_invocation_id,
+                  cancelled_at, cancelled_by, cancellation_reason
+             FROM action_approvals
+            WHERE execution_id = ? AND route_kind = 'Executable'
+            ORDER BY requested_at`,
+        )
+        .all(executionId),
+      projectToolRegistrations: db
+        .prepare(
+          `SELECT plugin_id, plugin_version, content_hash, definitions_json,
+                  registered_at
+             FROM project_tool_registry
+            WHERE project_id = (
+              SELECT project_id FROM executions WHERE execution_id = ?
+            )
+            ORDER BY registered_at, plugin_id, plugin_version, content_hash`,
+        )
+        .all(executionId),
+    };
+  } finally {
+    db.close();
+  }
+};
+
+const pendingExecutableApproval = (
+  databaseFile: string,
+  approvalId: string,
+): PendingExecutableApprovalRow | undefined => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        `SELECT ap.approval_id, ap.execution_id, ap.logical_step_no,
+                ap.repair_attempt,
+                ap.action_index, ap.logical_action_id, ap.call_ref,
+                ap.tool_invocation_id, ap.side_effect_semantics, ap.state,
+                ap.revision, s.provider_turn_id, s.state AS step_state,
+                a.state AS action_state
+           FROM action_approvals ap
+           JOIN agent_loop_steps s
+             ON s.execution_id = ap.execution_id
+            AND s.logical_step_no = ap.logical_step_no
+            AND s.repair_attempt = ap.repair_attempt
+           JOIN agent_loop_step_actions a
+             ON a.execution_id = ap.execution_id
+            AND a.logical_step_no = ap.logical_step_no
+            AND a.repair_attempt = ap.repair_attempt
+            AND a.action_index = ap.action_index
+            AND a.logical_action_id = ap.logical_action_id
+          WHERE ap.approval_id = ? AND ap.route_kind = 'Executable'
+            AND ap.binding_proven = 1`,
+      )
+      .get(approvalId) as PendingExecutableApprovalRow | undefined;
+  } finally {
+    db.close();
+  }
+};
+
 describe("P4 lease acquisition while another daemon owns a live lease", () => {
   it("records a real rejected acquisition for the same active Execution", async () => {
     const marker = `P4-LIVE-${crypto.randomUUID().slice(0, 8)}`;
@@ -142,16 +374,18 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
         ? `Add-Content -LiteralPath '${effectFile}' -Value '${effectMarker}'`
         : `printf '%s\\n' '${effectMarker}' >> '${effectFile}'`;
     const events: LeaseProbe[] = [];
+    const providerTimeline: Array<{
+      readonly event: string;
+      readonly at: string;
+      readonly callIndex?: number;
+    }> = [];
+    const leaseExpiryHistory: Array<{
+      readonly observedAt: string;
+      readonly generation: number;
+      readonly expiresAt: string;
+    }> = [];
     let manualWaitCalls = 0;
     let targetToolCalls = 0;
-    let signalProviderHeld!: () => void;
-    const providerHeld = new Promise<void>((resolveHeld) => {
-      signalProviderHeld = resolveHeld;
-    });
-    let releaseProvider!: () => void;
-    const providerRelease = new Promise<void>((resolveRelease) => {
-      releaseProvider = resolveRelease;
-    });
 
     const fixture = await startProductionFixture({
       admitWorkspaceDirectory: true,
@@ -162,22 +396,15 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
         ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
       },
       onDaemonStdout: (line) => recordProbe(events, line),
-      beforeResponse: async (call) => {
+      onResponseSent: (call, callIndex) => {
         const context = JSON.stringify(call.messages);
-        const available = new Set(
-          call.tools
-            .map((tool) => tool.function?.name)
-            .filter((name): name is string => name !== undefined),
-        );
-        if (
-          available.has("shell") &&
-          context.includes(marker) &&
-          context.includes(steerMarker)
-        ) {
-          signalProviderHeld();
-          await providerRelease;
+        if (context.includes(marker) && context.includes(steerMarker)) {
+          providerTimeline.push({
+            event: "server-response-sent",
+            at: new Date().toISOString(),
+            callIndex,
+          });
         }
-        return "respond";
       },
       reply: (call) => {
         const available = new Set(
@@ -279,10 +506,10 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       project,
       `请创建一个等待人工指示后执行一次shell写入的Work，目标标记 ${marker}。`,
     );
-    const approval = await waitForApproval(client, project, marker);
+    const workApproval = await waitForApproval(client, project, marker);
     await client.command(project.projectId, "ResolveControlApproval", {
-      approvalId: approval.approvalId,
-      expectedRevision: approval.revision,
+      approvalId: workApproval.approvalId,
+      expectedRevision: workApproval.revision,
       decision: "Approve",
       reason: "P4 live lease acquisition qualification",
     });
@@ -329,50 +556,176 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       provenance: { source: "HumanInput" },
     });
 
-    let providerGateTimer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        providerHeld,
-        new Promise<never>((_, reject) => {
-          providerGateTimer = setTimeout(
-            () => reject(new Error("Work Provider request was not held")),
-            45_000,
-          );
-        }),
-      ]);
-    } finally {
-      if (providerGateTimer !== undefined) clearTimeout(providerGateTimer);
-    }
-    const activeWork = await waitForPublic(
+    const inbox = await waitForPublic(
       () =>
         client.view<{
-          workId?: string;
-          activeExecution?: { executionId: string };
-        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+          unconsumed: Array<{
+            entryKey: string;
+            kind: string;
+            summary: string;
+          }>;
+        }>("inbox-view", { workspaceId: project.rootWorkspaceId }),
       (value) =>
-        value !== null &&
-        value.workId === currentWork.workId &&
-        value.activeExecution?.executionId !== undefined,
+        value.unconsumed.some(
+          (entry) =>
+            entry.kind === "Governance" &&
+            /^eap:(.+):(\d+)$/u.test(entry.entryKey),
+        ),
     );
-    const executionId = activeWork?.activeExecution?.executionId;
-    if (executionId === undefined) {
+    const approvalEntry = inbox.unconsumed.find(
+      (entry) =>
+        entry.kind === "Governance" && /^eap:(.+):(\d+)$/u.test(entry.entryKey),
+    );
+    const approvalMatch =
+      approvalEntry === undefined
+        ? null
+        : /^eap:(.+):(\d+)$/u.exec(approvalEntry.entryKey);
+    if (
+      approvalMatch === null ||
+      approvalMatch[1] === undefined ||
+      approvalMatch[2] === undefined
+    ) {
       throw new Error(
-        "Work Provider request did not expose its active Execution",
+        `P4 public Inbox exposed no exact pending Executable approval for ${marker}`,
       );
     }
+    const approvalId = approvalMatch[1];
+    const approvalRevision = Number(approvalMatch[2]);
+    const approval = pendingExecutableApproval(
+      fixture.databaseFile,
+      approvalId,
+    );
+    if (approval === undefined) {
+      throw new Error(`P4 approval ${approvalId} has no proven exact binding`);
+    }
+    const executionId = approval.execution_id;
     workExecutionId = executionId;
+    expect(approval).toMatchObject({
+      approval_id: approvalId,
+      execution_id: executionId,
+      state: "Pending",
+      revision: approvalRevision,
+      side_effect_semantics: "NonIdempotent",
+      step_state: "ActionsInProgress",
+      action_state: "Pending",
+    });
+    expect(
+      executionRows(fixture.databaseFile, executionId).invocations,
+    ).toEqual([]);
+
+    const resolution = await client.command(
+      project.projectId,
+      "ResolveExecutableApproval",
+      {
+        approvalId,
+        expectedRevision: approvalRevision,
+        decision: "Approve",
+        reason: "P4 live lease acquisition qualification",
+      },
+    );
+    expect(resolution).toMatchObject({ body: { resolution: "Committed" } });
+    const approvalResolvedAt = Date.now();
     const oldAcquired = await waitForPublic(
       async () =>
         events.find(
           (event) =>
             event.role === "old" &&
             event.boundary === "AH10AfterLeaseAcquired" &&
-            event.executionId === executionId,
+            event.executionId === executionId &&
+            Date.parse(event.observedAt) >= approvalResolvedAt,
         ),
       (event) => event !== undefined,
     );
     if (oldAcquired === undefined) {
-      throw new Error("Old daemon did not report owning the active Execution");
+      throw new Error(
+        "Old daemon did not reacquire the approved Execution after public resolution",
+      );
+    }
+
+    const effectEvent = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH7AfterToolEffectBeforeSettlement" &&
+            event.executionId === executionId,
+        ),
+      (event) => event !== undefined,
+      60_000,
+    ).catch((error: unknown) => {
+      const failure = error instanceof Error ? error.message : String(error);
+      const evidenceDirectory = resolve(".test-results");
+      mkdirSync(evidenceDirectory, { recursive: true });
+      const evidencePath = join(
+        evidenceDirectory,
+        `p4-live-lease-failure-${executionId}.json`,
+      );
+      const executionSnapshot = p4FailureSnapshot(
+        fixture.databaseFile,
+        executionId,
+      );
+      const evidence = {
+        failure,
+        fixtureDirectory: fixture.directory,
+        databaseFile: fixture.databaseFile,
+        targetExecutionId: executionId,
+        publicApproval: {
+          eapEntryKey: approvalEntry?.entryKey ?? null,
+          approvalId,
+          expectedRevision: approvalRevision,
+          resolution,
+          binding: approval,
+        },
+        oldAcquired,
+        currentLease: executionRows(fixture.databaseFile, executionId).lease,
+        executionSnapshot,
+        shellDefinition: events.find(
+          (event) => event.boundary === "P4ShellDefinitionSnapshot",
+        ),
+        catalogRefs: events.filter(
+          (event) => event.boundary === "P4ExecutableCatalogRefs",
+        ),
+        toolRuntimeProgress: events.filter(
+          (event) =>
+            event.role === "old" &&
+            (event.boundary.startsWith("AH7") ||
+              event.boundary === "P4ExecutableCatalogRefs" ||
+              event.boundary === "P4ExecutableToolRuntimeOutcome" ||
+              event.boundary === "P4P39BindClaimBranch" ||
+              event.boundary === "AH10AfterLeaseAcquired"),
+        ),
+        probeEvents: events,
+        schedulerDiagnostics: schedulerDiagnosticLines.map((line) =>
+          JSON.parse(line),
+        ),
+        providerTimeline,
+        providerCalls: fixture.providerCalls.map((call, callIndex) => ({
+          callIndex,
+          messages: call.messages,
+          availableTools: call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        })),
+        oldDaemon: fixture.daemonProcessSnapshot(),
+        daemonErrors: fixture.daemonErrors,
+      };
+      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), "utf8");
+      pendingP4FailureEvidence = {
+        fixture,
+        path: evidencePath,
+        executionId,
+        report: evidence,
+        daemonSnapshots: () => ({ old: fixture.daemonProcessSnapshot() }),
+      };
+      throw new Error(
+        `P4 old effect gate timeout; failure=${failure}; approval=${JSON.stringify({ approvalId, approvalRevision, state: approval.state, consumedBy: executionSnapshot.executableApprovals })}; currentLease=${JSON.stringify(evidence.currentLease)}; action=${JSON.stringify(executionSnapshot.actions)}; invocations=${JSON.stringify(executionSnapshot.invocations)}; toolRuntimeProgress=${JSON.stringify(evidence.toolRuntimeProgress)}; failureEvidence=${evidencePath}`,
+        { cause: error },
+      );
+    });
+    if (effectEvent === undefined) {
+      throw new Error(
+        `Old daemon did not reach the after-effect gate; p4=${JSON.stringify(p4FailureSnapshot(fixture.databaseFile, executionId))}`,
+      );
     }
     const beforeRetry = executionRows(fixture.databaseFile, executionId).lease;
     expect(beforeRetry).toMatchObject({
@@ -382,6 +735,33 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     expect(
       Date.parse(beforeRetry?.expires_at ?? "1970-01-01T00:00:00.000Z"),
     ).toBeGreaterThan(Date.now());
+    const initialLeaseExpiry = beforeRetry?.expires_at;
+    if (initialLeaseExpiry === undefined) {
+      throw new Error("P4 target lease was absent at the old effect gate");
+    }
+    leaseExpiryHistory.push({
+      observedAt: new Date().toISOString(),
+      generation: Number(
+        oldAcquired.fencingGeneration ?? beforeRetry?.generation,
+      ),
+      expiresAt: initialLeaseExpiry,
+    });
+    const effectLines = readFileSync(
+      `${fixture.workspaceDirectory}/${effectFile}`,
+      "utf8",
+    )
+      .split(/\r?\n/u)
+      .filter((line) => line === effectMarker);
+    expect(effectLines).toHaveLength(1);
+    expect(
+      executionRows(fixture.databaseFile, executionId).invocations,
+    ).toEqual([
+      expect.objectContaining({
+        invocation_id: effectEvent.invocationId,
+        settled_at: null,
+        settlement_kind: null,
+      }),
+    ]);
 
     const newDaemon = await fixture.startAdditionalDaemon({
       entry: fenceChild,
@@ -389,6 +769,9 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
         ARBOR_P4_FENCE_ROLE: "new",
         ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
         ARBOR_P4_FENCE_EXPLICIT_EXECUTION_ID: executionId,
+        ARBOR_P4_FENCE_TARGET_WORKSPACE_ID: project.rootWorkspaceId,
+        ARBOR_P4_FENCE_TARGET_WORK_ID: currentWork.workId,
+        ARBOR_P4_SCHEDULER_DIAGNOSTICS: "1",
       },
       onStdout: (line) => recordProbe(events, line),
     });
@@ -411,7 +794,13 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     ).toHaveLength(1);
     expect(
       executionRows(fixture.databaseFile, executionId).invocations,
-    ).toEqual([]);
+    ).toEqual([
+      expect.objectContaining({
+        invocation_id: effectEvent.invocationId,
+        settled_at: null,
+        settlement_kind: null,
+      }),
+    ]);
     const gateDirectory = join(fixture.directory, "p4-fence-gates");
     mkdirSync(gateDirectory, { recursive: true });
     writeFileSync(
@@ -459,7 +848,13 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       worker_incarnation_id: beforeRetry?.worker_incarnation_id,
       generation: oldAcquired.fencingGeneration,
     });
-    expect(afterRejectedAcquire.invocations).toEqual([]);
+    expect(afterRejectedAcquire.invocations).toEqual([
+      expect.objectContaining({
+        invocation_id: effectEvent.invocationId,
+        settled_at: null,
+        settlement_kind: null,
+      }),
+    ]);
     expect(
       events.some(
         (event) =>
@@ -469,18 +864,6 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       ),
     ).toBe(false);
 
-    releaseProvider();
-    const effectEvent = await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "old" &&
-            event.boundary === "AH7AfterToolEffectBeforeSettlement" &&
-            event.executionId === executionId,
-        ),
-      (event) => event !== undefined,
-      45_000,
-    );
     expect(
       executionRows(fixture.databaseFile, executionId).lease?.generation,
     ).toBe(oldAcquired.fencingGeneration);
@@ -528,5 +911,33 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     ).toHaveLength(1);
     expect(fixture.daemonErrors).toEqual([]);
     expect(newDaemon.daemonErrors).toEqual([]);
+    const resultDirectory = resolve(".test-results");
+    mkdirSync(resultDirectory, { recursive: true });
+    writeFileSync(
+      join(resultDirectory, `p4-live-lease-observation-${executionId}.json`),
+      JSON.stringify(
+        {
+          targetExecutionId: executionId,
+          oldAcquired,
+          schedulerSkip,
+          rejectedAttempt,
+          providerTimeline,
+          leaseExpiryHistory,
+          settledExecution: settled.execution,
+          settledInvocations: settled.invocations,
+          oldEffectObserved: readFileSync(
+            `${fixture.workspaceDirectory}/${effectFile}`,
+            "utf8",
+          )
+            .split(/\r?\n/u)
+            .filter((line) => line === effectMarker).length,
+          oldDaemon: fixture.daemonProcessSnapshot(),
+          newDaemon: newDaemon.daemonProcessSnapshot(),
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
   }, 180_000);
 });

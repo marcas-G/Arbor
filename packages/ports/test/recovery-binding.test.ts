@@ -101,6 +101,53 @@ describe("RecoveryBindingV1 canonical bytes and target projections", () => {
     ).toBeNull();
   });
 
+  it("preserves the raw P38 eight-hex action digest in the canonical P39 V1 binding", () => {
+    const approved = {
+      ...binding(),
+      approvalId: "eap:test-approval",
+      approvalSubject: "runtime:system",
+      approvalPreConsumeRevision: 0,
+      approvalConsumedRevision: 1,
+      approvalExpiresAt: "2026-10-14T12:20:30.366Z",
+      approvalTargetDigest: "e".repeat(64),
+      approvalActionDigest: "d26cc43f",
+      approvalConsumedBy:
+        "tin_00000000-0000-7000-8000-000000000002" as ToolInvocationId,
+    } satisfies RecoveryBindingV1;
+    const canonical = canonicalizeRecoveryBindingV1(approved);
+    const digest = recoveryBindingV1Digest(approved);
+
+    expect(canonical).toContain('"approvalActionDigest":"d26cc43f"');
+    expect(digest).toBe(
+      "d6d1367808ff90538ce44c70bc8c8c2446d19eae76c5ff8858fbc253647e8824",
+    );
+    expect(digest).toBe(recoveryBindingV1Digest(approved));
+    expect(
+      verifyRecoveryBindingV1({
+        invocationId: approved.invocationId,
+        canonicalJson: canonical,
+        bindingSha256: digest,
+      })?.value,
+    ).toEqual(approved);
+  });
+
+  it("rejects an SHA-256 wrapper where the exact P38 action digest is required", () => {
+    const approved = {
+      ...binding(),
+      approvalId: "eap:test-approval",
+      approvalSubject: "runtime:system",
+      approvalPreConsumeRevision: 0,
+      approvalConsumedRevision: 1,
+      approvalExpiresAt: "2026-10-14T12:20:30.366Z",
+      approvalTargetDigest: "e".repeat(64),
+      approvalActionDigest: "a".repeat(64),
+      approvalConsumedBy:
+        "tin_00000000-0000-7000-8000-000000000002" as ToolInvocationId,
+    } satisfies RecoveryBindingV1;
+
+    expect(() => canonicalizeRecoveryBindingV1(approved)).toThrow(TypeError);
+  });
+
   it("preserves approval target order and duplicate occurrences", () => {
     const forward = approvalTargetDigestV1(["space-a", "space-b"]);
     expect(forward).not.toBe(approvalTargetDigestV1(["space-b", "space-a"]));
