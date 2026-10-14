@@ -9,14 +9,48 @@ import {
 import { dirname, resolve } from "node:path";
 import { inspect } from "node:util";
 
-const redactText = (value) =>
-  String(value)
+const sensitiveEnvironmentValues = Object.entries(process.env)
+  .filter(
+    ([key, value]) =>
+      /secret|token|authorization|password|api.?key|credential|cookie/i.test(
+        key,
+      ) &&
+      typeof value === "string" &&
+      value.length >= 4,
+  )
+  .map(([, value]) => value)
+  .sort((left, right) => right.length - left.length);
+
+const redactText = (value) => {
+  let redacted = String(value)
     .replace(/\b(Bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
     .replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{12,}\b/g, "$1-[REDACTED]")
     .replace(
       /((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization|cookie)\s*[:=]\s*)([^\s,;]+)/gi,
       "$1[REDACTED]",
     );
+  for (const secret of sensitiveEnvironmentValues) {
+    redacted = redacted.split(secret).join("[REDACTED]");
+  }
+  return redacted;
+};
+
+export const redactTextForOutput = redactText;
+
+const normalizedPath = (path) => String(path).replaceAll("\\", "/");
+
+const testCaseKey = (file, ancestorTitles, title) =>
+  JSON.stringify([normalizedPath(file), ancestorTitles, title]);
+
+const ancestorTitlesOf = (testCase) => {
+  const titles = [];
+  let parent = testCase.parent;
+  while (parent && parent.type !== "module") {
+    titles.unshift(parent.name);
+    parent = parent.parent;
+  }
+  return titles;
+};
 
 const sensitiveKey =
   /secret|token|authorization|password|api.?key|credential|cookie/i;
@@ -112,18 +146,32 @@ const elapsed = (start, end) => Math.max(0, end - start);
 
 export const normalizeVitestJsonReport = (report, progress) => {
   if (!report || !Array.isArray(report.testResults) || !progress) return report;
-  const normalizePath = (path) => String(path).replaceAll("\\", "/");
-  const casesByKey = new Map(
-    (progress.cases ?? []).map((testCase) => [
-      `${normalizePath(testCase.file)}\u0000${testCase.fullName}`,
-      testCase,
-    ]),
-  );
+  const casesByKey = new Map();
+  for (const testCase of progress.cases ?? []) {
+    const key = testCaseKey(
+      testCase.file,
+      testCase.ancestorTitles ?? [],
+      testCase.title ?? testCase.case,
+    );
+    const matches = casesByKey.get(key) ?? [];
+    matches.push(testCase);
+    casesByKey.set(key, matches);
+  }
+  for (const matches of casesByKey.values()) {
+    matches.sort((left, right) => left.occurrence - right.occurrence);
+  }
+  const caseCursors = new Map();
   for (const file of report.testResults) {
     for (const assertion of file.assertionResults ?? []) {
-      const testCase = casesByKey.get(
-        `${normalizePath(file.name)}\u0000${assertion.fullName}`,
+      const key = testCaseKey(
+        file.name,
+        assertion.ancestorTitles ?? [],
+        assertion.title,
       );
+      const matches = casesByKey.get(key) ?? [];
+      const occurrence = caseCursors.get(key) ?? 0;
+      const testCase = matches[occurrence];
+      caseCursors.set(key, occurrence + 1);
       const errors = testCase?.errors ?? [];
       const failures = Array.isArray(assertion.failureMessages)
         ? assertion.failureMessages
@@ -168,6 +216,10 @@ export default class VitestProgressReporter {
     this.status = "running";
     this.current = null;
     this.cases = [];
+    this.caseById = new Map();
+    this.activeCases = new Map();
+    this.activeFiles = new Map();
+    this.caseOccurrences = new Map();
     this.files = new Map();
     this.caseStartedAt = new Map();
     this.fileStartedAt = new Map();
@@ -188,8 +240,44 @@ export default class VitestProgressReporter {
 
   startHeartbeat() {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    this.heartbeatTimer = setInterval(() => this.persist("heartbeat"), 30_000);
+    this.heartbeatTimer = setInterval(() => {
+      this.persist("heartbeat");
+      this.logHeartbeat();
+    }, 30_000);
     this.heartbeatTimer.unref?.();
+  }
+
+  logHeartbeat() {
+    const active = [...this.activeCases.values()]
+      .slice(-5)
+      .map((testCase) => redactText(testCase.fullName));
+    const remainder = Math.max(0, this.activeCases.size - active.length);
+    console.log(
+      `[vitest-progress] heartbeat elapsed=${elapsed(this.startedAt, Date.now())}ms active=${JSON.stringify(active)}${remainder ? ` +${remainder} more` : ""}`,
+    );
+  }
+
+  setCurrentFromActiveCases() {
+    const latestActive = [...this.activeCases.values()].at(-1);
+    if (latestActive) {
+      this.current = {
+        file: latestActive.file,
+        case: latestActive.fullName,
+        caseId: latestActive.id,
+        status: "running",
+        startedAt: latestActive.startedAt,
+      };
+      return;
+    }
+    const latestFile = [...this.activeFiles.values()].at(-1);
+    this.current = latestFile
+      ? {
+          file: latestFile.file,
+          case: null,
+          status: "file-running",
+          startedAt: latestFile.startedAt,
+        }
+      : null;
   }
 
   onTestModuleStart(module) {
@@ -197,6 +285,10 @@ export default class VitestProgressReporter {
     const relativeFile = module.relativeModuleId ?? module.moduleId;
     const now = Date.now();
     this.fileStartedAt.set(file, now);
+    this.activeFiles.set(file, {
+      file,
+      startedAt: new Date(now).toISOString(),
+    });
     const prior = this.files.get(file) ?? {
       file,
       relativeFile,
@@ -211,13 +303,9 @@ export default class VitestProgressReporter {
       finishedAt: null,
       durationMs: null,
     });
-    this.current = {
-      file,
-      case: null,
-      status: "file-running",
-      startedAt: new Date(now).toISOString(),
-    };
+    this.setCurrentFromActiveCases();
     this.persist("file-started");
+    console.log(`[vitest-progress] FILE START ${redactText(relativeFile)}`);
   }
 
   onTestModuleEnd(module) {
@@ -231,8 +319,12 @@ export default class VitestProgressReporter {
       finishedAt: new Date(now).toISOString(),
       durationMs: elapsed(started, now),
     });
-    if (this.current?.file === file) this.current = null;
+    this.activeFiles.delete(file);
+    this.setCurrentFromActiveCases();
     this.persist("file-finished");
+    console.log(
+      `[vitest-progress] FILE ${module.ok() ? "PASS" : "FAIL"} ${redactText(this.files.get(file)?.relativeFile ?? file)} (${elapsed(started, now)}ms)`,
+    );
   }
 
   onTestCaseReady(testCase) {
@@ -240,6 +332,12 @@ export default class VitestProgressReporter {
     this.caseStartedAt.set(testCase.id, now);
     const file = testCase.module.moduleId;
     const relativeFile = testCase.module.relativeModuleId ?? file;
+    const ancestorTitles = ancestorTitlesOf(testCase);
+    const occurrenceKey = testCaseKey(file, ancestorTitles, testCase.name);
+    const existing = this.caseById.get(testCase.id);
+    const occurrence =
+      existing?.occurrence ?? this.caseOccurrences.get(occurrenceKey) ?? 0;
+    if (!existing) this.caseOccurrences.set(occurrenceKey, occurrence + 1);
     const suite = this.files.get(file) ?? {
       file,
       relativeFile,
@@ -248,20 +346,17 @@ export default class VitestProgressReporter {
     };
     suite.caseCount += 1;
     this.files.set(file, suite);
-    this.current = {
-      file,
-      case: testCase.fullName,
-      status: "running",
-      startedAt: new Date(now).toISOString(),
-    };
-    const existing = this.cases.find((item) => item.id === testCase.id);
     const entry = {
       ...(existing ?? {}),
       id: testCase.id,
       file,
       relativeFile,
       case: testCase.name,
+      title: testCase.name,
+      ancestorTitles,
+      occurrence,
       fullName: testCase.fullName,
+      key: occurrenceKey,
       status: "running",
       startedAt: new Date(now).toISOString(),
       finishedAt: null,
@@ -269,8 +364,16 @@ export default class VitestProgressReporter {
       errors: [],
     };
     if (existing) Object.assign(existing, entry);
-    else this.cases.push(entry);
+    else {
+      this.cases.push(entry);
+      this.caseById.set(testCase.id, entry);
+    }
+    this.activeCases.set(testCase.id, entry);
+    this.setCurrentFromActiveCases();
     this.persist("test-started");
+    console.log(
+      `[vitest-progress] START ${redactText(relativeFile)} :: ${redactText([...ancestorTitles, testCase.name].join(" > "))}`,
+    );
   }
 
   onTestCaseResult(testCase) {
@@ -286,14 +389,20 @@ export default class VitestProgressReporter {
           ? "failed"
           : "skipped";
     const errors = (result.errors ?? []).map(serializeErrorForReport);
-    const existing = this.cases.find((item) => item.id === testCase.id);
+    const existing = this.caseById.get(testCase.id);
     const entry = {
       ...(existing ?? {}),
       id: testCase.id,
       file,
       relativeFile,
       case: testCase.name,
+      title: testCase.name,
+      ancestorTitles: existing?.ancestorTitles ?? ancestorTitlesOf(testCase),
+      occurrence: existing?.occurrence ?? 0,
       fullName: testCase.fullName,
+      key:
+        existing?.key ??
+        testCaseKey(file, ancestorTitlesOf(testCase), testCase.name),
       status,
       startedAt: existing?.startedAt ?? new Date(started).toISOString(),
       finishedAt: new Date(now).toISOString(),
@@ -302,9 +411,26 @@ export default class VitestProgressReporter {
       errors,
     };
     if (existing) Object.assign(existing, entry);
-    else this.cases.push(entry);
-    this.current = null;
+    else {
+      this.cases.push(entry);
+      this.caseById.set(testCase.id, entry);
+    }
+    this.activeCases.delete(testCase.id);
+    this.setCurrentFromActiveCases();
     this.persist("test-finished");
+    const title = [...entry.ancestorTitles, entry.title].join(" > ");
+    const errorsText = errors
+      .map(
+        (serialized) =>
+          serialized.message ??
+          serialized.stack ??
+          `${serialized.type}: ${serialized.inspect} (${serialized.string})`,
+      )
+      .filter(Boolean)
+      .join(" | ");
+    console.log(
+      `[vitest-progress] ${status.toUpperCase()} ${redactText(relativeFile)} :: ${redactText(title)} (${entry.durationMs}ms)${errorsText ? ` — ${redactText(errorsText)}` : ""}`,
+    );
   }
 
   onTestRunEnd(_modules, unhandledErrors, reason) {
@@ -312,8 +438,15 @@ export default class VitestProgressReporter {
     this.heartbeatTimer = null;
     this.unhandledErrors = (unhandledErrors ?? []).map(serializeErrorForReport);
     this.status = reason === "passed" ? "passed" : reason;
-    this.current = null;
+    this.activeCases.clear();
+    this.activeFiles.clear();
+    this.setCurrentFromActiveCases();
     this.persist("tests-finished");
+    for (const error of this.unhandledErrors) {
+      console.log(
+        `[vitest-progress] UNHANDLED ${redactText(error.message ?? error.stack ?? `${error.type}: ${error.inspect} (${error.string})`)}`,
+      );
+    }
   }
 
   persist(event) {
@@ -322,7 +455,7 @@ export default class VitestProgressReporter {
     this.updatedAt = new Date(now).toISOString();
     const counts = { passed: 0, failed: 0, skipped: 0, running: 0 };
     for (const testCase of this.cases) counts[testCase.status] += 1;
-    const payload = {
+    const payload = sanitizeValue({
       schemaVersion: 1,
       profile: this.profile,
       status: this.status,
@@ -336,6 +469,14 @@ export default class VitestProgressReporter {
             elapsedMs: elapsed(Date.parse(this.current.startedAt), now),
           }
         : null,
+      activeCases: [...this.activeCases.values()].slice(-5).map((testCase) => ({
+        id: testCase.id,
+        file: testCase.relativeFile,
+        case: testCase.fullName,
+        startedAt: testCase.startedAt,
+        elapsedMs: elapsed(Date.parse(testCase.startedAt), now),
+      })),
+      activeCasesOmitted: Math.max(0, this.activeCases.size - 5),
       counts,
       files: [...this.files.values()].map((file) => ({
         ...file,
@@ -350,7 +491,7 @@ export default class VitestProgressReporter {
           : elapsed(Date.parse(testCase.startedAt ?? now), now),
       })),
       unhandledErrors: this.unhandledErrors,
-    };
+    });
     const jsonPath = resolve(
       this.resultDirectory,
       this.options.jsonName ?? `${this.basename}-progress.json`,
