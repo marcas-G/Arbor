@@ -122,12 +122,24 @@ test("F21 browser Profile selection reaches file evidence, Verification PASS, an
   await page.getByRole("button", { name: "创建项目" }).click();
   await expect(page).toHaveURL(/\/p\/prj_[A-Za-z0-9-]+\/attention$/u);
   await attentionUnavailable;
-  await expect(page.getByRole("status")).toHaveText(
+  const unknownActivationNotice = page.getByRole("status").filter({
+    hasText:
+      "无法确认此项目的资源激活状态。请勿重复创建；刷新关注事项后再确认。",
+  });
+  await expect(unknownActivationNotice).toHaveCount(1);
+  await expect(unknownActivationNotice).toHaveText(
     "无法确认此项目的资源激活状态。请勿重复创建；刷新关注事项后再确认。",
   );
-  await expect(page.getByRole("heading", { name: "服务不可用" })).toBeVisible();
-  await expect(page.getByText("Network / Unavailable")).toBeVisible();
-  await expect(page.getByRole("button", { name: "重试" })).toBeVisible();
+  const attentionProblem = page.getByRole("alert");
+  await expect(
+    attentionProblem.getByRole("heading", { name: "服务不可用" }),
+  ).toBeVisible();
+  await expect(
+    attentionProblem.getByText("Network / Unavailable"),
+  ).toBeVisible();
+  await expect(
+    attentionProblem.getByRole("button", { name: "重试" }),
+  ).toBeVisible();
   await expect(
     page.getByText("项目已创建，但资源尚未激活，文件操作暂不可用。"),
   ).toHaveCount(0);
