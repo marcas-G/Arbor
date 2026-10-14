@@ -509,3 +509,38 @@ Validation on the integrated build:
   `.test-results/p4-live-lease-integrated.json` (1 passed, 0 failed).
 
 No other profile or UI/process test was run for this increment.
+
+## AH7 raw-binding oracle follow-up and crash-sentinels result
+
+Integrated the reviewed AH7 chain `ca26c7a0` → `442ddf78` → `b558eef8` as
+`b626b21b` → `11ffb4b5` → `967ac67c` on clean base `5c249603`. The two
+execution-recovery commits already represented by the stable integration
+were patch-equivalent (`git cherry` marked them `-`); only the AH7 boundary
+matrix/raw P4 invocation binding oracle and its result record were applied.
+No conflicts occurred. No `packages/agent-runtime`, runner, P9, UI, design, or
+sandbox change was introduced by this chain.
+
+The source branch records the final AH7 focused file as **7/7 PASS** (493.63s
+Vitest wall), including the exact `tool_invocations` raw-row binding checks.
+This is source-branch evidence; AH7 was not rerun on the integrated commit.
+The prior full crash-sentinels attempt on `5c2496030105a97f8a930fa85af6e32d69c91064`
+was terminal **FAIL**, with 18 selected files / 50 tests: 49 passed, 1 failed,
+0 skipped. Total runner wall time was 3,044,052ms (50m44.052s); group time was
+3,041,836ms. Manifest and JSON report:
+`.test-results/2026-10-14T12-53-09-633Z-9936/result-manifest.json` and
+`.test-results/2026-10-14T12-53-09-633Z-9936/crashSentinels.json`.
+
+The sole failure was `agent-action-ah7-pending-intent.functional.test.ts` —
+`reuses the same action and tool identity after AH7AfterActionIntentCommit`
+(66.539s): `AssertionError: expected [] to have a length of 1 but got +0`,
+at line 442. P4 live-lease and P9 dense-SSE cases in that same profile passed;
+this does not convert the overall profile to PASS.
+
+Post-integration validation on `967ac67c`:
+
+- `pnpm typecheck` — PASS.
+- Biome on the changed AH7 test — PASS.
+- `pnpm test:manifest` — PASS, 6/6; 48 functional Vitest + 6 UI files.
+- `git diff --check` — PASS.
+
+The profile failure is retained as evidence; no code fix or AH7 rerun was made.
