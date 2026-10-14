@@ -1,7 +1,7 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import VitestProgressReporter, {
   normalizeVitestJsonReport,
   serializeErrorForReport,
@@ -10,6 +10,7 @@ import VitestProgressReporter, {
 const directories: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -109,7 +110,8 @@ describe("Vitest progress reporter", () => {
           message: "",
           assertionResults: [
             {
-              fullName: "reporter > synthetic failure",
+              ancestorTitles: ["reporter"],
+              title: "synthetic failure",
               status: "failed",
               failureMessages: [null],
             },
@@ -121,7 +123,8 @@ describe("Vitest progress reporter", () => {
       cases: [
         {
           file: "/workspace/tests/synthetic.test.ts",
-          fullName: "reporter > synthetic failure",
+          ancestorTitles: ["reporter"],
+          title: "synthetic failure",
           errors: [error],
         },
       ],
@@ -131,5 +134,116 @@ describe("Vitest progress reporter", () => {
     expect(failureMessages).toHaveLength(1);
     expect(failureMessages?.[0]).toContain('"type":"Object"');
     expect(failureMessages?.some((message) => message === null)).toBe(false);
+  });
+
+  describe("outer suite", () => {
+    describe("repeated branch", () => {
+      it("maps nested duplicate titles by ancestor array and occurrence", () => {
+        const directory = temporaryDirectory();
+        const reporter = new VitestProgressReporter({
+          outputDirectory: directory,
+          basename: "nested",
+        });
+        const secret = "Bearer very-secret-token-value";
+        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        const module = {
+          moduleId: "/workspace/tests/nested.test.ts",
+          relativeModuleId: "tests/nested.test.ts",
+          ok: () => false,
+        };
+        const moduleParent = { type: "module", name: "tests/nested.test.ts" };
+        const outerSuite = {
+          type: "suite",
+          name: "outer suite",
+          parent: moduleParent,
+        };
+        const nestedSuite = {
+          type: "suite",
+          name: "repeated branch",
+          parent: outerSuite,
+        };
+        const makeCase = (id: string, code: string, message: string) => ({
+          id,
+          name: "same title",
+          fullName: "outer suite > repeated branch > same title",
+          parent: nestedSuite,
+          module,
+          result: () => ({
+            state: "failed",
+            errors: [{ code, message, customToken: secret }],
+          }),
+        });
+        const first = makeCase("duplicate-1", "FIRST", secret);
+        const second = makeCase("duplicate-2", "SECOND", "second failure");
+
+        reporter.onInit();
+        reporter.onTestRunStart();
+        reporter.onTestModuleStart(module);
+        reporter.onTestCaseReady(first);
+        reporter.onTestCaseReady(second);
+        reporter.onTestCaseResult(first);
+        const afterFirstFinish = JSON.parse(
+          readFileSync(join(directory, "nested-progress.json"), "utf8"),
+        );
+        expect(afterFirstFinish.activeCases).toHaveLength(1);
+        expect(afterFirstFinish.activeCases[0].id).toBe(second.id);
+        expect(afterFirstFinish.current.caseId).toBe(second.id);
+        reporter.onTestCaseResult(second);
+        reporter.onTestModuleEnd(module);
+        reporter.onTestRunEnd([], [], "failed");
+
+        const progress = JSON.parse(
+          readFileSync(join(directory, "nested-progress.json"), "utf8"),
+        ) as {
+          cases: Array<{ occurrence: number; ancestorTitles: string[] }>;
+        };
+        const report = normalizeVitestJsonReport(
+          {
+            testResults: [
+              {
+                name: module.moduleId,
+                message: "",
+                assertionResults: [
+                  {
+                    ancestorTitles: ["outer suite", "repeated branch"],
+                    title: "same title",
+                    status: "failed",
+                    failureMessages: [null],
+                  },
+                  {
+                    ancestorTitles: ["outer suite", "repeated branch"],
+                    title: "same title",
+                    status: "failed",
+                    failureMessages: [null],
+                  },
+                ],
+              },
+            ],
+          },
+          progress,
+        );
+        const failures = (report.testResults[0]?.assertionResults ?? []).map(
+          (assertion) => assertion.failureMessages[0],
+        );
+        const allOutput = [
+          JSON.stringify(progress),
+          JSON.stringify(report),
+          ...log.mock.calls.flat().map(String),
+        ].join("\n");
+
+        expect(progress.cases).toHaveLength(2);
+        expect(progress.cases.map((testCase) => testCase.occurrence)).toEqual([
+          0, 1,
+        ]);
+        expect(progress.cases[0]?.ancestorTitles).toEqual([
+          "outer suite",
+          "repeated branch",
+        ]);
+        expect(failures[0]).toContain('"code":"FIRST"');
+        expect(failures[1]).toContain('"code":"SECOND"');
+        expect(allOutput).not.toContain(secret);
+        expect(allOutput).not.toContain("very-secret-token-value");
+      });
+    });
   });
 });

@@ -13,7 +13,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateManifest } from "./check-manifest.mjs";
 import { buildProcessSpec, resolvePnpmInvocation } from "./runner-utils.mjs";
-import { normalizeVitestJsonReport } from "./vitest-progress-reporter.mjs";
+import {
+  normalizeVitestJsonReport,
+  redactTextForOutput,
+} from "./vitest-progress-reporter.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const manifestPath = join(root, "planning/testing/manifest.json");
@@ -268,12 +271,42 @@ function runCommand(groupName, label, args, env = {}) {
   activeChild = child;
   let stdout = "";
   let stderr = "";
+  const pendingOutput = { stdout: "", stderr: "" };
+  const sensitiveEnvironmentValues = Object.entries(process.env)
+    .filter(
+      ([key, value]) =>
+        /secret|token|authorization|password|api.?key|credential|cookie/i.test(
+          key,
+        ) &&
+        typeof value === "string" &&
+        value.length >= 4,
+    )
+    .map(([, value]) => value)
+    .sort((left, right) => right.length - left.length);
+  const redactOutput = (value) => {
+    let redacted = redactTextForOutput(value);
+    for (const secret of sensitiveEnvironmentValues) {
+      redacted = redacted.split(secret).join("[REDACTED]");
+    }
+    return redacted;
+  };
+  const flushOutput = (target, final = false) => {
+    const buffer = pendingOutput[target];
+    const lines = buffer.split(/(?<=\n)/u);
+    const trailing = lines.pop() ?? "";
+    const ready = final ? `${lines.join("")}${trailing}` : lines.join("");
+    pendingOutput[target] = final ? "" : trailing;
+    if (!ready) return;
+    const safeText = redactOutput(ready);
+    const safeBuffer = Buffer.from(safeText, "utf8");
+    if (target === "stdout") stdout += safeText;
+    else stderr += safeText;
+    writeFileSync(logDescriptor, safeBuffer, { flag: "a" });
+    (target === "stdout" ? process.stdout : process.stderr).write(safeBuffer);
+  };
   const output = (target) => (chunk) => {
-    const text = chunk.toString("utf8");
-    if (target === "stdout") stdout += text;
-    else stderr += text;
-    writeFileSync(logDescriptor, chunk, { flag: "a" });
-    (target === "stdout" ? process.stdout : process.stderr).write(chunk);
+    pendingOutput[target] += chunk.toString("utf8");
+    flushOutput(target);
   };
   child.stdout.on("data", output("stdout"));
   child.stderr.on("data", output("stderr"));
@@ -286,6 +319,8 @@ function runCommand(groupName, label, args, env = {}) {
     child.once("close", (code, signal) => {
       stopCurrentHeartbeat();
       activeChild = null;
+      flushOutput("stdout", true);
+      flushOutput("stderr", true);
       closeSync(logDescriptor);
       const exitCode = code ?? (signal ? 128 : 1);
       const commandResult = {
@@ -426,7 +461,6 @@ async function runTestGroup(groupName) {
         "--no-cache",
         "--no-file-parallelism",
         "--reporter=json",
-        "--reporter=verbose",
         "--reporter=./scripts/testing/vitest-progress-reporter.mjs",
         "--outputFile",
         reportPath,
