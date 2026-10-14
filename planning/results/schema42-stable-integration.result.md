@@ -407,3 +407,24 @@ start time are audit metadata only.
 
 The F21 assertion was corrected afterward. This run does not qualify that
 change or the remaining UI tests.
+
+## F21 UI assertion and runner identity audit follow-up
+
+Integrated the reviewed chain `a28c7ef5` → `d243ebde` → `379ce064` →
+`5ea5b40e` on clean HEAD `93ed979b`. Final content contains the F21
+unknown-attention assertion aligned to the existing page copy and explicit
+checks for the injected 503 response and unavailable state. The runner now
+records PID, hostname, and estimated process start time for audit identity.
+The intermediate mutable result-repair scripts and tests were removed by the
+later chain commit; no repair tool remains. There were no cherry-pick
+conflicts, and no UI or process test was run for this integration.
+
+Validation on the integrated code:
+
+- `pnpm typecheck` — PASS.
+- Biome on the four changed code files — PASS.
+- `pnpm test:manifest` — PASS, 6/6; inventory remains 48 functional Vitest
+  files + 6 UI files.
+- Reporter unit — PASS, 1 file / 4 tests.
+- UI F21 correction remains unqualified in this integration because UI tests
+  were intentionally not rerun.
