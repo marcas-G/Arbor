@@ -1,13 +1,10 @@
-import {
-  closeSync,
-  fsyncSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  atomicReplaceResultManifest,
+  resolveSafeResultManifest,
+} from "./repair-result-paths.mjs";
 import {
   inspectRunnerProcess,
   repairRunningResult,
@@ -39,19 +36,6 @@ function argumentsFrom(argv) {
   };
 }
 
-function atomicWrite(path, contents) {
-  const temporaryPath = `${path}.repair-${process.pid}`;
-  writeFileSync(temporaryPath, contents, { encoding: "utf8", flag: "wx" });
-  const descriptor = openSync(temporaryPath, "r+");
-  try {
-    // Flush the repaired manifest before atomically replacing the old one.
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
-  renameSync(temporaryPath, path);
-}
-
 function help() {
   return [
     "Usage: node scripts/testing/repair-results.mjs --runId <run-id> --evidence <manual-evidence>",
@@ -60,20 +44,6 @@ function help() {
     "For manifests with runner PID metadata, repair is allowed only when the same-host PID is absent.",
     "Legacy manifests require explicit operator evidence because they have no process identity.",
   ].join("\n");
-}
-
-function validateRunId(runId) {
-  if (
-    typeof runId !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-\d+$/u.test(runId)
-  ) {
-    throw new Error("--runId must be an exact test-run ID");
-  }
-  const resultDirectory = resolve(resultsRoot, runId);
-  if (dirname(resultDirectory) !== resultsRoot) {
-    throw new Error("--runId resolves outside this workspace's .test-results");
-  }
-  return join(resultDirectory, "result-manifest.json");
 }
 
 function main() {
@@ -85,7 +55,7 @@ function main() {
   if (!args.runId || !args.evidence) {
     throw new Error("both --runId and --evidence are required");
   }
-  const manifestPath = validateRunId(args.runId);
+  const manifestPath = resolveSafeResultManifest(resultsRoot, args.runId);
   const result = JSON.parse(readFileSync(manifestPath, "utf8"));
   const currentHostName = runnerHostName();
   const processState = inspectRunnerProcess(
@@ -99,7 +69,11 @@ function main() {
     processState,
     evidence: args.evidence,
   });
-  atomicWrite(manifestPath, `${JSON.stringify(repaired, null, 2)}\n`);
+  atomicReplaceResultManifest(
+    resultsRoot,
+    args.runId,
+    `${JSON.stringify(repaired, null, 2)}\n`,
+  );
   console.log(
     `Marked ${args.runId} interrupted; last heartbeat ${repaired.lastHeartbeatAt ?? "none"} was preserved.`,
   );

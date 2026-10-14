@@ -60,6 +60,7 @@ const result = {
   profile: profileName,
   completeCoverage: false,
   manifestSha256,
+  // The startup estimate is audit context only; repair still rejects any live PID.
   runner: {
     pid: process.pid,
     hostName: hostname(),

@@ -64,7 +64,7 @@ const redactText = (value) => {
     .replace(/\b(Bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
     .replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{12,}\b/g, "$1-[REDACTED]")
     .replace(
-      /((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization|cookie)\s*[:=]\s*)([^\s,;]+)/gi,
+      /(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization|cookie|credential|token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
       "$1[REDACTED]",
     );
   return redactEnvironmentValues(redacted, sensitiveEnvironmentValues);
@@ -96,24 +96,37 @@ const ancestorTitlesOf = (testCase) => {
 const sensitiveKey =
   /secret|token|authorization|password|api.?key|credential|cookie/i;
 
-const sanitizeValue = (value, seen = new WeakSet(), key = "") => {
+const sanitizeValue = (
+  value,
+  seen = new WeakSet(),
+  key = "",
+  redactString = redactText,
+) => {
   if (sensitiveKey.test(key)) return "[REDACTED]";
-  if (typeof value === "string") return redactText(value);
+  if (typeof value === "string") return redactString(value);
   if (value === null || typeof value !== "object") return value;
   if (seen.has(value)) return "[Circular]";
   seen.add(value);
   if (Array.isArray(value))
-    return value.map((item) => sanitizeValue(item, seen));
+    return value.map((item) => sanitizeValue(item, seen, "", redactString));
   const output = {};
   for (const name of Object.getOwnPropertyNames(value)) {
     try {
-      output[name] = sanitizeValue(value[name], seen, name);
+      output[name] = sanitizeValue(value[name], seen, name, redactString);
     } catch {
       output[name] = "[Uninspectable]";
     }
   }
   return output;
 };
+
+export const redactStructuredValueForOutput = (
+  value,
+  environmentOrValues = process.env,
+) =>
+  sanitizeValue(value, new WeakSet(), "", (string) =>
+    redactTextForOutput(string, environmentOrValues),
+  );
 
 export const serializeErrorForReport = (error) => {
   const safe = sanitizeValue(error);
