@@ -191,7 +191,7 @@ export function validateManifest(
   for (const required of [
     "quick",
     "smoke",
-    "crash",
+    "crashSentinels",
     "package",
     "functionalVitest",
     "functionalUi",

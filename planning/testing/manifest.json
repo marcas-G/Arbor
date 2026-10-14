@@ -27,7 +27,7 @@
       "tests/functional/process/command-input-validation.functional.test.ts",
       "tests/functional/process/recovery-verdicts.functional.test.ts"
     ],
-    "crash": [
+    "crashSentinels": [
       "tests/functional/process/agent-action-ah7-p4-store-process-crash.functional.test.ts",
       "tests/functional/process/agent-action-ah7-pending-intent.functional.test.ts",
       "tests/functional/process/agent-loop-ah11-step-effects-crash.functional.test.ts",
@@ -122,9 +122,9 @@
       "build": true,
       "completeCoverage": false
     },
-    "crash": {
-      "description": "Named process crash, lease, and provider handoff sentinels only.",
-      "groups": ["crash"],
+    "crash-sentinels": {
+      "description": "Curated crash, lease, and provider handoff sentinel files only; this profile does not qualify all AH10 handlers or AH1-AH19 coverage.",
+      "groups": ["crashSentinels"],
       "build": true,
       "completeCoverage": false
     },
