@@ -149,6 +149,8 @@ describe("production fixture port-zero startup handshake", () => {
     ["wrong-pid", /invalid functional daemon start identity/u],
     ["wrong-nonce", /functional daemon listening identity mismatch/u],
     ["early-exit", /exited before listening report/u],
+    ["duplicate-started", /duplicate functional daemon start marker/u],
+    ["duplicate-listening", /duplicate functional daemon listening marker/u],
   ] as const)("rejects the %s child handshake", async (mode, expected) => {
     await expect(
       startProductionFixture({
