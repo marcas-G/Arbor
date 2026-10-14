@@ -330,3 +330,25 @@ sequentially, each reached terminal status, and both runner manifests report
 Both profiles keep `completeCoverage: false`; neither is a release
 qualification. Quick completed before smoke started. No full/release profile
 was run.
+
+## Crash-sentinels runner result
+
+On clean HEAD `2fcdbf9b28c099c0c7de99b67b8f6879e1a22294`,
+`pnpm test:functional:crash-sentinels` reached a terminal failed status. Runner
+manifest:
+`.test-results/2026-10-14T08-48-16-443Z-1204/result-manifest.json`.
+
+- Selected 18 files; Vitest reported 50 tests: 43 passed, 7 failed, 0 skipped.
+- Total runner wall time was 3,421,422 ms (57m 1.422s); exit code 1.
+- Failures: both AH7 pending-intent crash boundaries found no expected row
+  (`expected []` at the same assertion); AH11 StepEffects recovery hit its
+  public functional timeout; AH8 stale-after-restart hit the 90-second case
+  timeout; P37 post-P10-marker recovery timed out starting its additional
+  daemon after a STARTED marker but before LISTENING (empty stderr); P4 live
+  lease acquisition hit a public functional timeout with `last=undefined`; and
+  P9 dense-SSE qualification was reported failed with a null failure message
+  in the Vitest JSON report.
+
+The dependent F20 clean-checkout/package profile was not started because this
+sentinel profile did not pass. The profile failures are recorded for follow-up;
+no test files were modified or rerun as a result of this attempt.
