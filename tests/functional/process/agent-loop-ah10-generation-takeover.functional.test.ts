@@ -524,7 +524,16 @@ describe("AH10 real daemon generation takeover", () => {
     120_000,
   );
 
+  // This real two-daemon recovery includes public admission, an actual lease
+  // expiry, gen1 startup, and receipt-first settlement. The measured focused
+  // run reaches lease expiry at ~74s; keep all internal lease/probe bounds and
+  // assertions unchanged while giving the outer Vitest case room to complete.
   it("recovers a committed Deliverable receipt when its Action is still Pending", async () => {
+    const phaseStartedAt = Date.now();
+    const markPhase = (phase: string) =>
+      console.info(
+        `[AH10 committed Deliverable] ${phase} +${Date.now() - phaseStartedAt}ms`,
+      );
     const marker = `AH10-pending-${crypto.randomUUID().slice(0, 8)}`;
     const events: Ah10Probe[] = [];
     let probeArmed = false;
@@ -589,6 +598,7 @@ describe("AH10 real daemon generation takeover", () => {
       },
       onDaemonStdout: (line) => pushProbe(events, line),
     });
+    markPhase("schema42 fixture and primary daemon ready");
     fixtures.push(fixture);
     mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
     const client = makePublicClient(fixture.baseUrl);
@@ -597,12 +607,14 @@ describe("AH10 real daemon generation takeover", () => {
       fixture.workspaceDirectory,
       "AH10 committed receipt pending-action recovery",
     );
+    markPhase("public project created");
     const sourceWork = await admitRootWorkThroughPublicConversation(
       client,
       project,
       marker,
       `Please create the pending AH10 Work ${marker}.`,
     );
+    markPhase("source Work publicly admitted");
     const sourceWorkId = sourceWork.workId;
     const seedWorkAtWait = await waitForPublic(
       () =>
@@ -623,6 +635,7 @@ describe("AH10 real daemon generation takeover", () => {
     }
     expect(seedWorkAtWait.revision).toBe(0);
     await fixture.crash();
+    markPhase("seed daemon stopped");
     probeArmed = true;
     await fixture.restart({
       entry: ah10Child,
@@ -631,6 +644,7 @@ describe("AH10 real daemon generation takeover", () => {
         ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
       },
     });
+    markPhase("gen0 daemon restarted");
     await client.command(project.projectId, "SteerWork", {
       workId: sourceWorkId,
       workspaceId: project.rootWorkspaceId,
@@ -655,6 +669,7 @@ describe("AH10 real daemon generation takeover", () => {
     if (actionIntent === undefined) {
       throw new Error("AH10 initial Action intent probe was absent");
     }
+    markPhase("gen0 action intent committed");
     releaseGate(fixture, "old", "action-intent");
 
     const afterControlReturn = await waitForPublic(
@@ -673,6 +688,7 @@ describe("AH10 real daemon generation takeover", () => {
     if (afterControlReturn === undefined) {
       throw new Error("AH10 post-control-return probe was absent");
     }
+    markPhase("Deliverable Gateway command returned before Observation");
     const beforeCrash = readAh10Rows(fixture.databaseFile);
     const committedBeforeCrash = beforeCrash.commands.filter((command) => {
       if (command.resolution !== "Committed" || command.result_json === null) {
@@ -706,6 +722,7 @@ describe("AH10 real daemon generation takeover", () => {
     expect(targetProviderCalls).toBe(1);
 
     await fixture.crash();
+    markPhase("gen0 crashed after committed receipt");
     await waitForPublic(
       async () =>
         readAh10Rows(fixture.databaseFile).leases.find(
@@ -715,6 +732,7 @@ describe("AH10 real daemon generation takeover", () => {
         lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
       35_000,
     );
+    markPhase("gen0 lease expired");
     const recoveryDaemon = await fixture.startAdditionalDaemon({
       entry: ah10Child,
       daemonEnvironment: {
@@ -723,6 +741,7 @@ describe("AH10 real daemon generation takeover", () => {
       },
       onStdout: (line) => pushProbe(events, line),
     });
+    markPhase("gen1 recovery daemon ready");
     const recoveredLease = await waitForPublic(
       async () =>
         events.find(
@@ -735,6 +754,7 @@ describe("AH10 real daemon generation takeover", () => {
       45_000,
     );
     expect(recoveredLease?.fencingGeneration).toBe(1);
+    markPhase("gen1 acquired lease");
     const recoveredIntent = await waitForPublic(
       async () =>
         events.find(
@@ -750,6 +770,7 @@ describe("AH10 real daemon generation takeover", () => {
     expect(recoveredIntent?.providerTurnId).toBe(actionIntent.providerTurnId);
     expect(recoveredIntent?.callRef).toBe(actionIntent.callRef);
     expect(recoveredIntent?.logicalActionId).toBe(actionIntent.logicalActionId);
+    markPhase("gen1 recovered original Action identity");
     releaseGate(fixture, "new", "action-intent");
     await waitForPublic(
       async () =>
@@ -767,6 +788,7 @@ describe("AH10 real daemon generation takeover", () => {
         `AH10 gen-1 action result did not commit: ${error instanceof Error ? error.message : String(error)}; events=${JSON.stringify(events)}; rows=${JSON.stringify(readAh10Rows(fixture.databaseFile))}; providerCalls=${fixture.providerCalls.length}; daemonErrors=${recoveryDaemon.daemonErrors.join(" | ")}`,
       );
     });
+    markPhase("gen1 Action result committed");
 
     const recovered = readAh10Rows(fixture.databaseFile);
     const committedAfterRecovery = recovered.commands.filter((command) => {
@@ -802,10 +824,11 @@ describe("AH10 real daemon generation takeover", () => {
       ),
     ).toHaveLength(1);
     expect(targetProviderCalls).toBe(1);
+    markPhase("receipt, Action, Observation, and provider assertions complete");
     expect(recoveryDaemon.daemonErrors).toEqual([]);
     releaseGate(fixture, "new", "action-result");
     await recoveryDaemon.crash();
-  }, 90_000);
+  }, 180_000);
 
   it("recovers a committed DeclareDependency receipt while its Action is Pending", async () => {
     const marker = `AH10-dependency-pending-${crypto.randomUUID().slice(0, 8)}`;
