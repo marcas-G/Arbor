@@ -13,7 +13,10 @@ pnpm build
 
 Before the first start, create a schema 42 database with `fresh` (or upgrade an existing stopped database with `copy` as shown below). Then set `ARBOR_DB` to that completed database and start Arbor:
 
+First create or choose the local parent directory for the database, P39 report, and manifest. It must already exist and pass the P39 protected-directory checks for a local volume and the required owner/ACL. Creating the directory does not guarantee those checks will pass. For example:
+
 ```powershell
+New-Item -ItemType Directory -Force -Path 'C:\Arbor Data'
 node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
   --database 'C:\Arbor Data\arbor-v42.db' `
   --p39-report-db 'C:\Arbor Data\arbor-v42-p39-report.db' `
@@ -36,7 +39,7 @@ pnpm start
 
 The current runtime requires schema version 42 before startup. It does not apply migrations at startup. An older database must first be upgraded offline; do not start Arbor against a database at any other version.
 
-The examples below assume the repository root is the current directory. For each new `fresh` or `copy` job, use separate, new target, P39 report, and copy-manifest paths. A `resume-copy` job must reuse the exact source, target, report, and manifest paths from its interrupted `copy`; do not allocate replacement paths for a resume. `copy` accepts source schema versions 36, 37, or 38 only. Keep the source daemon stopped and the source database unchanged through completion. Never point the operator at a live database or use the upgraded copy until the command reports success. The command validates the report and manifest chain as part of its operation. The manifest records local path metadata: retain it on the machine where the upgrade ran and redact it before sharing. Keep the original database as the rollback point; on success, explicitly point `ARBOR_DB` at the upgraded copy before restarting Arbor.
+The examples below assume the repository root is the current directory. First create or choose the local parent directory for the target, P39 report, and manifest; it must already exist and pass P39 local-volume and owner/ACL protection checks. `New-Item -ItemType Directory -Force` can create the directory but does not guarantee it will pass those checks. For each new `fresh` or `copy` job, use separate, new target, P39 report, and copy-manifest paths. A `resume-copy` job must reuse the exact source, target, report, and manifest paths from its interrupted `copy`; do not allocate replacement paths for a resume. `copy` accepts source schema versions 36, 37, or 38 only. Keep the source daemon stopped and the source database unchanged through completion. Never point the operator at a live database or use the upgraded copy until the command reports success. The command validates the report and manifest chain as part of its operation. The manifest records local path metadata: retain it on the machine where the upgrade ran and redact it before sharing. Keep the original database as the rollback point; on success, explicitly point `ARBOR_DB` at the upgraded copy before restarting Arbor.
 
 First build the CLI:
 
@@ -108,7 +111,7 @@ pnpm start
 
 In the app, open the project switcher and choose **新建项目**. Choose an available project resource and submit the name; a configured host directory is available as a resource profile. To begin work, open the Project's root Workspace and create or assign Work through the available controls. Human approvals are handled in the Project's **待处理** queue at `/p/{projectId}/queue`; open the exact item and approve or reject it there. A Workspace **收件箱** is not the approval queue. A successful Provider verification is not itself human acceptance of the Work.
 
-The current local sandbox binds approved paths/mounts and projects a restricted environment into subprocesses. It is not OS-level process isolation: the current process runs with the user's operating-system permissions. Native OS Sandbox support is accepted in governance but has not been implemented.
+The current local sandbox binds approved paths/mounts and projects a restricted environment into subprocesses. It is not OS-level process isolation: the current process runs with the user's operating-system permissions. Native OS Sandbox has not been implemented.
 
 ## Verification and evidence limits
 
