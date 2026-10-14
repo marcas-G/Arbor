@@ -10,6 +10,12 @@ describe("functional-test trust boundary", () => {
     const journey = source(
       "tests/capability/black-box/s1-s4-public-api.test.ts",
     );
+    const lifecycle = source(
+      "tests/functional/support/daemon-process-lifecycle.ts",
+    );
+    const productionFixture = source(
+      "tests/functional/support/production-fixture.ts",
+    );
     for (const forbidden of [
       "node:sqlite",
       "SqlClient",
@@ -21,7 +27,24 @@ describe("functional-test trust boundary", () => {
     ]) {
       expect(journey).not.toContain(forbidden);
     }
-    expect(journey).toContain('spawn("node", [DAEMON_ENTRY]');
+    expect(journey).toContain(
+      'from "../../functional/support/daemon-process-lifecycle.js"',
+    );
+    expect(journey).toContain("waitForDaemonListening(child, requestedPort");
+    expect(journey).toContain("stopChildBounded(child)");
+    expect(journey).not.toContain("freePort(");
+    expect(journey).not.toContain('spawn("node", [DAEMON_ENTRY]');
+    expect(journey).not.toContain("JSON.parse(line)");
+    expect(lifecycle).toContain("export const waitForDaemonListening");
+    expect(lifecycle).toContain('event.tag === "FUNCTIONAL_DAEMON_STARTED"');
+    expect(lifecycle).toContain('event.tag !== "FUNCTIONAL_DAEMON_LISTENING"');
+    expect(lifecycle).toContain("event.pid !== child.pid");
+    expect(lifecycle).toContain("event.nonce !== startedNonce");
+    expect(lifecycle).toContain("export const stopChildBounded");
+    expect(lifecycle).toContain("killWindowsProcessTree(child, timeoutMs)");
+    expect(productionFixture).toContain("spawn(process.execPath, [childEntry]");
+    expect(productionFixture).toContain("waitForNonceBoundPort(child, 0)");
+    expect(productionFixture).toContain("await stopChild(daemon)");
     expect(journey).toContain('post("/commands"');
     expect(journey).toContain("/views/");
     expect(journey).toContain('view<unknown>("current-work"');
