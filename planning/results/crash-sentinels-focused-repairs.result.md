@@ -46,11 +46,29 @@ It was red with two read-handler invocations and green with one; it also checks
 the source `NextStepReady`, one successor, one Applied read, one successor
 action, and two ProviderTurns total.
 
+The recovery fast path now verifies all of that evidence before returning
+`Completed`: the current step revision and ProviderTurn binding; the exact
+settled-success manifest; the canonical ProviderTurn output and its
+`decodedOutputHash`; the accepted ModelOutput's exact sequence/source/content;
+the cursor equal to the decoded action count; and a unique persisted action for
+every index with the exact deterministic identity, route, callRef, kind, input
+hash, and `Applied` state. Missing or inconsistent evidence uses the existing
+typed `AgentLoopStepReplayBindingMismatch` failure path. It cannot advance a
+corrupt step as if its effects were complete.
+
+The P3 recovery unit now covers a valid two-action crash recovery plus negative
+cases for output-hash mismatch, cursor mismatch, an action-index gap, a
+callRef/identity mismatch, and a nonterminal Pending action row.
+
 - Unit regression: red at two read invocations; then PASS, 1/1.
+- B2 recovery evidence unit: PASS, 7/7 (single-action, multi-action, and five
+  fail-closed corruptions).
 - `AH11AfterStepEffectsCommit` real-process case: PASS, 1/1 (83.453s) after
   rebuilding `pnpm build` so the daemon used the changed production code.
 - `AH11BeforeStepEffectsCommit`: PASS, 1/1 (79.030s) in the preceding focused
   file run; the new fast path applies only to `StepEffectsCommitted`.
+- The process cases were not rerun after the B2 verification strengthening;
+  this increment was limited to unit and static checks.
 - Diagnostic artifacts are written under the ignored
   `.test-results/ah11-phase-diagnostics/` directory on slow/cleanup paths.
 
@@ -69,7 +87,7 @@ budget, inner waits, and qualification assertions are unchanged.
 
 - `pnpm build`: PASS.
 - `pnpm exec tsc -p tsconfig.test.json --noEmit --pretty false`: PASS.
-- Biome on the five changed TypeScript files: PASS.
+- Biome on the changed TypeScript files: PASS.
 - `git diff --check`: PASS.
 - The full `crash-sentinels` profile was not rerun. Its baseline manifest had
   seven failures, including P37 additional-daemon startup, P4 live-lease

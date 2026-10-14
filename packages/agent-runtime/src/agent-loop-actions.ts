@@ -13,11 +13,12 @@ import type {
   WorkRevision,
 } from "@arbor/domain";
 import { workEpisode as exactWorkEpisode } from "@arbor/domain";
-import type {
-  ControlBasis,
-  ModelOutput,
-  PreparedModelTurn,
-  ToolInvocation,
+import {
+  type ControlBasis,
+  decodeTurn,
+  type ModelOutput,
+  type PreparedModelTurn,
+  type ToolInvocation,
 } from "@arbor/model-context";
 import type {
   AgentLoopStepActionRecord,
@@ -37,7 +38,7 @@ import type {
   TransactionPortService,
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
-import { Effect, type Option } from "effect";
+import { Effect, Option } from "effect";
 import { MAX_TURNS, safetyStop } from "./agent-loop-policy.js";
 import {
   type AgentActionError,
@@ -356,7 +357,10 @@ export interface AgentLoopActionDependencies {
   readonly turn: number;
   readonly currentLoopStep?: AgentLoopStepRecord;
   readonly loopSteps?: AgentLoopStepStoreService;
-  readonly providerTurns?: Pick<ProviderTurnStoreService, "findManifestByTurn">;
+  readonly providerTurns?: Pick<
+    ProviderTurnStoreService,
+    "findManifestByTurn" | "findSettledResult"
+  >;
   readonly inboxSequence?: Pick<InboxProjectionStoreService, "currentSequence">;
   readonly loopStepFence?: AgentLoopStepFence;
   readonly tx: TransactionPortService;
@@ -411,6 +415,7 @@ export const executeAgentLoopActions = (
     decodedOutput,
     turn,
     loopSteps,
+    providerTurns,
     loopStepFence,
     tx,
     sessions,
@@ -431,14 +436,233 @@ export const executeAgentLoopActions = (
     }> = [];
     let durableProgress = false;
 
-    // This state is committed only after the accepted output's action cursor
-    // has reached the end. Recovery must hand that same output to step
-    // completion so it can create the successor, without re-dispatching any
-    // already Applied executable or control actions.
+    // This state may advance only when its exact accepted ProviderTurn output,
+    // cursor, and every terminal action row still agree. Otherwise a corrupt
+    // ledger could be mistaken for completed effects during recovery.
     if (currentLoopStep?.state === "StepEffectsCommitted") {
+      const committedStep = currentLoopStep;
+      if (
+        loopSteps === undefined ||
+        loopStepFence === undefined ||
+        providerTurns === undefined
+      ) {
+        return yield* Effect.fail(
+          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+        );
+      }
+      const expectedOutput = {
+        providerTurnId: preparedTurn.manifest.providerTurnId,
+        outputContractRef: preparedTurn.manifest.outputContractRef,
+        decoderVersion: "decode-turn-v1",
+        text: decodedOutput.text,
+        finishReason: decodedOutput.finishReason,
+        toolInvocations: decodedOutput.toolInvocations,
+      } as const;
+      const expectedOutputHash = sha256Hex(JSON.stringify(expectedOutput));
+      const verification = yield* tx
+        .transact(
+          Effect.gen(function* () {
+            const stepOption = yield* loopSteps.find(committedStep.identity);
+            if (!Option.isSome(stepOption)) return undefined;
+            const step = stepOption.value;
+            if (
+              step.state !== "StepEffectsCommitted" ||
+              step.revision !== committedStep.revision ||
+              step.providerTurnId !== preparedTurn.manifest.providerTurnId ||
+              step.manifestId === undefined ||
+              step.decodedOutputHash !== expectedOutputHash ||
+              step.decoderVersion !== "decode-turn-v1" ||
+              step.modelOutputSessionSequence === undefined ||
+              step.nextActionIndex !== decodedOutput.toolInvocations.length
+            ) {
+              return undefined;
+            }
+
+            const providerResult = yield* providerTurns.findSettledResult(
+              step.providerTurnId,
+            );
+            const persistedManifest = yield* providerTurns.findManifestByTurn(
+              step.providerTurnId,
+            );
+            if (
+              providerResult._tag !== "SettledSuccess" ||
+              providerResult.evidenceVersion !== "provider-success-v1" ||
+              persistedManifest === null ||
+              providerResult.manifestId !== step.manifestId ||
+              providerResult.manifestJson !== persistedManifest.manifestJson ||
+              providerResult.turn.providerTurnId !== step.providerTurnId ||
+              providerResult.turn.executionId !== input.execution.executionId ||
+              providerResult.turn.sessionId !== input.execution.sessionId ||
+              providerResult.turn.contextEpoch !==
+                preparedTurn.manifest.contextEpoch ||
+              providerResult.turn.modelRef !== preparedTurn.manifest.modelRef ||
+              providerResult.turn.outputContractRef !==
+                preparedTurn.manifest.outputContractRef ||
+              providerResult.finishReason !== decodedOutput.finishReason
+            ) {
+              return undefined;
+            }
+
+            let manifest: Record<string, unknown>;
+            try {
+              const parsed = JSON.parse(
+                persistedManifest.manifestJson,
+              ) as unknown;
+              if (
+                typeof parsed !== "object" ||
+                parsed === null ||
+                Array.isArray(parsed)
+              ) {
+                return undefined;
+              }
+              manifest = parsed as Record<string, unknown>;
+            } catch {
+              return undefined;
+            }
+            const manifestRoutes = manifest.toolRoutes;
+            if (
+              manifest.providerTurnId !== step.providerTurnId ||
+              manifest.executionId !== input.execution.executionId ||
+              manifest.sessionId !== input.execution.sessionId ||
+              manifest.contextEpoch !== preparedTurn.manifest.contextEpoch ||
+              manifest.modelRef !== preparedTurn.manifest.modelRef ||
+              manifest.outputContractRef !==
+                preparedTurn.manifest.outputContractRef ||
+              manifest.logicalStepNo !== step.identity.logicalStepNo ||
+              manifest.repairAttempt !== step.identity.repairAttempt ||
+              !Array.isArray(manifestRoutes) ||
+              JSON.stringify(manifestRoutes) !==
+                JSON.stringify(preparedTurn.manifest.toolRoutes) ||
+              JSON.stringify(manifestRoutes) !==
+                JSON.stringify(preparedTurn.toolRoutes)
+            ) {
+              return undefined;
+            }
+
+            const providerOutput = decodeTurn(providerResult.canonicalEvents);
+            if (
+              !providerOutput.ok ||
+              JSON.stringify({
+                providerTurnId: step.providerTurnId,
+                outputContractRef: manifest.outputContractRef,
+                decoderVersion: "decode-turn-v1",
+                text: providerOutput.output.text,
+                finishReason: providerOutput.output.finishReason,
+                toolInvocations: providerOutput.output.toolInvocations,
+              }) !== JSON.stringify(expectedOutput)
+            ) {
+              return undefined;
+            }
+
+            const outputRows = yield* sessions.listEntries(
+              input.execution.sessionId,
+              step.modelOutputSessionSequence - 1,
+              1,
+            );
+            const outputEntry = outputRows[0];
+            if (
+              outputRows.length !== 1 ||
+              outputEntry?.sequence !== step.modelOutputSessionSequence ||
+              outputEntry.entryKind !== "ModelOutput" ||
+              outputEntry.source?.kind !== "ProviderTurn" ||
+              outputEntry.source.ref !== `${step.providerTurnId}:assistant`
+            ) {
+              return undefined;
+            }
+            const outputPayload = outputEntry.payload;
+            const typedOutputMatches =
+              typeof outputPayload === "object" &&
+              outputPayload !== null &&
+              "_tag" in outputPayload &&
+              outputPayload._tag === "AssistantMessage" &&
+              "providerTurnId" in outputPayload &&
+              outputPayload.providerTurnId === step.providerTurnId &&
+              "contentRef" in outputPayload &&
+              outputPayload.contentRef ===
+                `provider:${step.providerTurnId}:assistant` &&
+              "text" in outputPayload &&
+              outputPayload.text === decodedOutput.text &&
+              "finishReason" in outputPayload &&
+              outputPayload.finishReason === decodedOutput.finishReason;
+            const legacyOutputMatches =
+              JSON.stringify(outputPayload) === JSON.stringify(expectedOutput);
+            if (!typedOutputMatches && !legacyOutputMatches) return undefined;
+
+            const actions = yield* loopSteps.listActions(step.identity);
+            if (
+              actions.length !== decodedOutput.toolInvocations.length ||
+              new Set(actions.map((action) => action.actionIndex)).size !==
+                actions.length
+            ) {
+              return undefined;
+            }
+            for (
+              let actionIndex = 0;
+              actionIndex < decodedOutput.toolInvocations.length;
+              actionIndex += 1
+            ) {
+              const invocation = decodedOutput.toolInvocations[actionIndex];
+              const action = actions.find(
+                (candidate) => candidate.actionIndex === actionIndex,
+              );
+              if (invocation === undefined || action === undefined) {
+                return undefined;
+              }
+              const routes = manifestRoutes.filter(
+                (
+                  route,
+                ): route is { name: string; route: "Executable" | "Control" } =>
+                  typeof route === "object" &&
+                  route !== null &&
+                  "name" in route &&
+                  typeof route.name === "string" &&
+                  "route" in route &&
+                  (route.route === "Executable" || route.route === "Control"),
+              );
+              const matchingRoutes = routes.filter(
+                (route) => route.name === invocation.toolName,
+              );
+              const route = matchingRoutes[0];
+              const logicalActionId = `lac_${sha256Hex(
+                JSON.stringify({
+                  executionId: input.execution.executionId,
+                  providerTurnId: step.providerTurnId,
+                  callRef: invocation.callRef,
+                  routeKind: route?.route,
+                  actionKind: invocation.toolName,
+                }),
+              )}`;
+              if (
+                matchingRoutes.length !== 1 ||
+                action.identity.executionId !== step.identity.executionId ||
+                action.identity.logicalStepNo !== step.identity.logicalStepNo ||
+                action.identity.repairAttempt !== step.identity.repairAttempt ||
+                action.logicalActionId !== logicalActionId ||
+                action.callRef !== invocation.callRef ||
+                action.routeKind !== route?.route ||
+                action.actionKind !== invocation.toolName ||
+                action.inputHash !== sha256Hex(invocation.argumentsJson) ||
+                // StepEffectsCommitted is reachable only after the action loop
+                // completed without an action-settling disposition.
+                action.state !== "Applied" ||
+                action.resultRef === undefined ||
+                action.observationSourceRef === undefined
+              ) {
+                return undefined;
+              }
+            }
+            return step;
+          }),
+        )
+        .pipe(Effect.mapError(failure));
+      if (verification === undefined) {
+        return yield* Effect.fail(
+          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+        );
+      }
       return {
         _tag: "Completed",
-        loopStep: currentLoopStep,
+        loopStep: verification,
         observations,
         durableProgress,
       };
