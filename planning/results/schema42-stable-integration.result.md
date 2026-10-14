@@ -426,5 +426,25 @@ Validation on the integrated code:
 - `pnpm test:manifest` — PASS, 6/6; inventory remains 48 functional Vitest
   files + 6 UI files.
 - Reporter unit — PASS, 1 file / 4 tests.
-- UI F21 correction remains unqualified in this integration because UI tests
-  were intentionally not rerun.
+- UI F21 correction remains unqualified; the subsequent UI attempt is recorded
+  below and stopped on a selector ambiguity.
+
+## UI profile attempt on `c5a1a51d`
+
+`pnpm test:functional:ui` selected six Playwright files (eight tests,
+`--retries=0`). Root and Web builds passed. The run reached F21 and failed
+because the new exact-text assertion targeted `getByRole("status")`, which
+matched two status elements: the expected unknown-resource notice and the
+separate refresh-failure notice. The expected copy was present; this is a
+test-selector strict-mode ambiguity, not missing product state. The operator
+stopped after this first observed failure; the remaining tests have no
+qualification evidence.
+
+Run directory: `.test-results/2026-10-14T12-35-03-183Z-12980/`. The manifest
+records `interrupted`, `completeCoverage: false`, one observed failure, and
+unavailable full pass/skip/total counts because the Playwright child close
+event/report was not captured. After confirming no runner, Playwright, or
+fixture process remained, the stale manifest was manually terminalized for
+this run only; no reusable repair tool was added. The owned schema-42 fixture
+was validated against its marker and cleaned through the existing P39 cleanup
+helper. Total runner wall time: 183.358s. No UI test was rerun.
