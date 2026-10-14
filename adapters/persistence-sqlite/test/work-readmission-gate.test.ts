@@ -506,7 +506,7 @@ describe("P2 WorkReadmissionGateStore", () => {
         yield* seed();
         const tx = yield* TransactionPort;
         const facts = yield* RecoveryAttentionFactStore;
-        yield* tx.transact(
+        const fact = yield* tx.transact(
           facts.recordDeliverReplayFailure({
             projectId: projectId as never,
             executionId: executionId as never,
@@ -524,6 +524,16 @@ describe("P2 WorkReadmissionGateStore", () => {
         });
         const sql = yield* SqlClient;
         yield* tx.transact(
+          sql.unsafe("DELETE FROM domain_events WHERE event_id = ?", [
+            fact.eventId,
+          ]),
+        );
+        const retainedFact = yield* query();
+        expect(Option.isSome(retainedFact) && retainedFact.value).toEqual({
+          sourceKind: "DeliverReplayFact",
+          executionId,
+        });
+        yield* tx.transact(
           sql.unsafe(
             "DELETE FROM agent_execution_state WHERE execution_id = ?",
             [executionId],
@@ -534,6 +544,40 @@ describe("P2 WorkReadmissionGateStore", () => {
         if (missingEpisode._tag === "Failure") {
           expect(JSON.stringify(missingEpisode.cause)).toContain(
             '"reasonCode":"SourceEpisodeStateMissing"',
+          );
+        }
+      }),
+    ));
+
+  it("fails closed when a retained DeliverReplayFact has a present conflicting event witness", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed();
+        const tx = yield* TransactionPort;
+        const facts = yield* RecoveryAttentionFactStore;
+        const fact = yield* tx.transact(
+          facts.recordDeliverReplayFailure({
+            projectId: projectId as never,
+            executionId: executionId as never,
+            targetWorkspaceId: workspaceId as never,
+            logicalActionId: "act_readmission_deliver_mismatch",
+            messageId: "msg_readmission_deliver_mismatch",
+            failureCode: "LegacyMessageMissingEvent",
+            firstDetectedAt: "t1",
+          }),
+        );
+        const sql = yield* SqlClient;
+        yield* tx.transact(
+          sql.unsafe(
+            "UPDATE domain_events SET payload_json = '{}' WHERE event_id = ?",
+            [fact.eventId],
+          ),
+        );
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SourceFactEventMismatch"',
           );
         }
       }),

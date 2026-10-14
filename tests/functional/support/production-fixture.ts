@@ -1,15 +1,33 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  cloneFunctionalSchema42Database,
+  createFunctionalFixtureDirectory,
+  removeFunctionalFixtureDirectory,
+} from "./schema42-bootstrap.js";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
 const NONCE_DAEMON_ENTRY = resolve(
   "tests/functional/support/nonce-daemon-child.mjs",
 );
 const WEB_DIST = resolve("apps/web/dist");
+const MAX_DAEMON_ERROR_CHARS = 12_000;
+
+const redactDaemonText = (value: string): string =>
+  value
+    .replaceAll("test-only", "[REDACTED]")
+    .replace(
+      /(authorization["']?\s*[:=]\s*["']?bearer\s+)["']?[^"'\s,;]+/giu,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /((?:api[_-]?key|token|secret)["']?\s*[:=]\s*["']?)[^"'\s,;]+/giu,
+      "$1[REDACTED]",
+    )
+    .slice(-MAX_DAEMON_ERROR_CHARS);
 
 export interface CapturedProviderCall {
   readonly messages: ReadonlyArray<{ role?: string; content?: string }>;
@@ -449,11 +467,11 @@ export const startProductionFixture = async (input: {
   readonly daemonEnvironment?: Readonly<Record<string, string>>;
   readonly onDaemonStdout?: (line: string) => void;
 }): Promise<ProductionFixture> => {
-  const directory = mkdtempSync(join(tmpdir(), "arbor-functional-"));
+  const directory = createFunctionalFixtureDirectory();
   const workspaceDirectory = join(directory, "workspace");
   mkdirSync(workspaceDirectory, { recursive: true });
   writeFileSync(join(workspaceDirectory, "proof.txt"), "FUNCTIONAL_VERIFIED");
-  const databaseFile = join(directory, "arbor-functional.db");
+  const { databaseFile } = cloneFunctionalSchema42Database(directory);
   const provider = await startProvider(
     input.reply,
     input.onResponseSent,
@@ -462,6 +480,15 @@ export const startProductionFixture = async (input: {
   let httpPort = input.isolatedPortHandshake === true ? 0 : await freePort();
   let baseUrl = `http://127.0.0.1:${httpPort}`;
   const daemonErrors: string[] = [];
+  const recordDaemonError = (message: string) => {
+    daemonErrors.push(redactDaemonText(message));
+    if (daemonErrors.length > 24)
+      daemonErrors.splice(0, daemonErrors.length - 24);
+  };
+  const daemonErrorSummary = () =>
+    redactDaemonText(
+      daemonErrors.slice(-12).join("\n").slice(-MAX_DAEMON_ERROR_CHARS),
+    );
   const additionalDaemons: ChildProcess[] = [];
   let daemon: ChildProcess | undefined;
   let lastDaemonLaunch:
@@ -546,31 +573,50 @@ export const startProductionFixture = async (input: {
     daemon.stderr?.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8").trim();
       if (text.length > 0 && !text.includes("ExperimentalWarning")) {
-        daemonErrors.push(text);
+        recordDaemonError(text);
       }
     });
     daemon.on("error", (error) => {
-      daemonErrors.push(`spawn error=${error.message}`);
+      recordDaemonError(`spawn error=${error.message}`);
     });
     if (input.isolatedPortHandshake === true) {
       try {
         httpPort = await waitForNonceBoundPort(daemon, input.onDaemonStdout);
       } catch (error) {
         await stopChild(daemon);
-        throw error;
+        throw new Error(
+          `functional daemon startup handshake failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon.exitCode)}; signal=${String(daemon.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}`,
+          { cause: error },
+        );
       }
       baseUrl = `http://127.0.0.1:${httpPort}`;
     }
-    await waitFor(
-      () => fetch(baseUrl),
-      (response) => response.ok && daemon?.exitCode === null,
-      60_000,
-    );
+    try {
+      await waitFor(
+        () => fetch(baseUrl),
+        (response) => response.ok && daemon?.exitCode === null,
+        60_000,
+      );
+    } catch (error) {
+      await stopChild(daemon);
+      throw new Error(
+        `functional daemon startup failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon?.exitCode)}; signal=${String(daemon?.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}`,
+        { cause: error },
+      );
+    }
   };
 
-  await startDaemon();
+  try {
+    await startDaemon();
+  } catch (error) {
+    await new Promise<void>((resolveClose) =>
+      provider.server.close(() => resolveClose()),
+    );
+    removeFunctionalFixtureDirectory(directory);
+    throw error;
+  }
 
-  return {
+  const fixture: ProductionFixture = {
     baseUrl,
     directory,
     databaseFile,
@@ -661,7 +707,10 @@ export const startProductionFixture = async (input: {
       child.stderr?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf8").trim();
         if (text.length > 0 && !text.includes("ExperimentalWarning")) {
-          additionalErrors.push(text);
+          additionalErrors.push(redactDaemonText(text));
+          if (additionalErrors.length > 24) {
+            additionalErrors.splice(0, additionalErrors.length - 24);
+          }
         }
       });
       child.on("error", (error) => {
@@ -680,7 +729,7 @@ export const startProductionFixture = async (input: {
       } catch (error) {
         await stopChild(child);
         throw new Error(
-          `additional daemon failed to start: ${error instanceof Error ? error.message : String(error)}; stderr=${additionalErrors.join(" | ")}`,
+          `additional daemon failed to start: ${error instanceof Error ? error.message : String(error)}; stderr=${redactDaemonText(additionalErrors.slice(-12).join("\n")) || "<empty>"}`,
         );
       }
       return {
@@ -693,14 +742,27 @@ export const startProductionFixture = async (input: {
     stop: async () => {
       if (stopped) return;
       stopped = true;
-      await stopChild(daemon);
-      for (const child of additionalDaemons) await stopChild(child);
-      await new Promise<void>((resolveClose) =>
-        provider.server.close(() => resolveClose()),
-      );
-      if (input.preserveDirectoryOnStop !== true) {
-        rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
+      process.removeListener("SIGINT", stopOnSignal);
+      process.removeListener("SIGTERM", stopOnSignal);
+      try {
+        await Promise.all([
+          stopChild(daemon),
+          ...additionalDaemons.map((child) => stopChild(child)),
+        ]);
+      } finally {
+        await new Promise<void>((resolveClose) =>
+          provider.server.close(() => resolveClose()),
+        );
+        if (input.preserveDirectoryOnStop !== true) {
+          removeFunctionalFixtureDirectory(directory);
+        }
       }
     },
   };
+  const stopOnSignal = () => {
+    void fixture.stop().catch(() => undefined);
+  };
+  process.once("SIGINT", stopOnSignal);
+  process.once("SIGTERM", stopOnSignal);
+  return fixture;
 };

@@ -453,13 +453,25 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
             }
             const event = eventsById.get(fact.event_id);
             if (event === undefined) {
-              return yield* Effect.fail(
-                makeIntegrity(
-                  "SourceFactEventMismatch",
-                  fact.execution_id as ExecutionId,
-                  fact.fact_kind,
-                ),
-              );
+              // DeliverReplayEscalated.event_id is audit-only: P9 deliberately
+              // has no FK to the prunable journal. The immutable fact remains
+              // the durable readmission witness after pruning. AssignWork's
+              // fact still requires its event witness.
+              if (fact.fact_kind !== "DeliverReplayFact") {
+                return yield* Effect.fail(
+                  makeIntegrity(
+                    "SourceFactEventMismatch",
+                    fact.execution_id as ExecutionId,
+                    fact.fact_kind,
+                  ),
+                );
+              }
+              candidates.push({
+                executionId: fact.execution_id as ExecutionId,
+                kind: fact.fact_kind,
+                fact,
+              });
+              continue;
             }
             let payload: Record<string, unknown> | null = null;
             try {

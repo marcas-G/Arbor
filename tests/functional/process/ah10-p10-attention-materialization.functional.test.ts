@@ -55,6 +55,11 @@ import { subtreeAttentionAggregate } from "../../../packages/projection-runtime/
 import type { AttentionReadDeps } from "../../../packages/projection-runtime/src/attention-loader.js";
 import { deriveProjectAttention } from "../../../packages/projection-runtime/src/attention-loader.js";
 import { projectionReadError } from "../../../packages/projection-runtime/src/errors.js";
+import { upgradeSchema42TestDatabase } from "../../support/schema42-database.js";
+import {
+  createFunctionalFixtureDirectory,
+  removeFunctionalFixtureDirectory,
+} from "../support/schema42-bootstrap.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ac");
 const parentWorkspaceId = parse(WorkspaceId)(
@@ -530,11 +535,7 @@ const queryPublicAttention = async (databaseFile: string) => {
       "attention",
       { projectId: firstFixture.projectId },
     );
-    const tree = yield* queries.query<TreeViewReq, TreeViewRes>(
-      "responsibility-tree",
-      { projectId: firstFixture.projectId },
-    );
-    return { rows: result.value.rows, treeRoot: tree.value.nodes[0] };
+    return { rows: result.value.rows };
   });
   return Effect.runPromise(Effect.scoped(Effect.provide(program, app)));
 };
@@ -746,7 +747,7 @@ describe("AH10/P10 Attention materialization", () => {
   });
 
   it("makes Deliver replay failure ActionRequired and rebuilds from the retained P9 fact after event pruning", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "p37-deliver-attention-"));
+    const directory = createFunctionalFixtureDirectory();
     const databaseFile = join(directory, "arbor.sqlite");
     try {
       const program = Effect.gen(function* () {
@@ -778,15 +779,6 @@ describe("AH10/P10 Attention materialization", () => {
             [projectId],
           ),
         };
-        // Simulate P1 journal pruning while preserving the P9 fact source.
-        yield* sql.unsafe("DELETE FROM domain_events WHERE event_id = ?", [
-          fact.eventId,
-        ]);
-        yield* sql.unsafe(
-          "DELETE FROM deliver_replay_attention_rows WHERE attention_fact_id = ?",
-          [fact.attentionFactId],
-        );
-        yield* rebuildP10Attention();
         return {
           fact,
           poll,
@@ -794,15 +786,37 @@ describe("AH10/P10 Attention materialization", () => {
           firstView,
           pending,
           blockedHandoverRows,
-          rebuiltRows: yield* readDeliverAttentionRows(),
-          rebuiltView: yield* readMaterializedAttentionView(),
         };
       });
 
       const result = await Effect.runPromise(
         Effect.provide(program, makeApp(databaseFile)),
       );
-      const publicView = await queryPublicAttention(databaseFile);
+      await upgradeSchema42TestDatabase({
+        databaseFilename: databaseFile,
+        p39ReportFilename: join(directory, "p39-report.sqlite"),
+      });
+      const publicBeforePrune = await queryPublicAttentionAndTree(databaseFile);
+      const rebuildAfterPrune = Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        // Simulate P1 journal pruning while preserving the P9 fact source.
+        yield* sql.unsafe("DELETE FROM domain_events WHERE event_id = ?", [
+          result.fact.eventId,
+        ]);
+        yield* sql.unsafe(
+          "DELETE FROM deliver_replay_attention_rows WHERE attention_fact_id = ?",
+          [result.fact.attentionFactId],
+        );
+        yield* rebuildP10Attention();
+        return {
+          rows: yield* readDeliverAttentionRows(),
+          view: yield* readMaterializedAttentionView(),
+        };
+      });
+      const rebuilt = await Effect.runPromise(
+        Effect.provide(rebuildAfterPrune, makeApp(databaseFile)),
+      );
+      const publicAfterPrune = await queryPublicAttentionAndTree(databaseFile);
       const expectedAttention = {
         source: "DeliverReplayFailure",
         severity: "ActionRequired",
@@ -833,27 +847,36 @@ describe("AH10/P10 Attention materialization", () => {
         inbox: [{ count: 0 }],
         messageSent: [{ count: 0 }],
       });
-      expect(result.rebuiltRows).toHaveLength(1);
-      expect(result.rebuiltRows[0]?.dedupKey).toBe(result.fact.attentionFactId);
-      expect(result.rebuiltView).toEqual([expectedAttention]);
-      expect(publicView.rows).toEqual([expectedPublicAttention]);
-      expect(publicView.treeRoot?.subtreeAttention).toEqual({
+      expect(result.firstView).toEqual([expectedAttention]);
+      expect(publicBeforePrune.firstAttention).toEqual([
+        expect.objectContaining({
+          source: "DeliverReplayFailure",
+          dedupKey: result.fact.attentionFactId,
+        }),
+      ]);
+      expect(publicBeforePrune.treeRoot?.subtreeAttention).toEqual({
         attention: 0,
         actionRequired: 1,
       });
-      expect(JSON.stringify(result.rebuiltView)).not.toContain(
-        result.fact.messageId,
-      );
-      expect(JSON.stringify(result.rebuiltView)).not.toContain(
-        result.fact.eventId,
-      );
+      expect(rebuilt.rows).toHaveLength(1);
+      expect(rebuilt.rows[0]?.dedupKey).toBe(result.fact.attentionFactId);
+      expect(rebuilt.view).toEqual([expectedAttention]);
+      expect(publicAfterPrune.firstAttention).toEqual([
+        expectedPublicAttention,
+      ]);
+      expect(publicAfterPrune.treeRoot?.subtreeAttention).toEqual({
+        attention: 0,
+        actionRequired: 1,
+      });
+      expect(JSON.stringify(rebuilt.view)).not.toContain(result.fact.messageId);
+      expect(JSON.stringify(rebuilt.view)).not.toContain(result.fact.eventId);
     } finally {
-      rmSync(directory, { recursive: true, force: true });
+      removeFunctionalFixtureDirectory(directory);
     }
   });
 
   it("keeps stale materialized sources out across WorkSteered lag, rebuild, and SQLite reopen", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "rai-p10-work-revision-"));
+    const directory = createFunctionalFixtureDirectory();
     const databaseFile = join(directory, "arbor.sqlite");
     try {
       const program = Effect.gen(function* () {
@@ -929,10 +952,14 @@ describe("AH10/P10 Attention materialization", () => {
       expect(result.rowsAfterRebuild).toEqual([]);
       expect(result.deliverRowsAfterRebuild).toEqual([]);
 
+      await upgradeSchema42TestDatabase({
+        databaseFilename: databaseFile,
+        p39ReportFilename: join(directory, "p39-report.sqlite"),
+      });
       const afterReopen = await queryPublicAttention(databaseFile);
       expect(afterReopen.rows).toEqual([]);
     } finally {
-      rmSync(directory, { recursive: true, force: true });
+      removeFunctionalFixtureDirectory(directory);
     }
   });
 
@@ -1024,9 +1051,7 @@ describe("AH10/P10 Attention materialization", () => {
   });
 
   it("real daemon discovers projects, survives pre/post-commit kills, and rebuilds to the same public Attention/Tree view", async () => {
-    const directory = mkdtempSync(
-      join(tmpdir(), "arbor-p10-attention-daemon-"),
-    );
+    const directory = createFunctionalFixtureDirectory();
     const databaseFile = join(directory, "daemon.sqlite");
     let runningChild: ReturnType<typeof spawn> | undefined;
     try {
@@ -1056,6 +1081,10 @@ describe("AH10/P10 Attention materialization", () => {
       const facts = await Effect.runPromise(
         Effect.scoped(Effect.provide(seed, makeApp(databaseFile))),
       );
+      await upgradeSchema42TestDatabase({
+        databaseFilename: databaseFile,
+        p39ReportFilename: join(directory, "p39-report.sqlite"),
+      });
 
       const beforeCommitMarker = join(directory, "before-commit.marker");
       const beforeCommit = await startDaemonChildUntilMarker(
@@ -1155,7 +1184,7 @@ describe("AH10/P10 Attention materialization", () => {
       });
     } finally {
       if (runningChild !== undefined) await killDaemonChild(runningChild);
-      rmSync(directory, { recursive: true, force: true });
+      removeFunctionalFixtureDirectory(directory);
     }
   });
 });

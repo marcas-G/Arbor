@@ -26,6 +26,8 @@ interface Ah10Probe {
   readonly callRef?: string;
   readonly actionIndex?: number;
   readonly commandId?: string;
+  readonly pauseRequested?: boolean;
+  readonly receivedAt?: number;
 }
 
 interface CommandRow {
@@ -104,7 +106,8 @@ afterEach(async () => {
 const pushProbe = (events: Ah10Probe[], line: string) => {
   try {
     const event = JSON.parse(line) as Ah10Probe;
-    if (event.tag === "AH10_PROBE") events.push(event);
+    if (event.tag === "AH10_PROBE")
+      events.push({ ...event, receivedAt: Date.now() });
   } catch {
     // Daemon logs are retained by the fixture for failure diagnostics.
   }
@@ -280,6 +283,11 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
   it.each(["before", "after"] as const)(
     "takes over a Query after killing gen0 %s its FencingRejected receipt commits",
     async (crashSide) => {
+      const phaseStartedAt = Date.now();
+      const markPhase = (phase: string) =>
+        console.info(
+          `[AH10 Query ${crashSide}] ${phase} +${Date.now() - phaseStartedAt}ms`,
+        );
       const marker = `AH10-send-query-${crypto.randomUUID().slice(0, 8)}`;
       const events: Ah10Probe[] = [];
       const providerMarkerCalls: number[] = [];
@@ -365,6 +373,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         },
         onDaemonStdout: (line) => pushProbe(events, line),
       });
+      markPhase("schema42 fixture and primary daemon ready");
       fixtures.push(fixture);
       mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
 
@@ -388,6 +397,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
           },
         },
       );
+      markPhase("public project, child Work, and initial approval settled");
       const childWorkspaceId = child.workspaceId;
       const childWorkId = child.currentWork.workId;
       expect(child.currentWork.objective).toBe(
@@ -416,16 +426,19 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         status: "Open",
       });
       await fixture.crash();
+      markPhase("seed daemon stopped");
       probeArmed = true;
       await fixture.restart({
         entry: ah10Child,
         daemonEnvironment: {
           ARBOR_AH10_ROLE: "old",
           ARBOR_AH10_GATE_ACTION_KIND: "send_message",
+          ARBOR_AH10_DELAY_LEASE_RENEWAL_PAUSE: "1",
           ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
             crashSide === "before" ? "1" : "0",
         },
       });
+      markPhase("old daemon restarted for generation-zero episode");
       await client.command(project.projectId, "SteerWork", {
         workId: childWorkId,
         workspaceId: childWorkspaceId,
@@ -452,38 +465,10 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       if (oldAction === undefined) {
         throw new Error("AH10 old SendMessage ActionIntent probe was absent");
       }
+      markPhase("old SendMessage intent committed");
       expect(oldAction.callRef).toMatch(/^call_/u);
       expect(oldAction.providerTurnId).toMatch(/^ptn_/u);
       expect(oldAction.logicalActionId).toMatch(/^lac_/u);
-
-      const oldLeasePause = await waitForPublic(
-        async () =>
-          events.find(
-            (event) =>
-              event.role === "old" &&
-              event.boundary === "AH10BeforeLeaseRenewal" &&
-              event.executionId === oldAction.executionId,
-          ),
-        (event) => event !== undefined,
-        20_000,
-      );
-      if (oldLeasePause === undefined) {
-        throw new Error("AH10 old lease renewal pause probe was absent");
-      }
-      expect(oldLeasePause.fencingGeneration).toBe(0);
-      const oldLease = readRows(fixture.databaseFile).leases.find(
-        (lease) => lease.execution_id === oldAction.executionId,
-      );
-      expect(oldLease?.generation).toBe(0);
-      await waitForPublic(
-        async () =>
-          readRows(fixture.databaseFile).leases.find(
-            (lease) => lease.execution_id === oldAction.executionId,
-          ),
-        (lease) =>
-          lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-        35_000,
-      );
 
       const newDaemon = await fixture.startAdditionalDaemon({
         entry: ah10Child,
@@ -494,6 +479,63 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         },
         onStdout: (line) => pushProbe(events, line),
       });
+      markPhase("new daemon ready while generation-zero lease is still valid");
+      const leaseAfterNewReady = readRows(fixture.databaseFile).leases.find(
+        (lease) => lease.execution_id === oldAction.executionId,
+      );
+      expect(leaseAfterNewReady?.generation).toBe(0);
+      expect(
+        Date.parse(leaseAfterNewReady?.expires_at ?? "1970-01-01"),
+      ).toBeGreaterThan(Date.now());
+      expect(
+        events.some(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH10AfterLeaseAcquired" &&
+            event.executionId === oldAction.executionId,
+        ),
+      ).toBe(false);
+
+      // Keep gen0 renewing while the second real daemon boots. Pause only its
+      // next renewal after gen1 is ready, so the full 30s lease interval is
+      // observed with both processes already running.
+      writeFileSync(
+        resolve(fixture.directory, "ah10-gates", "old-lease-renewal.pause"),
+        "pause next renewal",
+      );
+      const oldLeasePause = await waitForPublic(
+        async () =>
+          events.find(
+            (event) =>
+              event.role === "old" &&
+              event.boundary === "AH10BeforeLeaseRenewal" &&
+              event.executionId === oldAction.executionId &&
+              event.pauseRequested === true,
+          ),
+        (event) => event !== undefined,
+        20_000,
+      );
+      if (oldLeasePause === undefined) {
+        throw new Error("AH10 old lease renewal pause probe was absent");
+      }
+      markPhase("old owner paused its next lease renewal");
+      expect(oldLeasePause.fencingGeneration).toBe(0);
+      const oldLease = readRows(fixture.databaseFile).leases.find(
+        (lease) => lease.execution_id === oldAction.executionId,
+      );
+      expect(oldLease?.generation).toBe(0);
+      const generationZeroExpiresAt = Date.parse(
+        oldLease?.expires_at ?? "1970-01-01",
+      );
+      expect(generationZeroExpiresAt).toBeGreaterThan(Date.now());
+      expect(
+        events.some(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH10AfterLeaseAcquired" &&
+            event.executionId === oldAction.executionId,
+        ),
+      ).toBe(false);
       const newLease = await waitForPublic(
         async () =>
           events.find(
@@ -508,7 +550,16 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       if (newLease === undefined) {
         throw new Error("AH10 new SendMessage owner did not acquire the lease");
       }
+      expect(newLease.receivedAt).toBeGreaterThanOrEqual(
+        generationZeroExpiresAt,
+      );
+      markPhase("new daemon acquired generation one after expiry");
       expect(newLease.fencingGeneration).toBe(1);
+      expect(
+        readRows(fixture.databaseFile).leases.find(
+          (lease) => lease.execution_id === oldAction.executionId,
+        )?.generation,
+      ).toBe(1);
       const newAction = await waitForPublic(
         async () =>
           events.find(
@@ -664,7 +715,12 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       expect(providerMarkerCalls).toHaveLength(1);
       expect(newDaemon.daemonErrors).toEqual([]);
     },
-    90_000,
+    // Measured under the functional suite: template/clone + public setup and
+    // gen0 setup consume ~54s; the second daemon is ready at ~69–72s, before
+    // the unshortened 30s lease expires and receipt/identity assertions run.
+    // Keep every in-test lease and probe bound intact; this is only the outer
+    // Vitest budget for the real two-daemon Query takeover.
+    180_000,
   );
 
   it.each(["before", "after", "committed"] as const)(

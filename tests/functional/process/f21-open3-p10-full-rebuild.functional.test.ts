@@ -1,12 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer } from "effect";
@@ -36,7 +29,11 @@ import {
   TransactionPort,
   WorkspaceResourceActivationStore,
 } from "../../../packages/ports/src/index.js";
-import { ensureLegacyProjectResourceSourceFixture } from "../../support/legacy-project-resource-source.js";
+import { upgradeSchema42TestDatabase } from "../../support/schema42-database.js";
+import {
+  createFunctionalFixtureDirectory,
+  removeFunctionalFixtureDirectory,
+} from "../support/schema42-bootstrap.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-012345670020");
 const workspaceId = parse(WorkspaceId)(
@@ -80,7 +77,6 @@ const seedDatabase = async (databaseFile: string, pinnedRoot: string) => {
           ) VALUES (?, 'P10 full rebuild', ?, '{}', 0, '{}', 'local', 'Open', 0, 't0', 't0')`,
           [projectId, workspaceId],
         );
-        yield* ensureLegacyProjectResourceSourceFixture();
         yield* sql.unsafe(
           `INSERT INTO workspaces (
             workspace_id, project_id, parent_workspace_id, name,
@@ -324,7 +320,7 @@ const inspectState = (databaseFile: string) => {
   }
 };
 
-const makeDirectory = () => mkdtempSync(join(tmpdir(), "arbor-f21-story-l-"));
+const makeDirectory = () => createFunctionalFixtureDirectory();
 const pinnedPathFor = (databaseFile: string) =>
   join(dirname(databaseFile), "pinned-tree");
 
@@ -355,6 +351,10 @@ test("P10 Story L rebuild rolls back snapshot/offset rewind on kill and lineariz
       databaseFile,
       pinnedPathFor(databaseFile),
     );
+    await upgradeSchema42TestDatabase({
+      databaseFilename: databaseFile,
+      p39ReportFilename: join(directory, "p39-report.sqlite"),
+    });
     expect(originalOffset.last_sequence).toBe(3);
     p10 = startWorker(databaseFile, "hold-before-commit", markerFile);
     const before = JSON.parse(await waitForMarker(markerFile, p10)) as {
@@ -433,7 +433,7 @@ test("P10 Story L rebuild rolls back snapshot/offset rewind on kill and lineariz
   } finally {
     if (p11 !== undefined) await killWorker(p11);
     if (p10 !== undefined) await killWorker(p10);
-    rmSync(directory, { recursive: true, force: true });
+    removeFunctionalFixtureDirectory(directory);
   }
 });
 
@@ -447,6 +447,10 @@ test("P10 Story L after-commit kill preserves snapshot and restarted consumer ca
       databaseFile,
       pinnedPathFor(databaseFile),
     );
+    await upgradeSchema42TestDatabase({
+      databaseFilename: databaseFile,
+      p39ReportFilename: join(directory, "p39-report.sqlite"),
+    });
     expect(originalOffset.last_sequence).toBe(3);
     child = startWorker(databaseFile, "hold-after-commit", markerFile);
     const committedMarker = JSON.parse(
@@ -534,6 +538,6 @@ test("P10 Story L after-commit kill preserves snapshot and restarted consumer ca
     );
   } finally {
     if (child !== undefined) await killWorker(child);
-    rmSync(directory, { recursive: true, force: true });
+    removeFunctionalFixtureDirectory(directory);
   }
 });
