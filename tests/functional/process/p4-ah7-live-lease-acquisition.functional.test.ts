@@ -839,22 +839,6 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       join(gateDirectory, "old-acquire.request"),
       "pause the old daemon immediately before the real LeaseService.acquire call",
     );
-    const pausedAcquire = await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "old" &&
-            event.boundary === "AH10BeforeLeaseAcquiredPaused" &&
-            event.executionId === executionId,
-        ),
-      (event) => event !== undefined,
-      45_000,
-    );
-    expect(pausedAcquire).toMatchObject({
-      role: "old",
-      boundary: "AH10BeforeLeaseAcquiredPaused",
-      executionId,
-    });
     const oldAcquireEventStart = events.length;
     const resolution = await client.command(
       project.projectId,
@@ -887,8 +871,24 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       consumed_by: null,
     });
     expect(committedApproval?.decided_at).not.toBeNull();
+    const readyToAcquire = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH10BeforeLeaseAcquiredReady" &&
+            event.executionId === executionId,
+        ),
+      (event) => event !== undefined,
+      45_000,
+    );
+    expect(readyToAcquire).toMatchObject({
+      role: "old",
+      boundary: "AH10BeforeLeaseAcquiredReady",
+      executionId,
+    });
     writeFileSync(
-      join(gateDirectory, "old-old-acquire.release"),
+      join(gateDirectory, "old-acquire.release"),
       "allow the exact approved Execution to call LeaseService.acquire",
     );
     const approvalResume = await waitForPublic(
