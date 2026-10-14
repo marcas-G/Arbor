@@ -1,5 +1,12 @@
+import { spawn } from "node:child_process";
+import type { Server } from "node:http";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  childHasExited,
+  closeServerBounded,
+  stopChildBounded,
+} from "../support/daemon-process-lifecycle.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -145,6 +152,16 @@ describe("production fixture port-zero startup handshake", () => {
     expect(listening[1]?.port).not.toBe(requestedPort);
   }, 180_000);
 
+  it("keeps fixture stop idempotent across repeated calls", async () => {
+    const fixture = await startFixture();
+    fixtures.push(fixture);
+
+    await fixture.stop();
+    await expect(fixture.stop()).resolves.toBeUndefined();
+    expect(fixture.daemonProcessSnapshot()?.alive).toBe(false);
+    expect(fixture.daemonErrors).toEqual([]);
+  }, 180_000);
+
   it.each([
     ["wrong-pid", /invalid functional daemon start identity/u],
     ["wrong-nonce", /functional daemon listening identity mismatch/u],
@@ -160,4 +177,55 @@ describe("production fixture port-zero startup handshake", () => {
       }),
     ).rejects.toThrow(expected);
   });
+
+  it("bounds provider close when it hangs or throws", async () => {
+    let forcedHangClose = 0;
+    const hangingServer = {
+      listening: true,
+      close: (_callback: (error?: Error) => void) => undefined,
+      closeAllConnections: () => {
+        forcedHangClose += 1;
+      },
+    } as unknown as Server;
+    await expect(closeServerBounded(hangingServer, 10)).rejects.toThrow(
+      "HTTP server did not close within 10ms",
+    );
+    expect(forcedHangClose).toBe(1);
+
+    let forcedThrowClose = 0;
+    const throwingServer = {
+      listening: true,
+      close: () => {
+        throw new Error("injected provider close failure");
+      },
+      closeAllConnections: () => {
+        forcedThrowClose += 1;
+      },
+    } as unknown as Server;
+    await expect(closeServerBounded(throwingServer, 10)).rejects.toThrow(
+      "injected provider close failure",
+    );
+    expect(forcedThrowClose).toBe(1);
+  });
+
+  it("stops a child once and treats a second stop as already settled", async () => {
+    const child = spawn(process.execPath, [invalidChild], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
+      child.once("spawn", resolveSpawn);
+      child.once("error", rejectSpawn);
+    });
+    let exitEvents = 0;
+    child.on("exit", () => {
+      exitEvents += 1;
+    });
+
+    await stopChildBounded(child);
+    await stopChildBounded(child);
+
+    expect(childHasExited(child)).toBe(true);
+    expect(exitEvents).toBe(1);
+  }, 30_000);
 });

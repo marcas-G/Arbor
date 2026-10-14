@@ -5,6 +5,7 @@ import { createServer, type Server } from "node:http";
 import { join, resolve } from "node:path";
 import {
   childHasExited,
+  closeServerBounded,
   stopChildBounded as stopChild,
   waitForDaemonListening as waitForNonceBoundPort,
 } from "./daemon-process-lifecycle.js";
@@ -384,14 +385,25 @@ export const startProductionFixture = async (input: {
       providerPort: provider.port,
     });
   } catch (error) {
+    const cleanupFailures: Array<unknown> = [];
     try {
       if (provider !== undefined) {
-        await new Promise<void>((resolveClose) =>
-          provider?.server.close(() => resolveClose()),
-        );
+        await closeServerBounded(provider.server);
       }
-    } finally {
+    } catch (cleanupError) {
+      cleanupFailures.push(cleanupError);
+    }
+    try {
       removeFunctionalFixtureDirectory(directory);
+    } catch (cleanupError) {
+      cleanupFailures.push(cleanupError);
+    }
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupFailures],
+        "production fixture setup and cleanup both failed",
+        { cause: error },
+      );
     }
     throw error;
   }
@@ -412,6 +424,22 @@ export const startProductionFixture = async (input: {
     redactDaemonText(
       daemonErrors.slice(-12).join("\n").slice(-MAX_DAEMON_ERROR_CHARS),
     );
+  const stopDaemonAfterStartupFailure = async (
+    primary: unknown,
+    phase: string,
+  ) => {
+    try {
+      await stopChild(daemon);
+    } catch (cleanupError) {
+      const diagnostic = `${phase} daemon cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
+      recordDaemonError(diagnostic);
+      throw new AggregateError(
+        [primary, cleanupError],
+        `${phase} and daemon cleanup both failed`,
+        { cause: primary },
+      );
+    }
+  };
   const additionalDaemons: ChildProcess[] = [];
   let daemon: ChildProcess | undefined;
   let lastDaemonLaunch:
@@ -421,7 +449,7 @@ export const startProductionFixture = async (input: {
         readonly environmentKeys: ReadonlyArray<string>;
       }
     | undefined;
-  let stopped = false;
+  let stopPromise: Promise<void> | undefined;
   let daemonStarts = 0;
 
   const startDaemon = async (override?: {
@@ -486,7 +514,10 @@ export const startProductionFixture = async (input: {
         onStdoutLine: (line) => input.onDaemonStdout?.(line),
       });
     } catch (error) {
-      await stopChild(daemon);
+      await stopDaemonAfterStartupFailure(
+        error,
+        "functional daemon startup handshake",
+      );
       throw new Error(
         `functional daemon startup handshake failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon.exitCode)}; signal=${String(daemon.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}`,
         { cause: error },
@@ -501,7 +532,7 @@ export const startProductionFixture = async (input: {
         60_000,
       );
     } catch (error) {
-      await stopChild(daemon);
+      await stopDaemonAfterStartupFailure(error, "functional daemon readiness");
       throw new Error(
         `functional daemon startup failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon?.exitCode)}; signal=${String(daemon?.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}`,
         { cause: error },
@@ -512,10 +543,35 @@ export const startProductionFixture = async (input: {
   try {
     await startDaemon();
   } catch (error) {
-    await new Promise<void>((resolveClose) =>
-      activeProvider.server.close(() => resolveClose()),
-    );
-    removeFunctionalFixtureDirectory(directory);
+    const cleanupFailures: Array<unknown> = [];
+    try {
+      await stopChild(daemon);
+    } catch (cleanupError) {
+      recordDaemonError(
+        `startup daemon cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+      );
+      cleanupFailures.push(cleanupError);
+    }
+    try {
+      await closeServerBounded(activeProvider.server);
+    } catch (cleanupError) {
+      recordDaemonError(
+        `startup provider cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+      );
+      cleanupFailures.push(cleanupError);
+    }
+    try {
+      removeFunctionalFixtureDirectory(directory);
+    } catch (cleanupError) {
+      cleanupFailures.push(cleanupError);
+    }
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupFailures],
+        "production fixture startup and cleanup both failed",
+        { cause: error },
+      );
+    }
     throw error;
   }
 
@@ -654,30 +710,65 @@ export const startProductionFixture = async (input: {
         crash: () => stopChild(child),
       };
     },
-    stop: async () => {
-      if (stopped) return;
-      stopped = true;
-      process.removeListener("SIGINT", stopOnSignal);
-      process.removeListener("SIGTERM", stopOnSignal);
-      try {
-        await Promise.all([
-          stopChild(daemon),
-          ...additionalDaemons.map((child) => stopChild(child)),
-        ]);
-      } finally {
-        await new Promise<void>((resolveClose) =>
-          activeProvider.server.close(() => resolveClose()),
-        );
-        if (input.preserveDirectoryOnStop !== true) {
-          removeFunctionalFixtureDirectory(directory);
+    stop: () => {
+      if (stopPromise !== undefined) return stopPromise;
+      process.removeListener("SIGINT", stopOnInterrupt);
+      process.removeListener("SIGTERM", stopOnTerminate);
+      stopPromise = (async () => {
+        const failures: Array<unknown> = [];
+        for (const child of [daemon, ...additionalDaemons]) {
+          try {
+            await stopChild(child);
+          } catch (error) {
+            const diagnostic = `daemon cleanup failed: ${error instanceof Error ? error.message : String(error)}; ${child === undefined ? "pid=undefined" : `pid=${String(child.pid)} exitCode=${String(child.exitCode)} signal=${String(child.signalCode)}`}`;
+            recordDaemonError(diagnostic);
+            failures.push(new Error(diagnostic, { cause: error }));
+          }
         }
-      }
+        try {
+          await closeServerBounded(activeProvider.server);
+        } catch (error) {
+          const diagnostic = `provider cleanup failed: port=${activeProvider.port}; ${error instanceof Error ? error.message : String(error)}`;
+          recordDaemonError(diagnostic);
+          failures.push(new Error(diagnostic, { cause: error }));
+        }
+        try {
+          if (input.preserveDirectoryOnStop !== true) {
+            removeFunctionalFixtureDirectory(directory);
+          }
+        } catch (error) {
+          failures.push(error);
+        }
+        if (failures.length > 0) {
+          throw new AggregateError(
+            failures,
+            `production fixture stop failed; daemon=${daemonErrorSummary() || "<empty>"}`,
+          );
+        }
+      })();
+      return stopPromise;
     },
   };
   const stopOnSignal = () => {
-    void fixture.stop().catch(() => undefined);
+    void fixture.stop().catch((error: unknown) => {
+      recordDaemonError(
+        `interrupted fixture cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   };
-  process.once("SIGINT", stopOnSignal);
-  process.once("SIGTERM", stopOnSignal);
+  const stopOnInterrupt = () => {
+    recordDaemonError(
+      "fixture interrupted by SIGINT; bounded cleanup requested",
+    );
+    stopOnSignal();
+  };
+  const stopOnTerminate = () => {
+    recordDaemonError(
+      "fixture interrupted by SIGTERM; bounded cleanup requested",
+    );
+    stopOnSignal();
+  };
+  process.once("SIGINT", stopOnInterrupt);
+  process.once("SIGTERM", stopOnTerminate);
   return fixture;
 };

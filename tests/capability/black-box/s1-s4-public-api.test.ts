@@ -677,14 +677,20 @@ let childWorkspaceId: string;
 let workId: string;
 const memoryCode = `BB-MEMORY-${randomUUID().slice(0, 8).toUpperCase()}`;
 let cleanupPromise: Promise<void> | undefined;
+let primaryTestErrors: ReadonlyArray<unknown> = [];
 
-const cleanupOnSignal = () => {
+const cleanupOnSignal = (signal: "SIGINT" | "SIGTERM") => {
+  daemonLifecycleDiagnostics.push(
+    `scenario interrupted by ${signal}; bounded cleanup requested`,
+  );
   void cleanupScenario().catch((error: unknown) => {
     daemonErrors.push(
       `signal cleanup failed: ${error instanceof Error ? error.message : String(error)}; ${processSnapshot(daemon)}`,
     );
   });
 };
+const onSigint = () => cleanupOnSignal("SIGINT");
+const onSigterm = () => cleanupOnSignal("SIGTERM");
 
 beforeAll(async () => {
   databaseFactory = await createSchema42TestDatabaseFactory();
@@ -693,8 +699,8 @@ beforeAll(async () => {
 const cleanupScenario = () => {
   if (cleanupPromise !== undefined) return cleanupPromise;
   cleanupPromise = (async () => {
-    process.removeListener("SIGINT", cleanupOnSignal);
-    process.removeListener("SIGTERM", cleanupOnSignal);
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigterm);
     const failures: Array<unknown> = [];
     try {
       await stopDaemon(daemon);
@@ -735,10 +741,14 @@ const cleanupScenario = () => {
   return cleanupPromise;
 };
 
-beforeEach(async () => {
+beforeEach(async (context) => {
   cleanupPromise = undefined;
-  process.once("SIGINT", cleanupOnSignal);
-  process.once("SIGTERM", cleanupOnSignal);
+  primaryTestErrors = [];
+  context.onTestFailed(({ task }) => {
+    primaryTestErrors = task.result?.errors ?? [];
+  });
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
   try {
     daemonErrors.length = 0;
     daemonLifecycleDiagnostics.length = 0;
@@ -765,12 +775,34 @@ beforeEach(async () => {
       );
     }
   } catch (error) {
-    await cleanupScenario();
+    try {
+      await cleanupScenario();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "black-box scenario setup and cleanup both failed",
+        { cause: error },
+      );
+    }
     throw error;
   }
 }, 120_000);
 
-afterEach(cleanupScenario, 120_000);
+afterEach(async (context) => {
+  try {
+    await cleanupScenario();
+  } catch (cleanupError) {
+    const testErrors = context.task.result?.errors ?? primaryTestErrors;
+    if (testErrors.length > 0) {
+      throw new AggregateError(
+        [...testErrors, cleanupError],
+        "black-box test and cleanup both failed",
+        { cause: testErrors[0] },
+      );
+    }
+    throw cleanupError;
+  }
+}, 120_000);
 
 afterAll(() => databaseFactory?.cleanup(), 120_000);
 

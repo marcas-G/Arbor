@@ -39,3 +39,24 @@ unchanged.
 
 The first R2 test attempt preceded the required Web build and failed three
 HTTP-readiness cases; after building Web, the expanded eight-case suite passed.
+
+## Cleanup review follow-up
+
+Date: 2026-10-15.
+
+The shared bounded server close is now also used by the production fixture on
+startup failure and normal stop. Fixture stop memoizes its in-flight promise,
+aggregates daemon/provider/directory cleanup failures, and records signal
+interruption plus cleanup errors. The S1–S4 signal path uses the same bounded
+daemon/provider shutdown and preserves setup/test errors alongside cleanup
+failures.
+
+Focused verification after this follow-up:
+
+- `production-fixture-port-handshake.functional.test.ts` — PASS, 11/11,
+  including provider close timeout/throw and repeated fixture/child stop.
+- `pnpm typecheck` with `GOMAXPROCS=2` — PASS. The default parallel attempt
+  exhausted Windows virtual memory; the bounded-parallel retry passed.
+- Biome on the five changed TypeScript/JavaScript files — PASS.
+
+The full S1–S4 suite was not rerun for this cleanup-only increment, per scope.
