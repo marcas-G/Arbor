@@ -290,5 +290,22 @@ Focused validation on this integration branch:
 - P4 unified-approval process-crash case — PASS, 1 file / 1 test in 58.79s.
 - `git diff --check` — PASS after the result and manifest updates.
 
-The source result retains the R3 RAI-DG-01 red findings; these focused results
-do not establish full 48-file functional or release qualification.
+## RAI-DG-01 focused closure
+
+Imported the reviewed RAI-DG-01 implementation commit `0de1b8f4`. The test and
+P37 fixture changes reuse the qualified receipt-first Deliver path, apply the
+configured no-progress threshold only to the test child, and pause at the
+exact Work-revision RuntimeSafetyStop settlement boundary. No production code,
+migration, or design semantics changed. R3's earlier red evidence remains in
+its historical result; the reviewed follow-up now closes these two focused
+journeys.
+
+Focused integration run: `rai-readmission-hold.functional.test.ts` — PASS,
+1 file / 2 tests in 161.39s. The commit's independent review reports Blocking,
+B1 and B2 all zero. This focused closure does not claim a full functional or
+release qualification; the 48-file process inventory and 6-file UI inventory
+have not been run as a complete profile.
+
+Post-RAI static checks: `pnpm typecheck` PASS; Biome on the three changed
+fixture/test files PASS; `pnpm test:manifest` PASS (6/6, 48 Vitest + 6 UI);
+`git diff --check` PASS.
