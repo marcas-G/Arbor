@@ -92,6 +92,20 @@ const readActionKind = (logicalActionId) => {
   }
 };
 
+const readLeaseOwner = (executionId) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        `SELECT worker_id, worker_incarnation_id, generation
+           FROM execution_leases WHERE execution_id = ?`,
+      )
+      .get(executionId);
+  } finally {
+    db.close();
+  }
+};
+
 const executeLegacyDirectDeliver = async (event) => {
   const deliverableId = process.env.ARBOR_P37_LEGACY_DELIVERABLE_ID;
   const summary = process.env.ARBOR_P37_LEGACY_SUMMARY;
@@ -238,9 +252,25 @@ const qualificationProbe = async (event) => {
 };
 
 const executionLeaseQualificationProbe = async (event) => {
-  if (event.boundary === "AH10AfterLeaseAcquired") emit(event);
+  if (event.boundary === "AH10AfterLeaseAcquired") {
+    const owner = readLeaseOwner(event.executionId);
+    if (
+      owner === undefined ||
+      Number(owner.generation) !== Number(event.fencingGeneration)
+    ) {
+      throw new Error(
+        `P37 lease owner tuple was unavailable at acquisition: ${JSON.stringify({ event, owner })}`,
+      );
+    }
+    emit({
+      ...event,
+      processId: process.pid,
+      workerId: owner.worker_id,
+      workerIncarnationId: owner.worker_incarnation_id,
+    });
+  }
   if (event.boundary === "AH10BeforeLeaseRenewal") {
-    emit(event);
+    emit({ ...event, processId: process.pid });
     await holdConfiguredBoundary(event.boundary, event);
   }
 };

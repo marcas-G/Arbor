@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { newUuid7 } from "../../../packages/application/src/index.js";
-import { expireExecutionLeaseForQualification } from "./lease-qualification.js";
+import {
+  expireExecutionLeaseForQualification,
+  type QualificationDaemonController,
+  type QualificationLeaseOwnerEvidence,
+} from "./lease-qualification.js";
 import {
   type CapturedProviderCall,
   type ProductionFixture,
@@ -66,6 +70,9 @@ export interface P37Probe {
   readonly tag: "P37_DELIVER_PROBE";
   readonly role: "old" | "new";
   readonly boundary: string;
+  readonly processId?: number;
+  readonly workerId?: string;
+  readonly workerIncarnationId?: string;
   readonly executionId?: string;
   readonly providerTurnId?: string;
   readonly d4NoProgressTurns?: number;
@@ -1113,27 +1120,95 @@ export const prepareContradictoryCommittedReceipt = async (marker: string) => {
   return prepared;
 };
 
-export const expireP37LeaseForQualification = async (
-  fixture: ProductionFixture,
-  executionId: string,
-) => {
-  const lease = readP37Snapshot(fixture.databaseFile).leases.find(
-    (candidate) =>
-      (candidate as { execution_id: string }).execution_id === executionId,
-  ) as { readonly generation: number; readonly expires_at: string } | undefined;
+export const p37LeaseOwnerEvidence = (input: {
+  readonly probes: ReadonlyArray<P37Probe>;
+  readonly executionId: string;
+  readonly daemon: QualificationDaemonController;
+}): QualificationLeaseOwnerEvidence => {
+  const snapshot = input.daemon.snapshot();
+  if (snapshot?.pid === undefined) {
+    throw new Error("P37 lease owner controller has no process identity");
+  }
+  const probe = [...input.probes]
+    .reverse()
+    .find(
+      (candidate) =>
+        candidate.boundary === "AH10AfterLeaseAcquired" &&
+        candidate.executionId === input.executionId &&
+        candidate.processId === snapshot.pid,
+    );
+  if (
+    probe === undefined ||
+    probe.fencingGeneration === undefined ||
+    probe.workerId === undefined ||
+    probe.workerIncarnationId === undefined
+  ) {
+    throw new Error(
+      `P37 actual lease owner cannot be proven for execution ${input.executionId} pid ${snapshot.pid}`,
+    );
+  }
+  return {
+    executionId: input.executionId,
+    processId: snapshot.pid,
+    workerId: probe.workerId,
+    workerIncarnationId: probe.workerIncarnationId,
+    generation: probe.fencingGeneration,
+  };
+};
+
+export const expireP37LeaseForQualification = async (input: {
+  readonly databaseFile: string;
+  readonly executionId: string;
+  readonly daemon: QualificationDaemonController;
+  readonly ownerEvidence: QualificationLeaseOwnerEvidence;
+}) => {
+  const leaseDb = new DatabaseSync(input.databaseFile, { readOnly: true });
+  let lease:
+    | {
+        readonly execution_id: string;
+        readonly worker_id: string;
+        readonly worker_incarnation_id: string;
+        readonly generation: number;
+        readonly expires_at: string;
+      }
+    | undefined;
+  try {
+    lease = leaseDb
+      .prepare(
+        `SELECT execution_id, worker_id, worker_incarnation_id, generation,
+                expires_at FROM execution_leases WHERE execution_id = ?`,
+      )
+      .get(input.executionId) as typeof lease;
+  } finally {
+    leaseDb.close();
+  }
   if (lease === undefined)
-    throw new Error(`P37 lease ${executionId} is absent before takeover`);
+    throw new Error(`P37 lease ${input.executionId} is absent before takeover`);
+  if (
+    input.ownerEvidence.executionId !== input.executionId ||
+    input.ownerEvidence.workerId !== lease.worker_id ||
+    input.ownerEvidence.workerIncarnationId !== lease.worker_incarnation_id ||
+    input.ownerEvidence.generation !== Number(lease.generation)
+  ) {
+    throw new Error(
+      `P37 lease owner evidence does not match durable tuple: ${JSON.stringify({
+        executionId: input.executionId,
+        lease,
+        ownerEvidence: input.ownerEvidence,
+      })}`,
+    );
+  }
   return expireExecutionLeaseForQualification({
-    databaseFile: fixture.databaseFile,
-    executionId,
+    databaseFile: input.databaseFile,
+    executionId: input.executionId,
     expected: {
       generation: Number(lease.generation),
       expiresAt: lease.expires_at,
+      workerId: lease.worker_id,
+      workerIncarnationId: lease.worker_incarnation_id,
     },
-    daemon: {
-      crash: fixture.crash,
-      snapshot: fixture.daemonProcessSnapshot,
-    },
+    daemon: input.daemon,
+    ownerEvidence: input.ownerEvidence,
   });
 };
 

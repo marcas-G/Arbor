@@ -7,6 +7,7 @@ import {
   findDeliverReplayFact,
   fixtures,
   p37Child,
+  p37LeaseOwnerEvidence,
   persistRaiFailureEvidence,
   publicDeliverReplayRows,
   readP37Snapshot,
@@ -69,10 +70,20 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
     } finally {
       inboxDb.close();
     }
-    await expireP37LeaseForQualification(
-      seed.fixture,
-      firstAction.execution_id,
-    );
+    const oldDaemon = {
+      crash: seed.fixture.crash,
+      snapshot: seed.fixture.daemonProcessSnapshot,
+    };
+    await expireP37LeaseForQualification({
+      databaseFile: seed.fixture.databaseFile,
+      executionId: firstAction.execution_id,
+      daemon: oldDaemon,
+      ownerEvidence: p37LeaseOwnerEvidence({
+        probes: seed.probes,
+        executionId: firstAction.execution_id,
+        daemon: oldDaemon,
+      }),
+    });
 
     const d4Threshold = 1;
     const providerRequestBaselineCount = seed.fixture.providerCalls.length;
