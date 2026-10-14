@@ -56,6 +56,12 @@ export type ProviderResponseGate = (
   index: number,
 ) => Promise<"respond" | "abort" | undefined>;
 
+export interface ProductionFixtureSetupProbeEvent {
+  readonly stage: "after-clone" | "provider-started";
+  readonly directory: string;
+  readonly providerPort?: number;
+}
+
 export interface ProductionFixture {
   readonly baseUrl: string;
   readonly directory: string;
@@ -329,7 +335,7 @@ const startProvider = (
     readonly server: Server;
     readonly port: number;
     readonly calls: CapturedProviderCall[];
-  }>((resolveStart) => {
+  }>((resolveStart, rejectStart) => {
     const calls: CapturedProviderCall[] = [];
     const server = createServer((request, response) => {
       if (request.method === "GET" && request.url?.endsWith("/models")) {
@@ -403,7 +409,8 @@ const startProvider = (
         });
       });
     });
-    server.listen(0, "127.0.0.1", () => {
+    const onListening = () => {
+      server.removeListener("error", onStartError);
       const address = server.address();
       resolveStart({
         server,
@@ -411,7 +418,16 @@ const startProvider = (
           typeof address === "object" && address !== null ? address.port : -1,
         calls,
       });
-    });
+    };
+    const onStartError = (error: Error) => {
+      if (server.listening) {
+        server.close(() => rejectStart(error));
+      } else {
+        rejectStart(error);
+      }
+    };
+    server.once("error", onStartError);
+    server.listen(0, "127.0.0.1", onListening);
   });
 
 const stopChild = async (child: ChildProcess | undefined): Promise<void> => {
@@ -466,17 +482,49 @@ export const startProductionFixture = async (input: {
   readonly isolatedPortHandshake?: boolean;
   readonly daemonEnvironment?: Readonly<Record<string, string>>;
   readonly onDaemonStdout?: (line: string) => void;
+  /** Test-only fault probe for verifying early fixture setup cleanup. */
+  readonly setupProbe?: (
+    event: ProductionFixtureSetupProbeEvent,
+  ) => void | Promise<void>;
 }): Promise<ProductionFixture> => {
   const directory = createFunctionalFixtureDirectory();
-  const workspaceDirectory = join(directory, "workspace");
-  mkdirSync(workspaceDirectory, { recursive: true });
-  writeFileSync(join(workspaceDirectory, "proof.txt"), "FUNCTIONAL_VERIFIED");
-  const { databaseFile } = cloneFunctionalSchema42Database(directory);
-  const provider = await startProvider(
-    input.reply,
-    input.onResponseSent,
-    input.beforeResponse,
-  );
+  let workspaceDirectory: string;
+  let databaseFile: string;
+  let provider: Awaited<ReturnType<typeof startProvider>> | undefined;
+  try {
+    workspaceDirectory = join(directory, "workspace");
+    mkdirSync(workspaceDirectory, { recursive: true });
+    writeFileSync(join(workspaceDirectory, "proof.txt"), "FUNCTIONAL_VERIFIED");
+    const clones = cloneFunctionalSchema42Database(directory);
+    databaseFile = clones.databaseFile;
+    await input.setupProbe?.({ stage: "after-clone", directory });
+    provider = await startProvider(
+      input.reply,
+      input.onResponseSent,
+      input.beforeResponse,
+    );
+    await input.setupProbe?.({
+      stage: "provider-started",
+      directory,
+      providerPort: provider.port,
+    });
+  } catch (error) {
+    try {
+      if (provider !== undefined) {
+        await new Promise<void>((resolveClose) =>
+          provider?.server.close(() => resolveClose()),
+        );
+      }
+    } finally {
+      removeFunctionalFixtureDirectory(directory);
+    }
+    throw error;
+  }
+  if (provider === undefined) {
+    removeFunctionalFixtureDirectory(directory);
+    throw new Error("Functional provider did not start.");
+  }
+  const activeProvider = provider;
   let httpPort = input.isolatedPortHandshake === true ? 0 : await freePort();
   let baseUrl = `http://127.0.0.1:${httpPort}`;
   const daemonErrors: string[] = [];
@@ -515,7 +563,7 @@ export const startProductionFixture = async (input: {
       ARBOR_HTTP_HOST: "127.0.0.1",
       ARBOR_WEB_DIST: WEB_DIST,
       ARBOR_AUTH_TOKENS: "",
-      ARBOR_MODEL_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
+      ARBOR_MODEL_BASE_URL: `http://127.0.0.1:${activeProvider.port}/v1`,
       ARBOR_MODEL_NAME: "functional-model",
       ARBOR_MODEL_API_KEY_VAR: "ARBOR_FUNCTIONAL_TEST_KEY",
       ARBOR_FUNCTIONAL_TEST_KEY: "test-only",
@@ -610,7 +658,7 @@ export const startProductionFixture = async (input: {
     await startDaemon();
   } catch (error) {
     await new Promise<void>((resolveClose) =>
-      provider.server.close(() => resolveClose()),
+      activeProvider.server.close(() => resolveClose()),
     );
     removeFunctionalFixtureDirectory(directory);
     throw error;
@@ -621,7 +669,7 @@ export const startProductionFixture = async (input: {
     directory,
     databaseFile,
     workspaceDirectory,
-    providerCalls: provider.calls,
+    providerCalls: activeProvider.calls,
     daemonErrors,
     daemonProcessSnapshot: () => {
       const launch = lastDaemonLaunch;
@@ -665,7 +713,7 @@ export const startProductionFixture = async (input: {
         ARBOR_HTTP_HOST: "127.0.0.1",
         ARBOR_WEB_DIST: WEB_DIST,
         ARBOR_AUTH_TOKENS: "",
-        ARBOR_MODEL_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
+        ARBOR_MODEL_BASE_URL: `http://127.0.0.1:${activeProvider.port}/v1`,
         ARBOR_MODEL_NAME: "functional-model",
         ARBOR_MODEL_API_KEY_VAR: "ARBOR_FUNCTIONAL_TEST_KEY",
         ARBOR_FUNCTIONAL_TEST_KEY: "test-only",
@@ -751,7 +799,7 @@ export const startProductionFixture = async (input: {
         ]);
       } finally {
         await new Promise<void>((resolveClose) =>
-          provider.server.close(() => resolveClose()),
+          activeProvider.server.close(() => resolveClose()),
         );
         if (input.preserveDirectoryOnStop !== true) {
           removeFunctionalFixtureDirectory(directory);

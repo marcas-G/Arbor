@@ -24,6 +24,11 @@ qualification is pending on the clean implementation commit.
   generation 1 and the existing receipt/identity/uniqueness assertions intact.
   The outer Vitest budget is 180 seconds for this real two-daemon case; the
   actual 30-second lease and all internal probe bounds are unchanged.
+- `startProductionFixture` now owns the private directory, clone and provider
+  startup inside one cleanup boundary. A failure after cloning removes the
+  directory; a failure after provider startup closes the listener and removes
+  the directory. Provider listen errors reject startup cleanly. A test-only
+  setup probe exercises both failure boundaries.
 - Functional assertions continue to observe process behavior through the
   public API; SQLite reads are limited to test fixture setup/qualification
   evidence and are not used as a replacement public behavior assertion.
@@ -72,6 +77,15 @@ P2/P7 security gates are not weakened.
 - F21 exact-P35 full-rebuild cases: 2/2 passed (182.96s file).
 - AH10 Query receipt takeover, both before/after receipt commit: 2/2 passed
   (246.36s invocation; test cases 110.719s and 86.147s).
+- Committed Deliverable receipt-first takeover: first full diagnostic hit the
+  90s outer Vitest timeout. A focused phase-timed run reached gen0 lease expiry
+  at 70.96s and completed gen1 startup, lease acquire, same-Action recovery and
+  all receipt/Observation/provider assertions by 88.83s; case passed at
+  89.194s after setting only its outer budget to 180s. The real lease and
+  internal 35s/45s/30s probe waits remain unchanged.
+- Early fixture cleanup injection at `after-clone` and `provider-started`:
+  2/2 passed (1.384s / 1.124s); the private directory is removed in both cases,
+  and the opened provider port rejects connections after cleanup.
 - After the readmission correction, persistence focused tests for retained
   fact hold and present-but-conflicting event: 2/2 passed (28.35s).
 - After rebuilding dist, P10 post-prune public Attention + Tree case: 1/1
@@ -83,9 +97,29 @@ P2/P7 security gates are not weakened.
   89.426s. Earlier isolated F21 file run passed 2/2 (182.96s).
 - `pnpm typecheck`: passed (`tsc -b` and test tsconfig).
 - `pnpm build`: passed (`tsc -b`).
-- Biome on all 14 changed implementation/test/config files: passed.
+- Biome on all 16 changed implementation/test/config/result files: passed.
 - `git diff --check`: passed.
 
-The full `pnpm test:functional` suite has not yet run against this clean
-implementation commit. Its terminal counts and duration will be appended after
-qualification.
+## Diagnostic full run
+
+The first full `pnpm test:functional` was launched from clean implementation
+commit `639a5fb7b15ca84ed4eb60734199b02509e20624`. It was deliberately
+interrupted after the AH19 file's case boundary because the run already had one
+known timeout and the owner requested fail-fast sharding before another full
+attempt. The one red was AH10 `recovers a committed Deliverable receipt when
+its Action is still Pending` at 90.337s; focused timing and the subsequent
+180s-budget focused pass above identify outer-budget exhaustion, not a behavior
+assertion failure. The process teardown completed; one generated private root
+left by the interrupted invocation was removed after confirming all child
+processes had exited. This partial run is diagnostic only, has no qualification
+counts, and did not reach Playwright.
+
+The identified timeout passed focused after increasing only its measured outer
+Vitest budget; the review's early-clone/provider cleanup gap is also closed
+with two failure-injection cases. The exact non-pending functional manifest is
+the 46 files matched under `tests/functional/process` and
+`tests/functional/package`; `tests/functional/pending` is excluded. These files
+will be run in disjoint, ordered shards on the next clean commit, with each
+shard's exact file list and exit code recorded before one later complete
+`pnpm test:functional` run. Neither this partial run nor the focused passes are
+a release qualification.
