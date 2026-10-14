@@ -674,6 +674,29 @@ On `fe289568`:
 No cherry-pick conflict resolution was required. A process check before the
 requested full check found no test/runner processes; the only matching process
 was the PowerShell process performing the inspection. P12 restore-drill state
-was clean, and no new sidecar was present after these checks. A unique full
-`pnpm check` on the committed integration SHA is the next validation step; no
-release profile is authorized by this result.
+was clean, and no new sidecar was present after these checks. The later full
+check attempt and its interruption are recorded in the incremental-audit
+section above; no release profile is authorized by this result.
+
+## S1–S4 B1/B2 signal-safe cleanup follow-up
+
+Cherry-picked `28bf8d6042861bdbeade3437f31ea54158e03600` as `0d8789ff` on
+`0c78f247`. The parent is the already-integrated `2a91bdaf` cleanup state;
+the patch applied without conflict atop the integrated safe-handshake chain.
+S1–S4 and the production fixture now share the lifecycle helper's signal
+registration, single memoized cleanup, interruption diagnostics, and visible
+cleanup failures. The duplicate-STARTED fixture now uses a conflicting nonce
+and matching LISTENING marker so the shared handshake parser must reject the
+duplicate identity. No production source or design document changed.
+
+Post-integration checks on `0d8789ff`:
+
+- `pnpm typecheck` (`GOMAXPROCS=2`) — PASS.
+- Biome on the four changed TypeScript/JavaScript files — PASS.
+- `pnpm test:manifest` — PASS, 9/9; 48 functional Vitest files and 6 UI files.
+- Focused architecture boundary test — PASS, 1 file / 4 tests.
+- `git diff --check` — PASS.
+
+The source branch's prior focused production-fixture handshake evidence was
+11/11 PASS, but it was not rerun on this integration SHA. No full or other
+process test was started.
