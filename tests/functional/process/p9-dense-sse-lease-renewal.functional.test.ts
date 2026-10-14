@@ -611,183 +611,311 @@ const waitFor = async <A>(
   return read();
 };
 
+const redactDiagnostic = (value: string): string =>
+  value
+    .replace(/\b(Bearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
+    .replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{12,}\b/g, "$1-[REDACTED]")
+    .replace(
+      /((?:api[_-]?key|access[_-]?token|password|secret|authorization)\s*[:=]\s*)([^\s,;]+)/gi,
+      "$1[REDACTED]",
+    );
+
+const safeErrorSummary = (error: unknown): string => {
+  if (error instanceof Error)
+    return redactDiagnostic(`${error.name}: ${error.message}`);
+  try {
+    const serialized = JSON.stringify(error, (key, value: unknown) =>
+      /secret|token|authorization|password|api.?key|credential|cookie/i.test(
+        key,
+      )
+        ? "[REDACTED]"
+        : typeof value === "string"
+          ? redactDiagnostic(value)
+          : value,
+    );
+    return redactDiagnostic((serialized ?? String(error)).slice(0, 2_000));
+  } catch {
+    return redactDiagnostic(String(error));
+  }
+};
+
+const failureDiagnostics = (phase: string, error: unknown) => {
+  let lease: ReturnType<typeof readLease>;
+  try {
+    lease = readLease();
+  } catch (readError) {
+    lease = undefined;
+    const name = readError instanceof Error ? readError.name : typeof readError;
+    phase = `${phase}; lease read failed (${name})`;
+  }
+  let providerState: ReturnType<typeof readProviderState> | undefined;
+  try {
+    providerState = readProviderState();
+  } catch {
+    providerState = undefined;
+  }
+  const errorType =
+    error !== null && (typeof error === "object" || typeof error === "function")
+      ? ((error as { constructor?: { name?: string }; _tag?: unknown })
+          .constructor?.name ?? typeof error)
+      : typeof error;
+  const errorTag =
+    error !== null && typeof error === "object" && "_tag" in error
+      ? String(error._tag)
+      : undefined;
+  const errorMessage = safeErrorSummary(error);
+  const driverErrorType =
+    denseState.driverError !== undefined &&
+    denseState.driverError !== null &&
+    (typeof denseState.driverError === "object" ||
+      typeof denseState.driverError === "function")
+      ? ((denseState.driverError as { constructor?: { name?: string } })
+          .constructor?.name ?? typeof denseState.driverError)
+      : denseState.driverError === undefined
+        ? null
+        : typeof denseState.driverError;
+  const driverErrorSummary =
+    denseState.driverError === undefined
+      ? null
+      : safeErrorSummary(denseState.driverError);
+  return {
+    phase,
+    error: {
+      type: errorType,
+      ...(errorTag === undefined ? {} : { tag: errorTag }),
+      summary: errorMessage,
+      ownPropertyNames:
+        error !== null &&
+        (typeof error === "object" || typeof error === "function")
+          ? Object.getOwnPropertyNames(error)
+          : [],
+    },
+    lease: {
+      executionId,
+      initialGeneration: denseState.initialLease?.generation ?? null,
+      currentGeneration: lease?.generation ?? null,
+      currentExpiresAt: lease?.expires_at ?? null,
+    },
+    frames: {
+      read: denseState.framesConsumed,
+      written: denseState.framesWritten,
+      persistedTextDeltas: countPersistedTextDeltas(
+        providerState?.attempt?.canonical_event_prefix_json,
+      ),
+    },
+    provider: {
+      serverListening: providerServer?.listening ?? false,
+      requests: denseState.requestCount,
+      activeResponses: denseState.activeResponses,
+      frameCapReached: denseState.frameCapReached,
+      driverErrorType,
+      driverErrorSummary,
+      attemptOutcome: providerState?.attempt?.outcome ?? null,
+      attemptSettled:
+        providerState?.attempt?.settled_at !== null &&
+        providerState?.attempt?.settled_at !== undefined,
+      turnFinishReason: providerState?.turn?.finish_reason ?? null,
+      turnSettled:
+        providerState?.turn?.settled_at !== null &&
+        providerState?.turn?.settled_at !== undefined,
+      resultEventKinds:
+        denseState.providerResult?.events.map((event) => event._tag) ?? [],
+    },
+    daemon: "not spawned; runExecution is in-process for this test",
+  };
+};
+
 describe("P9 dense SSE lease renewal qualification", () => {
   it("commits TTL/3 renewal while an active SSE stream is consumed and preserves its result", async () => {
     expect(LEASE_RENEW_INTERVAL_MS).toBe(LEASE_TTL_MS / 3);
-    const providerBaseUrl = await startDenseProvider();
-    const fetcher: OpenAICompatibleFetch = async (url, init) => {
-      const response = await fetch(url, {
-        method: init.method,
-        headers: init.headers,
-        body: init.body,
-        signal: init.signal as AbortSignal,
-      });
-      if (response.body === null) {
-        return { ok: response.ok, status: response.status, body: null };
-      }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let partial = "";
-      const body = new ReadableStream<Uint8Array>({
-        pull: async (controller) => {
-          const result = await reader.read();
-          if (result.done) {
-            const complete = partial + decoder.decode();
-            denseState.framesConsumed += complete
-              .split("\n\n")
-              .filter((frame) => frame.startsWith("data:")).length;
-            controller.close();
-            return;
-          }
-          const frames = (
-            partial + decoder.decode(result.value, { stream: true })
-          ).split("\n\n");
-          partial = frames.pop() ?? "";
-          denseState.framesConsumed += frames.filter((frame) =>
-            frame.startsWith("data:"),
-          ).length;
-          controller.enqueue(result.value);
-        },
-        cancel: (reason) => reader.cancel(reason),
-      });
-      return { ok: response.ok, status: response.status, body };
-    };
-    const app = makeApp(providerBaseUrl, fetcher);
-    await run(
-      Effect.gen(function* () {
-        yield* runMigrations(P32_MIGRATIONS);
-        yield* seed;
-        yield* admit;
-      }),
-      app,
-    );
-
-    const runningExecution = run(
-      runExecution(executionId, { _tag: "Recovery" }, principal),
-      app,
-    );
-    running = runningExecution;
-    void runningExecution.catch((error: unknown) => {
-      denseState.driverError = error;
-    });
+    let phase = "start local provider";
     try {
-      const leaseAtProviderStart = await waitFor(
-        () => denseState.initialLease,
-        (lease) => lease !== undefined,
-        5_000,
-      );
-      const initialLease = leaseAtProviderStart;
-      if (initialLease === undefined) {
-        throw new Error("P9 driver did not observe its acquired lease");
-      }
-      const deadline = Date.now() + renewalWaitLimitMs;
-      let renewed: ReturnType<typeof readLease>;
-      let activityAtRenewal:
-        | {
-            readonly activeResponses: number;
-            readonly framesConsumed: number;
-            readonly framesWritten: number;
-            readonly persistedTextDeltas: number;
-            readonly previousExpiresAt: string;
-            readonly renewedExpiresAt: string;
-          }
-        | undefined;
-      let lastObservedExpiresAt = initialLease.expiresAt;
-      do {
-        if (denseState.driverError !== undefined) {
-          throw new Error(
-            `ProviderRuntime failed before lease renewal: ${JSON.stringify(denseState.driverError)}; lease=${JSON.stringify({ initial: initialLease, current: readLease(), now: new Date().toISOString() })}; activity=${JSON.stringify({ activeResponses: denseState.activeResponses, requestCount: denseState.requestCount, framesWritten: denseState.framesWritten, framesConsumed: denseState.framesConsumed, frameCapReached: denseState.frameCapReached })}`,
-          );
+      const providerBaseUrl = await startDenseProvider();
+      phase = "construct provider client and app";
+      const fetcher: OpenAICompatibleFetch = async (url, init) => {
+        const response = await fetch(url, {
+          method: init.method,
+          headers: init.headers,
+          body: init.body,
+          signal: init.signal as AbortSignal,
+        });
+        if (response.body === null) {
+          return { ok: response.ok, status: response.status, body: null };
         }
-        const current = readLease();
-        if (
-          current !== undefined &&
-          Number(current.generation) === initialLease.generation &&
-          Date.parse(current.expires_at) > Date.parse(lastObservedExpiresAt)
-        ) {
-          const sampledActivity = {
-            activeResponses: denseState.activeResponses,
-            framesConsumed: denseState.framesConsumed,
-            framesWritten: denseState.framesWritten,
-            persistedTextDeltas: countPersistedTextDeltas(
-              readProviderState().attempt?.canonical_event_prefix_json,
-            ),
-            previousExpiresAt: lastObservedExpiresAt,
-            renewedExpiresAt: current.expires_at,
-          };
-          lastObservedExpiresAt = current.expires_at;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let partial = "";
+        const body = new ReadableStream<Uint8Array>({
+          pull: async (controller) => {
+            const result = await reader.read();
+            if (result.done) {
+              const complete = partial + decoder.decode();
+              denseState.framesConsumed += complete
+                .split("\n\n")
+                .filter((frame) => frame.startsWith("data:")).length;
+              controller.close();
+              return;
+            }
+            const frames = (
+              partial + decoder.decode(result.value, { stream: true })
+            ).split("\n\n");
+            partial = frames.pop() ?? "";
+            denseState.framesConsumed += frames.filter((frame) =>
+              frame.startsWith("data:"),
+            ).length;
+            controller.enqueue(result.value);
+          },
+          cancel: (reason) => reader.cancel(reason),
+        });
+        return { ok: response.ok, status: response.status, body };
+      };
+      const app = makeApp(providerBaseUrl, fetcher);
+      phase = "run migrations, seed, and admit execution";
+      await run(
+        Effect.gen(function* () {
+          yield* runMigrations(P32_MIGRATIONS);
+          yield* seed;
+          yield* admit;
+        }),
+        app,
+      );
+
+      phase = "start execution and observe initial lease";
+      const runningExecution = run(
+        runExecution(executionId, { _tag: "Recovery" }, principal),
+        app,
+      );
+      running = runningExecution;
+      void runningExecution.catch((error: unknown) => {
+        denseState.driverError = error;
+      });
+      try {
+        const leaseAtProviderStart = await waitFor(
+          () => denseState.initialLease,
+          (lease) => lease !== undefined,
+          5_000,
+        );
+        const initialLease = leaseAtProviderStart;
+        if (initialLease === undefined) {
+          throw new Error("P9 driver did not observe its acquired lease");
+        }
+        phase =
+          "wait for a committed lease renewal with dense persisted SSE evidence";
+        const deadline = Date.now() + renewalWaitLimitMs;
+        let renewed: ReturnType<typeof readLease>;
+        let activityAtRenewal:
+          | {
+              readonly activeResponses: number;
+              readonly framesConsumed: number;
+              readonly framesWritten: number;
+              readonly persistedTextDeltas: number;
+              readonly previousExpiresAt: string;
+              readonly renewedExpiresAt: string;
+            }
+          | undefined;
+        let lastObservedExpiresAt = initialLease.expiresAt;
+        do {
+          if (denseState.driverError !== undefined) {
+            throw new Error(
+              `ProviderRuntime failed before lease renewal: ${JSON.stringify(denseState.driverError)}; lease=${JSON.stringify({ initial: initialLease, current: readLease(), now: new Date().toISOString() })}; activity=${JSON.stringify({ activeResponses: denseState.activeResponses, requestCount: denseState.requestCount, framesWritten: denseState.framesWritten, framesConsumed: denseState.framesConsumed, frameCapReached: denseState.frameCapReached })}`,
+            );
+          }
+          const current = readLease();
           if (
-            sampledActivity.activeResponses === 1 &&
-            sampledActivity.framesConsumed > 512 &&
-            sampledActivity.framesWritten > 512 &&
-            sampledActivity.persistedTextDeltas > 512
+            current !== undefined &&
+            Number(current.generation) === initialLease.generation &&
+            Date.parse(current.expires_at) > Date.parse(lastObservedExpiresAt)
           ) {
-            renewed = current;
-            activityAtRenewal = sampledActivity;
-            break;
+            const sampledActivity = {
+              activeResponses: denseState.activeResponses,
+              framesConsumed: denseState.framesConsumed,
+              framesWritten: denseState.framesWritten,
+              persistedTextDeltas: countPersistedTextDeltas(
+                readProviderState().attempt?.canonical_event_prefix_json,
+              ),
+              previousExpiresAt: lastObservedExpiresAt,
+              renewedExpiresAt: current.expires_at,
+            };
+            lastObservedExpiresAt = current.expires_at;
+            if (
+              sampledActivity.activeResponses === 1 &&
+              sampledActivity.framesConsumed > 512 &&
+              sampledActivity.framesWritten > 512 &&
+              sampledActivity.persistedTextDeltas > 512
+            ) {
+              renewed = current;
+              activityAtRenewal = sampledActivity;
+              break;
+            }
           }
+          if (denseState.frameCapReached) break;
+          await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+        } while (Date.now() < deadline);
+
+        expect(
+          renewed,
+          `no committed lease renewal observed; activity=${JSON.stringify({
+            driverError: denseState.driverError,
+            activeResponses: denseState.activeResponses,
+            requestCount: denseState.requestCount,
+            framesWritten: denseState.framesWritten,
+            framesConsumed: denseState.framesConsumed,
+            frameCapReached: denseState.frameCapReached,
+          })}`,
+        ).toBeDefined();
+        expect(renewed?.generation).toBe(initialLease.generation);
+        expect(
+          Date.parse(renewed?.expires_at ?? "1970-01-01T00:00:00.000Z"),
+        ).toBeGreaterThan(Date.parse(initialLease.expiresAt));
+        expect(activityAtRenewal).toMatchObject({ activeResponses: 1 });
+        expect(activityAtRenewal?.framesConsumed).toBeGreaterThan(512);
+        expect(activityAtRenewal?.framesWritten).toBeGreaterThan(512);
+        expect(activityAtRenewal?.persistedTextDeltas).toBeGreaterThan(512);
+        expect(
+          Date.parse(activityAtRenewal?.renewedExpiresAt ?? "1970-01-01"),
+        ).toBeGreaterThan(
+          Date.parse(activityAtRenewal?.previousExpiresAt ?? "9999-12-31"),
+        );
+        expect(denseState.requestCount).toBe(1);
+        expect(denseState.frameCapReached).toBe(false);
+
+        phase = "finish the provider stream and verify durable result";
+        denseState.finishStream = true;
+        const settlement = await runningExecution;
+        if (settlement._tag !== "Completed") {
+          throw new Error(`execution was not completed: ${settlement._tag}`);
         }
-        if (denseState.frameCapReached) break;
-        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
-      } while (Date.now() < deadline);
-
-      expect(
-        renewed,
-        `no committed lease renewal observed; activity=${JSON.stringify({
-          driverError: denseState.driverError,
-          activeResponses: denseState.activeResponses,
-          requestCount: denseState.requestCount,
-          framesWritten: denseState.framesWritten,
-          framesConsumed: denseState.framesConsumed,
-          frameCapReached: denseState.frameCapReached,
-        })}`,
-      ).toBeDefined();
-      expect(renewed?.generation).toBe(initialLease.generation);
-      expect(
-        Date.parse(renewed?.expires_at ?? "1970-01-01T00:00:00.000Z"),
-      ).toBeGreaterThan(Date.parse(initialLease.expiresAt));
-      expect(activityAtRenewal).toMatchObject({ activeResponses: 1 });
-      expect(activityAtRenewal?.framesConsumed).toBeGreaterThan(512);
-      expect(activityAtRenewal?.framesWritten).toBeGreaterThan(512);
-      expect(activityAtRenewal?.persistedTextDeltas).toBeGreaterThan(512);
-      expect(
-        Date.parse(activityAtRenewal?.renewedExpiresAt ?? "1970-01-01"),
-      ).toBeGreaterThan(
-        Date.parse(activityAtRenewal?.previousExpiresAt ?? "9999-12-31"),
-      );
-      expect(denseState.requestCount).toBe(1);
-      expect(denseState.frameCapReached).toBe(false);
-
-      denseState.finishStream = true;
-      const settlement = await runningExecution;
-      if (settlement._tag !== "Completed") {
-        throw new Error(`execution was not completed: ${settlement._tag}`);
+        expect(denseState.requestCount).toBe(1);
+        expect(denseState.providerResult?.events).toContainEqual(
+          expect.objectContaining({
+            _tag: "TextDelta",
+            text: expect.stringContaining("p9-renewal-result-retained"),
+          }),
+        );
+        expect(denseState.providerResult?.events).toContainEqual(
+          expect.objectContaining({
+            _tag: "TurnCompleted",
+            finishReason: "Stop",
+          }),
+        );
+        const persisted = readProviderState();
+        expect(persisted.attempt).toMatchObject({ outcome: "Success" });
+        expect(persisted.attempt?.settled_at).not.toBeNull();
+        expect(persisted.attempt?.canonical_event_prefix_json).toContain(
+          "p9-renewal-result-retained",
+        );
+        expect(persisted.turn).toMatchObject({ finish_reason: "Stop" });
+        expect(persisted.turn?.settled_at).not.toBeNull();
+      } finally {
+        denseState.finishStream = true;
+        await running?.catch(() => undefined);
+        running = undefined;
       }
-      expect(denseState.requestCount).toBe(1);
-      expect(denseState.providerResult?.events).toContainEqual(
-        expect.objectContaining({
-          _tag: "TextDelta",
-          text: expect.stringContaining("p9-renewal-result-retained"),
-        }),
+    } catch (error) {
+      throw new Error(
+        `P9 dense SSE failed: ${JSON.stringify(failureDiagnostics(phase, error))}`,
+        { cause: error },
       );
-      expect(denseState.providerResult?.events).toContainEqual(
-        expect.objectContaining({
-          _tag: "TurnCompleted",
-          finishReason: "Stop",
-        }),
-      );
-      const persisted = readProviderState();
-      expect(persisted.attempt).toMatchObject({ outcome: "Success" });
-      expect(persisted.attempt?.settled_at).not.toBeNull();
-      expect(persisted.attempt?.canonical_event_prefix_json).toContain(
-        "p9-renewal-result-retained",
-      );
-      expect(persisted.turn).toMatchObject({ finish_reason: "Stop" });
-      expect(persisted.turn?.settled_at).not.toBeNull();
-    } finally {
-      denseState.finishStream = true;
-      await running?.catch(() => undefined);
-      running = undefined;
     }
   }, 45_000);
 });

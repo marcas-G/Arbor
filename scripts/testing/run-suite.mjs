@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateManifest } from "./check-manifest.mjs";
 import { buildProcessSpec, resolvePnpmInvocation } from "./runner-utils.mjs";
+import { normalizeVitestJsonReport } from "./vitest-progress-reporter.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const manifestPath = join(root, "planning/testing/manifest.json");
@@ -68,10 +69,12 @@ const result = {
   startedAt: startedAt.toISOString(),
   finishedAt: null,
   durationMs: null,
+  lastHeartbeatAt: null,
   exitCode: null,
 };
 
 let activeChild = null;
+let activeHeartbeatTimer = null;
 let pendingSignal = null;
 let stopRequested = false;
 let logIndex = 0;
@@ -99,7 +102,8 @@ function summaryMarkdown() {
     `- Selected test files: ${selectedFiles.length}`,
     `- Exit code: ${result.exitCode ?? "pending"}`,
     `- Signal: ${result.signal ?? "none"}`,
-    `- Current group/command: ${result.current ? `${result.current.group} / ${result.current.command.join(" ")}` : "none"}`,
+    `- Current group/command: ${result.current ? `${result.current.group} / ${result.current.command.join(" ")} (elapsed ${result.current.elapsedMs ?? 0} ms; heartbeat ${result.current.lastHeartbeatAt ?? "pending"})` : "none"}`,
+    `- Last heartbeat: ${result.lastHeartbeatAt ?? "none"}`,
     "",
     "| Group | Files | Duration (ms) | Exit | Signal | Passed | Failed | Skipped | Total |",
     "|---|---:|---:|---:|---|---:|---:|---:|---:|",
@@ -145,14 +149,39 @@ function safe(value) {
 }
 
 function setCurrent(group, command, args) {
+  if (activeHeartbeatTimer) clearInterval(activeHeartbeatTimer);
+  const startedAt = new Date().toISOString();
   result.current = {
     group,
     command: [command, ...args],
-    startedAt: new Date().toISOString(),
+    startedAt,
+    elapsedMs: 0,
+    lastHeartbeatAt: startedAt,
     exitCode: null,
     signal: null,
   };
+  result.lastHeartbeatAt = startedAt;
   persistManifest();
+  activeHeartbeatTimer = setInterval(() => {
+    if (!result.current) return;
+    const heartbeatAt = new Date().toISOString();
+    result.lastHeartbeatAt = heartbeatAt;
+    result.current.lastHeartbeatAt = heartbeatAt;
+    result.current.elapsedMs = Math.max(
+      0,
+      Date.now() - Date.parse(result.current.startedAt),
+    );
+    persistManifest();
+    console.log(
+      `test runner heartbeat: ${group} / ${command}; elapsed ${result.current.elapsedMs} ms; ${heartbeatAt}`,
+    );
+  }, 30_000);
+  activeHeartbeatTimer.unref?.();
+}
+
+function stopCurrentHeartbeat() {
+  if (activeHeartbeatTimer) clearInterval(activeHeartbeatTimer);
+  activeHeartbeatTimer = null;
 }
 
 function handleSignal(signal) {
@@ -163,6 +192,7 @@ function handleSignal(signal) {
   result.completeCoverage = false;
   result.signal = signal;
   result.exitCode = signal === "SIGINT" ? 130 : 143;
+  stopCurrentHeartbeat();
   if (result.current) {
     result.current.interrupted = true;
   }
@@ -177,6 +207,7 @@ function handleFatal(error) {
   result.exitCode = 1;
   result.error =
     error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  stopCurrentHeartbeat();
   if (result.current) result.current.interrupted = true;
   try {
     persistManifest();
@@ -216,6 +247,7 @@ function processSpec(args, env = {}) {
       ...process.env,
       ARBOR_TEST_CACHE: "off",
       ARBOR_TEST_RESULT_DIRECTORY: resultDirectory,
+      ARBOR_TEST_PROFILE: profileName,
       ...env,
     },
   });
@@ -252,6 +284,7 @@ function runCommand(groupName, label, args, env = {}) {
       spawnError = error;
     });
     child.once("close", (code, signal) => {
+      stopCurrentHeartbeat();
       activeChild = null;
       closeSync(logDescriptor);
       const exitCode = code ?? (signal ? 128 : 1);
@@ -334,6 +367,7 @@ async function captureMetadata(group, label, executable, args) {
       spawnError = error;
     });
     child.once("close", (code, signal) => {
+      stopCurrentHeartbeat();
       activeChild = null;
       if (result.current) {
         result.current.exitCode = code ?? (signal ? 128 : 1);
@@ -380,20 +414,37 @@ async function runTestGroup(groupName) {
       runner === "vitest-functional"
         ? "vitest.functional.config.ts"
         : "vitest.config.ts";
-    commandResult = await runCommand(groupName, "vitest", [
-      "exec",
+    commandResult = await runCommand(
+      groupName,
       "vitest",
-      "run",
-      "--config",
-      config,
-      "--no-cache",
-      "--no-file-parallelism",
-      "--reporter=json",
-      "--outputFile",
-      reportPath,
-      ...files,
-    ]);
-    group.counts = testCounts(parseJson(reportPath), "vitest");
+      [
+        "exec",
+        "vitest",
+        "run",
+        "--config",
+        config,
+        "--no-cache",
+        "--no-file-parallelism",
+        "--reporter=json",
+        "--reporter=verbose",
+        "--reporter=./scripts/testing/vitest-progress-reporter.mjs",
+        "--outputFile",
+        reportPath,
+        ...files,
+      ],
+      {
+        ARBOR_VITEST_PROGRESS_BASENAME: safe(groupName),
+      },
+    );
+    const report = parseJson(reportPath);
+    const progress = parseJson(
+      join(resultDirectory, `${safe(groupName)}-progress.json`),
+    );
+    if (report) {
+      normalizeVitestJsonReport(report, progress);
+      atomicWrite(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    }
+    group.counts = testCounts(report, "vitest");
   } else {
     const playwrightReport = join(
       resultDirectory,
@@ -489,6 +540,7 @@ function groupRunSummary() {
 }
 
 function finalize() {
+  stopCurrentHeartbeat();
   const finishedAt = new Date();
   result.groups = groupRunSummary();
   if (pendingSignal) {
