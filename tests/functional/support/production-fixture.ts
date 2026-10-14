@@ -116,6 +116,22 @@ const waitForNonceBoundPort = (
     let settled = false;
     let startedNonce: string | undefined;
     let stdoutBuffer = "";
+    let stdoutLineCount = 0;
+    const lifecycleMarkers: Array<{
+      readonly tag: string;
+      readonly pid?: unknown;
+      readonly nonce?: unknown;
+      readonly port?: unknown;
+    }> = [];
+    const handshakeDiagnostic = () =>
+      JSON.stringify({
+        pid: child.pid,
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+        startedNonce: startedNonce ?? null,
+        stdoutLineCount,
+        lifecycleMarkers,
+      });
     const finish = (
       result: { readonly port: number } | { readonly error: Error },
     ) => {
@@ -129,18 +145,21 @@ const waitForNonceBoundPort = (
     const timeout = setTimeout(
       () =>
         finish({
-          error: new Error("functional daemon startup handshake timed out"),
+          error: new Error(
+            `functional daemon startup handshake timed out; observed=${handshakeDiagnostic()}`,
+          ),
         }),
       60_000,
     );
     const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
       finish({
         error: new Error(
-          `functional daemon exited before listening report: code=${String(code)} signal=${String(signal)}`,
+          `functional daemon exited before listening report: code=${String(code)} signal=${String(signal)}; observed=${handshakeDiagnostic()}`,
         ),
       });
     const readLine = (line: string) => {
       if (line.length === 0) return;
+      stdoutLineCount += 1;
       let event: {
         readonly tag?: unknown;
         readonly nonce?: unknown;
@@ -151,6 +170,18 @@ const waitForNonceBoundPort = (
         event = JSON.parse(line) as typeof event;
       } catch {
         return;
+      }
+      if (
+        event.tag === "FUNCTIONAL_DAEMON_STARTED" ||
+        event.tag === "FUNCTIONAL_DAEMON_LISTENING"
+      ) {
+        lifecycleMarkers.push({
+          tag: event.tag,
+          pid: event.pid,
+          nonce: event.nonce,
+          port: event.port,
+        });
+        if (lifecycleMarkers.length > 8) lifecycleMarkers.shift();
       }
       if (event.tag === "FUNCTIONAL_DAEMON_STARTED") {
         if (

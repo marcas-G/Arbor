@@ -120,4 +120,48 @@ describe("lease qualification expiry CAS", () => {
       expires_at: "2999-01-01T00:00:00.000Z",
     });
   });
+
+  it("fails closed before mutation when the selected daemon is not the observed lease owner", async () => {
+    const databaseFile = seedLease();
+    let crashCount = 0;
+    await expect(
+      expireExecutionLeaseForQualification({
+        databaseFile,
+        executionId: "exe_test",
+        expected: {
+          generation: 7,
+          expiresAt: "2999-01-01T00:00:00.000Z",
+          workerId: "worker:old",
+          workerIncarnationId: "inc-old",
+        },
+        ownerEvidence: {
+          executionId: "exe_test",
+          processId: 123,
+          workerId: "worker:old",
+          workerIncarnationId: "inc-old",
+          generation: 7,
+        },
+        daemon: {
+          crash: async () => {
+            crashCount += 1;
+          },
+          snapshot: () => ({
+            pid: 456,
+            exitCode: null,
+            signalCode: null,
+            alive: true,
+          }),
+        },
+      }),
+    ).rejects.toThrow(
+      "lease qualification controller does not match observed owner process",
+    );
+    expect(crashCount).toBe(0);
+    expect(readLease(databaseFile)).toMatchObject({
+      worker_id: "worker:old",
+      worker_incarnation_id: "inc-old",
+      generation: 7,
+      expires_at: "2999-01-01T00:00:00.000Z",
+    });
+  });
 });

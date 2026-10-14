@@ -20,6 +20,14 @@ export interface QualificationDaemonController {
   readonly snapshot: () => QualificationDaemonExitSnapshot | null;
 }
 
+export interface QualificationLeaseOwnerEvidence {
+  readonly executionId: string;
+  readonly processId: number;
+  readonly workerId: string;
+  readonly workerIncarnationId: string;
+  readonly generation: number;
+}
+
 /** Test-only CAS: make a stale lease immediately eligible for takeover after
  * its old daemon has exited. It deliberately leaves owner and generation
  * untouched so the real recovery daemon still exercises LeaseService.acquire.
@@ -34,10 +42,27 @@ export const expireExecutionLeaseForQualification = async (input: {
     readonly workerIncarnationId?: string;
   };
   readonly daemon: QualificationDaemonController;
+  readonly ownerEvidence?: QualificationLeaseOwnerEvidence;
 }): Promise<{
   readonly before: LeaseQualificationTuple;
   readonly after: LeaseQualificationTuple;
 }> => {
+  const ownerEvidence = input.ownerEvidence;
+  if (ownerEvidence !== undefined) {
+    const beforeCrash = input.daemon.snapshot();
+    if (
+      ownerEvidence.executionId !== input.executionId ||
+      beforeCrash === null ||
+      beforeCrash.pid !== ownerEvidence.processId ||
+      (!beforeCrash.alive &&
+        beforeCrash.exitCode === null &&
+        beforeCrash.signalCode === null)
+    ) {
+      throw new Error(
+        "lease qualification controller does not match observed owner process",
+      );
+    }
+  }
   if (input.daemon.snapshot()?.alive !== false) await input.daemon.crash();
   const oldDaemon = input.daemon.snapshot();
   if (
@@ -48,6 +73,14 @@ export const expireExecutionLeaseForQualification = async (input: {
   ) {
     throw new Error(
       "lease qualification CAS requires a confirmed exited old daemon",
+    );
+  }
+  if (
+    ownerEvidence !== undefined &&
+    oldDaemon.pid !== ownerEvidence.processId
+  ) {
+    throw new Error(
+      "lease qualification controller exited a different owner process",
     );
   }
 
@@ -69,7 +102,12 @@ export const expireExecutionLeaseForQualification = async (input: {
       (input.expected?.workerId !== undefined &&
         before.worker_id !== input.expected.workerId) ||
       (input.expected?.workerIncarnationId !== undefined &&
-        before.worker_incarnation_id !== input.expected.workerIncarnationId)
+        before.worker_incarnation_id !== input.expected.workerIncarnationId) ||
+      (ownerEvidence !== undefined &&
+        (before.execution_id !== ownerEvidence.executionId ||
+          before.worker_id !== ownerEvidence.workerId ||
+          before.worker_incarnation_id !== ownerEvidence.workerIncarnationId ||
+          Number(before.generation) !== ownerEvidence.generation))
     ) {
       throw new Error(
         `lease qualification tuple changed before CAS: ${JSON.stringify({
@@ -80,11 +118,6 @@ export const expireExecutionLeaseForQualification = async (input: {
     }
 
     const expiredAt = "1970-01-01T00:00:00.000Z";
-    if (Date.parse(before.expires_at) <= Date.now()) {
-      throw new Error(
-        `lease was already expired before qualification CAS: ${before.expires_at}`,
-      );
-    }
     const update = db
       .prepare(
         `UPDATE execution_leases SET expires_at = ?
