@@ -6,14 +6,25 @@
 git rev-parse HEAD
 ```
 
-运行环境为 Windows、Node.js 24.21.0、pnpm 12.4.2。首次安装并启动：
+运行环境为 Windows、Node.js 24.21.0、pnpm 12.4.2。首次安装并构建：
 
 ```powershell
 pnpm install --frozen-lockfile
+pnpm build
+```
+
+首次启动前，先离线创建 schema 42 数据库，再将 `ARBOR_DB` 指向它并启动 Arbor。已有数据库则按下文 `copy` 操作完成后指向升级副本：
+
+```powershell
+node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
+  --database 'C:\Arbor Data\arbor-v42.db' `
+  --p39-report-db 'C:\Arbor Data\arbor-v42-p39-report.db' `
+  --copy-manifest 'C:\Arbor Data\arbor-v42-manifest.jsonl'
+$env:ARBOR_DB = 'C:\Arbor Data\arbor-v42.db'
 pnpm start
 ```
 
-`pnpm start` 会构建工作区和 Web 客户端，并以前台方式启动本机 daemon。浏览器打开 `http://127.0.0.1:8787`。按 `Ctrl+C` 停止，重新执行 `pnpm start` 重启。可用 `ARBOR_HTTP_PORT` 更改端口，`ARBOR_DB` 指定 SQLite 文件。PowerShell 路径包含空格时使用单引号，例如：
+daemon 只接受已是 schema 42 的数据库；启动不执行迁移或升级。`pnpm start` 构建 Web 客户端，并以前台方式启动本机 daemon。浏览器打开 `http://127.0.0.1:8787`。按 `Ctrl+C` 停止，重新执行 `pnpm start` 重启。可用 `ARBOR_HTTP_PORT` 更改端口，`ARBOR_DB` 指定 SQLite 文件。PowerShell 路径包含空格时使用单引号。
 
 ```powershell
 $env:ARBOR_DB = 'C:\Users\Example User\Arbor Data\arbor.db'
@@ -22,9 +33,9 @@ pnpm start
 
 ## Schema 42 与旧库升级
 
-当前运行时目标为 schema 42。普通启动不会替旧数据库执行 P39，也不会完成到 42 的完整升级；schema 39 是受控维护迁移。较旧数据库可能先应用其余兼容迁移，再因缺少 schema 39 而失败。遇到失败应停止启动尝试，改用离线升级器处理停机副本。
+当前启动 gate 精确要求 `PRAGMA user_version = 42`。普通启动不应用迁移。未达到 schema 42 的数据库必须先通过离线 `schema:upgrade` 完成升级，不要直接启动。
 
-升级只能针对停止服务后的本机数据库进行。先正常停止 Arbor，并确认没有其他进程使用源库。整个复制和续跑期间源库必须停机、只读且保持不变。升级器会拒绝与应用数据库及相关文件冲突的路径；仍须由操作员确保目标、P39 报告库和 manifest 都是独立的新路径。严禁把在线数据库交给升级器，也不要把目标路径指向源库。
+升级只能针对停止服务后的本机数据库进行。先正常停止 Arbor，并确认没有其他进程使用源库。`copy` 仅支持 schema 36、37、38 的源库。整个复制和续跑期间源库必须停机、只读且保持不变。对于新的 `fresh` 或 `copy` 作业，目标、P39 报告库和 manifest 必须各自是独立的新路径；`resume-copy` 必须复用中断作业原有的源、目标、报告和 manifest 路径。严禁把在线数据库交给升级器，也不要把目标路径指向源库。
 
 先构建升级器：
 
@@ -61,7 +72,7 @@ node '.\apps\single-workspace\dist\schema-upgrade.js' --mode resume-copy `
   --copy-manifest 'C:\Arbor Data\arbor-v42-copy-manifest.jsonl'
 ```
 
-升级器在成功返回前会验证 P39 report 的结构与证据、manifest 链和摘要，并确认只读重开的目标确为 schema 42。命令报错或拒绝时，不要切换数据库；保留源库和诊断文件以便检查。成功后保留原库作为回滚点，再显式切换并启动：
+升级器在成功返回前会验证 P39 report 的结构与证据、manifest 链和摘要，并确认只读重开的目标确为 schema 42。manifest 含本机路径元数据，只在运行升级的本机留存；分享前先脱敏。命令报错或拒绝时，不要切换数据库；保留源库和诊断文件以便检查。成功后保留原库作为回滚点，再显式切换并启动：
 
 ```powershell
 $env:ARBOR_DB = 'C:\Arbor Data\arbor-v42-copy.db'
@@ -78,10 +89,11 @@ pnpm start
 
 ```powershell
 $env:ARBOR_MODEL_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'Provider API key' -AsSecureString)).Password
+$env:ARBOR_CONFIG = (Resolve-Path '.\arbor.config.json').Path
 pnpm start
 ```
 
-也可把密钥存入仅当前用户可读的私有 key file，并在配置中使用 `{ "kind": "file", "ref": "C:\\Users\\Example User\\.config\\arbor\\provider.key" }`。不要把真实 key 写入仓库、命令参数、shell 历史或日志。`ARBOR_CONFIG` 可指定配置文件；默认查找 `.\arbor.config.json`，然后 `$HOME\.config\arbor\arbor.config.json`。配置文件密钥应通过 env 或 file SecretRef 提供，不使用 inline secret。
+也可把密钥存入仅当前用户可读的私有 key file，并在配置中使用 `{ "kind": "file", "ref": "C:\\Users\\Example User\\.config\\arbor\\provider.key" }`。不要把真实 key 写入仓库、命令参数、shell 历史或日志。Windows 上显式设置 `$env:ARBOR_CONFIG` 指向私有配置文件，或将未跟踪的 `arbor.config.json` 放在仓库根目录；不要依赖 `$HOME` 回退。配置文件密钥应通过 env 或 file SecretRef 提供，不使用 inline secret。
 
 ## 项目资源与人工审批
 
@@ -92,7 +104,7 @@ $env:ARBOR_PROJECT_ROOT = 'C:\Users\Example User\Arbor Work'
 pnpm start
 ```
 
-可选的项目资源 profile 字段为 `ARBOR_PROJECT_PROFILE_REF`、`ARBOR_PROJECT_PROFILE_VERSION`、`ARBOR_PROJECT_PROFILE_NAME`。daemon 启动时读取该目录；在界面项目切换器中选择“新建项目”，选择可用资源并提交名称。进入项目根 Workspace 后创建或分配 Work。需要人工授权的具体动作会出现在 Queue/Inbox；打开并核对目标动作后批准或拒绝。Work 的 Provider 验证结果与人对最终结果的验收是两个步骤。
+可选的项目资源 profile 字段为 `ARBOR_PROJECT_PROFILE_REF`、`ARBOR_PROJECT_PROFILE_VERSION`、`ARBOR_PROJECT_PROFILE_NAME`。daemon 启动时读取该目录；在界面项目切换器中选择“新建项目”，选择可用资源并提交名称。进入项目根 Workspace 后创建或分配 Work。人工审批入口是项目级“待处理”队列 `/p/{projectId}/queue`；打开具体事项并核对后批准或拒绝。Workspace 的“收件箱”不承载审批。Work 的 Provider 验证结果与人对最终结果的验收是两个步骤。
 
 当前 local sandbox 仅将已批准的路径作为 mounts/boundaries 提供，并向子进程投影允许的环境变量；这不是 OS 级隔离，进程仍具有运行用户的操作系统权限。Native OS Sandbox 已有接受的治理设计，尚待实现；不要将本地 mount 边界描述成 OS 沙箱。
 
