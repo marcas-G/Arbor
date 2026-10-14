@@ -13,6 +13,7 @@ coverage/
 capability.config.json
 .vitest/
 .functional-test-results/
+.test-results/
 playwright-report/
 
 # Local provider configuration — may contain inline credentials
