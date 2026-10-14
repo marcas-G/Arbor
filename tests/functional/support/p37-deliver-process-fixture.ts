@@ -314,8 +314,9 @@ export const readP37Snapshot = (databaseFile: string) => {
                 s.provider_turn_id, s.state AS step_state,
                 s.settlement_json AS step_settlement_json,
                 s.revision AS step_revision, s.updated_at AS step_updated_at,
-                a.logical_action_id, a.action_index,
+                a.logical_action_id, a.action_index, a.route_kind,
                 a.observation_source_ref, a.call_ref, a.action_kind, a.state,
+                a.disposition_json, a.result_ref, a.settlement_ref,
                 a.updated_at AS action_updated_at
            FROM agent_loop_step_actions a
            JOIN agent_loop_steps s

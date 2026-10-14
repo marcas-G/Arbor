@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { P37Probe } from "../support/p37-deliver-process-fixture.js";
 import {
   awaitP37Probe,
+  deliverAndHoldCommittedReceipt,
   expireP37LeaseForQualification,
   findDeliverReplayFact,
   fixtures,
@@ -27,34 +28,26 @@ afterEach(async () => {
 describe("pending RAI-DG-01 Work readmission process journeys", () => {
   it("keeps the original Work revision held after the P37 Inbox mismatch is ACKed and RuntimeSafetyStop settles", async () => {
     const marker = `RAI-DG-01-REV1-${crypto.randomUUID().slice(0, 8)}`;
-    const seed = await seedDeliverableWaitingForDelivery(marker, {
-      startDeliverImmediately: true,
-    });
-    const initialRevision = seed.seededWork.revision;
+    // Reuse the qualified P37 receipt-first crash fixture. It reaches the
+    // same delivered effect through public SteerWork, then freezes the exact
+    // action before Observation/Applied commit.
+    const seed = await deliverAndHoldCommittedReceipt(marker);
+    const initialRevision = seed.seededWork.revision + 1;
     const workId = seed.seededWork.workId;
     if (workId === undefined) throw new Error("RAI target WorkId missing");
     const firstReceipt = readP37Snapshot(seed.fixture.databaseFile);
-    const firstAction = firstReceipt.actions.find(
-      (action) => action.action_kind === "deliver",
-    ) as
-      | {
-          execution_id: string;
-          provider_turn_id: string;
-          logical_action_id: string;
-          observation_source_ref: string | null;
-        }
-      | undefined;
-    expect(firstAction).toBeDefined();
-    expect(firstAction?.logical_action_id).toMatch(/^lac_/u);
+    const firstAction = seed.action;
     const firstWorkExecution = firstReceipt.executions.filter(
-      (execution) => execution.episode_ref === seed.seededWork.workId,
+      (execution) =>
+        execution.episode_ref === seed.seededWork.workId &&
+        Number(execution.episode_revision) === initialRevision,
     );
     expect(firstWorkExecution).toHaveLength(1);
     expect(firstWorkExecution[0]).toMatchObject({
       episode_ref: seed.seededWork.workId,
       episode_revision: initialRevision,
     });
-    if (firstAction === undefined) throw new Error("P37 action missing");
+    expect(firstAction.logical_action_id).toMatch(/^lac_/u);
 
     await seed.fixture.crash();
     const inboxDb = new DatabaseSync(seed.fixture.databaseFile);
@@ -63,9 +56,7 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
         .prepare(
           "UPDATE inbox_entries SET summary = 'RAI-DG-01 deliberate mismatch' WHERE entry_key = ?",
         )
-        .run(
-          `msg:${(firstReceipt.messages[0] as { message_id: string }).message_id}`,
-        );
+        .run(`msg:${seed.message.message_id}`);
       expect(Number(changed.changes)).toBe(1);
     } finally {
       inboxDb.close();
@@ -224,20 +215,33 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
                   episodeRef: targetExecution.episode_ref,
                   episodeRevision: targetExecution.episode_revision,
                   settlementKind: targetExecution.settlement_kind,
+                  settlementJson: targetExecution.settlement_json,
                   hasRuntimeSafetyStop: String(
                     targetExecution.settlement_json ?? "",
                   ).includes("RuntimeSafetyStop"),
                 }
               : null,
+            targetWorkExecutions: diagnostic.executions
+              .filter((execution) => execution.episode_ref === workId)
+              .map((execution) => ({
+                executionId: execution.execution_id,
+                episodeRevision: execution.episode_revision,
+                settlementKind: execution.settlement_kind,
+                settlementJson: execution.settlement_json,
+              })),
             originalAction: targetAction
               ? {
                   executionId: targetAction.execution_id,
                   logicalActionId: targetAction.logical_action_id,
                   actionKind: targetAction.action_kind,
+                  routeKind: targetAction.route_kind,
                   actionState: targetAction.state,
                   stepState: targetAction.step_state,
                   stepRevision: targetAction.step_revision,
                   actionIndex: targetAction.action_index,
+                  disposition: targetAction.disposition_json,
+                  resultRef: targetAction.result_ref,
+                  settlementRef: targetAction.settlement_ref,
                 }
               : null,
             p9Probes: relevantProbes,
@@ -262,6 +266,15 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
               .filter((offset) => offset.project_id === seed.project.projectId)
               .slice(-2),
             targetWork: targetWorkRows,
+            deliverMessages: diagnostic.messages,
+            deliverInbox: diagnostic.inbox,
+            loopSteps: diagnostic.loopSteps.filter((step) =>
+              diagnostic.executions.some(
+                (execution) =>
+                  execution.execution_id === step.execution_id &&
+                  execution.episode_ref === workId,
+              ),
+            ),
             targetLease: targetLeases,
             publicCurrentWork,
             publicAttention,
@@ -701,11 +714,74 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
       },
       provenance: { source: "HumanInput" },
     });
-    const safetyStop = await awaitP37Probe(
-      seed.probes,
-      (probe) =>
-        probe.role === "new" && probe.boundary === "P37AfterSettlementCommit",
-    );
+    let safetyStop: P37Probe | undefined;
+    try {
+      safetyStop = await awaitP37Probe(
+        seed.probes,
+        (probe) =>
+          probe.role === "new" && probe.boundary === "P37AfterSettlementCommit",
+      );
+    } catch (error) {
+      const snapshot = readP37Snapshot(seed.fixture.databaseFile);
+      const db = new DatabaseSync(seed.fixture.databaseFile, {
+        readOnly: true,
+      });
+      let waits: Array<Record<string, unknown>> = [];
+      try {
+        waits = db
+          .prepare(
+            `SELECT work_id, wait_mode, conditions_json, registered_at, updated_at
+               FROM work_waits ORDER BY registered_at, work_id`,
+          )
+          .all() as Array<Record<string, unknown>>;
+      } finally {
+        db.close();
+      }
+      const currentWork = await seed.client
+        .view<{
+          workId?: string;
+          revision?: number;
+          status?: string;
+          activeExecution?: { executionId?: string };
+        } | null>("current-work", {
+          workspaceId: seed.producer.workspaceId,
+        })
+        .catch(() => null);
+      throw new Error(
+        `RAI safety-stop settlement probe timeout; cause=${error instanceof Error ? error.message : String(error)}; diagnostic=${JSON.stringify(
+          {
+            target: {
+              workId,
+              workRevision: initialRevision + 1,
+              workspaceId: seed.producer.workspaceId,
+            },
+            currentWork,
+            executions: snapshot.executions.filter(
+              (execution) => execution.episode_ref === workId,
+            ),
+            actions: snapshot.actions.filter((action) =>
+              snapshot.executions.some(
+                (execution) =>
+                  execution.execution_id === action.execution_id &&
+                  execution.episode_ref === workId,
+              ),
+            ),
+            loopSteps: snapshot.loopSteps.filter((step) =>
+              snapshot.executions.some(
+                (execution) =>
+                  execution.execution_id === step.execution_id &&
+                  execution.episode_ref === workId,
+              ),
+            ),
+            leases: snapshot.leases,
+            waits,
+            probes: seed.probes.slice(-24),
+            providerRequestCount: seed.fixture.providerCalls.length,
+            daemonErrors: seed.fixture.daemonErrors,
+          },
+        )}`,
+      );
+    }
     expect(safetyStop?.executionId).toBeDefined();
     const stopped = readP37Snapshot(seed.fixture.databaseFile);
     expect(stopped.facts).toHaveLength(0);
