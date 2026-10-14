@@ -15,6 +15,8 @@
     "test:functional": "node scripts/testing/run-suite.mjs release",
     "test:functional:process": "node scripts/testing/run-suite.mjs process",
     "test:functional:ui": "node scripts/testing/run-suite.mjs ui",
+    "test:functional:quick": "node scripts/testing/run-suite.mjs quick",
+    "test:functional:smoke": "node scripts/testing/run-suite.mjs smoke",
     "test:quick": "node scripts/testing/run-suite.mjs quick",
     "test:smoke": "node scripts/testing/run-suite.mjs smoke",
     "test:crash-sentinels": "node scripts/testing/run-suite.mjs crash-sentinels",
