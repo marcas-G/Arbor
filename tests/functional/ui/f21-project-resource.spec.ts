@@ -115,13 +115,23 @@ test("F21 browser Profile selection reaches file evidence, Verification PASS, an
   await page.getByRole("button", { name: /当前项目/u }).click();
   await page.getByRole("button", { name: "新建项目" }).click();
   await page.getByLabel("项目名称").fill("F21 关注事项读取失败");
+  const attentionUnavailable = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/views/attention" && response.status() === 503;
+  });
   await page.getByRole("button", { name: "创建项目" }).click();
   await expect(page).toHaveURL(/\/p\/prj_[A-Za-z0-9-]+\/attention$/u);
+  await attentionUnavailable;
+  await expect(page.getByRole("status")).toHaveText(
+    "无法确认此项目的资源激活状态。请勿重复创建；刷新关注事项后再确认。",
+  );
+  await expect(page.getByRole("heading", { name: "服务不可用" })).toBeVisible();
+  await expect(page.getByText("Network / Unavailable")).toBeVisible();
+  await expect(page.getByRole("button", { name: "重试" })).toBeVisible();
   await expect(
-    page.getByRole("status").filter({
-      hasText: "项目已创建，但当前无法确认资源激活状态",
-    }),
-  ).toBeVisible();
+    page.getByText("项目已创建，但资源尚未激活，文件操作暂不可用。"),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "创建项目" })).toHaveCount(0);
   expect(fixture.daemonErrors).toEqual([]);
 });
 
