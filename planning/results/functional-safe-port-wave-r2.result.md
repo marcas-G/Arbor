@@ -20,6 +20,10 @@ continue to use the nonce wrapper. Custom daemon entries must emit the same
 handshake and fail closed if they do not; there is no legacy port-allocation
 fallback.
 
+B1 review correction: when a restart requests a nonzero port, the child-reported
+listening port must equal that requested port. A mismatched custom restart is
+stopped and rejected before HTTP readiness probing.
+
 Custom daemon reporters were added to the AH17, AH18, AH19, F21 and P4 child
 entries. Existing AH crash, AH10 and P37 custom entries already used the shared
 reporter. The checkout audit found 39 process test files with direct fixture
@@ -34,11 +38,12 @@ serial-only path, so no serial-only manifest tag was needed.
 - `pnpm typecheck`: PASS.
 - `pnpm --filter @arbor/web build`: PASS (prerequisite for the fixture's HTTP
   readiness probe).
-- `pnpm exec biome check` on the 8 changed source/test files: PASS.
+- `pnpm exec biome check` on the 9 changed source/test files: PASS.
 - `pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/production-fixture-port-handshake.functional.test.ts --reporter=verbose`:
-  PASS, 1 file / 5 tests. Coverage includes two concurrently starting fixtures
+  PASS, 1 file / 6 tests. Coverage includes two concurrently starting fixtures
   with distinct child-reported ports and PID/nonce identities, restart reuse of
-  the actual original port after the old PID exits, wrong PID, wrong nonce, and
+  the actual original port after the old PID exits, rejection and cleanup of a
+  custom restart child bound to a different port, wrong PID, wrong nonce, and
   early child exit.
 - `git diff --check`: PASS.
 

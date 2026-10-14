@@ -101,7 +101,10 @@ export interface ProductionFixture {
   readonly stop: () => Promise<void>;
 }
 
-const waitForNonceBoundPort = (child: ChildProcess): Promise<number> =>
+const waitForNonceBoundPort = (
+  child: ChildProcess,
+  requestedPort: number,
+): Promise<number> =>
   new Promise<number>((resolvePort, rejectPort) => {
     let settled = false;
     let startedNonce: string | undefined;
@@ -172,6 +175,14 @@ const waitForNonceBoundPort = (child: ChildProcess): Promise<number> =>
       ) {
         finish({
           error: new Error("functional daemon listening identity mismatch"),
+        });
+        return;
+      }
+      if (requestedPort !== 0 && event.port !== requestedPort) {
+        finish({
+          error: new Error(
+            `functional daemon bound unexpected port: requested=${requestedPort} reported=${event.port}`,
+          ),
         });
         return;
       }
@@ -605,7 +616,7 @@ export const startProductionFixture = async (input: {
       recordDaemonError(`spawn error=${error.message}`);
     });
     try {
-      httpPort = await waitForNonceBoundPort(daemon);
+      httpPort = await waitForNonceBoundPort(daemon, requestedPort);
     } catch (error) {
       await stopChild(daemon);
       throw new Error(
@@ -736,7 +747,7 @@ export const startProductionFixture = async (input: {
         additionalErrors.push(`spawn error=${error.message}`);
       });
       try {
-        additionalPort = await waitForNonceBoundPort(child);
+        additionalPort = await waitForNonceBoundPort(child, 0);
         additionalBaseUrl = `http://127.0.0.1:${additionalPort}`;
         await waitFor(
           () => fetch(additionalBaseUrl),
