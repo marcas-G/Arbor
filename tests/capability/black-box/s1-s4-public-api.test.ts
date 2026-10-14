@@ -16,6 +16,9 @@ import {
 import { createSchema42TestDatabaseFactory } from "../../support/schema42-database.js";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
+const DAEMON_HANDSHAKE_ENTRY = resolve(
+  "tests/functional/support/nonce-daemon-child.mjs",
+);
 const WEB_DIST = resolve("apps/web/dist");
 const TOKEN = "scenario-black-box-token";
 const LOCAL_READ_TOKEN = "scenario-local-read-token";
@@ -35,17 +38,6 @@ const uuidV7 = () => {
 };
 
 const id = (prefix: string) => `${prefix}_${uuidV7()}`;
-
-const freePort = () =>
-  new Promise<number>((resolvePort) => {
-    const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port =
-        typeof address === "object" && address !== null ? address.port : -1;
-      server.close(() => resolvePort(port));
-    });
-  });
 
 interface ProviderCall {
   readonly messages: ReadonlyArray<{ role?: string; content?: string }>;
@@ -411,20 +403,143 @@ let databaseFile: string;
 let httpPort: number;
 let base: string;
 let provider: Awaited<ReturnType<typeof startProvider>>;
-let daemon: ChildProcess;
+let daemon: ChildProcess | undefined;
 const daemonErrors: string[] = [];
+const daemonMarkers: string[] = [];
 let databaseFactory: Awaited<
   ReturnType<typeof createSchema42TestDatabaseFactory>
 >;
 let databaseFixture: ReturnType<typeof databaseFactory.create>;
 
-const startDaemon = () => {
-  const child = spawn("node", [DAEMON_ENTRY], {
+const processSnapshot = (child: ChildProcess | undefined) =>
+  `pid=${String(child?.pid)}; exit=${String(child?.exitCode)}; signal=${String(child?.signalCode)}; stderr=${daemonErrors.slice(-8).join(" | ") || "<empty>"}; markers=${daemonMarkers.slice(-8).join(" | ") || "<empty>"}`;
+
+const childHasExited = (child: ChildProcess) =>
+  child.exitCode !== null || child.signalCode !== null;
+
+const stopDaemon = async (child: ChildProcess | undefined) => {
+  if (child === undefined || childHasExited(child)) return;
+  await new Promise<void>((resolveExit) => {
+    child.once("exit", () => resolveExit());
+    child.kill("SIGKILL");
+  });
+};
+
+const waitForDaemonListening = (
+  child: ChildProcess,
+  requestedPort: number,
+): Promise<number> =>
+  new Promise<number>((resolvePort, rejectPort) => {
+    let startedNonce: string | undefined;
+    let stdoutBuffer = "";
+    let settled = false;
+    const finish = (
+      result: { readonly port: number } | { readonly error: Error },
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener("exit", onExit);
+      if ("error" in result) rejectPort(result.error);
+      else resolvePort(result.port);
+    };
+    const timeout = setTimeout(
+      () =>
+        finish({
+          error: new Error("daemon PID/nonce/listening handshake timed out"),
+        }),
+      60_000,
+    );
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
+      finish({
+        error: new Error(
+          `daemon exited before listening handshake: exit=${String(code)} signal=${String(signal)}`,
+        ),
+      });
+    const readLine = (line: string) => {
+      if (line.length === 0) return;
+      daemonMarkers.push(line);
+      let event: {
+        readonly tag?: unknown;
+        readonly nonce?: unknown;
+        readonly pid?: unknown;
+        readonly port?: unknown;
+      };
+      try {
+        event = JSON.parse(line) as typeof event;
+      } catch {
+        return;
+      }
+      if (event.tag === "FUNCTIONAL_DAEMON_STARTED") {
+        if (
+          typeof event.nonce !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+            event.nonce,
+          ) ||
+          event.pid !== child.pid ||
+          childHasExited(child)
+        ) {
+          finish({
+            error: new Error("daemon start PID/nonce handshake mismatch"),
+          });
+          return;
+        }
+        startedNonce = event.nonce;
+        return;
+      }
+      if (event.tag !== "FUNCTIONAL_DAEMON_LISTENING") return;
+      if (
+        startedNonce === undefined ||
+        event.nonce !== startedNonce ||
+        event.pid !== child.pid ||
+        typeof event.port !== "number" ||
+        !Number.isInteger(event.port) ||
+        event.port < 1 ||
+        event.port > 65_535 ||
+        childHasExited(child)
+      ) {
+        finish({
+          error: new Error(
+            "daemon listening PID/nonce/port handshake mismatch",
+          ),
+        });
+        return;
+      }
+      if (requestedPort !== 0 && event.port !== requestedPort) {
+        finish({
+          error: new Error(
+            `daemon bound unexpected port: requested=${requestedPort} reported=${event.port}`,
+          ),
+        });
+        return;
+      }
+      finish({ port: event.port });
+    };
+    child.once("exit", onExit);
+    if (child.stdout === null) {
+      finish({
+        error: new Error("daemon stdout is required for startup handshake"),
+      });
+      return;
+    }
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString("utf8");
+      let newline = stdoutBuffer.indexOf("\n");
+      while (newline >= 0) {
+        readLine(stdoutBuffer.slice(0, newline).trim());
+        stdoutBuffer = stdoutBuffer.slice(newline + 1);
+        newline = stdoutBuffer.indexOf("\n");
+      }
+    });
+  });
+
+const startDaemon = async (requestedPort: number) => {
+  const child = spawn(process.execPath, [DAEMON_HANDSHAKE_ENTRY], {
     cwd: directory,
     env: {
       ...process.env,
       ARBOR_DB: databaseFile,
-      ARBOR_HTTP_PORT: String(httpPort),
+      ARBOR_HTTP_PORT: String(requestedPort),
       ARBOR_HTTP_HOST: "127.0.0.1",
       ARBOR_WEB_DIST: WEB_DIST,
       ARBOR_AUTH_TOKENS: `${TOKEN}=${HUMAN},${LOCAL_READ_TOKEN}=user:local`,
@@ -434,7 +549,7 @@ const startDaemon = () => {
       ARBOR_MODEL_API_KEY_VAR: "ARBOR_SCENARIO_TEST_KEY",
       ARBOR_SCENARIO_TEST_KEY: "test-only",
     },
-    stdio: ["ignore", "ignore", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
   child.stderr?.on("data", (chunk: Buffer) => {
     const text = chunk.toString("utf8").trim();
@@ -445,7 +560,19 @@ const startDaemon = () => {
   child.on("error", (error) => {
     daemonErrors.push(`spawn error=${error.message}`);
   });
-  return child;
+  try {
+    const listeningPort = await waitForDaemonListening(child, requestedPort);
+    if (childHasExited(child)) {
+      throw new Error("daemon exited after listening report");
+    }
+    return { child, listeningPort };
+  } catch (error) {
+    await stopDaemon(child);
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; ${processSnapshot(child)}`,
+      { cause: error },
+    );
+  }
 };
 
 const headers = () => ({
@@ -618,13 +745,21 @@ const readDaemonReadiness = async (): Promise<DaemonReadinessProbe> => {
   }
 };
 
-const waitForDaemonReady = (timeoutMs = 30_000) =>
-  waitFor(
-    readDaemonReadiness,
-    (probe) =>
-      probe.status === 404 && probe.problemCode === "transport/unknown-view",
-    timeoutMs,
-  );
+const waitForDaemonReady = async (timeoutMs = 30_000) => {
+  try {
+    return await waitFor(
+      readDaemonReadiness,
+      (probe) =>
+        probe.status === 404 && probe.problemCode === "transport/unknown-view",
+      timeoutMs,
+    );
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; ${processSnapshot(daemon)}`,
+      { cause: error },
+    );
+  }
+};
 
 let projectId: string;
 let rootWorkspaceId: string;
@@ -639,12 +774,7 @@ beforeAll(async () => {
 
 const cleanupScenario = async () => {
   try {
-    if (daemon?.exitCode === null) {
-      daemon.kill("SIGKILL");
-      await new Promise<void>((resolveExit) =>
-        daemon.once("exit", () => resolveExit()),
-      );
-    }
+    await stopDaemon(daemon);
     if (provider !== undefined) {
       await new Promise<void>((resolveClose) =>
         provider.server.close(() => resolveClose()),
@@ -673,10 +803,12 @@ beforeEach(async () => {
     rootSessionId = id("ses");
     childWorkspaceId = id("ws");
     workId = id("wrk");
-    httpPort = await freePort();
-    base = `http://127.0.0.1:${httpPort}`;
+    daemonMarkers.length = 0;
     provider = await startProvider();
-    daemon = startDaemon();
+    const started = await startDaemon(0);
+    daemon = started.child;
+    httpPort = started.listeningPort;
+    base = `http://127.0.0.1:${httpPort}`;
     try {
       await waitForDaemonReady(60_000);
     } catch (error) {
@@ -1041,11 +1173,11 @@ describe("S1-S4 public-process black-box", () => {
     await createPublicProject();
     await createAndAcceptRootGoal();
     const callsBeforeRestart = provider.calls.length;
-    daemon.kill("SIGKILL");
-    await new Promise<void>((resolveExit) =>
-      daemon.once("exit", () => resolveExit()),
-    );
-    daemon = startDaemon();
+    await stopDaemon(daemon);
+    const started = await startDaemon(httpPort);
+    daemon = started.child;
+    expect(started.listeningPort).toBe(httpPort);
+    base = `http://127.0.0.1:${started.listeningPort}`;
     await waitForDaemonReady();
 
     const tree = await view<{ nodes: Array<{ workspaceId: string }> }>(
