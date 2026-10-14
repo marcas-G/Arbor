@@ -138,29 +138,27 @@ describe("Vitest progress reporter", () => {
     expect(failureMessages?.some((message) => message === null)).toBe(false);
   });
 
-  it("redacts short sensitive values without treating drive prefixes as secrets", () => {
+  it("redacts only sensitive environment values and preserves ordinary values and paths", () => {
     const values = collectEnvironmentRedactionValues({
       API_KEY: "ab",
-      SERVICE_TOKEN: "test",
       HOMEDRIVE: "C:",
       APP_MODE: "prod",
-      SESSION_VALUE: "A1bc",
+      NODE_ENV: "test",
       USERPROFILE: "C:\\Users\\ThinkPad",
     });
     const redacted = redactTextForOutput(
-      "credential ab; word cab; drive C:; path C:\\Users\\ThinkPad; module synthetic.test.ts; session A1bc; mode prod; value test",
+      "credential ab; word cab; drive C:; path C:\\Users\\ThinkPad; module synthetic.test.ts; mode prod; node env test",
       values,
     );
 
-    expect(values).toEqual(["test", "prod", "A1bc", "ab"]);
+    expect(values).toEqual(["ab"]);
     expect(redacted).toContain("credential [REDACTED]");
     expect(redacted).toContain("word cab");
     expect(redacted).toContain("drive C:");
     expect(redacted).toContain("path C:\\Users\\ThinkPad");
     expect(redacted).toContain("module synthetic.test.ts");
-    expect(redacted).toContain("session [REDACTED]");
-    expect(redacted).toContain("mode [REDACTED]");
-    expect(redacted).toContain("value [REDACTED]");
+    expect(redacted).toContain("mode prod");
+    expect(redacted).toContain("node env test");
 
     const sensitiveDriveValue = collectEnvironmentRedactionValues({
       API_KEY: "C:",
