@@ -70,10 +70,21 @@ interface ExecutionRow {
 
 interface PendingExecutableApprovalRow {
   readonly approval_id: string;
+  readonly project_id: string;
+  readonly workspace_id: string;
   readonly execution_id: string;
   readonly execution_workspace_id: string;
   readonly episode_kind: string;
   readonly episode_ref: string;
+  readonly subject_ref: string;
+  readonly stable_action_id: string;
+  readonly action_version: string;
+  readonly action_digest: string;
+  readonly arguments_json: string;
+  readonly target_ref: string;
+  readonly target_resource_space_ids_json: string;
+  readonly control_basis_digest: string;
+  readonly binding_proven: number;
   readonly logical_step_no: number;
   readonly repair_attempt: number;
   readonly action_index: number;
@@ -535,7 +546,11 @@ const pendingExecutableApproval = (
   try {
     return db
       .prepare(
-        `SELECT ap.approval_id, ap.execution_id,
+        `SELECT ap.approval_id, ap.project_id, ap.workspace_id,
+                ap.execution_id, ap.subject_ref, ap.stable_action_id,
+                ap.action_version, ap.action_digest, ap.arguments_json,
+                ap.target_ref, ap.target_resource_space_ids_json,
+                ap.control_basis_digest, ap.binding_proven,
                 e.workspace_id AS execution_workspace_id,
                 e.episode_kind, e.episode_ref, ap.logical_step_no,
                 ap.repair_attempt,
@@ -580,7 +595,11 @@ const consumedExecutableApprovalSnapshot = (
     db.exec("BEGIN");
     const row = db
       .prepare(
-        `SELECT ap.approval_id, ap.execution_id,
+        `SELECT ap.approval_id, ap.project_id, ap.workspace_id,
+                ap.execution_id, ap.subject_ref, ap.stable_action_id,
+                ap.action_version, ap.action_digest, ap.arguments_json,
+                ap.target_ref, ap.target_resource_space_ids_json,
+                ap.control_basis_digest, ap.binding_proven,
                 e.workspace_id AS execution_workspace_id,
                 e.episode_kind, e.episode_ref, ap.logical_step_no,
                 ap.repair_attempt, ap.action_index, ap.logical_action_id,
@@ -624,6 +643,39 @@ const consumedExecutableApprovalSnapshot = (
     db.close();
   }
 };
+
+const exactExecutableApprovalBinding = (
+  approval: PendingExecutableApprovalRow,
+) => ({
+  approval_id: approval.approval_id,
+  project_id: approval.project_id,
+  workspace_id: approval.workspace_id,
+  execution_id: approval.execution_id,
+  execution_workspace_id: approval.execution_workspace_id,
+  episode_kind: approval.episode_kind,
+  episode_ref: approval.episode_ref,
+  subject_ref: approval.subject_ref,
+  stable_action_id: approval.stable_action_id,
+  action_version: approval.action_version,
+  action_digest: approval.action_digest,
+  arguments_json: approval.arguments_json,
+  target_ref: approval.target_ref,
+  target_resource_space_ids_json: approval.target_resource_space_ids_json,
+  control_basis_digest: approval.control_basis_digest,
+  binding_proven: approval.binding_proven,
+  logical_step_no: approval.logical_step_no,
+  repair_attempt: approval.repair_attempt,
+  action_index: approval.action_index,
+  logical_action_id: approval.logical_action_id,
+  call_ref: approval.call_ref,
+  tool_invocation_id: approval.tool_invocation_id,
+  provider_turn_id: approval.provider_turn_id,
+  bound_logical_step_no: approval.bound_logical_step_no,
+  bound_repair_attempt: approval.bound_repair_attempt,
+  bound_action_index: approval.bound_action_index,
+  action_logical_action_id: approval.action_logical_action_id,
+  action_call_ref: approval.action_call_ref,
+});
 
 describe("P4 lease acquisition while another daemon owns a live lease", () => {
   const runP4LeaseAcquisition = async () => {
@@ -890,6 +942,14 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       throw new Error(`P4 approval ${approvalId} has no proven exact binding`);
     }
     const executionId = approval.execution_id;
+    const expectedApprovalBinding = {
+      ...exactExecutableApprovalBinding(approval),
+      project_id: project.projectId,
+      workspace_id: project.rootWorkspaceId,
+      execution_workspace_id: project.rootWorkspaceId,
+      episode_kind: "WorkEpisode",
+      episode_ref: currentWork.workId,
+    };
     workExecutionId = executionId;
     pendingP4FailureEvidence = {
       fixture,
@@ -911,7 +971,7 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       }),
     };
     expect(approval).toMatchObject({
-      approval_id: approvalId,
+      ...expectedApprovalBinding,
       execution_id: executionId,
       state: "Pending",
       revision: approvalRevision,
@@ -944,14 +1004,7 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       approvalId,
     );
     expect(committedApproval).toMatchObject({
-      approval_id: approvalId,
-      execution_id: executionId,
-      logical_step_no: approval.logical_step_no,
-      repair_attempt: approval.repair_attempt,
-      action_index: approval.action_index,
-      logical_action_id: approval.logical_action_id,
-      call_ref: approval.call_ref,
-      tool_invocation_id: approval.tool_invocation_id,
+      ...expectedApprovalBinding,
       side_effect_semantics: "NonIdempotent",
       state: "Approved",
       revision: approvalRevision + 1,
@@ -1086,23 +1139,7 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       );
     }
     expect(consumedApproval).toMatchObject({
-      approval_id: approvalId,
-      execution_id: executionId,
-      execution_workspace_id: project.rootWorkspaceId,
-      episode_kind: "WorkEpisode",
-      episode_ref: currentWork.workId,
-      logical_step_no: approval.logical_step_no,
-      repair_attempt: approval.repair_attempt,
-      action_index: approval.action_index,
-      bound_logical_step_no: approval.logical_step_no,
-      bound_repair_attempt: approval.repair_attempt,
-      bound_action_index: approval.action_index,
-      logical_action_id: approval.logical_action_id,
-      action_logical_action_id: approval.logical_action_id,
-      call_ref: approval.call_ref,
-      action_call_ref: approval.call_ref,
-      tool_invocation_id: approval.tool_invocation_id,
-      provider_turn_id: approval.provider_turn_id,
+      ...expectedApprovalBinding,
       side_effect_semantics: "NonIdempotent",
       state: "Consumed",
       revision: approvalRevision + 2,
