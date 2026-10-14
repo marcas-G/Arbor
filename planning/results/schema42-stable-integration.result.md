@@ -581,3 +581,32 @@ Vitest file duration 108.939s, zero retries. JSON report:
 `.test-results/r2-port-handshake-11.json`. Post-integration `pnpm typecheck`,
 Biome on five changed code files, and `git diff --check` passed. No test
 processes remained after the focused run.
+
+## Full `pnpm check` attempt on `813f9ce2`
+
+After the S1–S4 architecture-oracle correction, the unique full `pnpm check`
+attempt on clean HEAD `813f9ce2524ec56f9c191358a21bc7284c9eabfe` passed Biome
+(1170 files), typecheck, and architecture (32 files / 161 tests). The root
+`pnpm test` stage emitted two failures before its terminal summary became
+unavailable:
+
+1. S4 public black-box restart journey:
+   `black-box timeout; last={"status":null,"problemCode":null,"transportError":"fetch-failed"}`
+   from `tests/capability/black-box/s1-s4-public-api.test.ts`.
+2. Provider Runtime Phase 1 connect-timeout case:
+   `Timed out waiting for provider adapter start` in
+   `tests/provider-runtime-phase1.integration.test.ts` (case duration
+   6.063s).
+
+The exec session later became unavailable (`Unknown process id`) after the
+runner process tree had exited. No final Vitest file/test totals or exact full
+check wall time were available from the runner, so neither is inferred here.
+Because `pnpm check` chains gates with `&&` and failed in root `pnpm test`,
+the Web typecheck/build/test stages did not run. No release/full profile was
+started, and the check was not repeated.
+
+The test-created `planning/results/P12.restore-drill.json` mutation was
+restored to the committed contents. The 8KB P39 writer-lock sidecar was
+verified to have no process references and moved, without deletion, to the
+recoverable path
+`C:\Users\ThinkPad\AppData\Local\Temp\Arbor-test-artifacts\.arbor-p39-writer-4fc3f9f4a3b4ef590fde1f83f3f1943aefe82e1fcbccd5c542e176c1c1140273-pnpm-check-813f9ce2.sqlite`.
