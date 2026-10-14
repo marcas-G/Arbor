@@ -20,7 +20,13 @@ export function serializeErrorForReport(
   error: unknown,
 ): SerializedProgressError;
 export function normalizeVitestJsonReport<T>(report: T, progress: unknown): T;
-export function redactTextForOutput(value: unknown): string;
+export function collectEnvironmentRedactionValues(
+  environment: Record<string, string | undefined>,
+): string[];
+export function redactTextForOutput(
+  value: unknown,
+  environmentOrValues?: Record<string, string | undefined> | string[],
+): string;
 
 export default class VitestProgressReporter {
   constructor(options?: VitestProgressOptions);

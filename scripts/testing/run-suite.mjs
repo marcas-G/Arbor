@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { validateManifest } from "./check-manifest.mjs";
 import { buildProcessSpec, resolvePnpmInvocation } from "./runner-utils.mjs";
 import {
+  collectEnvironmentRedactionValues,
   normalizeVitestJsonReport,
   redactTextForOutput,
 } from "./vitest-progress-reporter.mjs";
@@ -272,24 +273,8 @@ function runCommand(groupName, label, args, env = {}) {
   let stdout = "";
   let stderr = "";
   const pendingOutput = { stdout: "", stderr: "" };
-  const sensitiveEnvironmentValues = Object.entries(process.env)
-    .filter(
-      ([key, value]) =>
-        /secret|token|authorization|password|api.?key|credential|cookie/i.test(
-          key,
-        ) &&
-        typeof value === "string" &&
-        value.length >= 4,
-    )
-    .map(([, value]) => value)
-    .sort((left, right) => right.length - left.length);
-  const redactOutput = (value) => {
-    let redacted = redactTextForOutput(value);
-    for (const secret of sensitiveEnvironmentValues) {
-      redacted = redacted.split(secret).join("[REDACTED]");
-    }
-    return redacted;
-  };
+  const redactionValues = collectEnvironmentRedactionValues(process.env);
+  const redactOutput = (value) => redactTextForOutput(value, redactionValues);
   const flushOutput = (target, final = false) => {
     const buffer = pendingOutput[target];
     const lines = buffer.split(/(?<=\n)/u);

@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import VitestProgressReporter, {
+  collectEnvironmentRedactionValues,
   normalizeVitestJsonReport,
+  redactTextForOutput,
   serializeErrorForReport,
 } from "../../scripts/testing/vitest-progress-reporter.mjs";
 
@@ -134,6 +136,41 @@ describe("Vitest progress reporter", () => {
     expect(failureMessages).toHaveLength(1);
     expect(failureMessages?.[0]).toContain('"type":"Object"');
     expect(failureMessages?.some((message) => message === null)).toBe(false);
+  });
+
+  it("redacts short sensitive values without treating drive prefixes as secrets", () => {
+    const values = collectEnvironmentRedactionValues({
+      API_KEY: "ab",
+      SERVICE_TOKEN: "test",
+      HOMEDRIVE: "C:",
+      APP_MODE: "prod",
+      SESSION_VALUE: "A1bc",
+      USERPROFILE: "C:\\Users\\ThinkPad",
+    });
+    const redacted = redactTextForOutput(
+      "credential ab; word cab; drive C:; path C:\\Users\\ThinkPad; module synthetic.test.ts; session A1bc; mode prod; value test",
+      values,
+    );
+
+    expect(values).toEqual(["test", "prod", "A1bc", "ab"]);
+    expect(redacted).toContain("credential [REDACTED]");
+    expect(redacted).toContain("word cab");
+    expect(redacted).toContain("drive C:");
+    expect(redacted).toContain("path C:\\Users\\ThinkPad");
+    expect(redacted).toContain("module synthetic.test.ts");
+    expect(redacted).toContain("session [REDACTED]");
+    expect(redacted).toContain("mode [REDACTED]");
+    expect(redacted).toContain("value [REDACTED]");
+
+    const sensitiveDriveValue = collectEnvironmentRedactionValues({
+      API_KEY: "C:",
+    });
+    expect(
+      redactTextForOutput(
+        "path C:\\Users\\ThinkPad; key C:",
+        sensitiveDriveValue,
+      ),
+    ).toBe("path C:\\Users\\ThinkPad; key [REDACTED]");
   });
 
   describe("outer suite", () => {
