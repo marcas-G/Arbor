@@ -105,11 +105,30 @@ let workExecutionId: string | undefined;
 let effectObserved = false;
 const schedulerDiagnosticLines: string[] = [];
 const p4DiagnosticErrors: string[] = [];
+const p4EvidenceFailures: unknown[] = [];
+let p4PrimaryFailure: unknown;
 let probeLogLinesWritten = 0;
 const maximumP4DiagnosticLines = 512;
 
 const evidenceErrorMessage = (error: unknown): string =>
   error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+
+const emitP4DiagnosticMarker = (marker: Record<string, unknown>) => {
+  try {
+    console.error(JSON.stringify(marker));
+  } catch (error) {
+    p4EvidenceFailures.push(error);
+  }
+};
+
+const reportEvidenceFailure = (operation: string, error: unknown) => {
+  p4EvidenceFailures.push(error);
+  emitP4DiagnosticMarker({
+    tag: "P4_DIAGNOSTIC_FAILURE",
+    operation,
+    error: evidenceErrorMessage(error),
+  });
+};
 
 const attachEvidenceError = (
   report: Record<string, unknown>,
@@ -132,6 +151,7 @@ const writeEvidenceSafely = (path: string, report: Record<string, unknown>) => {
     writeFileSync(path, JSON.stringify(report, null, 2), "utf8");
   } catch (error) {
     attachEvidenceError(report, `write ${path}`, error);
+    reportEvidenceFailure(`write ${path}`, error);
   }
 };
 
@@ -144,7 +164,19 @@ const captureEvidenceSafely = <A>(
     return capture();
   } catch (error) {
     attachEvidenceError(report, label, error);
+    reportEvidenceFailure(label, error);
     return null;
+  }
+};
+
+const capturePrimaryFailure = async (run: () => Promise<void>) => {
+  p4PrimaryFailure = undefined;
+  p4EvidenceFailures.splice(0);
+  try {
+    await run();
+  } catch (error) {
+    p4PrimaryFailure = error;
+    throw error;
   }
 };
 let pendingP4FailureEvidence:
@@ -169,29 +201,39 @@ const appendProbeLine = (line: string) => {
     probeLogLinesWritten += 1;
   } catch (error) {
     p4DiagnosticErrors.push(`append probe log: ${evidenceErrorMessage(error)}`);
+    reportEvidenceFailure("append probe log", error);
   }
 };
 
 afterEach(async () => {
+  let cleanupError: unknown;
   for (const fixture of fixtures.splice(0)) {
-    let stopError: unknown;
-    let failureReportCaptured = false;
     try {
       await fixture.stop();
     } catch (error) {
-      stopError = error;
+      cleanupError =
+        cleanupError === undefined
+          ? error
+          : new AggregateError(
+              [cleanupError, error],
+              "multiple P4 fixture cleanup failures",
+            );
+      emitP4DiagnosticMarker({
+        tag: "P4_CLEANUP_FAILURE",
+        operation: "fixture.stop",
+        error: evidenceErrorMessage(error),
+      });
     } finally {
       const pending = pendingP4FailureEvidence;
       if (pending?.fixture === fixture) {
-        failureReportCaptured = true;
         const completedEvidence: Record<string, unknown> = {
           ...pending.report,
           ...(p4DiagnosticErrors.length > 0
             ? { p4DiagnosticErrors: [...p4DiagnosticErrors] }
             : {}),
         };
-        if (stopError !== undefined) {
-          attachEvidenceError(completedEvidence, "fixture.stop", stopError);
+        if (cleanupError !== undefined) {
+          completedEvidence.cleanupError = evidenceErrorMessage(cleanupError);
         }
         completedEvidence.afterStopExecutionSnapshot = captureEvidenceSafely(
           completedEvidence,
@@ -207,9 +249,55 @@ afterEach(async () => {
         pendingP4FailureEvidence = undefined;
       }
     }
-    if (stopError !== undefined && !failureReportCaptured) {
-      throw stopError;
+  }
+
+  const evidenceErrors = [...p4EvidenceFailures];
+  if (p4PrimaryFailure instanceof Error) {
+    if (cleanupError !== undefined) {
+      Object.defineProperty(p4PrimaryFailure, "cleanupError", {
+        configurable: true,
+        enumerable: true,
+        value: cleanupError,
+      });
     }
+    if (evidenceErrors.length > 0) {
+      Object.defineProperty(p4PrimaryFailure, "evidenceError", {
+        configurable: true,
+        enumerable: true,
+        value: evidenceErrors,
+      });
+    }
+    const suppressedDiagnostics = [
+      ...(cleanupError === undefined ? [] : [cleanupError]),
+      ...evidenceErrors,
+    ];
+    if (suppressedDiagnostics.length > 0) {
+      Object.defineProperty(p4PrimaryFailure, "suppressedDiagnostics", {
+        configurable: true,
+        enumerable: true,
+        value: suppressedDiagnostics,
+      });
+      throw p4PrimaryFailure;
+    }
+    return;
+  }
+  if (p4PrimaryFailure !== undefined) {
+    const errors = [
+      p4PrimaryFailure,
+      ...(cleanupError === undefined ? [] : [cleanupError]),
+      ...evidenceErrors,
+    ];
+    throw new AggregateError(errors, "P4 test and fixture cleanup failed");
+  }
+  const finalizationErrors = [
+    ...(cleanupError === undefined ? [] : [cleanupError]),
+    ...evidenceErrors,
+  ];
+  if (finalizationErrors.length > 0) {
+    throw new AggregateError(
+      finalizationErrors,
+      "P4 fixture cleanup or failure evidence capture failed",
+    );
   }
 });
 
@@ -538,7 +626,7 @@ const consumedExecutableApprovalSnapshot = (
 };
 
 describe("P4 lease acquisition while another daemon owns a live lease", () => {
-  it("records a real rejected acquisition for the same active Execution", async () => {
+  const runP4LeaseAcquisition = async () => {
     const marker = `P4-LIVE-${crypto.randomUUID().slice(0, 8)}`;
     const steerMarker = `P4-LIVE-STEER-${crypto.randomUUID().slice(0, 8)}`;
     const effectMarker = `P4_LIVE_EFFECT_${marker}`;
@@ -1362,5 +1450,11 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       observationEvidence,
     );
     pendingP4FailureEvidence = undefined;
-  }, 180_000);
+  };
+
+  it(
+    "records a real rejected acquisition for the same active Execution",
+    () => capturePrimaryFailure(runP4LeaseAcquisition),
+    180_000,
+  );
 });
