@@ -15,7 +15,10 @@ pnpm build
 
 首次启动前，先离线创建 schema 42 数据库，再将 `ARBOR_DB` 指向它并启动 Arbor。已有数据库则按下文 `copy` 操作完成后指向升级副本：
 
+先创建或选择本机父目录。父目录必须已存在，并通过 P39 的本地卷、owner 和 ACL 保护校验。创建目录本身不保证能通过这些校验：
+
 ```powershell
+New-Item -ItemType Directory -Force -Path 'C:\Arbor Data'
 node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
   --database 'C:\Arbor Data\arbor-v42.db' `
   --p39-report-db 'C:\Arbor Data\arbor-v42-p39-report.db' `
@@ -35,7 +38,7 @@ pnpm start
 
 当前启动 gate 精确要求 `PRAGMA user_version = 42`。普通启动不应用迁移。未达到 schema 42 的数据库必须先通过离线 `schema:upgrade` 完成升级，不要直接启动。
 
-升级只能针对停止服务后的本机数据库进行。先正常停止 Arbor，并确认没有其他进程使用源库。`copy` 仅支持 schema 36、37、38 的源库。整个复制和续跑期间源库必须停机、只读且保持不变。对于新的 `fresh` 或 `copy` 作业，目标、P39 报告库和 manifest 必须各自是独立的新路径；`resume-copy` 必须复用中断作业原有的源、目标、报告和 manifest 路径。严禁把在线数据库交给升级器，也不要把目标路径指向源库。
+升级只能针对停止服务后的本机数据库进行。先正常停止 Arbor，并确认没有其他进程使用源库。先创建或选择目标、P39 报告库和 manifest 所在的本机父目录；它必须已存在且通过 P39 本地卷、owner 和 ACL 保护校验。`New-Item -ItemType Directory -Force` 可创建目录，但不保证目录符合这些保护条件。`copy` 仅支持 schema 36、37、38 的源库。整个复制和续跑期间源库必须停机、只读且保持不变。对于新的 `fresh` 或 `copy` 作业，目标、P39 报告库和 manifest 必须各自是独立的新路径；`resume-copy` 必须复用中断作业原有的源、目标、报告和 manifest 路径。严禁把在线数据库交给升级器，也不要把目标路径指向源库。
 
 先构建升级器：
 
@@ -106,7 +109,7 @@ pnpm start
 
 可选的项目资源 profile 字段为 `ARBOR_PROJECT_PROFILE_REF`、`ARBOR_PROJECT_PROFILE_VERSION`、`ARBOR_PROJECT_PROFILE_NAME`。daemon 启动时读取该目录；在界面项目切换器中选择“新建项目”，选择可用资源并提交名称。进入项目根 Workspace 后创建或分配 Work。人工审批入口是项目级“待处理”队列 `/p/{projectId}/queue`；打开具体事项并核对后批准或拒绝。Workspace 的“收件箱”不承载审批。Work 的 Provider 验证结果与人对最终结果的验收是两个步骤。
 
-当前 local sandbox 仅将已批准的路径作为 mounts/boundaries 提供，并向子进程投影允许的环境变量；这不是 OS 级隔离，进程仍具有运行用户的操作系统权限。Native OS Sandbox 已有接受的治理设计，尚待实现；不要将本地 mount 边界描述成 OS 沙箱。
+当前 local sandbox 仅将已批准的路径作为 mounts/boundaries 提供，并向子进程投影允许的环境变量；这不是 OS 级隔离，进程仍具有运行用户的操作系统权限。Native OS Sandbox 尚未实现；不要将本地 mount 边界描述成 OS 沙箱。
 
 ## 检查与证据范围
 
