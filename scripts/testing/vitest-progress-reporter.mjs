@@ -17,9 +17,7 @@ export const collectEnvironmentRedactionValues = (environment) =>
   Object.entries(environment)
     .filter(([key, value]) => {
       if (typeof value !== "string" || value.length === 0) return false;
-      if (sensitiveEnvironmentName.test(key)) return true;
-      if (/^[A-Za-z]:$/.test(value)) return false;
-      return value.length >= 4 && !/[\\/:\s]/.test(value);
+      return sensitiveEnvironmentName.test(key);
     })
     .map(([, value]) => value)
     .sort((left, right) => right.length - left.length);
