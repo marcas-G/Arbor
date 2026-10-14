@@ -1,6 +1,6 @@
 # Scientific Test Wave R3: Deterministic Lease Qualification
 
-Date: 2026-10-14  
+Date: 2026-10-14
 Base: `1ce7ffc7f22a5e641ef45e0ef5fda2b2c08e9db9`
 
 ## Scope

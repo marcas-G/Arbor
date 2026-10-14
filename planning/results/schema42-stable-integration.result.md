@@ -245,3 +245,50 @@ and no command or production behavior changed.
 Focused verification: `no-forbidden-controls.test.tsx` — 8/8 PASS; Biome on
 `apps/web/src/pages/attention/fixtures.ts` — PASS; Web typecheck — PASS;
 `git diff --check` — PASS. No full check was rerun.
+
+## Scientific functional-test infrastructure and P4/R3 qualification
+
+Cherry-picked the requested functional schema-42 baseline and cleanup
+(`639a5fb7`, `1ce7ffc7`), scientific test-tier proposal (`99adab0f`), unified
+P4 store-crash qualification (`acc848b9`), exact R1 runner chain
+(`8b06d24c`, `c59a4c17`, `dbedf73d`), R2 port-safe fixture chain
+(`f96aee24`, `c79d2d19`), and R3 lease qualification chain
+(`8ce7cc48`, `275ea886`). The proposal, result records, test manifest and
+runner documentation are retained. No sandbox governance dirty landing was
+included.
+
+Functional process fixtures now start from the shared schema-42 template and
+private clones with owned startup/cleanup. The R2 handshake uses child PID,
+nonce and actual reported port; restarts require the old child to exit and
+reject a custom child that reports a different requested port. R3 replaces
+most real-time lease-expiry waits with an owner-bound exact-tuple CAS while
+retaining the specified natural-expiry sentinels and the P9 dense-SSE
+wall-clock case. The P4 process-crash test now covers unified approvals.
+
+Cherry-pick conflict resolution: only
+`tests/functional/support/production-fixture.ts` conflicted during R3 P37
+diagnostic integration. Kept R2's requested-port parameter and rejection
+check, and merged R3's bounded stdout-line/lifecycle-marker diagnostics. The
+existing fixture stdout listener already forwards callback lines, so the
+incoming duplicate `onLine` callback was omitted to avoid duplicate diagnostic
+capture while preserving safe handshake evidence.
+
+Focused validation on this integration branch:
+
+- `pnpm typecheck` — PASS.
+- Biome on changed TypeScript/JavaScript/JSON files — PASS (47 files
+  processed).
+- `pnpm test:manifest` — PASS, 6/6; manifest validator reports **48**
+  functional Vitest files and **6** UI files. The first attempt caught the
+  newly added R2 handshake file missing from the manifest; the runner startup
+  probe then exited during manifest validation before launching its fake
+  package-manager process. Added the file to the smoke and full inventory,
+  updated the validator/test count to 48, and the complete manifest self-test
+  passed on rerun.
+- Lease/helper unit tests — PASS, 2 files / 9 tests.
+- R2 production fixture port handshake — PASS, 1 file / 6 tests in 123.60s.
+- P4 unified-approval process-crash case — PASS, 1 file / 1 test in 58.79s.
+- `git diff --check` — PASS after the result and manifest updates.
+
+The source result retains the R3 RAI-DG-01 red findings; these focused results
+do not establish full 48-file functional or release qualification.

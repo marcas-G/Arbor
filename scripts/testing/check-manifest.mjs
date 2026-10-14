@@ -180,9 +180,9 @@ export function validateManifest(
     }
   }
 
-  if (groups.functionalVitest?.length !== 47)
+  if (groups.functionalVitest?.length !== 48)
     report(
-      `expected 47 configured functional Vitest files, found ${groups.functionalVitest?.length ?? 0}`,
+      `expected 48 configured functional Vitest files, found ${groups.functionalVitest?.length ?? 0}`,
     );
   if (groups.functionalUi?.length !== 6)
     report(

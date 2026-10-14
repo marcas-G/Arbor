@@ -1,7 +1,7 @@
 # Scientific Test Architecture R1 Result
 
-Date: 2026-10-14  
-Base: `1ce7ffc7f22a5e641ef45e0ef5fda2b2c08e9db9`  
+Date: 2026-10-14
+Base: `1ce7ffc7f22a5e641ef45e0ef5fda2b2c08e9db9`
 Scope: exact test inventory, profile definitions, validation, and serial runner. No `docs/design/**` files changed.
 
 ## Implemented
@@ -38,3 +38,12 @@ The quick/smoke/crash profiles are explicit subsets of the current suites. They 
 ## Qualification boundary
 
 This result qualifies the manifest and runner self-checks only. It does not qualify any application behavior, crash boundary, clean checkout, browser journey, or release. The release profile's `completeCoverage` is true only after both exact complete groups execute successfully during that invocation.
+
+## R2 inventory follow-up
+
+R2 adds `tests/functional/process/production-fixture-port-handshake.functional.test.ts`
+after this R1 snapshot. The current manifest includes that file in both the
+smoke and complete functional Vitest groups, so the current inventory is 48
+Vitest files plus 6 UI files. `pnpm test:manifest` passes 6/6 self-checks and
+reports 48/6. The 47/6 counts above remain the R1 commit's historical
+inventory.
