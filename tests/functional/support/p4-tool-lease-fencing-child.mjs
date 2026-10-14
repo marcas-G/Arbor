@@ -131,10 +131,10 @@ const executionLeaseQualificationProbe = async (event) => {
     existsSync(join(gateDirectory, "old-acquire.request"))
   ) {
     emit({
-      boundary: "AH10BeforeLeaseAcquiredPaused",
+      boundary: "AH10BeforeLeaseAcquiredReady",
       executionId: event.executionId,
     });
-    await waitForGate("old-acquire", event);
+    await waitForGate("acquire", event);
     return;
   }
   if (event.boundary === "AH10LeaseAcquisitionRejected") {
