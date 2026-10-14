@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { P37Probe } from "../support/p37-deliver-process-fixture.js";
 import {
   awaitP37Probe,
+  expireP37LeaseForQualification,
   findDeliverReplayFact,
   fixtures,
   p37Child,
@@ -15,7 +16,6 @@ import {
   restartP37Normally,
   seedDeliverableWaitingForDelivery,
   startP37RecoveryDaemon,
-  waitForLeaseExpiry,
 } from "../support/p37-deliver-process-fixture.js";
 import { makePublicClient, waitForPublic } from "../support/public-client.js";
 
@@ -69,8 +69,8 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
     } finally {
       inboxDb.close();
     }
-    await waitForLeaseExpiry(
-      seed.fixture.databaseFile,
+    await expireP37LeaseForQualification(
+      seed.fixture,
       firstAction.execution_id,
     );
 

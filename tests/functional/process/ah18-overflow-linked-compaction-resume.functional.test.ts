@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -842,23 +843,32 @@ const startAtBoundary = async (boundary: Ah18CrashBoundary) => {
   };
 };
 
-const waitForExpiredLease = async (
+const expireLeaseAfterOldDaemonExit = (
   fixture: ProductionFixture,
   project: { readonly rootSessionId: string },
   executionId: string,
   workId: string,
-) =>
-  waitForPublic(
-    async () =>
-      readSnapshot(fixture.databaseFile, {
-        sessionId: project.rootSessionId,
-        executionId,
-        workId,
-      }).leases.find((lease) => lease.execution_id === executionId),
-    (lease) =>
-      lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-    35_000,
-  );
+) => {
+  const lease = readSnapshot(fixture.databaseFile, {
+    sessionId: project.rootSessionId,
+    executionId,
+    workId,
+  }).leases.find((candidate) => candidate.execution_id === executionId);
+  if (lease === undefined)
+    throw new Error(`AH18 lease ${executionId} is absent after daemon exit`);
+  return expireExecutionLeaseForQualification({
+    databaseFile: fixture.databaseFile,
+    executionId,
+    expected: {
+      generation: Number(lease.generation),
+      expiresAt: lease.expires_at,
+    },
+    daemon: {
+      crash: fixture.crash,
+      snapshot: fixture.daemonProcessSnapshot,
+    },
+  });
+};
 
 const insertOrphanCompactionManifest = (
   databaseFile: string,
@@ -1138,17 +1148,19 @@ describe("AH18 linked overflow compaction recovery", () => {
         expect(afterOldKill.links).toEqual(beforeKill.links);
       }
 
-      await waitForPublic(
-        async () =>
-          readSnapshot(fixture.databaseFile, {
-            sessionId: project.rootSessionId,
-            executionId,
-            workId,
-          }).leases.find((lease) => lease.execution_id === executionId),
-        (lease) =>
-          lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-        35_000,
+      const expiredLease = await expireLeaseAfterOldDaemonExit(
+        fixture,
+        project,
+        executionId,
+        workId,
       );
+      expect(expiredLease.after).toMatchObject({
+        execution_id: executionId,
+        worker_id: expiredLease.before.worker_id,
+        worker_incarnation_id: expiredLease.before.worker_incarnation_id,
+        generation: expiredLease.before.generation,
+        expires_at: "1970-01-01T00:00:00.000Z",
+      });
       await fixture.restart().catch((error: unknown) => {
         throw new Error(
           `AH18 ordinary daemon restart failed: ${error instanceof Error ? error.message : String(error)}; snapshot=${JSON.stringify(readSnapshot(fixture.databaseFile, { sessionId: project.rootSessionId, executionId, workId }))}; providerRequests=${JSON.stringify(provider.requests.map((request) => request.kind))}; daemon=${fixture.daemonErrors.join(" | ")}`,
@@ -1374,7 +1386,7 @@ describe("AH18 linked overflow compaction recovery", () => {
       "initial-inference",
     ]);
 
-    await waitForExpiredLease(fixture, project, executionId, workId);
+    await expireLeaseAfterOldDaemonExit(fixture, project, executionId, workId);
     await fixture.restart().catch((error: unknown) => {
       throw new Error(
         `AH18 restart after failTurn rollback failed: ${error instanceof Error ? error.message : String(error)}; snapshot=${JSON.stringify(readSnapshot(fixture.databaseFile, ids))}; requests=${JSON.stringify(provider.requests.map((request) => request.kind))}; daemon=${fixture.daemonErrors.join(" | ")}`,
@@ -1613,7 +1625,12 @@ describe("AH18 linked overflow compaction recovery", () => {
       );
       expect(afterOldKill.links).toEqual(beforeKill.links);
       expect(afterOldKill.step).toEqual(beforeKill.step);
-      await waitForExpiredLease(fixture, project, executionId, workId);
+      await expireLeaseAfterOldDaemonExit(
+        fixture,
+        project,
+        executionId,
+        workId,
+      );
       await fixture.restart();
 
       const recovered = await waitForPublic(
@@ -1766,7 +1783,7 @@ describe("AH18 linked overflow compaction recovery", () => {
     ).toBe(false);
 
     await fixture.crash();
-    await waitForExpiredLease(fixture, project, executionId, workId);
+    await expireLeaseAfterOldDaemonExit(fixture, project, executionId, workId);
     insertOrphanCompactionManifest(fixture.databaseFile, {
       providerTurnId: compactionId,
       executionId,
@@ -1864,7 +1881,12 @@ describe("AH18 linked overflow compaction recovery", () => {
       ).toBe(false);
 
       await fixture.crash();
-      await waitForExpiredLease(fixture, project, executionId, workId);
+      await expireLeaseAfterOldDaemonExit(
+        fixture,
+        project,
+        executionId,
+        workId,
+      );
       corruptSummaryBinding(fixture.databaseFile, {
         providerTurnId: compactionId,
         manifestId: summaryTurn.manifest_id,
@@ -2090,7 +2112,12 @@ describe("AH18 linked overflow compaction recovery", () => {
       expect(afterOldKill.session).toEqual(beforeKill.session);
       expect(afterOldKill.checkpoints).toEqual(beforeKill.checkpoints);
       expect(afterOldKill.links).toEqual(beforeKill.links);
-      await waitForExpiredLease(fixture, project, executionId, workId);
+      await expireLeaseAfterOldDaemonExit(
+        fixture,
+        project,
+        executionId,
+        workId,
+      );
       await fixture.restart();
 
       const terminal = await waitForPublic(

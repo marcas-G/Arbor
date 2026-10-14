@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
 import {
   type CapturedProviderCall,
   type ProductionFixture,
@@ -1839,20 +1840,32 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
   return { fixture, project, workId, probe, native, reportUrl, childOutput };
 };
 
-const waitForLeaseExpiry = async (
+const expireLeaseAfterOldDaemonExit = (
   fixture: ProductionFixture,
   sessionId: string,
   executionId: string,
   workId: string,
-) =>
-  waitForPublic(
-    async () =>
-      readSnapshot(fixture.databaseFile, { sessionId, executionId, workId })
-        .leases[0],
-    (lease) =>
-      lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-    35_000,
-  );
+) => {
+  const lease = readSnapshot(fixture.databaseFile, {
+    sessionId,
+    executionId,
+    workId,
+  }).leases.find((candidate) => candidate.execution_id === executionId);
+  if (lease === undefined)
+    throw new Error(`AH19 lease ${executionId} is absent after daemon exit`);
+  return expireExecutionLeaseForQualification({
+    databaseFile: fixture.databaseFile,
+    executionId,
+    expected: {
+      generation: Number(lease.generation),
+      expiresAt: lease.expires_at,
+    },
+    daemon: {
+      crash: fixture.crash,
+      snapshot: fixture.daemonProcessSnapshot,
+    },
+  });
+};
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
@@ -2223,7 +2236,7 @@ describe("AH19 restart binding qualification", () => {
         (request) => request.providerTurnId === nativeTurnId,
       ).length;
       await fixture.crash();
-      await waitForLeaseExpiry(
+      await expireLeaseAfterOldDaemonExit(
         fixture,
         project.rootSessionId,
         executionId,
@@ -2364,7 +2377,7 @@ describe("AH19 restart binding qualification", () => {
     expect(nativeRow).toBeDefined();
     expect(beforeRestart.session?.context_epoch).toBe(1);
     await fixture.crash();
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -2487,7 +2500,7 @@ describe("AH19 restart binding qualification", () => {
       ),
     ).toEqual([expect.objectContaining({ outcome: "Success" })]);
     await fixture.crash();
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       probe.executionId,
@@ -2552,7 +2565,7 @@ describe("AH19 restart binding qualification", () => {
       expect(beforeKill.session?.context_epoch).toBe(1);
       expect(beforeKill.checkpoints).toHaveLength(1);
       await fixture.crash();
-      await waitForLeaseExpiry(
+      await expireLeaseAfterOldDaemonExit(
         fixture,
         project.rootSessionId,
         probe.executionId,
@@ -2644,7 +2657,7 @@ describe("AH19 restart binding qualification", () => {
       const source = manifest.sourceAgentLoopStep;
       expect(source).toBeDefined();
       await fixture.crash();
-      await waitForLeaseExpiry(
+      await expireLeaseAfterOldDaemonExit(
         fixture,
         project.rootSessionId,
         executionId,
@@ -2751,7 +2764,7 @@ describe("AH19 restart binding qualification", () => {
     expect(beforeKill.session?.context_epoch).toBe(0);
     expect(beforeKill.checkpoints).toHaveLength(0);
     await fixture.crash();
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -2846,7 +2859,7 @@ describe("AH19 restart binding qualification", () => {
         ),
       ).toBe(false);
       await fixture.crash();
-      await waitForLeaseExpiry(
+      await expireLeaseAfterOldDaemonExit(
         fixture,
         project.rootSessionId,
         executionId,
@@ -2971,7 +2984,7 @@ describe("AH19 restart binding qualification", () => {
       expect(nativeRequestCount).toBe(1);
 
       await fixture.crash();
-      await waitForLeaseExpiry(
+      await expireLeaseAfterOldDaemonExit(
         fixture,
         project.rootSessionId,
         executionId,
@@ -3175,7 +3188,7 @@ describe("AH19 restart binding qualification", () => {
         (turn) => turn.provider_turn_id === targetNativeTurnId,
       ),
     ).toEqual(targetNativeTurn);
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -3329,7 +3342,7 @@ describe("AH19 restart binding qualification", () => {
     });
 
     await fixture.crash();
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -3436,7 +3449,7 @@ describe("AH19 restart binding qualification", () => {
       providerTurnId: `ptn_${executionId}_2`,
     });
     await fixture.crash();
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -3595,7 +3608,7 @@ describe("AH19 restart binding qualification", () => {
           link.logical_step_no === 1 && link.role === "OverflowReplacement",
       ),
     ).toEqual(olderReplacementLink);
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -3825,7 +3838,7 @@ describe("AH19 restart binding qualification", () => {
     expect(readSnapshot(fixture.databaseFile, ids).steps).toEqual(
       beforeKill.steps,
     );
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -3987,7 +4000,7 @@ describe("AH19 restart binding qualification", () => {
     const nativeCheckpoint = beforeKill.checkpoints[0];
     expect(nativeCheckpoint).toBeDefined();
     await fixture.crash();
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -4123,7 +4136,7 @@ describe("AH19 restart binding qualification", () => {
     ).toEqual(beforeTurn);
     expect(afterKill.providerAttempts).toEqual(beforeKill.providerAttempts);
     expect(afterKill.checkpoints).toEqual([]);
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -4227,7 +4240,7 @@ describe("AH19 restart binding qualification", () => {
       });
 
       await fixture.crash();
-      await waitForLeaseExpiry(
+      await expireLeaseAfterOldDaemonExit(
         fixture,
         project.rootSessionId,
         executionId,
@@ -4354,7 +4367,7 @@ describe("AH19 restart binding qualification", () => {
     const afterKill = readSnapshot(fixture.databaseFile, ids);
     expect(afterKill.session).toEqual(beforeKill.session);
     expect(afterKill.checkpoints).toEqual([]);
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -4444,7 +4457,7 @@ describe("AH19 restart binding qualification", () => {
     ]);
 
     await fixture.crash();
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,
@@ -4548,7 +4561,7 @@ describe("AH19 restart binding qualification", () => {
       });
 
       await fixture.crash();
-      await waitForLeaseExpiry(
+      await expireLeaseAfterOldDaemonExit(
         fixture,
         project.rootSessionId,
         executionId,
@@ -4649,7 +4662,7 @@ describe("AH19 restart binding qualification", () => {
     const afterKill = readSnapshot(fixture.databaseFile, ids);
     expect(afterKill.session).toEqual(beforeKill.session);
     expect(afterKill.checkpoints).toEqual(beforeKill.checkpoints);
-    await waitForLeaseExpiry(
+    await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
       executionId,

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { newUuid7 } from "../../../packages/application/src/index.js";
+import { expireExecutionLeaseForQualification } from "./lease-qualification.js";
 import {
   type CapturedProviderCall,
   type ProductionFixture,
@@ -1112,21 +1113,29 @@ export const prepareContradictoryCommittedReceipt = async (marker: string) => {
   return prepared;
 };
 
-export const waitForLeaseExpiry = async (
-  databaseFile: string,
+export const expireP37LeaseForQualification = async (
+  fixture: ProductionFixture,
   executionId: string,
-) =>
-  waitForPublic(
-    async () =>
-      readP37Snapshot(databaseFile).leases.find(
-        (lease) =>
-          (lease as { execution_id: string }).execution_id === executionId,
-      ),
-    (lease) =>
-      lease !== undefined &&
-      Date.parse((lease as { expires_at: string }).expires_at) <= Date.now(),
-    40_000,
-  );
+) => {
+  const lease = readP37Snapshot(fixture.databaseFile).leases.find(
+    (candidate) =>
+      (candidate as { execution_id: string }).execution_id === executionId,
+  ) as { readonly generation: number; readonly expires_at: string } | undefined;
+  if (lease === undefined)
+    throw new Error(`P37 lease ${executionId} is absent before takeover`);
+  return expireExecutionLeaseForQualification({
+    databaseFile: fixture.databaseFile,
+    executionId,
+    expected: {
+      generation: Number(lease.generation),
+      expiresAt: lease.expires_at,
+    },
+    daemon: {
+      crash: fixture.crash,
+      snapshot: fixture.daemonProcessSnapshot,
+    },
+  });
+};
 
 export const startP37RecoveryDaemon = (
   fixture: ProductionFixture,

@@ -1,9 +1,11 @@
-import { Effect, Layer, Option } from "effect";
+import { Effect, Clock as EffectClock, Fiber, Layer, Option } from "effect";
+import { TestClock } from "effect/testing";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   AgentExecutionStateStoreLive,
   ClockLive,
+  ClockTest,
   CommandStoreLive,
   DomainEventJournalLive,
   ExecutionRepositoryLive,
@@ -47,6 +49,7 @@ import {
   FenceStopCheckLive,
   LEASE_RENEW_INTERVAL_MS,
   LEASE_TTL_MS,
+  leaseRenewalLoop,
   P2CommandHandlerRegistryLive,
   RuntimeSafetyGateLive,
   renewLeaseOnce,
@@ -188,9 +191,10 @@ const makeApp = (
     never,
     ExecutionRepository | TransactionPort | LeaseService | SqlClient
   >,
+  clockLayer: Layer.Layer<Clock> = ClockLive,
 ) => {
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(base, clockLayer, IdGeneratorLive);
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
@@ -223,6 +227,19 @@ const makeApp = (
   );
   return Layer.mergeAll(all, Layer.provide(CommandGatewayLive, all));
 };
+
+const effectTestClockLeaseLayer = Layer.effect(
+  Clock,
+  Effect.gen(function* () {
+    const effectClock = yield* EffectClock.Clock;
+    return Clock.of({
+      now: () =>
+        Effect.sync(() =>
+          new Date(effectClock.currentTimeMillisUnsafe()).toISOString(),
+        ),
+    });
+  }),
+).pipe(Layer.provideMerge(TestClock.layer({ warningDelay: "10 seconds" })));
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -442,6 +459,109 @@ describe("P9-004 lease renewal loop (L2/L3) + soft release", () => {
         ),
       );
       expect(stale._tag).toBe("LeaseLost");
+    });
+    await run(program, app);
+  });
+
+  it("L2: TestClock drives acquire, TTL/3 renewal, cancellation, expiry, takeover, and stale fencing", async () => {
+    const epoch = Date.parse("2026-10-14T00:00:00.000Z");
+    const app = makeApp(slowDriver(1, { v: null }), effectTestClockLeaseLayer);
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P12_MIGRATIONS);
+      yield* seed;
+      yield* admit;
+      yield* TestClock.setTime(epoch);
+      const tx = yield* TransactionPort;
+      const leases = yield* LeaseService;
+      const acquired = yield* tx.transact(
+        leases.acquire(executionId, "worker:a", "inc-a"),
+      );
+      expect(acquired.generation).toBe(0);
+      expect(acquired.expiresAt).toBe(
+        new Date(epoch + LEASE_TTL_MS).toISOString(),
+      );
+
+      const renewal = yield* Effect.forkChild(
+        leaseRenewalLoop(
+          executionId,
+          "worker:a",
+          "inc-a",
+          acquired.generation,
+          LEASE_RENEW_INTERVAL_MS,
+        ),
+      );
+      yield* TestClock.adjust(LEASE_RENEW_INTERVAL_MS);
+      const firstRenewal = yield* leaseRow();
+      expect(firstRenewal?.generation).toBe(0);
+      expect(firstRenewal?.expiresAt).toBe(
+        new Date(epoch + LEASE_RENEW_INTERVAL_MS + LEASE_TTL_MS).toISOString(),
+      );
+
+      yield* Fiber.interrupt(renewal);
+      const canceledAt = yield* leaseRow();
+      yield* TestClock.adjust(LEASE_RENEW_INTERVAL_MS * 4);
+      const afterCancel = yield* leaseRow();
+      expect(afterCancel).toEqual(canceledAt);
+
+      const clock = yield* Clock;
+      const now = yield* clock.now();
+      const expiredCount = yield* tx.transact(leases.invalidateExpired(now));
+      expect(expiredCount).toBe(1);
+      const takeover = yield* tx.transact(
+        leases.acquire(executionId, "worker:b", "inc-b"),
+      );
+      expect(takeover).toMatchObject({
+        workerId: "worker:b",
+        workerIncarnationId: "inc-b",
+        generation: 1,
+      });
+
+      const staleRenewal = yield* Effect.flip(
+        renewLeaseOnce(executionId, "worker:a", "inc-a", acquired.generation),
+      );
+      expect(staleRenewal._tag).toBe("LeaseLost");
+      const fence = yield* FenceStopCheck;
+      const staleWrite = yield* tx.transact(
+        fence.check(
+          {
+            _tag: "ExecutionOrigin",
+            principal,
+            executionId,
+            fencingGeneration: acquired.generation,
+          },
+          { _tag: "NormalExecutionMutation" },
+        ),
+      );
+      expect(staleWrite).toBe("FencingRejected");
+    });
+    await run(program, app);
+  });
+
+  it("L2: ClockTest pins the TTL and expiry boundary used by lease acquisition", async () => {
+    const acquiredAt = "2026-10-14T01:02:03.000Z";
+    const app = makeApp(slowDriver(1, { v: null }), ClockTest(acquiredAt));
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P12_MIGRATIONS);
+      yield* seed;
+      yield* admit;
+      const tx = yield* TransactionPort;
+      const leases = yield* LeaseService;
+      const lease = yield* tx.transact(
+        leases.acquire(executionId, "worker:clock-test", "inc-clock-test"),
+      );
+      expect(lease.expiresAt).toBe(
+        new Date(Date.parse(acquiredAt) + LEASE_TTL_MS).toISOString(),
+      );
+      expect(
+        yield* tx.transact(
+          leases.invalidateExpired(
+            new Date(Date.parse(lease.expiresAt) - 1).toISOString(),
+          ),
+        ),
+      ).toBe(0);
+      expect(
+        yield* tx.transact(leases.invalidateExpired(lease.expiresAt)),
+      ).toBe(1);
     });
     await run(program, app);
   });

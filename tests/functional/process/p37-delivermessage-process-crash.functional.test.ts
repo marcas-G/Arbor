@@ -6,6 +6,7 @@ import {
   deliverAndHoldCommittedReceipt,
   expectedDeliverCommandId,
   expectedDeliverMessageId,
+  expireP37LeaseForQualification,
   findDeliverReplayFact,
   fixtures,
   p37Child,
@@ -17,7 +18,6 @@ import {
   restartP37Normally,
   seedDeliverableWaitingForDelivery,
   startP37RecoveryDaemon,
-  waitForLeaseExpiry,
 } from "../support/p37-deliver-process-fixture.js";
 import { makePublicClient, waitForPublic } from "../support/public-client.js";
 
@@ -94,19 +94,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       );
       expect(oldRenewal?.executionId).toBe(oldAction.executionId);
 
-      await waitForPublic(
-        async () =>
-          readP37Snapshot(fixture.databaseFile).leases.find(
-            (lease) =>
-              (lease as { execution_id: string }).execution_id ===
-              oldAction.executionId,
-          ),
-        (lease) =>
-          lease !== undefined &&
-          Date.parse((lease as { expires_at: string }).expires_at) <=
-            Date.now(),
-        40_000,
-      );
+      await expireP37LeaseForQualification(fixture, oldAction.executionId);
       const newDaemon = await fixture.startAdditionalDaemon({
         entry: p37Child,
         daemonEnvironment: {
@@ -442,8 +430,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     } finally {
       inboxDb.close();
     }
-    await waitForLeaseExpiry(
-      prepared.fixture.databaseFile,
+    await expireP37LeaseForQualification(
+      prepared.fixture,
       prepared.action.execution_id,
     );
     const recovery = await startP37RecoveryDaemon(
@@ -505,8 +493,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       ),
     ).toHaveLength(0);
     await recovery.crash();
-    await waitForLeaseExpiry(
-      prepared.fixture.databaseFile,
+    await expireP37LeaseForQualification(
+      prepared.fixture,
       prepared.action.execution_id,
     );
     await restartP37Normally(prepared.fixture);
@@ -561,8 +549,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     } finally {
       inboxDb.close();
     }
-    await waitForLeaseExpiry(
-      prepared.fixture.databaseFile,
+    await expireP37LeaseForQualification(
+      prepared.fixture,
       prepared.action.execution_id,
     );
     const recovery = await startP37RecoveryDaemon(
@@ -676,8 +664,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       }
       await recovery.crash();
       if (p9Probe?.executionId !== undefined) {
-        await waitForLeaseExpiry(
-          prepared.fixture.databaseFile,
+        await expireP37LeaseForQualification(
+          prepared.fixture,
           p9Probe.executionId,
         );
       }
@@ -789,7 +777,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       "Applied",
     );
     await seed.fixture.crash();
-    await waitForLeaseExpiry(seed.fixture.databaseFile, executionId);
+    await expireP37LeaseForQualification(seed.fixture, executionId);
 
     const recovery = await startP37RecoveryDaemon(
       seed.fixture,
@@ -846,7 +834,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     } finally {
       inboxDb.close();
     }
-    await waitForLeaseExpiry(seed.fixture.databaseFile, executionId);
+    await expireP37LeaseForQualification(seed.fixture, executionId);
     await restartP37Normally(seed.fixture);
     const finalWithFact = await waitForPublic(
       async () => readP37Snapshot(seed.fixture.databaseFile),
@@ -988,8 +976,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         );
       }
       if (projectionProbe?.executionId !== undefined) {
-        await waitForLeaseExpiry(
-          prepared.fixture.databaseFile,
+        await expireP37LeaseForQualification(
+          prepared.fixture,
           projectionProbe.executionId,
         );
       }
@@ -1055,8 +1043,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     if (prepared.held.executionId === undefined) {
       throw new Error("P37 contradictory receipt ExecutionId missing");
     }
-    await waitForLeaseExpiry(
-      prepared.fixture.databaseFile,
+    await expireP37LeaseForQualification(
+      prepared.fixture,
       prepared.held.executionId,
     );
     await restartP37Normally(prepared.fixture);
