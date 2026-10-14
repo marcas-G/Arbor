@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -652,15 +653,35 @@ describe("AH17 CompactionCheckpoint and ContextEpoch process crash", () => {
       const afterOldKill = readAh17Snapshot(fixture.databaseFile, ids);
       expect(afterOldKill.session).toEqual(beforeKill.session);
       expect(afterOldKill.checkpoints).toEqual(beforeKill.checkpoints);
-      await waitForPublic(
-        async () =>
-          readAh17Snapshot(fixture.databaseFile, ids).leases.find(
-            (lease) => lease.execution_id === boundary.executionId,
-          ),
-        (lease) =>
-          lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-        35_000,
+      const oldLease = afterOldKill.leases.find(
+        (lease) => lease.execution_id === boundary.executionId,
       );
+      if (oldLease === undefined)
+        throw new Error("AH17 old execution lease is absent after daemon exit");
+      const expiredLease = await expireExecutionLeaseForQualification({
+        databaseFile: fixture.databaseFile,
+        executionId: boundary.executionId,
+        expected: {
+          generation: Number(oldLease.generation),
+          expiresAt: oldLease.expires_at,
+        },
+        daemon: {
+          crash: fixture.crash,
+          snapshot: fixture.daemonProcessSnapshot,
+        },
+      });
+      expect(expiredLease.before).toMatchObject({
+        execution_id: boundary.executionId,
+        generation: oldLease.generation,
+        expires_at: oldLease.expires_at,
+      });
+      expect(expiredLease.after).toMatchObject({
+        execution_id: boundary.executionId,
+        generation: oldLease.generation,
+        worker_id: expiredLease.before.worker_id,
+        worker_incarnation_id: expiredLease.before.worker_incarnation_id,
+        expires_at: "1970-01-01T00:00:00.000Z",
+      });
       await fixture.restart().catch((error: unknown) => {
         throw new Error(
           `AH17 daemon did not restart after ${crashSide} boundary: ${error instanceof Error ? error.message : String(error)}; daemon=${fixture.daemonErrors.join(" | ")}`,

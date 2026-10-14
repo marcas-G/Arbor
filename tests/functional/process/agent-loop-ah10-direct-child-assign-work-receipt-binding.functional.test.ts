@@ -8,6 +8,7 @@ import {
   createP32MigrationBaseline,
   upgradeSchema42TestDatabase,
 } from "../../support/schema42-database.js";
+import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -1578,15 +1579,14 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         }
         expect(oldLeasePause.fencingGeneration).toBe(0);
       }
-      await waitForPublic(
-        async () =>
-          readRows(recoveryDatabaseFile).leases.find(
-            (lease) => lease.execution_id === oldAction.executionId,
-          ),
-        (lease) =>
-          lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-        35_000,
-      );
+      await expireExecutionLeaseForQualification({
+        databaseFile: recoveryDatabaseFile,
+        executionId: oldAction.executionId,
+        daemon: {
+          crash: fixture.crash,
+          snapshot: fixture.daemonProcessSnapshot,
+        },
+      });
 
       if (crashSide === "legacy-p32-upgrade") {
         recoveryDatabaseFile = await makePreBindingP32Copy(
@@ -1788,15 +1788,14 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         expect(afterAttentionKill.bindingAttentionEvents).toHaveLength(
           expectedFactCount,
         );
-        await waitForPublic(
-          async () =>
-            readRows(recoveryDatabaseFile).leases.find(
-              (lease) => lease.execution_id === oldAction.executionId,
-            ),
-          (lease) =>
-            lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-          35_000,
-        );
+        await expireExecutionLeaseForQualification({
+          databaseFile: recoveryDatabaseFile,
+          executionId: oldAction.executionId,
+          daemon: {
+            crash: newDaemon.crash,
+            snapshot: newDaemon.daemonProcessSnapshot,
+          },
+        });
         const restartedDaemon = await fixture.startAdditionalDaemon({
           entry: ah10Child,
           daemonEnvironment: {

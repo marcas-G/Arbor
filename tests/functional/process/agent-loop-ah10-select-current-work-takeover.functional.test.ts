@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -587,15 +588,14 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
       );
       expect(oldLease?.generation).toBe(0);
       if (oldLease === undefined) throw new Error("gen0 lease row is absent");
-      await waitForPublic(
-        async () =>
-          readRows(fixture.databaseFile).leases.find(
-            (lease) => lease.execution_id === oldAction.executionId,
-          ),
-        (lease) =>
-          lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-        35_000,
-      );
+      await expireExecutionLeaseForQualification({
+        databaseFile: fixture.databaseFile,
+        executionId: oldAction.executionId,
+        daemon: {
+          crash: fixture.crash,
+          snapshot: fixture.daemonProcessSnapshot,
+        },
+      });
 
       const newDaemon = await fixture.startAdditionalDaemon({
         entry: ah10Child,
@@ -1146,16 +1146,16 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
         ),
       ),
     ).toHaveLength(0);
-    const expiredLease = await waitForPublic(
-      async () =>
-        readRows(fixture.databaseFile).leases.find(
-          (lease) => lease.execution_id === oldAction.executionId,
-        ),
-      (lease) =>
-        lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-      35_000,
-    );
-    expect(expiredLease?.generation).toBe(0);
+    const expiredLease = await expireExecutionLeaseForQualification({
+      databaseFile: fixture.databaseFile,
+      executionId: oldAction.executionId,
+      daemon: {
+        crash: fixture.crash,
+        snapshot: fixture.daemonProcessSnapshot,
+      },
+    });
+    expect(expiredLease.before.generation).toBe(0);
+    expect(expiredLease.after.generation).toBe(0);
 
     const newDaemon = await fixture.startAdditionalDaemon({
       entry: ah10Child,

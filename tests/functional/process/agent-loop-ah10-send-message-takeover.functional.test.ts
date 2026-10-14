@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -1175,15 +1176,14 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         ]);
         expect(replyProviderCalls).toHaveLength(1);
         await fixture.crash();
-        await waitForPublic(
-          async () =>
-            readRows(fixture.databaseFile).leases.find(
-              (lease) => lease.execution_id === oldAction.executionId,
-            ),
-          (lease) =>
-            lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-          35_000,
-        );
+        await expireExecutionLeaseForQualification({
+          databaseFile: fixture.databaseFile,
+          executionId: oldAction.executionId,
+          daemon: {
+            crash: fixture.crash,
+            snapshot: fixture.daemonProcessSnapshot,
+          },
+        });
       } else {
         const oldLeasePause = await waitForPublic(
           async () =>
@@ -1201,15 +1201,14 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
             "AH10 old Reply lease renewal pause probe was absent",
           );
         expect(oldLeasePause.fencingGeneration).toBe(0);
-        await waitForPublic(
-          async () =>
-            readRows(fixture.databaseFile).leases.find(
-              (lease) => lease.execution_id === oldAction.executionId,
-            ),
-          (lease) =>
-            lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-          35_000,
-        );
+        await expireExecutionLeaseForQualification({
+          databaseFile: fixture.databaseFile,
+          executionId: oldAction.executionId,
+          daemon: {
+            crash: fixture.crash,
+            snapshot: fixture.daemonProcessSnapshot,
+          },
+        });
         newDaemon = await fixture.startAdditionalDaemon({
           entry: ah10Child,
           daemonEnvironment: {
@@ -1728,15 +1727,14 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         (lease) => lease.execution_id === oldAction.executionId,
       );
       expect(oldLease?.generation).toBe(0);
-      await waitForPublic(
-        async () =>
-          readRows(fixture.databaseFile).leases.find(
-            (lease) => lease.execution_id === oldAction.executionId,
-          ),
-        (lease) =>
-          lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-        35_000,
-      );
+      await expireExecutionLeaseForQualification({
+        databaseFile: fixture.databaseFile,
+        executionId: oldAction.executionId,
+        daemon: {
+          crash: fixture.crash,
+          snapshot: fixture.daemonProcessSnapshot,
+        },
+      });
 
       const newDaemon = await fixture.startAdditionalDaemon({
         entry: ah10Child,

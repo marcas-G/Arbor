@@ -96,6 +96,13 @@ export interface ProductionFixture {
     readonly baseUrl: string;
     readonly httpPort: number;
     readonly daemonErrors: ReadonlyArray<string>;
+    readonly daemonProcessSnapshot: () => {
+      readonly pid: number | undefined;
+      readonly exitCode: number | null;
+      readonly signalCode: NodeJS.Signals | null;
+      readonly killed: boolean;
+      readonly alive: boolean;
+    };
     readonly crash: () => Promise<void>;
   }>;
   readonly stop: () => Promise<void>;
@@ -764,6 +771,24 @@ export const startProductionFixture = async (input: {
         baseUrl: additionalBaseUrl,
         httpPort: additionalPort,
         daemonErrors: additionalErrors,
+        daemonProcessSnapshot: () => {
+          let alive = false;
+          if (child.pid !== undefined && child.exitCode === null) {
+            try {
+              process.kill(child.pid, 0);
+              alive = true;
+            } catch {
+              alive = false;
+            }
+          }
+          return {
+            pid: child.pid,
+            exitCode: child.exitCode,
+            signalCode: child.signalCode,
+            killed: child.killed,
+            alive,
+          };
+        },
         crash: () => stopChild(child),
       };
     },

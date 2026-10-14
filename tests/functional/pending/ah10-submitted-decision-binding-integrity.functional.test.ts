@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -848,15 +849,35 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
       expect(afterOldKill.decisions).toEqual(beforeRestart.decisions);
       expect(afterOldKill.actions).toEqual(beforeRestart.actions);
       expect(afterOldKill.observations).toEqual(beforeRestart.observations);
-      await waitForPublic(
-        async () =>
-          readRows(fixture.databaseFile).leases.find(
-            (lease) => lease.execution_id === oldAction.executionId,
-          ),
-        (lease) =>
-          lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-        35_000,
+      const expiredLeaseRow = afterOldKill.leases.find(
+        (lease) => lease.execution_id === oldAction.executionId,
       );
+      if (expiredLeaseRow === undefined)
+        throw new Error("AH10 old lease is absent after daemon exit");
+      const expiredLease = await expireExecutionLeaseForQualification({
+        databaseFile: fixture.databaseFile,
+        executionId: oldAction.executionId,
+        expected: {
+          generation: Number(expiredLeaseRow.generation),
+          expiresAt: expiredLeaseRow.expires_at,
+        },
+        daemon: {
+          crash: fixture.crash,
+          snapshot: fixture.daemonProcessSnapshot,
+        },
+      });
+      expect(expiredLease.before).toMatchObject({
+        execution_id: oldAction.executionId,
+        generation: expiredLeaseRow.generation,
+        expires_at: expiredLeaseRow.expires_at,
+      });
+      expect(expiredLease.after).toMatchObject({
+        execution_id: oldAction.executionId,
+        worker_id: expiredLease.before.worker_id,
+        worker_incarnation_id: expiredLease.before.worker_incarnation_id,
+        generation: expiredLeaseRow.generation,
+        expires_at: "1970-01-01T00:00:00.000Z",
+      });
 
       const newDaemon = await fixture.startAdditionalDaemon({
         entry: ah10Child,
