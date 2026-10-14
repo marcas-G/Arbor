@@ -544,3 +544,15 @@ Post-integration validation on `967ac67c`:
 - `git diff --check` — PASS.
 
 The profile failure is retained as evidence; no code fix or AH7 rerun was made.
+
+## Full UI profile after AH7 oracle integration
+
+On clean HEAD `c520827e25a37ec1f8dbd6a4f792c621e09820aa`,
+`pnpm test:functional:ui` reached terminal **PASS**: six selected Playwright
+files, 8/8 tests, 0 failed, 0 skipped, and `--retries=0`. Root and Web builds
+passed. UI group duration was 191,515ms; total runner duration was 193,376ms.
+Manifest: `.test-results/2026-10-14T14-26-54-606Z-13548/result-manifest.json`.
+
+The manifest records `gitDirty: false` and `completeCoverage: false`; this is
+the UI profile result only, not full release qualification. No release/full
+profile was started.
