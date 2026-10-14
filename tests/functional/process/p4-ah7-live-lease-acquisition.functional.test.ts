@@ -104,8 +104,49 @@ let probeLogFile: string | undefined;
 let workExecutionId: string | undefined;
 let effectObserved = false;
 const schedulerDiagnosticLines: string[] = [];
+const p4DiagnosticErrors: string[] = [];
 let probeLogLinesWritten = 0;
 const maximumP4DiagnosticLines = 512;
+
+const evidenceErrorMessage = (error: unknown): string =>
+  error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+
+const attachEvidenceError = (
+  report: Record<string, unknown>,
+  label: string,
+  error: unknown,
+) => {
+  const existing = report.evidenceError;
+  const prior =
+    typeof existing === "string"
+      ? [existing]
+      : Array.isArray(existing)
+        ? existing.filter((entry): entry is string => typeof entry === "string")
+        : [];
+  report.evidenceError = [...prior, `${label}: ${evidenceErrorMessage(error)}`];
+};
+
+const writeEvidenceSafely = (path: string, report: Record<string, unknown>) => {
+  try {
+    mkdirSync(resolve(".test-results"), { recursive: true });
+    writeFileSync(path, JSON.stringify(report, null, 2), "utf8");
+  } catch (error) {
+    attachEvidenceError(report, `write ${path}`, error);
+  }
+};
+
+const captureEvidenceSafely = <A>(
+  report: Record<string, unknown>,
+  label: string,
+  capture: () => A,
+): A | null => {
+  try {
+    return capture();
+  } catch (error) {
+    attachEvidenceError(report, label, error);
+    return null;
+  }
+};
 let pendingP4FailureEvidence:
   | {
       readonly fixture: ProductionFixture;
@@ -123,32 +164,51 @@ const appendProbeLine = (line: string) => {
   ) {
     return;
   }
-  appendFileSync(probeLogFile, `${line}\n`);
-  probeLogLinesWritten += 1;
+  try {
+    appendFileSync(probeLogFile, `${line}\n`);
+    probeLogLinesWritten += 1;
+  } catch (error) {
+    p4DiagnosticErrors.push(`append probe log: ${evidenceErrorMessage(error)}`);
+  }
 };
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) {
+    let stopError: unknown;
+    let failureReportCaptured = false;
     try {
       await fixture.stop();
+    } catch (error) {
+      stopError = error;
     } finally {
       const pending = pendingP4FailureEvidence;
       if (pending?.fixture === fixture) {
-        const completedEvidence = {
+        failureReportCaptured = true;
+        const completedEvidence: Record<string, unknown> = {
           ...pending.report,
-          afterStopExecutionSnapshot: p4FailureSnapshot(
-            fixture.databaseFile,
-            pending.executionId,
-          ),
-          afterStopDaemonSnapshots: pending.daemonSnapshots(),
+          ...(p4DiagnosticErrors.length > 0
+            ? { p4DiagnosticErrors: [...p4DiagnosticErrors] }
+            : {}),
         };
-        writeFileSync(
-          pending.path,
-          JSON.stringify(completedEvidence, null, 2),
-          "utf8",
+        if (stopError !== undefined) {
+          attachEvidenceError(completedEvidence, "fixture.stop", stopError);
+        }
+        completedEvidence.afterStopExecutionSnapshot = captureEvidenceSafely(
+          completedEvidence,
+          "after-stop database snapshot",
+          () => p4FailureSnapshot(fixture.databaseFile, pending.executionId),
         );
+        completedEvidence.afterStopDaemonSnapshots = captureEvidenceSafely(
+          completedEvidence,
+          "after-stop daemon snapshot",
+          pending.daemonSnapshots,
+        );
+        writeEvidenceSafely(pending.path, completedEvidence);
         pendingP4FailureEvidence = undefined;
       }
+    }
+    if (stopError !== undefined && !failureReportCaptured) {
+      throw stopError;
     }
   }
 });
@@ -513,6 +573,7 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       daemonEnvironment: {
         ARBOR_P4_FENCE_ROLE: "old",
         ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
+        ARBOR_P4_FENCE_PAUSE_OLD_ACQUIRE: "1",
       },
       setupProbe: (event) => {
         if (startupDiagnostics.length < 8) startupDiagnostics.push(event);
@@ -608,25 +669,25 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       },
     }).catch((error: unknown) => {
       const resultDirectory = resolve(".test-results");
-      mkdirSync(resultDirectory, { recursive: true });
       const failure = error instanceof Error ? error.message : String(error);
-      writeFileSync(
+      const evidence: Record<string, unknown> = {
+        failure,
+        startupDiagnostics,
+        daemonStdoutProbes: events.slice(0, maximumP4DiagnosticLines),
+        ...(p4DiagnosticErrors.length > 0
+          ? { p4DiagnosticErrors: [...p4DiagnosticErrors] }
+          : {}),
+      };
+      writeEvidenceSafely(
         join(resultDirectory, "p4-live-lease-startup-failure.json"),
-        JSON.stringify(
-          {
-            failure,
-            startupDiagnostics,
-            daemonStdoutProbes: events.slice(0, maximumP4DiagnosticLines),
-          },
-          null,
-          2,
-        ),
-        "utf8",
+        evidence,
       );
       throw error;
     });
     fixtures.push(fixture);
     probeLogFile = join(fixture.directory, "p4-live-lease-probes.ndjson");
+    const gateDirectory = join(fixture.directory, "p4-fence-gates");
+    mkdirSync(gateDirectory, { recursive: true });
 
     const client = makePublicClient(fixture.baseUrl);
     const project = await createFunctionalProject(
@@ -742,6 +803,25 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     }
     const executionId = approval.execution_id;
     workExecutionId = executionId;
+    pendingP4FailureEvidence = {
+      fixture,
+      path: join(
+        resolve(".test-results"),
+        `p4-live-lease-unexpected-failure-${executionId}.json`,
+      ),
+      executionId,
+      report: {
+        failure:
+          "P4 live lease qualification did not reach successful completion",
+        fixtureDirectory: fixture.directory,
+        databaseFile: fixture.databaseFile,
+        targetExecutionId: executionId,
+      },
+      daemonSnapshots: () => ({
+        old: fixture.daemonProcessSnapshot(),
+        errors: [...fixture.daemonErrors],
+      }),
+    };
     expect(approval).toMatchObject({
       approval_id: approvalId,
       execution_id: executionId,
@@ -755,6 +835,27 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       executionRows(fixture.databaseFile, executionId).invocations,
     ).toEqual([]);
 
+    writeFileSync(
+      join(gateDirectory, "old-acquire.request"),
+      "pause the old daemon immediately before the real LeaseService.acquire call",
+    );
+    const pausedAcquire = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH10BeforeLeaseAcquiredPaused" &&
+            event.executionId === executionId,
+        ),
+      (event) => event !== undefined,
+      45_000,
+    );
+    expect(pausedAcquire).toMatchObject({
+      role: "old",
+      boundary: "AH10BeforeLeaseAcquiredPaused",
+      executionId,
+    });
+    const oldAcquireEventStart = events.length;
     const resolution = await client.command(
       project.projectId,
       "ResolveExecutableApproval",
@@ -766,27 +867,46 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       },
     );
     expect(resolution).toMatchObject({ body: { resolution: "Committed" } });
+    const committedApproval = consumedExecutableApprovalSnapshot(
+      fixture.databaseFile,
+      approvalId,
+    );
+    expect(committedApproval).toMatchObject({
+      approval_id: approvalId,
+      execution_id: executionId,
+      logical_step_no: approval.logical_step_no,
+      repair_attempt: approval.repair_attempt,
+      action_index: approval.action_index,
+      logical_action_id: approval.logical_action_id,
+      call_ref: approval.call_ref,
+      tool_invocation_id: approval.tool_invocation_id,
+      side_effect_semantics: "NonIdempotent",
+      state: "Approved",
+      revision: approvalRevision + 1,
+      consumed_at: null,
+      consumed_by: null,
+    });
+    expect(committedApproval?.decided_at).not.toBeNull();
+    writeFileSync(
+      join(gateDirectory, "old-old-acquire.release"),
+      "allow the exact approved Execution to call LeaseService.acquire",
+    );
     const approvalResume = await waitForPublic(
       async () => {
         const persistedApproval = consumedExecutableApprovalSnapshot(
           fixture.databaseFile,
           approvalId,
         );
-        const decidedAt =
-          persistedApproval?.decided_at === null ||
-          persistedApproval?.decided_at === undefined
-            ? Number.NaN
-            : Date.parse(persistedApproval.decided_at);
         return {
           approval: persistedApproval,
-          oldAcquired: events.find(
-            (event) =>
-              event.role === "old" &&
-              event.boundary === "AH10AfterLeaseAcquired" &&
-              event.executionId === executionId &&
-              Number.isFinite(decidedAt) &&
-              Date.parse(event.observedAt) >= decidedAt,
-          ),
+          oldAcquired: events
+            .slice(oldAcquireEventStart)
+            .find(
+              (event) =>
+                event.role === "old" &&
+                event.boundary === "AH10AfterLeaseAcquired" &&
+                event.executionId === executionId,
+            ),
         };
       },
       (value) =>
@@ -797,40 +917,24 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     ).catch((error: unknown) => {
       const failure = error instanceof Error ? error.message : String(error);
       const evidenceDirectory = resolve(".test-results");
-      mkdirSync(evidenceDirectory, { recursive: true });
       const evidencePath = join(
         evidenceDirectory,
         "p4-live-lease-approval-resume-failure.json",
       );
-      const executionSnapshot = p4FailureSnapshot(
-        fixture.databaseFile,
-        executionId,
-      );
-      const approvalSnapshot = consumedExecutableApprovalSnapshot(
-        fixture.databaseFile,
-        approvalId,
-      );
       const builtinCatalog = events.find(
         (event) => event.boundary === "P4BuiltinCatalogSnapshot",
       );
-      const evidence = {
+      const evidence: Record<string, unknown> = {
         failure,
         fixtureDirectory: fixture.directory,
         databaseFile: fixture.databaseFile,
         targetExecutionId: executionId,
-        persistedApprovalDecision: approvalSnapshot,
         publicApproval: {
           approvalId,
           expectedRevision: approvalRevision,
           resolution,
           binding: approval,
         },
-        currentLease: executionRows(fixture.databaseFile, executionId).lease,
-        executionSnapshot,
-        derivedCatalog: deriveCatalogSnapshot(
-          executionSnapshot,
-          builtinCatalog,
-        ),
         shellDefinition: events.find(
           (event) => event.boundary === "P4ShellDefinitionSnapshot",
         ),
@@ -840,10 +944,11 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
         ),
         probeEvents: events.slice(0, maximumP4DiagnosticLines),
         providerTimeline,
-        oldDaemon: fixture.daemonProcessSnapshot(),
         daemonErrors: fixture.daemonErrors,
+        ...(p4DiagnosticErrors.length > 0
+          ? { p4DiagnosticErrors: [...p4DiagnosticErrors] }
+          : {}),
       };
-      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), "utf8");
       pendingP4FailureEvidence = {
         fixture,
         path: evidencePath,
@@ -854,10 +959,36 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
           errors: [...fixture.daemonErrors],
         }),
       };
-      throw new Error(
-        `Old daemon did not reacquire the approved Execution at or after the persisted executable approval decision; failureEvidence=${evidencePath}`,
-        { cause: error },
+      evidence.persistedApprovalDecision = captureEvidenceSafely(
+        evidence,
+        "persisted approval snapshot",
+        () =>
+          consumedExecutableApprovalSnapshot(fixture.databaseFile, approvalId),
       );
+      const executionSnapshot = captureEvidenceSafely(
+        evidence,
+        "execution database snapshot",
+        () => p4FailureSnapshot(fixture.databaseFile, executionId),
+      );
+      evidence.currentLease = captureEvidenceSafely(
+        evidence,
+        "current lease snapshot",
+        () => executionRows(fixture.databaseFile, executionId).lease,
+      );
+      evidence.executionSnapshot = executionSnapshot;
+      evidence.derivedCatalog =
+        executionSnapshot === null
+          ? null
+          : captureEvidenceSafely(evidence, "derived catalog snapshot", () =>
+              deriveCatalogSnapshot(executionSnapshot, builtinCatalog),
+            );
+      evidence.oldDaemon = captureEvidenceSafely(
+        evidence,
+        "old daemon snapshot",
+        () => fixture.daemonProcessSnapshot(),
+      );
+      writeEvidenceSafely(evidencePath, evidence);
+      throw error;
     });
     const consumedApproval = approvalResume.approval;
     const oldAcquired = approvalResume.oldAcquired;
@@ -900,6 +1031,20 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
         `P4 approval ${approvalId} has invalid decided_at ${consumedApproval.decided_at}`,
       );
     }
+    const resumedLease = executionRows(fixture.databaseFile, executionId).lease;
+    expect(oldAcquired).toMatchObject({
+      role: "old",
+      executionId,
+      workerId: resumedLease?.worker_id,
+      workerIncarnationId: resumedLease?.worker_incarnation_id,
+      fencingGeneration: resumedLease?.generation,
+    });
+    expect(resumedLease).toMatchObject({
+      execution_id: executionId,
+      worker_id: oldAcquired.workerId,
+      worker_incarnation_id: oldAcquired.workerIncarnationId,
+      generation: oldAcquired.fencingGeneration,
+    });
 
     const effectEvent = await waitForPublic(
       async () =>
@@ -914,19 +1059,14 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     ).catch((error: unknown) => {
       const failure = error instanceof Error ? error.message : String(error);
       const evidenceDirectory = resolve(".test-results");
-      mkdirSync(evidenceDirectory, { recursive: true });
       const evidencePath = join(
         evidenceDirectory,
         `p4-live-lease-failure-${executionId}.json`,
       );
-      const executionSnapshot = p4FailureSnapshot(
-        fixture.databaseFile,
-        executionId,
-      );
       const builtinCatalog = events.find(
         (event) => event.boundary === "P4BuiltinCatalogSnapshot",
       );
-      const evidence = {
+      const evidence: Record<string, unknown> = {
         failure,
         fixtureDirectory: fixture.directory,
         databaseFile: fixture.databaseFile,
@@ -939,17 +1079,10 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
           binding: approval,
         },
         oldAcquired,
-        currentLease: executionRows(fixture.databaseFile, executionId).lease,
-        executionSnapshot,
-        derivedCatalog: deriveCatalogSnapshot(
-          executionSnapshot,
-          builtinCatalog,
-        ),
         shellDefinition: events.find(
           (event) => event.boundary === "P4ShellDefinitionSnapshot",
         ),
         builtinCatalog,
-        projectToolRegistryRows: executionSnapshot.projectToolRegistryRows,
         catalogRefs: events.filter(
           (event) => event.boundary === "P4ExecutableCatalogRefs",
         ),
@@ -974,27 +1107,55 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
             .map((tool) => tool.function?.name)
             .filter((name): name is string => name !== undefined),
         })),
-        oldDaemon: fixture.daemonProcessSnapshot(),
         daemonErrors: fixture.daemonErrors,
+        ...(p4DiagnosticErrors.length > 0
+          ? { p4DiagnosticErrors: [...p4DiagnosticErrors] }
+          : {}),
       };
-      writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), "utf8");
       pendingP4FailureEvidence = {
         fixture,
         path: evidencePath,
         executionId,
         report: evidence,
-        daemonSnapshots: () => ({ old: fixture.daemonProcessSnapshot() }),
+        daemonSnapshots: () => ({
+          old: fixture.daemonProcessSnapshot(),
+          errors: [...fixture.daemonErrors],
+        }),
       };
-      throw new Error(
-        `P4 old effect gate timeout; failure=${failure}; approval=${JSON.stringify({ approvalId, approvalRevision, state: approval.state, consumedBy: executionSnapshot.executableApprovals })}; currentLease=${JSON.stringify(evidence.currentLease)}; action=${JSON.stringify(executionSnapshot.actions)}; invocations=${JSON.stringify(executionSnapshot.invocations)}; toolRuntimeProgress=${JSON.stringify(evidence.toolRuntimeProgress)}; failureEvidence=${evidencePath}`,
-        { cause: error },
+      const executionSnapshot = captureEvidenceSafely(
+        evidence,
+        "execution database snapshot",
+        () => p4FailureSnapshot(fixture.databaseFile, executionId),
       );
+      evidence.executionSnapshot = executionSnapshot;
+      evidence.currentLease = captureEvidenceSafely(
+        evidence,
+        "current lease snapshot",
+        () => executionRows(fixture.databaseFile, executionId).lease,
+      );
+      if (executionSnapshot !== null) {
+        evidence.derivedCatalog = captureEvidenceSafely(
+          evidence,
+          "derived catalog snapshot",
+          () => deriveCatalogSnapshot(executionSnapshot, builtinCatalog),
+        );
+        evidence.projectToolRegistryRows =
+          executionSnapshot.projectToolRegistryRows;
+      }
+      evidence.oldDaemon = captureEvidenceSafely(
+        evidence,
+        "old daemon snapshot",
+        () => fixture.daemonProcessSnapshot(),
+      );
+      writeEvidenceSafely(evidencePath, evidence);
+      throw error;
     });
     if (effectEvent === undefined) {
       throw new Error(
         `Old daemon did not reach the after-effect gate; p4=${JSON.stringify(p4FailureSnapshot(fixture.databaseFile, executionId))}`,
       );
     }
+    expect(consumedApproval.tool_invocation_id).toBe(effectEvent.invocationId);
     const beforeRetry = executionRows(fixture.databaseFile, executionId).lease;
     expect(beforeRetry).toMatchObject({
       execution_id: executionId,
@@ -1069,8 +1230,6 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
         settlement_kind: null,
       }),
     ]);
-    const gateDirectory = join(fixture.directory, "p4-fence-gates");
-    mkdirSync(gateDirectory, { recursive: true });
     writeFileSync(
       join(gateDirectory, "new-explicit-runExecution.release"),
       "invoke the production runExecution path for the exact active Execution",
@@ -1180,32 +1339,28 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     expect(fixture.daemonErrors).toEqual([]);
     expect(newDaemon.daemonErrors).toEqual([]);
     const resultDirectory = resolve(".test-results");
-    mkdirSync(resultDirectory, { recursive: true });
-    writeFileSync(
+    const observationEvidence: Record<string, unknown> = {
+      targetExecutionId: executionId,
+      oldAcquired,
+      schedulerSkip,
+      rejectedAttempt,
+      providerTimeline,
+      leaseExpiryHistory,
+      settledExecution: settled.execution,
+      settledInvocations: settled.invocations,
+      oldEffectObserved: readFileSync(
+        `${fixture.workspaceDirectory}/${effectFile}`,
+        "utf8",
+      )
+        .split(/\r?\n/u)
+        .filter((line) => line === effectMarker).length,
+      oldDaemon: fixture.daemonProcessSnapshot(),
+      newDaemon: newDaemon.daemonProcessSnapshot(),
+    };
+    writeEvidenceSafely(
       join(resultDirectory, `p4-live-lease-observation-${executionId}.json`),
-      JSON.stringify(
-        {
-          targetExecutionId: executionId,
-          oldAcquired,
-          schedulerSkip,
-          rejectedAttempt,
-          providerTimeline,
-          leaseExpiryHistory,
-          settledExecution: settled.execution,
-          settledInvocations: settled.invocations,
-          oldEffectObserved: readFileSync(
-            `${fixture.workspaceDirectory}/${effectFile}`,
-            "utf8",
-          )
-            .split(/\r?\n/u)
-            .filter((line) => line === effectMarker).length,
-          oldDaemon: fixture.daemonProcessSnapshot(),
-          newDaemon: newDaemon.daemonProcessSnapshot(),
-        },
-        null,
-        2,
-      ),
-      "utf8",
+      observationEvidence,
     );
+    pendingP4FailureEvidence = undefined;
   }, 180_000);
 });
