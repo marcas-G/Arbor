@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
 import {
@@ -103,6 +105,60 @@ const ah7CrashSnapshotExpectations = {
     timeoutMs: 120_000,
   },
 } satisfies Record<Ah7PendingIntentBoundary, Ah7CrashSnapshotExpectation>;
+interface RawP4InvocationRow {
+  readonly invocation_id: string;
+  readonly execution_id: string;
+  readonly workspace_id: string;
+  readonly tool_name: string;
+  readonly tool_version: string;
+  readonly side_effect_semantics: string;
+  readonly arguments_json: string;
+  readonly resolved_regions_json: string;
+  readonly approval_id: string | null;
+  readonly effect_admission_state: string;
+  readonly recovery_binding_state: string;
+  readonly recovery_binding_sha256: string | null;
+  readonly settlement_provenance: string | null;
+  readonly selected_attempt_no: number | null;
+  readonly selected_fact_id: string | null;
+  readonly intent_at: string;
+  readonly settled_at: string | null;
+  readonly settlement_kind: string | null;
+  readonly settlement_json: string | null;
+  readonly result_ref: string | null;
+  readonly observation_format_version: string | null;
+  readonly observation_json: Uint8Array | null;
+  readonly observation_sha256: string | null;
+}
+
+const readRawP4InvocationRows = (
+  databaseFile: string,
+  executionId: string,
+): ReadonlyArray<RawP4InvocationRow> => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        "SELECT * FROM tool_invocations WHERE execution_id = ? ORDER BY invocation_id",
+      )
+      .all(executionId) as unknown as ReadonlyArray<RawP4InvocationRow>;
+  } finally {
+    db.close();
+  }
+};
+
+const p4ImmutableBinding = (row: RawP4InvocationRow) => ({
+  invocationId: row.invocation_id,
+  executionId: row.execution_id,
+  workspaceId: row.workspace_id,
+  toolName: row.tool_name,
+  toolVersion: row.tool_version,
+  sideEffectSemantics: row.side_effect_semantics,
+  argumentsJson: row.arguments_json,
+  resolvedRegionsJson: row.resolved_regions_json,
+  approvalId: row.approval_id,
+  intentAt: row.intent_at,
+});
 let activePhase: string | undefined;
 let activeExecutionId: string | undefined;
 let activeDiagnosticTimer: ReturnType<typeof setTimeout> | undefined;
@@ -353,6 +409,10 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         activePhase = "probe-daemon-exited";
         const crashed = durableSnapshot(fixture.databaseFile);
         activePhase = "kill-snapshot-read";
+        const rawTargetInvocations = readRawP4InvocationRows(
+          fixture.databaseFile,
+          hit?.executionId ?? "",
+        );
         const targetSteps = crashed.steps.filter(
           (step) => step.execution_id === hit?.executionId,
         );
@@ -368,6 +428,9 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         const targetInvocationId = targetInvocations[0]?.invocation_id;
         const targetArtifacts = crashed.artifacts.filter(
           (artifact) => artifact.invocation_id === targetInvocationId,
+        );
+        expect(rawTargetInvocations).toHaveLength(
+          expectedCrash.p4Intent === "Absent" ? 0 : 1,
         );
         expect(targetSteps).toEqual([
           expect.objectContaining({
@@ -478,6 +541,10 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         const recoveredTargetInvocations = recovered.toolInvocations.filter(
           (invocation) => invocation.execution_id === hit?.executionId,
         );
+        const recoveredRawInvocations = readRawP4InvocationRows(
+          fixture.databaseFile,
+          hit?.executionId ?? "",
+        );
         const recoveredInvocationId =
           targetInvocationId ?? recoveredTargetInvocations[0]?.invocation_id;
         const recoveredTargetToolResults = recovered.toolResults.filter(
@@ -518,6 +585,35 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
             result_ref: expect.any(String),
           }),
         ]);
+        expect(recoveredRawInvocations).toHaveLength(1);
+        const recoveredRawInvocation = recoveredRawInvocations[0];
+        if (recoveredRawInvocation === undefined) {
+          throw new Error("AH7 recovered P4 raw invocation row absent");
+        }
+        expect(recoveredRawInvocation).toMatchObject({
+          invocation_id: recoveredTargetInvocations[0]?.invocation_id,
+          execution_id: hit?.executionId,
+          workspace_id: project.rootWorkspaceId,
+          tool_name: "read",
+          side_effect_semantics: "ReadOnly",
+          approval_id: null,
+          settlement_kind: "Success",
+          result_ref: recoveredTargetArtifacts[0]?.artifact_id,
+        });
+        expect(
+          recoveredRawInvocation.tool_version.trim().length,
+        ).toBeGreaterThan(0);
+        expect(recoveredRawInvocation.intent_at.length).toBeGreaterThan(0);
+        expect(
+          Array.isArray(
+            JSON.parse(recoveredRawInvocation.resolved_regions_json),
+          ),
+        ).toBe(true);
+        expect(
+          createHash("sha256")
+            .update(recoveredRawInvocation.arguments_json)
+            .digest("hex"),
+        ).toBe(recoveredTargetActions[0]?.input_hash);
         if (targetInvocationId !== undefined) {
           expect(recoveredTargetInvocations[0]?.invocation_id).toBe(
             targetInvocationId,
@@ -531,7 +627,12 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         if (expectedCrash.artifactCount === 1) {
           expect(recoveredTargetArtifacts).toEqual(targetArtifacts);
         }
-        if (expectedCrash.p4Intent === "Success") {
+        if (expectedCrash.p4Intent === "Pending") {
+          expect(p4ImmutableBinding(recoveredRawInvocation)).toEqual(
+            p4ImmutableBinding(rawTargetInvocations[0] as RawP4InvocationRow),
+          );
+        } else if (expectedCrash.p4Intent === "Success") {
+          expect(recoveredRawInvocations).toEqual(rawTargetInvocations);
           expect(recoveredTargetInvocations).toEqual(targetInvocations);
         }
         expect(recoveredTargetToolResults[0]).toMatchObject({

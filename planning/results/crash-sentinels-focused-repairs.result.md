@@ -27,32 +27,48 @@ transaction commits. The test now encodes every boundary explicitly:
 | `AH7AfterActionResultCommit` | Applied / 1 | Success | 1 | 1 |
 
 After recovery, every boundary must converge to the same Action identity, one
-P4 Success result and Artifact, one ToolResult/Observation, and one measured
-provider decision. Where a P4 intent existed before the crash, its
-ToolInvocationId must be preserved; a pending intent may advance to Success,
-while an already committed Success row must remain identical. The two
-pre-settlement cases have a 180-second outer case budget because one run reached
-113.6 seconds and a second hit the old 120-second outer limit. Inner deadlines
-and qualification assertions are unchanged. The per-boundary table includes
-probe identity and timeout. A test-local 90-second diagnostic records phase and
-durable state for the commit-boundary case.
+durable P4 invocation/Success settlement/result/Artifact, one ToolResult and
+Observation, and one measured provider decision. The test reads the raw
+`tool_invocations` row locally; it does not change the shared snapshot API. For
+a pending intent it compares the preserved invocation ID and every immutable
+P4 binding column: execution/workspace, tool name/version, arguments, resolved
+regions, approval ID, side-effect semantics, and intent time. A P4 row already
+settled Success at crash time must remain byte-for-byte equal after recovery.
+The crash snapshot's mutable effect-admission and settlement fields are checked
+against the per-boundary state table. This proves durable row/result/artifact
+uniqueness; it does not claim the physical ReadOnly executor runs only once,
+since a pending ReadOnly invocation may be executed again during recovery. The
+two pre-settlement cases have a 180-second outer case budget because one run
+reached 113.6 seconds and a second hit the old 120-second outer limit. Inner
+deadlines and qualification assertions are unchanged. The per-boundary table
+also selects probe identity and timeout. A test-local 90-second diagnostic
+records phase and durable state for the commit-boundary case.
+
+For `AH7AfterActionIntentCommit`, there is no P4 row before the crash. Recovery
+selects the exact row by the crashed Execution, then binds it to the existing
+Action's callRef/input hash, Workspace, tool name, and side-effect semantics.
+For crash snapshots with a pending P4 row, only the immutable binding subset is
+compared because recovery legitimately changes it to Success. For crash
+snapshots with a committed Success row, the full raw row is compared.
 
 - Initial focused red: both settlement-before-commit boundaries failed at the
   Artifact count assertion. A later first whole-file run exposed four remaining
   oracle errors: ActionIntent recovery filtered Artifact by an absent
   pre-crash invocation ID, and three pending-intent boundaries compared the
   pending P4 row to its legitimate recovered Success row.
-- Final focused file: **7/7 PASS**, total Vitest wall time **577.55s**.
+- Final focused file after raw-row binding checks: **7/7 PASS**, total Vitest
+  wall time **493.63s**. A preceding full run before the raw-row checks also
+  passed 7/7 in 577.55s.
 
 | Boundary | Result | Case time |
 |---|---:|---:|
-| `AH7AfterActionIntentCommit` | PASS | 73.796s |
-| `AH7AfterToolIntentCommit` | PASS | 76.627s |
-| `AH7BeforeToolSettlementTransaction` | PASS | 89.470s |
-| `AH7BeforeToolSettlementCommit` | PASS | 75.300s |
-| `AH7AfterToolSettlementCommit` | PASS | 86.406s |
-| `AH7BeforeActionResultCommit` | PASS | 73.849s |
-| `AH7AfterActionResultCommit` | PASS | 71.278s |
+| `AH7AfterActionIntentCommit` | PASS | 67.689s |
+| `AH7AfterToolIntentCommit` | PASS | 67.576s |
+| `AH7BeforeToolSettlementTransaction` | PASS | 66.189s |
+| `AH7BeforeToolSettlementCommit` | PASS | 66.927s |
+| `AH7AfterToolSettlementCommit` | PASS | 66.101s |
+| `AH7BeforeActionResultCommit` | PASS | 66.963s |
+| `AH7AfterActionResultCommit` | PASS | 66.829s |
 
 ## AH11 StepEffectsCommitted recovery
 
