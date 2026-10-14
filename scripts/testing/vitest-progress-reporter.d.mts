@@ -27,6 +27,10 @@ export function redactTextForOutput(
   value: unknown,
   environmentOrValues?: Record<string, string | undefined> | string[],
 ): string;
+export function redactStructuredValueForOutput(
+  value: unknown,
+  environmentOrValues?: Record<string, string | undefined> | string[],
+): unknown;
 
 export default class VitestProgressReporter {
   constructor(options?: VitestProgressOptions);
