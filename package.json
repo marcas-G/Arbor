@@ -32,7 +32,7 @@
     "test:capability:real": "node scripts/testing/run-capability.mjs real-provider",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "architecture": "vitest run tests/architecture",
+    "architecture": "vitest run --config vitest.architecture.config.ts",
     "drill:restore": "pnpm build && node apps/single-workspace/dist/restore-drill.js",
     "assess:storage": "pnpm build && node apps/single-workspace/dist/storage-assessment-harness.js",
     "schema:upgrade": "pnpm build && node apps/single-workspace/dist/schema-upgrade.js",
