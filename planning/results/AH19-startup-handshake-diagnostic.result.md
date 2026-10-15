@@ -145,18 +145,20 @@ one budget. A taskkill taking slightly more than 5s could therefore time out
 even when the target exited normally immediately after taskkill completed.
 
 Windows stop now bounds taskkill independently at 10s, then starts a fresh
-5s target-exit grace. If the target exits first, the taskkill helper is killed
-and reaped. Timeout errors identify `taskkill`, `taskkill-cleanup`, or
+5s target-exit grace. If the target exits first, the same `/T /F` helper is
+allowed a bounded completion; only helper exit code 0 with the helper reaped
+proves tree cleanup. Helper error, nonzero exit, or timeout rejects as
+unproven. Timeout errors identify `taskkill`, `taskkill-cleanup`, or
 `target-exit-after-taskkill`; race and child-exit listeners/timers are removed
 on every outcome. Taskkill helper cleanup has a separate 1s bound.
 
 | Validation | Result |
 |---|---|
 | Virtual-clock taskkill completes after old 5s bound; target exits within fresh grace | PASS; no real sleep; listeners/timers cleared |
-| Target exits before taskkill; helper is reaped | PASS; no real sleep |
+| Target exits before taskkill; same helper completes successfully | PASS; no real sleep |
 | Taskkill independent timeout and helper cleanup | PASS; no real sleep; listeners/timers cleared |
 | Real Windows parent+grandchild process-tree stop, repeated stop | PASS, 1/1; 319ms |
-| Existing repeated single-child stop | PASS, 1/1 |
+| Real Windows process-tree stop and repeated stop after successful tree kill | PASS, 1/1 |
 | AH19 exact `providerTurnId` | PASS, 53.630s |
 | Ordered AH19 `logicalStepNo` + `providerTurnId` | PASS, 2/2; 53.667s and 53.126s |
 | Targeted Biome and `pnpm typecheck` | PASS |
@@ -204,18 +206,22 @@ also fails, the code attempts direct-child `SIGKILL` and a fresh bounded exit
 wait, then rejects with `Windows process-tree cleanup unproven` and the
 attempt-phase list; it never treats direct-child exit as proof that descendants
 were removed. If the target exits while taskkill has not spawned yet, cleanup
-waits for the helper's spawn/error/exit; a late-spawned helper is killed and
-reaped.
+waits for the same helper's spawn/error/exit and then for successful exit code
+0. A spawn error, nonzero exit, or timeout rejects as unproven rather than
+treating an already-exited root as proof of tree cleanup. A late-spawned helper
+must finish the tree kill and be reaped.
 
 | Validation | Result |
 |---|---|
 | Primary timeout → retry tree-kill success → target and fake descendant exit | PASS; virtual timing; no real sleep |
 | Two tree-kill failures → direct child killed and function rejects unproven; fake descendant retained | PASS; virtual timing; no helper/target remains |
-| Target-first with pid-less helper delayed spawn → helper killed and reaped | PASS; no real sleep |
-| Target-first with pid-less helper spawn error | PASS; waited for error; no helper remains |
-| Windows lifecycle race/retry/fallback suite | PASS, 9/9; real process-tree repeated-stop included |
-| AH19 exact `providerTurnId` | PASS, 53.575s |
-| Ordered AH19 `logicalStepNo` + `providerTurnId` | PASS, 2/2; fail-closed markers at 53.644s and 53.231s |
+| Controlled target-first root+descendant; helper code 0 removes descendant | PASS; no real sleep |
+| Target-first with pid-less helper delayed spawn → helper code 0 required | PASS; no real sleep |
+| Target-first with pid-less helper spawn error | PASS; rejects as unproven after error |
+| Target-first helper nonzero exit | PASS; rejects as unproven |
+| Windows lifecycle race/retry/fallback suite | PASS, see final B1/B2 run below |
+| AH19 exact `providerTurnId` | PASS, 75.56s |
+| Ordered AH19 `logicalStepNo` + `providerTurnId` | PASS, 2/2; fail-closed markers at 54.149s and 52.726s |
 | Targeted Biome and `pnpm typecheck` | PASS |
 
 No per-case timeout, recovery assertion, or security/settlement assertion was

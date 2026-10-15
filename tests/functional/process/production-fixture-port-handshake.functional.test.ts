@@ -448,27 +448,6 @@ describe("production fixture port-zero startup handshake", () => {
     expect(forcedThrowClose).toBe(1);
   });
 
-  it("stops a child once and treats a second stop as already settled", async () => {
-    const child = spawn(process.execPath, [invalidChild], {
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    await new Promise<void>((resolveSpawn, rejectSpawn) => {
-      child.once("spawn", resolveSpawn);
-      child.once("error", rejectSpawn);
-    });
-    let exitEvents = 0;
-    child.on("exit", () => {
-      exitEvents += 1;
-    });
-
-    await stopChildBounded(child);
-    await stopChildBounded(child);
-
-    expect(childHasExited(child)).toBe(true);
-    expect(exitEvents).toBe(1);
-  }, 30_000);
-
   it("waits a fresh target-exit grace after delayed taskkill completion", async () => {
     const target = fakeLifecycleProcess(41_001);
     const killer = fakeLifecycleProcess(41_002);
@@ -498,9 +477,10 @@ describe("production fixture port-zero startup handshake", () => {
     expect(killer.listenerCount("error")).toBe(0);
   });
 
-  it("reaps taskkill when the target process exits first", async () => {
+  it("waits for successful tree cleanup when the target exits first", async () => {
     const target = fakeLifecycleProcess(41_101);
     const killer = fakeLifecycleProcess(41_102);
+    let descendantAlive = true;
     const clock = fakeTimerClock();
     const seam: StopChildLifecycleTestSeam = {
       platform: "win32",
@@ -511,17 +491,22 @@ describe("production fixture port-zero startup handshake", () => {
 
     const stopped = stopChildBounded(target, 5_000, seam);
     emitProcessExit(target, 0);
+    setImmediate(() => {
+      descendantAlive = false;
+      emitProcessExit(killer, 0);
+    });
     await expect(stopped).resolves.toBeUndefined();
 
-    expect(killer.killed).toBe(true);
+    expect(killer.killed).toBe(false);
     expect(childHasExited(killer)).toBe(true);
+    expect(descendantAlive).toBe(false);
     expect(clock.pendingCount()).toBe(0);
     expect(target.listenerCount("exit")).toBe(0);
     expect(killer.listenerCount("exit")).toBe(0);
     expect(killer.listenerCount("error")).toBe(0);
   });
 
-  it("waits for a pid-less taskkill helper to spawn, then kills and reaps it", async () => {
+  it("waits for a pid-less taskkill helper to spawn and finish successfully", async () => {
     const target = fakeLifecycleProcess(41_201);
     const killer = fakeLifecycleProcess(undefined);
     const clock = fakeTimerClock();
@@ -544,8 +529,12 @@ describe("production fixture port-zero startup handshake", () => {
 
     (killer as unknown as { pid: number }).pid = 41_202;
     killer.emit("spawn");
+    await new Promise<void>((resolveImmediate) =>
+      setImmediate(resolveImmediate),
+    );
+    emitProcessExit(killer, 0);
     await expect(stopped).resolves.toBeUndefined();
-    expect(killer.killed).toBe(true);
+    expect(killer.killed).toBe(false);
     expect(childHasExited(killer)).toBe(true);
     expect(clock.pendingCount()).toBe(0);
     expect(target.listenerCount("exit")).toBe(0);
@@ -554,7 +543,7 @@ describe("production fixture port-zero startup handshake", () => {
     expect(killer.listenerCount("error")).toBe(0);
   });
 
-  it("waits for a pid-less taskkill spawn error after target-first exit", async () => {
+  it("rejects when a pid-less taskkill helper errors after target-first exit", async () => {
     const target = fakeLifecycleProcess(41_301);
     const killer = fakeLifecycleProcess(undefined);
     const clock = fakeTimerClock();
@@ -576,13 +565,40 @@ describe("production fixture port-zero startup handshake", () => {
     expect(settled).toBe(false);
 
     killer.emit("error", new Error("injected delayed spawn failure"));
-    await expect(stopped).resolves.toBeUndefined();
+    await expect(stopped).rejects.toThrow(
+      /Windows process-tree cleanup unproven; attempt phases=taskkill-1-target-first-error/u,
+    );
     expect(settled).toBe(true);
     expect(killer.killed).toBe(false);
     expect(killer.listenerCount("spawn")).toBe(0);
     expect(killer.listenerCount("exit")).toBe(0);
     expect(killer.listenerCount("error")).toBe(0);
     expect(clock.pendingCount()).toBe(0);
+  });
+
+  it("rejects when target-first taskkill exits nonzero", async () => {
+    const target = fakeLifecycleProcess(41_351);
+    const killer = fakeLifecycleProcess(41_352);
+    const clock = fakeTimerClock();
+    const seam: StopChildLifecycleTestSeam = {
+      platform: "win32",
+      spawnTaskkill: () => killer,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    };
+
+    const stopped = stopChildBounded(target, 5_000, seam);
+    emitProcessExit(target, 0);
+    setImmediate(() => emitProcessExit(killer, 5));
+    await expect(stopped).rejects.toThrow(
+      /Windows process-tree cleanup unproven; attempt phases=taskkill-1-target-first-exit \(code=5/u,
+    );
+    expect(childHasExited(target)).toBe(true);
+    expect(childHasExited(killer)).toBe(true);
+    expect(killer.killed).toBe(false);
+    expect(clock.pendingCount()).toBe(0);
+    expect(target.listenerCount("exit")).toBe(0);
+    expect(killer.listenerCount("exit")).toBe(0);
   });
 
   it("retries a timed-out tree kill and verifies the retry removes the tree", async () => {
