@@ -2064,8 +2064,14 @@ const startAtCheckpointBoundary = async (
     | "AH11AfterStepEffectsCommit",
   extraDaemonEnvironment: Readonly<Record<string, string>> = {},
   episode: "Work" | "ConversationResponse" = "Work",
-  traceStartup = false,
+  traceStartup = true,
 ) => {
+  if (activePhaseDiagnostic === undefined) {
+    beginAh19PhaseDiagnostics(
+      `AH19 checkpoint-boundary startup ${boundary}`,
+      boundary,
+    );
+  }
   probes.length = 0;
   providerRequests.length = 0;
   const reportUrl = await startReportServer();
@@ -2126,6 +2132,10 @@ const startAtCheckpointBoundary = async (
       `AH19 daemon failed startup: ${error instanceof Error ? error.message : String(error)}; childPhases=${observedChildPhases.join("|")}`,
     );
   });
+  if (activePhaseDiagnostic !== undefined) {
+    activePhaseDiagnostic.fixture = fixture;
+    activePhaseDiagnostic.childOutput = childOutput;
+  }
   fixtures.push(fixture);
   const client = makePublicClient(fixture.baseUrl);
   const project = await createFunctionalProject(
@@ -2291,8 +2301,14 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
   boundary:
     | "AH17BeforeCheckpointEpochCommit"
     | "AH17AfterCheckpointEpochCommit",
-  traceStartup = false,
+  traceStartup = true,
 ) => {
+  if (activePhaseDiagnostic === undefined) {
+    beginAh19PhaseDiagnostics(
+      `AH19 ordinary Native startup ${boundary}`,
+      boundary,
+    );
+  }
   probes.length = 0;
   providerRequests.length = 0;
   const reportUrl = await startReportServer();
@@ -2342,6 +2358,10 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
     }
     throw error;
   });
+  if (activePhaseDiagnostic !== undefined) {
+    activePhaseDiagnostic.fixture = fixture;
+    activePhaseDiagnostic.childOutput = childOutput;
+  }
   fixtures.push(fixture);
   const client = makePublicClient(fixture.baseUrl);
   const project = await createFunctionalProject(
@@ -2672,9 +2692,13 @@ describe("AH19 ProviderNative binding recovery", () => {
     const fixture = await startProductionFixture({
       reply: approvedRootWorkReply(seedMarker, workSeed),
       beforeResponse: heldWorkRequest.beforeResponse,
-      daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
+      daemonEnvironment: {
+        ARBOR_AH19_REPORT_URL: reportUrl,
+        ARBOR_AH19_STARTUP_TRACE: "1",
+      },
       onDaemonStdout: (line) => {
         childOutput.push(line);
+        recordAh19StartupOutput(line);
         if (line.includes("AH19_CHILD_START"))
           recordAh19Phase("child START", line);
         if (/listening|LISTEN/iu.test(line))
