@@ -5,10 +5,16 @@ Status: **PASS**
 The P9 regression guard previously expected the `architecture` package script
 to contain `tests/architecture`. That path belongs to
 `vitest.architecture.config.ts`; the script correctly invokes Vitest with that
-config. The guard now parses the script's `--config` argument, verifies the
-resolved config file exists, reads its include/exclude glob patterns, and
-checks that every current architecture test file is included and not excluded.
-It also verifies `pnpm check` has an exact `pnpm architecture` step.
+config. The guard now verifies `pnpm check` has a standalone `pnpm architecture`
+step before a standalone `pnpm test` step. It resolves the architecture script's
+`--config` path, checks realpath containment within the repository, then reads
+the config's literal include/exclude arrays. Vitest's installed `picomatch`
+implementation checks every recursively discovered architecture test file.
+Computed include/exclude arrays fail closed.
+
+Negative checks cover a missing core-test step hidden by a Web-test command, the
+wrong step order, a nested architecture test path, dynamic include syntax, an
+exclude pattern, and a config path outside the repository.
 
 ## Evidence
 

@@ -1,6 +1,16 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -3292,28 +3302,80 @@ describe("p9-acceptance", () => {
 const P9_DIR = import.meta.dirname;
 const REPO_ROOT = join(P9_DIR, "..");
 
-const matchesTestGlob = (pattern: string, path: string) => {
-  let expression = "^";
-  for (let index = 0; index < pattern.length; index += 1) {
-    const current = pattern[index];
-    if (current === undefined) continue;
-    if (current === "*" && pattern[index + 1] === "*") {
-      if (pattern[index + 2] === "/") {
-        expression += "(?:.*/)?";
-        index += 2;
-      } else {
-        expression += ".*";
-        index += 1;
-      }
-    } else if (current === "*") {
-      expression += "[^/]*";
-    } else {
-      expression += /[.+^${}()|[\]\\]/u.test(current)
-        ? `\\${current}`
-        : current;
-    }
+const requireFromTest = createRequire(import.meta.url);
+const requireFromVitest = createRequire(
+  requireFromTest.resolve("vitest/package.json"),
+);
+const picomatch = requireFromVitest("picomatch") as (
+  pattern: string,
+) => (path: string) => boolean;
+
+const parseStaticStringArray = (
+  source: string,
+  property: string,
+): ReadonlyArray<string> | undefined => {
+  const body = source.match(
+    new RegExp(`\\b${property}\\s*:\\s*\\[([^\\]]*)\\]`, "u"),
+  )?.[1];
+  if (body === undefined) return undefined;
+  const patterns = [...body.matchAll(/(["'])(.*?)\1/gu)];
+  const rest = body.replace(/(["'])(.*?)\1/gu, "").replace(/[\s,]/gu, "");
+  if (rest.length > 0) return undefined;
+  return patterns
+    .map((match) => match[2])
+    .filter((pattern): pattern is string => pattern !== undefined);
+};
+
+const enumerateTestFilesRecursively = (
+  directory: string,
+  repositoryRelativeDirectory: string,
+): ReadonlyArray<string> =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolutePath = join(directory, entry.name);
+    const relativePath = `${repositoryRelativeDirectory}/${entry.name}`;
+    if (entry.isDirectory())
+      return enumerateTestFilesRecursively(absolutePath, relativePath);
+    if (entry.isFile() && entry.name.endsWith(".test.ts"))
+      return [relativePath];
+    return [];
+  });
+
+const isCoveredByVitestGlobs = (
+  includeGlobs: ReadonlyArray<string>,
+  excludeGlobs: ReadonlyArray<string>,
+  testFiles: ReadonlyArray<string>,
+) =>
+  testFiles.every(
+    (testFile) =>
+      includeGlobs.some((pattern) => picomatch(pattern)(testFile)) &&
+      !excludeGlobs.some((pattern) => picomatch(pattern)(testFile)),
+  );
+
+const resolvesToRepositoryFile = (repositoryRoot: string, path: string) => {
+  try {
+    const realRepositoryRoot = realpathSync(repositoryRoot);
+    const realCandidate = realpathSync(resolve(repositoryRoot, path));
+    const relativeCandidate = relative(realRepositoryRoot, realCandidate);
+    return (
+      relativeCandidate !== "" &&
+      relativeCandidate !== ".." &&
+      !relativeCandidate.startsWith(`..${sep}`) &&
+      !isAbsolute(relativeCandidate)
+    );
+  } catch {
+    return false;
   }
-  return new RegExp(`${expression}$`, "u").test(path);
+};
+
+const hasArchitectureCheckSteps = (checkScript: string) => {
+  const steps = checkScript.split("&&").map((step) => step.trim());
+  const architectureIndex = steps.indexOf("pnpm architecture");
+  const coreTestIndex = steps.indexOf("pnpm test");
+  return (
+    architectureIndex >= 0 &&
+    coreTestIndex >= 0 &&
+    architectureIndex < coreTestIndex
+  );
 };
 
 const p9SuiteSources = (): ReadonlyArray<{
@@ -3514,11 +3576,19 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
       }
     ).scripts;
     const checkScript = scripts.check ?? "";
+    expect(hasArchitectureCheckSteps(checkScript)).toBe(true);
+    expect(
+      hasArchitectureCheckSteps(
+        "pnpm lint && pnpm typecheck && pnpm architecture && pnpm --filter @arbor/web test",
+      ),
+    ).toBe(false);
+    expect(
+      hasArchitectureCheckSteps(
+        "pnpm lint && pnpm typecheck && pnpm test && pnpm architecture",
+      ),
+    ).toBe(false);
+
     const architectureScript = scripts.architecture ?? "";
-    expect(checkScript).toContain("test");
-    expect(checkScript.split("&&").map((step) => step.trim())).toContain(
-      "pnpm architecture",
-    );
     const architectureCommand = architectureScript.split(/\s+/u);
     const vitestRunIndex = architectureCommand.findIndex(
       (token, index) =>
@@ -3529,52 +3599,98 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
       (token) => token === "--config" || token.startsWith("--config="),
     );
     expect(configFlagIndex).toBeGreaterThan(vitestRunIndex);
-    const architectureConfigPath = architectureCommand[
-      configFlagIndex
-    ]?.startsWith("--config=")
-      ? architectureCommand[configFlagIndex].slice("--config=".length)
-      : architectureCommand[configFlagIndex + 1];
+    const configFlag = architectureCommand[configFlagIndex];
+    const architectureConfigPath = configFlag?.startsWith("--config=")
+      ? configFlag.slice("--config=".length)
+      : configFlag === "--config"
+        ? architectureCommand[configFlagIndex + 1]
+        : undefined;
     expect(architectureConfigPath).toBeDefined();
+    if (architectureConfigPath === undefined)
+      throw new Error("architecture script does not resolve a config path");
     const resolvedArchitectureConfig = resolve(
       REPO_ROOT,
-      architectureConfigPath ?? "",
+      architectureConfigPath,
     );
     expect(existsSync(resolvedArchitectureConfig)).toBe(true);
-    const architectureConfig = readFileSync(resolvedArchitectureConfig, "utf8");
-    const includeBlock = architectureConfig.match(
-      /\binclude\s*:\s*\[([^\]]*)\]/u,
-    )?.[1];
-    expect(includeBlock).toBeDefined();
-    const includeGlobs = [
-      ...(includeBlock ?? "").matchAll(/["']([^"']+)["']/gu),
-    ]
-      .map((match) => match[1])
-      .filter((pattern): pattern is string => pattern !== undefined);
-    expect(includeGlobs.length).toBeGreaterThan(0);
-    const excludeBlock = architectureConfig.match(
-      /\bexclude\s*:\s*\[([^\]]*)\]/u,
-    )?.[1];
-    const excludeGlobs = [
-      ...(excludeBlock ?? "").matchAll(/["']([^"']+)["']/gu),
-    ]
-      .map((match) => match[1])
-      .filter((pattern): pattern is string => pattern !== undefined);
-    const architectureTestFiles = readdirSync(
+    expect(resolvesToRepositoryFile(REPO_ROOT, architectureConfigPath)).toBe(
+      true,
+    );
+    const realArchitectureConfig = realpathSync(resolvedArchitectureConfig);
+    const architectureConfig = readFileSync(realArchitectureConfig, "utf8");
+    const includeGlobs = parseStaticStringArray(architectureConfig, "include");
+    expect(includeGlobs).toBeDefined();
+    if (includeGlobs === undefined)
+      throw new Error("architecture include must be a static string array");
+    const excludeIsDeclared = /\bexclude\s*:/u.test(architectureConfig);
+    const parsedExcludeGlobs = parseStaticStringArray(
+      architectureConfig,
+      "exclude",
+    );
+    expect(excludeIsDeclared && parsedExcludeGlobs === undefined).toBe(false);
+    const excludeGlobs = parsedExcludeGlobs ?? [];
+    const architectureTestFiles = enumerateTestFilesRecursively(
       join(REPO_ROOT, "tests", "architecture"),
-    )
-      .filter((name) => name.endsWith(".test.ts"))
-      .map((name) => `tests/architecture/${name}`);
+      "tests/architecture",
+    );
     expect(architectureTestFiles.length).toBeGreaterThan(0);
-    for (const testFile of architectureTestFiles) {
+    expect(
+      isCoveredByVitestGlobs(includeGlobs, excludeGlobs, architectureTestFiles),
+    ).toBe(true);
+
+    const nestedRoot = mkdtempSync(join(tmpdir(), "arbor-p9-arch-nested-"));
+    try {
+      const nestedDirectory = join(nestedRoot, "nested");
+      mkdirSync(nestedDirectory);
+      writeFileSync(join(nestedDirectory, "nested.test.ts"), "", "utf8");
+      const nestedTestFiles = enumerateTestFilesRecursively(
+        nestedRoot,
+        "tests/architecture",
+      );
+      expect(nestedTestFiles).toEqual([
+        "tests/architecture/nested/nested.test.ts",
+      ]);
       expect(
-        includeGlobs.some((pattern) => matchesTestGlob(pattern, testFile)),
-        `${testFile} must match the architecture config include patterns`,
+        isCoveredByVitestGlobs(includeGlobs, excludeGlobs, nestedTestFiles),
       ).toBe(true);
       expect(
-        excludeGlobs.some((pattern) => matchesTestGlob(pattern, testFile)),
-        `${testFile} must not match an architecture config exclude pattern`,
+        isCoveredByVitestGlobs(
+          includeGlobs,
+          ["tests/architecture/**/*.test.ts"],
+          nestedTestFiles,
+        ),
       ).toBe(false);
+    } finally {
+      rmSync(nestedRoot, { recursive: true, force: true });
     }
+
+    expect(
+      parseStaticStringArray(
+        "test: { include: getArchitectureIncludes() }",
+        "include",
+      ),
+    ).toBeUndefined();
+    expect(
+      parseStaticStringArray(
+        'test: { include: ["tests/**/*.test.ts", getExtraIncludes()] }',
+        "include",
+      ),
+    ).toBeUndefined();
+
+    const outsideRoot = mkdtempSync(
+      join(tmpdir(), "arbor-p9-architecture-config-escape-"),
+    );
+    try {
+      const outsideConfigPath = join(outsideRoot, "vitest.config.ts");
+      writeFileSync(outsideConfigPath, "export default {};\n", "utf8");
+      expect(existsSync(outsideConfigPath)).toBe(true);
+      expect(resolvesToRepositoryFile(REPO_ROOT, outsideConfigPath)).toBe(
+        false,
+      );
+    } finally {
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
+
     expect(scripts.test ?? "").toContain("vitest run");
   });
 });
