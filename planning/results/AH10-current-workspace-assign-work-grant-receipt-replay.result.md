@@ -52,8 +52,11 @@ decodes the already-Committed receipt into the Observation without submitting
 a new Command.
 
 Grant evidence construction is shared with the ordinary current-workspace
-authorization path. No production command semantics, receipt contents, P9
-fences, or `docs/design/**` contracts changed.
+authorization path and requires a nonnegative safe-integer Grant revision in
+addition to the exact subject/capability/target and validity window. Malformed
+revision values fail closed in both ordinary authorization and receipt replay.
+No production command semantics, receipt contents, P9 fences, or
+`docs/design/**` contracts changed.
 
 ## Verification
 
@@ -66,5 +69,16 @@ fences, or `docs/design/**` contracts changed.
 - `pnpm build` — PASS.
 - `pnpm exec tsc -p tsconfig.test.json --noEmit` — PASS.
 - Biome on the changed authorizer and test — PASS.
+- B2 negative matrix in
+  `ah10-current-workspace-assign-work-receipt-replay.test.ts` — PASS, 18/18.
+  It covers expired/future grants; HumanPrincipal, foreign WorkspaceAgent, and
+  foreign Execution subjects; wrong and wildcard capabilities; wrong target;
+  missing, NaN, negative, and fractional revisions; Approval-row precedence;
+  no-Approval/no-grant behavior; and exact Approval/PermissionGrant success
+  paths. Every negative asserts `RecoveryBlocked`, zero pending Approval/Inbox
+  writes, and no replay flags.
+- `pnpm exec vitest run apps/single-workspace/test/ah10-current-workspace-assign-work-receipt-replay.test.ts` — PASS, 18/18.
+- `pnpm exec tsc -p tsconfig.test.json --noEmit` — PASS after the B2 additions.
+- Biome on the changed authorizer and test after the B2 additions — PASS.
 
 The full functional suite was not rerun.

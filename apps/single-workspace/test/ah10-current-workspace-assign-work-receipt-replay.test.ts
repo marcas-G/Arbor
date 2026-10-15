@@ -135,6 +135,78 @@ const exactGrant: PermissionGrant = {
   state: "Active",
 };
 
+const invalidGrantCases: ReadonlyArray<{
+  readonly name: string;
+  readonly grant: PermissionGrant;
+}> = [
+  {
+    name: "expired",
+    grant: { ...exactGrant, expiresAt: "2026-10-15T11:59:59.000Z" },
+  },
+  {
+    name: "future validFrom",
+    grant: { ...exactGrant, validFrom: "2026-10-15T12:00:01.000Z" },
+  },
+  {
+    name: "HumanPrincipal subject",
+    grant: {
+      ...exactGrant,
+      subject: {
+        _tag: "HumanPrincipal",
+        principal: parse(Principal)("user:local"),
+      },
+    },
+  },
+  {
+    name: "other WorkspaceAgent subject",
+    grant: {
+      ...exactGrant,
+      subject: {
+        _tag: "WorkspaceAgent",
+        workspaceId: parse(WorkspaceId)(
+          "ws_018f2b3c-4d5e-7abc-8def-0123456789a2",
+        ),
+      },
+    },
+  },
+  {
+    name: "other Execution subject",
+    grant: {
+      ...exactGrant,
+      subject: {
+        _tag: "Execution",
+        executionId: parse(ExecutionId)(
+          "exe_018f2b3c-4d5e-7abc-8def-0123456789a2",
+        ),
+      },
+    },
+  },
+  {
+    name: "wrong capability",
+    grant: { ...exactGrant, capability: "core.control.accept-result" },
+  },
+  {
+    name: "wildcard capability",
+    grant: { ...exactGrant, capability: "*" },
+  },
+  {
+    name: "missing revision",
+    grant: (({ revision: _revision, ...grant }) => grant)(exactGrant),
+  },
+  {
+    name: "NaN revision",
+    grant: { ...exactGrant, revision: Number.NaN },
+  },
+  {
+    name: "negative revision",
+    grant: { ...exactGrant, revision: -1 },
+  },
+  {
+    name: "fractional revision",
+    grant: { ...exactGrant, revision: 1.5 },
+  },
+];
+
 const exactConsumedApproval: ControlApprovalRecord = {
   approvalId,
   projectId,
@@ -294,22 +366,43 @@ describe("AH10 current-Workspace AssignWork receipt-first authorization", () => 
       await authorizePriorReceipt({});
 
     expect(result).toEqual({ _tag: "RecoveryBlocked" });
+    expect("assignWorkReplay" in result).toBe(false);
+    expect("assignWorkCommandReplay" in result).toBe(false);
     expect(pendingApprovals).toBe(0);
     expect(inboxAdmissions).toBe(0);
   });
 
   it("blocks a mismatched PermissionGrant", async () => {
-    const { result } = await authorizePriorReceipt({
-      grants: [
-        {
-          ...exactGrant,
-          target: "ws_other" as never,
-        },
-      ],
-    });
+    const { result, pendingApprovals, inboxAdmissions } =
+      await authorizePriorReceipt({
+        grants: [
+          {
+            ...exactGrant,
+            target: "ws_other" as never,
+          },
+        ],
+      });
 
     expect(result).toEqual({ _tag: "RecoveryBlocked" });
+    expect("assignWorkReplay" in result).toBe(false);
+    expect("assignWorkCommandReplay" in result).toBe(false);
+    expect(pendingApprovals).toBe(0);
+    expect(inboxAdmissions).toBe(0);
   });
+
+  it.each(invalidGrantCases)(
+    "blocks a prior Committed receipt with $name PermissionGrant evidence without side effects",
+    async ({ grant }) => {
+      const { result, pendingApprovals, inboxAdmissions } =
+        await authorizePriorReceipt({ grants: [grant] });
+
+      expect(result).toEqual({ _tag: "RecoveryBlocked" });
+      expect("assignWorkReplay" in result).toBe(false);
+      expect("assignWorkCommandReplay" in result).toBe(false);
+      expect(pendingApprovals).toBe(0);
+      expect(inboxAdmissions).toBe(0);
+    },
+  );
 
   it("does not fall back to a matching grant when a deterministic Approval row exists but mismatches", async () => {
     const { result, pendingApprovals, inboxAdmissions } =
@@ -322,6 +415,8 @@ describe("AH10 current-Workspace AssignWork receipt-first authorization", () => 
       });
 
     expect(result).toEqual({ _tag: "RecoveryBlocked" });
+    expect("assignWorkReplay" in result).toBe(false);
+    expect("assignWorkCommandReplay" in result).toBe(false);
     expect(pendingApprovals).toBe(0);
     expect(inboxAdmissions).toBe(0);
   });
@@ -356,5 +451,7 @@ describe("AH10 current-Workspace AssignWork receipt-first authorization", () => 
     });
 
     expect(result).toEqual({ _tag: "RecoveryBlocked" });
+    expect("assignWorkReplay" in result).toBe(false);
+    expect("assignWorkCommandReplay" in result).toBe(false);
   });
 });
