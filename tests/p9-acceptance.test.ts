@@ -21,6 +21,9 @@ import {
   isComputedPropertyName,
   isExportAssignment,
   isIdentifier,
+  isImportDeclaration,
+  isImportSpecifier,
+  isNamedImports,
   isObjectLiteralExpression,
   isPropertyAssignment,
   isSpreadAssignment,
@@ -3394,7 +3397,49 @@ const readStaticStringArray = (
   return values;
 };
 
+const hasTrustedDefineConfigImport = (sourceFile: TypeScriptSourceFile) => {
+  const imports = sourceFile.statements.filter(isImportDeclaration);
+  if (imports.length !== 1) return false;
+  const declaration = imports[0];
+  if (
+    declaration === undefined ||
+    !isStringLiteral(declaration.moduleSpecifier) ||
+    declaration.moduleSpecifier.text !== "vitest/config" ||
+    declaration.attributes !== undefined
+  )
+    return false;
+  const clause = declaration.importClause;
+  if (
+    clause === undefined ||
+    clause.name !== undefined ||
+    clause.phaseModifier !== undefined ||
+    clause.namedBindings === undefined ||
+    !isNamedImports(clause.namedBindings) ||
+    clause.namedBindings.elements.length !== 1
+  )
+    return false;
+  const specifier = clause.namedBindings.elements[0];
+  if (
+    specifier === undefined ||
+    !isImportSpecifier(specifier) ||
+    specifier.isTypeOnly ||
+    specifier.propertyName !== undefined ||
+    specifier.name.text !== "defineConfig"
+  )
+    return false;
+
+  let defineConfigIdentifierCount = 0;
+  const visit = (node: import("typescript/unstable/ast").Node) => {
+    if (isIdentifier(node) && node.text === "defineConfig")
+      defineConfigIdentifierCount += 1;
+    node.forEachChild(visit);
+  };
+  sourceFile.forEachChild(visit);
+  return defineConfigIdentifierCount === 2;
+};
+
 const parseArchitectureConfigSource = (sourceFile: TypeScriptSourceFile) => {
+  if (!hasTrustedDefineConfigImport(sourceFile)) return undefined;
   const exports = sourceFile.statements.filter(isExportAssignment);
   if (exports.length !== 1 || exports[0]?.isExportEquals !== false)
     return undefined;
@@ -3844,6 +3889,26 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
         configSource(
           'include: ["tests/architecture/**/*.test.ts"], exclude: getExcludes()',
         ),
+      ],
+      [
+        "wrong-define-config-module",
+        'import { defineConfig } from "./wrapper";\nexport default defineConfig({ test: { include: ["tests/architecture/**/*.test.ts"] } });',
+      ],
+      [
+        "aliased-define-config-import",
+        'import { defineConfig as configure } from "vitest/config";\nexport default configure({ test: { include: ["tests/architecture/**/*.test.ts"] } });',
+      ],
+      [
+        "duplicate-imports",
+        'import { defineConfig } from "vitest/config";\nimport { defineConfig as configure } from "vitest/config";\nexport default defineConfig({ test: { include: ["tests/architecture/**/*.test.ts"] } });',
+      ],
+      [
+        "local-define-config-wrapper",
+        'const defineConfig = (config: unknown) => config;\nexport default defineConfig({ test: { include: ["tests/architecture/**/*.test.ts"] } });',
+      ],
+      [
+        "shadowed-define-config-import",
+        'import { defineConfig } from "vitest/config";\nconst defineConfig = (config: unknown) => config;\nexport default defineConfig({ test: { include: ["tests/architecture/**/*.test.ts"] } });',
       ],
     ];
     const invalidConfigRoot = mkdtempSync(

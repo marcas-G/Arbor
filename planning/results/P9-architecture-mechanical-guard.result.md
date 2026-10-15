@@ -12,17 +12,21 @@ step before a standalone `pnpm test` step, and checks config-path containment
 using real paths.
 
 The config is loaded with the installed TypeScript compiler API and inspected
-as an AST. The guard requires `export default defineConfig({ test: ... })` and
-unique direct `include` and optional `exclude` property assignments to static
-string arrays. Comments cannot supply fields, and duplicates, computed keys,
-spreads, and dynamic arrays fail closed. Vitest's installed `picomatch`
-implementation checks every recursively discovered architecture test file.
+as an AST. The guard requires exactly one non-aliased named `defineConfig`
+import from `vitest/config`, bound to the `defineConfig` call without additional
+shadowing references, and `export default defineConfig({ test: ... })`. The
+`test` object must have unique direct `include` and optional `exclude` property
+assignments to static string arrays. Comments cannot supply fields, and
+duplicate imports/properties, local wrappers/shadows, computed keys, spreads,
+and dynamic arrays fail closed. Vitest's installed `picomatch` implementation
+checks every recursively discovered architecture test file.
 
 Negative checks cover echo/pre-command prefixes, shell control syntax,
 duplicate config flags, flag-as-config-value, a missing core-test step hidden
 by a Web-test command, the wrong step order, a nested architecture test path,
-comment-only fields, dynamic/computed/spread/duplicate config properties,
-exclusion, and a config path outside the repository.
+comment-only fields, wrong-module and aliased `defineConfig` imports, duplicate
+imports, a local wrapper/shadow, dynamic/computed/spread/duplicate config
+properties, exclusion, and a config path outside the repository.
 
 ## Evidence
 
