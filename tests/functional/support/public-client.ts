@@ -473,6 +473,45 @@ export const waitForApproval = async (
   return { approvalId: match[1] as string, revision: Number(match[2]) };
 };
 
+/** Selects the sole pending Executable approval by its public Inbox key. The
+ * caller must independently validate that exact row's durable action binding
+ * before resolving it. */
+export const waitForExecutableApproval = async (
+  client: PublicClient,
+  workspaceId: string,
+  contextLabel: string,
+  timeoutMs = 60_000,
+): Promise<{ readonly approvalId: string; readonly revision: number }> => {
+  const entryPattern = /^eap:(.+):(\d+)$/u;
+  const inbox = await waitForPublic(
+    () =>
+      client.view<{
+        unconsumed: Array<{ entryKey: string; kind: string; summary: string }>;
+      }>("inbox-view", { workspaceId }),
+    (value) =>
+      value.unconsumed.some(
+        (entry) =>
+          entry.kind === "Governance" && entryPattern.test(entry.entryKey),
+      ),
+    timeoutMs,
+  );
+  const entries = inbox.unconsumed.filter(
+    (entry) => entry.kind === "Governance" && entryPattern.test(entry.entryKey),
+  );
+  if (entries.length !== 1) {
+    throw new Error(
+      `public Inbox exposed ${entries.length} Executable approvals for ${contextLabel}; expected exactly one`,
+    );
+  }
+  const match = entryPattern.exec(entries[0]?.entryKey ?? "");
+  if (match?.[1] === undefined || match[2] === undefined) {
+    throw new Error(
+      `public Inbox exposed no exact Executable approval for ${contextLabel}`,
+    );
+  }
+  return { approvalId: match[1], revision: Number(match[2]) };
+};
+
 export const admitRootWorkThroughPublicConversation = async (
   client: PublicClient,
   project: FunctionalProject,

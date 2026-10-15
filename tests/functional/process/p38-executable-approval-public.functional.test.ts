@@ -12,6 +12,7 @@ import {
   makePublicClient,
   submitHumanMessage,
   waitForApproval,
+  waitForExecutableApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -56,7 +57,6 @@ interface ApprovalSnapshot {
 }
 
 const fixtures: ProductionFixture[] = [];
-const EXECUTABLE_APPROVAL_ENTRY_KEY = /^eap:(.+):(\d+)$/u;
 const p4FenceChild = resolve(
   "tests/functional/support/p4-tool-lease-fencing-child.mjs",
 );
@@ -195,36 +195,12 @@ const startExecutableApproval = async (
     reason: "admit the Work whose shell action is separately gated",
   });
 
-  const inbox = await waitForPublic(
-    () =>
-      client.view<{
-        unconsumed: Array<{ entryKey: string; kind: string; summary: string }>;
-      }>("inbox-view", { workspaceId: project.rootWorkspaceId }),
-    (value) =>
-      value.unconsumed.some(
-        (entry) =>
-          entry.kind === "Governance" &&
-          EXECUTABLE_APPROVAL_ENTRY_KEY.test(entry.entryKey),
-      ),
+  const { approvalId, revision } = await waitForExecutableApproval(
+    client,
+    project.rootWorkspaceId,
+    marker,
     60_000,
   );
-  const entry = inbox.unconsumed.find(
-    (candidate) =>
-      candidate.kind === "Governance" &&
-      EXECUTABLE_APPROVAL_ENTRY_KEY.test(candidate.entryKey),
-  );
-  const match =
-    entry === undefined
-      ? null
-      : EXECUTABLE_APPROVAL_ENTRY_KEY.exec(entry.entryKey);
-  if (match === null || match[1] === undefined || match[2] === undefined) {
-    throw new Error(
-      `public Inbox exposed no exact Executable approval for ${marker}`,
-    );
-  }
-
-  const approvalId = match[1];
-  const revision = Number(match[2]);
   const snapshot = () =>
     readApprovalSnapshot(
       fixture.databaseFile,
