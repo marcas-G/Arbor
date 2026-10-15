@@ -1410,7 +1410,7 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     });
     expect(rejectedAttempt?.pid).not.toBe(oldAcquired.pid);
     expect(rejectedAttempt?.workerIncarnationId).toMatch(
-      /^wic_local_[0-9a-f-]{36}$/u,
+      /^wic_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
     );
     expect(rejectedAttempt?.workerIncarnationId).not.toBe(
       oldAcquired.workerIncarnationId,
