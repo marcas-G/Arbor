@@ -238,22 +238,41 @@ cleanup.
 No per-case timeout, recovery assertion, or security/settlement assertion was
 changed. No full suite was run.
 
-## Target-first process-table verification follow-up
+## Windows natural-exit grace follow-up
 
-When taskkill returns nonzero after the root exits, a bounded, hidden
-PowerShell helper queries `Win32_Process` and emits only the descendant PID
-closure. The query is evidence-only: an empty closure confirms absence; any
-descendant or query failure remains unproven and reports only validated PIDs.
-The returned PIDs are never passed to taskkill, avoiding PID-reuse mis-targets.
-This process-table query is not used on ordinary code-0 taskkill success. A
-nonempty closure is left for the test runner's stop path or manual/known-handle
-cleanup; this code does not claim that those descendants were removed.
+The PID-reuse-risking process-table query and descendant-PID taskkill path
+were removed. Before any Windows taskkill is spawned for a live child, stop
+now waits up to 1.5s for a natural root exit. If the child exits during that
+grace, stop returns without starting taskkill; a child already exited before
+the call retains the existing no-op behavior. Once the grace expires and a
+forced taskkill starts, only taskkill exit code 0 plus an observed target exit
+can succeed. Target-first code 128, other nonzero exits, errors, and timeouts
+remain `tree cleanup unproven`. This contract does not claim to manage
+external processes detached from the root.
+
+The bounded grace can add at most 1.5s to an active Windows stop before a
+forced kill. No business timeout was raised. AH18 `manifest-context-epoch`
+passed three consecutive exact runs after the ownership-loss fix at 32.827s,
+33.365s, and 32.916s (Vitest file durations 54.96s, 55.05s, and 89.04s).
+
+The AH10 regression exposed a separate production leak: `consumeWorkspaceWake`
+was the only production `runExecution` caller that let `LeaseFencingRejected`
+escape. The old gen-0 process then wrote the expected ownership-loss error to
+stderr and terminated while the gen-1 process remained clean. This callsite
+now ends only that wake on `LeaseFencingRejected`; unrelated failures still
+propagate. After this fix, the AH10 before/after generation-takeover pair
+passed two consecutive rounds at 1.5s grace (round 1: 64.226s / 64.168s;
+round 2: 64.254s / 70.755s). No case timeout or security/settlement assertion
+was changed.
 
 | Validation | Result |
 |---|---|
-| Target-first code 128 with empty descendant closure | PASS |
-| Target-first live descendant closure | PASS; rejects unproven and never kills queried PID |
-| Target-first query failure / remaining descendants | PASS; unproven |
-| Real Windows root-only target-first code 128 with empty closure | PASS, 1/1; actual process-table query |
-| AH18 exact `manifest-context-epoch` fail-closed case | PASS, 30.667s |
-| AH10 generation-takeover before/after receipt-commit pair | PASS, 2/2; 67.561s and 59.175s |
+| Natural exit during injected grace; no taskkill spawn | PASS |
+| Active child after grace + target-first code 128 | PASS; rejects unproven |
+| Active child after grace + code 0 and target exit | PASS |
+| Real Windows root exits during grace; no taskkill spawn | PASS, 1/1 |
+| `containLeaseFencingRejected` unit test | PASS, catches only ownership loss; unrelated tagged failures propagate |
+| AH18 exact `manifest-context-epoch` fail-closed case | PASS, 3/3; 32.827s, 33.365s, 32.916s |
+| AH10 generation-takeover before/after receipt-commit pair | PASS, 2 consecutive rounds (4/4); 64.226s / 64.168s and 64.254s / 70.755s |
+| Lifecycle focused group | PASS, 15 passed / 13 skipped; includes real Windows tree stop and grace/no-taskkill |
+| Full fixture-handshake file attempt | Late HTTP readiness assertion once measured 5.578s against `<5s`; exact case rerun twice passed at 4.870s / 4.912s, so no behavior regression reproduced |
