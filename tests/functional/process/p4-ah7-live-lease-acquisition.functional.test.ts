@@ -1407,9 +1407,14 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       executionId,
       fencingGeneration: oldAcquired.fencingGeneration,
       workerId: beforeRetry?.worker_id,
-      workerIncarnationId: beforeRetry?.worker_incarnation_id,
     });
     expect(rejectedAttempt?.pid).not.toBe(oldAcquired.pid);
+    expect(rejectedAttempt?.workerIncarnationId).toMatch(
+      /^wic_local_[0-9a-f-]{36}$/u,
+    );
+    expect(rejectedAttempt?.workerIncarnationId).not.toBe(
+      oldAcquired.workerIncarnationId,
+    );
     expect(
       fixture.providerCalls.filter((call) =>
         JSON.stringify(call.messages).includes(steerMarker),

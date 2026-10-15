@@ -648,6 +648,47 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
         work.revision === initialRevision + 1,
     );
     expect(revisedWork?.status).toBe("Open");
+    const resumedExecution = await waitForPublic(
+      async () =>
+        readP37Snapshot(seed.fixture.databaseFile).executions.find(
+          (execution) =>
+            execution.episode_ref === seed.seededWork.workId &&
+            Number(execution.episode_revision) === initialRevision + 1,
+        ),
+      (execution) => execution !== undefined,
+      30_000,
+    ).catch(async (error: unknown) => {
+      const diagnostic = await readRaiBoundaryDiagnostic({
+        databaseFile: seed.fixture.databaseFile,
+        client: seed.client,
+        projectId: seed.project.projectId,
+        workspaceId: seed.producer.workspaceId,
+        workId,
+        workRevision: initialRevision + 1,
+        executionId: firstAction.execution_id,
+        logicalActionId: firstAction.logical_action_id,
+        probes: seed.probes,
+        providerRequestCount: seed.fixture.providerCalls.length,
+        providerRequestBaselineCount,
+        maxNoProgressTurns: d4Threshold,
+        daemonErrorCount: seed.fixture.daemonErrors.length,
+      });
+      const evidenceDirectory = persistRaiFailureEvidence({
+        databaseFile: seed.fixture.databaseFile,
+        diagnostic,
+        daemonErrors: seed.fixture.daemonErrors,
+        daemonStdoutLines: seed.daemonStdoutLines,
+        daemonProcessSnapshot: seed.fixture.daemonProcessSnapshot(),
+      });
+      throw new Error(
+        `RAI exact revised-episode execution did not appear: cause=${error instanceof Error ? error.message : String(error)}; evidence=${evidenceDirectory}; diagnostic=${JSON.stringify(diagnostic)}`,
+      );
+    });
+    if (resumedExecution === undefined) {
+      throw new Error("RAI exact revised-episode execution was absent");
+    }
+    expect(resumedExecution.episode_ref).toBe(seed.seededWork.workId);
+    expect(Number(resumedExecution.episode_revision)).toBe(initialRevision + 1);
     const postSteerRows = await readPublicAttention(
       seed.client,
       seed.project.projectId,
@@ -668,13 +709,7 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
     ).toBe(false);
     const afterSteer = readP37Snapshot(seed.fixture.databaseFile);
     expect(afterSteer.facts).toHaveLength(1);
-    expect(
-      afterSteer.executions.some(
-        (execution) =>
-          execution.episode_ref === seed.seededWork.workId &&
-          Number(execution.episode_revision) === initialRevision + 1,
-      ),
-    ).toBe(true);
+    expect(afterSteer.executions).toContainEqual(resumedExecution);
   }, 240_000);
 
   it("keeps an ordinary RuntimeSafetyStop Work revision held without any P9 fact", async () => {

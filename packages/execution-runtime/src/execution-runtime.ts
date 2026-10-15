@@ -42,6 +42,7 @@ import {
   WorkerDispatchPort,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
+import { LOCAL_WORKER_INCARNATION_ID } from "./process-identity.js";
 import { recordSubmittedDecisionBindingFailure } from "./submitted-decision-binding-failure.js";
 
 /** Empirical TTL value (P2 `03` §8 keeps lease duration non-contract); only
@@ -90,9 +91,6 @@ export type ExecutionLeaseQualificationProbe = (
 ) => Promise<void>;
 
 const WORKER_ID = "worker:local";
-/** P12 `06` §2: the in-process worker incarnation. A daemon restart mints a
- * new incarnation so an old process cannot be mistaken for the current one. */
-const WORKER_INCARNATION_ID = "wic_local_process";
 
 const episodeIdentityMatches = (
   stored: AgentEpisodeIdentity,
@@ -331,7 +329,7 @@ export const runExecution = (
     const { lease, agentExecutionState } = yield* tx.transact(
       Effect.gen(function* () {
         const lease = yield* leases
-          .acquire(executionId, WORKER_ID, WORKER_INCARNATION_ID)
+          .acquire(executionId, WORKER_ID, LOCAL_WORKER_INCARNATION_ID)
           .pipe(
             Effect.tapError((error) =>
               error._tag === "LeaseFencingRejected" &&
@@ -341,7 +339,7 @@ export const runExecution = (
                       boundary: "AH10LeaseAcquisitionRejected",
                       executionId,
                       workerId: WORKER_ID,
-                      workerIncarnationId: WORKER_INCARNATION_ID,
+                      workerIncarnationId: LOCAL_WORKER_INCARNATION_ID,
                       fencingGeneration: error.generation,
                     }),
                   )
@@ -377,7 +375,7 @@ export const runExecution = (
           boundary: "AH10AfterLeaseAcquired",
           executionId,
           workerId: WORKER_ID,
-          workerIncarnationId: WORKER_INCARNATION_ID,
+          workerIncarnationId: LOCAL_WORKER_INCARNATION_ID,
           fencingGeneration: lease.generation,
         }),
       );

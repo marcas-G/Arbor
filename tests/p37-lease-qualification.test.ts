@@ -218,7 +218,10 @@ describe("P37 exited-owner lease qualification", () => {
   });
 
   it.each([
-    ["worker tuple", acquiredProbe({ workerIncarnationId: "inc-foreign" })],
+    [
+      "same-PID reuse with a different process incarnation",
+      acquiredProbe({ workerIncarnationId: "inc-foreign" }),
+    ],
     ["higher generation", acquiredProbe({ generation: 5 })],
   ] as const)(
     "fails closed on conflicting %s evidence",
@@ -263,4 +266,32 @@ describe("P37 exited-owner lease qualification", () => {
     expect(owner.crashCount()).toBe(0);
     expect(readLease(databaseFile)).toMatchObject({ generation: 4 });
   });
+
+  it.each([
+    ["negative", acquiredProbe({ generation: -1 })],
+    [
+      "unsafe integer",
+      acquiredProbe({ generation: Number.MAX_SAFE_INTEGER + 1 }),
+    ],
+    ["NaN", acquiredProbe({ generation: Number.NaN })],
+  ] as const)(
+    "does not treat a %s probe generation as owner evidence",
+    async (_name, probe) => {
+      const databaseFile = seedLease();
+      await expect(
+        expireP37LeaseForQualification({
+          databaseFile,
+          executionId: "exe_p37_owner_test",
+          daemon: ownerController().controller,
+          probes: [probe],
+          timeoutMs: 25,
+          pollIntervalMs: 5,
+        }),
+      ).rejects.toThrow("no stable-incarnation prior probe exists");
+      expect(readLease(databaseFile)).toMatchObject({
+        generation: 4,
+        expires_at: "2999-01-01T00:00:00.000Z",
+      });
+    },
+  );
 });
