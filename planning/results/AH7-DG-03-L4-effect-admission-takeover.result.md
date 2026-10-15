@@ -122,3 +122,23 @@ Verification after the follow-up:
 - `pnpm typecheck` — PASS (`tsc -b` and `tsc -p tsconfig.test.json`).
 - `pnpm lint` — PASS, Biome checked 1177 files.
 - `git diff --check` — PASS.
+
+## Review follow-up: subject and control-basis binding
+
+The Executable-approval query now also selects `subject_ref` and
+`control_basis_digest`. The qualification joins the exact invocation to its
+immutable P39 `RecoveryBindingV1` row, re-canonicalizes and re-digests that
+record with the public P39 helpers, and requires the binding's
+`controlBasisDigest` to equal the approval row's 64-hex digest. It also requires
+the Executable approval `subject_ref` to equal both the frozen binding's
+`approvalSubject` and `principalId`; this checks the actual persisted principal
+binding for the current Workspace Execution rather than accepting any
+non-empty subject string. The canonical binding additionally ties that digest
+and subject to this exact execution, invocation, callRef, logical action, and
+shell definition.
+
+After these binding assertions:
+
+- `pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/p4-ah7-effect-admission-takeover.functional.test.ts` — PASS, 3/3.
+- `pnpm exec tsc -p tsconfig.test.json --noEmit` — PASS.
+- Biome on the P4 test and `git diff --check` — PASS.
