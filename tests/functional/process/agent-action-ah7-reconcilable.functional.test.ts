@@ -103,11 +103,13 @@ interface ExecutableApprovalQualification {
     readonly project_id: string;
     readonly workspace_id: string;
     readonly execution_id: string;
+    readonly subject_ref: string;
     readonly stable_action_id: string;
     readonly action_version: string;
     readonly side_effect_semantics: string;
     readonly arguments_json: string;
     readonly target_resource_space_ids_json: string;
+    readonly control_basis_digest: string;
     readonly state: string;
     readonly revision: number;
     readonly binding_proven: number;
@@ -150,9 +152,11 @@ const waitForExactShellApproval = async (input: {
     const row = db
       .prepare(
         `SELECT a.approval_id, a.route_kind, a.project_id, a.workspace_id,
+                a.subject_ref,
                 a.execution_id, a.stable_action_id, a.action_version,
                 a.side_effect_semantics, a.arguments_json,
-                a.target_resource_space_ids_json, a.state, a.revision,
+                a.target_resource_space_ids_json, a.control_basis_digest,
+                a.state, a.revision,
                 a.binding_proven, a.logical_step_no, a.repair_attempt,
                 a.action_index, a.logical_action_id, a.call_ref,
                 a.tool_invocation_id, e.episode_kind, e.episode_ref,
@@ -185,9 +189,11 @@ const waitForExactShellApproval = async (input: {
       route_kind: "Executable",
       project_id: input.projectId,
       workspace_id: input.workspaceId,
+      subject_ref: "runtime:system",
       stable_action_id: "shell",
       action_version: SHELL_DEFINITION.version,
       side_effect_semantics: input.sideEffectSemantics,
+      control_basis_digest: expect.stringMatching(/^[0-9a-f]{64}$/u),
       state: "Pending",
       revision,
       binding_proven: 1,
@@ -203,10 +209,7 @@ const waitForExactShellApproval = async (input: {
     const targetResourceSpaceIds = JSON.parse(
       row.target_resource_space_ids_json,
     ) as unknown;
-    expect(Array.isArray(targetResourceSpaceIds)).toBe(true);
-    expect(
-      (targetResourceSpaceIds as ReadonlyArray<string>).length,
-    ).toBeGreaterThan(0);
+    expect(targetResourceSpaceIds).toEqual(["filesystem"]);
     expect(row.logical_action_id).toMatch(/^lac_/u);
     expect(row.call_ref).toMatch(/^call_/u);
     expect(row.tool_invocation_id).toMatch(/^tin_/u);
@@ -310,6 +313,26 @@ const readP4InvocationApprovalBinding = (
           readonly result_ref: string | null;
           readonly settlement_kind: string | null;
           readonly settled_at: string | null;
+        }
+      | undefined;
+  } finally {
+    db.close();
+  }
+};
+
+const readP39RecoveryBinding = (databaseFile: string, invocationId: string) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        `SELECT canonical_binding_json, binding_sha256
+           FROM tool_invocation_recovery_bindings
+          WHERE invocation_id = ?`,
+      )
+      .get(invocationId) as
+      | {
+          readonly canonical_binding_json: string;
+          readonly binding_sha256: string;
         }
       | undefined;
   } finally {
@@ -637,6 +660,34 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         .map((region) => region.resourceSpaceId)
         .sort();
       expect(resolvedRegionIds).toEqual([...approvedResourceIds].sort());
+      const p39RecoveryBinding = readP39RecoveryBinding(
+        fixture.databaseFile,
+        hit.invocationId,
+      );
+      if (p39RecoveryBinding === undefined) {
+        throw new Error("AH7 P39 recovery binding row absent after intent");
+      }
+      const canonicalRecoveryBinding = JSON.parse(
+        p39RecoveryBinding.canonical_binding_json,
+      ) as {
+        readonly approvalId: string | null;
+        readonly approvalSubject: string | null;
+        readonly controlBasisDigest: string;
+      };
+      expect(canonicalRecoveryBinding).toMatchObject({
+        approvalId: executableApproval.approvalId,
+        approvalSubject: executableApproval.row.subject_ref,
+        controlBasisDigest: executableApproval.row.control_basis_digest,
+      });
+      expect(canonicalRecoveryBinding.controlBasisDigest).toMatch(
+        /^[0-9a-f]{64}$/u,
+      );
+      expect(p39RecoveryBinding.binding_sha256).toMatch(/^[0-9a-f]{64}$/u);
+      expect(
+        createHash("sha256")
+          .update(p39RecoveryBinding.canonical_binding_json)
+          .digest("hex"),
+      ).toBe(p39RecoveryBinding.binding_sha256);
       const approvalAtCrash = readExecutableApprovalAfterRecovery(
         fixture.databaseFile,
         executableApproval.approvalId,
