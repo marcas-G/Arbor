@@ -149,8 +149,14 @@ const waitForDaemonReadiness = async (
         `functional daemon exited before HTTP readiness; ${childExitDiagnostic(child)}; stderr=${daemonErrorSummary() || "<empty>"}`,
       );
     }
+    const remainingMs = deadline - Date.now();
+    const abortController = new AbortController();
+    const requestTimer = setTimeout(
+      () => abortController.abort(),
+      Math.min(1_000, remainingMs),
+    );
     try {
-      const response = await fetch(baseUrl);
+      const response = await fetch(baseUrl, { signal: abortController.signal });
       if (response.ok) {
         if (childHasExited(child)) {
           throw new Error(
@@ -168,8 +174,13 @@ const waitForDaemonReadiness = async (
         );
       }
       lastError = error;
+    } finally {
+      clearTimeout(requestTimer);
     }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    const backoffMs = Math.min(100, deadline - Date.now());
+    if (backoffMs > 0) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, backoffMs));
+    }
   }
   throw new Error(
     `functional daemon HTTP readiness timed out after ${timeoutMs}ms; last=${lastError instanceof Error ? lastError.message : String(lastError)}`,
@@ -401,6 +412,8 @@ export const startProductionFixture = async (input: {
   readonly isolatedPortHandshake?: boolean;
   readonly daemonEnvironment?: Readonly<Record<string, string>>;
   readonly onDaemonStdout?: (line: string) => void;
+  /** Test-only bound for exercising daemon HTTP-readiness failure cleanup. */
+  readonly daemonReadinessTimeoutMs?: number;
   /** Test-only fault probe for verifying early fixture setup cleanup. */
   readonly setupProbe?: (
     event: ProductionFixtureSetupProbeEvent,
@@ -571,7 +584,12 @@ export const startProductionFixture = async (input: {
       if (daemon === undefined) {
         throw new Error("functional daemon process was not started");
       }
-      await waitForDaemonReadiness(daemon, baseUrl, daemonErrorSummary, 60_000);
+      await waitForDaemonReadiness(
+        daemon,
+        baseUrl,
+        daemonErrorSummary,
+        input.daemonReadinessTimeoutMs ?? 60_000,
+      );
     } catch (error) {
       await stopDaemonAfterStartupFailure(error, "functional daemon readiness");
       throw new Error(
