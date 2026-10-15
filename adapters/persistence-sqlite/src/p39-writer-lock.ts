@@ -15,7 +15,10 @@ import { Context, Duration, Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqliteAdapterError } from "./errors.js";
 import { sqliteAdapterError } from "./errors.js";
-import { executeP39WindowsSecurityQuery } from "./p39-windows-security.js";
+import {
+  type P39WindowsProtectedPath,
+  validateP39WindowsProtectedPaths,
+} from "./p39-windows-security.js";
 
 export const P39_WRITER_LOCK_DDL = `
 CREATE TABLE IF NOT EXISTS p39_writer_lock (
@@ -63,69 +66,64 @@ export class P39WriterLockClient extends Context.Service<
  * writer lock and audit sidecar. Different owners and any other writers fail
  * closed; deployments needing separate service/operator identities need a
  * separately governed shared-ACL profile. */
-const validateP39ProtectedPath = (
-  path: string,
-  kind: "directory" | "file",
+const validateP39ProtectedPaths = (
+  paths: ReadonlyArray<P39WindowsProtectedPath>,
 ): boolean => {
+  if (paths.length === 0) return false;
   try {
-    const stat = statSync(path, { bigint: true });
-    if (
-      (kind === "directory" ? !stat.isDirectory() : !stat.isFile()) ||
-      stat.dev === 0n ||
-      (kind === "file" && (stat.ino === 0n || stat.nlink !== 1n)) ||
-      !isSupportedLocalFilesystem(path)
-    ) {
-      return false;
+    const entries = paths.map(({ path, kind }) => ({
+      path,
+      kind,
+      stat: statSync(path, { bigint: true }),
+    }));
+    for (const { kind, stat } of entries) {
+      if (
+        (kind === "directory" ? !stat.isDirectory() : !stat.isFile()) ||
+        stat.dev === 0n ||
+        (kind === "file" && (stat.ino === 0n || stat.nlink !== 1n))
+      ) {
+        return false;
+      }
     }
     if (process.platform === "win32") {
-      const encoded = Buffer.from(path, "utf8").toString("base64");
-      const script = [
-        "$ErrorActionPreference='Stop'",
-        `$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))`,
-        "$i=Get-Item -LiteralPath $p -Force",
-        `if(${kind === "directory" ? "!$i.PSIsContainer" : "$i.PSIsContainer"} -or (($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)){exit 2}`,
-        "$a=Get-Acl -LiteralPath $p",
-        "$w=[Security.Principal.WindowsIdentity]::GetCurrent()",
-        "$u=$w.User.Value",
-        "$t=@($u,'S-1-5-18','S-1-5-32-544')",
-        "$m=[int][Security.AccessControl.FileSystemRights]::WriteData -bor [int][Security.AccessControl.FileSystemRights]::AppendData -bor [int][Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor [int][Security.AccessControl.FileSystemRights]::WriteAttributes -bor [int][Security.AccessControl.FileSystemRights]::Delete -bor [int][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [int][Security.AccessControl.FileSystemRights]::ChangePermissions -bor [int][Security.AccessControl.FileSystemRights]::TakeOwnership",
-        "$g=$false",
-        "foreach($r in $a.Access){$sid=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($r.AccessControlType -eq 'Allow' -and (([int]$r.FileSystemRights -band $m) -ne 0)){if(!($t -contains $sid)){exit 3};if($sid -eq $u){$g=$true}}}",
-        "$o=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value",
-        "if(!$g){exit 4}",
-        "Write-Output ($o+'|'+$u)",
-      ].join(";");
-      const [ownerIdentity, processIdentity] =
-        executeP39WindowsSecurityQuery(script).split("|");
-      return p39SameOperatingSystemIdentity(
-        ownerIdentity ?? "",
-        processIdentity ?? "",
-      );
+      return validateP39WindowsProtectedPaths(paths);
     }
-    const mode = Number(stat.mode & 0o7777n);
     const currentUid = process.getuid?.();
-    return (
-      currentUid !== undefined &&
-      p39SameOperatingSystemIdentity(`uid:${stat.uid}`, `uid:${currentUid}`) &&
-      (mode & 0o022) === 0 &&
-      (kind === "directory" ? (mode & 0o100) !== 0 : (mode & 0o200) !== 0)
-    );
+    if (currentUid === undefined) return false;
+    for (const { path, kind, stat } of entries) {
+      if (!isSupportedLocalFilesystem(path)) {
+        return false;
+      }
+      const mode = Number(stat.mode & 0o7777n);
+      if (
+        !p39SameOperatingSystemIdentity(
+          `uid:${stat.uid}`,
+          `uid:${currentUid}`,
+        ) ||
+        (mode & 0o022) !== 0 ||
+        (kind === "directory" ? (mode & 0o100) === 0 : (mode & 0o200) === 0)
+      ) {
+        return false;
+      }
+    }
+    return true;
   } catch {
     return false;
   }
 };
 
 export const validateP39ProtectedDirectory = (directory: string): boolean =>
-  validateP39ProtectedPath(directory, "directory");
+  validateP39ProtectedPaths([{ path: directory, kind: "directory" }]);
 
 export const validateP39ProtectedFile = (filename: string): boolean =>
-  validateP39ProtectedPath(filename, "file");
+  validateP39ProtectedPaths([{ path: filename, kind: "file" }]);
 
 /** A primary-adjacent lock path shared by daemon and maintenance under the same
  * validated OS identity. The v1 owner profile deliberately rejects other OS
  * identities before either process can migrate or assemble P4. */
-export const p39WriterLockFilename = (
+const p39WriterLockFilenameValidatedParent = (
   primaryDatabaseFilename: string,
+  parentAlreadyValidated: boolean,
 ): string | P39WriterLockFailure => {
   if (
     primaryDatabaseFilename === ":memory:" ||
@@ -160,12 +158,6 @@ export const p39WriterLockFilename = (
       return invalidLockPath();
     }
     const parent = dirname(canonical);
-    if (
-      !validateP39ProtectedDirectory(parent) ||
-      !validateP39ProtectedFile(canonical)
-    ) {
-      return unsupportedWriterDeployment();
-    }
     const filename = join(
       parent,
       `.arbor-p39-writer-${sha256Hex(`${stat.dev}:${stat.ino}`)}.sqlite`,
@@ -175,6 +167,16 @@ export const p39WriterLockFilename = (
       process.platform !== "win32" &&
       (Number(parentStat.mode & 0o7777n) & 0o020) !== 0;
     const lockFileMode = sharedGroupDirectory ? 0o660 : 0o600;
+    if (
+      !existsSync(filename) &&
+      !parentAlreadyValidated &&
+      !validateP39ProtectedPaths([
+        { path: parent, kind: "directory" },
+        { path: canonical, kind: "file" },
+      ])
+    ) {
+      return unsupportedWriterDeployment();
+    }
     if (!existsSync(filename)) {
       try {
         const descriptor = openSync(filename, "wx", lockFileMode);
@@ -212,7 +214,13 @@ export const p39WriterLockFilename = (
     ) {
       return invalidLockPath();
     }
-    if (!validateP39ProtectedFile(canonicalLock)) {
+    if (
+      !validateP39ProtectedPaths([
+        { path: parent, kind: "directory" },
+        { path: canonical, kind: "file" },
+        { path: canonicalLock, kind: "file" },
+      ])
+    ) {
       return unsupportedWriterDeployment();
     }
     return filename;
@@ -220,6 +228,14 @@ export const p39WriterLockFilename = (
     return invalidLockPath();
   }
 };
+
+/** A primary-adjacent lock path shared by daemon and maintenance under the same
+ * validated OS identity. The v1 owner profile deliberately rejects other OS
+ * identities before either process can migrate or assemble P4. */
+export const p39WriterLockFilename = (
+  primaryDatabaseFilename: string,
+): string | P39WriterLockFailure =>
+  p39WriterLockFilenameValidatedParent(primaryDatabaseFilename, false);
 
 export interface P39PreparedPrimaryDatabasePath {
   readonly databaseFilename: string;
@@ -248,8 +264,7 @@ export const prepareP39PrimaryDatabasePath = (
       normalizeForPlatform(parent) !== normalizeForPlatform(canonicalParent) ||
       canonicalParent.startsWith("\\\\") ||
       (process.platform === "win32" &&
-        !/^(?:\\\\\?\\)?[a-z]:\\/iu.test(canonicalParent)) ||
-      !isSupportedLocalFilesystem(canonicalParent)
+        !/^(?:\\\\\?\\)?[a-z]:\\/iu.test(canonicalParent))
     ) {
       return invalidLockPath();
     }
@@ -284,7 +299,7 @@ export const prepareP39PrimaryDatabasePath = (
     ) {
       return invalidLockPath();
     }
-    const lockFilename = p39WriterLockFilename(canonical);
+    const lockFilename = p39WriterLockFilenameValidatedParent(canonical, true);
     return typeof lockFilename === "string"
       ? { databaseFilename: canonical, writerLockFilename: lockFilename }
       : lockFilename;
@@ -311,22 +326,6 @@ const normalizeForPlatform = (path: string): string => {
 
 const isSupportedLocalFilesystem = (path: string): boolean => {
   try {
-    if (process.platform === "win32") {
-      const encoded = Buffer.from(path, "utf8").toString("base64");
-      const script = [
-        `$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))`,
-        "$r=[IO.Path]::GetPathRoot($p)",
-        "if($r.StartsWith(([string][char]92)+([char]92)+'?'+([char]92))){$r=$r.Substring(4)}",
-        "$d=[IO.DriveInfo]::new($r)",
-        "Write-Output ($d.DriveType.ToString()+'|'+$d.DriveFormat)",
-      ].join(";");
-      const output = executeP39WindowsSecurityQuery(script);
-      const [driveType, driveFormat] = output.split("|");
-      return (
-        (driveType === "Fixed" || driveType === "Removable") &&
-        ["NTFS", "ReFS", "exFAT", "FAT", "FAT32"].includes(driveFormat ?? "")
-      );
-    }
     const filesystemType = statfsSync(path).type;
     const supportedLocalTypes = new Set([
       0x0000ef53, // ext2/3/4
@@ -358,8 +357,10 @@ export const p39WriterLockLayer = (
     Effect.gen(function* () {
       const sql = yield* SqlClient;
       if (
-        !validateP39ProtectedDirectory(dirname(filename)) ||
-        !validateP39ProtectedFile(filename)
+        !validateP39ProtectedPaths([
+          { path: dirname(filename), kind: "directory" },
+          { path: filename, kind: "file" },
+        ])
       ) {
         return yield* Effect.fail(unsupportedWriterDeployment());
       }

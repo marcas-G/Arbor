@@ -3,9 +3,99 @@ import {
   executeP39WindowsSecurityQuery,
   P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
   type P39WindowsSecurityQueryExecutor,
+  p39WindowsProtectedPathsScript,
+  validateP39WindowsProtectedPaths,
 } from "../src/p39-windows-security.js";
 
 describe("P39 Windows security query timeout", () => {
+  it("batches volume, reparse, ACL and owner checks for every path in one query", () => {
+    const paths = [
+      { path: "C:\\private\\workspace", kind: "directory" as const },
+      { path: "C:\\private\\workspace\\primary.sqlite", kind: "file" as const },
+      { path: "C:\\private\\workspace\\writer.sqlite", kind: "file" as const },
+    ];
+    const script = p39WindowsProtectedPathsScript(paths);
+    const calls: Array<{
+      command: string;
+      args: ReadonlyArray<string>;
+      timeout: number;
+    }> = [];
+    const executor: P39WindowsSecurityQueryExecutor = (
+      command,
+      args,
+      options,
+    ) => {
+      calls.push({ command, args, timeout: options.timeout });
+      return "P39_PROTECTED_PATHS_OK";
+    };
+
+    expect(validateP39WindowsProtectedPaths(paths, executor)).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      command: "powershell.exe",
+      args: expect.arrayContaining([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+      ]),
+      timeout: P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
+    });
+    for (const { path, kind } of paths) {
+      expect(script).toContain(Buffer.from(path, "utf8").toString("base64"));
+      expect(script).toContain(`Kind='${kind}'`);
+    }
+    expect(script).toContain("[IO.DriveInfo]::new($r)");
+    expect(script).toContain("Get-Item -LiteralPath $p -Force");
+    expect(script).toContain("Get-Acl -LiteralPath $p");
+    expect(script).toContain(
+      "$a.GetOwner([Security.Principal.SecurityIdentifier])",
+    );
+    expect(script).toContain("ReparsePoint");
+    expect(script).toContain("S-1-5-18");
+    expect(script).toContain("S-1-5-32-544");
+  });
+
+  it("fails closed when a batched Windows security probe errors or returns an unexpected result", () => {
+    const paths = [
+      { path: "C:\\private\\primary.sqlite", kind: "file" as const },
+    ];
+    const failedExecutor: P39WindowsSecurityQueryExecutor = () => {
+      throw new Error("simulated PowerShell failure");
+    };
+    const unexpectedExecutor: P39WindowsSecurityQueryExecutor = () =>
+      "anything else";
+
+    expect(validateP39WindowsProtectedPaths(paths, failedExecutor)).toBe(false);
+    expect(validateP39WindowsProtectedPaths(paths, unexpectedExecutor)).toBe(
+      false,
+    );
+    expect(validateP39WindowsProtectedPaths([], unexpectedExecutor)).toBe(
+      false,
+    );
+  });
+
+  it("keeps the shared timeout and fails closed for a timed-out batch", () => {
+    let observedTimeout: number | undefined;
+    const timedOutExecutor: P39WindowsSecurityQueryExecutor = (
+      _command,
+      _args,
+      options,
+    ) => {
+      observedTimeout = options.timeout;
+      throw Object.assign(new Error("spawnSync powershell.exe ETIMEDOUT"), {
+        code: "ETIMEDOUT",
+      });
+    };
+
+    expect(
+      validateP39WindowsProtectedPaths(
+        [{ path: "C:\\private\\primary.sqlite", kind: "file" }],
+        timedOutExecutor,
+      ),
+    ).toBe(false);
+    expect(observedTimeout).toBe(P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS);
+  });
+
   it("allows a simulated probe slower than 5s but below the shared bound", () => {
     let observedTimeout: number | undefined;
     const delayedExecutor: P39WindowsSecurityQueryExecutor = (
