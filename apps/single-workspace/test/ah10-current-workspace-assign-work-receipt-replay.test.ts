@@ -445,13 +445,16 @@ describe("AH10 current-Workspace AssignWork receipt-first authorization", () => 
   });
 
   it("blocks a Committed receipt whose result names another Workspace before grant fallback", async () => {
-    const { result } = await authorizePriorReceipt({
-      grants: [exactGrant],
-      receipt: committedReceipt("ws_other"),
-    });
+    const { result, pendingApprovals, inboxAdmissions } =
+      await authorizePriorReceipt({
+        grants: [exactGrant],
+        receipt: committedReceipt("ws_other"),
+      });
 
     expect(result).toEqual({ _tag: "RecoveryBlocked" });
     expect("assignWorkReplay" in result).toBe(false);
     expect("assignWorkCommandReplay" in result).toBe(false);
+    expect(pendingApprovals).toBe(0);
+    expect(inboxAdmissions).toBe(0);
   });
 });
