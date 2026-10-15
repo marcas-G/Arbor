@@ -144,6 +144,8 @@ const assignWorkPermissionGrantEvidence = (input: {
     grant.capability !== "core.control.assign-work" ||
     grant.target !== input.targetRef ||
     grant.revision === undefined ||
+    !Number.isSafeInteger(grant.revision) ||
+    grant.revision < 0 ||
     grant.validFrom === undefined
   ) {
     return undefined;
