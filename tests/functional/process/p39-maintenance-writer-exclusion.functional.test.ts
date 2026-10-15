@@ -16,7 +16,8 @@ import {
   removeP39PrivateTestDirectory,
 } from "../../support/p39-windows-deployment-test.js";
 
-const windowsAclQualificationAvailable = p39WindowsAclQualificationAvailable();
+const windowsAclQualificationAvailable =
+  process.platform === "win32" && p39WindowsAclQualificationAvailable();
 
 const childModule = resolve(
   "tests/functional/support/p39-writer-lock-child.mjs",

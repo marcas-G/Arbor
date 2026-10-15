@@ -29,6 +29,11 @@ export const p39WindowsTestEnvironment = (): NodeJS.ProcessEnv => {
 let windowsAclModuleAvailable: boolean | undefined;
 let currentWindowsSid: string | undefined;
 
+export const isP39WindowsAclQualificationEnabled = (
+  platform: NodeJS.Platform,
+  aclModuleAvailable: boolean,
+): boolean => platform === "win32" && aclModuleAvailable;
+
 /** The test process does not impersonate between fixture operations, so its
  * Windows token SID is stable and can be safely reused for ACL cleanup. */
 const getCurrentWindowsSid = (): string => {
@@ -105,7 +110,7 @@ export const removeP39PrivateTestTempRoot = (
 /** Missing PowerShell ACL support means Windows deployment qualification
  * cannot run. Keep ordinary SQL and non-deployment tests enabled. */
 export const p39WindowsAclQualificationAvailable = (): boolean => {
-  if (process.platform !== "win32") return true;
+  if (process.platform !== "win32") return false;
   if (windowsAclModuleAvailable !== undefined) return windowsAclModuleAvailable;
   try {
     execFileSync(
@@ -127,7 +132,10 @@ export const p39WindowsAclQualificationAvailable = (): boolean => {
   } catch {
     windowsAclModuleAvailable = false;
   }
-  return windowsAclModuleAvailable;
+  return isP39WindowsAclQualificationEnabled(
+    process.platform,
+    windowsAclModuleAvailable,
+  );
 };
 
 /** Apply an exact private ACL to one test-owned path. The only principals

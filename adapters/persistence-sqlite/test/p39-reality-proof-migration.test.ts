@@ -51,7 +51,10 @@ import {
   validateP39ProtectedFile,
 } from "../src/p39-writer-lock.js";
 
-const windowsAclQualificationAvailable = p39WindowsAclQualificationAvailable();
+const crossPlatformP39PathQualificationAvailable =
+  process.platform !== "win32" || p39WindowsAclQualificationAvailable();
+const windowsAclQualificationAvailable =
+  process.platform === "win32" && p39WindowsAclQualificationAvailable();
 
 const executorWithP39ScriptTransform =
   (transform: (script: string) => string): P39WindowsSecurityQueryExecutor =>
@@ -316,7 +319,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     expect(result[0]?.contentHash).toBe(sha256Hex(result[0]?.reportJson ?? ""));
   });
 
-  it.skipIf(!windowsAclQualificationAvailable)(
+  it.skipIf(!crossPlatformP39PathQualificationAvailable)(
     "initializes and revalidates only the exact reserved sidecar schema",
     async () => {
       const directory = makeP39PrivateTestDirectory(
@@ -352,7 +355,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     120_000,
   );
 
-  it.skipIf(!windowsAclQualificationAvailable)(
+  it.skipIf(!crossPlatformP39PathQualificationAvailable)(
     "rejects temporary sidecars and hard-linked database identities",
     async () => {
       const directory = makeP39PrivateTestDirectory(
@@ -394,7 +397,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     120_000,
   );
 
-  it.skipIf(!windowsAclQualificationAvailable)(
+  it.skipIf(!crossPlatformP39PathQualificationAvailable)(
     "derives one shared writer-lock identity and rejects primary hard links",
     () => {
       const directory = makeP39PrivateTestDirectory(
@@ -421,7 +424,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     120_000,
   );
 
-  it.skipIf(!windowsAclQualificationAvailable)(
+  it.skipIf(!crossPlatformP39PathQualificationAvailable)(
     "uses a primary-shared lock path across user-root settings and rejects symlink aliases",
     () => {
       const directory = makeP39PrivateTestDirectory(
@@ -482,7 +485,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     }
   });
 
-  it.skipIf(!windowsAclQualificationAvailable)(
+  it.skipIf(!crossPlatformP39PathQualificationAvailable)(
     "retains single-path directory and file validation entrypoints",
     () => {
       const directory = makeP39PrivateTestDirectory(

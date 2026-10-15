@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isP39WindowsAclQualificationEnabled } from "../../../tests/support/p39-windows-deployment-test.js";
 import {
   executeP39WindowsSecurityQuery,
   P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
@@ -8,6 +9,13 @@ import {
 } from "../src/p39-windows-security.js";
 
 describe("P39 Windows security query timeout", () => {
+  it("enables Windows ACL qualification only on Windows with the module available", () => {
+    expect(isP39WindowsAclQualificationEnabled("linux", true)).toBe(false);
+    expect(isP39WindowsAclQualificationEnabled("darwin", true)).toBe(false);
+    expect(isP39WindowsAclQualificationEnabled("win32", false)).toBe(false);
+    expect(isP39WindowsAclQualificationEnabled("win32", true)).toBe(true);
+  });
+
   it("batches volume, reparse, ACL and owner checks for every path in one query", () => {
     const paths = [
       { path: "C:\\private\\workspace", kind: "directory" as const },
