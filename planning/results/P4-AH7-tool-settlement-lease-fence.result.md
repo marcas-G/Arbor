@@ -65,9 +65,11 @@ P4 row changed from unsettled to `Success` while G1's driver remained paused.
   `ExecutionDriverOwnershipLost`, then `runExecution` maps it back to
   `LeaseFencingRejected`. Production dispatch consumes it as lost ownership;
   the stale worker does not persist a successful Observation.
-- The current G1 replay does not re-execute the NonIdempotent effect. It settles
-  the P4 invocation and Execution `OutcomeUnknown`; it does not invoke
-  RecoveryController to write `tool_invocations`.
+- The current-generation replay does not re-execute the NonIdempotent effect.
+  Under the frozen P4/P9 ambiguous-effect contract, it keeps the P4 invocation
+  `MayHaveStarted` and unsettled while Execution settles `OutcomeUnknown` with
+  the exact invocation ref; it does not invoke RecoveryController to write
+  `tool_invocations`.
 
 ## Verification
 
@@ -118,3 +120,40 @@ no push, and no merge were performed.
 The legacy directive handler conditionally forwards a fence when one is
 present but is not wired into the active production Composition; this was not
 used to establish the production qualification and is non-blocking here.
+
+## P38 Executable approval and generation-qualified follow-up
+
+The public-process test now obtains the shell EAP from the sole exact root
+Inbox `eap:<id>:<revision>` entry, validates its WorkEpisode/action/call,
+`NonIdempotent` shell-v2 arguments, resource target, subject, and ControlBasis,
+then resolves it through the public `ResolveExecutableApproval` command. The
+P4 invocation's `approval_id`, consumed EAP, P39 canonical RecoveryBinding,
+ControlBasis/subject digest pair, and resource-region binding are checked
+through the real SQLite rows.
+
+P38's nonterminal approval pause releases the initial generation before the
+human decision. Therefore the old effect owner after approval is identified as
+the exact durable `G_old` (the exercised runs acquire G=1), not hardcoded to
+generation 0. The test pauses that owner's renewal, conditionally expires only
+the matching lease generation, and requires the new daemon's generation to be
+exactly `G_old + 1`. The old P4 rejection witness is strictly either
+`AH7ToolSettlementFenceRejected` or a same-execution/invocation/call/action
+`P4ExecutableToolRuntimeOutcome` whose `errorTag` is exactly
+`LeaseFencingRejected`. No other stage/error is accepted. This accounts for
+P4's current failure point after public approval re-entry, before the settlement
+write, without weakening the no-stale-success assertion.
+
+On current-owner recovery the effect marker remains exactly once. Because the
+NonIdempotent result is ambiguous with no reconciliation fact, the invocation
+remains unsettled at `MayHaveStarted`, Execution settles
+`OutcomeUnknown(ReconciliationRequired([invocationId]))`, Action is
+`ReconciliationPending`, and one typed P3 `OutcomeUnknown` ToolResult is
+projected without executor/canonical/Artifact result refs. No successful
+Observation, duplicate ToolResult, second effect, or second provider/executor
+attempt is admitted.
+
+Follow-up verification: the complete
+`p4-ah7-tool-settlement-lease-fencing.functional.test.ts` passed twice
+consecutively (1/1 each). The P4 AH7 effect-admission takeover file passed
+3/3 in one run, and the P38 public Approve representative passed 1/1. Typecheck,
+targeted Biome, and `git diff --check` passed. No full functional suite ran.
