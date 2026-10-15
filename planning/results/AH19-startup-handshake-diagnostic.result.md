@@ -211,6 +211,14 @@ waits for the same helper's spawn/error/exit and then for successful exit code
 treating an already-exited root as proof of tree cleanup. A late-spawned helper
 must finish the tree kill and be reaped.
 
+If a failed taskkill attempt is being cleaned up and the root exits during that
+cleanup window, the run terminates as unproven without retrying against the
+stale PID. A `WeakMap` preserves that outcome for later calls on the same
+`ChildProcess`, so a repeated stop cannot wash away the failure. A child that
+naturally exited before any stop attempt retains the existing no-op contract;
+repeated-stop idempotence is qualified only after a prior successful tree
+cleanup.
+
 | Validation | Result |
 |---|---|
 | Primary timeout → retry tree-kill success → target and fake descendant exit | PASS; virtual timing; no real sleep |
@@ -219,9 +227,12 @@ must finish the tree kill and be reaped.
 | Target-first with pid-less helper delayed spawn → helper code 0 required | PASS; no real sleep |
 | Target-first with pid-less helper spawn error | PASS; rejects as unproven after error |
 | Target-first helper nonzero exit | PASS; rejects as unproven |
-| Windows lifecycle race/retry/fallback suite | PASS, see final B1/B2 run below |
-| AH19 exact `providerTurnId` | PASS, 75.56s |
-| Ordered AH19 `logicalStepNo` + `providerTurnId` | PASS, 2/2; fail-closed markers at 54.149s and 52.726s |
+| Root exits during failed-helper cleanup | PASS; terminal unproven is memoized and repeated stop rethrows; fake descendant remains unproven |
+| Naturally exited child never previously stopped | PASS; existing no-op behavior |
+| Repeated stop after successful real tree cleanup | PASS, 1/1; second stop is a no-op |
+| Windows lifecycle race/retry/fallback suite | PASS, 11/11; includes real Windows tree and target-first helper outcomes |
+| AH19 exact `providerTurnId` | PASS, 76.18s |
+| Ordered AH19 `logicalStepNo` + `providerTurnId` | PASS, 2/2; fail-closed markers at 53.707s and 53.021s |
 | Targeted Biome and `pnpm typecheck` | PASS |
 
 No per-case timeout, recovery assertion, or security/settlement assertion was

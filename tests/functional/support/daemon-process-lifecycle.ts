@@ -39,6 +39,7 @@ export interface StopChildLifecycleTestSeam {
 
 const WINDOWS_TASKKILL_TIMEOUT_MS = 10_000;
 const WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS = 1_000;
+const unprovenWindowsTreeCleanup = new WeakMap<ChildProcess, string>();
 
 const waitForChildExit = (child: ChildProcess, timeoutMs: number) => {
   if (childHasExited(child)) return Promise.resolve();
@@ -418,7 +419,12 @@ const killWindowsProcessTree = async (
         );
       }
     }
-    if (childHasExited(child)) return;
+    if (childHasExited(child)) {
+      attempts.push(
+        `target-exited-after-failed-taskkill-${attemptNumber}; tree-cleanup-unproven`,
+      );
+      break;
+    }
     if (!helperCleanupProven) break;
   }
 
@@ -444,13 +450,30 @@ export const stopChildBounded = async (
   timeoutMs = 5_000,
   seam: StopChildLifecycleTestSeam = {},
 ): Promise<void> => {
-  if (child === undefined || childHasExited(child)) return;
-  if ((seam.platform ?? process.platform) === "win32") {
-    await killWindowsProcessTree(child, timeoutMs, seam);
+  if (child === undefined) return;
+  const platform = seam.platform ?? process.platform;
+  if (platform === "win32") {
+    const priorUnprovenOutcome = unprovenWindowsTreeCleanup.get(child);
+    if (priorUnprovenOutcome !== undefined) {
+      throw new Error(priorUnprovenOutcome);
+    }
+    if (childHasExited(child)) return;
+    try {
+      await killWindowsProcessTree(child, timeoutMs, seam);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("Windows process-tree cleanup unproven")
+      ) {
+        unprovenWindowsTreeCleanup.set(child, error.message);
+      }
+      throw error;
+    }
   } else {
+    if (childHasExited(child)) return;
     child.kill("SIGKILL");
+    await waitForChildExit(child, timeoutMs);
   }
-  await waitForChildExit(child, timeoutMs);
 };
 
 export const waitForDaemonListening = (
