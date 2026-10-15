@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -3292,6 +3292,30 @@ describe("p9-acceptance", () => {
 const P9_DIR = import.meta.dirname;
 const REPO_ROOT = join(P9_DIR, "..");
 
+const matchesTestGlob = (pattern: string, path: string) => {
+  let expression = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const current = pattern[index];
+    if (current === undefined) continue;
+    if (current === "*" && pattern[index + 1] === "*") {
+      if (pattern[index + 2] === "/") {
+        expression += "(?:.*/)?";
+        index += 2;
+      } else {
+        expression += ".*";
+        index += 1;
+      }
+    } else if (current === "*") {
+      expression += "[^/]*";
+    } else {
+      expression += /[.+^${}()|[\]\\]/u.test(current)
+        ? `\\${current}`
+        : current;
+    }
+  }
+  return new RegExp(`${expression}$`, "u").test(path);
+};
+
 const p9SuiteSources = (): ReadonlyArray<{
   name: string;
   source: string;
@@ -3482,12 +3506,75 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
     // (lint + typecheck + architecture + test, all green together).
     const scripts = (
       JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as {
-        scripts: Record<string, string>;
+        scripts: {
+          check?: string;
+          architecture?: string;
+          test?: string;
+        };
       }
     ).scripts;
-    expect(scripts.check).toContain("test");
-    expect(scripts.check).toContain("architecture");
-    expect(scripts.architecture).toContain("tests/architecture");
-    expect(scripts.test).toContain("vitest run");
+    const checkScript = scripts.check ?? "";
+    const architectureScript = scripts.architecture ?? "";
+    expect(checkScript).toContain("test");
+    expect(checkScript.split("&&").map((step) => step.trim())).toContain(
+      "pnpm architecture",
+    );
+    const architectureCommand = architectureScript.split(/\s+/u);
+    const vitestRunIndex = architectureCommand.findIndex(
+      (token, index) =>
+        token === "vitest" && architectureCommand[index + 1] === "run",
+    );
+    expect(vitestRunIndex).toBeGreaterThanOrEqual(0);
+    const configFlagIndex = architectureCommand.findIndex(
+      (token) => token === "--config" || token.startsWith("--config="),
+    );
+    expect(configFlagIndex).toBeGreaterThan(vitestRunIndex);
+    const architectureConfigPath = architectureCommand[
+      configFlagIndex
+    ]?.startsWith("--config=")
+      ? architectureCommand[configFlagIndex].slice("--config=".length)
+      : architectureCommand[configFlagIndex + 1];
+    expect(architectureConfigPath).toBeDefined();
+    const resolvedArchitectureConfig = resolve(
+      REPO_ROOT,
+      architectureConfigPath ?? "",
+    );
+    expect(existsSync(resolvedArchitectureConfig)).toBe(true);
+    const architectureConfig = readFileSync(resolvedArchitectureConfig, "utf8");
+    const includeBlock = architectureConfig.match(
+      /\binclude\s*:\s*\[([^\]]*)\]/u,
+    )?.[1];
+    expect(includeBlock).toBeDefined();
+    const includeGlobs = [
+      ...(includeBlock ?? "").matchAll(/["']([^"']+)["']/gu),
+    ]
+      .map((match) => match[1])
+      .filter((pattern): pattern is string => pattern !== undefined);
+    expect(includeGlobs.length).toBeGreaterThan(0);
+    const excludeBlock = architectureConfig.match(
+      /\bexclude\s*:\s*\[([^\]]*)\]/u,
+    )?.[1];
+    const excludeGlobs = [
+      ...(excludeBlock ?? "").matchAll(/["']([^"']+)["']/gu),
+    ]
+      .map((match) => match[1])
+      .filter((pattern): pattern is string => pattern !== undefined);
+    const architectureTestFiles = readdirSync(
+      join(REPO_ROOT, "tests", "architecture"),
+    )
+      .filter((name) => name.endsWith(".test.ts"))
+      .map((name) => `tests/architecture/${name}`);
+    expect(architectureTestFiles.length).toBeGreaterThan(0);
+    for (const testFile of architectureTestFiles) {
+      expect(
+        includeGlobs.some((pattern) => matchesTestGlob(pattern, testFile)),
+        `${testFile} must match the architecture config include patterns`,
+      ).toBe(true);
+      expect(
+        excludeGlobs.some((pattern) => matchesTestGlob(pattern, testFile)),
+        `${testFile} must not match an architecture config exclude pattern`,
+      ).toBe(false);
+    }
+    expect(scripts.test ?? "").toContain("vitest run");
   });
 });
