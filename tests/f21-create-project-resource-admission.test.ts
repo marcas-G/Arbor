@@ -557,10 +557,14 @@ describe("F21 CreateProject v2 host resource admission", () => {
       });
       expect(profileResolveCalls).toBe(3);
       expect(responses.forgedReplay).toEqual(responses.forged);
-      expect(responses.repairedWithSameId).toMatchObject({
-        ok: false,
-        status: 409,
-        problem: { code: "command/idempotency-conflict" },
+      expect(responses.repairedWithSameId).toEqual({
+        ok: true,
+        status: 200,
+        body: {
+          commandId: forgedRequest.commandId,
+          resolution: "TerminalRejected",
+          rejection: "IdempotencyConflict",
+        },
       });
     },
   );
@@ -691,7 +695,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
   );
 
   itWithSchema42TestDatabase(
-    "replays a v1 receipt only as a tuple conflict and leaves its row unchanged",
+    "returns Gateway's non-disclosing v1 tuple-conflict receipt and leaves its row unchanged",
     async (database) => {
       const root = tempRoot();
       const directory = join(root, "registered");
@@ -774,11 +778,18 @@ describe("F21 CreateProject v2 host resource admission", () => {
       );
       expect(outcome.before).toEqual(outcome.after);
       expect(outcome.rawV1).toMatchObject({ ok: false, status: 400 });
-      expect(outcome.v2Candidate).toMatchObject({
-        ok: false,
-        status: 409,
-        problem: { code: "command/idempotency-conflict" },
+      expect(outcome.v2Candidate).toEqual({
+        ok: true,
+        status: 200,
+        body: {
+          commandId: request.commandId,
+          resolution: "TerminalRejected",
+          rejection: "IdempotencyConflict",
+        },
       });
+      expect(JSON.stringify(outcome.v2Candidate)).not.toContain(
+        "historical-address",
+      );
       expect(outcome.counts).toMatchObject({
         projects: 0,
         workspaces: 0,
