@@ -238,41 +238,43 @@ cleanup.
 No per-case timeout, recovery assertion, or security/settlement assertion was
 changed. No full suite was run.
 
-## Windows natural-exit grace follow-up
+## Lease-loss and child-exit follow-up
 
-The PID-reuse-risking process-table query and descendant-PID taskkill path
-were removed. Before any Windows taskkill is spawned for a live child, stop
-now waits up to 1.5s for a natural root exit. If the child exits during that
-grace, stop returns without starting taskkill; a child already exited before
-the call retains the existing no-op behavior. Once the grace expires and a
-forced taskkill starts, only taskkill exit code 0 plus an observed target exit
-can succeed. Target-first code 128, other nonzero exits, errors, and timeouts
-remain `tree cleanup unproven`. This contract does not claim to manage
-external processes detached from the root.
+Windows `stopChildBounded` again attempts taskkill immediately for a live child;
+there is no generic natural-exit grace or process-table PID query. Once forced
+cleanup starts, only taskkill exit code 0 plus observed target exit proves
+cleanup. Target-first code 128, other nonzero exits, errors, and timeouts stay
+`tree cleanup unproven`. This does not claim to manage external processes
+detached from the root.
 
-The bounded grace can add at most 1.5s to an active Windows stop before a
-forced kill. No business timeout was raised. AH18 `manifest-context-epoch`
-passed three consecutive exact runs after the ownership-loss fix at 32.827s,
-33.365s, and 32.916s (Vitest file durations 54.96s, 55.05s, and 89.04s).
+The AH10 regression identified `consumeWorkspaceWake` as the only production
+`runExecution` callsite not containing `LeaseFencingRejected`. It now ends
+only that wake on ownership loss; unrelated failures still propagate. AH10
+before/after generation-takeover passed two consecutive rounds after removing
+the generic grace (81.676s / 59.131s and 59.528s / 58.963s), with the old owner
+explicitly stopped by the fixture and no daemon errors.
 
-The AH10 regression exposed a separate production leak: `consumeWorkspaceWake`
-was the only production `runExecution` caller that let `LeaseFencingRejected`
-escape. The old gen-0 process then wrote the expected ownership-loss error to
-stderr and terminated while the gen-1 process remained clean. This callsite
-now ends only that wake on `LeaseFencingRejected`; unrelated failures still
-propagate. After this fix, the AH10 before/after generation-takeover pair
-passed two consecutive rounds at 1.5s grace (round 1: 64.226s / 64.168s;
-round 2: 64.254s / 70.755s). No case timeout or security/settlement assertion
-was changed.
+The AH18 fail-closed tests now wait for their own restarted child to report a
+determinate exit after observing failure evidence. This is a scenario-level
+assertion, not a cleanup grace: it proves the child exited naturally after the
+typed rejection rather than relying on fixture teardown to make the assertion
+pass. The orphan-manifest and both corruption-table branches passed three
+consecutive runs (9/9): orphan 31.369s / 29.871s / 34.640s;
+manifest-context-epoch 29.881s / 29.792s / 30.029s; turn-context-epoch
+29.827s / 29.479s / 24.550s.
+
+The first full handshake-file run exposed a test-child setup bug, not a
+taskkill success case: wrong/duplicate-marker branches used unresolved
+top-level await without a referenced event-loop handle. Node exited them with
+code 13 while taskkill raced and returned 128. These intentionally live test
+children now hold a referenced interval until fixture cleanup. Their expected
+handshake-marker assertions remain unchanged, and cleanup can stop a live
+child normally.
 
 | Validation | Result |
 |---|---|
-| Natural exit during injected grace; no taskkill spawn | PASS |
-| Active child after grace + target-first code 128 | PASS; rejects unproven |
-| Active child after grace + code 0 and target exit | PASS |
-| Real Windows root exits during grace; no taskkill spawn | PASS, 1/1 |
-| `containLeaseFencingRejected` unit test | PASS, catches only ownership loss; unrelated tagged failures propagate |
-| AH18 exact `manifest-context-epoch` fail-closed case | PASS, 3/3; 32.827s, 33.365s, 32.916s |
+| `containLeaseFencingRejected` unit test | PASS; catches only ownership loss; unrelated tagged failures propagate |
 | AH10 generation-takeover before/after receipt-commit pair | PASS, 2 consecutive rounds (4/4); 64.226s / 64.168s and 64.254s / 70.755s |
-| Lifecycle focused group | PASS, 15 passed / 13 skipped; includes real Windows tree stop and grace/no-taskkill |
-| Full fixture-handshake file attempt | Late HTTP readiness assertion once measured 5.578s against `<5s`; exact case rerun twice passed at 4.870s / 4.912s, so no behavior regression reproduced |
+| AH18 orphan-manifest + corruption-table cases with exit assertion | PASS, 3 consecutive rounds; 9/9 |
+| Full `production-fixture-port-handshake` file | PASS, 2 consecutive rounds; 26/26 each, 70.27s / 69.64s |
+| Late HTTP readiness `<5s` assertion | PASS in both full-file rounds at 3.035s / 2.980s |

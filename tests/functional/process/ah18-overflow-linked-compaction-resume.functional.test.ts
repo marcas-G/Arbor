@@ -870,6 +870,35 @@ const expireLeaseAfterOldDaemonExit = (
   });
 };
 
+const waitForFailedRestartExit = async (
+  fixture: ProductionFixture,
+): Promise<
+  NonNullable<ReturnType<ProductionFixture["daemonProcessSnapshot"]>>
+> => {
+  const snapshot = await waitForPublic(
+    async () => fixture.daemonProcessSnapshot(),
+    (snapshot) =>
+      snapshot !== null &&
+      !snapshot.alive &&
+      (snapshot.exitCode !== null || snapshot.signalCode !== null),
+    15_000,
+  );
+  if (snapshot === null) {
+    throw new Error("AH18 failed restart process snapshot is unavailable");
+  }
+  return snapshot;
+};
+
+const expectFailClosedEvidence = (
+  fixture: ProductionFixture,
+  restartError: unknown,
+) => {
+  const evidence = `${fixture.daemonErrors.join(" | ")} ${restartError instanceof Error ? restartError.message : String(restartError ?? "")}`;
+  expect(evidence).toMatch(
+    /ProtocolViolation|manifest|context|ProviderRuntime|AgentLoopStep/iu,
+  );
+};
+
 const insertOrphanCompactionManifest = (
   databaseFile: string,
   input: {
@@ -1821,15 +1850,18 @@ describe("AH18 linked overflow compaction recovery", () => {
       (state) => state.errors.length > 0 || state.providerRequests > 1,
       15_000,
     );
+    expectFailClosedEvidence(fixture, restartError);
+    const failedRestart = await waitForFailedRestartExit(fixture);
+    expect(failedRestart.alive).toBe(false);
+    expect(
+      failedRestart.exitCode !== null || failedRestart.signalCode !== null,
+    ).toBe(true);
 
     const failedClosed = readSnapshot(fixture.databaseFile, {
       sessionId: project.rootSessionId,
       executionId,
       workId,
     });
-    expect(fixture.daemonErrors.length > 0 || restartError !== undefined).toBe(
-      true,
-    );
     expect(provider.requests.map((request) => request.kind)).toEqual([
       "initial-inference",
     ]);
@@ -1928,15 +1960,18 @@ describe("AH18 linked overflow compaction recovery", () => {
         (state) => state.errors.length > 0 || state.providerRequests > 1,
         15_000,
       );
+      expectFailClosedEvidence(fixture, restartError);
+      const failedRestart = await waitForFailedRestartExit(fixture);
+      expect(failedRestart.alive).toBe(false);
+      expect(
+        failedRestart.exitCode !== null || failedRestart.signalCode !== null,
+      ).toBe(true);
 
       const failedClosed = readSnapshot(fixture.databaseFile, {
         sessionId: project.rootSessionId,
         executionId,
         workId,
       });
-      expect(
-        fixture.daemonErrors.length > 0 || restartError !== undefined,
-      ).toBe(true);
       expect(provider.requests.map((request) => request.kind)).toEqual([
         "initial-inference",
       ]);
