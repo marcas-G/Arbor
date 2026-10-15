@@ -296,6 +296,8 @@ export const selectProviderLayer = (
 
 export interface SingleWorkspaceConfig {
   readonly databaseFile: string;
+  /** Test-only startup trace; absent from ordinary production composition. */
+  readonly startupDiagnosticProbe?: (phase: string) => void;
   /** P12 cross-contract completeness correction: the runtime project whose
    * committed Project-tool registrations are unioned into the model-facing
    * catalog. Absent => the catalogued set is the builtins only. */
@@ -443,10 +445,20 @@ export const buildSingleWorkspaceLayer = (
   config: SingleWorkspaceConfig,
 ): Layer.Layer<SingleWorkspaceServices> => {
   const governance = resolveCompositionGovernance(config);
+  try {
+    config.startupDiagnosticProbe?.("p39.layer-path-validation.before");
+  } catch {
+    // Test-only startup diagnostics are non-authoritative.
+  }
   const preparedDatabase =
     config.databaseFile === ":memory:"
       ? undefined
       : prepareP39PrimaryDatabasePath(config.databaseFile);
+  try {
+    config.startupDiagnosticProbe?.("p39.layer-path-validation.after");
+  } catch {
+    // Test-only startup diagnostics are non-authoritative.
+  }
   if (
     preparedDatabase !== undefined &&
     !("databaseFilename" in preparedDatabase)
@@ -956,6 +968,9 @@ export const buildSingleWorkspaceLayer = (
         ? { projectId: config.projectId }
         : {}),
       principal: parse(Principal)(config.principalRef ?? "runtime:system"),
+      ...(config.startupDiagnosticProbe === undefined
+        ? {}
+        : { startupDiagnosticProbe: config.startupDiagnosticProbe }),
       bindingFingerprint:
         deploymentBinding === undefined
           ? `legacy:${modelRef}`
@@ -1022,6 +1037,11 @@ export const buildSingleWorkspaceLayer = (
   const currentSchemaGate = Layer.provide(
     Layer.effectDiscard(
       Effect.gen(function* () {
+        try {
+          config.startupDiagnosticProbe?.("p39.schema-validation.before");
+        } catch {
+          // Test-only startup diagnostics are non-authoritative.
+        }
         if (preparedDatabase !== undefined) {
           const currentLockPath = p39WriterLockFilename(
             primaryDatabaseFilename,
@@ -1054,6 +1074,11 @@ export const buildSingleWorkspaceLayer = (
               `database user_version ${current} requires an offline upgrade to schema ${CURRENT_SCHEMA_VERSION}`,
             ),
           );
+        }
+        try {
+          config.startupDiagnosticProbe?.("p39.schema-validation.after");
+        } catch {
+          // Test-only startup diagnostics are non-authoritative.
         }
       }),
     ),

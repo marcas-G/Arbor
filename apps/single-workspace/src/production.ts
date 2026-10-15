@@ -258,6 +258,8 @@ export type ConversationResponseQualificationProbe = (event: {
 export interface ProductionDaemonConfig {
   readonly projectId?: ProjectId;
   readonly principal: Principal;
+  /** Test-only startup trace; absent from ordinary production composition. */
+  readonly startupDiagnosticProbe?: (phase: string) => void;
   readonly batchSize?: number;
   /** P12 v1.43 deployment-pinned Attention poll lease, queue and backoff profile. */
   readonly attentionPollPolicy?: AttentionPollPolicyConfig;
@@ -770,16 +772,26 @@ export const ProductionDaemonServiceLive = (
       });
 
       const recovery: RecoveryDaemon<ProductionDaemonServices> = {
-        startup: Effect.asVoid(
-          Effect.flatMap(expireExecutableApprovals, () =>
-            Effect.flatMap(startupRecovery(config.principal), () =>
-              Effect.flatMap(
-                recoverProjectResourceActivations,
-                () => t1.markComplete,
-              ),
-            ),
-          ),
-        ),
+        startup: Effect.gen(function* () {
+          yield* expireExecutableApprovals;
+          yield* Effect.sync(() => {
+            try {
+              config.startupDiagnosticProbe?.("daemon.startup-recovery.before");
+            } catch {
+              // Test-only startup diagnostics are non-authoritative.
+            }
+          });
+          yield* startupRecovery(config.principal);
+          yield* Effect.sync(() => {
+            try {
+              config.startupDiagnosticProbe?.("daemon.startup-recovery.after");
+            } catch {
+              // Test-only startup diagnostics are non-authoritative.
+            }
+          });
+          yield* recoverProjectResourceActivations;
+          yield* t1.markComplete;
+        }),
         sweep: Effect.asVoid(
           Effect.flatMap(expireExecutableApprovals, () =>
             sweepRecovery(config.principal),
@@ -1009,7 +1021,23 @@ export const ProductionDaemonServiceLive = (
       );
 
       const daemon = makeProductionDaemon({
-        migrate: runMigrations(CURRENT_MIGRATIONS),
+        migrate: Effect.gen(function* () {
+          yield* Effect.sync(() => {
+            try {
+              config.startupDiagnosticProbe?.("daemon.migrate.before");
+            } catch {
+              // Test-only startup diagnostics are non-authoritative.
+            }
+          });
+          yield* runMigrations(CURRENT_MIGRATIONS);
+          yield* Effect.sync(() => {
+            try {
+              config.startupDiagnosticProbe?.("daemon.migrate.after");
+            } catch {
+              // Test-only startup diagnostics are non-authoritative.
+            }
+          });
+        }),
         recovery,
         consumers,
         conversationTick,

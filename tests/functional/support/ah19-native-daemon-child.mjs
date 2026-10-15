@@ -15,10 +15,14 @@ const [ports, effect, composition, app] = await Promise.all([
   load("../../../apps/single-workspace/dist/composition.js"),
   load("../../../apps/single-workspace/dist/main.js"),
 ]);
-const { createFunctionalDaemonListenReporter } = await import(
-  "./functional-daemon-lifecycle.mjs"
-);
+const {
+  createAh19StartupDiagnosticProbe,
+  createFunctionalDaemonListenReporter,
+} = await import("./functional-daemon-lifecycle.mjs");
 const onWebTransportListening = createFunctionalDaemonListenReporter();
+const startupDiagnosticProbe = createAh19StartupDiagnosticProbe(
+  process.env.ARBOR_AH19_STARTUP_TRACE === "1",
+);
 const { ProviderPort } = ports;
 const { resolvedModelBindingFingerprint, resolveModelBinding } = ports;
 const { Effect, Layer, Stream } = effect;
@@ -459,6 +463,7 @@ const config = {
     host: "127.0.0.1",
   },
   onWebTransportListening,
+  startupDiagnosticProbe,
   qualificationProbe: async (event) => {
     if (event.boundary === "AH19NativeCheckpointRecovery") {
       process.stdout.write(
@@ -529,8 +534,12 @@ process.stdout.write(
 );
 
 try {
+  const daemonProgram = runDaemonForever(config);
+  startupDiagnosticProbe("layer.construction.before");
+  const applicationLayer = main(config);
+  startupDiagnosticProbe("layer.construction.after");
   await Effect.runPromise(
-    Effect.provide(Effect.scoped(runDaemonForever(config)), main(config)),
+    Effect.provide(Effect.scoped(daemonProgram), applicationLayer),
   );
 } catch (error) {
   process.stdout.write(

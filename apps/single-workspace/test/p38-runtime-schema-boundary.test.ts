@@ -185,6 +185,9 @@ describe("schema 42 runtime startup boundary", () => {
     const fixture = await createSchema42TestDatabase({
       prefix: ".schema-42-runtime-once-",
     });
+    const startupDiagnosticProbe = (_phase: string) => {
+      throw new Error("test-only startup observer failure");
+    };
     let listeningPort: number | undefined;
     try {
       await Effect.runPromise(
@@ -194,6 +197,7 @@ describe("schema 42 runtime startup boundary", () => {
               runDaemonOnce({
                 databaseFile: fixture.databaseFilename,
                 webTransport: { host: "127.0.0.1", port: 0 },
+                startupDiagnosticProbe,
                 onWebTransportListening: (port) => {
                   listeningPort = port;
                 },
@@ -201,6 +205,7 @@ describe("schema 42 runtime startup boundary", () => {
             ),
             buildSingleWorkspaceLayer({
               databaseFile: fixture.databaseFilename,
+              startupDiagnosticProbe,
             }),
           ),
         ),

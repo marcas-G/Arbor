@@ -8,9 +8,15 @@ import {
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
 import { parse, WorkspaceId } from "../../../packages/domain/dist/index.js";
-import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
+import {
+  createAh19StartupDiagnosticProbe,
+  createFunctionalDaemonListenReporter,
+} from "./functional-daemon-lifecycle.mjs";
 
 const onWebTransportListening = createFunctionalDaemonListenReporter();
+const startupDiagnosticProbe = createAh19StartupDiagnosticProbe(
+  process.env.ARBOR_AH19_STARTUP_TRACE === "1",
+);
 
 const projectResourceProfiles = makeProjectResourceProfilePort(
   projectResourceProfilesFromEnvironment(),
@@ -28,14 +34,19 @@ const config = {
   projectResourceProfiles,
   webTransport,
   onWebTransportListening,
+  startupDiagnosticProbe,
   ...(process.env.ARBOR_WORKSPACE_ID !== undefined
     ? { workspaceId: parse(WorkspaceId)(process.env.ARBOR_WORKSPACE_ID) }
     : {}),
 };
 
+const daemonProgram = runDaemonForever(config);
+startupDiagnosticProbe("layer.construction.before");
+const applicationLayer = main({
+  projectResourceProfiles,
+  startupDiagnosticProbe,
+});
+startupDiagnosticProbe("layer.construction.after");
 await Effect.runPromise(
-  Effect.provide(
-    Effect.scoped(runDaemonForever(config)),
-    main({ projectResourceProfiles }),
-  ),
+  Effect.provide(Effect.scoped(daemonProgram), applicationLayer),
 );

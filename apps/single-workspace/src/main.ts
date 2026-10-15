@@ -247,6 +247,17 @@ export interface ProductionDaemonRunConfig
   }) => void;
 }
 
+const reportStartupPhase = (
+  probe: ((phase: string) => void) | undefined,
+  phase: string,
+): void => {
+  try {
+    probe?.(phase);
+  } catch {
+    // Test-only startup diagnostics are non-authoritative.
+  }
+};
+
 /** P5 `01` §3: migrate, then run one scheduler loop step for a workspace.
  * T1 (P9 `03` §2): the startup full recovery pass runs exactly once per
  * daemon start, before any new dispatch or admission. */
@@ -303,6 +314,10 @@ export const runOnce = (workspaceId: string, principalRef = "runtime:system") =>
 export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
   Effect.gen(function* () {
     const deployment = yield* ProductionDaemonService;
+    reportStartupPhase(
+      config.startupDiagnosticProbe,
+      "production-daemon-service.acquired",
+    );
     const principal = parse(Principal)(config.principalRef ?? "runtime:system");
     let schedulerTickSequence = 0;
     const reportSchedulerEvent = (event: {
@@ -543,7 +558,9 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
         yield* resumeActiveExecution(workspaceId);
       }
     });
+    reportStartupPhase(config.startupDiagnosticProbe, "daemon.start.before");
     yield* deployment.daemon.start;
+    reportStartupPhase(config.startupDiagnosticProbe, "daemon.start.after");
     let webTransportHandle:
       | Awaited<ReturnType<typeof startWebTransport>>
       | undefined;
@@ -552,6 +569,10 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
       const sql = yield* SqlClient;
       const projectDirectory = yield* ProjectDirectory;
       const projectResourceProfiles = yield* ProjectResourceProfilePort;
+      reportStartupPhase(
+        config.startupDiagnosticProbe,
+        "web-transport.bind.before",
+      );
       const handle = yield* Effect.promise(() =>
         startWebTransport({
           http: boundary.http,
@@ -578,6 +599,10 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
       } catch {
         // Lifecycle observation is non-authoritative and cannot fail startup.
       }
+      reportStartupPhase(
+        config.startupDiagnosticProbe,
+        "web-transport.bind.after",
+      );
       yield* Effect.addFinalizer(() => Effect.promise(handle.close));
     }
     // ResponseJob transitions may happen in the daemon sweep without a
@@ -626,6 +651,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
 export const runDaemonOnce = (config: ProductionDaemonRunConfig = {}) =>
   withP39RuntimeWriterPermit(
     config.databaseFile ?? process.env.ARBOR_DB ?? "./arbor-slice.db",
+    config.startupDiagnosticProbe,
     Effect.gen(function* () {
       const { deployment, schedulerTick, conversationTick } =
         yield* runProductionDaemon(config);
@@ -641,6 +667,7 @@ export const runDaemonOnce = (config: ProductionDaemonRunConfig = {}) =>
 export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
   withP39RuntimeWriterPermit(
     config.databaseFile ?? process.env.ARBOR_DB ?? "./arbor-slice.db",
+    config.startupDiagnosticProbe,
     Effect.gen(function* () {
       const { deployment, schedulerTick, conversationTick } =
         yield* runProductionDaemon(config);
@@ -662,20 +689,40 @@ export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
  * opening the primary database until its ordered migration transaction ends. */
 const withP39RuntimeWriterPermit = <A, E, R>(
   primaryDatabaseFilename: string,
+  startupDiagnosticProbe: ((phase: string) => void) | undefined,
   use: Effect.Effect<A, E, R>,
 ): Effect.Effect<
   A,
   E | P39MaintenanceFailure | P39WriterLockFailure | SqliteAdapterError,
   Exclude<R, Scope.Scope>
 > => {
+  reportStartupPhase(
+    startupDiagnosticProbe,
+    "p39.runtime-path-validation.before",
+  );
   const prepared = prepareP39PrimaryDatabasePath(primaryDatabaseFilename);
+  reportStartupPhase(
+    startupDiagnosticProbe,
+    "p39.runtime-path-validation.after",
+  );
   if (!("databaseFilename" in prepared)) {
     return Effect.fail(p39UnsupportedDeployment(prepared.code));
   }
   return Effect.scoped(
     Effect.provide(
       Effect.acquireUseRelease(
-        acquireP39RuntimeWriterPermit(),
+        Effect.gen(function* () {
+          reportStartupPhase(
+            startupDiagnosticProbe,
+            "p39.writer-permit-acquire.before",
+          );
+          const permit = yield* acquireP39RuntimeWriterPermit();
+          reportStartupPhase(
+            startupDiagnosticProbe,
+            "p39.writer-permit-acquire.after",
+          );
+          return permit;
+        }),
         () => use,
         releaseP39WriterPermit,
       ),

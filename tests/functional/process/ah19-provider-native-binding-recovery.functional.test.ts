@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -151,10 +152,205 @@ interface Ah19PhaseDiagnostic {
   snapshot: (() => unknown) | undefined;
   childOutput: ReadonlyArray<string>;
   fixture: ProductionFixture | undefined;
+  startupEventCount: number;
   render: (() => string) | undefined;
 }
 
 let activePhaseDiagnostic: Ah19PhaseDiagnostic | undefined;
+
+const ah19StartupArtifact = resolve(
+  ".test-results",
+  `ah19-startup-${process.pid}.jsonl`,
+);
+const ah19StartupPhases = new Set([
+  "layer.construction.before",
+  "layer.construction.after",
+  "p39.layer-path-validation.before",
+  "p39.layer-path-validation.after",
+  "p39.schema-validation.before",
+  "p39.schema-validation.after",
+  "p39.runtime-path-validation.before",
+  "p39.runtime-path-validation.after",
+  "p39.writer-permit-acquire.before",
+  "p39.writer-permit-acquire.after",
+  "production-daemon-service.acquired",
+  "daemon.start.before",
+  "daemon.start.after",
+  "daemon.migrate.before",
+  "daemon.migrate.after",
+  "daemon.startup-recovery.before",
+  "daemon.startup-recovery.after",
+  "web-transport.bind.before",
+  "web-transport.bind.after",
+  "daemon.process.exit",
+]);
+
+const persistAh19StartupRecord = (
+  record: Readonly<Record<string, unknown>>,
+) => {
+  const diagnostic = activePhaseDiagnostic;
+  if (diagnostic === undefined || diagnostic.startupEventCount >= 96) return;
+  diagnostic.startupEventCount += 1;
+  try {
+    mkdirSync(resolve(".test-results"), { recursive: true });
+    appendFileSync(
+      ah19StartupArtifact,
+      `${JSON.stringify({
+        testName: diagnostic.testName,
+        runPid: process.pid,
+        ...record,
+      })}\n`,
+      "utf8",
+    );
+  } catch {
+    // Diagnostic persistence is non-authoritative.
+  }
+};
+
+const recordAh19StartupOutput = (line: string) => {
+  let event: Record<string, unknown>;
+  try {
+    event = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  if (
+    event.tag === "AH19_STARTUP_PHASE" &&
+    typeof event.phase === "string" &&
+    ah19StartupPhases.has(event.phase)
+  ) {
+    const elapsedMs =
+      typeof event.elapsedMs === "number" && Number.isFinite(event.elapsedMs)
+        ? Math.max(0, Math.round(event.elapsedMs))
+        : undefined;
+    const childPid =
+      typeof event.pid === "number" && Number.isSafeInteger(event.pid)
+        ? event.pid
+        : undefined;
+    const exitCode =
+      typeof event.exitCode === "number" && Number.isInteger(event.exitCode)
+        ? event.exitCode
+        : undefined;
+    persistAh19StartupRecord({
+      kind: "phase",
+      phase: event.phase,
+      ...(elapsedMs === undefined ? {} : { elapsedMs }),
+      ...(childPid === undefined ? {} : { childPid }),
+      ...(exitCode === undefined ? {} : { exitCode }),
+    });
+    return;
+  }
+  if (
+    event.tag === "FUNCTIONAL_DAEMON_STARTED" ||
+    event.tag === "FUNCTIONAL_DAEMON_LISTENING"
+  ) {
+    const childPid =
+      typeof event.pid === "number" && Number.isSafeInteger(event.pid)
+        ? event.pid
+        : undefined;
+    persistAh19StartupRecord({
+      kind: "lifecycle",
+      phase:
+        event.tag === "FUNCTIONAL_DAEMON_STARTED"
+          ? "functional-daemon.started"
+          : "functional-daemon.listening",
+      ...(childPid === undefined ? {} : { childPid }),
+    });
+  }
+};
+
+const parseAh19HandshakeState = (error: unknown) => {
+  const messages: string[] = [];
+  const queue: Array<unknown> = [error];
+  const seen = new Set<unknown>();
+  while (queue.length > 0 && messages.length < 8) {
+    const current = queue.shift();
+    if (current === undefined || seen.has(current)) continue;
+    seen.add(current);
+    if (current instanceof Error) {
+      messages.push(current.message);
+      if (current.cause !== undefined) queue.push(current.cause);
+      if (current instanceof AggregateError) queue.push(...current.errors);
+    } else if (typeof current === "string") {
+      messages.push(current);
+    }
+  }
+  const message = messages.join("\n");
+  const match = message.match(/observed=(\{[\s\S]*?\}); exitCode=/u);
+  if (match?.[1] === undefined) return undefined;
+  try {
+    const observed = JSON.parse(match[1]) as Record<string, unknown>;
+    const exitCode =
+      typeof observed.exitCode === "number" ? observed.exitCode : null;
+    const signalCode =
+      typeof observed.signalCode === "string" ? observed.signalCode : null;
+    return {
+      pid:
+        typeof observed.pid === "number" && Number.isSafeInteger(observed.pid)
+          ? observed.pid
+          : null,
+      exitCode,
+      signalCode,
+      aliveAtTimeout: exitCode === null && signalCode === null,
+      exitCodeAfterCleanup:
+        message.match(/; exitCode=(\d+|null); signal=/u)?.[1] === undefined
+          ? null
+          : message.match(/; exitCode=(\d+|null); signal=/u)?.[1] === "null"
+            ? null
+            : Number(message.match(/; exitCode=(\d+|null); signal=/u)?.[1]),
+      signalAfterCleanup:
+        message.match(/; signal=([A-Za-z]+|null)/u)?.[1] ?? null,
+      stdoutLineCount:
+        typeof observed.stdoutLineCount === "number"
+          ? observed.stdoutLineCount
+          : null,
+      lifecyclePhases: Array.isArray(observed.lifecycleMarkers)
+        ? observed.lifecycleMarkers.flatMap((marker) =>
+            typeof marker === "object" &&
+            marker !== null &&
+            "tag" in marker &&
+            typeof marker.tag === "string"
+              ? [marker.tag]
+              : [],
+          )
+        : [],
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const ah19PersistedStateSummary = (snapshot: Ah19Snapshot) => ({
+  contextEpoch: snapshot.session?.context_epoch ?? null,
+  checkpointCount: snapshot.checkpoints.length,
+  stepStates: snapshot.steps.map((step) => ({
+    logicalStepNo: step.logical_step_no,
+    repairAttempt: step.repair_attempt,
+    state: step.state,
+    successorPresent: step.successor_json !== null,
+    outputPinned:
+      step.decoded_output_hash !== null &&
+      step.model_output_session_sequence !== null,
+  })),
+  actionStates: snapshot.actions.map((action) => action.state),
+  execution:
+    snapshot.execution === undefined
+      ? null
+      : {
+          settled: snapshot.execution.settled_at !== null,
+          settlementKind: snapshot.execution.settlement_kind,
+        },
+  responseJobStates: snapshot.responseJobs.map((job) => job.state),
+  providerTurns: snapshot.providerTurns.map((turn) => ({
+    settled: turn.settled_at !== null,
+    finishReason: turn.finish_reason,
+  })),
+  providerLinkStates: snapshot.providerLinks.map((link) => ({
+    role: link.role,
+    state: link.state,
+  })),
+  leaseGenerations: snapshot.leases.map((lease) => lease.generation),
+});
 
 const beginAh19PhaseDiagnostics = (testName: string, marker: string) => {
   if (activePhaseDiagnostic?.timer !== undefined)
@@ -167,6 +363,7 @@ const beginAh19PhaseDiagnostics = (testName: string, marker: string) => {
     snapshot: undefined,
     childOutput: [],
     fixture: undefined,
+    startupEventCount: 0,
     render: undefined,
   };
   const describeState = () => {
@@ -182,10 +379,26 @@ const beginAh19PhaseDiagnostics = (testName: string, marker: string) => {
       testName: diagnostic.testName,
       elapsedMs: Date.now() - diagnostic.startedAt,
       phases: diagnostic.phases,
-      childOutput: diagnostic.childOutput,
-      providerCalls: diagnostic.fixture?.providerCalls ?? [],
-      daemonStderr: diagnostic.fixture?.daemonErrors ?? [],
-      providerRequests,
+      childPhases: diagnostic.childOutput.flatMap((line) => {
+        try {
+          const event = JSON.parse(line) as Record<string, unknown>;
+          return typeof event.tag === "string" &&
+            (event.tag.startsWith("FUNCTIONAL_DAEMON_") ||
+              event.tag === "AH19_STARTUP_PHASE")
+            ? [event.tag]
+            : [];
+        } catch {
+          return [];
+        }
+      }),
+      providerCallCount: diagnostic.fixture?.providerCalls.length ?? 0,
+      daemonStderrCount: diagnostic.fixture?.daemonErrors.length ?? 0,
+      providerRequests: providerRequests.map(
+        ({ operationKind, bindingVariant }) => ({
+          operationKind,
+          bindingVariant,
+        }),
+      ),
       snapshot,
     });
   };
@@ -1653,6 +1866,7 @@ const startAtCheckpointBoundary = async (
     | "AH11AfterStepEffectsCommit",
   extraDaemonEnvironment: Readonly<Record<string, string>> = {},
   episode: "Work" | "ConversationResponse" = "Work",
+  traceStartup = false,
 ) => {
   probes.length = 0;
   providerRequests.length = 0;
@@ -1675,13 +1889,15 @@ const startAtCheckpointBoundary = async (
     ...(heldWorkRequest === undefined
       ? {}
       : { beforeResponse: heldWorkRequest.beforeResponse }),
-    daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
+    daemonEnvironment: {
+      ARBOR_AH19_REPORT_URL: reportUrl,
+      ...(traceStartup ? { ARBOR_AH19_STARTUP_TRACE: "1" } : {}),
+    },
     onDaemonStdout: (line) => {
       childOutput.push(line);
-      if (line.includes("AH19_CHILD_START"))
-        recordAh19Phase("child START", line);
-      if (/listening|LISTEN/iu.test(line))
-        recordAh19Phase("child LISTEN", line);
+      recordAh19StartupOutput(line);
+      if (line.includes("AH19_CHILD_START")) recordAh19Phase("child START");
+      if (/listening|LISTEN/iu.test(line)) recordAh19Phase("child LISTEN");
       try {
         const event = JSON.parse(line) as Ah19Probe;
         if (event.tag === "AH19_PROBE") probes.push(event);
@@ -1690,8 +1906,26 @@ const startAtCheckpointBoundary = async (
       }
     },
   }).catch((error: unknown) => {
+    const observedChildPhases = childOutput.flatMap((line) => {
+      try {
+        const event = JSON.parse(line) as Record<string, unknown>;
+        return typeof event.tag === "string" &&
+          (event.tag.startsWith("FUNCTIONAL_DAEMON_") ||
+            event.tag === "AH19_STARTUP_PHASE")
+          ? [event.tag]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+    persistAh19StartupRecord({
+      kind: "startup-failure",
+      boundary: "fixture-startup",
+      process: parseAh19HandshakeState(error) ?? null,
+      persistedState: "fresh cloned schema; public project setup not reached",
+    });
     throw new Error(
-      `AH19 daemon failed startup: ${error instanceof Error ? error.message : String(error)}; child=${childOutput.join(" | ")}`,
+      `AH19 daemon failed startup: ${error instanceof Error ? error.message : String(error)}; childPhases=${observedChildPhases.join("|")}`,
     );
   });
   fixtures.push(fixture);
@@ -1705,6 +1939,7 @@ const startAtCheckpointBoundary = async (
     ARBOR_AH19_BOUNDARY: boundary,
     ARBOR_AH19_BINDING_VARIANT: "A",
     ARBOR_AH19_REPORT_URL: reportUrl,
+    ...(traceStartup ? { ARBOR_AH19_STARTUP_TRACE: "1" } : {}),
     ...(episode === "ConversationResponse"
       ? { ARBOR_AH19_TERMINAL_CONVERSATION: "1" }
       : {}),
@@ -2003,10 +2238,23 @@ const expireLeaseAfterOldDaemonExit = (
 };
 
 afterEach(async () => {
-  if (activePhaseDiagnostic?.timer !== undefined)
-    clearInterval(activePhaseDiagnostic.timer);
-  activePhaseDiagnostic = undefined;
+  const diagnostic = activePhaseDiagnostic;
+  if (diagnostic?.timer !== undefined) clearInterval(diagnostic.timer);
+  if (diagnostic !== undefined && diagnostic.snapshot !== undefined) {
+    try {
+      persistAh19StartupRecord({
+        kind: "final-persisted-state",
+        state: diagnostic.snapshot(),
+      });
+    } catch {
+      persistAh19StartupRecord({
+        kind: "final-persisted-state",
+        state: "snapshot unavailable",
+      });
+    }
+  }
   for (const fixture of fixtures.splice(0)) {
+    const beforeStop = fixture.daemonProcessSnapshot();
     try {
       await fixture.stop();
     } catch (error) {
@@ -2014,7 +2262,32 @@ afterEach(async () => {
         `[AH19 cleanup warning] fixture stop failed without replacing test result: ${error instanceof Error ? error.stack : String(error)}\n`,
       );
     }
+    const afterStop = fixture.daemonProcessSnapshot();
+    persistAh19StartupRecord({
+      kind: "fixture-daemon-process",
+      beforeStop:
+        beforeStop === null
+          ? null
+          : {
+              pid: beforeStop.pid,
+              exitCode: beforeStop.exitCode,
+              signalCode: beforeStop.signalCode,
+              killed: beforeStop.killed,
+              alive: beforeStop.alive,
+            },
+      afterStop:
+        afterStop === null
+          ? null
+          : {
+              pid: afterStop.pid,
+              exitCode: afterStop.exitCode,
+              signalCode: afterStop.signalCode,
+              killed: afterStop.killed,
+              alive: afterStop.alive,
+            },
+    });
   }
+  activePhaseDiagnostic = undefined;
   for (const server of reportServers.splice(0)) {
     if (!server.listening) continue;
     try {
@@ -4034,10 +4307,15 @@ describe("AH19 restart binding qualification", () => {
   }, 180_000);
 
   it("settles a terminal ConversationResponse from its pinned StepEffectsCommitted output after Native rebase", async () => {
+    const diagnostic = beginAh19PhaseDiagnostics(
+      "terminal ConversationResponse after Native rebase",
+      "ah19-terminal-conversation-rebase",
+    );
     const scenario = await startAtCheckpointBoundary(
       "AH11AfterStepEffectsCommit",
       { ARBOR_AH19_AH11_MATCH_INDEX: "1" },
       "ConversationResponse",
+      true,
     );
     const { fixture, project, workId, probe, reportUrl, childOutput } =
       scenario;
@@ -4046,6 +4324,10 @@ describe("AH19 restart binding qualification", () => {
     const nativeTurnId = `ptn_${executionId}_0_native_compact_0`;
     const replacementTurnId = `ptn_${executionId}_0_overflow_0`;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
+    diagnostic.attach(fixture, childOutput);
+    diagnostic.setSnapshot(() =>
+      ah19PersistedStateSummary(readSnapshot(fixture.databaseFile, ids)),
+    );
     expect(probe.providerTurnId).toBe(sourceInferenceTurnId);
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
     const responseJob = beforeKill.responseJobs[0];
@@ -4107,25 +4389,30 @@ describe("AH19 restart binding qualification", () => {
           ARBOR_AH19_BOUNDARY: "none",
           ARBOR_AH19_BINDING_VARIANT: "B",
           ARBOR_AH19_REPORT_URL: reportUrl,
+          ARBOR_AH19_STARTUP_TRACE: "1",
         },
       })
       .catch((error: unknown) => {
+        const failedSnapshot = readSnapshot(fixture.databaseFile, ids);
+        persistAh19StartupRecord({
+          kind: "startup-failure",
+          boundary: "conversation-response-restart",
+          process: parseAh19HandshakeState(error) ?? null,
+          persistedState: ah19PersistedStateSummary(failedSnapshot),
+        });
         const qualification = childOutput.flatMap((line) => {
           try {
             const event = JSON.parse(line) as Record<string, unknown>;
-            return event.tag === "AH19_PROBE"
-              ? [`${String(event.boundary)}:${String(event.stage)}`]
-              : event.tag === "AH19_CHILD_ERROR"
-                ? [
-                    `CHILD_ERROR:${String(event.message)}:${String(event.stack ?? "")}`,
-                  ]
-                : [String(event.tag)];
+            return event.tag === "AH19_PROBE" &&
+              typeof event.boundary === "string"
+              ? [event.boundary]
+              : [];
           } catch {
             return [];
           }
         });
         throw new Error(
-          `AH19 ConversationResponse daemon restart failed: ${error instanceof Error ? error.message : String(error)}; qualification=${qualification.join(" | ")}; providerRequests=${JSON.stringify(providerRequests.map(({ operationKind, providerTurnId, bindingVariant, items }) => ({ operationKind, providerTurnId, bindingVariant, opaque: items.filter((item) => item.opaqueItemRef !== undefined).map((item) => item.opaqueItemRef) })))}; snapshot=${JSON.stringify(readSnapshot(fixture.databaseFile, ids), (_key, value) => (typeof value === "string" && value.length > 300 ? `${value.slice(0, 300)}…` : value))}`,
+          `AH19 ConversationResponse daemon restart failed: ${error instanceof Error ? error.message : String(error)}; qualification=${qualification.join("|")}; providerRequests=${JSON.stringify(providerRequests.map(({ operationKind, bindingVariant }) => ({ operationKind, bindingVariant })))}; persistedState=${JSON.stringify(ah19PersistedStateSummary(failedSnapshot))}`,
         );
       });
     const recovered = await waitForPublic(
@@ -4222,13 +4509,19 @@ describe("AH19 restart binding qualification", () => {
       providerRequests.filter((event) => event.bindingVariant === "B"),
     ).toHaveLength(1);
     expect(fixture.daemonErrors).toEqual([]);
+    diagnostic.phase("terminal response recovery assertions passed");
   }, 180_000);
 
   it("fails closed on a corrupted compiled hash for the pinned terminal output before Summary", async () => {
+    const diagnostic = beginAh19PhaseDiagnostics(
+      "corrupted compiled hash for terminal output",
+      "ah19-terminal-hash-corruption",
+    );
     const scenario = await startAtCheckpointBoundary(
       "AH11AfterStepEffectsCommit",
       { ARBOR_AH19_AH11_MATCH_INDEX: "1" },
       "ConversationResponse",
+      true,
     );
     const { fixture, project, workId, probe, reportUrl, childOutput } =
       scenario;
@@ -4236,6 +4529,10 @@ describe("AH19 restart binding qualification", () => {
     const sourceInferenceTurnId = `ptn_${executionId}_0`;
     const replacementTurnId = `ptn_${executionId}_0_overflow_0`;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
+    diagnostic.attach(fixture, childOutput);
+    diagnostic.setSnapshot(() =>
+      ah19PersistedStateSummary(readSnapshot(fixture.databaseFile, ids)),
+    );
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
     const sourceStep = beforeKill.steps.find(
       (step) => step.logical_step_no === 0 && step.repair_attempt === 0,
