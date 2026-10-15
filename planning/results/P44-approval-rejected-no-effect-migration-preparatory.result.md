@@ -1,7 +1,7 @@
 # P44 ApprovalRejected no-effect migration — preparatory evidence
 
-Date: 2026-10-16  
-Candidate: `b1e75f78`  
+Date: 2026-10-16
+Prepared at candidate: `6e11987a7bb8ede2716d4e099a8ed31d6c24b31a`
 Status: descriptor and isolated evidence complete; **schema activation not authorized or performed**.
 
 ## Descriptor
@@ -12,24 +12,23 @@ Status: descriptor and isolated evidence complete; **schema activation not autho
 
 ## Isolated qualification
 
-`adapters/persistence-sqlite/test/p44-approval-rejected-no-effect-migration.test.ts` starts from the real schema-42/P39 disposable fixture, explicitly applies the dormant P43 Blocked WorkEpisode descriptor for that isolated fixture, then applies P44. It verifies version 44, the fixture-owned `work_blockers` table, unchanged `tool_invocations` foreign keys and indexes, clean `foreign_key_check`, and byte-for-byte P40 guard predicates apart from the one allowlist entry (accounting only for SQLite's removal of the final semicolon).
+`adapters/persistence-sqlite/test/p44-approval-rejected-no-effect-migration.test.ts` starts from the real schema-42/P39 disposable fixture, explicitly applies the dormant P43 Blocked WorkEpisode descriptor for that isolated fixture, then applies P44. It verifies version 44, the fixture-owned `work_blockers` table, unchanged `tool_invocations` foreign keys and indexes, clean `foreign_key_check`, and byte-for-byte P40 guard predicates apart from the one allowlist entry (accounting only for SQLite's removal of the final semicolon). A separate negative case directly attempts P44 at schema 42, asserts the requires-version-43 refusal, and confirms user_version and both guard trigger definitions are unchanged.
 
 The second case exercises P38's P4 terminal-denial mapping for `Rejected → ApprovalRejected` and expired `Pending → ApprovalExpired`, records both Denied outcomes through the SQLite ToolInvocationStore on insert/update, and confirms unknown denial reasons and malformed canonical Success evidence are still rejected. The test is isolated persistence/P4 evidence, not a claim that the current daemon accepts schema 44 or that public P38 Reject/Expire journeys have passed on a registered schema.
 
 ## Verification
 
 - `pnpm --filter @arbor/persistence-sqlite build` — PASS.
-- `pnpm exec vitest run adapters/persistence-sqlite/test/p44-approval-rejected-no-effect-migration.test.ts` — PASS, 1 file / 2 tests.
+- `pnpm exec vitest run adapters/persistence-sqlite/test/p44-approval-rejected-no-effect-migration.test.ts` — PASS, 1 file / 3 tests.
 - `pnpm typecheck` — PASS.
 - Targeted Biome check for the descriptor/test and `git diff --check` — PASS.
 - No full functional suite, P39–P43 offline CLI, current-runtime fixture migration, or online/preserved database upgrade was run. The current runtime remains at schema 42.
 
 ## Activation remains gated
 
-The required activation package is recorded in
-`planning/proposals/P44-approval-rejected-no-effect-schema-activation-package.md`.
-An explicit governance/token decision must settle the schema-43 predecessor;
-the dormant P43 Blocked WorkEpisode test descriptor is not authorization to
-register that feature. Only an authorized follow-up may alter the registry,
-runtime/readiness target, CLI, or current fixtures, and it must remain offline
-for fresh databases or disposable copies.
+The combined activation request and exact token
+`AUTHORIZE_P43_BLOCKED_AND_P44_APPROVAL_REJECTED_SCHEMA_ACTIVATION` are recorded
+in `planning/proposals/P44-approval-rejected-no-effect-schema-activation-package.md`.
+It explicitly sequences the existing accepted dormant P43 owner (42→43) before
+P44 (43→44), and gates registry/runtime/readiness/CLI/current-fixture changes.
+No such activation was performed.

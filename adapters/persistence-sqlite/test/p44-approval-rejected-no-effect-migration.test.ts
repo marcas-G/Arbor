@@ -145,6 +145,56 @@ const expectedP40Guard = (name: string): string => {
 };
 
 describe("unregistered P44 ApprovalRejected no-effect migration", () => {
+  it("refuses direct application on schema 42 without changing the version or P40 guards", async () => {
+    const fixture = await createSchema42TestDatabase();
+    try {
+      const before = [
+        guardSql(
+          fixture.databaseFilename,
+          "tool_invocations_observation_insert_guard",
+        ),
+        guardSql(
+          fixture.databaseFilename,
+          "tool_invocations_observation_update_guard",
+        ),
+      ];
+      const direct = Effect.runPromise(
+        Effect.scoped(
+          Effect.provide(
+            runMigrations([P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION]),
+            layer({ filename: fixture.databaseFilename }),
+          ),
+        ),
+      );
+      await expect(direct).rejects.toThrow(
+        "migration 44 requires database user_version 43, found 42",
+      );
+      const db = new DatabaseSync(fixture.databaseFilename, {
+        readOnly: true,
+      });
+      try {
+        const version = db.prepare("PRAGMA user_version").get() as {
+          readonly user_version: number;
+        };
+        expect(version.user_version).toBe(42);
+      } finally {
+        db.close();
+      }
+      expect([
+        guardSql(
+          fixture.databaseFilename,
+          "tool_invocations_observation_insert_guard",
+        ),
+        guardSql(
+          fixture.databaseFilename,
+          "tool_invocations_observation_update_guard",
+        ),
+      ]).toEqual(before);
+    } finally {
+      fixture.cleanup();
+    }
+  }, 180_000);
+
   it("applies only after isolated dormant P43, preserves P43 tables/relations, and changes exactly the P40 denial allowlist", async () => {
     const fixture = await createSchema42TestDatabase();
     try {
