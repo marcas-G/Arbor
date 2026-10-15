@@ -1,138 +1,250 @@
-# F23 / P8 RetryVerification Permanent Replay Authority — Design Gap Proposal
+# F23 / P8 RetryVerification Permanent Replay Origin — Fixed Governance Package
 
-状态：**DRAFT — Design Gap evidence only; not accepted and not implementation authorization**
+状态：**DRAFT — fixed proposal package; not accepted and not implementation authorization**
 
-## Problem statement
+Suggested exact decision token:
+`AUTHORIZE_F23_P8_PERMANENT_REPLAY_ORIGIN_AND_LEGACY_DISPOSITION`
 
-Commit `bee70f2a58f3c42610fa245adb4d8dd9f9e06b68` corrected the external
-command ordering required by DID §4.1B, P1 `01` §3 / `03` §3.1, and P12 `02`
-§2 / `10` §3: external Resolver visibility precedes Gateway invocation, and
-the Gateway's `BEGIN IMMEDIATE` transaction is the sole receipt lookup and
-linearization point. No external receipt pre-read remains, including for
-`RetryVerification`.
+This package proposes an owning-contract update plus implementation scope. It
+does not modify `docs/design/**`, production code, migrations, schema registry,
+or online databases.
 
-The correction exposes an unresolved P8 interaction. After a successful
-`RetryVerification`, the old Verification is durably `Concluded(Unknown,
-Orphaned)`. A same-CommandId, same-payload public retry reaches the real
-production Resolver first, which currently requires that source Verification
-to remain Open; it therefore returns HTTP 403 `authority/denied` before
-Gateway can return the permanent original receipt. The isolated public-process
-reproduction and exact output are recorded in
-`planning/results/F23-retry-verification-permanent-replay.result.md`.
+## 1. Evidence and frozen-contract conflict
 
-P8 `01` §3A and `06` Story H require exact CommandId replay to return the same
-successor Verification/Execution IDs and receipt; the clauses state no replay
-expiry. P1 `04` §6 says Commands are never hard-deleted, while Domain Events
-may be hard-deleted after a deployment-configured retention horizon. The
-current durable Verification and `verification_executions` rows have no
-originating CommandId or retry-handoff binding. `domain_events.caused_by_command_id`
-is the only existing causal link for `VerificationConcluded` and
-`VerificationStarted`, and that evidence is retention-bounded. Thus an event-
-only Resolver candidate cannot guarantee P8 replay for the permanent lifetime
-of a Command receipt.
+Commit `bee70f2a58f3c42610fa245adb4d8dd9f9e06b68` correctly removed external
+receipt pre-read: P12 Resolver visibility must precede Gateway, and the
+Gateway `BEGIN IMMEDIATE` transaction remains the sole Command receipt lookup
+and tuple comparison point (DID §4.1B; P1 `01` §3 / `03` §3.1; P12 `02` §2 /
+`10` §3). The real-process RED at
+`tests/functional/pending/f23-retry-verification-permanent-replay.functional.test.ts`
+shows the resulting gap: a first public `RetryVerification` commits, but an
+immediate exact same-CommandId/same-payload retry receives HTTP 403
+`authority/denied` because the source Verification is now Concluded.
 
-Conversely, issuing a replay-only Resolver authority merely because the old
-Verification is Orphaned would admit arbitrary CommandIds to Gateway. Even if
-the absent-receipt path later fails its final authority check, the Gateway
-response can distinguish receipt presence and becomes an idempotency/receipt
-existence probe. Do not implement that state-only shortcut.
+P8 `01` §3A and `06` Story H say exact replay returns the same receipt and
+successor IDs without an expiry. P12 `02` and DID §4.1B require current
+visibility/authorization before receipt access. P1 `04` §6 says Commands are
+never hard-deleted, while Domain Events may be deleted after a deployment-
+configured retention horizon. Current `verifications` rows do not retain an
+originating CommandId. The event pair is therefore insufficient as permanent
+non-receipt authorization evidence.
 
-## Gap
+The fixed recommendation is: **exact replay returns the stored receipt only
+if the caller still passes current P12 visibility and authorization**.
+Revoked/changed owner authorization, a different actor, or a foreign source
+gets the same generic Resolver denial before Gateway and without reading a
+receipt. P8's current unqualified wording is broader than that boundary and
+must be amended before implementation; do not silently reinterpret it in
+code.
 
-The frozen contracts require all four properties simultaneously:
+## 2. Minimum permanent canonical origin fact
 
-1. Exact P8 retries replay the original receipt without a stated expiry.
-2. External Resolver visibility succeeds before Gateway can inspect a receipt.
-3. Gateway `BEGIN IMMEDIATE` is the only Command receipt lookup and tuple
-   comparison point; mismatches are decided before JSON decode.
-4. Domain-event causality is retention-bounded, but Command receipts are
-   permanent; the schema has no permanent, non-receipt retry-origin binding.
+Add a P8-owned immutable physical relation provisionally named
+`retry_verification_origins`. This is a canonical non-receipt fact: Resolver
+may query it by CommandId; it is not a CommandStore alias and contains no
+receipt JSON. The row is retained for the entire lifetime of its permanent
+Command receipt and is not subject to Domain Event retention/pruning.
 
-No current non-receipt source proves indefinitely that a candidate CommandId
-is the command that created a particular P8 orphan handoff. P8 replay therefore
-cannot both preserve the permanent receipt contract and avoid granting a
-receipt-existence probe. This is a design gap; no owner document is changed by
-this proposal.
+The row contains only these fields:
 
-## Minimal candidate direction for governance
+| Field | Purpose |
+|---|---|
+| `command_id` | Permanent origin key; primary key and FK to `commands.command_id` |
+| `project_id` | Scope of the P8 handoff and current visibility check |
+| `actor` | Original external actor identity, checked against current principal and envelope |
+| `source_verification_id` | Exact source Verification identity |
+| `source_work_id` | Exact source Work / target scope |
+| `successor_verification_id` | Durable successor identity from P8 handoff |
+| `successor_verifier_execution_id` | Durable verifier Execution identity from P8 handoff |
+| `created_at` | Immutable origin creation time |
 
-Consider an immutable P8 retry-handoff binding written atomically with the
-old Orphaned conclusion, successor Verification, spawn intent, and Gateway
-receipt. A possible relation keyed by `command_id` would durably bind:
+Do **not** store or compare fingerprint, Handler schema version, fingerprint
+algorithm version, summary content, expected Work revision, payload JSON, or
+receipt result in this origin relation. Those tuple decisions stay at Gateway.
+Origin may use FK protection for Project, source/successor Verification and
+successor verifier Execution. Enforce at most one origin per CommandId and
+source Verification, and immutable update/delete behavior. Exact DDL, FK
+deferral, uniqueness and trigger details belong to the accepted owning P8/P1
+contract; migration number is deliberately **TBD**.
 
-- command/project/actor and exact semantic fingerprint, Handler schema
-  version, and fingerprint algorithm version;
-- source Work, source Verification, target Work revision, and the exact
-  settled/bound verifier Execution IDs;
-- successor Verification and verifier Execution IDs;
-- binding version and immutable creation identity.
+### Resolver and Gateway semantics
 
-The Resolver would query this narrow binding store, never CommandStore. It
-would re-evaluate current authentication, Work visibility, and current human
-governance authority against the bound source, then issue a distinct
-replay-candidate authority only for that durable originating CommandId. The
-RetryVerification handler must not accept that tag. Gateway remains unchanged:
-inside its transaction, exact tuple returns the original receipt, tuple
-mismatch returns existing `IdempotencyConflict` without decoding either JSON
-column, and an absent receipt fails final authority without invoking the
-handler. The binding must be immutable and retained for at least the lifetime
-of its permanent Command receipt; event pruning must not affect replay.
+1. Decode the strict external envelope and require declared Actor to match the
+   authenticated Principal. Malformed CommandId remains the existing HTTP 400
+   codec failure before Resolver/Gateway.
+2. For a normal first retry against an Open exact source, use the existing
+   current P12 human authority path.
+3. For a non-Open historical source, Resolver queries `retry_verification_origins`
+   by candidate CommandId. It then requires bound project/actor/source Work and
+   Verification IDs to match the envelope and requires the current caller to
+   remain authorized for the bound source. No origin or any project/actor/
+   source mismatch returns the existing generic `authority/denied` before
+   Gateway. It does not query CommandStore or compare receipt tuple fields.
+4. For an origin match, Resolver supplies a dedicated replay-only authority.
+   It intentionally does not compare summary, expected Work revision, or
+   successor Verification/Execution IDs from the candidate payload. Therefore
+   changed summary/revision/successor IDs with the same CommandId and same
+   source scope reach Gateway and take Gateway's existing complete-fingerprint
+   `IdempotencyConflict` branch. Changed source/project/actor remains a
+   pre-Gateway generic deny.
+5. Gateway remains the only component to look up the receipt. Under
+   `BEGIN IMMEDIATE`, exact tuple returns the original decoded receipt;
+   mismatch returns the existing non-disclosing `IdempotencyConflict` before
+   either JSON field is decoded; neither branch writes/repairs the receipt,
+   attempts, canonical state, Event, or spawn intent.
+6. If a replay-only authority reaches Gateway but the receipt row is absent,
+   Gateway must return the existing narrow safe
+   `PersistenceCorruption<"CommandStore">` / external
+   `persistence/corruption` unavailable response, with no handler invocation
+   or writes. It must not turn an origin-only row into a new retry.
+7. Malformed, duplicate, contradictory, or FK-inconsistent origin facts fail
+   closed with a typed persistence-corruption disposition mapped to a fixed
+   safe response; no row contents, receipt bytes, raw JSON, fingerprint, or
+   parser/database text is exposed.
 
-The proposal intentionally does not settle whether this is a new table,
-extended Verification record, or a P8-owned store abstraction. It also does
-not assign a migration number, register a migration, or authorize online DB
-upgrade. Governance must decide migration compatibility, table constraints,
-writer ownership, and current-visibility behavior before implementation.
+Current visibility is intentionally evaluated on every exact retry. If
+authorization is revoked or the current governing owner changes so the
+original actor is no longer permitted, Resolver denies without receipt access.
+Restoring valid current authority allows exact replay again. A different
+CommandId for the same source has no origin row and cannot obtain a
+replay-only authority.
 
-## Required fail-closed and atomicity decisions
+## 3. Atomic write, migration and legacy disposition
 
-- Legacy P8 receipts without a provable permanent binding must not be
-  reconstructed from untrusted receipt JSON, Session text, or pruned history.
-  Governance must decide whether available event pairs permit a one-time
-  bounded backfill and what happens to unprovable old receipts; without that
-  decision, no migration/backfill is authorized.
-- A missing, duplicate, malformed, conflicting, wrong-project, wrong-actor,
-  wrong-source, or wrong-successor binding grants no replay authority.
-- A different CommandId for the same source has no matching origin binding
-  and must fail before receipt-dependent response behavior.
-- The same originating CommandId with a changed tuple may pass only the
-  original source's current visibility/owner check; Gateway must then return
-  the existing non-disclosing tuple-mismatch receipt without decoding JSON.
-  A changed target/project or unauthorized principal must not use the binding
-  to cross a visibility boundary.
-- The binding, source conclusion, successor creation, spawn intent, and
-  receipt share the existing command transaction. Crash before commit leaves
-  none; crash after commit allows exact replay. No second successor/event or
-  verifier spawn is created by replay.
+The origin row is written in the same successful Gateway command transaction
+as the old `Unknown(Orphaned)` conclusion, successor Verification, durable
+spawn intent and Committed receipt. The handler writes only the typed origin
+facts; any FK to a Command inserted later in the same Gateway transaction must
+be deferred until commit. If a command fails, the origin is not written. A
+pre-commit crash leaves none of the handoff/origin/receipt facts; a
+post-commit crash leaves all. Replay creates no additional Verification,
+Execution, Event, spawn intent, or origin.
 
-## Qualification required after governance
+The migration identity is **TBD** pending accepted owning-doc changes. It must
+be ordered, transactional, monotonic, safe to re-run after an already-committed
+version, and roll back schema/data together on an interrupted transaction. No
+migration is registered or applied by this proposal.
 
-1. Store/schema tests: uniqueness, immutable exact tuple, foreign keys,
-   retention-independent preservation, malformed/duplicate rows fail closed.
-2. Resolver tests: exact owner-authorized historical replay passes; changed
-   project/actor/source/target and arbitrary CommandId do not obtain the
-   replay tag; child Work requires exact Parent-human governance; Agent grants
-   never qualify.
-3. Gateway tests: exact tuple returns the original receipt; corrupt/wrong-
-   shape stored JSON on a mismatch is never decoded; changed tuple takes the
-   existing conflict path; missing receipt with replay-only authority cannot
-   invoke the handler or write a successor.
-4. Real public-process P8 Story H: first retry commits; same CommandId and
-   payload returns byte/equivalent receipt and IDs without additional
-   Verification, execution, event, or spawn; changed payload and wrong target
-   fail closed; unauthorized actor cannot observe the receipt; arbitrary new
-   CommandId is denied without a receipt-existence distinction.
-5. Atomicity/recovery: inject crashes before and after the transaction commit;
-   prove binding + source conclusion + successor + intent + receipt are all
-   absent before commit and all present after commit.
-6. Retention qualification: prune the corresponding Domain Events after the
-   configured horizon and still prove exact receipt replay from the durable
-   binding. Do not use a retention-window-only test as proof of permanent
-   replay.
+### Evidence-gated backfill
 
-## Acceptance boundary
+Backfill an old successful receipt into `retry_verification_origins` only when
+all available canonical evidence proves the exact handoff:
 
-This proposal only records the gap and a candidate design direction. It does
-not modify `docs/design/**`, alter schema/runtime behavior, register a
-migration, or authorize implementation. Suggested exact future token:
-`AUTHORIZE_P8_RETRY_VERIFICATION_PERMANENT_REPLAY_BINDING_IMPLEMENTATION`.
+- a strict current `RetryVerificationResult` receipt decodes as Committed and
+  its CommandId/ProjectId and source/successor Work, Verification and Execution
+  IDs are internally consistent;
+- exactly one `VerificationConcluded(v1)` and one `VerificationStarted(v1)`
+  event are present with the same `caused_by_command_id`, ProjectId and actor;
+- the conclusion event binds the exact source Verification, Work and target
+  Work revision, `Unknown`, and `Orphaned`;
+- the start event binds the exact successor Verification, same Work and target
+  revision; the canonical successor Verification and
+  `verification_executions` facts bind its verifier Execution to the exact
+  result ID;
+- the current command row is Committed and its ProjectId agrees.
+
+If any field is absent, malformed, duplicated, pruned, or inconsistent, do
+not guess from Session text or repair/delete the receipt. Mark the recognized
+successful receipt `UnboundLegacy` in a separate immutable legacy-disposition
+fact and admit a queryable Governance Inbox item to the current authorized
+human route. The disposition carries only bounded identity/reason data, not
+raw receipt JSON or summary content. External replay of an UnboundLegacy
+receipt is a generic Resolver deny. Governance Inbox admission and the
+disposition fact commit atomically with migration/backfill. This is a new
+route-specific Inbox use; its exact key, recipient, query/consumption and
+rebuild behavior require owner-document acceptance. No automatic backfill
+may use a pruned event or a partial receipt to fabricate origin.
+
+## 4. Required test matrix
+
+### Resolver / visibility
+
+- Origin exact CommandId + same project/actor/source Work/Verification and
+  currently authorized Root human or exact direct Parent human yields only
+  replay-only authority.
+- Missing origin / arbitrary new CommandId, wrong project, actor mismatch,
+  changed source Work/Verification, foreign source, wrong Parent, Agent
+  principal/grant, revoked authority or changed owner all generic-deny before
+  Gateway and reveal no receipt/output IDs.
+- With exact origin and same source + CommandId, changed summary, expected
+  revision, successor Verification ID or successor Execution ID reaches
+  Gateway; Gateway returns `IdempotencyConflict`. The test proves Resolver
+  did not compare those tuple fields.
+- Malformed CommandId returns codec HTTP 400 before Resolver/Gateway.
+- Revoke/change owner: exact replay denies; restore current authority: exact
+  replay returns the same original receipt.
+
+### Gateway / persistence
+
+- Exact tuple returns the exact stored receipt/result IDs, with unchanged
+  receipt bytes and no new attempt, Event, Verification, Execution or spawn.
+- Each changed tuple component takes existing conflict behavior before
+  corrupt historical result/error JSON is decoded; raw JSON, sentinel and
+  fingerprint remain undisclosed; receipt bytes/attempt/Event stay unchanged.
+- Origin exists but receipt is missing: typed safe corruption/unavailable,
+  zero handler invocation and zero writes.
+- Origin row malformed, duplicate, contradictory or FK-broken: typed safe
+  disposition; no receipt/result disclosure or repair.
+- Two synchronized same-command submissions create one origin/receipt and one
+  P8 successor chain.
+
+### Migration / retention / crash
+
+- Fresh and ordered upgrade fixtures create the origin/disposition relations;
+  FK checks and uniqueness/immutability tests pass. Reapplying a committed
+  migration is a no-op; interrupted migration rolls back completely and can
+  be resumed through the ordered runner.
+- Evidence-gated legacy positive backfill; negatives for absent/pruned events,
+  wrong project/actor, duplicate event pair, source/successor mismatch, wrong
+  result shape, incomplete verifier binding and missing receipt. Unprovable
+  recognized successful receipt becomes exactly one UnboundLegacy disposition
+  plus one queryable Inbox item; receipt bytes are preserved.
+- Crash immediately before and after commit proves the source conclusion,
+  successor, spawn intent, origin, Inbox disposition when applicable, and
+  receipt are atomic.
+- Prune the source event pair after its configured retention horizon; the
+  permanent origin still supports exact authorized replay and cannot be
+  pruned with Events. No retention-window-only evidence is sufficient.
+
+### Public-process qualification
+
+Real production daemon/public `/commands` journey: first retry commits; exact
+authorized replay returns the same receipt and successor IDs; changed tuple
+returns Gateway conflict; changed source/project/actor and unauthorized
+caller get generic pre-Gateway denial; arbitrary CommandId gets no replay
+authority; missing receipt with origin returns safe corruption; no replay
+duplicates canonical state or spawn. Run P8 handler, Resolver, Gateway,
+transport and existing P1 exact-tuple corruption cases together.
+
+## 5. Owning-document changes required before implementation
+
+This is not an implementation-only seam. The following owners must explicitly
+accept the narrowed contract and permanent origin:
+
+- **P8 `01` §3A and P8 `06` Story H:** narrow “exact replay returns” to
+  “current-authorized exact replay”; define changed-tuple routing, durable
+  origin, and UnboundLegacy disposition/Inbox behavior. This changes the
+  currently unqualified replay promise and P8's current no-Attention/no-new-
+  surface boundary must be reviewed (proposal recommends Governance Inbox,
+  not P10 Attention).
+- **P1 `01` §3 / §3A and P1 `03` §3.1:** define replay-only authority with
+  missing receipt as safe `PersistenceCorruption<CommandStore>`, and preserve
+  sole Gateway tuple lookup/linearization and mismatch-before-decode order.
+- **P1 `04` §6 and migration owner:** define origin/disposition storage,
+  deferred FK/immutability, no-prune lifetime, migration ordering/idempotence,
+  backfill and UnboundLegacy legacy policy. Migration id remains TBD.
+- **P12 `02` §2 and P12 `10` §3:** authorize the narrow non-receipt origin
+  read and current visibility/actor/source checks; resolver never reads
+  CommandStore and never compares fingerprint/schema/algorithm.
+- **P6 `02` Communication Protocol plus P8 owner:** define the route-specific,
+  human-only durable Governance Inbox entry for UnboundLegacy and its stable
+  key/recipient/consumption/rebuild semantics. If P10 Attention is chosen
+  instead, P10 `02`/`04`/`07` and `00` must separately accept a new source;
+  this proposal does not choose or authorize that alternative.
+
+Until those owner changes are accepted and landed, preserve the current
+bee70f2 Resolver-before-Gateway behavior and keep the RED test isolated. Do
+not add a state-only replay authority, event-retention-window workaround,
+unregistered migration, production code, or online upgrade. Suggested exact
+acceptance token is recorded at the top of this proposal; acceptance is not
+implied by this artifact.
