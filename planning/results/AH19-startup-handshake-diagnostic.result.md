@@ -274,7 +274,7 @@ child normally.
 | Validation | Result |
 |---|---|
 | `containLeaseFencingRejected` unit test | PASS; catches only ownership loss; unrelated tagged failures propagate |
-| AH10 generation-takeover before/after receipt-commit pair | PASS, 2 consecutive rounds (4/4); 64.226s / 64.168s and 64.254s / 70.755s |
+| AH10 generation-takeover before/after receipt-commit pair | PASS, 2 consecutive rounds after removing grace (4/4); 81.676s / 59.131s and 59.528s / 58.963s |
 | AH18 orphan-manifest + corruption-table cases with exit assertion | PASS, 3 consecutive rounds; 9/9 |
 | Full `production-fixture-port-handshake` file | PASS, 2 consecutive rounds; 26/26 each, 70.27s / 69.64s |
 | Late HTTP readiness `<5s` assertion | PASS in both full-file rounds at 3.035s / 2.980s |
