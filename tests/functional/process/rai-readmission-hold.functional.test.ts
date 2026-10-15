@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { P37Probe } from "../support/p37-deliver-process-fixture.js";
 import {
   awaitP37Probe,
+  captureP37LeaseOwnerProcessAnchor,
   deliverAndHoldCommittedReceipt,
   expireP37LeaseForQualification,
   findDeliverReplayFact,
@@ -48,7 +49,16 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
     });
     expect(firstAction.logical_action_id).toMatch(/^lac_/u);
 
-    await seed.fixture.crash();
+    const oldDaemon = {
+      crash: seed.fixture.crash,
+      snapshot: seed.fixture.daemonProcessSnapshot,
+    };
+    const ownerAnchor = captureP37LeaseOwnerProcessAnchor({
+      executionId: firstAction.execution_id,
+      probes: seed.probes,
+      daemon: oldDaemon,
+    });
+    await oldDaemon.crash();
     const inboxDb = new DatabaseSync(seed.fixture.databaseFile);
     try {
       const changed = inboxDb
@@ -60,14 +70,11 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
     } finally {
       inboxDb.close();
     }
-    const oldDaemon = {
-      crash: seed.fixture.crash,
-      snapshot: seed.fixture.daemonProcessSnapshot,
-    };
     await expireP37LeaseForQualification({
       databaseFile: seed.fixture.databaseFile,
       executionId: firstAction.execution_id,
       daemon: oldDaemon,
+      ownerAnchor,
       probes: seed.probes,
       daemonErrors: seed.fixture.daemonErrors,
     });

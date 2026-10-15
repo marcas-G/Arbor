@@ -105,3 +105,37 @@ Review follow-up verification:
 - `git diff --check` — PASS.
 
 No full functional/release suite was run.
+
+## Review follow-up: exact live-process owner anchor
+
+The UUIDv7 incarnation fix still allowed a theoretical PID-reuse gap if the
+anchor were inferred only after the process exited: a replacement process
+could reuse the same PID and supply a self-consistent durable tuple and exact
+generation probe. P37 qualification now captures `LeaseOwnerProcessAnchor`
+while the owner daemon is alive. The anchor binds execution ID, PID, worker ID,
+and worker incarnation to the exact controller object and its observed
+`AH10AfterLeaseAcquired` probe. Missing probes or conflicting worker/incarnation
+observations from that live PID fail at capture time.
+
+Every P37/RAI expiry callsite now captures the anchor before calling that same
+controller's `crash()`, then passes both the unchanged controller object and
+anchor into the after-exit resolver. That resolver first requires the old
+snapshot to show the anchored PID exited; the durable lease's worker/incarnation
+must equal the anchor; exact and derived probes must also match it. Generation
+may advance only while the anchored process identity remains the same. Thus a
+same-PID replacement with incarnation B, even with an exact generation-4
+probe and matching durable generation-4 row, is rejected against owner A's
+anchor before CAS.
+
+Verification after anchor binding:
+
+- Identity + P37 qualification tests — PASS, 15/15, including missing/conflicting anchor, exact-generation PID reuse rejection, derived-generation PID reuse rejection, invalid/negative generations, and normal commit-before-probe derivation.
+- P37 ActionRequired-after-Inbox-drift exact case — PASS, three consecutive rounds.
+- Full P37 process file — PASS, 11/11, 503.81s.
+- Full RAI file — PASS, 2/2, 70.28s.
+- P4 live-lease qualification — PASS, 1/1, 36.81s.
+- AH10 committed-Deliverable takeover — PASS, 1/1, 41.96s.
+- `pnpm typecheck` — PASS (`tsc -b` and test TypeScript project).
+- `pnpm build` — PASS (`tsc -b`).
+- `pnpm lint` — PASS, Biome checked 1177 files.
+- `git diff --check` — PASS.
