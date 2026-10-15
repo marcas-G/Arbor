@@ -17,6 +17,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createP39PrivateTestFile,
+  isP39PathQualificationEnabled,
   makeP39PrivateTestDirectory,
   p39WindowsAclQualificationAvailable,
   p39WindowsTestEnvironment,
@@ -52,7 +53,10 @@ import {
 } from "../src/p39-writer-lock.js";
 
 const crossPlatformP39PathQualificationAvailable =
-  process.platform !== "win32" || p39WindowsAclQualificationAvailable();
+  isP39PathQualificationEnabled(
+    process.platform,
+    p39WindowsAclQualificationAvailable(),
+  );
 const windowsAclQualificationAvailable =
   process.platform === "win32" && p39WindowsAclQualificationAvailable();
 
