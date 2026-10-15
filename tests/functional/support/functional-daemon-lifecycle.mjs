@@ -48,10 +48,17 @@ export const createAh19StartupDiagnosticProbe = (enabled) => {
       })}\n`,
     );
   };
+  const safeReport = (phase, extra = {}) => {
+    try {
+      report(phase, extra);
+    } catch {
+      // Test-only observations cannot affect child startup.
+    }
+  };
   if (enabled) {
     process.on("exit", (exitCode) => {
-      report("daemon.process.exit", { exitCode });
+      safeReport("daemon.process.exit", { exitCode });
     });
   }
-  return report;
+  return safeReport;
 };
