@@ -316,6 +316,49 @@ describe("P37 exited-owner lease qualification", () => {
     ).toThrow("conflicting or incomplete lease-acquisition probes");
   });
 
+  it("rejects a different controller that spoofs the anchored PID and exited snapshot", async () => {
+    const databaseFile = seedLease({
+      generation: 4,
+      workerId: "worker:p37-old",
+      workerIncarnationId: "inc-p37-old",
+    });
+    const probes: P37Probe[] = [acquiredProbe({ generation: 3 })];
+    const ownerA = ownerController({ pid: 321 });
+    const ownerAnchor = await anchorAndExitOwner({ probes, owner: ownerA });
+    const controllerB = {
+      crash: async () => {
+        throw new Error("controller B must not be crashed by expiry");
+      },
+      snapshot: () => ({
+        pid: 321,
+        exitCode: 1,
+        signalCode: null,
+        alive: false,
+      }),
+    };
+
+    await expect(
+      expireP37LeaseForQualification({
+        databaseFile,
+        executionId: "exe_p37_owner_test",
+        daemon: controllerB,
+        ownerAnchor,
+        probes,
+        timeoutMs: 25,
+        pollIntervalMs: 5,
+      }),
+    ).rejects.toThrow(
+      "P37 owner anchor does not belong to this execution and daemon controller",
+    );
+    expect(ownerA.crashCount()).toBe(1);
+    expect(readLease(databaseFile)).toMatchObject({
+      generation: 4,
+      worker_id: "worker:p37-old",
+      worker_incarnation_id: "inc-p37-old",
+      expires_at: "2999-01-01T00:00:00.000Z",
+    });
+  });
+
   it("rejects exact-generation PID reuse after anchoring the exited old owner", async () => {
     const databaseFile = seedLease({
       generation: 4,
