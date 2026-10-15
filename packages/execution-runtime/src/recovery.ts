@@ -35,6 +35,7 @@ import {
   TransactionPort,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
+import { RECOVERY_WORKER_INCARNATION_ID } from "./process-identity.js";
 import { recordSubmittedDecisionBindingFailure } from "./submitted-decision-binding-failure.js";
 
 export interface RecoveryResult {
@@ -79,7 +80,6 @@ const recoveryCommandId = (
   parse(CommandId)(`cmd_${newUuid7("recovery", `${executionId}:${branch}`)}`);
 
 const RECOVERY_WORKER_ID = "worker:recovery-controller";
-const RECOVERY_WORKER_INCARNATION_ID = "wic_recovery_controller";
 
 export const classifySettledDecisionPendingActionAudit = (input: {
   readonly executionId: string;

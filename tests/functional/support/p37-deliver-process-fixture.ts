@@ -1209,7 +1209,9 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
     actual.expires_at === expected.expires_at;
   const probeGeneration = (probe: P37Probe) => {
     const generation = probe.fencingGeneration;
-    return generation !== undefined && Number.isSafeInteger(generation)
+    return generation !== undefined &&
+      Number.isSafeInteger(generation) &&
+      generation >= 0
       ? generation
       : undefined;
   };

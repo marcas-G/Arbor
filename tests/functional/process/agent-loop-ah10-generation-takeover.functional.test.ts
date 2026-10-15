@@ -25,6 +25,7 @@ interface Ah10Probe {
   readonly boundary: string;
   readonly executionId: string;
   readonly fencingGeneration?: number;
+  readonly workerIncarnationId?: string;
   readonly pauseRequested?: boolean;
   readonly providerTurnId?: string;
   readonly logicalActionId?: string;
@@ -403,6 +404,17 @@ describe("AH10 real daemon generation takeover", () => {
         45_000,
       );
       expect(newLease?.fencingGeneration).toBe(1);
+      const oldLeaseAcquired = events.find(
+        (event) =>
+          event.role === "old" &&
+          event.boundary === "AH10AfterLeaseAcquired" &&
+          event.executionId === oldAction.executionId,
+      );
+      expect(oldLeaseAcquired?.workerIncarnationId).toBeTruthy();
+      expect(newLease?.workerIncarnationId).toBeTruthy();
+      expect(newLease?.workerIncarnationId).not.toBe(
+        oldLeaseAcquired?.workerIncarnationId,
+      );
       const newAction = await waitForPublic(
         async () =>
           events.find(
