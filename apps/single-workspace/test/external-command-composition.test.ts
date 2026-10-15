@@ -2,10 +2,6 @@ import type {
   AuthorityDecisionInput,
   CommandGatewayService,
 } from "@arbor/application";
-import {
-  FINGERPRINT_ALGORITHM_VERSION,
-  semanticRequestFingerprint,
-} from "@arbor/application";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { resolveCompositionGovernance } from "../src/composition.js";
@@ -250,7 +246,7 @@ describe("external command composition boundary", () => {
     expect(calls).toEqual([]);
   });
 
-  it("receipt-first replays only the exact RetryVerification envelope and denies tuple mismatches", async () => {
+  it("resolves current RetryVerification authority before Gateway receipt replay", async () => {
     const commandId = "cmd_018f2b3c-4d5e-7abc-8def-0123456789d1";
     const projectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789d2";
     const payload = {
@@ -262,32 +258,25 @@ describe("external command composition boundary", () => {
       verifierExecutionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789d6",
     };
     const actor = "user:local";
-    const fingerprint = semanticRequestFingerprint({
-      commandType: "RetryVerification",
-      projectId,
-      actor,
-      schemaVersion: "1",
-      payload,
-    });
-    const stored = {
-      commandId,
-      projectId,
-      semanticRequestFingerprint: fingerprint,
-      schemaVersion: "1",
-      fingerprintAlgorithmVersion: FINGERPRINT_ALGORITHM_VERSION,
-      resolution: "Committed",
-      resultJson: "{}",
-      terminalErrorJson: null,
-      createdAt: "2026-10-12T00:00:00.000Z",
-      settledAt: "2026-10-12T00:00:01.000Z",
-    };
+    const calls: string[] = [];
     const gatewayAuthorities: unknown[] = [];
     const submission = makeExternalSubmission({
       resolver: {
-        resolve: () => {
-          throw new Error(
-            "receipt replay must not resolve mutable source facts",
-          );
+        resolve: (input: AuthorityDecisionInput) => {
+          calls.push("resolver");
+          return Effect.succeed({
+            _tag: "RetryVerificationAuthority",
+            principal: input.principal,
+            commandId: input.envelope.commandId,
+            semanticRequestFingerprint: input.semanticRequestFingerprint,
+            projectId: input.envelope.projectId,
+            targetWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789d7",
+            currentOwnerId: "ws_018f2b3c-4d5e-7abc-8def-0123456789d7",
+            workId: payload.workId,
+            expectedWorkRevision: payload.expectedWorkRevision,
+            verificationId: payload.verificationId,
+            settledVerifierExecutionIds: [payload.verifierExecutionId],
+          } as never);
         },
       } as never,
       gateway: {
@@ -296,18 +285,22 @@ describe("external command composition boundary", () => {
           _context: Parameters<CommandGatewayService["execute"]>[1],
           authority: Parameters<CommandGatewayService["execute"]>[2],
         ) => {
+          calls.push("gateway");
           gatewayAuthorities.push(authority);
           return Effect.succeed({
             commandId,
-            resolution: { _tag: "Committed", result: { replayed: true } },
+            resolution: {
+              _tag: "TerminalRejected",
+              error: { _tag: "IdempotencyConflict", commandId },
+            },
           } as never);
         },
       } as never,
       registry: { lookup: () => Option.some({ schemaVersion: "1" }) } as never,
       loadInputs: () => {
-        throw new Error("receipt replay must not load mutable source facts");
+        calls.push("load-inputs");
+        return Effect.succeed({} as AuthorityInputs);
       },
-      findCommandResolution: () => Effect.succeed(Option.some(stored as never)),
     });
     const envelope = {
       commandType: "RetryVerification",
@@ -317,72 +310,30 @@ describe("external command composition boundary", () => {
       issuedAt: "2026-10-12T00:00:00.000Z",
       payload,
     };
-    const replay = await Effect.runPromise(
+    const response = await Effect.runPromise(
       submission.submit(
         actor as never,
         externalContext(actor as never),
         envelope,
       ),
     );
-    expect(replay).toMatchObject({
+    expect(response).toMatchObject({
       ok: true,
-      body: { commandId, resolution: "Committed", result: { replayed: true } },
+      body: {
+        commandId,
+        resolution: "TerminalRejected",
+        rejection: "IdempotencyConflict",
+      },
     });
     expect(gatewayAuthorities[0]).toMatchObject({
-      _tag: "RetryVerificationReceiptReplayAuthority",
+      _tag: "RetryVerificationAuthority",
       commandId,
       projectId,
-      semanticRequestFingerprint: fingerprint,
+      workId: payload.workId,
+      verificationId: payload.verificationId,
+      expectedWorkRevision: payload.expectedWorkRevision,
     });
-
-    const mismatches = [
-      { ...envelope, actor: "user:other" },
-      {
-        ...envelope,
-        commandType: "SubmitHumanMessage",
-        payload: {
-          messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789d8",
-          targetWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789d9",
-          bodyRef: "body-ref",
-        },
-      },
-      { ...envelope, projectId: "prj_018f2b3c-4d5e-7abc-8def-0123456789d7" },
-      { ...envelope, payload: { ...payload, summaryContent: "changed" } },
-    ];
-    for (const mismatch of mismatches) {
-      const mismatchSubmission = makeExternalSubmission({
-        resolver: {
-          resolve: () => {
-            throw new Error("must not resolve");
-          },
-        } as never,
-        gateway: {
-          execute: () => {
-            throw new Error("mismatch must not reach Gateway");
-          },
-        } as never,
-        registry: {
-          lookup: () => Option.some({ schemaVersion: "1" }),
-        } as never,
-        loadInputs: () => {
-          throw new Error("mismatch must not load state");
-        },
-        findCommandResolution: () =>
-          Effect.succeed(Option.some(stored as never)),
-      });
-      const response = await Effect.runPromise(
-        mismatchSubmission.submit(
-          mismatch.actor as never,
-          externalContext(mismatch.actor as never),
-          mismatch,
-        ),
-      );
-      expect(response).toMatchObject({
-        ok: false,
-        status: 409,
-        problem: { code: "command/idempotency-conflict" },
-      });
-    }
+    expect(calls).toEqual(["load-inputs", "resolver", "gateway"]);
   });
 
   it("keeps a configured-auth outsider from resolving an Executable approval", async () => {
