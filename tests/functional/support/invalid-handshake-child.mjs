@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 
 const mode = process.env.ARBOR_TEST_HANDSHAKE_MODE;
 const nonce = randomUUID();
@@ -6,6 +7,26 @@ const report = (tag, eventNonce, pid, port) =>
   process.stdout.write(
     `${JSON.stringify({ tag, nonce: eventNonce, pid, ...(port === undefined ? {} : { port }) })}\n`,
   );
+
+if (mode === "exit-after-listening") {
+  const port = Number(process.env.ARBOR_HTTP_PORT ?? "0");
+  const server = createServer(() => {});
+  await new Promise((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(port, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("test child did not bind an HTTP port");
+  }
+  report("FUNCTIONAL_DAEMON_STARTED", nonce, process.pid);
+  report("FUNCTIONAL_DAEMON_LISTENING", nonce, process.pid, address.port);
+  setTimeout(() => {
+    process.stderr.write("readiness-exit-sentinel\n");
+    process.exit(23);
+  }, 100);
+  await new Promise(() => {});
+}
 
 if (mode === "early-exit") {
   report("FUNCTIONAL_DAEMON_STARTED", nonce, process.pid);

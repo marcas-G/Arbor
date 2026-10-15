@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -177,6 +178,57 @@ describe("production fixture port-zero startup handshake", () => {
       }),
     ).rejects.toThrow(expected);
   });
+
+  it("fails readiness promptly and cleans up when a listening child exits", async () => {
+    let fixtureDirectory: string | undefined;
+    let providerPort: number | undefined;
+    let childPid: number | undefined;
+    const lines: string[] = [];
+    const startedAt = Date.now();
+
+    await expect(
+      startProductionFixture({
+        reply: () => "unused",
+        firstDaemonEntry: invalidChild,
+        daemonEnvironment: {
+          ARBOR_TEST_HANDSHAKE_MODE: "exit-after-listening",
+        },
+        onDaemonStdout: (line) => {
+          lines.push(line);
+          try {
+            const report = JSON.parse(line) as { tag?: string; pid?: number };
+            if (report.tag === "FUNCTIONAL_DAEMON_STARTED") {
+              childPid = report.pid;
+            }
+          } catch {
+            // Keep the process output as diagnostic evidence only.
+          }
+        },
+        setupProbe: (event) => {
+          fixtureDirectory = event.directory;
+          providerPort = event.providerPort;
+        },
+      }),
+    ).rejects.toThrow(
+      /exited before HTTP readiness.*exitCode=23.*readiness-exit-sentinel/su,
+    );
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(fixtureDirectory).toBeDefined();
+    expect(existsSync(fixtureDirectory ?? "")).toBe(false);
+    expect(providerPort).toBeDefined();
+    await expect(
+      fetch(`http://127.0.0.1:${providerPort}/models`),
+    ).rejects.toThrow();
+    expect(childPid).toBeDefined();
+    if (childPid !== undefined) {
+      expect(() => process.kill(childPid as number, 0)).toThrow();
+    }
+    expect(lifecycleReports(lines).map((report) => report.tag)).toEqual([
+      "FUNCTIONAL_DAEMON_STARTED",
+      "FUNCTIONAL_DAEMON_LISTENING",
+    ]);
+  }, 120_000);
 
   it("bounds provider close when it hangs or throws", async () => {
     let forcedHangClose = 0;
