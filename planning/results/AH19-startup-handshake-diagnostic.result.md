@@ -25,9 +25,11 @@ provide the callback.
 Persisted records are bounded and contain only phase, elapsed milliseconds,
 child PID, lifecycle stage, exit status, and summarized state; they omit
 nonces, secrets, provider request bodies, Session text, and opaque references.
-The reporter is enabled only for five AH19 manifest-corruption cases:
-`logicalStepNo`, `providerTurnId`, `bindingFingerprint`, `repairAttempt`, and
-`executionId`. Other AH19 cases continue to run without these startup traces.
+The reporter is enabled only for seven AH19 cases: five manifest-corruption
+cases (`logicalStepNo`, `providerTurnId`, `bindingFingerprint`, `repairAttempt`,
+and `executionId`), terminal ConversationResponse rebase, and terminal
+compiled-hash corruption. Other AH19 cases continue to run without these
+startup traces.
 
 ## Validation
 
@@ -106,7 +108,9 @@ Validation on `c6d7c518` plus the fixture change:
 
 | Check | Result |
 |---|---|
-| Fixture listen-then-exit cleanup regression | PASS, 1/1; 2.084s test time |
+| Fixture listen-then-exit cleanup regression | PASS, 1/1; 2.298s test time |
+| Fixture live-but-no-headers overall timeout regression | PASS, 1/1; 3.199s test time |
+| Fixture late-200-after-deadline regression | PASS, 1/1; 3.310s test time |
 | `pnpm typecheck` | PASS |
 | Exact `providerTurnId` fail-closed case | PASS, 85.771s; 39 skipped |
 | Ordered `logicalStepNo`, then `providerTurnId` with `--bail=1` | PASS, 2/2; 81.892s and 89.758s; 38 skipped |
