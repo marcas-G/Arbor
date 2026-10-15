@@ -134,6 +134,38 @@ test-fixture orchestration defect causing the delayed return; it does not claim
 that all possible startup/resource contention is eliminated. The only retained
 untracked batch evidence remains `.arbor-functional-schema42-FBDIxO/`.
 
+## Windows process-tree stop follow-up
+
+Run `.test-results/2026-10-15T08-12-23-904Z-6668` failed before manifest
+mutation or business assertions, while `startOrdinaryNativeAtCheckpointBoundary`
+was stopping its generation-0 daemon. The child had reached LISTEN. The
+previous Windows lifecycle code started a 5s target-exit wait at the same time
+as `taskkill.exe`, so command runtime and Node's later child-exit event shared
+one budget. A taskkill taking slightly more than 5s could therefore time out
+even when the target exited normally immediately after taskkill completed.
+
+Windows stop now bounds taskkill independently at 10s, then starts a fresh
+5s target-exit grace. If the target exits first, the taskkill helper is killed
+and reaped. Timeout errors identify `taskkill`, `taskkill-cleanup`, or
+`target-exit-after-taskkill`; race and child-exit listeners/timers are removed
+on every outcome. Taskkill helper cleanup has a separate 1s bound.
+
+| Validation | Result |
+|---|---|
+| Virtual-clock taskkill completes after old 5s bound; target exits within fresh grace | PASS; no real sleep; listeners/timers cleared |
+| Target exits before taskkill; helper is reaped | PASS; no real sleep |
+| Taskkill independent timeout and helper cleanup | PASS; no real sleep; listeners/timers cleared |
+| Real Windows parent+grandchild process-tree stop, repeated stop | PASS, 1/1; 319ms |
+| Existing repeated single-child stop | PASS, 1/1 |
+| AH19 exact `providerTurnId` | PASS, 53.630s |
+| Ordered AH19 `logicalStepNo` + `providerTurnId` | PASS, 2/2; 53.667s and 53.126s |
+| Targeted Biome and `pnpm typecheck` | PASS |
+
+No AH19 per-case budget or business/security assertion changed. The lifecycle
+fix is isolated to test-process cleanup and its shared process helper; no full
+suite was run. The failed run's startup phase trace did not reach manifest
+mutation, confirming that failure point was cleanup rather than AH19 recovery.
+
 ## Startup trace expansion and AH17 sequence
 
 The AH19 child trace applies by default to every process launched via
