@@ -27,84 +27,203 @@ const withTimeout = async <A>(
   }
 };
 
+export interface StopChildLifecycleTestSeam {
+  readonly platform?: NodeJS.Platform;
+  readonly taskkillTimeoutMs?: number;
+  readonly taskkillCleanupTimeoutMs?: number;
+  readonly spawnTaskkill?: (pid: number) => ChildProcess;
+  /** Test-only clock seam for deterministic process-tree stop race coverage. */
+  readonly setTimeout?: typeof setTimeout;
+  readonly clearTimeout?: typeof clearTimeout;
+}
+
+const WINDOWS_TASKKILL_TIMEOUT_MS = 10_000;
+const WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS = 1_000;
+
 const waitForChildExit = (child: ChildProcess, timeoutMs: number) => {
   if (childHasExited(child)) return Promise.resolve();
-  return withTimeout(
-    new Promise<void>((resolveExit) => {
-      child.once("exit", () => resolveExit());
-    }),
-    timeoutMs,
-    `daemon process did not exit within ${timeoutMs}ms; ${childExitDiagnostic(child)}`,
-  );
+  return new Promise<void>((resolveExit, rejectExit) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener("exit", onExit);
+      if (error === undefined) resolveExit();
+      else rejectExit(error);
+    };
+    const onExit = () => finish();
+    const timeout = setTimeout(
+      () =>
+        finish(
+          new Error(
+            `daemon process did not exit within ${timeoutMs}ms; ${childExitDiagnostic(child)}`,
+          ),
+        ),
+      timeoutMs,
+    );
+    child.once("exit", onExit);
+    if (childHasExited(child)) finish();
+  });
+};
+
+type TaskkillOutcome =
+  | { readonly kind: "target-exit" }
+  | {
+      readonly kind: "taskkill-exit";
+      readonly code: number | null;
+      readonly signal: NodeJS.Signals | null;
+    }
+  | { readonly kind: "taskkill-error"; readonly error: Error }
+  | { readonly kind: "taskkill-timeout" };
+
+const waitForTaskkillOrTarget = (
+  killer: ChildProcess,
+  target: ChildProcess,
+  timeoutMs: number,
+  timers: Pick<StopChildLifecycleTestSeam, "setTimeout" | "clearTimeout">,
+): Promise<TaskkillOutcome> =>
+  new Promise((resolveOutcome) => {
+    let settled = false;
+    const setTimer = timers.setTimeout ?? setTimeout;
+    const clearTimer = timers.clearTimeout ?? clearTimeout;
+    let timeout: ReturnType<typeof setTimeout>;
+    const finish = (outcome: TaskkillOutcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimer(timeout);
+      killer.removeListener("error", onError);
+      killer.removeListener("exit", onKillerExit);
+      target.removeListener("exit", onTargetExit);
+      resolveOutcome(outcome);
+    };
+    const onError = (error: Error) => finish({ kind: "taskkill-error", error });
+    const onKillerExit = (code: number | null, signal: NodeJS.Signals | null) =>
+      finish({ kind: "taskkill-exit", code, signal });
+    const onTargetExit = () => finish({ kind: "target-exit" });
+    timeout = setTimer(() => finish({ kind: "taskkill-timeout" }), timeoutMs);
+    killer.once("error", onError);
+    killer.once("exit", onKillerExit);
+    target.once("exit", onTargetExit);
+    if (childHasExited(target)) onTargetExit();
+    else if (childHasExited(killer)) {
+      onKillerExit(killer.exitCode, killer.signalCode);
+    }
+  });
+
+const stopKillerAfterTargetExit = async (
+  killer: ChildProcess,
+  timeoutMs: number,
+) => {
+  if (childHasExited(killer)) return;
+  const killRequested = killer.kill();
+  if (childHasExited(killer) || (killer.pid === undefined && !killRequested))
+    return;
+  try {
+    await waitForChildExit(killer, timeoutMs);
+  } catch (error) {
+    throw new Error(
+      `taskkill helper cleanup timed out; phase=taskkill-cleanup; ${childExitDiagnostic(killer)}`,
+      { cause: error },
+    );
+  }
 };
 
 const killWindowsProcessTree = async (
   child: ChildProcess,
-  timeoutMs: number,
+  targetExitGraceMs: number,
+  seam: StopChildLifecycleTestSeam,
 ) => {
   if (child.pid === undefined) {
     throw new Error(
       `cannot stop child without a PID; ${childExitDiagnostic(child)}`,
     );
   }
-  const killer = spawn(
-    "taskkill.exe",
-    ["/PID", String(child.pid), "/T", "/F"],
-    {
-      stdio: "ignore",
-      windowsHide: true,
-    },
-  );
-  let killerExited = false;
-  const killerExit = new Promise<void>((resolveExit, rejectExit) => {
-    killer.once("error", (error) => {
-      killerExited = true;
-      rejectExit(error);
-    });
-    killer.once("exit", (code, signal) => {
-      killerExited = true;
-      if (code === 0 || childHasExited(child)) resolveExit();
-      else {
-        rejectExit(
-          new Error(
-            `taskkill failed with code=${String(code)} signal=${String(signal)}; ${childExitDiagnostic(child)}`,
-          ),
-        );
-      }
-    });
-  });
-  const targetExit = waitForChildExit(child, timeoutMs);
+  let killer: ChildProcess;
   try {
-    const outcome = await Promise.race([
-      killerExit.then(
-        () => "killer" as const,
-        (error: unknown) => {
-          if (childHasExited(child)) return "target" as const;
-          throw error;
-        },
-      ),
-      targetExit.then(() => "target" as const),
-    ]);
-    if (outcome === "target" && !killerExited) {
-      await Promise.race([
-        killerExit.catch(() => undefined),
-        new Promise<void>((resolveGrace) => setTimeout(resolveGrace, 1_000)),
-      ]);
-      if (!killerExited) killer.kill();
+    killer = (
+      seam.spawnTaskkill ??
+      ((pid) =>
+        spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+          stdio: "ignore",
+          windowsHide: true,
+        }))
+    )(child.pid);
+  } catch (error) {
+    throw new Error(
+      `taskkill spawn failed; phase=taskkill-start; ${childExitDiagnostic(child)}`,
+      { cause: error },
+    );
+  }
+
+  const cleanupTimeoutMs =
+    seam.taskkillCleanupTimeoutMs ?? WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS;
+  const taskkillTimeoutMs =
+    seam.taskkillTimeoutMs ?? WINDOWS_TASKKILL_TIMEOUT_MS;
+  try {
+    const outcome = await waitForTaskkillOrTarget(
+      killer,
+      child,
+      taskkillTimeoutMs,
+      seam,
+    );
+    if (outcome.kind === "target-exit") {
+      await stopKillerAfterTargetExit(killer, cleanupTimeoutMs);
+      return;
     }
-    await targetExit;
-  } finally {
-    if (!killerExited) killer.kill();
+    if (outcome.kind === "taskkill-timeout") {
+      throw new Error(
+        `taskkill process-tree command timed out after ${taskkillTimeoutMs}ms; phase=taskkill; ${childExitDiagnostic(child)}`,
+      );
+    }
+    if (outcome.kind === "taskkill-error") {
+      throw new Error(
+        `taskkill process-tree command failed; phase=taskkill; ${childExitDiagnostic(child)}; error=${outcome.error.message}`,
+        { cause: outcome.error },
+      );
+    }
+    if (outcome.code !== 0 && !childHasExited(child)) {
+      throw new Error(
+        `taskkill failed with code=${String(outcome.code)} signal=${String(outcome.signal)}; phase=taskkill; ${childExitDiagnostic(child)}`,
+      );
+    }
+    try {
+      await waitForChildExit(child, targetExitGraceMs);
+    } catch (error) {
+      throw new Error(
+        `daemon process did not exit within ${targetExitGraceMs}ms after taskkill; phase=target-exit-after-taskkill; ${childExitDiagnostic(child)}`,
+        { cause: error },
+      );
+    }
+  } catch (error) {
+    const taskkillTimedOut =
+      error instanceof Error && error.message.includes("phase=taskkill;");
+    if (
+      !childHasExited(killer) &&
+      (killer.pid !== undefined || taskkillTimedOut)
+    ) {
+      await stopKillerAfterTargetExit(killer, cleanupTimeoutMs).catch(
+        (cleanupError: unknown) => {
+          throw new AggregateError(
+            [error, cleanupError],
+            "taskkill failure and helper cleanup both failed",
+            { cause: error },
+          );
+        },
+      );
+    }
+    throw error;
   }
 };
 
 export const stopChildBounded = async (
   child: ChildProcess | undefined,
   timeoutMs = 5_000,
+  seam: StopChildLifecycleTestSeam = {},
 ): Promise<void> => {
   if (child === undefined || childHasExited(child)) return;
-  if (process.platform === "win32") {
-    await killWindowsProcessTree(child, timeoutMs);
+  if ((seam.platform ?? process.platform) === "win32") {
+    await killWindowsProcessTree(child, timeoutMs, seam);
   } else {
     child.kill("SIGKILL");
   }
