@@ -13,8 +13,10 @@ Execution. The public `RetryVerification` command is submitted once and
 commits the Orphaned conclusion, successor Verification, and receipt. The same
 CommandId and exact payload are immediately submitted again.
 
-The expected result is the original HTTP 200 Committed receipt with the same
-successor IDs, as required by P8 `01` §3A and `06` Story H. At baseline
+The proposed expected result is the original HTTP 200 Committed receipt with
+the same successor IDs because this reproduction keeps the same authenticated
+Root human, project, source Work and Verification, and therefore remains
+currently authorized under the fixed proposal. At baseline
 `bee70f2a58f3c42610fa245adb4d8dd9f9e06b68`, the actual result is HTTP 403
 `authority/denied`, reason `NoApplicableGrant:RetryVerification`; the Resolver
 rejects the now-Concluded source before Gateway. The test failure is the
@@ -47,10 +49,15 @@ be pruned after a deployment-configured horizon. Current canonical Verification
 rows have no permanent originating-command binding. The event-only candidate
 was therefore withdrawn: it would not prove permanent replay after pruning,
 and a state-only replay authority would let arbitrary CommandIds reach the
-receipt-dependent Gateway path. See
+receipt-dependent Gateway path. The revised fixed proposal requires current
+P12 authorization, limits replay-origin fields to non-receipt identities,
+leaves all remaining tuple comparison to Gateway, and specifies evidence-gated
+legacy backfill plus queryable UnboundLegacy Governance Inbox disposition. See
 `planning/proposals/F23-retry-verification-permanent-replay-authority-draft.md`
-for the complete Design Gap, candidate permanent binding, migration/backfill
-boundary, and required negatives/atomicity/retention matrix.
+for exact physical candidates, migration/FK/retention/atomicity rules, missing
+receipt/origin corruption behavior, all required negative and crash tests, and
+the P8/P1/P12/P6 owning-doc changes required for acceptance. Its raw SHA-256 is
+`CF2D33C20F5327A4E06AD8622E6CA8A67434A911BED24A2F4D46AB30966D1B17`.
 
 No `docs/design/**`, production code, schema registry, migration, or online
 database was changed for this gap disposition. The F23 `bee70f2` Resolver-before-
