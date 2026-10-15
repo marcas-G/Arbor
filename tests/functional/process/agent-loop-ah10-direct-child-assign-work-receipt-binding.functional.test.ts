@@ -8,7 +8,11 @@ import {
   createP32MigrationBaseline,
   upgradeSchema42TestDatabase,
 } from "../../support/schema42-database.js";
-import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
+import {
+  expireExecutionLeaseAfterOwnerExitForQualification,
+  type LiveOwnerLeasePauseEvidence,
+  waitForLiveOwnerLeaseExpiryForQualification,
+} from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -32,6 +36,7 @@ interface Probe {
   readonly boundary: string;
   readonly executionId: string;
   readonly fencingGeneration?: number;
+  readonly pauseRequested?: boolean;
   readonly providerTurnId?: string;
   readonly logicalActionId?: string;
   readonly actionKind?: string;
@@ -39,7 +44,6 @@ interface Probe {
   readonly actionIndex?: number;
   readonly commandId?: string;
   readonly committedCommandId?: string;
-  readonly pauseRequested?: boolean;
 }
 
 interface CommandRow {
@@ -1199,6 +1203,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         revision: 0,
       });
 
+      let liveOwnerPauseEvidence: LiveOwnerLeasePauseEvidence | undefined;
+
       // The old daemon is held at the exact Agent ActionIntent boundary. The
       // target is the wref recovered from its persisted successful
       // list_workspaces ControlResult, not a fabricated or derived ref.
@@ -1562,6 +1568,17 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           20_000,
         );
         expect(renewal?.fencingGeneration).toBe(1);
+        if (renewal === undefined) {
+          throw new Error(
+            "AssignWork live-owner renewal pause evidence absent",
+          );
+        }
+        liveOwnerPauseEvidence = {
+          boundary: "AH10BeforeLeaseRenewal",
+          pauseRequested: renewal.pauseRequested === true,
+          executionId: renewal.executionId,
+          fencingGeneration: renewal.fencingGeneration ?? -1,
+        };
       } else {
         const oldLeasePause = await waitForPublic(
           async () =>
@@ -1578,15 +1595,36 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           throw new Error("Direct-child AssignWork old lease probe was absent");
         }
         expect(oldLeasePause.fencingGeneration).toBe(0);
+        liveOwnerPauseEvidence = {
+          boundary: "AH10BeforeLeaseRenewal",
+          pauseRequested: oldLeasePause.pauseRequested === true,
+          executionId: oldLeasePause.executionId,
+          fencingGeneration: oldLeasePause.fencingGeneration ?? -1,
+        };
       }
-      await expireExecutionLeaseForQualification({
-        databaseFile: recoveryDatabaseFile,
-        executionId: oldAction.executionId,
-        daemon: {
-          crash: fixture.crash,
-          snapshot: fixture.daemonProcessSnapshot,
-        },
-      });
+      if (crashSide === "approval-fencing-before") {
+        if (liveOwnerPauseEvidence === undefined) {
+          throw new Error(
+            `live-owner branch ${crashSide} omitted pause evidence`,
+          );
+        }
+        await waitForLiveOwnerLeaseExpiryForQualification({
+          databaseFile: recoveryDatabaseFile,
+          executionId: oldAction.executionId,
+          pauseEvidence: liveOwnerPauseEvidence,
+          expected: { generation: liveOwnerPauseEvidence.fencingGeneration },
+          daemon: { snapshot: fixture.daemonProcessSnapshot },
+        });
+      } else {
+        await expireExecutionLeaseAfterOwnerExitForQualification({
+          databaseFile: recoveryDatabaseFile,
+          executionId: oldAction.executionId,
+          daemon: {
+            crash: fixture.crash,
+            snapshot: fixture.daemonProcessSnapshot,
+          },
+        });
+      }
 
       if (crashSide === "legacy-p32-upgrade") {
         recoveryDatabaseFile = await makePreBindingP32Copy(
@@ -1788,7 +1826,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         expect(afterAttentionKill.bindingAttentionEvents).toHaveLength(
           expectedFactCount,
         );
-        await expireExecutionLeaseForQualification({
+        await expireExecutionLeaseAfterOwnerExitForQualification({
           databaseFile: recoveryDatabaseFile,
           executionId: oldAction.executionId,
           daemon: {

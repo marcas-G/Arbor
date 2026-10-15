@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
+import { expireExecutionLeaseAfterOwnerExitForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -854,18 +854,19 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
       );
       if (expiredLeaseRow === undefined)
         throw new Error("AH10 old lease is absent after daemon exit");
-      const expiredLease = await expireExecutionLeaseForQualification({
-        databaseFile: fixture.databaseFile,
-        executionId: oldAction.executionId,
-        expected: {
-          generation: Number(expiredLeaseRow.generation),
-          expiresAt: expiredLeaseRow.expires_at,
-        },
-        daemon: {
-          crash: fixture.crash,
-          snapshot: fixture.daemonProcessSnapshot,
-        },
-      });
+      const expiredLease =
+        await expireExecutionLeaseAfterOwnerExitForQualification({
+          databaseFile: fixture.databaseFile,
+          executionId: oldAction.executionId,
+          expected: {
+            generation: Number(expiredLeaseRow.generation),
+            expiresAt: expiredLeaseRow.expires_at,
+          },
+          daemon: {
+            crash: fixture.crash,
+            snapshot: fixture.daemonProcessSnapshot,
+          },
+        });
       expect(expiredLease.before).toMatchObject({
         execution_id: oldAction.executionId,
         generation: expiredLeaseRow.generation,

@@ -2,7 +2,10 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
+import {
+  expireExecutionLeaseAfterOwnerExitForQualification,
+  waitForLiveOwnerLeaseExpiryForQualification,
+} from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -725,7 +728,7 @@ describe("AH10 real daemon generation takeover", () => {
 
     await fixture.crash();
     markPhase("gen0 crashed after committed receipt");
-    await expireExecutionLeaseForQualification({
+    await expireExecutionLeaseAfterOwnerExitForQualification({
       databaseFile: fixture.databaseFile,
       executionId: actionIntent.executionId,
       daemon: {
@@ -1059,7 +1062,7 @@ describe("AH10 real daemon generation takeover", () => {
     expect(declarationProviderCalls).toBe(1);
 
     await fixture.crash();
-    await expireExecutionLeaseForQualification({
+    await expireExecutionLeaseAfterOwnerExitForQualification({
       databaseFile: fixture.databaseFile,
       executionId: oldAction.executionId,
       daemon: {
@@ -1852,12 +1855,20 @@ describe("AH10 real daemon generation takeover", () => {
         (event) => event !== undefined,
         20_000,
       );
+      if (oldLeasePause === undefined) {
+        throw new Error("AH10 old AcceptResult lease pause evidence absent");
+      }
       expect(oldLeasePause?.fencingGeneration).toBe(0);
-      await expireExecutionLeaseForQualification({
+      await waitForLiveOwnerLeaseExpiryForQualification({
         databaseFile: fixture.databaseFile,
         executionId: oldAction.executionId,
+        pauseEvidence: {
+          boundary: "AH10BeforeLeaseRenewal",
+          pauseRequested: oldLeasePause.pauseRequested === true,
+          executionId: oldLeasePause.executionId,
+          fencingGeneration: oldLeasePause.fencingGeneration ?? -1,
+        },
         daemon: {
-          crash: fixture.crash,
           snapshot: fixture.daemonProcessSnapshot,
         },
       });
@@ -2532,7 +2543,7 @@ describe("AH10 real daemon generation takeover", () => {
       0,
     );
     await fixture.crash();
-    await expireExecutionLeaseForQualification({
+    await expireExecutionLeaseAfterOwnerExitForQualification({
       databaseFile: fixture.databaseFile,
       executionId: oldAction.executionId,
       daemon: {

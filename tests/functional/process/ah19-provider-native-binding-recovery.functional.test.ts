@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
+import { expireExecutionLeaseAfterOwnerExitForQualification } from "../support/lease-qualification.js";
 import {
   type CapturedProviderCall,
   type ProductionFixture,
@@ -2457,7 +2457,7 @@ const expireLeaseAfterOldDaemonExit = (
   }).leases.find((candidate) => candidate.execution_id === executionId);
   if (lease === undefined)
     throw new Error(`AH19 lease ${executionId} is absent after daemon exit`);
-  return expireExecutionLeaseForQualification({
+  return expireExecutionLeaseAfterOwnerExitForQualification({
     databaseFile: fixture.databaseFile,
     executionId,
     expected: {

@@ -2,7 +2,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
+import {
+  expireExecutionLeaseAfterOwnerExitForQualification,
+  waitForLiveOwnerLeaseExpiryForQualification,
+} from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -21,13 +24,13 @@ interface Ah10Probe {
   readonly boundary: string;
   readonly executionId: string;
   readonly fencingGeneration?: number;
+  readonly pauseRequested?: boolean;
   readonly providerTurnId?: string;
   readonly logicalActionId?: string;
   readonly actionKind?: string;
   readonly callRef?: string;
   readonly actionIndex?: number;
   readonly commandId?: string;
-  readonly pauseRequested?: boolean;
   readonly receivedAt?: number;
 }
 
@@ -1176,7 +1179,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         ]);
         expect(replyProviderCalls).toHaveLength(1);
         await fixture.crash();
-        await expireExecutionLeaseForQualification({
+        await expireExecutionLeaseAfterOwnerExitForQualification({
           databaseFile: fixture.databaseFile,
           executionId: oldAction.executionId,
           daemon: {
@@ -1201,11 +1204,22 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
             "AH10 old Reply lease renewal pause probe was absent",
           );
         expect(oldLeasePause.fencingGeneration).toBe(0);
-        await expireExecutionLeaseForQualification({
+        await waitForLiveOwnerLeaseExpiryForQualification({
           databaseFile: fixture.databaseFile,
           executionId: oldAction.executionId,
+          pauseEvidence: {
+            boundary: "AH10BeforeLeaseRenewal",
+            pauseRequested: oldLeasePause.pauseRequested === true,
+            executionId: oldLeasePause.executionId,
+            fencingGeneration: oldLeasePause.fencingGeneration ?? -1,
+          },
+          expected: {
+            generation: 0,
+            ...(oldLeaseAtIntent === undefined
+              ? {}
+              : { expiresAt: oldLeaseAtIntent.expires_at }),
+          },
           daemon: {
-            crash: fixture.crash,
             snapshot: fixture.daemonProcessSnapshot,
           },
         });
@@ -1727,11 +1741,20 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         (lease) => lease.execution_id === oldAction.executionId,
       );
       expect(oldLease?.generation).toBe(0);
-      await expireExecutionLeaseForQualification({
+      await waitForLiveOwnerLeaseExpiryForQualification({
         databaseFile: fixture.databaseFile,
         executionId: oldAction.executionId,
+        pauseEvidence: {
+          boundary: "AH10BeforeLeaseRenewal",
+          pauseRequested: oldLeasePause.pauseRequested === true,
+          executionId: oldLeasePause.executionId,
+          fencingGeneration: oldLeasePause.fencingGeneration ?? -1,
+        },
+        expected: {
+          generation: 0,
+          ...(oldLease === undefined ? {} : { expiresAt: oldLease.expires_at }),
+        },
         daemon: {
-          crash: fixture.crash,
           snapshot: fixture.daemonProcessSnapshot,
         },
       });
