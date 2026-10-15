@@ -17,6 +17,13 @@ const onWebTransportListening = createFunctionalDaemonListenReporter();
 const startupDiagnosticProbe = createAh19StartupDiagnosticProbe(
   process.env.ARBOR_AH19_STARTUP_TRACE === "1",
 );
+const reportStartupPhase = (phase) => {
+  try {
+    startupDiagnosticProbe(phase);
+  } catch {
+    // Child-side startup observation cannot change control flow.
+  }
+};
 
 const projectResourceProfiles = makeProjectResourceProfilePort(
   projectResourceProfilesFromEnvironment(),
@@ -41,12 +48,12 @@ const config = {
 };
 
 const daemonProgram = runDaemonForever(config);
-startupDiagnosticProbe("layer.construction.before");
+reportStartupPhase("layer.construction.before");
 const applicationLayer = main({
   projectResourceProfiles,
   startupDiagnosticProbe,
 });
-startupDiagnosticProbe("layer.construction.after");
+reportStartupPhase("layer.construction.after");
 await Effect.runPromise(
   Effect.provide(Effect.scoped(daemonProgram), applicationLayer),
 );

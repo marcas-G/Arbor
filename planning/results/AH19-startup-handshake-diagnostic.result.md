@@ -36,6 +36,7 @@ The reporter is enabled only for the two requested AH19 cases.
 | Targeted Biome, 8 files | PASS |
 | `git diff --check` | PASS |
 | `p38-runtime-schema-boundary` real `--once` + Web bind with a probe that throws on every phase | PASS, 1/1, 55.66s |
+| Startup JSONL redaction sentinel regression | PASS, 1/1; sentinel fields do not appear in the artifact |
 | AH19 terminal ConversationResponse after Native rebase | PASS, 1/1; case 77.311s, 38 skipped |
 | AH19 corrupted compiled hash before Summary | PASS, 1/1; case 133.322s, 38 skipped |
 
@@ -59,6 +60,15 @@ in 19.4s, 20.7s, and 20.4s. Migration took 1–2ms and T1 startup recovery
 6–8ms. The final test child exited with code 1 after listening, as expected
 for the corrupted binding-evidence fail-closed path; the case passed its
 existing no-Summary/no-settlement assertions.
+
+Post-review hardening constrains the JSONL writer to tagged records and routes
+every persisted state through `ah19PersistedStateSummary`, which emits only
+numeric counters, presence/settlement booleans, and known enum labels (unknown
+labels become `other`). A sentinel regression injects the same marker into
+Session, Provider request/response, checkpoint, and opaque-reference fields;
+the marker is absent from the JSONL. Both child-side Layer phase calls use a
+nonthrowing wrapper. The schema-42 `--once` observer-throws regression remains
+green.
 
 After cleanup, OS process checks found all six captured child PIDs no longer
 running. The only remaining workspace temp directory is the pre-existing

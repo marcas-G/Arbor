@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -149,7 +149,7 @@ interface Ah19PhaseDiagnostic {
   readonly startedAt: number;
   readonly phases: string[];
   timer: ReturnType<typeof setInterval> | undefined;
-  snapshot: (() => unknown) | undefined;
+  persistedState: (() => Ah19PersistedStateSummary) | undefined;
   childOutput: ReadonlyArray<string>;
   fixture: ProductionFixture | undefined;
   startupEventCount: number;
@@ -158,11 +158,155 @@ interface Ah19PhaseDiagnostic {
 
 let activePhaseDiagnostic: Ah19PhaseDiagnostic | undefined;
 
+const ah19StepStateLabels = new Set([
+  "ProviderResultAvailable",
+  "OutputAccepted",
+  "ActionsInProgress",
+  "StepEffectsCommitted",
+  "SettlementProposed",
+  "NextStepReady",
+] as const);
+const ah19ActionStateLabels = new Set([
+  "Pending",
+  "IntentCommitted",
+  "EffectInProgress",
+  "Applied",
+  "Rejected",
+  "SkippedStale",
+  "SkippedEarlySettlement",
+] as const);
+const ah19SettlementKindLabels = new Set([
+  "Completed",
+  "Failed",
+  "Interrupted",
+  "Unknown",
+] as const);
+const ah19ResponseJobStateLabels = new Set([
+  "Pending",
+  "Running",
+  "Answered",
+  "Failed",
+  "Attention",
+] as const);
+const ah19ProviderLinkRoleLabels = new Set([
+  "Inference",
+  "OverflowCompaction",
+  "OverflowReplacement",
+] as const);
+const ah19ProviderLinkStateLabels = new Set([
+  "Prepared",
+  "SettledSuccess",
+  "SettledFailure",
+] as const);
+
+type Ah19StepStateLabel =
+  | (typeof ah19StepStateLabels extends ReadonlySet<infer T> ? T : never)
+  | "other";
+type Ah19ActionStateLabel =
+  | (typeof ah19ActionStateLabels extends ReadonlySet<infer T> ? T : never)
+  | "other";
+type Ah19SettlementKindLabel =
+  | (typeof ah19SettlementKindLabels extends ReadonlySet<infer T> ? T : never)
+  | "other";
+type Ah19ResponseJobStateLabel =
+  | (typeof ah19ResponseJobStateLabels extends ReadonlySet<infer T> ? T : never)
+  | "other";
+type Ah19ProviderLinkRoleLabel =
+  | (typeof ah19ProviderLinkRoleLabels extends ReadonlySet<infer T> ? T : never)
+  | "other";
+type Ah19ProviderLinkStateLabel =
+  | (typeof ah19ProviderLinkStateLabels extends ReadonlySet<infer T>
+      ? T
+      : never)
+  | "other";
+
+type Ah19PersistedStateSummary = {
+  readonly contextEpoch: number | null;
+  readonly checkpointCount: number;
+  readonly stepStates: ReadonlyArray<{
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly state: Ah19StepStateLabel;
+    readonly successorPresent: boolean;
+    readonly outputPinned: boolean;
+  }>;
+  readonly actionStates: ReadonlyArray<Ah19ActionStateLabel>;
+  readonly execution: {
+    readonly settled: boolean;
+    readonly settlementKind: Ah19SettlementKindLabel | null;
+  } | null;
+  readonly responseJobStates: ReadonlyArray<Ah19ResponseJobStateLabel>;
+  readonly providerTurns: ReadonlyArray<{
+    readonly settled: boolean;
+    readonly hasFinishReason: boolean;
+  }>;
+  readonly providerLinkStates: ReadonlyArray<{
+    readonly role: Ah19ProviderLinkRoleLabel;
+    readonly state: Ah19ProviderLinkStateLabel;
+  }>;
+  readonly leaseGenerations: ReadonlyArray<number>;
+};
+
+interface Ah19PersistedProcessState {
+  readonly pid: number | null;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+  readonly aliveAtTimeout: boolean;
+  readonly exitCodeAfterCleanup: number | null;
+  readonly signalAfterCleanup: NodeJS.Signals | null;
+  readonly stdoutLineCount: number | null;
+  readonly lifecyclePhases: ReadonlyArray<
+    "FUNCTIONAL_DAEMON_STARTED" | "FUNCTIONAL_DAEMON_LISTENING"
+  >;
+}
+
+type Ah19StartupArtifactRecord =
+  | {
+      readonly kind: "phase";
+      readonly phase: Ah19StartupPhase;
+      readonly elapsedMs?: number;
+      readonly childPid?: number;
+      readonly exitCode?: number;
+    }
+  | {
+      readonly kind: "lifecycle";
+      readonly phase:
+        | "functional-daemon.started"
+        | "functional-daemon.listening";
+      readonly childPid?: number;
+    }
+  | {
+      readonly kind: "startup-failure";
+      readonly boundary: "fixture-startup" | "conversation-response-restart";
+      readonly process: Ah19PersistedProcessState | null;
+      readonly persistedState:
+        | Ah19PersistedStateSummary
+        | "fresh cloned schema; public project setup not reached";
+    }
+  | {
+      readonly kind: "final-persisted-state";
+      readonly state: Ah19PersistedStateSummary;
+    }
+  | { readonly kind: "snapshot-unavailable" }
+  | {
+      readonly kind: "fixture-daemon-process";
+      readonly beforeStop: Ah19ProcessSnapshotSummary | null;
+      readonly afterStop: Ah19ProcessSnapshotSummary | null;
+    };
+
+interface Ah19ProcessSnapshotSummary {
+  readonly pid: number | undefined;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+  readonly killed: boolean;
+  readonly alive: boolean;
+}
+
 const ah19StartupArtifact = resolve(
   ".test-results",
   `ah19-startup-${process.pid}.jsonl`,
 );
-const ah19StartupPhases = new Set([
+const ah19StartupPhaseValues = [
   "layer.construction.before",
   "layer.construction.after",
   "p39.layer-path-validation.before",
@@ -183,11 +327,22 @@ const ah19StartupPhases = new Set([
   "web-transport.bind.before",
   "web-transport.bind.after",
   "daemon.process.exit",
+] as const;
+type Ah19StartupPhase = (typeof ah19StartupPhaseValues)[number];
+const ah19StartupPhases = new Set<string>(ah19StartupPhaseValues);
+const ah19SafeSignals = new Set<NodeJS.Signals>([
+  "SIGABRT",
+  "SIGBREAK",
+  "SIGFPE",
+  "SIGHUP",
+  "SIGILL",
+  "SIGINT",
+  "SIGKILL",
+  "SIGSEGV",
+  "SIGTERM",
 ]);
 
-const persistAh19StartupRecord = (
-  record: Readonly<Record<string, unknown>>,
-) => {
+const persistAh19StartupRecord = (record: Ah19StartupArtifactRecord) => {
   const diagnostic = activePhaseDiagnostic;
   if (diagnostic === undefined || diagnostic.startupEventCount >= 96) return;
   diagnostic.startupEventCount += 1;
@@ -233,7 +388,7 @@ const recordAh19StartupOutput = (line: string) => {
         : undefined;
     persistAh19StartupRecord({
       kind: "phase",
-      phase: event.phase,
+      phase: event.phase as Ah19StartupPhase,
       ...(elapsedMs === undefined ? {} : { elapsedMs }),
       ...(childPid === undefined ? {} : { childPid }),
       ...(exitCode === undefined ? {} : { exitCode }),
@@ -259,7 +414,9 @@ const recordAh19StartupOutput = (line: string) => {
   }
 };
 
-const parseAh19HandshakeState = (error: unknown) => {
+const parseAh19HandshakeState = (
+  error: unknown,
+): Ah19PersistedProcessState | undefined => {
   const messages: string[] = [];
   const queue: Array<unknown> = [error];
   const seen = new Set<unknown>();
@@ -283,7 +440,13 @@ const parseAh19HandshakeState = (error: unknown) => {
     const exitCode =
       typeof observed.exitCode === "number" ? observed.exitCode : null;
     const signalCode =
-      typeof observed.signalCode === "string" ? observed.signalCode : null;
+      typeof observed.signalCode === "string" &&
+      ah19SafeSignals.has(observed.signalCode as NodeJS.Signals)
+        ? (observed.signalCode as NodeJS.Signals)
+        : null;
+    const cleanupExitMatch = message.match(/; exitCode=(\d+|null); signal=/u);
+    const cleanupSignalMatch = message.match(/; signal=([A-Za-z]+|null)/u);
+    const cleanupSignal = cleanupSignalMatch?.[1];
     return {
       pid:
         typeof observed.pid === "number" && Number.isSafeInteger(observed.pid)
@@ -293,13 +456,14 @@ const parseAh19HandshakeState = (error: unknown) => {
       signalCode,
       aliveAtTimeout: exitCode === null && signalCode === null,
       exitCodeAfterCleanup:
-        message.match(/; exitCode=(\d+|null); signal=/u)?.[1] === undefined
+        cleanupExitMatch?.[1] === undefined || cleanupExitMatch[1] === "null"
           ? null
-          : message.match(/; exitCode=(\d+|null); signal=/u)?.[1] === "null"
-            ? null
-            : Number(message.match(/; exitCode=(\d+|null); signal=/u)?.[1]),
+          : Number(cleanupExitMatch[1]),
       signalAfterCleanup:
-        message.match(/; signal=([A-Za-z]+|null)/u)?.[1] ?? null,
+        cleanupSignal !== undefined &&
+        ah19SafeSignals.has(cleanupSignal as NodeJS.Signals)
+          ? (cleanupSignal as NodeJS.Signals)
+          : null,
       stdoutLineCount:
         typeof observed.stdoutLineCount === "number"
           ? observed.stdoutLineCount
@@ -309,7 +473,8 @@ const parseAh19HandshakeState = (error: unknown) => {
             typeof marker === "object" &&
             marker !== null &&
             "tag" in marker &&
-            typeof marker.tag === "string"
+            (marker.tag === "FUNCTIONAL_DAEMON_STARTED" ||
+              marker.tag === "FUNCTIONAL_DAEMON_LISTENING")
               ? [marker.tag]
               : [],
           )
@@ -320,65 +485,79 @@ const parseAh19HandshakeState = (error: unknown) => {
   }
 };
 
-const ah19PersistedStateSummary = (snapshot: Ah19Snapshot) => ({
+const safeAh19Label = <T extends string>(
+  value: string | null,
+  allowed: ReadonlySet<T>,
+): T | "other" | null =>
+  value === null ? null : allowed.has(value as T) ? (value as T) : "other";
+
+const ah19PersistedStateSummary = (
+  snapshot: Ah19Snapshot,
+): Ah19PersistedStateSummary => ({
   contextEpoch: snapshot.session?.context_epoch ?? null,
   checkpointCount: snapshot.checkpoints.length,
   stepStates: snapshot.steps.map((step) => ({
     logicalStepNo: step.logical_step_no,
     repairAttempt: step.repair_attempt,
-    state: step.state,
+    state: safeAh19Label(step.state, ah19StepStateLabels) ?? "other",
     successorPresent: step.successor_json !== null,
     outputPinned:
       step.decoded_output_hash !== null &&
       step.model_output_session_sequence !== null,
   })),
-  actionStates: snapshot.actions.map((action) => action.state),
+  actionStates: snapshot.actions.map(
+    (action) => safeAh19Label(action.state, ah19ActionStateLabels) ?? "other",
+  ),
   execution:
     snapshot.execution === undefined
       ? null
       : {
           settled: snapshot.execution.settled_at !== null,
-          settlementKind: snapshot.execution.settlement_kind,
+          settlementKind:
+            safeAh19Label(
+              snapshot.execution.settlement_kind,
+              ah19SettlementKindLabels,
+            ) ?? null,
         },
-  responseJobStates: snapshot.responseJobs.map((job) => job.state),
+  responseJobStates: snapshot.responseJobs.map(
+    (job) => safeAh19Label(job.state, ah19ResponseJobStateLabels) ?? "other",
+  ),
   providerTurns: snapshot.providerTurns.map((turn) => ({
     settled: turn.settled_at !== null,
-    finishReason: turn.finish_reason,
+    hasFinishReason: turn.finish_reason !== null,
   })),
   providerLinkStates: snapshot.providerLinks.map((link) => ({
-    role: link.role,
-    state: link.state,
+    role: safeAh19Label(link.role, ah19ProviderLinkRoleLabels) ?? "other",
+    state: safeAh19Label(link.state, ah19ProviderLinkStateLabels) ?? "other",
   })),
   leaseGenerations: snapshot.leases.map((lease) => lease.generation),
 });
 
-const beginAh19PhaseDiagnostics = (testName: string, marker: string) => {
+const beginAh19PhaseDiagnostics = (testName: string, _marker: string) => {
   if (activePhaseDiagnostic?.timer !== undefined)
     clearInterval(activePhaseDiagnostic.timer);
   const diagnostic: Ah19PhaseDiagnostic = {
     testName,
     startedAt: Date.now(),
-    phases: [`${new Date().toISOString()} start marker=${marker}`],
+    phases: [`${new Date().toISOString()} start`],
     timer: undefined,
-    snapshot: undefined,
+    persistedState: undefined,
     childOutput: [],
     fixture: undefined,
     startupEventCount: 0,
     render: undefined,
   };
   const describeState = () => {
-    let snapshot: unknown;
+    let persistedState: Ah19PersistedStateSummary | null = null;
     try {
-      snapshot = diagnostic.snapshot?.();
-    } catch (error) {
-      snapshot = {
-        snapshotError: error instanceof Error ? error.stack : String(error),
-      };
+      persistedState = diagnostic.persistedState?.() ?? null;
+    } catch {
+      persistedState = null;
     }
     return JSON.stringify({
       testName: diagnostic.testName,
       elapsedMs: Date.now() - diagnostic.startedAt,
-      phases: diagnostic.phases,
+      phases: diagnostic.phases.map((phase) => phase.split(" ")[1] ?? "phase"),
       childPhases: diagnostic.childOutput.flatMap((line) => {
         try {
           const event = JSON.parse(line) as Record<string, unknown>;
@@ -393,13 +572,7 @@ const beginAh19PhaseDiagnostics = (testName: string, marker: string) => {
       }),
       providerCallCount: diagnostic.fixture?.providerCalls.length ?? 0,
       daemonStderrCount: diagnostic.fixture?.daemonErrors.length ?? 0,
-      providerRequests: providerRequests.map(
-        ({ operationKind, bindingVariant }) => ({
-          operationKind,
-          bindingVariant,
-        }),
-      ),
-      snapshot,
+      persistedState,
     });
   };
   diagnostic.render = describeState;
@@ -416,8 +589,8 @@ const beginAh19PhaseDiagnostics = (testName: string, marker: string) => {
       diagnostic.fixture = fixture;
       diagnostic.childOutput = childOutput;
     },
-    setSnapshot: (snapshot: () => unknown) => {
-      diagnostic.snapshot = snapshot;
+    setPersistedState: (snapshot: () => Ah19PersistedStateSummary) => {
+      diagnostic.persistedState = snapshot;
     },
     phase: (name: string, details?: unknown) => {
       diagnostic.phases.push(
@@ -444,10 +617,8 @@ const beginAh19PhaseDiagnostics = (testName: string, marker: string) => {
   };
 };
 
-const recordAh19Phase = (name: string, details?: unknown) => {
-  activePhaseDiagnostic?.phases.push(
-    `${new Date().toISOString()} ${name}${details === undefined ? "" : ` ${JSON.stringify(details)}`}`,
-  );
+const recordAh19Phase = (name: string, _details?: unknown) => {
+  activePhaseDiagnostic?.phases.push(`${new Date().toISOString()} ${name}`);
 };
 
 const ah19Failure = (phase: string, error: unknown) => {
@@ -2240,17 +2411,14 @@ const expireLeaseAfterOldDaemonExit = (
 afterEach(async () => {
   const diagnostic = activePhaseDiagnostic;
   if (diagnostic?.timer !== undefined) clearInterval(diagnostic.timer);
-  if (diagnostic !== undefined && diagnostic.snapshot !== undefined) {
+  if (diagnostic?.persistedState !== undefined) {
     try {
       persistAh19StartupRecord({
         kind: "final-persisted-state",
-        state: diagnostic.snapshot(),
+        state: diagnostic.persistedState(),
       });
     } catch {
-      persistAh19StartupRecord({
-        kind: "final-persisted-state",
-        state: "snapshot unavailable",
-      });
+      persistAh19StartupRecord({ kind: "snapshot-unavailable" });
     }
   }
   for (const fixture of fixtures.splice(0)) {
@@ -2303,6 +2471,130 @@ afterEach(async () => {
       );
     }
   }
+});
+
+describe("AH19 startup diagnostic persistence", () => {
+  it("excludes provider and Session payload sentinels from the startup JSONL", () => {
+    const sentinel = "AH19_SENSITIVE_SENTINEL_9c2f";
+    const diagnostic = beginAh19PhaseDiagnostics(
+      "startup persisted-state allowlist",
+      "startup-state-allowlist",
+    );
+    const snapshot = {
+      session: { session_id: sentinel, context_epoch: 1 },
+      checkpoints: [
+        {
+          sequence: 0,
+          item_type: "CompactionCheckpoint",
+          source_ref: sentinel,
+          payload_json: sentinel,
+          content_hash: sentinel,
+        },
+      ],
+      providerTurns: [
+        {
+          provider_turn_id: sentinel,
+          execution_id: sentinel,
+          session_id: sentinel,
+          context_epoch: 1,
+          manifest_id: sentinel,
+          output_contract_ref: sentinel,
+          settled_at: null,
+          finish_reason: sentinel,
+          manifest_json: sentinel,
+          portable_request_json: sentinel,
+        },
+      ],
+      providerAttempts: [
+        {
+          provider_turn_id: sentinel,
+          attempt_no: 0,
+          outcome: sentinel,
+          provider_error_kind: sentinel,
+          settled_at: null,
+          observation_json: sentinel,
+          canonical_event_prefix_json: sentinel,
+          delivered_position: null,
+          continuation_checkpoint_json: sentinel,
+        },
+      ],
+      steps: [
+        {
+          logical_step_no: 0,
+          repair_attempt: 0,
+          provider_turn_id: sentinel,
+          state: sentinel,
+          next_action_index: 0,
+          predecessor_logical_step_no: null,
+          predecessor_repair_attempt: null,
+          successor_json: sentinel,
+          decoded_output_hash: sentinel,
+          model_output_session_sequence: 1,
+        },
+      ],
+      actions: [
+        {
+          logical_step_no: 0,
+          repair_attempt: 0,
+          action_index: 0,
+          logical_action_id: sentinel,
+          call_ref: sentinel,
+          action_kind: sentinel,
+          state: sentinel,
+          revision: 0,
+          observation_source_ref: sentinel,
+        },
+      ],
+      providerLinks: [
+        {
+          logical_step_no: 0,
+          repair_attempt: 0,
+          overflow_ordinal: 0,
+          role: sentinel,
+          provider_turn_id: sentinel,
+          predecessor_provider_turn_id: sentinel,
+          context_epoch: 1,
+          state: sentinel,
+        },
+      ],
+      sessionEntries: [
+        {
+          sequence: 1,
+          entry_kind: sentinel,
+          item_type: sentinel,
+          source_ref: sentinel,
+          payload_json: sentinel,
+        },
+      ],
+      execution: {
+        execution_id: sentinel,
+        settled_at: null,
+        settlement_kind: sentinel,
+      },
+      leases: [{ execution_id: sentinel, generation: 1, expires_at: sentinel }],
+      workWait: { work_id: sentinel },
+      responseJobs: [
+        {
+          message_id: sentinel,
+          state: sentinel,
+          response_body: sentinel,
+          response_execution_id: sentinel,
+        },
+      ],
+    } as Ah19Snapshot;
+    const state = ah19PersistedStateSummary(snapshot);
+
+    try {
+      diagnostic.setPersistedState(() => state);
+      persistAh19StartupRecord({ kind: "final-persisted-state", state });
+      const contents = readFileSync(ah19StartupArtifact, "utf8");
+      expect(JSON.stringify(state)).not.toContain(sentinel);
+      expect(contents).not.toContain(sentinel);
+      expect(contents).toContain('"kind":"final-persisted-state"');
+    } finally {
+      diagnostic.stop();
+    }
+  });
 });
 
 describe("AH19 ProviderNative binding recovery", () => {
@@ -2374,20 +2666,6 @@ describe("AH19 ProviderNative binding recovery", () => {
       },
       heldWorkRequest,
     );
-    diagnostic.setSnapshot(() => {
-      const executionId = readWorkExecutionId(
-        fixture.databaseFile,
-        project,
-        workId,
-      );
-      return executionId === undefined
-        ? { workId, executionId: null }
-        : readSnapshot(fixture.databaseFile, {
-            sessionId: project.rootSessionId,
-            executionId,
-            workId,
-          });
-    });
     diagnostic.phase("Work seed public step complete", { workId });
 
     await waitForPublic(
@@ -3035,7 +3313,9 @@ describe("AH19 restart binding qualification", () => {
       workId,
     };
     diagnostic?.attach(fixture, childOutput);
-    diagnostic?.setSnapshot(() => readSnapshot(fixture.databaseFile, ids));
+    diagnostic?.setPersistedState(() =>
+      ah19PersistedStateSummary(readSnapshot(fixture.databaseFile, ids)),
+    );
     diagnostic?.phase("gen0 checkpoint boundary ready", {
       executionId: probe.executionId,
       providerTurnId: native.providerTurnId,
@@ -3344,7 +3624,9 @@ describe("AH19 restart binding qualification", () => {
     const executionId = probe.executionId;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
     diagnostic?.attach(fixture, childOutput);
-    diagnostic?.setSnapshot(() => readSnapshot(fixture.databaseFile, ids));
+    diagnostic?.setPersistedState(() =>
+      ah19PersistedStateSummary(readSnapshot(fixture.databaseFile, ids)),
+    );
     diagnostic?.phase("child START/LISTEN gen0 complete", { executionId });
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
     const originalNativeRow = beforeKill.providerTurns.find(
@@ -4325,7 +4607,7 @@ describe("AH19 restart binding qualification", () => {
     const replacementTurnId = `ptn_${executionId}_0_overflow_0`;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
     diagnostic.attach(fixture, childOutput);
-    diagnostic.setSnapshot(() =>
+    diagnostic.setPersistedState(() =>
       ah19PersistedStateSummary(readSnapshot(fixture.databaseFile, ids)),
     );
     expect(probe.providerTurnId).toBe(sourceInferenceTurnId);
@@ -4530,7 +4812,7 @@ describe("AH19 restart binding qualification", () => {
     const replacementTurnId = `ptn_${executionId}_0_overflow_0`;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
     diagnostic.attach(fixture, childOutput);
-    diagnostic.setSnapshot(() =>
+    diagnostic.setPersistedState(() =>
       ah19PersistedStateSummary(readSnapshot(fixture.databaseFile, ids)),
     );
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
@@ -4986,7 +5268,9 @@ describe("AH19 restart binding qualification", () => {
     const nativeTurnId = `ptn_${executionId}_1_native_compact_0`;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
     diagnostic.attach(fixture, scenario.childOutput);
-    diagnostic.setSnapshot(() => readSnapshot(fixture.databaseFile, ids));
+    diagnostic.setPersistedState(() =>
+      ah19PersistedStateSummary(readSnapshot(fixture.databaseFile, ids)),
+    );
     diagnostic.phase("child START/LISTEN gen0 complete", { executionId });
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
     expect(beforeKill.session?.context_epoch).toBe(1);
@@ -5231,7 +5515,9 @@ describe("AH19 restart binding qualification", () => {
     const nativeTurnId = `ptn_${executionId}_1_native_compact_0`;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
     diagnostic.attach(fixture, childOutput);
-    diagnostic.setSnapshot(() => readSnapshot(fixture.databaseFile, ids));
+    diagnostic.setPersistedState(() =>
+      ah19PersistedStateSummary(readSnapshot(fixture.databaseFile, ids)),
+    );
     diagnostic.phase("child START/LISTEN gen0 complete", { executionId });
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
     const nativeCheckpoint = JSON.parse(
