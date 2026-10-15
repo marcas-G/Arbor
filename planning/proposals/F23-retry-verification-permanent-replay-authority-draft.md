@@ -2,12 +2,15 @@
 
 状态：**DRAFT — fixed proposal package; not accepted and not implementation authorization**
 
-Suggested exact decision token:
-`AUTHORIZE_F23_P8_PERMANENT_REPLAY_ORIGIN_AND_LEGACY_DISPOSITION`
+Recommended exact design-acceptance token:
+`ACCEPT_F23_P8_PERMANENT_REPLAY_ORIGIN_AND_LEGACY_DISPOSITION`
 
-This package proposes an owning-contract update plus implementation scope. It
-does not modify `docs/design/**`, production code, migrations, schema registry,
-or online databases.
+Acceptance of this token authorizes only landing the fixed changes in the
+owning design documents listed below and an independent post-landing
+consistency review. It does not authorize production implementation, DDL,
+migration registration/execution, or test implementation; each remains
+separately gated. This proposal itself does not modify `docs/design/**`,
+production code, migrations, schema registry, or online databases.
 
 ## 1. Evidence and frozen-contract conflict
 
@@ -245,6 +248,7 @@ accept the narrowed contract and permanent origin:
 Until those owner changes are accepted and landed, preserve the current
 bee70f2 Resolver-before-Gateway behavior and keep the RED test isolated. Do
 not add a state-only replay authority, event-retention-window workaround,
-unregistered migration, production code, or online upgrade. Suggested exact
-acceptance token is recorded at the top of this proposal; acceptance is not
-implied by this artifact.
+unregistered migration, production code, or online upgrade. The token at the
+top accepts only the named owning-document landing and independent
+consistency review. Production code, DDL, migration registration/execution,
+and test implementation require separate authorization after that landing.

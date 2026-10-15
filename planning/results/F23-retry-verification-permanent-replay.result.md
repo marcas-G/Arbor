@@ -57,7 +57,12 @@ legacy backfill plus queryable UnboundLegacy Governance Inbox disposition. See
 for exact physical candidates, migration/FK/retention/atomicity rules, missing
 receipt/origin corruption behavior, all required negative and crash tests, and
 the P8/P1/P12/P6 owning-doc changes required for acceptance. Its raw SHA-256 is
-`CF2D33C20F5327A4E06AD8622E6CA8A67434A911BED24A2F4D46AB30966D1B17`.
+recorded after this token-only revision. The recommended token
+`ACCEPT_F23_P8_PERMANENT_REPLAY_ORIGIN_AND_LEGACY_DISPOSITION` authorizes only
+the fixed owning-document landing and independent post-landing consistency
+review; implementation/DDL/migration registration and tests remain separately
+gated. Revised proposal raw SHA-256:
+`6BEEC14ED975D7322003C95D28F63D161C82F4EFA4B584ECAA99D1120BE712CA`.
 
 No `docs/design/**`, production code, schema registry, migration, or online
 database was changed for this gap disposition. The F23 `bee70f2` Resolver-before-
