@@ -46,7 +46,9 @@ production API contract changed.
   admission scenario took 16.633s.
 - Before-admission kill snapshot: same `ExecutionId`, `ToolInvocationId`,
   `ProviderTurnId`, `callRef` and `LogicalActionId`; generation 0 intent stays
-  `NotAdmitted` with no effect, no ToolResult and null executable approval.
+  `NotAdmitted` with no effect or executor-origin result and null executable
+  approval. (The earlier query keyed ToolResult by `invocationId`, so it did
+  not count later P3 terminal projections that carry only the `callRef`.)
   Generation 1 passes the admission gate, writes exactly one safe shell marker,
   settles Success and converges one ToolResult/Applied action. Work control
   approval stays the exact consumed Control approval; executable approval
@@ -54,18 +56,69 @@ production API contract changed.
 - After-admission-commit kill snapshot: same identities and generation
   takeover; `MayHaveStarted` is durable before the old daemon is killed, but
   the shell marker is absent. Recovery does not invoke the Executor; the
-  invocation remains unsettled, the action is `ReconciliationPending`, the
-  Execution is `OutcomeUnknown`, there is no ToolResult, and the marker remains
-  absent.
+  invocation remains unsettled, the action is `ReconciliationPending`, and the
+  Execution is `OutcomeUnknown`. P3 persists one typed unresolved terminal
+  ToolResult/Observation projection for that action; there is no executor
+  result/effect, and the marker remains absent.
 - `node --check`, Biome on touched code, and `git diff --check`: PASS. No full
   suite was run.
 
 ## Boundary
 
-This closes only the real-daemon pre/post effect-admission wave for a no-
-approval `Reconcilable` shell call. It does not qualify an actual external
-effect followed by settlement crash, old-generation post-effect fencing,
-P4 settlement/Observation/Action-cursor transaction boundaries, or
-approved-Executable production routing. Existing P4 post-effect fencing
-evidence remains separate and its current candidate qualification must not be
-inferred from this result. AH7 remains OPEN.
+The original real-daemon pre/post effect-admission wave covered a no-approval
+`Reconcilable` shell call. The follow-up below adds the exact public
+Executable-approval precondition for this test path. This evidence does not
+qualify an actual external effect followed by settlement crash, old-generation
+post-effect fencing, or P4 settlement/Observation/Action-cursor transaction
+boundaries. Existing P4 post-effect fencing evidence remains separate and its
+current candidate qualification must not be inferred from this result. AH7
+remains OPEN.
+
+## Follow-up: public Executable-approval precondition
+
+Candidate `3d197114` failed in the selected full-functional batch at
+`tests/functional/process/p4-ah7-effect-admission-takeover.functional.test.ts`
+while waiting for the old daemon's `AH7BeforeEffectAdmission` probe directly
+after `SteerWork` (`public functional timeout; last=undefined`). That test flow
+had admitted the Work and waited for a steer, but shell is separately approval-
+gated. Until the exact public Inbox `eap:<approvalId>:<revision>` item is
+approved, ToolRuntime returns `ApprovalRequired` before the effect-admission
+probe, so the prior wait could not observe the requested boundary. This was a
+test precondition gap, not evidence that the lease or effect-admission hook was
+skipped after a shell intent.
+
+The qualification now waits for exactly one unconsumed Executable approval in
+the root Workspace Inbox, verifies its joined DB binding is the current
+WorkEpisode's `shell` action (project/workspace/execution, shell version,
+FNV action digest over exact invocation arguments, filesystem target region,
+side-effect semantics, and action/call identity), then approves that exact
+approval through `ResolveExecutableApproval`. At the AH7 boundary, it verifies
+the invocation references this approval, the sole Executable approval is
+`Consumed` by the same ToolInvocation, and the original Work Control approval
+remains consumed. It also binds old/new fencing generations to the observed
+lease probes rather than assuming the resumed, approval-gated Execution is
+generation 0.
+
+The first post-approval run exposed two stale test oracles. The original test
+assumed the first lease generation remained 0 despite the approval interruption
+and reacquisition; it now uses the exact old `AH10AfterLeaseAcquired` probe and
+requires the successor to be exactly generation +1. It also expected a
+NonIdempotent `MayHaveStarted` invocation to be settled `OutcomeUnknown`. P4/P9
+instead require that invocation to remain unsettled absent a reconciliation
+fact, while the Execution settles `OutcomeUnknown(ReconciliationRequired)` for
+that exact invocation. The test now asserts the exact terminal P3 unresolved
+ToolResult/Observation projection (including `OutcomeUnknown`, settlement
+disposition, and generic unresolved text), with no executor invocation ID,
+artifact, canonical effect, external marker, or second invocation/provider
+replay. A terminal P3 projection may be represented in both typed `ToolResult`
+and action Observation columns under the same `source_ref`; the assertion
+deduplicates that canonical projection instead of counting both storage views
+as two results.
+
+Verification after the follow-up:
+
+- `pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/p4-ah7-effect-admission-takeover.functional.test.ts` — PASS, two consecutive full-file rounds, each 3/3 scenarios (~95s each).
+- `pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/p38-executable-approval-public.functional.test.ts -t "approves over the public API and resumes the same Execution/AgentLoopStep"` — PASS, 1/1.
+- `pnpm typecheck` — PASS (`tsc -b` and `tsc -p tsconfig.test.json`).
+- `pnpm lint` — PASS, Biome checked 1177 files.
+- `git diff --check` — PASS.

@@ -21,6 +21,43 @@ interface Probe {
   readonly invocationId?: string;
   readonly callRef?: string;
   readonly fencingGeneration?: number;
+  readonly definition?: {
+    readonly version?: string;
+    readonly hash?: string;
+    readonly sideEffectSemantics?: string;
+  };
+}
+
+interface ExecutableApprovalRow {
+  readonly approval_id: string;
+  readonly route_kind: string;
+  readonly project_id: string;
+  readonly workspace_id: string;
+  readonly execution_id: string;
+  readonly execution_workspace_id: string;
+  readonly episode_kind: string;
+  readonly episode_ref: string;
+  readonly subject_ref: string;
+  readonly stable_action_id: string;
+  readonly action_version: string;
+  readonly side_effect_semantics: string;
+  readonly action_digest: string;
+  readonly arguments_json: string;
+  readonly target_ref: string;
+  readonly target_resource_space_ids_json: string;
+  readonly state: string;
+  readonly revision: number;
+  readonly decided_at: string | null;
+  readonly consumed_at: string | null;
+  readonly consumed_by: string | null;
+  readonly binding_proven: number;
+  readonly tool_invocation_id: string;
+  readonly logical_action_id: string;
+  readonly call_ref: string;
+  readonly action_kind: string;
+  readonly action_route_kind: string;
+  readonly action_state: string;
+  readonly action_call_ref: string;
 }
 
 interface AdmissionRows {
@@ -31,7 +68,11 @@ interface AdmissionRows {
     | {
         readonly invocation_id: string;
         readonly execution_id: string;
+        readonly workspace_id: string;
         readonly tool_name: string;
+        readonly tool_version: string;
+        readonly arguments_json: string;
+        readonly resolved_regions_json: string;
         readonly side_effect_semantics: string;
         readonly approval_id: string | null;
         readonly effect_admission_state: string;
@@ -42,6 +83,7 @@ interface AdmissionRows {
   readonly execution:
     | {
         readonly settlement_kind: string | null;
+        readonly settlement_json: string | null;
         readonly settled_at: string | null;
       }
     | undefined;
@@ -87,17 +129,45 @@ interface AdmissionRows {
         readonly call_ref: string;
         readonly action_kind: string;
         readonly state: string;
+        readonly disposition_json: string | null;
         readonly observation_source_ref: string | null;
       }
     | undefined;
-  readonly toolResults: ReadonlyArray<{ readonly payload_json: string }>;
+  readonly toolResults: ReadonlyArray<{
+    readonly source_kind: string | null;
+    readonly source_ref: string;
+    readonly payload_json: string;
+  }>;
+  readonly shellInvocationCount: number;
+  readonly observations: ReadonlyArray<{
+    readonly source_ref: string;
+    readonly payload_json: string;
+  }>;
   readonly workApproval:
     | { readonly route_kind: string; readonly state: string }
     | undefined;
   readonly executableApprovalCount: number;
+  readonly executableApproval: ExecutableApprovalRow | undefined;
 }
 
+const fnvDigest = (input: string): string => {
+  let value = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    value ^= input.charCodeAt(index);
+    value = Math.imul(value, 0x01000193) >>> 0;
+  }
+  return value.toString(16).padStart(8, "0");
+};
+
+const actionDigestOfInvocation = (input: {
+  readonly toolName: string;
+  readonly toolVersion: string;
+  readonly argumentsJson: string;
+}): string =>
+  fnvDigest(`${input.toolName}@${input.toolVersion}:${input.argumentsJson}`);
+
 const fixtures: ProductionFixture[] = [];
+const EXECUTABLE_APPROVAL_ENTRY_KEY = /^eap:(.+):(\d+)$/u;
 const fenceChild = resolve(
   "tests/functional/support/p4-tool-lease-fencing-child.mjs",
 );
@@ -111,10 +181,14 @@ const readRows = (
   executionId: string,
   invocationId: string,
   callRef: string,
-  approvalId: string,
+  workApprovalId: string,
+  executableApprovalId: string,
 ): AdmissionRows => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
+    // Keep Invocation, Approval, lease and Execution in one SQLite view; the
+    // recovery handoff updates them across adjacent transaction boundaries.
+    db.exec("BEGIN");
     return {
       lease: db
         .prepare(
@@ -123,15 +197,17 @@ const readRows = (
         .get(executionId) as AdmissionRows["lease"],
       invocation: db
         .prepare(
-          `SELECT invocation_id, execution_id, tool_name,
-                  side_effect_semantics, approval_id, effect_admission_state,
+          `SELECT invocation_id, execution_id, workspace_id, tool_name,
+                  tool_version, arguments_json, resolved_regions_json,
+                  side_effect_semantics,
+                  approval_id, effect_admission_state,
                   settled_at, settlement_kind
              FROM tool_invocations WHERE invocation_id = ?`,
         )
         .get(invocationId) as AdmissionRows["invocation"],
       execution: db
         .prepare(
-          "SELECT settlement_kind, settled_at FROM executions WHERE execution_id = ?",
+          "SELECT settlement_kind, settlement_json, settled_at FROM executions WHERE execution_id = ?",
         )
         .get(executionId) as AdmissionRows["execution"],
       step: db
@@ -220,6 +296,7 @@ const readRows = (
       action: db
         .prepare(
           `SELECT logical_action_id, call_ref, action_kind, state,
+                  disposition_json,
                   observation_source_ref
              FROM agent_loop_step_actions
             WHERE execution_id = ? AND call_ref = ?`,
@@ -227,23 +304,52 @@ const readRows = (
         .get(executionId, callRef) as AdmissionRows["action"],
       toolResults: db
         .prepare(
-          `SELECT payload_json FROM session_entries
-            WHERE item_type = 'ToolResult'
-              AND json_extract(payload_json, '$.invocationId') = ?
-              AND json_extract(payload_json, '$.callRef') = ?`,
+          `SELECT se.source_kind, se.source_ref, se.payload_json
+             FROM session_entries se
+             JOIN executions e ON e.session_id = se.session_id
+            WHERE e.execution_id = ?
+              AND se.item_type = 'ToolResult'
+              AND json_extract(se.payload_json, '$.callRef') = ?`,
         )
-        .all(invocationId, callRef)
+        .all(executionId, callRef)
         .map((row) => {
           if (typeof row.payload_json !== "string") {
             throw new Error("ToolResult payload_json was not text");
           }
-          return { payload_json: row.payload_json };
+          return {
+            source_kind:
+              row.source_kind === null ? null : String(row.source_kind),
+            source_ref: String(row.source_ref),
+            payload_json: row.payload_json,
+          };
         }),
+      shellInvocationCount: (
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM tool_invocations WHERE execution_id = ? AND tool_name = 'shell'",
+          )
+          .get(executionId) as { readonly count: number }
+      ).count,
+      observations: db
+        .prepare(
+          `SELECT se.source_ref, se.payload_json
+             FROM session_entries se
+             JOIN executions e ON e.session_id = se.session_id
+            WHERE e.execution_id = ?
+              AND se.source_kind = 'AgentLoopAction'
+              AND se.entry_kind = 'Observation'
+            ORDER BY se.sequence`,
+        )
+        .all(executionId)
+        .map((row) => ({
+          source_ref: String(row.source_ref),
+          payload_json: String(row.payload_json),
+        })),
       workApproval: db
         .prepare(
           "SELECT route_kind, state FROM action_approvals WHERE approval_id = ?",
         )
-        .get(approvalId) as AdmissionRows["workApproval"],
+        .get(workApprovalId) as AdmissionRows["workApproval"],
       executableApprovalCount: (
         db
           .prepare(
@@ -251,7 +357,73 @@ const readRows = (
           )
           .get(executionId) as { readonly count: number }
       ).count,
+      executableApproval: db
+        .prepare(
+          `SELECT ap.approval_id, ap.route_kind, ap.project_id,
+                  ap.workspace_id, ap.execution_id,
+                  e.workspace_id AS execution_workspace_id,
+                  e.episode_kind, e.episode_ref, ap.subject_ref,
+                  ap.stable_action_id, ap.action_version,
+                  ap.side_effect_semantics, ap.action_digest,
+                  ap.arguments_json, ap.target_ref,
+                  ap.target_resource_space_ids_json, ap.state, ap.revision,
+                  ap.decided_at, ap.consumed_at, ap.consumed_by,
+                  ap.binding_proven, ap.tool_invocation_id,
+                  ap.logical_action_id, ap.call_ref,
+                  a.action_kind, a.route_kind AS action_route_kind,
+                  a.state AS action_state, a.call_ref AS action_call_ref
+             FROM action_approvals ap
+             JOIN executions e ON e.execution_id = ap.execution_id
+             JOIN agent_loop_step_actions a
+               ON a.execution_id = ap.execution_id
+              AND a.logical_step_no = ap.logical_step_no
+              AND a.repair_attempt = ap.repair_attempt
+              AND a.action_index = ap.action_index
+              AND a.logical_action_id = ap.logical_action_id
+              AND a.call_ref = ap.call_ref
+            WHERE ap.approval_id = ? AND ap.route_kind = 'Executable'`,
+        )
+        .get(executableApprovalId) as AdmissionRows["executableApproval"],
     };
+  } finally {
+    db.close();
+  }
+};
+
+const readExecutableApprovalBinding = (
+  databaseFile: string,
+  approvalId: string,
+): ExecutableApprovalRow | undefined => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        `SELECT ap.approval_id, ap.route_kind, ap.project_id,
+                ap.workspace_id, ap.execution_id,
+                e.workspace_id AS execution_workspace_id,
+                e.episode_kind, e.episode_ref, ap.subject_ref,
+                ap.stable_action_id, ap.action_version,
+                ap.side_effect_semantics, ap.action_digest,
+                ap.arguments_json, ap.target_ref,
+                ap.target_resource_space_ids_json, ap.state, ap.revision,
+                ap.decided_at, ap.consumed_at, ap.consumed_by,
+                ap.binding_proven, ap.tool_invocation_id,
+                ap.logical_action_id, ap.call_ref,
+                a.action_kind, a.route_kind AS action_route_kind,
+                a.state AS action_state, a.call_ref AS action_call_ref
+           FROM action_approvals ap
+           JOIN executions e ON e.execution_id = ap.execution_id
+           JOIN agent_loop_step_actions a
+             ON a.execution_id = ap.execution_id
+            AND a.logical_step_no = ap.logical_step_no
+            AND a.repair_attempt = ap.repair_attempt
+            AND a.action_index = ap.action_index
+            AND a.logical_action_id = ap.logical_action_id
+            AND a.call_ref = ap.call_ref
+          WHERE ap.approval_id = ? AND ap.route_kind = 'Executable'
+            AND ap.binding_proven = 1`,
+      )
+      .get(approvalId) as ExecutableApprovalRow | undefined;
   } finally {
     db.close();
   }
@@ -456,6 +628,106 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         provenance: { source: "HumanInput" },
       });
 
+      const approvalInbox = await waitForPublic(
+        () =>
+          client.view<{
+            unconsumed: Array<{
+              entryKey: string;
+              kind: string;
+              summary: string;
+            }>;
+          }>("inbox-view", { workspaceId: project.rootWorkspaceId }),
+        (value) =>
+          value.unconsumed.filter(
+            (entry) =>
+              entry.kind === "Governance" &&
+              EXECUTABLE_APPROVAL_ENTRY_KEY.test(entry.entryKey),
+          ).length === 1,
+        60_000,
+      );
+      const executableApprovalEntries = approvalInbox.unconsumed.filter(
+        (entry) =>
+          entry.kind === "Governance" &&
+          EXECUTABLE_APPROVAL_ENTRY_KEY.test(entry.entryKey),
+      );
+      expect(executableApprovalEntries).toHaveLength(1);
+      const approvalMatch = EXECUTABLE_APPROVAL_ENTRY_KEY.exec(
+        executableApprovalEntries[0]?.entryKey ?? "",
+      );
+      if (
+        approvalMatch === null ||
+        approvalMatch[1] === undefined ||
+        approvalMatch[2] === undefined
+      ) {
+        throw new Error(
+          "P4 shell action produced no exact root-Workspace Executable approval",
+        );
+      }
+      const executableApprovalId = approvalMatch[1];
+      const executableApprovalRevision = Number(approvalMatch[2]);
+      const executableApproval = readExecutableApprovalBinding(
+        fixture.databaseFile,
+        executableApprovalId,
+      );
+      const shellDefinition = events.find(
+        (event) => event.boundary === "P4ShellDefinitionSnapshot",
+      )?.definition;
+      if (
+        executableApproval === undefined ||
+        shellDefinition?.version === undefined ||
+        shellDefinition.hash === undefined
+      ) {
+        throw new Error(
+          "P4 exact Executable approval binding or shell definition snapshot was absent",
+        );
+      }
+      expect(executableApproval).toMatchObject({
+        approval_id: executableApprovalId,
+        route_kind: "Executable",
+        project_id: project.projectId,
+        workspace_id: project.rootWorkspaceId,
+        execution_workspace_id: project.rootWorkspaceId,
+        episode_kind: "WorkEpisode",
+        episode_ref: work.workId,
+        stable_action_id: "shell",
+        action_version: shellDefinition.version,
+        side_effect_semantics: scenario.sideEffectSemantics,
+        state: "Pending",
+        revision: executableApprovalRevision,
+        binding_proven: 1,
+        action_kind: "shell",
+        action_route_kind: "Executable",
+        action_state: "Pending",
+      });
+      expect(
+        JSON.parse(executableApproval.target_resource_space_ids_json),
+      ).toEqual(["filesystem"]);
+      expect(executableApproval.target_ref).toBe(
+        executableApproval.target_resource_space_ids_json,
+      );
+      expect(executableApproval.action_digest).toBe(
+        actionDigestOfInvocation({
+          toolName: executableApproval.stable_action_id,
+          toolVersion: executableApproval.action_version,
+          argumentsJson: executableApproval.arguments_json,
+        }),
+      );
+      const oldAcquireEventStart = events.length;
+      const approvalResolution = await client.command(
+        project.projectId,
+        "ResolveExecutableApproval",
+        {
+          approvalId: executableApprovalId,
+          expectedRevision: executableApprovalRevision,
+          decision: "Approve",
+          reason:
+            "Approve the exact shell invocation before testing P4 effect admission",
+        },
+      );
+      expect(approvalResolution).toMatchObject({
+        body: { resolution: "Committed" },
+      });
+
       const oldAdmission = await waitForPublic(
         async () =>
           events.find(
@@ -473,38 +745,114 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         throw new Error("P4 effect-admission boundary omitted identity");
       }
       const { executionId, invocationId, callRef } = oldAdmission;
+      const oldLeaseAcquired = events
+        .slice(oldAcquireEventStart)
+        .filter(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH10AfterLeaseAcquired" &&
+            event.executionId === executionId,
+        )
+        .at(-1);
+      if (
+        oldLeaseAcquired?.fencingGeneration === undefined ||
+        !Number.isSafeInteger(oldLeaseAcquired.fencingGeneration) ||
+        oldLeaseAcquired.fencingGeneration < 0
+      ) {
+        throw new Error(
+          "P4 executable-approval continuation had no exact old-owner lease probe",
+        );
+      }
+      const oldGeneration = oldLeaseAcquired.fencingGeneration;
       const beforeTakeover = readRows(
         fixture.databaseFile,
         executionId,
         invocationId,
         callRef,
         approval.approvalId,
+        executableApprovalId,
       );
       expect(beforeTakeover.invocation).toMatchObject({
         invocation_id: invocationId,
         execution_id: executionId,
+        workspace_id: project.rootWorkspaceId,
         tool_name: "shell",
+        tool_version: shellDefinition.version,
         side_effect_semantics: scenario.sideEffectSemantics,
-        approval_id: null,
+        approval_id: executableApprovalId,
+        arguments_json: executableApproval.arguments_json,
         effect_admission_state: scenario.admission,
         settled_at: null,
       });
+      expect(
+        JSON.parse(
+          beforeTakeover.invocation?.resolved_regions_json ?? "[]",
+        ).map(
+          (region: { readonly resourceSpaceId: string }) =>
+            region.resourceSpaceId,
+        ),
+      ).toEqual(JSON.parse(executableApproval.target_resource_space_ids_json));
       expect(beforeTakeover.lease).toMatchObject({
         execution_id: executionId,
-        generation: 0,
+        generation: oldGeneration,
       });
       expect(beforeTakeover.action).toMatchObject({
         call_ref: callRef,
         action_kind: "shell",
         state: "Pending",
+        observation_source_ref: null,
       });
       expect(beforeTakeover.step?.provider_turn_id).toMatch(/^ptn_/u);
       expect(beforeTakeover.workApproval).toMatchObject({
         route_kind: "Control",
         state: "Consumed",
       });
-      expect(beforeTakeover.executableApprovalCount).toBe(0);
+      expect(beforeTakeover.executableApprovalCount).toBe(1);
+      expect(beforeTakeover.shellInvocationCount).toBe(1);
+      expect(beforeTakeover.executableApproval).toMatchObject({
+        approval_id: executableApprovalId,
+        route_kind: "Executable",
+        project_id: project.projectId,
+        workspace_id: project.rootWorkspaceId,
+        execution_id: executionId,
+        execution_workspace_id: project.rootWorkspaceId,
+        episode_kind: "WorkEpisode",
+        episode_ref: work.workId,
+        stable_action_id: beforeTakeover.invocation?.tool_name,
+        action_version: beforeTakeover.invocation?.tool_version,
+        side_effect_semantics: beforeTakeover.invocation?.side_effect_semantics,
+        action_digest: actionDigestOfInvocation({
+          toolName: beforeTakeover.invocation?.tool_name ?? "",
+          toolVersion: beforeTakeover.invocation?.tool_version ?? "",
+          argumentsJson: beforeTakeover.invocation?.arguments_json ?? "",
+        }),
+        arguments_json: beforeTakeover.invocation?.arguments_json,
+        target_ref: executableApproval.target_ref,
+        state: "Consumed",
+        decided_at: expect.any(String),
+        consumed_at: expect.any(String),
+        consumed_by: invocationId,
+        binding_proven: 1,
+        tool_invocation_id: invocationId,
+        logical_action_id: beforeTakeover.action?.logical_action_id,
+        call_ref: callRef,
+        action_kind: "shell",
+        action_route_kind: "Executable",
+        action_state: "Pending",
+        action_call_ref: callRef,
+      });
+      expect(beforeTakeover.executableApproval?.state).toBe("Consumed");
+      expect(beforeTakeover.executableApproval?.revision).toBeGreaterThan(
+        executableApprovalRevision,
+      );
       expect(beforeTakeover.toolResults).toHaveLength(0);
+      expect(
+        beforeTakeover.observations.filter(
+          (observation) =>
+            observation.source_ref ===
+            beforeTakeover.action?.observation_source_ref,
+        ),
+      ).toHaveLength(0);
       expect(existsSync(join(fixture.workspaceDirectory, effectFile))).toBe(
         false,
       );
@@ -530,9 +878,9 @@ describe("P4 AH7 effect-admission generation takeover", () => {
       try {
         leaseDb
           .prepare(
-            "UPDATE execution_leases SET expires_at = ? WHERE execution_id = ? AND generation = 0",
+            "UPDATE execution_leases SET expires_at = ? WHERE execution_id = ? AND generation = ?",
           )
-          .run("2000-01-01T00:00:00.000Z", executionId);
+          .run("2000-01-01T00:00:00.000Z", executionId, oldGeneration);
       } finally {
         leaseDb.close();
       }
@@ -542,6 +890,9 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         daemonEnvironment: {
           ARBOR_P4_FENCE_ROLE: "new",
           ARBOR_P4_FENCE_PAUSE_NEW: "1",
+          ...(scenario.sideEffectSemantics === "NonIdempotent"
+            ? { ARBOR_P4_FENCE_NON_IDEMPOTENT: "1" }
+            : {}),
         },
         onStdout: (line) => recordProbe(events, line),
       });
@@ -556,7 +907,7 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         (event) => event !== undefined,
         45_000,
       );
-      expect(newLease?.fencingGeneration).toBe(1);
+      expect(newLease?.fencingGeneration).toBe(oldGeneration + 1);
       await fixture.crash();
       const afterOldCrash = readRows(
         fixture.databaseFile,
@@ -564,11 +915,27 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         invocationId,
         callRef,
         approval.approvalId,
+        executableApprovalId,
       );
       expect(afterOldCrash.invocation?.effect_admission_state).toBe(
         scenario.admission,
       );
-      expect(afterOldCrash.lease?.generation).toBe(1);
+      expect(afterOldCrash.invocation).toMatchObject({
+        approval_id: executableApprovalId,
+        tool_name: "shell",
+        tool_version: shellDefinition.version,
+        side_effect_semantics: scenario.sideEffectSemantics,
+      });
+      expect(afterOldCrash.executableApprovalCount).toBe(1);
+      expect(afterOldCrash.shellInvocationCount).toBe(1);
+      expect(afterOldCrash.executableApproval).toMatchObject({
+        approval_id: executableApprovalId,
+        state: "Consumed",
+        consumed_by: invocationId,
+        tool_invocation_id: invocationId,
+        action_state: "Pending",
+      });
+      expect(afterOldCrash.lease?.generation).toBe(oldGeneration + 1);
       expect(existsSync(join(fixture.workspaceDirectory, effectFile))).toBe(
         false,
       );
@@ -586,6 +953,7 @@ describe("P4 AH7 effect-admission generation takeover", () => {
               invocationId,
               callRef,
               approval.approvalId,
+              executableApprovalId,
             ),
           (rows) => {
             const successorTurn = rows.providerTurns.find(
@@ -612,7 +980,7 @@ describe("P4 AH7 effect-admission generation takeover", () => {
           invocation_id: invocationId,
           effect_admission_state: "MayHaveStarted",
           settlement_kind: "Success",
-          approval_id: null,
+          approval_id: executableApprovalId,
         });
         expect(recovered.action).toMatchObject({
           logical_action_id: beforeTakeover.action?.logical_action_id,
@@ -697,6 +1065,7 @@ describe("P4 AH7 effect-admission generation takeover", () => {
               invocationId,
               callRef,
               approval.approvalId,
+              executableApprovalId,
             ),
           (rows) =>
             rows.execution?.settlement_kind === "OutcomeUnknown" &&
@@ -706,25 +1075,65 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         expect(recovered.invocation).toMatchObject({
           invocation_id: invocationId,
           effect_admission_state: "MayHaveStarted",
-          settled_at:
-            scenario.sideEffectSemantics === "NonIdempotent"
-              ? expect.any(String)
-              : null,
-          settlement_kind:
-            scenario.sideEffectSemantics === "NonIdempotent"
-              ? "OutcomeUnknown"
-              : null,
-          approval_id: null,
+          settled_at: null,
+          settlement_kind: null,
+          approval_id: executableApprovalId,
+        });
+        expect(recovered.execution).toMatchObject({
+          settlement_kind: "OutcomeUnknown",
+        });
+        expect(
+          JSON.parse(recovered.execution?.settlement_json ?? "null"),
+        ).toEqual({
+          _tag: "OutcomeUnknown",
+          reconciliation: {
+            _tag: "ReconciliationRequired",
+            invocationRefs: [invocationId],
+          },
         });
         expect(recovered.action).toMatchObject({
           logical_action_id: beforeTakeover.action?.logical_action_id,
           call_ref: callRef,
           state: "ReconciliationPending",
         });
+        expect(
+          JSON.parse(recovered.action?.disposition_json ?? "null"),
+        ).toEqual({
+          _tag: "ExecutionSettlement:OutcomeUnknown",
+          status: "OutcomeUnknown",
+        });
         expect(recovered.step?.provider_turn_id).toBe(
           beforeTakeover.step?.provider_turn_id,
         );
-        expect(recovered.toolResults).toHaveLength(0);
+        expect(recovered.shellInvocationCount).toBe(1);
+        const actionObservations = recovered.observations.filter(
+          (observation) =>
+            observation.source_ref === recovered.action?.observation_source_ref,
+        );
+        const terminalProjectionRefs = new Set([
+          ...recovered.toolResults.map((result) => result.source_ref),
+          ...actionObservations.map((observation) => observation.source_ref),
+        ]);
+        // A typed unresolved ToolResult is also stored as the action's
+        // Observation entry, so count the one canonical sourceRef once.
+        expect(terminalProjectionRefs.size).toBe(1);
+        const terminalResult = JSON.parse(
+          recovered.toolResults[0]?.payload_json ?? "{}",
+        ) as Record<string, unknown>;
+        expect(terminalResult).toMatchObject({
+          _tag: "ToolResult",
+          callRef,
+          status: "OutcomeUnknown",
+          outputText: "Control action settled the execution (OutcomeUnknown)",
+          artifactRefs: [],
+        });
+        expect(recovered.toolResults).toHaveLength(1);
+        expect(recovered.toolResults[0]).toMatchObject({
+          source_kind: "AgentLoopAction",
+          source_ref: recovered.action?.observation_source_ref,
+        });
+        expect(terminalResult.invocationId).toBeUndefined();
+        expect(terminalResult.canonicalRefs).toBeUndefined();
         expect(existsSync(join(fixture.workspaceDirectory, effectFile))).toBe(
           false,
         );
