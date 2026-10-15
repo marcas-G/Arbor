@@ -2,6 +2,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  canonicalizeRecoveryBindingV1,
+  type RecoveryBindingV1,
+  recoveryBindingV1Digest,
+} from "../../../packages/ports/src/recovery-binding.js";
 import type { ProductionFixture } from "../support/production-fixture.js";
 import { startProductionFixture } from "../support/production-fixture.js";
 import {
@@ -42,6 +47,7 @@ interface ExecutableApprovalRow {
   readonly action_version: string;
   readonly side_effect_semantics: string;
   readonly action_digest: string;
+  readonly control_basis_digest: string;
   readonly arguments_json: string;
   readonly target_ref: string;
   readonly target_resource_space_ids_json: string;
@@ -58,6 +64,12 @@ interface ExecutableApprovalRow {
   readonly action_route_kind: string;
   readonly action_state: string;
   readonly action_call_ref: string;
+}
+
+interface RecoveryBindingRow {
+  readonly binding_version: number;
+  readonly canonical_binding_json: string;
+  readonly binding_sha256: string;
 }
 
 interface AdmissionRows {
@@ -148,6 +160,7 @@ interface AdmissionRows {
     | undefined;
   readonly executableApprovalCount: number;
   readonly executableApproval: ExecutableApprovalRow | undefined;
+  readonly recoveryBinding: RecoveryBindingRow | undefined;
 }
 
 const fnvDigest = (input: string): string => {
@@ -365,6 +378,7 @@ const readRows = (
                   e.episode_kind, e.episode_ref, ap.subject_ref,
                   ap.stable_action_id, ap.action_version,
                   ap.side_effect_semantics, ap.action_digest,
+                  ap.control_basis_digest,
                   ap.arguments_json, ap.target_ref,
                   ap.target_resource_space_ids_json, ap.state, ap.revision,
                   ap.decided_at, ap.consumed_at, ap.consumed_by,
@@ -384,6 +398,12 @@ const readRows = (
             WHERE ap.approval_id = ? AND ap.route_kind = 'Executable'`,
         )
         .get(executableApprovalId) as AdmissionRows["executableApproval"],
+      recoveryBinding: db
+        .prepare(
+          `SELECT binding_version, canonical_binding_json, binding_sha256
+             FROM tool_invocation_recovery_bindings WHERE invocation_id = ?`,
+        )
+        .get(invocationId) as AdmissionRows["recoveryBinding"],
     };
   } finally {
     db.close();
@@ -404,6 +424,7 @@ const readExecutableApprovalBinding = (
                 e.episode_kind, e.episode_ref, ap.subject_ref,
                 ap.stable_action_id, ap.action_version,
                 ap.side_effect_semantics, ap.action_digest,
+                ap.control_basis_digest,
                 ap.arguments_json, ap.target_ref,
                 ap.target_resource_space_ids_json, ap.state, ap.revision,
                 ap.decided_at, ap.consumed_at, ap.consumed_by,
@@ -845,6 +866,41 @@ describe("P4 AH7 effect-admission generation takeover", () => {
       expect(beforeTakeover.executableApproval?.revision).toBeGreaterThan(
         executableApprovalRevision,
       );
+      const recoveryBindingRow = beforeTakeover.recoveryBinding;
+      if (recoveryBindingRow === undefined) {
+        throw new Error(
+          "P4 exact shell invocation had no canonical P39 recovery binding",
+        );
+      }
+      const recoveryBinding = JSON.parse(
+        recoveryBindingRow.canonical_binding_json,
+      ) as RecoveryBindingV1;
+      expect(recoveryBindingRow.binding_version).toBe(1);
+      expect(canonicalizeRecoveryBindingV1(recoveryBinding)).toBe(
+        recoveryBindingRow.canonical_binding_json,
+      );
+      expect(recoveryBindingV1Digest(recoveryBinding)).toBe(
+        recoveryBindingRow.binding_sha256,
+      );
+      expect(recoveryBinding.controlBasisDigest).toMatch(/^[0-9a-f]{64}$/u);
+      expect(recoveryBinding).toMatchObject({
+        executionId,
+        invocationId,
+        callRef,
+        logicalActionId: beforeTakeover.action?.logical_action_id,
+        toolName: "shell",
+        toolVersion: shellDefinition.version,
+        sideEffectSemantics: scenario.sideEffectSemantics,
+        approvalId: executableApprovalId,
+        controlBasisDigest:
+          beforeTakeover.executableApproval?.control_basis_digest,
+        approvalSubject: beforeTakeover.executableApproval?.subject_ref,
+        principalId: beforeTakeover.executableApproval?.subject_ref,
+      });
+      expect(beforeTakeover.executableApproval?.subject_ref).toBe(
+        recoveryBinding.approvalSubject,
+      );
+      expect(recoveryBinding.approvalSubject).toBeTruthy();
       expect(beforeTakeover.toolResults).toHaveLength(0);
       expect(
         beforeTakeover.observations.filter(
