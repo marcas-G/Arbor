@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { P37Probe } from "../support/p37-deliver-process-fixture.js";
 import {
   awaitP37Probe,
+  captureP37LeaseOwnerProcessAnchor,
   deliverAndHoldCommittedReceipt,
   expectedDeliverCommandId,
   expectedDeliverMessageId,
@@ -430,7 +431,16 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
   it("blocks a Committed receipt when a still-present Inbox row no longer matches", async () => {
     const marker = `P37-L6-INBOX-MISMATCH-${crypto.randomUUID().slice(0, 8)}`;
     const prepared = await deliverAndHoldCommittedReceipt(marker);
-    await prepared.fixture.crash();
+    const initialOwnerController = {
+      crash: prepared.fixture.crash,
+      snapshot: prepared.fixture.daemonProcessSnapshot,
+    };
+    const initialOwnerAnchor = captureP37LeaseOwnerProcessAnchor({
+      executionId: prepared.action.execution_id,
+      probes: prepared.probes,
+      daemon: initialOwnerController,
+    });
+    await initialOwnerController.crash();
     const inboxDb = new DatabaseSync(prepared.fixture.databaseFile);
     try {
       const changed = inboxDb
@@ -442,14 +452,11 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     } finally {
       inboxDb.close();
     }
-    const initialOwnerController = {
-      crash: prepared.fixture.crash,
-      snapshot: prepared.fixture.daemonProcessSnapshot,
-    };
     await expireP37LeaseForQualification({
       databaseFile: prepared.fixture.databaseFile,
       executionId: prepared.action.execution_id,
       daemon: initialOwnerController,
+      ownerAnchor: initialOwnerAnchor,
       probes: prepared.probes,
       daemonErrors: prepared.fixture.daemonErrors,
     });
@@ -511,15 +518,21 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
           prepared.action.observation_source_ref,
       ),
     ).toHaveLength(0);
-    await recovery.crash();
     const recoveryOwnerController = {
       crash: recovery.crash,
       snapshot: recovery.daemonProcessSnapshot,
     };
+    const recoveryOwnerAnchor = captureP37LeaseOwnerProcessAnchor({
+      executionId: prepared.action.execution_id,
+      probes: prepared.probes,
+      daemon: recoveryOwnerController,
+    });
+    await recoveryOwnerController.crash();
     await expireP37LeaseForQualification({
       databaseFile: prepared.fixture.databaseFile,
       executionId: prepared.action.execution_id,
       daemon: recoveryOwnerController,
+      ownerAnchor: recoveryOwnerAnchor,
       probes: prepared.probes,
       daemonErrors: recovery.daemonErrors,
     });
@@ -565,7 +578,16 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     expect(before.messages).toHaveLength(1);
     expect(before.messageEvents).toHaveLength(1);
     expect(before.inbox).toHaveLength(1);
-    await prepared.fixture.crash();
+    const leaseOwnerController = {
+      crash: prepared.fixture.crash,
+      snapshot: prepared.fixture.daemonProcessSnapshot,
+    };
+    const leaseOwnerAnchor = captureP37LeaseOwnerProcessAnchor({
+      executionId: prepared.action.execution_id,
+      probes: prepared.probes,
+      daemon: leaseOwnerController,
+    });
+    await leaseOwnerController.crash();
     const inboxDb = new DatabaseSync(prepared.fixture.databaseFile);
     try {
       const deleted = inboxDb
@@ -575,14 +597,11 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     } finally {
       inboxDb.close();
     }
-    const leaseOwnerController = {
-      crash: prepared.fixture.crash,
-      snapshot: prepared.fixture.daemonProcessSnapshot,
-    };
     await expireP37LeaseForQualification({
       databaseFile: prepared.fixture.databaseFile,
       executionId: prepared.action.execution_id,
       daemon: leaseOwnerController,
+      ownerAnchor: leaseOwnerAnchor,
       probes: prepared.probes,
       daemonErrors: prepared.fixture.daemonErrors,
     });
@@ -695,16 +714,28 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         expect(atBoundary.pendingFacts).toHaveLength(1);
         expect(atBoundary.markers).toHaveLength(0);
       }
-      await recovery.crash();
+      const expiredOwnerDaemon = {
+        crash: recovery.crash,
+        snapshot: recovery.daemonProcessSnapshot,
+      };
+      const p9OwnerAnchor =
+        p9Probe?.executionId === undefined
+          ? undefined
+          : captureP37LeaseOwnerProcessAnchor({
+              executionId: p9Probe.executionId,
+              probes: prepared.probes,
+              daemon: expiredOwnerDaemon,
+            });
+      await expiredOwnerDaemon.crash();
       if (p9Probe?.executionId !== undefined) {
-        const expiredOwnerDaemon = {
-          crash: recovery.crash,
-          snapshot: recovery.daemonProcessSnapshot,
-        };
+        if (p9OwnerAnchor === undefined) {
+          throw new Error("P37 P9 owner anchor was not captured before exit");
+        }
         await expireP37LeaseForQualification({
           databaseFile: prepared.fixture.databaseFile,
           executionId: p9Probe.executionId,
           daemon: expiredOwnerDaemon,
+          ownerAnchor: p9OwnerAnchor,
           probes: prepared.probes,
           daemonErrors: recovery.daemonErrors,
         });
@@ -816,15 +847,21 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     expect((directWrite.actions[0] as { state: string }).state).not.toBe(
       "Applied",
     );
-    await seed.fixture.crash();
     const initialOwnerController = {
       crash: seed.fixture.crash,
       snapshot: seed.fixture.daemonProcessSnapshot,
     };
+    const initialOwnerAnchor = captureP37LeaseOwnerProcessAnchor({
+      executionId,
+      probes: seed.probes,
+      daemon: initialOwnerController,
+    });
+    await initialOwnerController.crash();
     await expireP37LeaseForQualification({
       databaseFile: seed.fixture.databaseFile,
       executionId,
       daemon: initialOwnerController,
+      ownerAnchor: initialOwnerAnchor,
       probes: seed.probes,
       daemonErrors: seed.fixture.daemonErrors,
     });
@@ -873,7 +910,16 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     expect(failureCommitted.messageEvents).toHaveLength(1);
     expect(failureCommitted.pendingFacts).toHaveLength(1);
     expect(failureCommitted.markers).toHaveLength(0);
-    await recovery.crash();
+    const recoveryOwnerController = {
+      crash: recovery.crash,
+      snapshot: recovery.daemonProcessSnapshot,
+    };
+    const recoveryOwnerAnchor = captureP37LeaseOwnerProcessAnchor({
+      executionId,
+      probes: seed.probes,
+      daemon: recoveryOwnerController,
+    });
+    await recoveryOwnerController.crash();
 
     const inboxDb = new DatabaseSync(seed.fixture.databaseFile);
     try {
@@ -884,14 +930,11 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     } finally {
       inboxDb.close();
     }
-    const recoveryOwnerController = {
-      crash: recovery.crash,
-      snapshot: recovery.daemonProcessSnapshot,
-    };
     await expireP37LeaseForQualification({
       databaseFile: seed.fixture.databaseFile,
       executionId,
       daemon: recoveryOwnerController,
+      ownerAnchor: recoveryOwnerAnchor,
       probes: seed.probes,
       daemonErrors: recovery.daemonErrors,
     });
@@ -1007,7 +1050,19 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
           initialOffset,
         );
       }
-      await recovery.crash();
+      const expiredOwnerDaemon = {
+        crash: recovery.crash,
+        snapshot: recovery.daemonProcessSnapshot,
+      };
+      const projectionOwnerAnchor =
+        projectionProbe?.executionId === undefined
+          ? undefined
+          : captureP37LeaseOwnerProcessAnchor({
+              executionId: projectionProbe.executionId,
+              probes: prepared.probes,
+              daemon: expiredOwnerDaemon,
+            });
+      await expiredOwnerDaemon.crash();
       if (crashSide === "before") {
         const afterPreCommitCrash = readP37Snapshot(
           prepared.fixture.databaseFile,
@@ -1036,14 +1091,16 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         );
       }
       if (projectionProbe?.executionId !== undefined) {
-        const expiredOwnerDaemon = {
-          crash: recovery.crash,
-          snapshot: recovery.daemonProcessSnapshot,
-        };
+        if (projectionOwnerAnchor === undefined) {
+          throw new Error(
+            "P37 projection owner anchor was not captured before exit",
+          );
+        }
         await expireP37LeaseForQualification({
           databaseFile: prepared.fixture.databaseFile,
           executionId: projectionProbe.executionId,
           daemon: expiredOwnerDaemon,
+          ownerAnchor: projectionOwnerAnchor,
           probes: prepared.probes,
           daemonErrors: recovery.daemonErrors,
         });
@@ -1106,7 +1163,6 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     } finally {
       inboxDb.close();
     }
-    await recovery.crash();
     if (prepared.held.executionId === undefined) {
       throw new Error("P37 contradictory receipt ExecutionId missing");
     }
@@ -1114,10 +1170,17 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       crash: recovery.crash,
       snapshot: recovery.daemonProcessSnapshot,
     };
+    const expiredOwnerAnchor = captureP37LeaseOwnerProcessAnchor({
+      executionId: prepared.held.executionId,
+      probes: prepared.probes,
+      daemon: expiredOwnerDaemon,
+    });
+    await expiredOwnerDaemon.crash();
     await expireP37LeaseForQualification({
       databaseFile: prepared.fixture.databaseFile,
       executionId: prepared.held.executionId,
       daemon: expiredOwnerDaemon,
+      ownerAnchor: expiredOwnerAnchor,
       probes: prepared.probes,
       daemonErrors: recovery.daemonErrors,
     });

@@ -1122,11 +1122,83 @@ export const prepareContradictoryCommittedReceipt = async (marker: string) => {
   return prepared;
 };
 
+export interface LeaseOwnerProcessAnchor {
+  readonly executionId: string;
+  readonly processId: number;
+  readonly workerId: string;
+  readonly workerIncarnationId: string;
+}
+
+const leaseOwnerAnchorControllers = new WeakMap<
+  LeaseOwnerProcessAnchor,
+  QualificationDaemonController
+>();
+
+export const captureP37LeaseOwnerProcessAnchor = (input: {
+  readonly executionId: string;
+  readonly probes: ReadonlyArray<P37Probe>;
+  readonly daemon: QualificationDaemonController;
+}): LeaseOwnerProcessAnchor => {
+  const snapshot = input.daemon.snapshot();
+  if (
+    snapshot === null ||
+    snapshot.pid === undefined ||
+    !snapshot.alive ||
+    snapshot.exitCode !== null ||
+    snapshot.signalCode !== null
+  ) {
+    throw new Error(
+      `P37 owner anchor requires the live daemon controller: ${JSON.stringify({ executionId: input.executionId, snapshot })}`,
+    );
+  }
+  const processProbes = input.probes.filter(
+    (probe) =>
+      probe.executionId === input.executionId &&
+      probe.boundary === "AH10AfterLeaseAcquired" &&
+      probe.processId === snapshot.pid,
+  );
+  if (processProbes.length === 0) {
+    throw new Error(
+      `P37 owner anchor has no observed lease-acquisition probe: ${JSON.stringify({ executionId: input.executionId, processId: snapshot.pid })}`,
+    );
+  }
+  const identities = new Set(
+    processProbes.map(
+      (probe) =>
+        `${probe.workerId ?? ""}\u0000${probe.workerIncarnationId ?? ""}`,
+    ),
+  );
+  const probe = processProbes.at(-1);
+  if (
+    identities.size !== 1 ||
+    probe?.workerId === undefined ||
+    probe.workerId.length === 0 ||
+    probe.workerIncarnationId === undefined ||
+    probe.workerIncarnationId.length === 0 ||
+    probe.fencingGeneration === undefined ||
+    !Number.isSafeInteger(probe.fencingGeneration) ||
+    probe.fencingGeneration < 0
+  ) {
+    throw new Error(
+      `P37 owner anchor has conflicting or incomplete lease-acquisition probes: ${JSON.stringify({ executionId: input.executionId, processId: snapshot.pid, processProbes })}`,
+    );
+  }
+  const anchor: LeaseOwnerProcessAnchor = Object.freeze({
+    executionId: input.executionId,
+    processId: snapshot.pid,
+    workerId: probe.workerId,
+    workerIncarnationId: probe.workerIncarnationId,
+  });
+  leaseOwnerAnchorControllers.set(anchor, input.daemon);
+  return anchor;
+};
+
 const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
   readonly databaseFile: string;
   readonly probes: ReadonlyArray<P37Probe>;
   readonly executionId: string;
   readonly daemon: QualificationDaemonController;
+  readonly ownerAnchor: LeaseOwnerProcessAnchor;
   readonly daemonErrors?: ReadonlyArray<string>;
   readonly timeoutMs?: number;
   readonly pollIntervalMs?: number;
@@ -1164,6 +1236,13 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
         probe.executionId === input.executionId &&
         probe.boundary === "AH10AfterLeaseAcquired",
     );
+  const anchoredProbeCandidates = () =>
+    ownerProbeCandidates().filter(
+      (probe) =>
+        probe.processId === input.ownerAnchor.processId &&
+        probe.workerId === input.ownerAnchor.workerId &&
+        probe.workerIncarnationId === input.ownerAnchor.workerIncarnationId,
+    );
   const diagnostic = (
     message: string,
     processId: number | undefined,
@@ -1180,18 +1259,17 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
         daemon: input.daemon.snapshot(),
       })}`,
     );
-  const assertExitedProcess = (expectedPid?: number): number => {
+  const assertExitedProcess = (): number => {
     const snapshot = input.daemon.snapshot();
     if (
       snapshot === null ||
-      snapshot.pid === undefined ||
+      snapshot.pid !== input.ownerAnchor.processId ||
       snapshot.alive ||
-      (snapshot.exitCode === null && snapshot.signalCode === null) ||
-      (expectedPid !== undefined && snapshot.pid !== expectedPid)
+      (snapshot.exitCode === null && snapshot.signalCode === null)
     ) {
       throw diagnostic(
-        "P37 owner evidence requires the same confirmed-exited daemon",
-        expectedPid ?? snapshot?.pid,
+        "P37 owner evidence requires the anchored daemon to have exited",
+        input.ownerAnchor.processId,
         readLease(),
       );
     }
@@ -1224,6 +1302,11 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
     probe.workerId === lease.worker_id &&
     probe.workerIncarnationId === lease.worker_incarnation_id &&
     probeGeneration(probe) === Number(lease.generation);
+  const probeMatchesAnchor = (probe: P37Probe) =>
+    probe.executionId === input.ownerAnchor.executionId &&
+    probe.processId === input.ownerAnchor.processId &&
+    probe.workerId === input.ownerAnchor.workerId &&
+    probe.workerIncarnationId === input.ownerAnchor.workerIncarnationId;
   const assertNoProbeConflict = (
     processId: number,
     lease: LeaseQualificationTuple,
@@ -1233,7 +1316,8 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
     const conflictingTarget = candidates.find(
       (probe) =>
         probeGeneration(probe) === targetGeneration &&
-        !probeMatchesTuple(probe, lease, processId),
+        (!probeMatchesAnchor(probe) ||
+          !probeMatchesTuple(probe, lease, processId)),
     );
     const contradictoryHigher = candidates.find(
       (probe) =>
@@ -1254,7 +1338,7 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
     processId: number,
     lease: LeaseQualificationTuple,
   ) =>
-    ownerProbeCandidates()
+    anchoredProbeCandidates()
       .filter((probe) => {
         const generation = probeGeneration(probe);
         return (
@@ -1270,14 +1354,26 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
           (probeGeneration(right) ?? -1) - (probeGeneration(left) ?? -1),
       )[0];
 
+  if (
+    input.ownerAnchor.executionId !== input.executionId ||
+    leaseOwnerAnchorControllers.get(input.ownerAnchor) !== input.daemon
+  ) {
+    throw diagnostic(
+      "P37 owner anchor does not belong to this execution and daemon controller",
+      input.ownerAnchor.processId,
+      readLease(),
+    );
+  }
   const processId = assertExitedProcess();
   const initialLease = readLease();
   if (
     initialLease === undefined ||
-    initialLease.execution_id !== input.executionId
+    initialLease.execution_id !== input.executionId ||
+    initialLease.worker_id !== input.ownerAnchor.workerId ||
+    initialLease.worker_incarnation_id !== input.ownerAnchor.workerIncarnationId
   ) {
     throw diagnostic(
-      "P37 durable lease row is absent",
+      "P37 durable lease row is absent or differs from the live-process anchor",
       processId,
       initialLease,
     );
@@ -1293,7 +1389,7 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
   const deadline = Date.now() + (input.timeoutMs ?? 5_000);
   const pollIntervalMs = input.pollIntervalMs ?? 20;
   for (;;) {
-    assertExitedProcess(processId);
+    assertExitedProcess();
     const currentLease = readLease();
     if (!sameTuple(currentLease, initialLease)) {
       throw diagnostic(
@@ -1303,11 +1399,11 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
       );
     }
     assertNoProbeConflict(processId, initialLease);
-    const probe = ownerProbeCandidates().find((candidate) =>
+    const probe = anchoredProbeCandidates().find((candidate) =>
       probeMatchesTuple(candidate, initialLease, processId),
     );
     if (probe !== undefined) {
-      assertExitedProcess(processId);
+      assertExitedProcess();
       const finalLease = readLease();
       if (!sameTuple(finalLease, initialLease)) {
         throw diagnostic(
@@ -1328,7 +1424,7 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
     if (Date.now() >= deadline) {
       const priorProbe = latestStablePriorProbe(processId, initialLease);
       if (priorProbe !== undefined) {
-        assertExitedProcess(processId);
+        assertExitedProcess();
         const finalLease = readLease();
         if (!sameTuple(finalLease, initialLease)) {
           throw diagnostic(
@@ -1360,6 +1456,7 @@ export const expireP37LeaseForQualification = async (input: {
   readonly databaseFile: string;
   readonly executionId: string;
   readonly daemon: QualificationDaemonController;
+  readonly ownerAnchor: LeaseOwnerProcessAnchor;
   readonly probes: ReadonlyArray<P37Probe>;
   readonly daemonErrors?: ReadonlyArray<string>;
   readonly timeoutMs?: number;
