@@ -843,52 +843,49 @@ describe("production fixture port-zero startup handshake", () => {
     expect(clock.pendingCount()).toBe(0);
   });
 
-  it.skipIf(process.platform !== "win32")(
-    "stops a real Windows process tree and remains safe on repeated stop",
-    async () => {
-      const parent = spawn(process.execPath, [processTreeParent], {
-        stdio: ["ignore", "pipe", "ignore"],
-        windowsHide: true,
-      });
-      if (parent.stdout === null) {
-        throw new Error("process-tree helper stdout is required");
-      }
-      const lines = createInterface({ input: parent.stdout });
-      try {
-        const grandchildPid = await new Promise<number>(
-          (resolveReady, rejectReady) => {
-            parent.once("error", rejectReady);
-            lines.once("line", (line) => {
-              try {
-                const report = JSON.parse(line) as {
-                  readonly tag?: string;
-                  readonly grandchildPid?: number;
-                };
-                if (
-                  report.tag !== "PROCESS_TREE_READY" ||
-                  typeof report.grandchildPid !== "number"
-                ) {
-                  rejectReady(
-                    new Error("process-tree helper emitted invalid readiness"),
-                  );
-                  return;
-                }
-                resolveReady(report.grandchildPid);
-              } catch (error) {
-                rejectReady(error);
+  it("stops a real process tree and remains safe on repeated stop", async () => {
+    const parent = spawn(process.execPath, [processTreeParent], {
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+    if (parent.stdout === null) {
+      throw new Error("process-tree helper stdout is required");
+    }
+    const lines = createInterface({ input: parent.stdout });
+    try {
+      const grandchildPid = await new Promise<number>(
+        (resolveReady, rejectReady) => {
+          parent.once("error", rejectReady);
+          lines.once("line", (line) => {
+            try {
+              const report = JSON.parse(line) as {
+                readonly tag?: string;
+                readonly grandchildPid?: number;
+              };
+              if (
+                report.tag !== "PROCESS_TREE_READY" ||
+                typeof report.grandchildPid !== "number"
+              ) {
+                rejectReady(
+                  new Error("process-tree helper emitted invalid readiness"),
+                );
+                return;
               }
-            });
-          },
-        );
-        await stopChildBounded(parent);
-        await stopChildBounded(parent);
-        expect(childHasExited(parent)).toBe(true);
-        expect(() => process.kill(grandchildPid, 0)).toThrow();
-      } finally {
-        await stopChildBounded(parent).catch(() => undefined);
-        lines.close();
-      }
-    },
-    30_000,
-  );
+              resolveReady(report.grandchildPid);
+            } catch (error) {
+              rejectReady(error);
+            }
+          });
+        },
+      );
+      await stopChildBounded(parent);
+      await stopChildBounded(parent);
+      expect(childHasExited(parent)).toBe(true);
+      expect(() => process.kill(grandchildPid, 0)).toThrow();
+    } finally {
+      await stopChildBounded(parent).catch(() => undefined);
+      lines.close();
+    }
+  }, 30_000);
 });

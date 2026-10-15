@@ -558,6 +558,7 @@ export const startProductionFixture = async (input: {
     daemon = spawn(process.execPath, [entry], {
       cwd: directory,
       env: daemonEnv,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
     lastDaemonLaunch = {
@@ -714,6 +715,7 @@ export const startProductionFixture = async (input: {
       const child = spawn(process.execPath, [childEntry], {
         cwd: directory,
         env: daemonEnv,
+        detached: process.platform !== "win32",
         stdio: ["ignore", "pipe", "pipe"],
       });
       additionalDaemons.push(child);

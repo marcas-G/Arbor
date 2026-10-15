@@ -486,8 +486,22 @@ export const stopChildBounded = async (
       throw error;
     }
   } else {
-    if (childHasExited(child)) return;
-    child.kill("SIGKILL");
+    if (child.pid === undefined) {
+      if (childHasExited(child)) return;
+      throw new Error(
+        `cannot stop child process group without a PID; ${childExitDiagnostic(child)}`,
+      );
+    }
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ESRCH" && childHasExited(child)) return;
+      throw new Error(
+        `daemon process group could not be stopped; ${childExitDiagnostic(child)}; error=${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
     await waitForChildExit(child, timeoutMs);
   }
 };
