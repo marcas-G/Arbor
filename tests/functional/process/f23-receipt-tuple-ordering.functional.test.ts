@@ -113,7 +113,7 @@ afterEach(async () => {
 });
 
 describe("F23 Gateway receipt tuple comparison before stored JSON decode", () => {
-  it("returns IdempotencyConflict for a tuple mismatch before parsing corrupt historical JSON", async () => {
+  it("returns a non-disclosing 409 Problem for a tuple mismatch before parsing corrupt historical JSON", async () => {
     const sentinel = `F23-CORRUPT-RECEIPT-${crypto.randomUUID()}`;
     const fixture = await startProductionFixture({
       isolatedPortHandshake: true,
@@ -169,21 +169,27 @@ describe("F23 Gateway receipt tuple comparison before stored JSON decode", () =>
       const responseBody = JSON.parse(bodyText) as {
         readonly ok: boolean;
         readonly status: number;
-        readonly body?: {
-          readonly commandId: string;
-          readonly resolution: string;
-          readonly rejection?: string;
+        readonly problem?: {
+          readonly code: string;
+          readonly category: string;
+          readonly message: string;
+          readonly correlationId: string | null;
+          readonly retryDisposition: string;
+          readonly safeDetails: { readonly commandId: string };
         };
       };
 
-      expect(response.status).toBe(200);
-      expect(responseBody).toMatchObject({
-        ok: true,
-        status: 200,
-        body: {
-          commandId,
-          resolution: "TerminalRejected",
-          rejection: "IdempotencyConflict",
+      expect(response.status).toBe(409);
+      expect(responseBody).toEqual({
+        ok: false,
+        status: 409,
+        problem: {
+          code: "command/idempotency-conflict",
+          category: "stale",
+          message: "command/idempotency-conflict",
+          correlationId: null,
+          retryDisposition: "non-retryable",
+          safeDetails: { commandId },
         },
       });
       expect(bodyText).not.toContain(sentinel);

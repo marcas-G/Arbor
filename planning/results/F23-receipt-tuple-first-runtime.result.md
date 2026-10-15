@@ -72,3 +72,44 @@ only to preserve the existing AH10 receipt-first consumer after the Port shape
 change. It has focused AH10 regression coverage; independent review of its
 legacy-schema/error behavior is requested and remains pending. This result
 does not claim that review or the exact-tuple decoder gap is closed.
+
+## Public transport Problem oracle follow-up (2026-10-16)
+
+The earlier F23 test's HTTP 200 `CommandReceipt` expectation was an incorrect
+transport oracle. P8's external Problem presentation together with P1/F23
+freezes the internal Gateway outcome as
+`TerminalRejected(IdempotencyConflict)`, but the external transport presents
+that rejection as a non-retryable stale Problem, HTTP 409; it does not forward a
+successful receipt envelope. The test now asserts the complete external DTO:
+
+```json
+{
+  "ok": false,
+  "status": 409,
+  "problem": {
+    "code": "command/idempotency-conflict",
+    "category": "stale",
+    "message": "command/idempotency-conflict",
+    "correlationId": null,
+    "retryDisposition": "non-retryable",
+    "safeDetails": { "commandId": "<the requested command id>" }
+  }
+}
+```
+
+The no-sentinel/raw-JSON/fingerprint leak assertions, byte-identical stored
+receipt, unchanged attempts/events, and empty daemon errors remain. The two
+exact-tuple corrupt/wrong-shape receipt cases retain their existing safe 503
+Problem expectations.
+
+Verification on base candidate `efc5a095b485288dbaa19d95a9fda54f1bb3191a`:
+
+- `f23-receipt-tuple-ordering.functional.test.ts` — two consecutive runs,
+  4/4 PASS each.
+- `external-command-composition.test.ts` tuple-mismatch transport case — 1/1
+  PASS.
+- F21 `replays a v1 receipt only as a tuple conflict and leaves its row
+  unchanged` representative — 1/1 PASS.
+- `pnpm typecheck`, targeted Biome, and `git diff --check` — PASS.
+- Test-only change; no production code or frozen design documents changed. No
+  full functional suite was run.
