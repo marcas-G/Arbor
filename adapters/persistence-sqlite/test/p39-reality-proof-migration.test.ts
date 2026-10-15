@@ -42,6 +42,7 @@ import {
   p39WriterLockFilename,
   prepareP39PrimaryDatabasePath,
   validateP39ProtectedDirectory,
+  validateP39ProtectedFile,
 } from "../src/p39-writer-lock.js";
 
 const windowsAclQualificationAvailable = p39WindowsAclQualificationAvailable();
@@ -454,6 +455,25 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       removeP39PrivateTestDirectory(directory);
     }
   });
+
+  it.skipIf(!windowsAclQualificationAvailable)(
+    "retains single-path directory and file validation entrypoints",
+    () => {
+      const directory = makeP39PrivateTestDirectory(
+        process.cwd(),
+        ".p39-single-path-validation-test-",
+      );
+      const filename = join(directory, "primary.sqlite");
+      try {
+        createP39PrivateTestFile(filename);
+        expect(validateP39ProtectedDirectory(directory)).toBe(true);
+        expect(validateP39ProtectedFile(filename)).toBe(true);
+      } finally {
+        removeP39PrivateTestDirectory(directory);
+      }
+    },
+    120_000,
+  );
 
   it("checks a primary parent before creating a missing database file", () => {
     if (process.platform === "win32") return;
