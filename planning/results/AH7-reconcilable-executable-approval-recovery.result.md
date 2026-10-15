@@ -2,6 +2,7 @@
 
 Date: 2026-10-16
 Base candidate: `ecb0d93e14c046d990601807eb17cc2ecd057c72`
+Initial approval precondition landed at: `10de4fecccdd631a9a545511b3e768149f9e4cf2`
 Scope: test/support only; no production or design changes.
 
 ## Public approval precondition
@@ -12,9 +13,14 @@ Workspace's public Inbox after SteerWork. The test verifies that this EAP is
 distinct from the already-approved Work Control approval and that the durable
 Executable binding names the exact project/workspace, `WorkEpisode`/Work id
 and revision, `shell` tool/version, `Reconcilable` or `NonIdempotent` semantics,
-action/call/ToolInvocation identities, exact arguments/input hash, and nonempty
-resource-space target. Only after those checks does the test publicly approve
-the EAP and wait for the selected P4 intent/effect probe.
+action/call/ToolInvocation identities, exact arguments/input hash, and exact
+`['filesystem']` resource target. It asserts EAP subject `runtime:system` and a
+lowercase 64-hex ControlBasis digest. After P4 intent commit, the canonical P39
+RecoveryBinding must carry identical `approvalSubject` and `controlBasisDigest`;
+its digest is recomputed from the canonical bytes. P4 resolved-region resource
+IDs must exactly equal the approved target IDs. Only after the pre-invocation
+checks does the test publicly approve the EAP and wait for the selected P4
+intent/effect probe.
 
 The shared public-client helper requires exactly one pending Executable Inbox
 entry; the P38 approval setup uses the same selector. After recovery, the test
@@ -35,6 +41,9 @@ unchanged.
 
 - AH7 Reconcilable file, first complete run — PASS, 3/3.
 - AH7 Reconcilable file, second consecutive complete run — PASS, 3/3.
+- AH7 Reconcilable file after B2 binding strengthening, based on
+  `10de4fecccdd631a9a545511b3e768149f9e4cf2` plus the follow-up diff — PASS,
+  1/3.
 - `tests/functional/process/p4-ah7-effect-admission-takeover.functional.test.ts` — PASS, 3/3 (one run).
 - P38 public approval Approve representative, filtered to
   `approves over the public API and resumes the same Execution/AgentLoopStep` —
