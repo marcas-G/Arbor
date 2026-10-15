@@ -13,9 +13,13 @@ reap timed-out helpers, and preserve uncertain outcomes as failures.
 
 Review found a separate Unix gap: stopping a child only killed its PID, while
 daemon launches did not create an isolated process group. Unix cleanup now
-sends SIGKILL to the owned child's process group and waits for the direct child
-within the existing bound. Production fixture daemons, additional daemons, the
-S1–S4 daemon, and the real tree-test parent create isolated groups on Unix;
+sends SIGKILL to the owned child's process group, then polls group visibility
+until `kill(-pgid, 0)` reports `ESRCH`. It completes only after both the direct
+child has exited and the group is drained. Visible groups receive another
+SIGKILL on each bounded poll; `EPERM` and other probe errors fail closed, and a
+stable timeout error is reported if the process group remains visible.
+Production fixture daemons, additional daemons, the S1–S4 daemon, and the real
+tree-test parent create isolated groups on Unix;
 Windows spawn behavior remains unchanged. The shared real process-tree test
 now runs on both platforms. Its Unix grandchild inherits its parent's group,
 while on Windows it remains a child process for `taskkill /T` to terminate.
@@ -26,9 +30,10 @@ real process-tree qualification to run without a Windows-only skip.
 ## Evidence
 
 - Architecture target: **4/4 PASS**.
-- Lifecycle support functional file on Windows: **26/26 PASS**, including the
-  real Windows parent/grandchild cleanup test and all taskkill timeout, retry,
-  target-first, helper-reap, and fail-closed cases.
+- Lifecycle support functional file on Windows: **30/30 PASS**, including the
+  real Windows parent/grandchild cleanup test, Unix delayed-drain/ESRCH/EPERM/
+  timeout/repeated-stop cases, and all taskkill timeout, retry, target-first,
+  helper-reap, and fail-closed cases.
 - `pnpm typecheck`: PASS.
 - Biome and `git diff --check`: PASS.
 - WSL Ubuntu process-group smoke: SIGKILL to the isolated group removed both

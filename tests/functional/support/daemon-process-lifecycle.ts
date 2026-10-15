@@ -32,6 +32,11 @@ export interface StopChildLifecycleTestSeam {
   readonly taskkillTimeoutMs?: number;
   readonly taskkillCleanupTimeoutMs?: number;
   readonly spawnTaskkill?: (pid: number, attempt: number) => ChildProcess;
+  readonly signalProcessGroup?: (
+    processGroupId: number,
+    signal: NodeJS.Signals | 0,
+  ) => void;
+  readonly processGroupPollIntervalMs?: number;
   /** Test-only clock seam for deterministic process-tree stop race coverage. */
   readonly setTimeout?: typeof setTimeout;
   readonly clearTimeout?: typeof clearTimeout;
@@ -40,6 +45,82 @@ export interface StopChildLifecycleTestSeam {
 const WINDOWS_TASKKILL_TIMEOUT_MS = 10_000;
 const WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS = 1_000;
 const unprovenWindowsTreeCleanup = new WeakMap<ChildProcess, string>();
+const cleanedUnixProcessGroups = new WeakSet<ChildProcess>();
+
+const processErrorCode = (error: unknown) =>
+  (error as NodeJS.ErrnoException).code;
+
+const stopUnixProcessGroupBounded = async (
+  child: ChildProcess,
+  timeoutMs: number,
+  seam: StopChildLifecycleTestSeam,
+) => {
+  if (cleanedUnixProcessGroups.has(child)) return;
+  if (child.pid === undefined) {
+    if (childHasExited(child)) return;
+    throw new Error(
+      `cannot stop child process group without a PID; ${childExitDiagnostic(child)}`,
+    );
+  }
+
+  const processGroupId = child.pid;
+  const signalProcessGroup =
+    seam.signalProcessGroup ??
+    ((groupId: number, signal: NodeJS.Signals | 0) =>
+      process.kill(-groupId, signal));
+  const pollIntervalMs = Math.max(1, seam.processGroupPollIntervalMs ?? 25);
+  const startedAt = Date.now();
+  const deadline = startedAt + Math.max(0, timeoutMs);
+  let groupGone = false;
+
+  while (true) {
+    if (!groupGone) {
+      try {
+        signalProcessGroup(processGroupId, 0);
+      } catch (error) {
+        const code = processErrorCode(error);
+        if (code === "ESRCH") groupGone = true;
+        else {
+          throw new Error(
+            `daemon process group status could not be verified; pgid=${processGroupId}; error=${error instanceof Error ? error.message : String(error)}; ${childExitDiagnostic(child)}`,
+            { cause: error },
+          );
+        }
+      }
+    }
+
+    if (childHasExited(child) && groupGone) {
+      cleanedUnixProcessGroups.add(child);
+      return;
+    }
+
+    if (!groupGone) {
+      try {
+        signalProcessGroup(processGroupId, "SIGKILL");
+      } catch (error) {
+        const code = processErrorCode(error);
+        if (code === "ESRCH") groupGone = true;
+        else {
+          throw new Error(
+            `daemon process group could not be killed; pgid=${processGroupId}; error=${error instanceof Error ? error.message : String(error)}; ${childExitDiagnostic(child)}`,
+            { cause: error },
+          );
+        }
+      }
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error(
+        `daemon process group did not drain within ${timeoutMs}ms; pgid=${processGroupId}; ${childExitDiagnostic(child)}`,
+      );
+    }
+
+    await new Promise<void>((resolvePoll) => {
+      setTimeout(resolvePoll, Math.min(pollIntervalMs, remainingMs));
+    });
+  }
+};
 
 const waitForChildExit = (child: ChildProcess, timeoutMs: number) => {
   if (childHasExited(child)) return Promise.resolve();
@@ -486,23 +567,7 @@ export const stopChildBounded = async (
       throw error;
     }
   } else {
-    if (child.pid === undefined) {
-      if (childHasExited(child)) return;
-      throw new Error(
-        `cannot stop child process group without a PID; ${childExitDiagnostic(child)}`,
-      );
-    }
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ESRCH" && childHasExited(child)) return;
-      throw new Error(
-        `daemon process group could not be stopped; ${childExitDiagnostic(child)}; error=${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
-    }
-    await waitForChildExit(child, timeoutMs);
+    await stopUnixProcessGroupBounded(child, timeoutMs, seam);
   }
 };
 

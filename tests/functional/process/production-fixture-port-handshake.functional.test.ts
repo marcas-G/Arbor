@@ -124,6 +124,25 @@ const emitProcessExit = (child: ChildProcess, code: number) => {
   child.emit("exit", code, null);
 };
 
+const processGroupError = (code: string) =>
+  Object.assign(new Error(`synthetic process-group ${code}`), { code });
+
+const waitForProcessGone = async (pid: number, timeoutMs: number) => {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      throw error;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`process ${pid} did not disappear within ${timeoutMs}ms`);
+    }
+    await new Promise<void>((resolvePoll) => setTimeout(resolvePoll, 20));
+  }
+};
+
 describe("production fixture port-zero startup handshake", () => {
   it("starts concurrent fixtures on distinct child-reported ports", async () => {
     const firstLines: string[] = [];
@@ -446,6 +465,95 @@ describe("production fixture port-zero startup handshake", () => {
       "injected provider close failure",
     );
     expect(forcedThrowClose).toBe(1);
+  });
+
+  it("waits for Unix process-group drain after the direct child exits", async () => {
+    const target = fakeLifecycleProcess(40_901);
+    let descendantGroupAlive = true;
+    let liveProbes = 0;
+    let killSignals = 0;
+    const seam: StopChildLifecycleTestSeam = {
+      platform: "linux",
+      processGroupPollIntervalMs: 5,
+      signalProcessGroup: (_processGroupId, signal) => {
+        if (signal === 0) {
+          if (!descendantGroupAlive) throw processGroupError("ESRCH");
+          liveProbes += 1;
+          return;
+        }
+        expect(signal).toBe("SIGKILL");
+        killSignals += 1;
+        if (!childHasExited(target)) emitProcessExit(target, 0);
+        if (killSignals === 3) descendantGroupAlive = false;
+      },
+    };
+
+    await stopChildBounded(target, 500, seam);
+    expect(childHasExited(target)).toBe(true);
+    expect(descendantGroupAlive).toBe(false);
+    expect(liveProbes).toBeGreaterThan(1);
+    expect(killSignals).toBeGreaterThan(1);
+
+    const signalsAfterDrain = killSignals;
+    await stopChildBounded(target, 500, seam);
+    expect(killSignals).toBe(signalsAfterDrain);
+  });
+
+  it("waits for direct child exit after the group reports ESRCH", async () => {
+    const target = fakeLifecycleProcess(40_911);
+    let probeCount = 0;
+    let killSignalCount = 0;
+    const seam: StopChildLifecycleTestSeam = {
+      platform: "linux",
+      signalProcessGroup: (_processGroupId, signal) => {
+        if (signal === 0) {
+          probeCount += 1;
+          throw processGroupError("ESRCH");
+        }
+        killSignalCount += 1;
+      },
+    };
+
+    setTimeout(() => emitProcessExit(target, 0), 30);
+    const startedAt = Date.now();
+    await expect(stopChildBounded(target, 500, seam)).resolves.toBeUndefined();
+    expect(probeCount).toBe(1);
+    expect(killSignalCount).toBe(0);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(25);
+  });
+
+  it("fails closed when Unix process-group status is denied", async () => {
+    const target = fakeLifecycleProcess(40_921);
+    const seam: StopChildLifecycleTestSeam = {
+      platform: "linux",
+      signalProcessGroup: (_processGroupId, signal) => {
+        if (signal === 0) throw processGroupError("EPERM");
+      },
+    };
+
+    await expect(stopChildBounded(target, 500, seam)).rejects.toThrow(
+      "daemon process group status could not be verified; pgid=40921; error=synthetic process-group EPERM",
+    );
+  });
+
+  it("fails with a stable timeout while the Unix process group remains visible", async () => {
+    const target = fakeLifecycleProcess(40_931);
+    let killSignals = 0;
+    const seam: StopChildLifecycleTestSeam = {
+      platform: "linux",
+      processGroupPollIntervalMs: 5,
+      signalProcessGroup: (_processGroupId, signal) => {
+        if (signal === 0) return;
+        killSignals += 1;
+        if (!childHasExited(target)) emitProcessExit(target, 0);
+      },
+    };
+
+    await expect(stopChildBounded(target, 35, seam)).rejects.toThrow(
+      "daemon process group did not drain within 35ms; pgid=40931; pid=40931 exitCode=0 signal=null",
+    );
+    expect(childHasExited(target)).toBe(true);
+    expect(killSignals).toBeGreaterThan(1);
   });
 
   it("waits a fresh target-exit grace after delayed taskkill completion", async () => {
@@ -882,7 +990,7 @@ describe("production fixture port-zero startup handshake", () => {
       await stopChildBounded(parent);
       await stopChildBounded(parent);
       expect(childHasExited(parent)).toBe(true);
-      expect(() => process.kill(grandchildPid, 0)).toThrow();
+      await waitForProcessGone(grandchildPid, 5_000);
     } finally {
       await stopChildBounded(parent).catch(() => undefined);
       lines.close();

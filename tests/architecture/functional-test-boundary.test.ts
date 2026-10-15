@@ -76,7 +76,8 @@ describe("functional-test trust boundary", () => {
       'spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"]',
     );
     expect(lifecycle).toContain("for (const attemptNumber of [1, 2])");
-    expect(lifecycle).toContain('process.kill(-child.pid, "SIGKILL")');
+    expect(lifecycle).toContain("process.kill(-groupId, signal)");
+    expect(lifecycle).toContain("daemon process group did not drain within");
     expect(lifecycleQualification).toContain(
       '"stops a real process tree and remains safe on repeated stop"',
     );
