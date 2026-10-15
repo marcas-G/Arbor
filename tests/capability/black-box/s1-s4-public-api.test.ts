@@ -442,6 +442,7 @@ const stopDaemon = async (child: ChildProcess | undefined) => {
 const startDaemon = async (requestedPort: number) => {
   const child = spawn(process.execPath, [DAEMON_HANDSHAKE_ENTRY], {
     cwd: directory,
+    detached: process.platform !== "win32",
     env: {
       ...process.env,
       ARBOR_DB: databaseFile,

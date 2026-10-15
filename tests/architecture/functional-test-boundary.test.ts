@@ -44,6 +44,9 @@ describe("functional-test trust boundary", () => {
     const productionFixture = source(
       "tests/functional/support/production-fixture.ts",
     );
+    const lifecycleQualification = source(
+      "tests/functional/process/production-fixture-port-handshake.functional.test.ts",
+    );
     for (const forbidden of [
       "node:sqlite",
       "SqlClient",
@@ -69,7 +72,20 @@ describe("functional-test trust boundary", () => {
     expect(lifecycle).toContain("event.pid !== child.pid");
     expect(lifecycle).toContain("event.nonce !== startedNonce");
     expect(lifecycle).toContain("export const stopChildBounded");
-    expect(lifecycle).toContain("killWindowsProcessTree(child, timeoutMs)");
+    expect(lifecycle).toContain(
+      'spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"]',
+    );
+    expect(lifecycle).toContain("for (const attemptNumber of [1, 2])");
+    expect(lifecycle).toContain('process.kill(-child.pid, "SIGKILL")');
+    expect(lifecycleQualification).toContain(
+      '"stops a real process tree and remains safe on repeated stop"',
+    );
+    expect(lifecycleQualification).not.toContain(
+      'it.skipIf(process.platform !== "win32")',
+    );
+    expect(productionFixture).toContain(
+      'detached: process.platform !== "win32"',
+    );
     expect(productionFixture).toContain("spawn(process.execPath, [childEntry]");
     expect(productionFixture).toContain("waitForNonceBoundPort(child, 0)");
     expect(productionFixture).toContain("await stopChild(daemon)");
