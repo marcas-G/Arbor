@@ -25,11 +25,13 @@ provide the callback.
 Persisted records are bounded and contain only phase, elapsed milliseconds,
 child PID, lifecycle stage, exit status, and summarized state; they omit
 nonces, secrets, provider request bodies, Session text, and opaque references.
-The reporter is enabled only for seven AH19 cases: five manifest-corruption
-cases (`logicalStepNo`, `providerTurnId`, `bindingFingerprint`, `repairAttempt`,
-and `executionId`), terminal ConversationResponse rebase, and terminal
-compiled-hash corruption. Other AH19 cases continue to run without these
-startup traces.
+Within this test module, all processes launched via
+`ah19-native-daemon-child.mjs` now emit startup phases by default. The
+AH19-owned nonce-daemon startup paths in the checkpoint helpers also enable
+the phase trace, so startup failures before the AH19 child restart are
+observable. Other functional tests using the ordinary nonce daemon are not
+changed. Child callbacks remain exception-safe, and persisted diagnostic data
+continues through the same strict phase/state allowlists.
 
 ## Validation
 
@@ -43,6 +45,7 @@ startup traces.
 | Startup JSONL redaction sentinel regression | PASS, 1/1; sentinel fields do not appear in the artifact |
 | AH19 terminal ConversationResponse after Native rebase | PASS, 1/1; case 77.311s, 38 skipped |
 | AH19 corrupted compiled hash before Summary | PASS, 1/1; case 133.322s, 38 skipped |
+| AH19 ordinary history + AH17Before + AH17After checkpoint sequence | PASS, 3/3; cases 61.384s, 56.034s, 58.449s; original per-test budgets unchanged |
 
 ## Phase evidence
 
@@ -130,3 +133,32 @@ assertion, or settlement assertion changed. The evidence establishes a
 test-fixture orchestration defect causing the delayed return; it does not claim
 that all possible startup/resource contention is eliminated. The only retained
 untracked batch evidence remains `.arbor-functional-schema42-FBDIxO/`.
+
+## Startup trace expansion and AH17 sequence
+
+The AH19 child trace applies by default to every process launched via
+`ah19-native-daemon-child.mjs` in this test module. The checkpoint helpers
+also opt their AH19-owned initial nonce-daemon startup into the same trace;
+this is local to these AH19 tests and does not change ordinary nonce fixtures
+elsewhere. All persisted values continue through strict phase and state
+allowlists.
+
+The requested minimum sequence passed on unchanged test budgets:
+
+| Case | Initial nonce daemon final bind | AH19 child final bind | Test result |
+|---|---:|---:|---|
+| Ordinary Native history | 21.870s | 18.774s | PASS, 61.384s |
+| AH17BeforeCheckpointEpochCommit | 17.801s | 17.446s | PASS, 56.034s |
+| AH17AfterCheckpointEpochCommit | 18.646s | 17.600s | PASS, 58.449s |
+
+Per-child phase records are in `.test-results/ah19-startup-1036.jsonl`. All
+six processes reached `web-transport.bind.after` and emitted the nonce-bound
+LISTEN marker. The full batch's STARTED-without-LISTEN symptom did not
+reproduce in this sequence. A preceding diagnostic attempt did capture a slow
+but progressing AH17Before initial startup (P39 runtime-path validation
+13.512s, Layer path validation 26.545s, schema validation 40.645s, writer
+permit acquisition 50.253s, Web bind 50.333s). That attempt then failed in
+the new test-only auto-attach hook after fixture startup; the hook was
+corrected and the complete sequence rerun successfully. The timings show
+startup-phase variability, but no phase stalled in the successful sequence;
+they do not establish a production root cause for the earlier full-run event.

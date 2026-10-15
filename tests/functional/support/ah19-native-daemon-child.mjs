@@ -21,7 +21,7 @@ const {
 } = await import("./functional-daemon-lifecycle.mjs");
 const onWebTransportListening = createFunctionalDaemonListenReporter();
 const startupDiagnosticProbe = createAh19StartupDiagnosticProbe(
-  process.env.ARBOR_AH19_STARTUP_TRACE === "1",
+  process.env.ARBOR_AH19_STARTUP_TRACE !== "0",
 );
 const reportStartupPhase = (phase) => {
   try {
