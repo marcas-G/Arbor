@@ -237,3 +237,22 @@ cleanup.
 
 No per-case timeout, recovery assertion, or security/settlement assertion was
 changed. No full suite was run.
+
+## Target-first process-table verification follow-up
+
+When taskkill returns nonzero after the root exits, the Windows-only fallback
+now queries `Win32_Process` with a bounded, hidden PowerShell helper and emits
+only the descendant PID closure. An empty closure confirms absence. A live
+closure receives bounded `/T /F` cleanup and a second query; success is only
+reported when that recheck is empty. Query failure or remaining PIDs stays
+unproven and reports only validated PID numbers. The extra process query is
+not used on ordinary code-0 taskkill success.
+
+| Validation | Result |
+|---|---|
+| Target-first code 128 with empty descendant closure | PASS |
+| Target-first live descendant cleanup + empty recheck | PASS |
+| Target-first query failure / remaining descendants | PASS; unproven |
+| Real Windows parent exits first; grandchild remains until verified cleanup | PASS, 1/1; 1.62s |
+| AH18 exact `manifest-context-epoch` fail-closed case | PASS, 31.171s |
+| AH10 generation-takeover before/after receipt-commit pair | PASS, 2/2; 59.837s and 59.239s |

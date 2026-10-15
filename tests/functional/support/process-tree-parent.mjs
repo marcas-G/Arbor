@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 const grandchild = spawn(
   process.execPath,
   ["-e", "setInterval(() => {}, 1000)"],
-  { stdio: "ignore", windowsHide: true },
+  { detached: true, stdio: "ignore", windowsHide: true },
 );
 
 grandchild.once("spawn", () => {
