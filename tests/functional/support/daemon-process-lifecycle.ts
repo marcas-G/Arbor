@@ -36,10 +36,6 @@ export interface StopChildLifecycleTestSeam {
     rootPid: number,
     timeoutMs: number,
   ) => Promise<ReadonlyArray<number>>;
-  readonly cleanupDescendantPids?: (
-    pids: ReadonlyArray<number>,
-    timeoutMs: number,
-  ) => Promise<void>;
   /** Test-only clock seam for deterministic process-tree stop race coverage. */
   readonly setTimeout?: typeof setTimeout;
   readonly clearTimeout?: typeof clearTimeout;
@@ -167,27 +163,6 @@ const queryWindowsDescendantPids = async (
     throw new Error("Windows process-table query returned unsafe PID data");
   }
   return pids;
-};
-
-const cleanupWindowsDescendantPids = async (
-  pids: ReadonlyArray<number>,
-  timeoutMs: number,
-): Promise<void> => {
-  const deadline = Date.now() + timeoutMs;
-  for (const pid of pids) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      throw new Error("descendant taskkill cleanup exceeded its time bound");
-    }
-    const result = await runWindowsCommandBounded(
-      "taskkill.exe",
-      ["/PID", String(pid), "/T", "/F"],
-      remainingMs,
-    );
-    if (result.exitCode === null) {
-      throw new Error("descendant taskkill cleanup did not exit");
-    }
-  }
 };
 
 const waitForChildExit = (child: ChildProcess, timeoutMs: number) => {
@@ -408,7 +383,6 @@ interface TargetFirstTreeCheck {
 const targetFirstTreeCheck = async (
   rootPid: number,
   seam: StopChildLifecycleTestSeam,
-  cleanupTimeoutMs: number,
 ): Promise<TargetFirstTreeCheck> => {
   const queryDescendants =
     seam.queryDescendantPids ?? queryWindowsDescendantPids;
@@ -443,40 +417,10 @@ const targetFirstTreeCheck = async (
       phase: "target-first-tree-absence-confirmed",
     };
   }
-
-  let cleanupDetail = "descendant cleanup completed";
-  try {
-    await (seam.cleanupDescendantPids ?? cleanupWindowsDescendantPids)(
-      descendants,
-      cleanupTimeoutMs,
-    );
-  } catch (error) {
-    cleanupDetail = error instanceof Error ? error.message : String(error);
-  }
-
-  let remaining: ReadonlyArray<number>;
-  try {
-    remaining = await queryDescendants(
-      rootPid,
-      seam.taskkillTimeoutMs ?? WINDOWS_PROCESS_QUERY_TIMEOUT_MS,
-    );
-  } catch (error) {
-    return {
-      succeeded: false,
-      phase: "target-first-descendant-recheck-failed",
-      detail: `${cleanupDetail}; ${error instanceof Error ? error.message : String(error)}; descendantPids=${JSON.stringify(descendants.slice(0, 32))}`,
-    };
-  }
-  if (remaining.length === 0) {
-    return {
-      succeeded: true,
-      phase: "target-first-descendant-cleanup-confirmed",
-    };
-  }
   return {
     succeeded: false,
     phase: "target-first-descendants-remain",
-    detail: `${cleanupDetail}; descendantPids=${JSON.stringify(remaining.slice(0, 32))}`,
+    detail: `descendantPids=${JSON.stringify(descendants.slice(0, 32))}`,
   };
 };
 
@@ -562,11 +506,7 @@ const runTaskkillAttempt = async (
         detail: `${cleanupDetail}; taskkill outcome=${completion.kind}`,
       };
     }
-    const treeCheck = await targetFirstTreeCheck(
-      child.pid,
-      seam,
-      taskkillTimeoutMs,
-    );
+    const treeCheck = await targetFirstTreeCheck(child.pid, seam);
     const taskkillDetail =
       completion.kind === "exit"
         ? `taskkill exit code=${String(completion.code)} signal=${String(completion.signal)}`

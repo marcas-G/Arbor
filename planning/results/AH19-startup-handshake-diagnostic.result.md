@@ -240,19 +240,20 @@ changed. No full suite was run.
 
 ## Target-first process-table verification follow-up
 
-When taskkill returns nonzero after the root exits, the Windows-only fallback
-now queries `Win32_Process` with a bounded, hidden PowerShell helper and emits
-only the descendant PID closure. An empty closure confirms absence. A live
-closure receives bounded `/T /F` cleanup and a second query; success is only
-reported when that recheck is empty. Query failure or remaining PIDs stays
-unproven and reports only validated PID numbers. The extra process query is
-not used on ordinary code-0 taskkill success.
+When taskkill returns nonzero after the root exits, a bounded, hidden
+PowerShell helper queries `Win32_Process` and emits only the descendant PID
+closure. The query is evidence-only: an empty closure confirms absence; any
+descendant or query failure remains unproven and reports only validated PIDs.
+The returned PIDs are never passed to taskkill, avoiding PID-reuse mis-targets.
+This process-table query is not used on ordinary code-0 taskkill success. A
+nonempty closure is left for the test runner's stop path or manual/known-handle
+cleanup; this code does not claim that those descendants were removed.
 
 | Validation | Result |
 |---|---|
 | Target-first code 128 with empty descendant closure | PASS |
-| Target-first live descendant cleanup + empty recheck | PASS |
+| Target-first live descendant closure | PASS; rejects unproven and never kills queried PID |
 | Target-first query failure / remaining descendants | PASS; unproven |
-| Real Windows parent exits first; grandchild remains until verified cleanup | PASS, 1/1; 1.62s |
-| AH18 exact `manifest-context-epoch` fail-closed case | PASS, 31.171s |
-| AH10 generation-takeover before/after receipt-commit pair | PASS, 2/2; 59.837s and 59.239s |
+| Real Windows root-only target-first code 128 with empty closure | PASS, 1/1; actual process-table query |
+| AH18 exact `manifest-context-epoch` fail-closed case | PASS, 30.667s |
+| AH10 generation-takeover before/after receipt-commit pair | PASS, 2/2; 67.561s and 59.175s |
