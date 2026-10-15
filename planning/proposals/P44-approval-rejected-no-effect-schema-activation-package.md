@@ -1,48 +1,50 @@
-# P44 ApprovalRejected no-effect migration activation package
+# Combined P43 + P44 schema activation package
 
-Status: prepared implementation package; **not activated**.
+Status: prepared; **not activated**. Required authorization token:
+`AUTHORIZE_P43_BLOCKED_AND_P44_APPROVAL_REJECTED_SCHEMA_ACTIVATION`.
 
-## Proposed physical change
+## Combined migration sequence
 
-Migration 0044, `approval_rejected_no_effect_denial`, requires user version 43.
-It drops and recreates only the P40 `tool_invocations` observation INSERT and
-UPDATE guards. The recreated guards are derived from the exact P40 definitions;
-the sole predicate change is admitting the already-frozen
-`ApprovalRejected` reason in the `Denied` no-effect allowlist. P40/P39/P42 SQL,
-table shape, canonical observation predicates, and other denial reasons remain
-unchanged.
+The schema-43 owner is the existing accepted but dormant
+`P43_BLOCKED_WORKEPISODE_MIGRATION`. The combined request is exactly:
 
-Prepared descriptor SQL SHA-256:
+1. P43: schema 42 → 43, applying the existing Blocked WorkEpisode and Inbox
+   workspace-sequence migration.
+2. P44: schema 43 → 44, applying
+   `P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION`.
+
+P44 drops and recreates only the P40 `tool_invocations` observation INSERT and
+UPDATE guards. It preserves their exact predicates and adds only the frozen
+`ApprovalRejected` reason to each Denied no-effect allowlist. P40/P39/P42 SQL,
+table shape, canonical observation predicates, and all other denial reasons
+remain unchanged.
+
+Prepared P44 descriptor SQL SHA-256:
 `2378c0170aae7beb0592c69bfffef9e611da6d5323caaa0de5b7d5360b7ff33f`.
 
-The descriptor is exported for isolated qualification only. It is absent from
-`CURRENT_MIGRATIONS`; `CURRENT_SCHEMA_VERSION`, runtime admission, readiness,
-production fixtures, and the P39–P42 offline CLI are unchanged. No online or
-preserved database was opened or upgraded.
+## Required post-token implementation scope
 
-## Required activation boundary
+Only after the exact token above may an implementation follow-up:
 
-Activation must be authorized as an ordered schema **43 → 44** suffix; P44 must
-not be applied directly to schema 42. This package does not silently assign the
-schema-43 predecessor. The repository currently contains a dormant, unregistered
-P43 Blocked WorkEpisode descriptor used only by isolated tests. Its presence
-does not authorize registering or applying that feature. Before activation, the
-governor must explicitly settle the schema-43 predecessor/ownership and issue
-the applicable token.
+- register the ordered current suffix P40 → P41 → P42 → P43 → P44 (P39 remains
+  the privileged maintenance step), and move runtime/readiness target to 44;
+- extend the offline schema-upgrade CLI for fresh/copy/resume paths through
+  versions 39–44, including version-44 close/read-only-reopen no-op checks;
+- rename/create current-runtime fixtures as schema 44 while retaining schema42
+  historical fixtures; migrate current composition/store fixture call sites;
+- qualify migration-43 and migration-44 prepared/commit/rollback crash
+  boundaries and exact ordered resume behavior.
 
-Only after that token may a follow-up implementation register P44, raise the
-runtime target, update readiness and the offline fresh/copy/resume CLI, and
-rename current-runtime fixtures. That follow-up must remain offline and limited
-to fresh databases or operator-selected disposable copies; it must not open,
-upgrade, or mutate any preserved/live Arbor database.
+This proposal grants none of those changes by itself. No online database,
+preserved database, deployment, or release upgrade is authorized. Any future
+qualification/upgrade must be offline and confined to fresh databases or
+operator-selected disposable copies. Existing live/preserved Arbor databases
+must not be opened, modified, migrated, or used as a source fixture.
 
-## Isolated evidence target
+## Current preparatory evidence
 
-Qualification uses a disposable schema-42 fixture, explicitly applies the
-existing dormant P43 fixture descriptor and then P44, verifies `user_version=44`,
-the P43 fixture tables, unchanged tool-invocation foreign keys/indexes, clean
-`foreign_key_check`, exact P40 trigger predicates plus the one added reason, and
-P4 `ApprovalRejected`/`ApprovalExpired` denial insert/update. Unknown denial
-codes and malformed canonical-success evidence must remain rejected. This
-isolated sequence is test evidence only, not permission to activate either
-migration in production.
+The unregistered P44 descriptor and isolated schema42 → explicit dormant P43 →
+P44 test evidence are recorded in
+`planning/results/P44-approval-rejected-no-effect-migration-preparatory.result.md`.
+That isolated sequence validates SQL behavior only; it does not register P43 or
+P44 or authorize production activation.
