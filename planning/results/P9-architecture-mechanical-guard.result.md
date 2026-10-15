@@ -5,16 +5,24 @@ Status: **PASS**
 The P9 regression guard previously expected the `architecture` package script
 to contain `tests/architecture`. That path belongs to
 `vitest.architecture.config.ts`; the script correctly invokes Vitest with that
-config. The guard now verifies `pnpm check` has a standalone `pnpm architecture`
-step before a standalone `pnpm test` step. It resolves the architecture script's
-`--config` path, checks realpath containment within the repository, then reads
-the config's literal include/exclude arrays. Vitest's installed `picomatch`
-implementation checks every recursively discovered architecture test file.
-Computed include/exclude arrays fail closed.
+config. The guard now accepts only a command beginning with `vitest run` or
+`pnpm exec vitest run`, one `--config` with a non-flag value, and no shell
+control syntax. It verifies `pnpm check` has a standalone `pnpm architecture`
+step before a standalone `pnpm test` step, and checks config-path containment
+using real paths.
 
-Negative checks cover a missing core-test step hidden by a Web-test command, the
-wrong step order, a nested architecture test path, dynamic include syntax, an
-exclude pattern, and a config path outside the repository.
+The config is loaded with the installed TypeScript compiler API and inspected
+as an AST. The guard requires `export default defineConfig({ test: ... })` and
+unique direct `include` and optional `exclude` property assignments to static
+string arrays. Comments cannot supply fields, and duplicates, computed keys,
+spreads, and dynamic arrays fail closed. Vitest's installed `picomatch`
+implementation checks every recursively discovered architecture test file.
+
+Negative checks cover echo/pre-command prefixes, shell control syntax,
+duplicate config flags, flag-as-config-value, a missing core-test step hidden
+by a Web-test command, the wrong step order, a nested architecture test path,
+comment-only fields, dynamic/computed/spread/duplicate config properties,
+exclusion, and a config path outside the repository.
 
 ## Evidence
 

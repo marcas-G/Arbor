@@ -11,8 +11,25 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+import {
+  type Expression,
+  isArrayLiteralExpression,
+  isCallExpression,
+  isComputedPropertyName,
+  isExportAssignment,
+  isIdentifier,
+  isObjectLiteralExpression,
+  isPropertyAssignment,
+  isSpreadAssignment,
+  isStringLiteral,
+  type ObjectLiteralElementLike,
+  type ObjectLiteralExpression,
+  type SourceFile as TypeScriptSourceFile,
+} from "typescript/unstable/ast";
+import { API as TypeScriptAPI } from "typescript/unstable/sync";
 import { describe, expect, it } from "vitest";
 import {
   ClockLive,
@@ -3310,22 +3327,137 @@ const picomatch = requireFromVitest("picomatch") as (
   pattern: string,
 ) => (path: string) => boolean;
 
-const parseStaticStringArray = (
-  source: string,
-  property: string,
-): ReadonlyArray<string> | undefined => {
-  const body = source.match(
-    new RegExp(`\\b${property}\\s*:\\s*\\[([^\\]]*)\\]`, "u"),
-  )?.[1];
-  if (body === undefined) return undefined;
-  const patterns = [...body.matchAll(/(["'])(.*?)\1/gu)];
-  const rest = body.replace(/(["'])(.*?)\1/gu, "").replace(/[\s,]/gu, "");
-  if (rest.length > 0) return undefined;
-  return patterns
-    .map((match) => match[2])
-    .filter((pattern): pattern is string => pattern !== undefined);
+const parseArchitectureConfigArgument = (script: string) => {
+  if (/[\r\n]/u.test(script) || !/^[A-Za-z0-9_./=:\t -]+$/u.test(script))
+    return undefined;
+  const tokens = script.trim().split(/[ \t]+/u);
+  let argumentsStart: number;
+  if (tokens[0] === "vitest" && tokens[1] === "run") {
+    argumentsStart = 2;
+  } else if (
+    tokens[0] === "pnpm" &&
+    tokens[1] === "exec" &&
+    tokens[2] === "vitest" &&
+    tokens[3] === "run"
+  ) {
+    argumentsStart = 4;
+  } else {
+    return undefined;
+  }
+
+  const arguments_ = tokens.slice(argumentsStart);
+  const configOptions = arguments_.filter(
+    (token) => token === "--config" || token.startsWith("--config="),
+  );
+  if (configOptions.length !== 1) return undefined;
+  if (configOptions[0] === "--config") {
+    if (arguments_.length !== 2) return undefined;
+    const configPath = arguments_[1];
+    return configPath !== undefined && !configPath.startsWith("-")
+      ? configPath
+      : undefined;
+  }
+  if (arguments_.length !== 1) return undefined;
+  const configPath = configOptions[0]?.slice("--config=".length);
+  return configPath !== undefined &&
+    configPath.length > 0 &&
+    !configPath.startsWith("-")
+    ? configPath
+    : undefined;
 };
 
+const readUniqueStaticProperties = (object: ObjectLiteralExpression) => {
+  const properties = new Map<string, ObjectLiteralElementLike>();
+  for (const property of object.properties) {
+    if (isSpreadAssignment(property)) return undefined;
+    if (isComputedPropertyName(property.name)) return undefined;
+    const propertyName =
+      isIdentifier(property.name) || isStringLiteral(property.name)
+        ? property.name.text
+        : undefined;
+    if (propertyName === undefined || properties.has(propertyName))
+      return undefined;
+    properties.set(propertyName, property);
+  }
+  return properties;
+};
+
+const readStaticStringArray = (
+  expression: Expression,
+): ReadonlyArray<string> | undefined => {
+  if (!isArrayLiteralExpression(expression)) return undefined;
+  const values: string[] = [];
+  for (const element of expression.elements) {
+    if (!isStringLiteral(element)) return undefined;
+    values.push(element.text);
+  }
+  return values;
+};
+
+const parseArchitectureConfigSource = (sourceFile: TypeScriptSourceFile) => {
+  const exports = sourceFile.statements.filter(isExportAssignment);
+  if (exports.length !== 1 || exports[0]?.isExportEquals !== false)
+    return undefined;
+  const expression = exports[0].expression;
+  if (
+    !isCallExpression(expression) ||
+    !isIdentifier(expression.expression) ||
+    expression.expression.text !== "defineConfig" ||
+    expression.arguments.length !== 1
+  )
+    return undefined;
+  const rootConfig = expression.arguments[0];
+  if (rootConfig === undefined || !isObjectLiteralExpression(rootConfig))
+    return undefined;
+  const rootProperties = readUniqueStaticProperties(rootConfig);
+  const testProperty = rootProperties?.get("test");
+  if (
+    testProperty === undefined ||
+    !isPropertyAssignment(testProperty) ||
+    !isObjectLiteralExpression(testProperty.initializer)
+  )
+    return undefined;
+  const testProperties = readUniqueStaticProperties(testProperty.initializer);
+  const includeProperty = testProperties?.get("include");
+  if (includeProperty === undefined || !isPropertyAssignment(includeProperty))
+    return undefined;
+  const include = readStaticStringArray(includeProperty.initializer);
+  if (include === undefined) return undefined;
+  const excludeProperty = testProperties?.get("exclude");
+  if (excludeProperty === undefined) return { include, exclude: [] };
+  if (!isPropertyAssignment(excludeProperty)) return undefined;
+  const exclude = readStaticStringArray(excludeProperty.initializer);
+  return exclude === undefined ? undefined : { include, exclude };
+};
+
+const parseArchitectureConfigFiles = (configPaths: ReadonlyArray<string>) => {
+  const api = new TypeScriptAPI({ cwd: REPO_ROOT });
+  try {
+    const documents = configPaths.map((path) => ({
+      uri: pathToFileURL(path).href,
+    }));
+    const snapshot = api.updateSnapshot({ openFiles: documents });
+    return documents.map((document, index) => {
+      const project = snapshot.getDefaultProjectForFile(document);
+      if (project === undefined) return undefined;
+      if (project.program.getSyntacticDiagnostics(document).length > 0)
+        return undefined;
+      const sourceFile = project.program.getSourceFile(document);
+      if (sourceFile === undefined) return undefined;
+      const configPath = configPaths[index];
+      if (
+        configPath === undefined ||
+        sourceFile.text !== readFileSync(configPath, "utf8")
+      )
+        return undefined;
+      return parseArchitectureConfigSource(sourceFile);
+    });
+  } catch {
+    return configPaths.map(() => undefined);
+  } finally {
+    api.close();
+  }
+};
 const enumerateTestFilesRecursively = (
   directory: string,
   repositoryRelativeDirectory: string,
@@ -3377,7 +3509,6 @@ const hasArchitectureCheckSteps = (checkScript: string) => {
     architectureIndex < coreTestIndex
   );
 };
-
 const p9SuiteSources = (): ReadonlyArray<{
   name: string;
   source: string;
@@ -3589,25 +3720,48 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
     ).toBe(false);
 
     const architectureScript = scripts.architecture ?? "";
-    const architectureCommand = architectureScript.split(/\s+/u);
-    const vitestRunIndex = architectureCommand.findIndex(
-      (token, index) =>
-        token === "vitest" && architectureCommand[index + 1] === "run",
-    );
-    expect(vitestRunIndex).toBeGreaterThanOrEqual(0);
-    const configFlagIndex = architectureCommand.findIndex(
-      (token) => token === "--config" || token.startsWith("--config="),
-    );
-    expect(configFlagIndex).toBeGreaterThan(vitestRunIndex);
-    const configFlag = architectureCommand[configFlagIndex];
-    const architectureConfigPath = configFlag?.startsWith("--config=")
-      ? configFlag.slice("--config=".length)
-      : configFlag === "--config"
-        ? architectureCommand[configFlagIndex + 1]
-        : undefined;
+    const architectureConfigPath =
+      parseArchitectureConfigArgument(architectureScript);
     expect(architectureConfigPath).toBeDefined();
     if (architectureConfigPath === undefined)
-      throw new Error("architecture script does not resolve a config path");
+      throw new Error(
+        "architecture script must start with Vitest run and one --config",
+      );
+
+    expect(
+      parseArchitectureConfigArgument(
+        "vitest run --config vitest.architecture.config.ts",
+      ),
+    ).toBe("vitest.architecture.config.ts");
+    expect(
+      parseArchitectureConfigArgument(
+        "pnpm exec vitest run --config vitest.architecture.config.ts",
+      ),
+    ).toBe("vitest.architecture.config.ts");
+    expect(
+      parseArchitectureConfigArgument(
+        "echo vitest run --config vitest.architecture.config.ts",
+      ),
+    ).toBeUndefined();
+    expect(
+      parseArchitectureConfigArgument(
+        "pnpm install && vitest run --config vitest.architecture.config.ts",
+      ),
+    ).toBeUndefined();
+    expect(
+      parseArchitectureConfigArgument(
+        "vitest run --config one.config.ts --config two.config.ts",
+      ),
+    ).toBeUndefined();
+    expect(
+      parseArchitectureConfigArgument("vitest run --config --help"),
+    ).toBeUndefined();
+    expect(
+      parseArchitectureConfigArgument(
+        "vitest run --config vitest.architecture.config.ts; echo bad",
+      ),
+    ).toBeUndefined();
+
     const resolvedArchitectureConfig = resolve(
       REPO_ROOT,
       architectureConfigPath,
@@ -3617,25 +3771,24 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
       true,
     );
     const realArchitectureConfig = realpathSync(resolvedArchitectureConfig);
-    const architectureConfig = readFileSync(realArchitectureConfig, "utf8");
-    const includeGlobs = parseStaticStringArray(architectureConfig, "include");
-    expect(includeGlobs).toBeDefined();
-    if (includeGlobs === undefined)
-      throw new Error("architecture include must be a static string array");
-    const excludeIsDeclared = /\bexclude\s*:/u.test(architectureConfig);
-    const parsedExcludeGlobs = parseStaticStringArray(
-      architectureConfig,
-      "exclude",
-    );
-    expect(excludeIsDeclared && parsedExcludeGlobs === undefined).toBe(false);
-    const excludeGlobs = parsedExcludeGlobs ?? [];
+    const [globs] = parseArchitectureConfigFiles([realArchitectureConfig]);
+    expect(globs).toBeDefined();
+    if (globs === undefined)
+      throw new Error(
+        "architecture config must expose static include/exclude arrays",
+      );
+
     const architectureTestFiles = enumerateTestFilesRecursively(
       join(REPO_ROOT, "tests", "architecture"),
       "tests/architecture",
     );
     expect(architectureTestFiles.length).toBeGreaterThan(0);
     expect(
-      isCoveredByVitestGlobs(includeGlobs, excludeGlobs, architectureTestFiles),
+      isCoveredByVitestGlobs(
+        globs.include,
+        globs.exclude,
+        architectureTestFiles,
+      ),
     ).toBe(true);
 
     const nestedRoot = mkdtempSync(join(tmpdir(), "arbor-p9-arch-nested-"));
@@ -3651,11 +3804,11 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
         "tests/architecture/nested/nested.test.ts",
       ]);
       expect(
-        isCoveredByVitestGlobs(includeGlobs, excludeGlobs, nestedTestFiles),
+        isCoveredByVitestGlobs(globs.include, globs.exclude, nestedTestFiles),
       ).toBe(true);
       expect(
         isCoveredByVitestGlobs(
-          includeGlobs,
+          globs.include,
           ["tests/architecture/**/*.test.ts"],
           nestedTestFiles,
         ),
@@ -3664,29 +3817,70 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
       rmSync(nestedRoot, { recursive: true, force: true });
     }
 
-    expect(
-      parseStaticStringArray(
-        "test: { include: getArchitectureIncludes() }",
-        "include",
-      ),
-    ).toBeUndefined();
-    expect(
-      parseStaticStringArray(
-        'test: { include: ["tests/**/*.test.ts", getExtraIncludes()] }',
-        "include",
-      ),
-    ).toBeUndefined();
-
+    const configSource = (testOptions: string) =>
+      `export default defineConfig({ test: { ${testOptions} } });`;
+    const invalidConfigSources: ReadonlyArray<readonly [string, string]> = [
+      [
+        "comment-only",
+        configSource('// include: ["tests/architecture/**/*.test.ts"]\n'),
+      ],
+      ["dynamic-include", configSource("include: getArchitectureIncludes()")],
+      [
+        "spread",
+        configSource('...shared, include: ["tests/architecture/**/*.test.ts"]'),
+      ],
+      [
+        "computed-key",
+        configSource('["include"]: ["tests/architecture/**/*.test.ts"]'),
+      ],
+      [
+        "duplicate-include",
+        configSource(
+          'include: ["tests/architecture/**/*.test.ts"], include: ["tests/**/*.test.ts"]',
+        ),
+      ],
+      [
+        "dynamic-exclude",
+        configSource(
+          'include: ["tests/architecture/**/*.test.ts"], exclude: getExcludes()',
+        ),
+      ],
+    ];
+    const invalidConfigRoot = mkdtempSync(
+      join(tmpdir(), "arbor-p9-invalid-architecture-config-"),
+    );
+    try {
+      const invalidConfigPaths = invalidConfigSources.map(([name, source]) => {
+        const path = join(invalidConfigRoot, `${name}.config.ts`);
+        writeFileSync(path, source, "utf8");
+        return path;
+      });
+      const invalidConfigResults =
+        parseArchitectureConfigFiles(invalidConfigPaths);
+      expect(invalidConfigResults).toHaveLength(invalidConfigSources.length);
+      expect(invalidConfigResults.every((result) => result === undefined)).toBe(
+        true,
+      );
+    } finally {
+      rmSync(invalidConfigRoot, { recursive: true, force: true });
+    }
     const outsideRoot = mkdtempSync(
       join(tmpdir(), "arbor-p9-architecture-config-escape-"),
     );
     try {
       const outsideConfigPath = join(outsideRoot, "vitest.config.ts");
-      writeFileSync(outsideConfigPath, "export default {};\n", "utf8");
+      writeFileSync(outsideConfigPath, "", "utf8");
       expect(existsSync(outsideConfigPath)).toBe(true);
       expect(resolvesToRepositoryFile(REPO_ROOT, outsideConfigPath)).toBe(
         false,
       );
+      const escapedPath = relative(REPO_ROOT, outsideConfigPath)
+        .split(sep)
+        .join("/");
+      expect(
+        parseArchitectureConfigArgument(`vitest run --config ${escapedPath}`),
+      ).toBe(escapedPath);
+      expect(resolvesToRepositoryFile(REPO_ROOT, escapedPath)).toBe(false);
     } finally {
       rmSync(outsideRoot, { recursive: true, force: true });
     }
