@@ -217,6 +217,35 @@ describe("P37 exited-owner lease qualification", () => {
     expect(readLease(databaseFile)).toMatchObject({ generation: 4 });
   });
 
+  it("does not derive a durable generation across same-PID reuse with a new incarnation", async () => {
+    const databaseFile = seedLease({
+      workerIncarnationId: "inc-p37-reused-pid",
+    });
+    const owner = ownerController({ pid: 321 });
+    await expect(
+      expireP37LeaseForQualification({
+        databaseFile,
+        executionId: "exe_p37_owner_test",
+        daemon: owner.controller,
+        probes: [
+          acquiredProbe({
+            processId: 321,
+            generation: 3,
+            workerIncarnationId: "inc-p37-previous-pid-owner",
+          }),
+        ],
+        timeoutMs: 25,
+        pollIntervalMs: 5,
+      }),
+    ).rejects.toThrow("no stable-incarnation prior probe exists");
+    expect(owner.crashCount()).toBe(0);
+    expect(readLease(databaseFile)).toMatchObject({
+      generation: 4,
+      worker_incarnation_id: "inc-p37-reused-pid",
+      expires_at: "2999-01-01T00:00:00.000Z",
+    });
+  });
+
   it.each([
     [
       "same-PID reuse with a different process incarnation",
