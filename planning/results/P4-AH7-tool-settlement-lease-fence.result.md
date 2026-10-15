@@ -148,9 +148,10 @@ NonIdempotent result is ambiguous with no reconciliation fact, the invocation
 remains unsettled at `MayHaveStarted`, Execution settles
 `OutcomeUnknown(ReconciliationRequired([invocationId]))`, Action is
 `ReconciliationPending`, and one typed P3 `OutcomeUnknown` ToolResult is
-projected without executor/canonical/Artifact result refs. No successful
-Observation, duplicate ToolResult, second effect, or second provider/executor
-attempt is admitted.
+projected without executor/canonical/Artifact result refs. The test observes
+no successful Observation or duplicate ToolResult, exactly one P4 invocation
+for the logical action, one successful external effect marker, and one target
+Provider call. It does not claim a direct count of Executor attempts.
 
 Follow-up verification: the complete
 `p4-ah7-tool-settlement-lease-fencing.functional.test.ts` passed twice
