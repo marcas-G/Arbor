@@ -31,7 +31,7 @@ export interface StopChildLifecycleTestSeam {
   readonly platform?: NodeJS.Platform;
   readonly taskkillTimeoutMs?: number;
   readonly taskkillCleanupTimeoutMs?: number;
-  readonly spawnTaskkill?: (pid: number) => ChildProcess;
+  readonly spawnTaskkill?: (pid: number, attempt: number) => ChildProcess;
   /** Test-only clock seam for deterministic process-tree stop race coverage. */
   readonly setTimeout?: typeof setTimeout;
   readonly clearTimeout?: typeof clearTimeout;
@@ -111,21 +111,191 @@ const waitForTaskkillOrTarget = (
     }
   });
 
-const stopKillerAfterTargetExit = async (
+type KillerState = "spawn" | "exit" | "error" | "timeout";
+
+const waitForKillerState = (
   killer: ChildProcess,
   timeoutMs: number,
-) => {
+): Promise<KillerState> =>
+  new Promise((resolveState) => {
+    let settled = false;
+    const finish = (state: KillerState) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      killer.removeListener("spawn", onSpawn);
+      killer.removeListener("exit", onExit);
+      killer.removeListener("error", onError);
+      resolveState(state);
+    };
+    const onSpawn = () => finish("spawn");
+    const onExit = () => finish("exit");
+    const onError = () => finish("error");
+    const timeout = setTimeout(() => finish("timeout"), timeoutMs);
+    killer.once("spawn", onSpawn);
+    killer.once("exit", onExit);
+    killer.once("error", onError);
+    if (childHasExited(killer)) onExit();
+    else if (killer.pid !== undefined) onSpawn();
+  });
+
+const waitForKillerTermination = (
+  killer: ChildProcess,
+  timeoutMs: number,
+): Promise<"exit" | "error" | "timeout"> =>
+  new Promise((resolveState) => {
+    let settled = false;
+    const finish = (state: "exit" | "error" | "timeout") => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      killer.removeListener("exit", onExit);
+      killer.removeListener("error", onError);
+      resolveState(state);
+    };
+    const onExit = () => finish("exit");
+    const onError = () => finish("error");
+    const timeout = setTimeout(() => finish("timeout"), timeoutMs);
+    killer.once("exit", onExit);
+    killer.once("error", onError);
+    if (childHasExited(killer)) onExit();
+  });
+
+const reapTaskkillHelper = async (
+  killer: ChildProcess,
+  timeoutMs: number,
+  phase: string,
+): Promise<void> => {
+  if (!childHasExited(killer) && killer.pid === undefined) {
+    const state = await waitForKillerState(killer, timeoutMs);
+    if (state === "error" || state === "exit") {
+      if (killer.pid === undefined || childHasExited(killer)) return;
+    } else if (state === "timeout") {
+      killer.kill();
+      if (killer.pid === undefined && !childHasExited(killer)) {
+        throw new Error(
+          `taskkill helper did not spawn or settle within ${timeoutMs}ms; phase=${phase}; ${childExitDiagnostic(killer)}`,
+        );
+      }
+    }
+  }
   if (childHasExited(killer)) return;
-  const killRequested = killer.kill();
-  if (childHasExited(killer) || (killer.pid === undefined && !killRequested))
-    return;
+  killer.kill();
+  if (childHasExited(killer)) return;
+  const state = await waitForKillerTermination(killer, timeoutMs);
+  if (state === "exit" || (state === "error" && childHasExited(killer))) return;
+  throw new Error(
+    `taskkill helper could not be reaped within ${timeoutMs}ms; phase=${phase}; ${childExitDiagnostic(killer)}`,
+  );
+};
+
+interface TaskkillAttemptResult {
+  readonly helper?: ChildProcess;
+  readonly targetExitedFirst?: boolean;
+  readonly succeeded: boolean;
+  readonly phase: string;
+  readonly detail?: string;
+}
+
+const runTaskkillAttempt = async (
+  child: ChildProcess,
+  attempt: number,
+  taskkillTimeoutMs: number,
+  targetExitGraceMs: number,
+  seam: StopChildLifecycleTestSeam,
+): Promise<TaskkillAttemptResult> => {
+  if (child.pid === undefined) {
+    return {
+      succeeded: false,
+      phase: `taskkill-${attempt}-spawn`,
+      detail: "target PID unavailable",
+    };
+  }
+  let killer: ChildProcess;
   try {
-    await waitForChildExit(killer, timeoutMs);
+    killer = (
+      seam.spawnTaskkill ??
+      ((pid) =>
+        spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+          stdio: "ignore",
+          windowsHide: true,
+        }))
+    )(child.pid, attempt);
   } catch (error) {
-    throw new Error(
-      `taskkill helper cleanup timed out; phase=taskkill-cleanup; ${childExitDiagnostic(killer)}`,
-      { cause: error },
-    );
+    return {
+      succeeded: false,
+      phase: `taskkill-${attempt}-spawn`,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const outcome = await waitForTaskkillOrTarget(
+    killer,
+    child,
+    taskkillTimeoutMs,
+    seam,
+  );
+  if (outcome.kind === "target-exit" || childHasExited(child)) {
+    try {
+      await reapTaskkillHelper(
+        killer,
+        seam.taskkillCleanupTimeoutMs ?? WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS,
+        `taskkill-${attempt}-target-first-helper-cleanup`,
+      );
+      return {
+        helper: killer,
+        targetExitedFirst: true,
+        succeeded: true,
+        phase: `target-exit-before-taskkill-${attempt}-complete`,
+      };
+    } catch (error) {
+      return {
+        helper: killer,
+        targetExitedFirst: true,
+        succeeded: false,
+        phase: `taskkill-${attempt}-target-first-helper-cleanup`,
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  if (outcome.kind === "taskkill-timeout") {
+    return {
+      helper: killer,
+      succeeded: false,
+      phase: `taskkill-${attempt}-timeout`,
+      detail: `taskkill exceeded ${taskkillTimeoutMs}ms`,
+    };
+  }
+  if (outcome.kind === "taskkill-error") {
+    return {
+      ...(killer.pid === undefined ? {} : { helper: killer }),
+      succeeded: false,
+      phase: `taskkill-${attempt}-error`,
+      detail: outcome.error.message,
+    };
+  }
+  if (outcome.code !== 0) {
+    return {
+      helper: killer,
+      succeeded: false,
+      phase: `taskkill-${attempt}-exit-${String(outcome.code)}`,
+      detail: `signal=${String(outcome.signal)}`,
+    };
+  }
+  try {
+    await waitForChildExit(child, targetExitGraceMs);
+    return {
+      helper: killer,
+      succeeded: true,
+      phase: `taskkill-${attempt}-target-exit-confirmed`,
+    };
+  } catch (error) {
+    return {
+      helper: killer,
+      succeeded: false,
+      phase: `taskkill-${attempt}-target-exit-timeout`,
+      detail: error instanceof Error ? error.message : String(error),
+    };
   }
 };
 
@@ -139,81 +309,63 @@ const killWindowsProcessTree = async (
       `cannot stop child without a PID; ${childExitDiagnostic(child)}`,
     );
   }
-  let killer: ChildProcess;
-  try {
-    killer = (
-      seam.spawnTaskkill ??
-      ((pid) =>
-        spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
-          stdio: "ignore",
-          windowsHide: true,
-        }))
-    )(child.pid);
-  } catch (error) {
-    throw new Error(
-      `taskkill spawn failed; phase=taskkill-start; ${childExitDiagnostic(child)}`,
-      { cause: error },
-    );
-  }
-
-  const cleanupTimeoutMs =
-    seam.taskkillCleanupTimeoutMs ?? WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS;
+  const attempts: string[] = [];
   const taskkillTimeoutMs =
     seam.taskkillTimeoutMs ?? WINDOWS_TASKKILL_TIMEOUT_MS;
-  try {
-    const outcome = await waitForTaskkillOrTarget(
-      killer,
+  const cleanupTimeoutMs =
+    seam.taskkillCleanupTimeoutMs ?? WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS;
+
+  for (const attemptNumber of [1, 2]) {
+    const result = await runTaskkillAttempt(
       child,
+      attemptNumber,
       taskkillTimeoutMs,
+      targetExitGraceMs,
       seam,
     );
-    if (outcome.kind === "target-exit") {
-      await stopKillerAfterTargetExit(killer, cleanupTimeoutMs);
-      return;
+    attempts.push(
+      `${result.phase}${result.detail === undefined ? "" : ` (${result.detail})`}`,
+    );
+    if (result.targetExitedFirst) {
+      if (result.succeeded) return;
+      break;
     }
-    if (outcome.kind === "taskkill-timeout") {
-      throw new Error(
-        `taskkill process-tree command timed out after ${taskkillTimeoutMs}ms; phase=taskkill; ${childExitDiagnostic(child)}`,
-      );
+    if (result.succeeded) return;
+    let helperCleanupProven = true;
+    if (result.helper !== undefined && !childHasExited(result.helper)) {
+      try {
+        await reapTaskkillHelper(
+          result.helper,
+          cleanupTimeoutMs,
+          `taskkill-${attemptNumber}-helper-cleanup`,
+        );
+        attempts.push(`taskkill-${attemptNumber}-helper-reaped`);
+      } catch (error) {
+        helperCleanupProven = false;
+        attempts.push(
+          `taskkill-${attemptNumber}-helper-cleanup-unproven (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
     }
-    if (outcome.kind === "taskkill-error") {
-      throw new Error(
-        `taskkill process-tree command failed; phase=taskkill; ${childExitDiagnostic(child)}; error=${outcome.error.message}`,
-        { cause: outcome.error },
-      );
-    }
-    if (outcome.code !== 0 && !childHasExited(child)) {
-      throw new Error(
-        `taskkill failed with code=${String(outcome.code)} signal=${String(outcome.signal)}; phase=taskkill; ${childExitDiagnostic(child)}`,
-      );
-    }
-    try {
-      await waitForChildExit(child, targetExitGraceMs);
-    } catch (error) {
-      throw new Error(
-        `daemon process did not exit within ${targetExitGraceMs}ms after taskkill; phase=target-exit-after-taskkill; ${childExitDiagnostic(child)}`,
-        { cause: error },
-      );
-    }
-  } catch (error) {
-    const taskkillTimedOut =
-      error instanceof Error && error.message.includes("phase=taskkill;");
-    if (
-      !childHasExited(killer) &&
-      (killer.pid !== undefined || taskkillTimedOut)
-    ) {
-      await stopKillerAfterTargetExit(killer, cleanupTimeoutMs).catch(
-        (cleanupError: unknown) => {
-          throw new AggregateError(
-            [error, cleanupError],
-            "taskkill failure and helper cleanup both failed",
-            { cause: error },
-          );
-        },
-      );
-    }
-    throw error;
+    if (childHasExited(child)) return;
+    if (!helperCleanupProven) break;
   }
+
+  if (!childHasExited(child)) {
+    attempts.push("fallback-direct-child-SIGKILL");
+    try {
+      child.kill("SIGKILL");
+      await waitForChildExit(child, targetExitGraceMs);
+      attempts.push("fallback-direct-child-exit-confirmed");
+    } catch (error) {
+      attempts.push(
+        `fallback-direct-child-exit-unconfirmed (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
+  }
+  throw new Error(
+    `Windows process-tree cleanup unproven; attempt phases=${attempts.join(" -> ")}; ${childExitDiagnostic(child)}`,
+  );
 };
 
 export const stopChildBounded = async (

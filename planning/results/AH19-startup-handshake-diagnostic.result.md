@@ -194,3 +194,29 @@ the new test-only auto-attach hook after fixture startup; the hook was
 corrected and the complete sequence rerun successfully. The timings show
 startup-phase variability, but no phase stalled in the successful sequence;
 they do not establish a production root cause for the earlier full-run event.
+
+## Windows taskkill failure-path hardening
+
+The Windows process-tree path now retries `/T /F` once after a bounded primary
+helper cleanup when the target is still alive. A retry is successful only
+after the target's exit is observed within a fresh bounded grace. If the retry
+also fails, the code attempts direct-child `SIGKILL` and a fresh bounded exit
+wait, then rejects with `Windows process-tree cleanup unproven` and the
+attempt-phase list; it never treats direct-child exit as proof that descendants
+were removed. If the target exits while taskkill has not spawned yet, cleanup
+waits for the helper's spawn/error/exit; a late-spawned helper is killed and
+reaped.
+
+| Validation | Result |
+|---|---|
+| Primary timeout → retry tree-kill success → target and fake descendant exit | PASS; virtual timing; no real sleep |
+| Two tree-kill failures → direct child killed and function rejects unproven; fake descendant retained | PASS; virtual timing; no helper/target remains |
+| Target-first with pid-less helper delayed spawn → helper killed and reaped | PASS; no real sleep |
+| Target-first with pid-less helper spawn error | PASS; waited for error; no helper remains |
+| Windows lifecycle race/retry/fallback suite | PASS, 9/9; real process-tree repeated-stop included |
+| AH19 exact `providerTurnId` | PASS, 53.575s |
+| Ordered AH19 `logicalStepNo` + `providerTurnId` | PASS, 2/2; fail-closed markers at 53.644s and 53.231s |
+| Targeted Biome and `pnpm typecheck` | PASS |
+
+No per-case timeout, recovery assertion, or security/settlement assertion was
+changed. No full suite was run.
