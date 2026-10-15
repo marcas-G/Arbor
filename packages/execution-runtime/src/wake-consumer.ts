@@ -13,6 +13,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import { CommandId, DecisionId, ExecutionId, parse } from "@arbor/domain";
+import type { LeaseFencingRejected } from "@arbor/ports";
 import {
   Clock,
   DecisionRequestStore,
@@ -47,6 +48,14 @@ export const selectWorkspaceInboxEpisode = (
       entry.kind === "Message" ||
       entry.kind === "SpecialistSettled" ||
       entry.kind === "WorkBlocked",
+  );
+
+/** A worker that lost its lease must stop this wake without failing the daemon. */
+export const containLeaseFencingRejected = <A, E, R>(
+  effect: Effect.Effect<A, LeaseFencingRejected | E, R>,
+): Effect.Effect<A | undefined, E, R> =>
+  effect.pipe(
+    Effect.catchTag("LeaseFencingRejected", () => Effect.succeed(undefined)),
   );
 
 /**
@@ -248,13 +257,15 @@ export const consumeWorkspaceWake = (
         return;
       }
 
-      yield* runExecution(
-        executionId,
-        wakeReason,
-        principal,
-        undefined,
-        qualificationProbe,
-        leaseQualificationProbe,
+      yield* containLeaseFencingRejected(
+        runExecution(
+          executionId,
+          wakeReason,
+          principal,
+          undefined,
+          qualificationProbe,
+          leaseQualificationProbe,
+        ),
       );
       return;
     }
