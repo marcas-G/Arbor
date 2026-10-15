@@ -670,6 +670,86 @@ describe("production fixture port-zero startup handshake", () => {
     expect(retry.listenerCount("exit")).toBe(0);
   });
 
+  it("keeps a failed tree cleanup unproven when the root exits during helper cleanup", async () => {
+    const target = fakeLifecycleProcess(41_601);
+    const primary = fakeLifecycleProcess(41_602);
+    const primaryMutable = primary as unknown as {
+      killed: boolean;
+      kill: () => boolean;
+    };
+    primaryMutable.kill = () => {
+      primaryMutable.killed = true;
+      return true;
+    };
+    const clock = fakeTimerClock();
+    const descendantAlive = true;
+    let spawnAttempts = 0;
+    const seam: StopChildLifecycleTestSeam = {
+      platform: "win32",
+      taskkillTimeoutMs: 10_000,
+      taskkillCleanupTimeoutMs: 500,
+      spawnTaskkill: () => {
+        spawnAttempts += 1;
+        return primary;
+      },
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    };
+
+    const stopped = stopChildBounded(target, 5_000, seam);
+    clock.advanceBy(10_000);
+    await new Promise<void>((resolveImmediate) =>
+      setImmediate(resolveImmediate),
+    );
+    expect(primaryMutable.killed).toBe(true);
+    expect(childHasExited(target)).toBe(false);
+
+    emitProcessExit(target, 0);
+    emitProcessExit(primary, 1);
+    let firstFailure = "";
+    try {
+      await stopped;
+    } catch (error) {
+      firstFailure = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(firstFailure).toContain("Windows process-tree cleanup unproven");
+    expect(firstFailure).toContain(
+      "target-exited-after-failed-taskkill-1; tree-cleanup-unproven",
+    );
+    expect(spawnAttempts).toBe(1);
+    expect(descendantAlive).toBe(true);
+    expect(childHasExited(target)).toBe(true);
+    expect(childHasExited(primary)).toBe(true);
+    expect(clock.pendingCount()).toBe(0);
+    expect(target.listenerCount("exit")).toBe(0);
+    expect(primary.listenerCount("exit")).toBe(0);
+
+    await expect(stopChildBounded(target, 5_000, seam)).rejects.toThrow(
+      firstFailure,
+    );
+    expect(spawnAttempts).toBe(1);
+    expect(descendantAlive).toBe(true);
+  });
+
+  it("keeps an already-exited, never-stopped child as the existing no-op", async () => {
+    const target = fakeLifecycleProcess(41_701);
+    emitProcessExit(target, 0);
+    let spawnAttempts = 0;
+    const seam: StopChildLifecycleTestSeam = {
+      platform: "win32",
+      spawnTaskkill: () => {
+        spawnAttempts += 1;
+        return fakeLifecycleProcess(41_702);
+      },
+    };
+
+    await expect(
+      stopChildBounded(target, 5_000, seam),
+    ).resolves.toBeUndefined();
+    expect(spawnAttempts).toBe(0);
+  });
+
   it("kills and reaps taskkill on its independent timeout", async () => {
     const target = fakeLifecycleProcess(42_001);
     const killer = fakeLifecycleProcess(42_002);
