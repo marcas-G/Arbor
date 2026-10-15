@@ -8,9 +8,13 @@ const report = (tag, eventNonce, pid, port) =>
     `${JSON.stringify({ tag, nonce: eventNonce, pid, ...(port === undefined ? {} : { port }) })}\n`,
   );
 
-if (mode === "exit-after-listening") {
+if (mode === "exit-after-listening" || mode === "hang-readiness") {
   const port = Number(process.env.ARBOR_HTTP_PORT ?? "0");
-  const server = createServer(() => {});
+  const server = createServer(() => {
+    if (mode === "hang-readiness") {
+      report("FUNCTIONAL_DAEMON_READINESS_REQUEST", nonce, process.pid);
+    }
+  });
   await new Promise((resolveListen, rejectListen) => {
     server.once("error", rejectListen);
     server.listen(port, "127.0.0.1", resolveListen);
@@ -21,10 +25,12 @@ if (mode === "exit-after-listening") {
   }
   report("FUNCTIONAL_DAEMON_STARTED", nonce, process.pid);
   report("FUNCTIONAL_DAEMON_LISTENING", nonce, process.pid, address.port);
-  setTimeout(() => {
-    process.stderr.write("readiness-exit-sentinel\n");
-    process.exit(23);
-  }, 100);
+  if (mode === "exit-after-listening") {
+    setTimeout(() => {
+      process.stderr.write("readiness-exit-sentinel\n");
+      process.exit(23);
+    }, 100);
+  }
   await new Promise(() => {});
 }
 

@@ -25,7 +25,9 @@ provide the callback.
 Persisted records are bounded and contain only phase, elapsed milliseconds,
 child PID, lifecycle stage, exit status, and summarized state; they omit
 nonces, secrets, provider request bodies, Session text, and opaque references.
-The reporter is enabled only for the two requested AH19 cases.
+The reporter is enabled only for five AH19 manifest-corruption cases:
+`logicalStepNo`, `providerTurnId`, `bindingFingerprint`, `repairAttempt`, and
+`executionId`. Other AH19 cases continue to run without these startup traces.
 
 ## Validation
 
