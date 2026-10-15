@@ -34,6 +34,11 @@ export const isP39WindowsAclQualificationEnabled = (
   aclModuleAvailable: boolean,
 ): boolean => platform === "win32" && aclModuleAvailable;
 
+export const isP39PathQualificationEnabled = (
+  platform: NodeJS.Platform,
+  aclModuleAvailable: boolean,
+): boolean => platform !== "win32" || aclModuleAvailable;
+
 /** The test process does not impersonate between fixture operations, so its
  * Windows token SID is stable and can be safely reused for ACL cleanup. */
 const getCurrentWindowsSid = (): string => {

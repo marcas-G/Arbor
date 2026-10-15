@@ -10,14 +10,17 @@ import {
   releaseP39WriterPermit,
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import {
+  isP39PathQualificationEnabled,
   makeP39PrivateTestDirectory,
   p39WindowsAclQualificationAvailable,
   p39WindowsTestEnvironment,
   removeP39PrivateTestDirectory,
 } from "../../support/p39-windows-deployment-test.js";
 
-const windowsAclQualificationAvailable =
-  process.platform === "win32" && p39WindowsAclQualificationAvailable();
+const p39PathQualificationAvailable = isP39PathQualificationEnabled(
+  process.platform,
+  p39WindowsAclQualificationAvailable(),
+);
 
 const childModule = resolve(
   "tests/functional/support/p39-writer-lock-child.mjs",
@@ -175,7 +178,7 @@ const competeAcrossProcess = async (input: {
   }
 };
 
-describe.skipIf(!windowsAclQualificationAvailable)(
+describe.skipIf(!p39PathQualificationAvailable)(
   "P39 cross-process SQLite writer exclusion",
   () => {
     it("blocks maintenance while another OS process holds a daemon shared permit", async () => {

@@ -50,16 +50,42 @@ use because `SeSecurityPrivilege` is unavailable. The committed test uses
 `p39WindowsAclQualificationAvailable()` now returns false off Windows. The
 four OS-specific denial tests use the explicit gate
 `process.platform === "win32" && p39WindowsAclQualificationAvailable()`.
-Cross-platform P39 path tests retain their POSIX lane. A pure gate test checks
-Linux/darwin as false, Windows without the ACL module as false, and Windows
-with the module as true; this verifies the guard logic without claiming a
-Linux-host run.
+The P39 path/recovery suites that support POSIX use the separate gate
+`process.platform !== "win32" || p39WindowsAclQualificationAvailable()`;
+specifically, `blocked-workepisode-restart-wake.test.ts` and
+`p39-maintenance-writer-exclusion.functional.test.ts` remain enabled on POSIX.
+A pure gate test checks the non-Windows branch, Windows without the ACL module,
+and Windows with the module. No Linux-host run is claimed.
 
 ```powershell
 pnpm exec vitest run adapters/persistence-sqlite/test/p39-windows-security-timeout.test.ts --reporter=verbose
 ```
 
-Result: **6/6 PASS**, including the platform-gate cases.
+Result: **7/7 PASS**. The pure gate test verifies POSIX remains enabled for
+cross-platform path suites even when no Windows ACL module is available.
+
+The Windows lane also confirmed both cross-platform suites still execute when
+the Windows ACL module is available:
+
+```powershell
+pnpm exec vitest run apps/single-workspace/test/blocked-workepisode-restart-wake.test.ts --reporter=verbose
+```
+
+Result: **2/2 PASS** on `W10-20250217599`.
+
+```powershell
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/p39-maintenance-writer-exclusion.functional.test.ts --reporter=verbose
+```
+
+Result: **3/3 PASS** on `W10-20250217599`; all three cross-process writer
+exclusion cases ran rather than being suite-skipped.
+
+Both cross-platform suite gates use the pure predicate
+`isP39PathQualificationEnabled(process.platform, p39WindowsAclQualificationAvailable())`;
+the four OS-specific denial cases continue to use the stricter Windows-only
+predicate. No Linux host was available in this run, so the POSIX behavior is
+verified through the explicit pure-gate cases above rather than claimed as an
+OS-host execution.
 
 ## Performance and remaining checks
 

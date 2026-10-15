@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isP39WindowsAclQualificationEnabled } from "../../../tests/support/p39-windows-deployment-test.js";
+import {
+  isP39PathQualificationEnabled,
+  isP39WindowsAclQualificationEnabled,
+} from "../../../tests/support/p39-windows-deployment-test.js";
 import {
   executeP39WindowsSecurityQuery,
   P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
@@ -14,6 +17,13 @@ describe("P39 Windows security query timeout", () => {
     expect(isP39WindowsAclQualificationEnabled("darwin", true)).toBe(false);
     expect(isP39WindowsAclQualificationEnabled("win32", false)).toBe(false);
     expect(isP39WindowsAclQualificationEnabled("win32", true)).toBe(true);
+  });
+
+  it("keeps cross-platform P39 suites enabled on POSIX and gates only Windows without ACL support", () => {
+    expect(isP39PathQualificationEnabled("linux", false)).toBe(true);
+    expect(isP39PathQualificationEnabled("darwin", false)).toBe(true);
+    expect(isP39PathQualificationEnabled("win32", false)).toBe(false);
+    expect(isP39PathQualificationEnabled("win32", true)).toBe(true);
   });
 
   it("batches volume, reparse, ACL and owner checks for every path in one query", () => {

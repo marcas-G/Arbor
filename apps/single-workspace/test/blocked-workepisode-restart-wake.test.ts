@@ -15,12 +15,18 @@ import {
   p7SeedProject,
   p7TestActor,
 } from "../../../tests/support/p7-app.js";
-import { p39WindowsAclQualificationAvailable } from "../../../tests/support/p39-windows-deployment-test.js";
+import {
+  isP39PathQualificationEnabled,
+  p39WindowsAclQualificationAvailable,
+} from "../../../tests/support/p39-windows-deployment-test.js";
 import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { runDaemonOnce } from "../src/main.js";
 
-const windowsAclQualificationAvailable = p39WindowsAclQualificationAvailable();
+const p39PathQualificationAvailable = isP39PathQualificationEnabled(
+  process.platform,
+  p39WindowsAclQualificationAvailable(),
+);
 
 const projectId = p7Project;
 const childWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789a2";
@@ -129,7 +135,7 @@ const runWithDatabase = <A, R>(
     ),
   );
 
-describe.skipIf(!windowsAclQualificationAvailable)(
+describe.skipIf(!p39PathQualificationAvailable)(
   "Blocked WorkEpisode restart readmission",
   () => {
     it("global scheduler re-admits durable Parent Inbox after the source offset already advanced", async () => {
