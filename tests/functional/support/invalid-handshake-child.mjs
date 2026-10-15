@@ -7,6 +7,8 @@ const report = (tag, eventNonce, pid, port) =>
   process.stdout.write(
     `${JSON.stringify({ tag, nonce: eventNonce, pid, ...(port === undefined ? {} : { port }) })}\n`,
   );
+const stayAliveForFixtureCleanup = () =>
+  new Promise(() => setInterval(() => {}, 60_000));
 
 if (
   mode === "exit-after-listening" ||
@@ -42,7 +44,7 @@ if (
       process.exit(23);
     }, 100);
   }
-  await new Promise(() => {});
+  await stayAliveForFixtureCleanup();
 }
 
 if (mode === "early-exit") {
@@ -68,7 +70,7 @@ if (mode === "duplicate-started") {
       )
       .join("\n")}\n`,
   );
-  await new Promise(() => {});
+  await stayAliveForFixtureCleanup();
 }
 
 if (mode === "duplicate-listening") {
@@ -88,7 +90,7 @@ if (mode === "duplicate-listening") {
       )
       .join("\n")}\n`,
   );
-  await new Promise(() => {});
+  await stayAliveForFixtureCleanup();
 }
 
 report(
@@ -102,4 +104,4 @@ report(
   process.pid,
   43210,
 );
-await new Promise(() => {});
+await stayAliveForFixtureCleanup();

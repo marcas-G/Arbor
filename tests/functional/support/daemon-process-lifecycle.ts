@@ -31,7 +31,6 @@ export interface StopChildLifecycleTestSeam {
   readonly platform?: NodeJS.Platform;
   readonly taskkillTimeoutMs?: number;
   readonly taskkillCleanupTimeoutMs?: number;
-  readonly naturalExitGraceMs?: number;
   readonly spawnTaskkill?: (pid: number, attempt: number) => ChildProcess;
   /** Test-only clock seam for deterministic process-tree stop race coverage. */
   readonly setTimeout?: typeof setTimeout;
@@ -40,7 +39,6 @@ export interface StopChildLifecycleTestSeam {
 
 const WINDOWS_TASKKILL_TIMEOUT_MS = 10_000;
 const WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS = 1_000;
-const WINDOWS_NATURAL_EXIT_GRACE_MS = 1_500;
 const unprovenWindowsTreeCleanup = new WeakMap<ChildProcess, string>();
 
 const waitForChildExit = (child: ChildProcess, timeoutMs: number) => {
@@ -163,32 +161,6 @@ const waitForKillerTermination = (
     killer.once("error", onError);
     if (childHasExited(killer)) onExit();
   });
-
-const waitForNaturalChildExitGrace = (
-  child: ChildProcess,
-  graceMs: number,
-  timers: Pick<StopChildLifecycleTestSeam, "setTimeout" | "clearTimeout">,
-): Promise<boolean> => {
-  if (childHasExited(child)) return Promise.resolve(true);
-  if (graceMs <= 0) return Promise.resolve(false);
-  return new Promise((resolveExited) => {
-    let settled = false;
-    const setTimer = timers.setTimeout ?? setTimeout;
-    const clearTimer = timers.clearTimeout ?? clearTimeout;
-    let timeout: ReturnType<typeof setTimeout>;
-    const finish = (exited: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimer(timeout);
-      child.removeListener("exit", onExit);
-      resolveExited(exited);
-    };
-    const onExit = () => finish(true);
-    timeout = setTimer(() => finish(false), graceMs);
-    child.once("exit", onExit);
-    if (childHasExited(child)) finish(true);
-  });
-};
 
 type TaskkillCompletion =
   | {
@@ -502,14 +474,6 @@ export const stopChildBounded = async (
       throw new Error(priorUnprovenOutcome);
     }
     if (childHasExited(child)) return;
-    const naturalExitGraceMs =
-      seam.naturalExitGraceMs ??
-      (seam.setTimeout === undefined ? WINDOWS_NATURAL_EXIT_GRACE_MS : 0);
-    const exitedDuringGrace =
-      naturalExitGraceMs <= 0
-        ? false
-        : await waitForNaturalChildExitGrace(child, naturalExitGraceMs, seam);
-    if (exitedDuringGrace || childHasExited(child)) return;
     try {
       await killWindowsProcessTree(child, timeoutMs, seam);
     } catch (error) {
