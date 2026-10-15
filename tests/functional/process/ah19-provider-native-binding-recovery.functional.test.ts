@@ -2742,82 +2742,108 @@ describe("AH19 restart binding qualification", () => {
     ).toHaveLength(1);
   }, 150_000);
 
-  it.each(["firstSequence", "lastSequence"] as const)(
-    "fails closed after restart when an ordinary Native frontier has only %s null",
-    async (nullSide) => {
-      const scenario = await startOrdinaryNativeAtCheckpointBoundary(
-        "AH17AfterCheckpointEpochCommit",
-      );
-      const { fixture, project, workId, native, probe, childOutput } = scenario;
-      const ids = {
-        sessionId: project.rootSessionId,
-        executionId: probe.executionId,
-        workId,
-      };
-      const beforeKill = readSnapshot(fixture.databaseFile, ids);
-      expect(beforeKill.session?.context_epoch).toBe(1);
-      expect(beforeKill.checkpoints).toHaveLength(1);
-      await fixture.crash();
-      await expireLeaseAfterOldDaemonExit(
-        fixture,
-        project.rootSessionId,
-        probe.executionId,
-        workId,
-      );
-      corruptNativeManifestFrontierHalfNull(
-        fixture.databaseFile,
-        native.providerTurnId,
-        nullSide,
-      );
-      const corrupted = readSnapshot(fixture.databaseFile, ids);
-      const changedTurn = corrupted.providerTurns.find(
-        (turn) => turn.provider_turn_id === native.providerTurnId,
-      );
-      const frontier = JSON.parse(changedTurn?.manifest_json ?? "{}")
-        .inputFrontier as {
-        firstSequence: number | null;
-        lastSequence: number | null;
-      };
-      expect(frontier[nullSide]).toBeNull();
-      expect(
-        frontier[
-          nullSide === "firstSequence" ? "lastSequence" : "firstSequence"
-        ],
-      ).toEqual(expect.any(Number));
-      const requestsBeforeRestart = providerRequests.length;
-      await fixture
-        .restart({
-          entry: childEntry,
-          daemonEnvironment: {
-            ARBOR_AH19_BOUNDARY: "none",
-            ARBOR_AH19_BINDING_VARIANT: "A",
-            ARBOR_AH19_ORDINARY_WORK: "1",
-            ARBOR_AH19_CAPTURE_EXIT: "1",
-          },
-        })
-        .catch(() => undefined);
-      const outcome = await waitForPublic(
-        async () => ({
-          stage: childOutput.find((line) =>
-            line.includes(
-              "NativeCheckpointEvidence:frontier=false:source=true",
-            ),
-          ),
-          snapshot: readSnapshot(fixture.databaseFile, ids),
-        }),
-        (state) => state.stage !== undefined,
-        30_000,
-      );
-      expect(outcome.stage).toContain(
-        "NativeCheckpointEvidence:frontier=false:source=true",
-      );
-      expect(outcome.snapshot.session?.context_epoch).toBe(1);
-      expect(outcome.snapshot.checkpoints).toEqual(beforeKill.checkpoints);
-      expect(outcome.snapshot.steps).toEqual(beforeKill.steps);
-      expect(outcome.snapshot.execution?.settled_at).toBeNull();
-      expect(providerRequests).toHaveLength(requestsBeforeRestart);
-    },
+  const failClosedForHalfNullOrdinaryNativeFrontier = async (
+    nullSide: "firstSequence" | "lastSequence",
+  ) => {
+    const diagnostic =
+      nullSide === "lastSequence"
+        ? beginAh19PhaseDiagnostics(
+            "fails closed after restart when an ordinary Native frontier has only lastSequence null",
+            "ordinary-native-lastSequence-null",
+          )
+        : undefined;
+    const scenario = await startOrdinaryNativeAtCheckpointBoundary(
+      "AH17AfterCheckpointEpochCommit",
+    );
+    const { fixture, project, workId, native, probe, childOutput } = scenario;
+    const ids = {
+      sessionId: project.rootSessionId,
+      executionId: probe.executionId,
+      workId,
+    };
+    diagnostic?.attach(fixture, childOutput);
+    diagnostic?.setSnapshot(() => readSnapshot(fixture.databaseFile, ids));
+    diagnostic?.phase("gen0 checkpoint boundary ready", {
+      executionId: probe.executionId,
+      providerTurnId: native.providerTurnId,
+    });
+    const beforeKill = readSnapshot(fixture.databaseFile, ids);
+    expect(beforeKill.session?.context_epoch).toBe(1);
+    expect(beforeKill.checkpoints).toHaveLength(1);
+    await fixture.crash();
+    diagnostic?.phase("gen0 daemon crashed");
+    await expireLeaseAfterOldDaemonExit(
+      fixture,
+      project.rootSessionId,
+      probe.executionId,
+      workId,
+    );
+    diagnostic?.phase("lease expired after old daemon exit");
+    corruptNativeManifestFrontierHalfNull(
+      fixture.databaseFile,
+      native.providerTurnId,
+      nullSide,
+    );
+    diagnostic?.phase("manifest frontier mutated", { nullSide });
+    const corrupted = readSnapshot(fixture.databaseFile, ids);
+    const changedTurn = corrupted.providerTurns.find(
+      (turn) => turn.provider_turn_id === native.providerTurnId,
+    );
+    const frontier = JSON.parse(changedTurn?.manifest_json ?? "{}")
+      .inputFrontier as {
+      firstSequence: number | null;
+      lastSequence: number | null;
+    };
+    expect(frontier[nullSide]).toBeNull();
+    expect(
+      frontier[nullSide === "firstSequence" ? "lastSequence" : "firstSequence"],
+    ).toEqual(expect.any(Number));
+    const requestsBeforeRestart = providerRequests.length;
+    await fixture
+      .restart({
+        entry: childEntry,
+        daemonEnvironment: {
+          ARBOR_AH19_BOUNDARY: "none",
+          ARBOR_AH19_BINDING_VARIANT: "A",
+          ARBOR_AH19_ORDINARY_WORK: "1",
+          ARBOR_AH19_CAPTURE_EXIT: "1",
+        },
+      })
+      .catch(() => undefined);
+    diagnostic?.phase("gen1 restart returned");
+    const outcome = await waitForPublic(
+      async () => ({
+        stage: childOutput.find((line) =>
+          line.includes("NativeCheckpointEvidence:frontier=false:source=true"),
+        ),
+        snapshot: readSnapshot(fixture.databaseFile, ids),
+      }),
+      (state) => state.stage !== undefined,
+      30_000,
+    );
+    diagnostic?.phase("fail-closed frontier marker observed", {
+      stage: outcome.stage,
+    });
+    expect(outcome.stage).toContain(
+      "NativeCheckpointEvidence:frontier=false:source=true",
+    );
+    expect(outcome.snapshot.session?.context_epoch).toBe(1);
+    expect(outcome.snapshot.checkpoints).toEqual(beforeKill.checkpoints);
+    expect(outcome.snapshot.steps).toEqual(beforeKill.steps);
+    expect(outcome.snapshot.execution?.settled_at).toBeNull();
+    expect(providerRequests).toHaveLength(requestsBeforeRestart);
+  };
+
+  it(
+    "fails closed after restart when an ordinary Native frontier has only firstSequence null",
+    () => failClosedForHalfNullOrdinaryNativeFrontier("firstSequence"),
     150_000,
+  );
+
+  it(
+    "fails closed after restart when an ordinary Native frontier has only lastSequence null",
+    () => failClosedForHalfNullOrdinaryNativeFrontier("lastSequence"),
+    180_000,
   );
 
   it.each(["WorkStartup", "ConversationCommon"] as const)(
