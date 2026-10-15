@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { SHELL_DEFINITION } from "../../../packages/tool-runtime/src/catalog.js";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
 import {
   type AhProbeHit,
@@ -17,6 +19,7 @@ import {
   makePublicClient,
   submitHumanMessage,
   waitForApproval,
+  waitForExecutableApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -68,6 +71,249 @@ const isToolResultFor = (
     return payload.invocationId === invocationId && payload.callRef === callRef;
   } catch {
     return false;
+  }
+};
+
+const readToolResultForCall = (
+  rows: ReadonlyArray<Readonly<Record<string, unknown>>>,
+  callRef: string,
+) =>
+  rows
+    .map((row) => {
+      try {
+        return {
+          row,
+          payload: JSON.parse(String(row.payload_json)) as Record<
+            string,
+            unknown
+          >,
+        };
+      } catch {
+        return undefined;
+      }
+    })
+    .find((candidate) => candidate?.payload.callRef === callRef);
+
+interface ExecutableApprovalQualification {
+  readonly approvalId: string;
+  readonly revision: number;
+  readonly row: {
+    readonly approval_id: string;
+    readonly route_kind: string;
+    readonly project_id: string;
+    readonly workspace_id: string;
+    readonly execution_id: string;
+    readonly stable_action_id: string;
+    readonly action_version: string;
+    readonly side_effect_semantics: string;
+    readonly arguments_json: string;
+    readonly target_resource_space_ids_json: string;
+    readonly state: string;
+    readonly revision: number;
+    readonly binding_proven: number;
+    readonly logical_step_no: number;
+    readonly repair_attempt: number;
+    readonly action_index: number;
+    readonly logical_action_id: string;
+    readonly call_ref: string;
+    readonly tool_invocation_id: string;
+    readonly episode_kind: string | null;
+    readonly episode_ref: string | null;
+    readonly episode_revision: number | null;
+    readonly action_state: string;
+    readonly action_kind: string;
+    readonly action_call_ref: string;
+    readonly input_hash: string;
+  };
+}
+
+const waitForExactShellApproval = async (input: {
+  readonly client: ReturnType<typeof makePublicClient>;
+  readonly databaseFile: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly workId: string;
+  readonly controlApprovalId: string;
+  readonly marker: string;
+  readonly command: string;
+  readonly sideEffectSemantics: string;
+}): Promise<ExecutableApprovalQualification> => {
+  const publicEntry = await waitForExecutableApproval(
+    input.client,
+    input.workspaceId,
+    input.marker,
+    60_000,
+  );
+  const { approvalId, revision } = publicEntry;
+  const db = new DatabaseSync(input.databaseFile, { readOnly: true });
+  try {
+    const row = db
+      .prepare(
+        `SELECT a.approval_id, a.route_kind, a.project_id, a.workspace_id,
+                a.execution_id, a.stable_action_id, a.action_version,
+                a.side_effect_semantics, a.arguments_json,
+                a.target_resource_space_ids_json, a.state, a.revision,
+                a.binding_proven, a.logical_step_no, a.repair_attempt,
+                a.action_index, a.logical_action_id, a.call_ref,
+                a.tool_invocation_id, e.episode_kind, e.episode_ref,
+                e.episode_revision, x.state AS action_state,
+                x.action_kind, x.call_ref AS action_call_ref, x.input_hash
+           FROM action_approvals a
+           JOIN executions e ON e.execution_id = a.execution_id
+           JOIN agent_loop_step_actions x
+             ON x.execution_id = a.execution_id
+            AND x.logical_step_no = a.logical_step_no
+            AND x.repair_attempt = a.repair_attempt
+            AND x.action_index = a.action_index
+            AND x.logical_action_id = a.logical_action_id
+          WHERE a.approval_id = ? AND a.route_kind = 'Executable'
+            AND a.binding_proven = 1`,
+      )
+      .get(approvalId) as ExecutableApprovalQualification["row"] | undefined;
+    if (row === undefined) {
+      throw new Error(
+        `AH7 public EAP ${approvalId} had no exact durable P38 binding`,
+      );
+    }
+    const expectedArguments = {
+      command: input.command,
+      cwd: { mount: "workspace", path: "." },
+      timeoutMs: 5_000,
+    };
+    expect(row).toMatchObject({
+      approval_id: approvalId,
+      route_kind: "Executable",
+      project_id: input.projectId,
+      workspace_id: input.workspaceId,
+      stable_action_id: "shell",
+      action_version: SHELL_DEFINITION.version,
+      side_effect_semantics: input.sideEffectSemantics,
+      state: "Pending",
+      revision,
+      binding_proven: 1,
+      episode_kind: "WorkEpisode",
+      episode_ref: input.workId,
+      episode_revision: 1,
+      action_state: "Pending",
+      action_kind: "shell",
+      action_call_ref: row.call_ref,
+      input_hash: createHash("sha256").update(row.arguments_json).digest("hex"),
+    });
+    expect(JSON.parse(row.arguments_json)).toEqual(expectedArguments);
+    const targetResourceSpaceIds = JSON.parse(
+      row.target_resource_space_ids_json,
+    ) as unknown;
+    expect(Array.isArray(targetResourceSpaceIds)).toBe(true);
+    expect(
+      (targetResourceSpaceIds as ReadonlyArray<string>).length,
+    ).toBeGreaterThan(0);
+    expect(row.logical_action_id).toMatch(/^lac_/u);
+    expect(row.call_ref).toMatch(/^call_/u);
+    expect(row.tool_invocation_id).toMatch(/^tin_/u);
+    const executableApprovalCount = Number(
+      (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM action_approvals
+              WHERE execution_id = ? AND route_kind = 'Executable'
+                AND binding_proven = 1`,
+          )
+          .get(row.execution_id) as { readonly count: number }
+      ).count,
+    );
+    const controlApproval = db
+      .prepare("SELECT route_kind FROM action_approvals WHERE approval_id = ?")
+      .get(input.controlApprovalId) as
+      | { readonly route_kind: string }
+      | undefined;
+    expect(executableApprovalCount).toBe(1);
+    expect(controlApproval).toEqual({ route_kind: "Control" });
+    expect(input.controlApprovalId).not.toBe(approvalId);
+    return { approvalId, revision, row };
+  } finally {
+    db.close();
+  }
+};
+
+const readExecutableApprovalAfterRecovery = (
+  databaseFile: string,
+  approvalId: string,
+  executionId: string,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const approval = db
+      .prepare(
+        `SELECT approval_id, route_kind, execution_id, state, revision,
+                consumed_at, consumed_by, tool_invocation_id,
+                target_resource_space_ids_json
+           FROM action_approvals WHERE approval_id = ?`,
+      )
+      .get(approvalId) as
+      | {
+          readonly approval_id: string;
+          readonly route_kind: string;
+          readonly execution_id: string;
+          readonly state: string;
+          readonly revision: number;
+          readonly consumed_at: string | null;
+          readonly consumed_by: string | null;
+          readonly tool_invocation_id: string;
+          readonly target_resource_space_ids_json: string;
+        }
+      | undefined;
+    const approvals = db
+      .prepare(
+        `SELECT approval_id, state, consumed_by FROM action_approvals
+          WHERE execution_id = ? AND route_kind = 'Executable'
+            AND binding_proven = 1`,
+      )
+      .all(executionId) as Array<{
+      readonly approval_id: string;
+      readonly state: string;
+      readonly consumed_by: string | null;
+    }>;
+    if (approval === undefined) throw new Error("AH7 EAP row disappeared");
+    return { approval, approvals };
+  } finally {
+    db.close();
+  }
+};
+
+const readP4InvocationApprovalBinding = (
+  databaseFile: string,
+  executionId: string,
+  invocationId: string,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        `SELECT invocation_id, execution_id, workspace_id, tool_name,
+                tool_version, side_effect_semantics, arguments_json,
+                resolved_regions_json, approval_id, effect_admission_state,
+                result_ref, settlement_kind, settled_at
+           FROM tool_invocations WHERE execution_id = ? AND invocation_id = ?`,
+      )
+      .get(executionId, invocationId) as
+      | {
+          readonly invocation_id: string;
+          readonly execution_id: string;
+          readonly workspace_id: string;
+          readonly tool_name: string;
+          readonly tool_version: string;
+          readonly side_effect_semantics: string;
+          readonly arguments_json: string;
+          readonly resolved_regions_json: string;
+          readonly approval_id: string | null;
+          readonly effect_admission_state: string;
+          readonly result_ref: string | null;
+          readonly settlement_kind: string | null;
+          readonly settled_at: string | null;
+        }
+      | undefined;
+  } finally {
+    db.close();
   }
 };
 
@@ -305,6 +551,26 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       );
       expect(steeredWork?.status).toBe("Open");
 
+      const executableApproval = await waitForExactShellApproval({
+        client,
+        databaseFile: fixture.databaseFile,
+        projectId: project.projectId,
+        workspaceId: project.rootWorkspaceId,
+        workId,
+        controlApprovalId: approval.approvalId,
+        marker,
+        command,
+        sideEffectSemantics: semantics,
+      });
+      expect(
+        await client.command(project.projectId, "ResolveExecutableApproval", {
+          approvalId: executableApproval.approvalId,
+          expectedRevision: executableApproval.revision,
+          decision: "Approve",
+          reason: `AH7 public shell approval ${marker}`,
+        }),
+      ).toMatchObject({ body: { resolution: "Committed" } });
+
       let hit: AhProbeHit | undefined;
       try {
         const observed = await waitForPublic(
@@ -329,10 +595,68 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       }
       await fixture.crash();
       const crashed = durableSnapshot(fixture.databaseFile);
-      if (hit?.executionId === undefined || hit.invocationId === undefined) {
+      if (
+        hit?.executionId === undefined ||
+        hit.invocationId === undefined ||
+        hit.callRef === undefined
+      ) {
         throw new Error("AH7 shell probe lacks exact execution/tool identity");
       }
       const targetExecutionId = hit.executionId;
+      const targetCallRef = hit.callRef;
+      const crashedInvocationBinding = readP4InvocationApprovalBinding(
+        fixture.databaseFile,
+        targetExecutionId,
+        hit.invocationId,
+      );
+      expect(crashedInvocationBinding).toMatchObject({
+        invocation_id: hit.invocationId,
+        execution_id: targetExecutionId,
+        workspace_id: project.rootWorkspaceId,
+        tool_name: "shell",
+        tool_version: SHELL_DEFINITION.version,
+        side_effect_semantics: semantics,
+        approval_id: executableApproval.approvalId,
+        effect_admission_state:
+          boundary === "AH7AfterToolIntentCommit"
+            ? "NotAdmitted"
+            : "MayHaveStarted",
+        result_ref: null,
+      });
+      expect(
+        JSON.parse(crashedInvocationBinding?.arguments_json ?? "null"),
+      ).toEqual(JSON.parse(executableApproval.row.arguments_json));
+      const approvedResourceIds = JSON.parse(
+        executableApproval.row.target_resource_space_ids_json,
+      ) as ReadonlyArray<string>;
+      const resolvedRegionIds = (
+        JSON.parse(
+          crashedInvocationBinding?.resolved_regions_json ?? "[]",
+        ) as ReadonlyArray<{ readonly resourceSpaceId: string }>
+      )
+        .map((region) => region.resourceSpaceId)
+        .sort();
+      expect(resolvedRegionIds).toEqual([...approvedResourceIds].sort());
+      const approvalAtCrash = readExecutableApprovalAfterRecovery(
+        fixture.databaseFile,
+        executableApproval.approvalId,
+        targetExecutionId,
+      );
+      expect(approvalAtCrash.approval).toMatchObject({
+        approval_id: executableApproval.approvalId,
+        route_kind: "Executable",
+        execution_id: targetExecutionId,
+        state: "Consumed",
+        consumed_by: hit.invocationId,
+        tool_invocation_id: hit.invocationId,
+      });
+      expect(approvalAtCrash.approvals).toEqual([
+        expect.objectContaining({
+          approval_id: executableApproval.approvalId,
+          state: "Consumed",
+          consumed_by: hit.invocationId,
+        }),
+      ]);
       const crashedActions = crashed.actions.filter(
         (action) => action.execution_id === targetExecutionId,
       );
@@ -485,16 +809,37 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         execution_id: targetExecutionId,
         side_effect_semantics: semantics,
       });
+      const recoveredInvocationBinding = readP4InvocationApprovalBinding(
+        fixture.databaseFile,
+        targetExecutionId,
+        hit.invocationId,
+      );
+      expect(recoveredInvocationBinding?.approval_id).toBe(
+        executableApproval.approvalId,
+      );
+      expect(recoveredInvocationBinding?.arguments_json).toBe(
+        executableApproval.row.arguments_json,
+      );
+      const recoveredApproval = readExecutableApprovalAfterRecovery(
+        fixture.databaseFile,
+        executableApproval.approvalId,
+        targetExecutionId,
+      );
+      expect(recoveredApproval.approval).toMatchObject({
+        state: "Consumed",
+        consumed_by: hit.invocationId,
+      });
+      expect(recoveredApproval.approvals).toHaveLength(1);
       if (resumesUnadmittedIntent) {
         expect(settledInvocation?.settled_at).not.toBeNull();
         expect(settledInvocation?.settlement_kind).toBe("Success");
       } else if (semantics === "NonIdempotent") {
-        expect(settledInvocation?.settled_at).not.toBeNull();
-        expect(settledInvocation?.settlement_kind).toBe("OutcomeUnknown");
-        expect(JSON.parse(String(settledInvocation?.settlement_json))).toEqual({
-          _tag: "OutcomeUnknown",
-          reconciliationRefs: [hit?.invocationId],
-        });
+        expect(recoveredInvocationBinding?.effect_admission_state).toBe(
+          "MayHaveStarted",
+        );
+        expect(settledInvocation?.settled_at).toBeNull();
+        expect(settledInvocation?.settlement_kind).toBeNull();
+        expect(settledInvocation?.settlement_json).toBeNull();
       } else {
         expect(settledInvocation?.settled_at).toBeNull();
         expect(settledInvocation?.settlement_kind).toBeNull();
@@ -532,6 +877,44 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             },
           },
         );
+      }
+      if (semantics === "NonIdempotent") {
+        const toolResultsForCall = recovered.toolResults.filter(
+          (row) => readToolResultForCall([row], targetCallRef) !== undefined,
+        );
+        expect(toolResultsForCall).toHaveLength(1);
+        const unresolvedToolResult = readToolResultForCall(
+          recovered.toolResults,
+          targetCallRef,
+        );
+        expect(unresolvedToolResult).toBeDefined();
+        expect(unresolvedToolResult?.row.source_kind).toBe("AgentLoopAction");
+        expect(unresolvedToolResult?.payload).toMatchObject({
+          _tag: "ToolResult",
+          callRef: targetCallRef,
+          toolName: "shell",
+          status: "OutcomeUnknown",
+          artifactRefs: [],
+          truncated: false,
+        });
+        expect(unresolvedToolResult?.payload).not.toHaveProperty(
+          "canonicalRefs",
+        );
+        expect(unresolvedToolResult?.payload).not.toHaveProperty("resultRef");
+        expect(unresolvedToolResult?.payload).not.toHaveProperty(
+          "invocationId",
+        );
+        expect(unresolvedToolResult?.row.source_ref).toBe(
+          recoveredTargetActions[0]?.observation_source_ref,
+        );
+        expect(unresolvedToolResult?.payload.observationRef).toBe(
+          recoveredTargetActions[0]?.observation_source_ref,
+        );
+        expect(
+          recovered.artifacts.filter(
+            (artifact) => artifact.invocation_id === hit.invocationId,
+          ),
+        ).toEqual([]);
       }
       const recoveredSourceStep = recovered.steps.find(
         (step) =>
@@ -621,6 +1004,13 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         );
         expect(targetProviderCalls).toBe(1);
         expect(contentAfter).toBe(contentBefore);
+        if (semantics === "NonIdempotent") {
+          expect(
+            (contentAfter ?? "")
+              .split(/\r?\n/u)
+              .filter((line) => line === marker),
+          ).toHaveLength(1);
+        }
       }
       expect(fixture.daemonErrors).toEqual([]);
     }, 90_000);
