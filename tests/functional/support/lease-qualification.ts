@@ -33,6 +33,9 @@ export interface QualificationLeaseOwnerEvidence {
   readonly workerId: string;
   readonly workerIncarnationId: string;
   readonly generation: number;
+  readonly provenance?:
+    | "ExactLeaseAcquireProbe"
+    | "DurableGenerationWithStableIncarnation";
 }
 
 /** Test-only CAS: make a stale lease immediately eligible for takeover after

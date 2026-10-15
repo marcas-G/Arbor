@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { newUuid7 } from "../../../packages/application/src/index.js";
 import {
   expireExecutionLeaseAfterOwnerExitForQualification,
+  type LeaseQualificationTuple,
   type QualificationDaemonController,
   type QualificationLeaseOwnerEvidence,
 } from "./lease-qualification.js";
@@ -1121,48 +1122,248 @@ export const prepareContradictoryCommittedReceipt = async (marker: string) => {
   return prepared;
 };
 
-export const p37LeaseOwnerEvidence = (input: {
+const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
+  readonly databaseFile: string;
   readonly probes: ReadonlyArray<P37Probe>;
   readonly executionId: string;
   readonly daemon: QualificationDaemonController;
-}): QualificationLeaseOwnerEvidence => {
-  const snapshot = input.daemon.snapshot();
-  if (snapshot?.pid === undefined) {
-    throw new Error("P37 lease owner controller has no process identity");
-  }
-  const probe = [...input.probes]
-    .reverse()
-    .find(
-      (candidate) =>
-        candidate.boundary === "AH10AfterLeaseAcquired" &&
-        candidate.executionId === input.executionId &&
-        candidate.processId === snapshot.pid,
-    );
-  if (
-    probe === undefined ||
-    probe.fencingGeneration === undefined ||
-    probe.workerId === undefined ||
-    probe.workerIncarnationId === undefined
-  ) {
-    throw new Error(
-      `P37 actual lease owner cannot be proven for execution ${input.executionId} pid ${snapshot.pid}`,
-    );
-  }
-  return {
-    executionId: input.executionId,
-    processId: snapshot.pid,
-    workerId: probe.workerId,
-    workerIncarnationId: probe.workerIncarnationId,
-    generation: probe.fencingGeneration,
+  readonly daemonErrors?: ReadonlyArray<string>;
+  readonly timeoutMs?: number;
+  readonly pollIntervalMs?: number;
+}): Promise<QualificationLeaseOwnerEvidence> => {
+  const readLease = () => {
+    const leaseDb = new DatabaseSync(input.databaseFile, { readOnly: true });
+    try {
+      return leaseDb
+        .prepare(
+          `SELECT execution_id, worker_id, worker_incarnation_id, generation,
+                  expires_at FROM execution_leases WHERE execution_id = ?`,
+        )
+        .get(input.executionId) as LeaseQualificationTuple | undefined;
+    } finally {
+      leaseDb.close();
+    }
   };
+  const recentProbeGenerations = () =>
+    input.probes
+      .filter(
+        (probe) =>
+          probe.executionId === input.executionId &&
+          probe.boundary === "AH10AfterLeaseAcquired",
+      )
+      .slice(-16)
+      .map((probe) => ({
+        processId: probe.processId,
+        generation: probe.fencingGeneration,
+        workerId: probe.workerId,
+        workerIncarnationId: probe.workerIncarnationId,
+      }));
+  const ownerProbeCandidates = () =>
+    input.probes.filter(
+      (probe) =>
+        probe.executionId === input.executionId &&
+        probe.boundary === "AH10AfterLeaseAcquired",
+    );
+  const diagnostic = (
+    message: string,
+    processId: number | undefined,
+    lease: LeaseQualificationTuple | undefined,
+  ) =>
+    new Error(
+      `${message}: ${JSON.stringify({
+        executionId: input.executionId,
+        pid: processId ?? null,
+        lease: lease ?? null,
+        recentProbeGenerations: recentProbeGenerations(),
+        daemonErrors:
+          input.daemonErrors?.slice(-8).map((line) => line.slice(-1_000)) ?? [],
+        daemon: input.daemon.snapshot(),
+      })}`,
+    );
+  const assertExitedProcess = (expectedPid?: number): number => {
+    const snapshot = input.daemon.snapshot();
+    if (
+      snapshot === null ||
+      snapshot.pid === undefined ||
+      snapshot.alive ||
+      (snapshot.exitCode === null && snapshot.signalCode === null) ||
+      (expectedPid !== undefined && snapshot.pid !== expectedPid)
+    ) {
+      throw diagnostic(
+        "P37 owner evidence requires the same confirmed-exited daemon",
+        expectedPid ?? snapshot?.pid,
+        readLease(),
+      );
+    }
+    return snapshot.pid;
+  };
+  const sameTuple = (
+    actual: LeaseQualificationTuple | undefined,
+    expected: LeaseQualificationTuple,
+  ) =>
+    actual !== undefined &&
+    actual.execution_id === expected.execution_id &&
+    actual.worker_id === expected.worker_id &&
+    actual.worker_incarnation_id === expected.worker_incarnation_id &&
+    Number(actual.generation) === Number(expected.generation) &&
+    actual.expires_at === expected.expires_at;
+  const probeGeneration = (probe: P37Probe) => {
+    const generation = probe.fencingGeneration;
+    return generation !== undefined && Number.isSafeInteger(generation)
+      ? generation
+      : undefined;
+  };
+  const probeMatchesTuple = (
+    probe: P37Probe,
+    lease: LeaseQualificationTuple,
+    processId: number,
+  ) =>
+    probe.processId === processId &&
+    probe.workerId === lease.worker_id &&
+    probe.workerIncarnationId === lease.worker_incarnation_id &&
+    probeGeneration(probe) === Number(lease.generation);
+  const assertNoProbeConflict = (
+    processId: number,
+    lease: LeaseQualificationTuple,
+  ) => {
+    const targetGeneration = Number(lease.generation);
+    const candidates = ownerProbeCandidates();
+    const conflictingTarget = candidates.find(
+      (probe) =>
+        probeGeneration(probe) === targetGeneration &&
+        !probeMatchesTuple(probe, lease, processId),
+    );
+    const contradictoryHigher = candidates.find(
+      (probe) =>
+        probe.workerIncarnationId === lease.worker_incarnation_id &&
+        (probeGeneration(probe) ?? -1) > targetGeneration,
+    );
+    if (conflictingTarget !== undefined || contradictoryHigher !== undefined) {
+      throw diagnostic(
+        conflictingTarget !== undefined
+          ? "P37 conflicting owner probe exists at the durable generation"
+          : "P37 same-incarnation probe exceeds the durable lease generation",
+        processId,
+        lease,
+      );
+    }
+  };
+  const latestStablePriorProbe = (
+    processId: number,
+    lease: LeaseQualificationTuple,
+  ) =>
+    ownerProbeCandidates()
+      .filter((probe) => {
+        const generation = probeGeneration(probe);
+        return (
+          probe.processId === processId &&
+          probe.workerId === lease.worker_id &&
+          probe.workerIncarnationId === lease.worker_incarnation_id &&
+          generation !== undefined &&
+          generation < Number(lease.generation)
+        );
+      })
+      .sort(
+        (left, right) =>
+          (probeGeneration(right) ?? -1) - (probeGeneration(left) ?? -1),
+      )[0];
+
+  const processId = assertExitedProcess();
+  const initialLease = readLease();
+  if (
+    initialLease === undefined ||
+    initialLease.execution_id !== input.executionId
+  ) {
+    throw diagnostic(
+      "P37 durable lease row is absent",
+      processId,
+      initialLease,
+    );
+  }
+  const durableGeneration = Number(initialLease.generation);
+  if (!Number.isSafeInteger(durableGeneration) || durableGeneration < 0) {
+    throw diagnostic(
+      "P37 durable lease generation is not a safe nonnegative integer",
+      processId,
+      initialLease,
+    );
+  }
+  const deadline = Date.now() + (input.timeoutMs ?? 5_000);
+  const pollIntervalMs = input.pollIntervalMs ?? 20;
+  for (;;) {
+    assertExitedProcess(processId);
+    const currentLease = readLease();
+    if (!sameTuple(currentLease, initialLease)) {
+      throw diagnostic(
+        "P37 durable lease tuple changed while awaiting owner stdout",
+        processId,
+        currentLease,
+      );
+    }
+    assertNoProbeConflict(processId, initialLease);
+    const probe = ownerProbeCandidates().find((candidate) =>
+      probeMatchesTuple(candidate, initialLease, processId),
+    );
+    if (probe !== undefined) {
+      assertExitedProcess(processId);
+      const finalLease = readLease();
+      if (!sameTuple(finalLease, initialLease)) {
+        throw diagnostic(
+          "P37 durable lease tuple changed after exact owner probe arrived",
+          processId,
+          finalLease,
+        );
+      }
+      return {
+        executionId: input.executionId,
+        processId,
+        workerId: initialLease.worker_id,
+        workerIncarnationId: initialLease.worker_incarnation_id,
+        generation: durableGeneration,
+        provenance: "ExactLeaseAcquireProbe",
+      };
+    }
+    if (Date.now() >= deadline) {
+      const priorProbe = latestStablePriorProbe(processId, initialLease);
+      if (priorProbe !== undefined) {
+        assertExitedProcess(processId);
+        const finalLease = readLease();
+        if (!sameTuple(finalLease, initialLease)) {
+          throw diagnostic(
+            "P37 durable lease tuple changed after stable-incarnation evidence",
+            processId,
+            finalLease,
+          );
+        }
+        return {
+          executionId: input.executionId,
+          processId,
+          workerId: initialLease.worker_id,
+          workerIncarnationId: initialLease.worker_incarnation_id,
+          generation: durableGeneration,
+          provenance: "DurableGenerationWithStableIncarnation",
+        };
+      }
+      throw diagnostic(
+        `P37 exact owner probe did not arrive within ${input.timeoutMs ?? 5_000}ms and no stable-incarnation prior probe exists`,
+        processId,
+        currentLease,
+      );
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, pollIntervalMs));
+  }
 };
 
 export const expireP37LeaseForQualification = async (input: {
   readonly databaseFile: string;
   readonly executionId: string;
   readonly daemon: QualificationDaemonController;
-  readonly ownerEvidence: QualificationLeaseOwnerEvidence;
+  readonly probes: ReadonlyArray<P37Probe>;
+  readonly daemonErrors?: ReadonlyArray<string>;
+  readonly timeoutMs?: number;
+  readonly pollIntervalMs?: number;
 }) => {
+  const ownerEvidence = await p37LeaseOwnerEvidenceAfterOwnerExit(input);
   const leaseDb = new DatabaseSync(input.databaseFile, { readOnly: true });
   let lease:
     | {
@@ -1186,20 +1387,22 @@ export const expireP37LeaseForQualification = async (input: {
   if (lease === undefined)
     throw new Error(`P37 lease ${input.executionId} is absent before takeover`);
   if (
-    input.ownerEvidence.executionId !== input.executionId ||
-    input.ownerEvidence.workerId !== lease.worker_id ||
-    input.ownerEvidence.workerIncarnationId !== lease.worker_incarnation_id ||
-    input.ownerEvidence.generation !== Number(lease.generation)
+    !Number.isSafeInteger(Number(lease.generation)) ||
+    Number(lease.generation) < 0 ||
+    ownerEvidence.executionId !== input.executionId ||
+    ownerEvidence.workerId !== lease.worker_id ||
+    ownerEvidence.workerIncarnationId !== lease.worker_incarnation_id ||
+    ownerEvidence.generation !== Number(lease.generation)
   ) {
     throw new Error(
       `P37 lease owner evidence does not match durable tuple: ${JSON.stringify({
         executionId: input.executionId,
         lease,
-        ownerEvidence: input.ownerEvidence,
+        ownerEvidence,
       })}`,
     );
   }
-  return expireExecutionLeaseAfterOwnerExitForQualification({
+  const expired = await expireExecutionLeaseAfterOwnerExitForQualification({
     databaseFile: input.databaseFile,
     executionId: input.executionId,
     expected: {
@@ -1209,8 +1412,12 @@ export const expireP37LeaseForQualification = async (input: {
       workerIncarnationId: lease.worker_incarnation_id,
     },
     daemon: input.daemon,
-    ownerEvidence: input.ownerEvidence,
+    ownerEvidence,
   });
+  return {
+    ...expired,
+    ownerEvidenceProvenance: ownerEvidence.provenance,
+  };
 };
 
 export const startP37RecoveryDaemon = (

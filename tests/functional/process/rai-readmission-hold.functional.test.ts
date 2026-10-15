@@ -8,7 +8,6 @@ import {
   findDeliverReplayFact,
   fixtures,
   p37Child,
-  p37LeaseOwnerEvidence,
   persistRaiFailureEvidence,
   publicDeliverReplayRows,
   readP37Snapshot,
@@ -69,11 +68,8 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
       databaseFile: seed.fixture.databaseFile,
       executionId: firstAction.execution_id,
       daemon: oldDaemon,
-      ownerEvidence: p37LeaseOwnerEvidence({
-        probes: seed.probes,
-        executionId: firstAction.execution_id,
-        daemon: oldDaemon,
-      }),
+      probes: seed.probes,
+      daemonErrors: seed.fixture.daemonErrors,
     });
 
     const d4Threshold = 1;
