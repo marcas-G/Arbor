@@ -8,11 +8,22 @@ const report = (tag, eventNonce, pid, port) =>
     `${JSON.stringify({ tag, nonce: eventNonce, pid, ...(port === undefined ? {} : { port }) })}\n`,
   );
 
-if (mode === "exit-after-listening" || mode === "hang-readiness") {
+if (
+  mode === "exit-after-listening" ||
+  mode === "hang-readiness" ||
+  mode === "late-readiness"
+) {
   const port = Number(process.env.ARBOR_HTTP_PORT ?? "0");
-  const server = createServer(() => {
+  const server = createServer((_request, response) => {
     if (mode === "hang-readiness") {
       report("FUNCTIONAL_DAEMON_READINESS_REQUEST", nonce, process.pid);
+    }
+    if (mode === "late-readiness") {
+      setTimeout(() => {
+        report("FUNCTIONAL_DAEMON_READINESS_RESPONSE", nonce, process.pid);
+        response.writeHead(200);
+        response.end("ready");
+      }, 1_700);
     }
   });
   await new Promise((resolveListen, rejectListen) => {

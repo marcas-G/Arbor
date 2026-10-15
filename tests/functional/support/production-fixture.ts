@@ -139,6 +139,7 @@ const waitForDaemonReadiness = async (
   child: ChildProcess,
   baseUrl: string,
   daemonErrorSummary: () => string,
+  readinessFetch: typeof fetch,
   timeoutMs = 60_000,
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -156,16 +157,22 @@ const waitForDaemonReadiness = async (
       Math.min(1_000, remainingMs),
     );
     try {
-      const response = await fetch(baseUrl, { signal: abortController.signal });
+      const response = await readinessFetch(baseUrl, {
+        signal: abortController.signal,
+      });
       if (response.ok) {
         if (childHasExited(child)) {
           throw new Error(
             `functional daemon exited before HTTP readiness; ${childExitDiagnostic(child)}; stderr=${daemonErrorSummary() || "<empty>"}`,
           );
         }
-        return;
+        if (Date.now() < deadline) return;
+        lastError = new Error(
+          "HTTP readiness completed after overall deadline",
+        );
+      } else {
+        lastError = new Error(`HTTP readiness returned ${response.status}`);
       }
-      lastError = new Error(`HTTP readiness returned ${response.status}`);
     } catch (error) {
       if (childHasExited(child)) {
         throw new Error(
@@ -414,6 +421,8 @@ export const startProductionFixture = async (input: {
   readonly onDaemonStdout?: (line: string) => void;
   /** Test-only bound for exercising daemon HTTP-readiness failure cleanup. */
   readonly daemonReadinessTimeoutMs?: number;
+  /** Test-only fetch seam for exercising readiness deadline races. */
+  readonly daemonReadinessFetch?: typeof fetch;
   /** Test-only fault probe for verifying early fixture setup cleanup. */
   readonly setupProbe?: (
     event: ProductionFixtureSetupProbeEvent,
@@ -588,6 +597,7 @@ export const startProductionFixture = async (input: {
         daemon,
         baseUrl,
         daemonErrorSummary,
+        input.daemonReadinessFetch ?? fetch,
         input.daemonReadinessTimeoutMs ?? 60_000,
       );
     } catch (error) {

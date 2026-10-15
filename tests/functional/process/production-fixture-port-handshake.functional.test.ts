@@ -282,6 +282,71 @@ describe("production fixture port-zero startup handshake", () => {
     }
   }, 120_000);
 
+  it("rejects HTTP success that arrives after the overall readiness deadline", async () => {
+    let fixtureDirectory: string | undefined;
+    let providerPort: number | undefined;
+    let childPid: number | undefined;
+    let unexpectedFixture:
+      | Awaited<ReturnType<typeof startProductionFixture>>
+      | undefined;
+    let startupError: unknown;
+    const lines: string[] = [];
+    const timeoutMs = 1_500;
+    const startedAt = Date.now();
+
+    try {
+      unexpectedFixture = await startProductionFixture({
+        reply: () => "unused",
+        firstDaemonEntry: invalidChild,
+        daemonEnvironment: { ARBOR_TEST_HANDSHAKE_MODE: "late-readiness" },
+        daemonReadinessTimeoutMs: timeoutMs,
+        // Deliberately ignore the request AbortSignal so the fixture must also
+        // reject a late 200 after the absolute readiness deadline.
+        daemonReadinessFetch: (input) => fetch(input),
+        onDaemonStdout: (line) => {
+          lines.push(line);
+          try {
+            const report = JSON.parse(line) as { tag?: string; pid?: number };
+            if (report.tag === "FUNCTIONAL_DAEMON_STARTED") {
+              childPid = report.pid;
+            }
+          } catch {
+            // Keep the process output as diagnostic evidence only.
+          }
+        },
+        setupProbe: (event) => {
+          fixtureDirectory = event.directory;
+          providerPort = event.providerPort;
+        },
+      });
+    } catch (error) {
+      startupError = error;
+    }
+
+    if (unexpectedFixture !== undefined) await unexpectedFixture.stop();
+    expect(startupError).toBeInstanceOf(Error);
+    expect(String(startupError)).toContain(
+      `functional daemon HTTP readiness timed out after ${timeoutMs}ms`,
+    );
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(timeoutMs);
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(
+      lines.some((line) =>
+        line.includes("FUNCTIONAL_DAEMON_READINESS_RESPONSE"),
+      ),
+    ).toBe(true);
+    expect(fixtureDirectory).toBeDefined();
+    expect(existsSync(fixtureDirectory ?? "")).toBe(false);
+    expect(providerPort).toBeDefined();
+    await expect(
+      fetch(`http://127.0.0.1:${providerPort}/models`),
+    ).rejects.toThrow();
+    expect(childPid).toBeDefined();
+    if (childPid !== undefined) {
+      expect(() => process.kill(childPid as number, 0)).toThrow();
+    }
+  }, 120_000);
+
   it("bounds provider close when it hangs or throws", async () => {
     let forcedHangClose = 0;
     const hangingServer = {
