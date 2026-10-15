@@ -113,7 +113,7 @@ afterEach(async () => {
 });
 
 describe("F23 Gateway receipt tuple comparison before stored JSON decode", () => {
-  it("returns a non-disclosing 409 Problem for a tuple mismatch before parsing corrupt historical JSON", async () => {
+  it("requires Resolver visibility before disclosing a tuple mismatch", async () => {
     const sentinel = `F23-CORRUPT-RECEIPT-${crypto.randomUUID()}`;
     const fixture = await startProductionFixture({
       isolatedPortHandshake: true,
@@ -136,6 +136,11 @@ describe("F23 Gateway receipt tuple comparison before stored JSON decode", () =>
     };
     const currentPayload = {
       ...oldPayload,
+      // The tuple collision must not be disclosed before the current request
+      // passes Resolver visibility. This syntactically valid but nonexistent
+      // target deterministically fails authorization after the receipt has
+      // been seeded.
+      targetWorkspaceId: functionalId("ws"),
       bodyRef: "body-ref-current",
     };
     const rawMalformedResult = `{"messageId":"${messageId}","secret":"${sentinel}`;
@@ -171,25 +176,94 @@ describe("F23 Gateway receipt tuple comparison before stored JSON decode", () =>
         readonly status: number;
         readonly problem?: {
           readonly code: string;
-          readonly category: string;
-          readonly message: string;
-          readonly correlationId: string | null;
-          readonly retryDisposition: string;
-          readonly safeDetails: { readonly commandId: string };
         };
       };
 
-      expect(response.status).toBe(409);
-      expect(responseBody).toEqual({
+      expect(response.status).toBe(403);
+      expect(responseBody).toMatchObject({
         ok: false,
-        status: 409,
-        problem: {
-          code: "command/idempotency-conflict",
-          category: "stale",
-          message: "command/idempotency-conflict",
-          correlationId: null,
-          retryDisposition: "non-retryable",
-          safeDetails: { commandId },
+        status: 403,
+        problem: { code: "authority/denied" },
+      });
+      expect(bodyText).not.toContain(sentinel);
+      expect(bodyText).not.toContain(rawMalformedResult);
+      expect(bodyText).not.toContain(oldFingerprint);
+      expect(receiptBytesSnapshot(db, commandId)).toEqual(receiptBefore);
+      expect(sideEffectSnapshot(db, commandId)).toEqual(sideEffectsBefore);
+      expect(fixture.daemonErrors).toEqual([]);
+    } finally {
+      db.close();
+    }
+  }, 45_000);
+
+  it("returns Gateway's typed TerminalRejected receipt for an authorized tuple mismatch", async () => {
+    const sentinel = `F23-TUPLE-MISMATCH-${crypto.randomUUID()}`;
+    const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
+      reply: () => ({ _tag: "HttpError", status: 500 }),
+    });
+    fixtures.push(fixture);
+    const client = makePublicClient(fixture.baseUrl);
+    const project = await createFunctionalProject(
+      client,
+      fixture.workspaceDirectory,
+      "F23 Gateway tuple mismatch receipt",
+    );
+    const actor = "user:local";
+    const commandId = functionalId("cmd");
+    const messageId = functionalId("msg");
+    const payload = {
+      messageId,
+      targetWorkspaceId: project.rootWorkspaceId,
+      bodyRef: "body-ref-current",
+    };
+    const oldPayload = { ...payload, bodyRef: "body-ref-old" };
+    const rawMalformedResult = `{"secret":"${sentinel}`;
+    const db = new DatabaseSync(fixture.databaseFile);
+    try {
+      const oldFingerprint = seedReceipt(db, {
+        commandId,
+        projectId: project.projectId,
+        actor,
+        payload: oldPayload,
+        resultJson: rawMalformedResult,
+      });
+      const currentFingerprint = semanticRequestFingerprint({
+        commandType: "SubmitHumanMessage",
+        projectId: project.projectId,
+        actor,
+        schemaVersion: "1",
+        payload,
+      });
+      expect(oldFingerprint).not.toBe(currentFingerprint);
+      const receiptBefore = receiptBytesSnapshot(db, commandId);
+      const sideEffectsBefore = sideEffectSnapshot(db, commandId);
+
+      const response = await postExternalHumanMessage(fixture.baseUrl, {
+        commandId,
+        projectId: project.projectId,
+        actor,
+        payload,
+      });
+      const bodyText = await response.text();
+      const responseBody = JSON.parse(bodyText) as {
+        readonly ok: boolean;
+        readonly status?: number;
+        readonly body?: {
+          readonly commandId?: string;
+          readonly resolution?: string;
+          readonly rejection?: string;
+        };
+      };
+
+      expect(response.status).toBe(200);
+      expect(responseBody).toEqual({
+        ok: true,
+        status: 200,
+        body: {
+          commandId,
+          resolution: "TerminalRejected",
+          rejection: "IdempotencyConflict",
         },
       });
       expect(bodyText).not.toContain(sentinel);

@@ -72,15 +72,7 @@ export const makeRetryVerificationHandler = (
     schemaVersion: "1",
     authority: {
       tag: "RetryVerificationAuthority",
-      alsoTags: ["RetryVerificationReceiptReplayAuthority"],
       targetMatches: (authority, payload) => {
-        if (authority._tag === "RetryVerificationReceiptReplayAuthority") {
-          return (
-            authority.workId === payload.workId &&
-            authority.verificationId === payload.verificationId &&
-            authority.expectedWorkRevision === payload.expectedWorkRevision
-          );
-        }
         return (
           authority._tag === "RetryVerificationAuthority" &&
           authority.workId === payload.workId &&

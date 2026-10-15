@@ -23,7 +23,6 @@ import {
   CommandInputContractRegistry,
   decodeExternalCommand,
   deliverWakeSignal,
-  FINGERPRINT_ALGORITHM_VERSION,
   semanticRequestFingerprint,
 } from "@arbor/application";
 import type {
@@ -45,12 +44,10 @@ import { makeProjectPolicy } from "@arbor/domain";
 import type {
   ProjectionQueryError,
   ProjectionQueryPortService,
-  StoredCommandResolution,
 } from "@arbor/ports";
 import {
   AttentionProjectionStore,
   Clock,
-  CommandStore,
   ExecutableApprovalStore,
   ExecutionRepository,
   ExecutionScheduler,
@@ -80,7 +77,6 @@ import {
   authorityDeniedProblem,
   failureResponse,
   invalidCommandPayloadProblem,
-  makeProblem,
   problemFromCommandFailure,
   problemFromUnknownFailure,
 } from "./errors.js";
@@ -416,12 +412,6 @@ export interface ExternalSubmissionDeps {
   readonly loadInputs: (
     envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<AuthorityInputs, never>;
-  /** Optional receipt-first lookup used only for exact RetryVerification
-   * replay. The caller is authenticated and the envelope/fingerprint/schema
-   * tuple is checked before a replay-only authority reaches Gateway. */
-  readonly findCommandResolution?: (
-    commandId: CommandId,
-  ) => Effect.Effect<Option.Option<StoredCommandResolution>, never>;
   readonly afterCommitted?: (
     envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<void, unknown>;
@@ -527,75 +517,29 @@ export const makeExternalSubmission = (
           authorityDeniedProblem(`UnsupportedOrigin:${envelope.commandType}`),
         );
       }
-      let authority: import("@arbor/application").CommandAuthorityFact;
-      const priorResolution =
-        deps.findCommandResolution !== undefined
-          ? yield* deps.findCommandResolution(envelope.commandId)
-          : Option.none<StoredCommandResolution>();
-      const exactPriorRequest =
-        Option.isSome(priorResolution) &&
-        priorResolution.value.commandId === envelope.commandId &&
-        priorResolution.value.projectId === envelope.projectId &&
-        priorResolution.value.semanticRequestFingerprint === fingerprint &&
-        priorResolution.value.schemaVersion === handler.value.schemaVersion &&
-        priorResolution.value.fingerprintAlgorithmVersion ===
-          FINGERPRINT_ALGORITHM_VERSION;
-      if (Option.isSome(priorResolution)) {
-        if (!exactPriorRequest) {
-          return failureResponse(
-            makeProblem(
-              "command/idempotency-conflict",
-              "stale",
-              "non-retryable",
-              {
-                commandId: envelope.commandId,
-              },
-            ),
-          );
-        }
+      const inputs = yield* deps.loadInputs(envelope);
+      const decision: AuthorityDecisionInput = {
+        principal,
+        submissionContext,
+        envelope: gatewayEnvelope,
+        semanticRequestFingerprint: fingerprint,
+        canonicalFacts: inputs.canonicalFacts,
+        grants: inputs.grants,
+        governance: inputs.governance,
+        policy: inputs.policy,
+      };
+      const resolved = yield* Effect.match(deps.resolver.resolve(decision), {
+        onFailure: (error) => ({ _tag: "denied" as const, error }),
+        onSuccess: (fact) => ({ _tag: "fact" as const, fact }),
+      });
+      if (resolved._tag === "denied") {
+        return failureResponse(
+          authorityDeniedProblem(
+            `${resolved.error._tag}:${envelope.commandType}`,
+          ),
+        );
       }
-      if (
-        exactPriorRequest &&
-        envelope.commandType === "RetryVerification" &&
-        submissionContext._tag === "External"
-      ) {
-        const payload =
-          envelope.payload as import("@arbor/application").RetryVerificationPayload;
-        authority = {
-          _tag: "RetryVerificationReceiptReplayAuthority",
-          principal,
-          commandId: envelope.commandId,
-          semanticRequestFingerprint: fingerprint,
-          projectId: envelope.projectId,
-          workId: payload.workId,
-          verificationId: payload.verificationId,
-          expectedWorkRevision: payload.expectedWorkRevision,
-        };
-      } else {
-        const inputs = yield* deps.loadInputs(envelope);
-        const decision: AuthorityDecisionInput = {
-          principal,
-          submissionContext,
-          envelope: gatewayEnvelope,
-          semanticRequestFingerprint: fingerprint,
-          canonicalFacts: inputs.canonicalFacts,
-          grants: inputs.grants,
-          governance: inputs.governance,
-          policy: inputs.policy,
-        };
-        const resolved = yield* Effect.match(deps.resolver.resolve(decision), {
-          onFailure: (error) => ({ _tag: "denied" as const, error }),
-          onSuccess: (fact) => ({ _tag: "fact" as const, fact }),
-        });
-        if (resolved._tag === "denied") {
-          return failureResponse(
-            authorityDeniedProblem(
-              `${resolved.error._tag}:${envelope.commandType}`,
-            ),
-          );
-        }
-        authority = resolved.fact;
-      }
+      const authority = resolved.fact;
       const executed = yield* Effect.match(
         deps.gateway.execute(gatewayEnvelope, submissionContext, authority),
         {
@@ -676,7 +620,6 @@ export const makeExternalSubmissionFromServices = (
   | AuthorityResolverPort
   | CommandGateway
   | CommandHandlerRegistry
-  | CommandStore
 > =>
   Effect.gen(function* () {
     const resolver = yield* AuthorityResolverPort;
@@ -699,9 +642,6 @@ export const makeExternalSubmissionFromServices = (
                 );
           };
     const tx = yield* TransactionPort;
-    const commandStore = yield* CommandStore;
-    const findCommandResolution = (commandId: CommandId) =>
-      tx.transact(commandStore.findResolution(commandId)).pipe(Effect.orDie);
     const workspaces = yield* WorkspaceRepository;
     const works = yield* WorkRepository;
     const activationIntentsOption = yield* Effect.serviceOption(
@@ -739,7 +679,6 @@ export const makeExternalSubmissionFromServices = (
         gateway,
         registry,
         loadInputs,
-        findCommandResolution,
         ...(afterGatewayCommitBeforeCreateProjectActivation !== undefined
           ? { afterGatewayCommitBeforeCreateProjectActivation }
           : {}),
@@ -915,7 +854,6 @@ export const makeExternalSubmissionFromServices = (
       gateway,
       registry,
       loadInputs,
-      findCommandResolution,
       ...(afterGatewayCommitBeforeCreateProjectActivation !== undefined
         ? { afterGatewayCommitBeforeCreateProjectActivation }
         : {}),
