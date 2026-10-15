@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -18,6 +19,7 @@ import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
   p39WindowsAclQualificationAvailable,
+  p39WindowsTestEnvironment,
   removeP39PrivateTestDirectory,
   setP39PrivateWindowsAcl,
 } from "../../../tests/support/p39-windows-deployment-test.js";
@@ -38,6 +40,10 @@ import {
   validateP39ReportSidecarPath,
 } from "../src/p39-report-database.js";
 import {
+  type P39WindowsSecurityQueryExecutor,
+  validateP39WindowsProtectedPaths,
+} from "../src/p39-windows-security.js";
+import {
   p39SameOperatingSystemIdentity,
   p39WriterLockFilename,
   prepareP39PrimaryDatabasePath,
@@ -46,6 +52,26 @@ import {
 } from "../src/p39-writer-lock.js";
 
 const windowsAclQualificationAvailable = p39WindowsAclQualificationAvailable();
+
+const executorWithP39ScriptTransform =
+  (transform: (script: string) => string): P39WindowsSecurityQueryExecutor =>
+  (command, args, options) => {
+    const script = args.at(-1);
+    if (script === undefined) throw new Error("P39 probe script is missing");
+    return execFileSync(command, [...args.slice(0, -1), transform(script)], {
+      ...options,
+      env: p39WindowsTestEnvironment(),
+    });
+  };
+
+const addEveryoneWriterAce = (filename: string): void => {
+  execFileSync("icacls.exe", [filename, "/grant", "*S-1-1-0:(W)", "/C", "/Q"], {
+    encoding: "utf8",
+    timeout: 30_000,
+    windowsHide: true,
+    env: p39WindowsTestEnvironment(),
+  });
+};
 
 let p39TemplateDirectory: string | undefined;
 let p39TemplateFilename: string | undefined;
@@ -467,6 +493,96 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       try {
         createP39PrivateTestFile(filename);
         expect(validateP39ProtectedDirectory(directory)).toBe(true);
+        expect(validateP39ProtectedFile(filename)).toBe(true);
+      } finally {
+        removeP39PrivateTestDirectory(directory);
+      }
+    },
+    120_000,
+  );
+
+  it.skipIf(!windowsAclQualificationAvailable)(
+    "fails closed when a real protected file grants a foreign principal write access",
+    () => {
+      const directory = makeP39PrivateTestDirectory(
+        process.cwd(),
+        ".p39-foreign-writer-test-",
+      );
+      const filename = join(directory, "primary.sqlite");
+      try {
+        createP39PrivateTestFile(filename);
+        addEveryoneWriterAce(filename);
+        expect(
+          validateP39WindowsProtectedPaths([
+            { path: directory, kind: "directory" },
+            { path: filename, kind: "file" },
+          ]),
+        ).toBe(false);
+      } finally {
+        try {
+          if (existsSync(filename)) {
+            execFileSync("icacls.exe", [filename, "/reset", "/C", "/Q"], {
+              encoding: "utf8",
+              timeout: 30_000,
+              windowsHide: true,
+              env: p39WindowsTestEnvironment(),
+            });
+          }
+        } finally {
+          removeP39PrivateTestDirectory(directory);
+        }
+      }
+    },
+    120_000,
+  );
+
+  it.skipIf(!windowsAclQualificationAvailable)(
+    "fails closed on a mismatched ACL owner in a controlled PowerShell probe",
+    () => {
+      const directory = makeP39PrivateTestDirectory(
+        process.cwd(),
+        ".p39-wrong-owner-probe-test-",
+      );
+      const filename = join(directory, "primary.sqlite");
+      const paths = [{ path: filename, kind: "file" as const }];
+      try {
+        createP39PrivateTestFile(filename);
+        const executor = executorWithP39ScriptTransform((script) =>
+          script.replace(
+            "$a=Get-Acl -LiteralPath $p",
+            "$a=Get-Acl -LiteralPath $p;$a.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-18'))",
+          ),
+        );
+        expect(validateP39WindowsProtectedPaths(paths, executor)).toBe(false);
+        expect(validateP39ProtectedFile(filename)).toBe(true);
+      } finally {
+        removeP39PrivateTestDirectory(directory);
+      }
+    },
+    120_000,
+  );
+
+  it.skipIf(!windowsAclQualificationAvailable).each([
+    { driveType: "Network", driveFormat: "NTFS" },
+    { driveType: "Fixed", driveFormat: "UNKNOWN" },
+  ])(
+    "fails closed on controlled unsupported volume facts: $driveType/$driveFormat",
+    ({ driveType, driveFormat }) => {
+      const directory = makeP39PrivateTestDirectory(
+        process.cwd(),
+        ".p39-unsupported-volume-test-",
+      );
+      const filename = join(directory, "primary.sqlite");
+      const paths = [{ path: filename, kind: "file" as const }];
+      try {
+        createP39PrivateTestFile(filename);
+        const executor = executorWithP39ScriptTransform((script) =>
+          script.replace(
+            "$d=[IO.DriveInfo]::new($r)",
+            `$d=[pscustomobject]@{DriveType='${driveType}';DriveFormat='${driveFormat}'}`,
+          ),
+        );
+        expect(validateP39WindowsProtectedPaths(paths, executor)).toBe(false);
         expect(validateP39ProtectedFile(filename)).toBe(true);
       } finally {
         removeP39PrivateTestDirectory(directory);
