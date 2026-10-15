@@ -32,6 +32,14 @@ export interface StopChildLifecycleTestSeam {
   readonly taskkillTimeoutMs?: number;
   readonly taskkillCleanupTimeoutMs?: number;
   readonly spawnTaskkill?: (pid: number, attempt: number) => ChildProcess;
+  readonly queryDescendantPids?: (
+    rootPid: number,
+    timeoutMs: number,
+  ) => Promise<ReadonlyArray<number>>;
+  readonly cleanupDescendantPids?: (
+    pids: ReadonlyArray<number>,
+    timeoutMs: number,
+  ) => Promise<void>;
   /** Test-only clock seam for deterministic process-tree stop race coverage. */
   readonly setTimeout?: typeof setTimeout;
   readonly clearTimeout?: typeof clearTimeout;
@@ -39,7 +47,148 @@ export interface StopChildLifecycleTestSeam {
 
 const WINDOWS_TASKKILL_TIMEOUT_MS = 10_000;
 const WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS = 1_000;
+const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 5_000;
+const WINDOWS_MAX_DESCENDANT_PIDS = 128;
 const unprovenWindowsTreeCleanup = new WeakMap<ChildProcess, string>();
+
+const runWindowsCommandBounded = (
+  executable: string,
+  args: ReadonlyArray<string>,
+  timeoutMs: number,
+  env?: NodeJS.ProcessEnv,
+): Promise<{ readonly exitCode: number | null; readonly stdout: string }> =>
+  new Promise((resolveCommand, rejectCommand) => {
+    let child: ChildProcess;
+    try {
+      child = spawn(executable, [...args], {
+        ...(env === undefined ? {} : { env }),
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+      });
+    } catch (error) {
+      rejectCommand(error);
+      return;
+    }
+    let settled = false;
+    let stdout = "";
+    const finish = (
+      result:
+        | { readonly exitCode: number | null; readonly stdout: string }
+        | { readonly error: Error },
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener("error", onError);
+      child.removeListener("exit", onExit);
+      child.stdout?.removeListener("data", onStdout);
+      if ("error" in result) rejectCommand(result.error);
+      else resolveCommand(result);
+    };
+    const onStdout = (chunk: Buffer) => {
+      if (stdout.length < 32_768) {
+        stdout += chunk.toString("utf8").slice(0, 32_768 - stdout.length);
+      }
+    };
+    const onError = (error: Error) => finish({ error });
+    const onExit = (code: number | null) => finish({ exitCode: code, stdout });
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      void waitForChildExit(child, WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS).then(
+        () =>
+          finish({
+            error: new Error(`${executable} timed out after ${timeoutMs}ms`),
+          }),
+        (error: unknown) =>
+          finish({
+            error: new Error(
+              `${executable} timed out after ${timeoutMs}ms and could not be reaped`,
+              { cause: error },
+            ),
+          }),
+      );
+    }, timeoutMs);
+    child.stdout?.on("data", onStdout);
+    child.once("error", onError);
+    child.once("exit", onExit);
+    if (child.stdout === null) {
+      finish({ error: new Error(`${executable} stdout was unavailable`) });
+    }
+  });
+
+const windowsDescendantQueryScript = `
+$ErrorActionPreference = 'Stop'
+$rootPid = [int]$env:ARBOR_PROCESS_TREE_ROOT_PID
+$rows = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId)
+$known = @{}
+$known[[string]$rootPid] = $true
+do {
+  $changed = $false
+  foreach ($row in $rows) {
+    $processId = [int]$row.ProcessId
+    $parentId = [string][int]$row.ParentProcessId
+    $processKey = [string]$processId
+    if ($known.ContainsKey($parentId) -and -not $known.ContainsKey($processKey)) {
+      $known[$processKey] = $true
+      $changed = $true
+    }
+  }
+} while ($changed)
+$descendants = @($known.Keys | Where-Object { [int]$_ -ne $rootPid } | ForEach-Object { [int]$_ } | Sort-Object)
+if ($descendants.Count -eq 0) { Write-Output '[]' } else { ConvertTo-Json -InputObject $descendants -Compress }
+`;
+
+const queryWindowsDescendantPids = async (
+  rootPid: number,
+  timeoutMs: number,
+): Promise<ReadonlyArray<number>> => {
+  const result = await runWindowsCommandBounded(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", windowsDescendantQueryScript],
+    timeoutMs,
+    {
+      ...process.env,
+      ARBOR_PROCESS_TREE_ROOT_PID: String(rootPid),
+    },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error("Windows process-table query exited unsuccessfully");
+  }
+  const parsed: unknown = JSON.parse(result.stdout.trim() || "[]");
+  const values = Array.isArray(parsed) ? parsed : [parsed];
+  const pids = values.filter(
+    (pid): pid is number =>
+      typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0,
+  );
+  if (
+    pids.length !== values.length ||
+    pids.length > WINDOWS_MAX_DESCENDANT_PIDS
+  ) {
+    throw new Error("Windows process-table query returned unsafe PID data");
+  }
+  return pids;
+};
+
+const cleanupWindowsDescendantPids = async (
+  pids: ReadonlyArray<number>,
+  timeoutMs: number,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  for (const pid of pids) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error("descendant taskkill cleanup exceeded its time bound");
+    }
+    const result = await runWindowsCommandBounded(
+      "taskkill.exe",
+      ["/PID", String(pid), "/T", "/F"],
+      remainingMs,
+    );
+    if (result.exitCode === null) {
+      throw new Error("descendant taskkill cleanup did not exit");
+    }
+  }
+};
 
 const waitForChildExit = (child: ChildProcess, timeoutMs: number) => {
   if (childHasExited(child)) return Promise.resolve();
@@ -250,6 +399,87 @@ interface TaskkillAttemptResult {
   readonly detail?: string;
 }
 
+interface TargetFirstTreeCheck {
+  readonly succeeded: boolean;
+  readonly phase: string;
+  readonly detail?: string;
+}
+
+const targetFirstTreeCheck = async (
+  rootPid: number,
+  seam: StopChildLifecycleTestSeam,
+  cleanupTimeoutMs: number,
+): Promise<TargetFirstTreeCheck> => {
+  const queryDescendants =
+    seam.queryDescendantPids ?? queryWindowsDescendantPids;
+  let descendants: ReadonlyArray<number>;
+  try {
+    descendants = await queryDescendants(
+      rootPid,
+      seam.taskkillTimeoutMs ?? WINDOWS_PROCESS_QUERY_TIMEOUT_MS,
+    );
+  } catch (error) {
+    return {
+      succeeded: false,
+      phase: "target-first-descendant-query-failed",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (
+    descendants.some(
+      (pid) => !Number.isSafeInteger(pid) || pid <= 0 || pid === rootPid,
+    ) ||
+    descendants.length > WINDOWS_MAX_DESCENDANT_PIDS
+  ) {
+    return {
+      succeeded: false,
+      phase: "target-first-descendant-query-unsafe-pids",
+      detail: `descendantPids=${JSON.stringify(descendants.slice(0, 32))}`,
+    };
+  }
+  if (descendants.length === 0) {
+    return {
+      succeeded: true,
+      phase: "target-first-tree-absence-confirmed",
+    };
+  }
+
+  let cleanupDetail = "descendant cleanup completed";
+  try {
+    await (seam.cleanupDescendantPids ?? cleanupWindowsDescendantPids)(
+      descendants,
+      cleanupTimeoutMs,
+    );
+  } catch (error) {
+    cleanupDetail = error instanceof Error ? error.message : String(error);
+  }
+
+  let remaining: ReadonlyArray<number>;
+  try {
+    remaining = await queryDescendants(
+      rootPid,
+      seam.taskkillTimeoutMs ?? WINDOWS_PROCESS_QUERY_TIMEOUT_MS,
+    );
+  } catch (error) {
+    return {
+      succeeded: false,
+      phase: "target-first-descendant-recheck-failed",
+      detail: `${cleanupDetail}; ${error instanceof Error ? error.message : String(error)}; descendantPids=${JSON.stringify(descendants.slice(0, 32))}`,
+    };
+  }
+  if (remaining.length === 0) {
+    return {
+      succeeded: true,
+      phase: "target-first-descendant-cleanup-confirmed",
+    };
+  }
+  return {
+    succeeded: false,
+    phase: "target-first-descendants-remain",
+    detail: `${cleanupDetail}; descendantPids=${JSON.stringify(remaining.slice(0, 32))}`,
+  };
+};
+
 const runTaskkillAttempt = async (
   child: ChildProcess,
   attempt: number,
@@ -301,33 +531,54 @@ const runTaskkillAttempt = async (
         phase: `target-exit-before-taskkill-${attempt}-tree-kill-confirmed`,
       };
     }
+    let helperCleanupProven =
+      completion.kind === "exit" ||
+      (completion.kind === "error" && killer.pid === undefined);
     let cleanupDetail = "helper already settled";
     if (
       completion.kind === "timeout" ||
       (completion.kind === "error" && killer.pid !== undefined)
     ) {
-      cleanupDetail = "helper reaped";
+      cleanupDetail = "helper cleanup pending";
       try {
         await reapTaskkillHelper(
           killer,
           seam.taskkillCleanupTimeoutMs ?? WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS,
           `taskkill-${attempt}-target-first-helper-cleanup`,
         );
+        helperCleanupProven = true;
+        cleanupDetail = "helper reaped";
       } catch (error) {
+        helperCleanupProven = false;
         cleanupDetail = error instanceof Error ? error.message : String(error);
       }
     }
+    if (!helperCleanupProven) {
+      return {
+        helper: killer,
+        targetExitedFirst: true,
+        succeeded: false,
+        phase: `taskkill-${attempt}-target-first-helper-cleanup-unproven`,
+        detail: `${cleanupDetail}; taskkill outcome=${completion.kind}`,
+      };
+    }
+    const treeCheck = await targetFirstTreeCheck(
+      child.pid,
+      seam,
+      taskkillTimeoutMs,
+    );
+    const taskkillDetail =
+      completion.kind === "exit"
+        ? `taskkill exit code=${String(completion.code)} signal=${String(completion.signal)}`
+        : completion.kind === "error"
+          ? completion.error.message
+          : "taskkill timed out";
     return {
-      ...(killer.pid === undefined ? {} : { helper: killer }),
+      helper: killer,
       targetExitedFirst: true,
-      succeeded: false,
-      phase: `taskkill-${attempt}-target-first-${completion.kind}`,
-      detail:
-        completion.kind === "exit"
-          ? `code=${String(completion.code)} signal=${String(completion.signal)}`
-          : completion.kind === "error"
-            ? `${completion.error.message}; cleanup=${cleanupDetail}`
-            : `taskkill timed out; cleanup=${cleanupDetail}`,
+      succeeded: treeCheck.succeeded,
+      phase: treeCheck.phase,
+      detail: `${taskkillDetail}; ${cleanupDetail}${treeCheck.detail === undefined ? "" : `; ${treeCheck.detail}`}`,
     };
   }
   if (outcome.kind === "taskkill-timeout") {

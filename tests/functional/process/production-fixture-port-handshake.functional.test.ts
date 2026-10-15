@@ -550,6 +550,8 @@ describe("production fixture port-zero startup handshake", () => {
     const seam: StopChildLifecycleTestSeam = {
       platform: "win32",
       spawnTaskkill: () => killer,
+      queryDescendantPids: async () => [41_304],
+      cleanupDescendantPids: async () => undefined,
       setTimeout: clock.setTimeout,
       clearTimeout: clock.clearTimeout,
     };
@@ -566,7 +568,7 @@ describe("production fixture port-zero startup handshake", () => {
 
     killer.emit("error", new Error("injected delayed spawn failure"));
     await expect(stopped).rejects.toThrow(
-      /Windows process-tree cleanup unproven; attempt phases=taskkill-1-target-first-error/u,
+      /Windows process-tree cleanup unproven; attempt phases=target-first-descendants-remain.*descendantPids=\[41304\]/u,
     );
     expect(settled).toBe(true);
     expect(killer.killed).toBe(false);
@@ -583,6 +585,8 @@ describe("production fixture port-zero startup handshake", () => {
     const seam: StopChildLifecycleTestSeam = {
       platform: "win32",
       spawnTaskkill: () => killer,
+      queryDescendantPids: async () => [41_353],
+      cleanupDescendantPids: async () => undefined,
       setTimeout: clock.setTimeout,
       clearTimeout: clock.clearTimeout,
     };
@@ -591,7 +595,7 @@ describe("production fixture port-zero startup handshake", () => {
     emitProcessExit(target, 0);
     setImmediate(() => emitProcessExit(killer, 5));
     await expect(stopped).rejects.toThrow(
-      /Windows process-tree cleanup unproven; attempt phases=taskkill-1-target-first-exit \(code=5/u,
+      /Windows process-tree cleanup unproven; attempt phases=target-first-descendants-remain.*descendantPids=\[41353\]/u,
     );
     expect(childHasExited(target)).toBe(true);
     expect(childHasExited(killer)).toBe(true);
@@ -600,6 +604,207 @@ describe("production fixture port-zero startup handshake", () => {
     expect(target.listenerCount("exit")).toBe(0);
     expect(killer.listenerCount("exit")).toBe(0);
   });
+
+  it("accepts target-first taskkill code 128 only when descendant closure is empty", async () => {
+    const target = fakeLifecycleProcess(41_361);
+    const killer = fakeLifecycleProcess(41_362);
+    const clock = fakeTimerClock();
+    let queryCount = 0;
+    const seam: StopChildLifecycleTestSeam = {
+      platform: "win32",
+      spawnTaskkill: () => {
+        setImmediate(() => {
+          emitProcessExit(target, 0);
+          setImmediate(() => emitProcessExit(killer, 128));
+        });
+        return killer;
+      },
+      queryDescendantPids: async () => {
+        queryCount += 1;
+        return [];
+      },
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    };
+
+    await expect(
+      stopChildBounded(target, 5_000, seam),
+    ).resolves.toBeUndefined();
+    expect(queryCount).toBe(1);
+    expect(childHasExited(target)).toBe(true);
+    expect(childHasExited(killer)).toBe(true);
+    expect(clock.pendingCount()).toBe(0);
+    expect(target.listenerCount("exit")).toBe(0);
+    expect(killer.listenerCount("exit")).toBe(0);
+  });
+
+  it("cleans live descendants and rechecks the target-first process closure", async () => {
+    const target = fakeLifecycleProcess(41_371);
+    const killer = fakeLifecycleProcess(41_372);
+    const clock = fakeTimerClock();
+    let queryCount = 0;
+    let cleanupCalls = 0;
+    const seam: StopChildLifecycleTestSeam = {
+      platform: "win32",
+      spawnTaskkill: () => {
+        setImmediate(() => {
+          emitProcessExit(target, 0);
+          setImmediate(() => emitProcessExit(killer, 128));
+        });
+        return killer;
+      },
+      queryDescendantPids: async () => {
+        queryCount += 1;
+        return queryCount === 1 ? [41_373] : [];
+      },
+      cleanupDescendantPids: async (pids) => {
+        cleanupCalls += 1;
+        expect(pids).toEqual([41_373]);
+      },
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    };
+
+    await expect(
+      stopChildBounded(target, 5_000, seam),
+    ).resolves.toBeUndefined();
+    expect(queryCount).toBe(2);
+    expect(cleanupCalls).toBe(1);
+    expect(clock.pendingCount()).toBe(0);
+    expect(target.listenerCount("exit")).toBe(0);
+    expect(killer.listenerCount("exit")).toBe(0);
+  });
+
+  it.each([
+    [
+      "query failure",
+      async () => {
+        throw new Error("injected process query failure");
+      },
+    ],
+    ["remaining descendant", async () => [41_383]],
+  ] as const)(
+    "keeps target-first tree cleanup unproven on %s",
+    async (_caseName, queryDescendantPids) => {
+      const target = fakeLifecycleProcess(41_381);
+      const killer = fakeLifecycleProcess(41_382);
+      const clock = fakeTimerClock();
+      let cleanupCalls = 0;
+      const seam: StopChildLifecycleTestSeam = {
+        platform: "win32",
+        spawnTaskkill: () => {
+          setImmediate(() => {
+            emitProcessExit(target, 0);
+            setImmediate(() => emitProcessExit(killer, 128));
+          });
+          return killer;
+        },
+        queryDescendantPids,
+        cleanupDescendantPids: async () => {
+          cleanupCalls += 1;
+        },
+        setTimeout: clock.setTimeout,
+        clearTimeout: clock.clearTimeout,
+      };
+
+      await expect(stopChildBounded(target, 5_000, seam)).rejects.toThrow(
+        /Windows process-tree cleanup unproven/u,
+      );
+      expect(cleanupCalls).toBe(_caseName === "remaining descendant" ? 1 : 0);
+      expect(childHasExited(target)).toBe(true);
+      expect(childHasExited(killer)).toBe(true);
+      expect(clock.pendingCount()).toBe(0);
+      expect(target.listenerCount("exit")).toBe(0);
+      expect(killer.listenerCount("exit")).toBe(0);
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "confirms real descendants are killed after target-first taskkill code 128",
+    async () => {
+      const parent = spawn(process.execPath, [processTreeParent], {
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+      });
+      if (parent.stdout === null || parent.pid === undefined) {
+        throw new Error("process-tree helper stdout and PID are required");
+      }
+      const lines = createInterface({ input: parent.stdout });
+      let grandchildPid: number | undefined;
+      let sawGrandchildAfterRootExit = false;
+      try {
+        grandchildPid = await new Promise<number>(
+          (resolveReady, rejectReady) => {
+            parent.once("error", rejectReady);
+            lines.once("line", (line) => {
+              try {
+                const report = JSON.parse(line) as {
+                  readonly tag?: string;
+                  readonly grandchildPid?: number;
+                };
+                if (
+                  report.tag !== "PROCESS_TREE_READY" ||
+                  typeof report.grandchildPid !== "number"
+                ) {
+                  rejectReady(
+                    new Error("process-tree helper emitted invalid readiness"),
+                  );
+                  return;
+                }
+                resolveReady(report.grandchildPid);
+              } catch (error) {
+                rejectReady(error);
+              }
+            });
+          },
+        );
+        const targetPid = parent.pid;
+        await stopChildBounded(parent, 5_000, {
+          platform: "win32",
+          spawnTaskkill: (pid, attempt) => {
+            if (attempt !== 1 || pid !== targetPid) {
+              return spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+                stdio: "ignore",
+                windowsHide: true,
+              });
+            }
+            const delayedTaskkill = fakeLifecycleProcess(51_001);
+            setImmediate(() => {
+              parent.once("exit", () => {
+                try {
+                  process.kill(grandchildPid as number, 0);
+                  sawGrandchildAfterRootExit = true;
+                } catch {
+                  sawGrandchildAfterRootExit = false;
+                }
+                setImmediate(() => emitProcessExit(delayedTaskkill, 128));
+              });
+              parent.kill("SIGTERM");
+            });
+            return delayedTaskkill;
+          },
+        });
+
+        expect(sawGrandchildAfterRootExit).toBe(true);
+        expect(childHasExited(parent)).toBe(true);
+        expect(grandchildPid).toBeDefined();
+        if (grandchildPid !== undefined) {
+          expect(() => process.kill(grandchildPid as number, 0)).toThrow();
+        }
+      } finally {
+        await stopChildBounded(parent).catch(() => undefined);
+        if (grandchildPid !== undefined) {
+          try {
+            process.kill(grandchildPid, "SIGTERM");
+          } catch {
+            // The process-tree cleanup already reaped the child.
+          }
+        }
+        lines.close();
+      }
+    },
+    30_000,
+  );
 
   it("retries a timed-out tree kill and verifies the retry removes the tree", async () => {
     const target = fakeLifecycleProcess(41_401);
