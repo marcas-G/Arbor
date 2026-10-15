@@ -2,8 +2,8 @@
 
 Date: 2026-10-15
 
-Status: **both focused cases pass; prior intermittent startup timeout remains
-unexplained and is not closed as a root cause**.
+Status: **focused AH19 startup assertions pass; the release timeout is traced
+to fixture HTTP-readiness handling after an expected fail-closed child exit**.
 
 ## Scope and instrumentation
 
@@ -76,11 +76,51 @@ running. The only remaining workspace temp directory is the pre-existing
 `G43dwQ` directory exists in the candidate checkout or the configured Temp
 root, so none was removed.
 
-## Conclusion
+## Readiness-exit follow-up
 
-The two failures did not reproduce in isolated runs. The measured startup
-phases do not show a deterministic stall in P39 validation, migration, or T1
-recovery. The previous release batch's `STARTED`-without-`LISTENING` timeout
-therefore remains a nonreproduced intermittent startup delay. Resource or
-host contention is a possibility, not established evidence; no production
-defect or root cause is claimed closed by these passes.
+The later release run `.test-results/2026-10-15T05-58-32-788Z-3340` timed out
+on the manifest `providerTurnId` case after the surrounding cases passed.
+The cause was in fixture readiness, not daemon startup: after the nonce-bound
+LISTEN marker, `startDaemon` polled HTTP readiness for up to 60 seconds using a
+predicate that included `!childHasExited`. When the intentionally corrupted
+manifest made the restarted daemon exit fail-closed, that predicate remained
+false but did not reject; the fixture waited out the entire HTTP-readiness
+window. Earlier traces showed LISTEN followed by child exit code 1 about one
+second later and `fixture.restart` returning about 60 seconds after that. The
+`logicalStepNo` pre-fix trace at
+`.test-results/ah19-startup-23404.jsonl` reached LISTEN at child elapsed
+17.396s, exited code 1 at 18.392s, and had not returned from fixture restart
+before the 160s test timeout. This explains how accumulated scenario/startup
+latency can push the unchanged 160s test budget over its limit.
+
+`waitForDaemonReadiness` now checks child exit around each HTTP probe and
+rejects immediately with exit/signal and bounded, redacted stderr. The normal
+60s readiness bound remains unchanged. A fixture regression starts a real
+HTTP-listening test child that exits code 23 before answering readiness; it
+asserts prompt rejection, exit/stderr diagnostics, closed provider, removed
+fixture directory, and no surviving child process.
+
+Validation on `c6d7c518` plus the fixture change:
+
+| Check | Result |
+|---|---|
+| Fixture listen-then-exit cleanup regression | PASS, 1/1; 2.084s test time |
+| `pnpm typecheck` | PASS |
+| Exact `providerTurnId` fail-closed case | PASS, 85.771s; 39 skipped |
+| Ordered `logicalStepNo`, then `providerTurnId` with `--bail=1` | PASS, 2/2; 81.892s and 89.758s; 38 skipped |
+
+The post-fix trace `.test-results/ah19-startup-23956.jsonl` records the exact
+`providerTurnId` run: restart child Web LISTEN at child elapsed 17.893s, exit
+code 1 at 18.869s, and fixture restart plus fail-closed marker both returned at
+85.645s. The ordered pair trace is `.test-results/ah19-startup-25252.jsonl`;
+both cases report restart-return and fail-closed markers, and both children
+were already dead with exit code 1 before fixture cleanup. Startup phase times
+varied under the sequential run (for example, writer-permit acquisition was
+17.5s in the first case and 30.5s in the second), but both stayed within the
+existing per-case budget once the erroneous 60s readiness wait was removed.
+
+No production code, timeout budget, binding/security assertion, no-replay
+assertion, or settlement assertion changed. The evidence establishes a
+test-fixture orchestration defect causing the delayed return; it does not claim
+that all possible startup/resource contention is eliminated. The only retained
+untracked batch evidence remains `.arbor-functional-schema42-FBDIxO/`.

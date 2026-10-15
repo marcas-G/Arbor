@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join, resolve } from "node:path";
 import {
+  childExitDiagnostic,
   childHasExited,
   closeServerBounded,
   createSignalSafeCleanup,
@@ -132,6 +133,47 @@ const waitFor = async <A>(
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   throw new Error(`functional timeout; last=${String(last)}`);
+};
+
+const waitForDaemonReadiness = async (
+  child: ChildProcess,
+  baseUrl: string,
+  daemonErrorSummary: () => string,
+  timeoutMs = 60_000,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    if (childHasExited(child)) {
+      throw new Error(
+        `functional daemon exited before HTTP readiness; ${childExitDiagnostic(child)}; stderr=${daemonErrorSummary() || "<empty>"}`,
+      );
+    }
+    try {
+      const response = await fetch(baseUrl);
+      if (response.ok) {
+        if (childHasExited(child)) {
+          throw new Error(
+            `functional daemon exited before HTTP readiness; ${childExitDiagnostic(child)}; stderr=${daemonErrorSummary() || "<empty>"}`,
+          );
+        }
+        return;
+      }
+      lastError = new Error(`HTTP readiness returned ${response.status}`);
+    } catch (error) {
+      if (childHasExited(child)) {
+        throw new Error(
+          `functional daemon exited before HTTP readiness; ${childExitDiagnostic(child)}; stderr=${daemonErrorSummary() || "<empty>"}`,
+          { cause: error },
+        );
+      }
+      lastError = error;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error(
+    `functional daemon HTTP readiness timed out after ${timeoutMs}ms; last=${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
 };
 
 const sendTextResponse = (
@@ -526,12 +568,10 @@ export const startProductionFixture = async (input: {
     }
     baseUrl = `http://127.0.0.1:${httpPort}`;
     try {
-      await waitFor(
-        () => fetch(baseUrl),
-        (response) =>
-          response.ok && daemon !== undefined && !childHasExited(daemon),
-        60_000,
-      );
+      if (daemon === undefined) {
+        throw new Error("functional daemon process was not started");
+      }
+      await waitForDaemonReadiness(daemon, baseUrl, daemonErrorSummary, 60_000);
     } catch (error) {
       await stopDaemonAfterStartupFailure(error, "functional daemon readiness");
       throw new Error(

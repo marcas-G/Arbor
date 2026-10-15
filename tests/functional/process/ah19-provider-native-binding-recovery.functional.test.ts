@@ -276,6 +276,11 @@ type Ah19StartupArtifactRecord =
       readonly childPid?: number;
     }
   | {
+      readonly kind: "qualification-phase";
+      readonly phase: Ah19QualificationPhase;
+      readonly elapsedMs: number;
+    }
+  | {
       readonly kind: "startup-failure";
       readonly boundary: "fixture-startup" | "conversation-response-restart";
       readonly process: Ah19PersistedProcessState | null;
@@ -292,6 +297,10 @@ type Ah19StartupArtifactRecord =
       readonly kind: "fixture-daemon-process";
       readonly beforeStop: Ah19ProcessSnapshotSummary | null;
       readonly afterStop: Ah19ProcessSnapshotSummary | null;
+    }
+  | {
+      readonly kind: "restart-process";
+      readonly process: Ah19ProcessSnapshotSummary | null;
     };
 
 interface Ah19ProcessSnapshotSummary {
@@ -330,6 +339,17 @@ const ah19StartupPhaseValues = [
 ] as const;
 type Ah19StartupPhase = (typeof ah19StartupPhaseValues)[number];
 const ah19StartupPhases = new Set<string>(ah19StartupPhaseValues);
+const ah19QualificationPhaseValues = [
+  "child START/LISTEN gen0 complete",
+  "gen0 checkpoint boundary ready",
+  "crash gen0 complete",
+  "lease expired after old daemon exit",
+  "manifest mutated",
+  "gen1 restart returned",
+  "failclosed marker observed",
+] as const;
+type Ah19QualificationPhase = (typeof ah19QualificationPhaseValues)[number];
+const ah19QualificationPhases = new Set<string>(ah19QualificationPhaseValues);
 const ah19SafeSignals = new Set<NodeJS.Signals>([
   "SIGABRT",
   "SIGBREAK",
@@ -596,6 +616,13 @@ const beginAh19PhaseDiagnostics = (testName: string, _marker: string) => {
       diagnostic.phases.push(
         `${new Date().toISOString()} ${name}${details === undefined ? "" : ` ${JSON.stringify(details)}`}`,
       );
+      if (ah19QualificationPhases.has(name)) {
+        persistAh19StartupRecord({
+          kind: "qualification-phase",
+          phase: name as Ah19QualificationPhase,
+          elapsedMs: Date.now() - diagnostic.startedAt,
+        });
+      }
     },
     failure: (phase: string, error: unknown) => {
       diagnostic.phases.push(
@@ -2264,6 +2291,7 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
   boundary:
     | "AH17BeforeCheckpointEpochCommit"
     | "AH17AfterCheckpointEpochCommit",
+  traceStartup = false,
 ) => {
   probes.length = 0;
   providerRequests.length = 0;
@@ -2285,9 +2313,13 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
     beforeResponse: heldWorkRequest.beforeResponse,
     onResponseSent: (call, index) =>
       responsesSent.push({ index, request: call }),
-    daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
+    daemonEnvironment: {
+      ARBOR_AH19_REPORT_URL: reportUrl,
+      ...(traceStartup ? { ARBOR_AH19_STARTUP_TRACE: "1" } : {}),
+    },
     onDaemonStdout: (line) => {
       childOutput.push(line);
+      recordAh19StartupOutput(line);
       if (line.includes("AH19_CHILD_START"))
         recordAh19Phase("child START", line);
       if (/listening|LISTEN/iu.test(line))
@@ -2299,6 +2331,16 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
         // Preserve other daemon output in fixture diagnostics.
       }
     },
+  }).catch((error: unknown) => {
+    if (traceStartup) {
+      persistAh19StartupRecord({
+        kind: "startup-failure",
+        boundary: "fixture-startup",
+        process: parseAh19HandshakeState(error) ?? null,
+        persistedState: "fresh cloned schema; public project setup not reached",
+      });
+    }
+    throw error;
   });
   fixtures.push(fixture);
   const client = makePublicClient(fixture.baseUrl);
@@ -2319,6 +2361,7 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
       ARBOR_AH19_ORDINARY_WORK: "1",
       ARBOR_AH19_CONTEXT_WINDOW: "16384",
       ARBOR_AH19_REPORT_URL: reportUrl,
+      ...(traceStartup ? { ARBOR_AH19_STARTUP_TRACE: "1" } : {}),
     },
     heldWorkRequest,
     {
@@ -3619,6 +3662,7 @@ describe("AH19 restart binding qualification", () => {
       : undefined;
     const scenario = await startOrdinaryNativeAtCheckpointBoundary(
       "AH17AfterCheckpointEpochCommit",
+      withPhaseDiagnostics,
     );
     const { fixture, project, workId, native, probe, childOutput } = scenario;
     const executionId = probe.executionId;
@@ -3670,6 +3714,7 @@ describe("AH19 restart binding qualification", () => {
           ARBOR_AH19_BOUNDARY: "none",
           ARBOR_AH19_BINDING_VARIANT: "B",
           ARBOR_AH19_CAPTURE_EXIT: "1",
+          ...(withPhaseDiagnostics ? { ARBOR_AH19_STARTUP_TRACE: "1" } : {}),
         },
       })
       .catch(() => undefined);
@@ -3678,6 +3723,22 @@ describe("AH19 restart binding qualification", () => {
         line.includes("AH19_CHILD_START"),
       ),
     });
+    const restartProcess = fixture.daemonProcessSnapshot();
+    if (withPhaseDiagnostics) {
+      persistAh19StartupRecord({
+        kind: "restart-process",
+        process:
+          restartProcess === null
+            ? null
+            : {
+                pid: restartProcess.pid,
+                exitCode: restartProcess.exitCode,
+                signalCode: restartProcess.signalCode,
+                killed: restartProcess.killed,
+                alive: restartProcess.alive,
+              },
+      });
+    }
     const childError = await waitForPublic(
       async () =>
         childOutput
@@ -3698,9 +3759,7 @@ describe("AH19 restart binding qualification", () => {
     expect(childError?.error?.reason).toBe(
       "AgentLoopStepReplayBindingMismatch",
     );
-    diagnostic?.phase("failclosed marker observed", {
-      reason: childError?.error?.reason,
-    });
+    diagnostic?.phase("failclosed marker observed");
     const rejected = readSnapshot(fixture.databaseFile, ids);
     expect(rejected.session?.context_epoch).toBe(1);
     expect(rejected.checkpoints).toEqual(beforeKill.checkpoints);
@@ -3722,7 +3781,7 @@ describe("AH19 restart binding qualification", () => {
 
   it.each(["logicalStepNo", "providerTurnId", "bindingFingerprint"] as const)(
     "fails closed on an ordinary Native manifest with corrupted %s evidence",
-    async (field) => failClosedOnOrdinaryNativeManifestCorruption(field, false),
+    async (field) => failClosedOnOrdinaryNativeManifestCorruption(field, true),
     160_000,
   );
 
