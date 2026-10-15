@@ -2523,6 +2523,41 @@ export const P40_TOOL_OBSERVATION_REPLAY_MIGRATION: MigrationFile = {
   requiresUserVersion: 39,
 };
 
+const p40InvocationObservationGuardsForP44 = (() => {
+  const startMarker =
+    "CREATE TRIGGER tool_invocations_observation_insert_guard";
+  const endMarker = "CREATE TABLE tool_observation_replay_attention_facts";
+  const start = P40_TOOL_OBSERVATION_REPLAY_DDL.indexOf(startMarker);
+  const end = P40_TOOL_OBSERVATION_REPLAY_DDL.indexOf(endMarker, start);
+  if (start < 0 || end < 0) {
+    throw new Error("P40 invocation observation guards are unavailable.");
+  }
+  const source = P40_TOOL_OBSERVATION_REPLAY_DDL.slice(start, end).trim();
+  const oldAllowlistEntry =
+    "'InvocationAuthorityDenied','ApprovalRequired','ApprovalNotFound',";
+  if (source.split(oldAllowlistEntry).length - 1 !== 2) {
+    throw new Error("P40 Denied guard shape changed; refusing P44 derivation.");
+  }
+  return source.replaceAll(
+    oldAllowlistEntry,
+    "'InvocationAuthorityDenied','ApprovalRequired','ApprovalRejected','ApprovalNotFound',",
+  );
+})();
+
+/** P4 approval rejection is a frozen terminal no-effect Denied outcome. This
+ * one-way repair preserves the P40 trigger predicates and adds only its reason
+ * code; the descriptor remains unregistered pending activation governance. */
+export const P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION = {
+  id: 44,
+  name: "approval_rejected_no_effect_denial",
+  requiresUserVersion: 43,
+  sql: `
+DROP TRIGGER tool_invocations_observation_insert_guard;
+DROP TRIGGER tool_invocations_observation_update_guard;
+${p40InvocationObservationGuardsForP44}
+`,
+} satisfies MigrationFile & { readonly requiresUserVersion: 43 };
+
 /**
  * Schema 42 is the current runtime target. P39 remains an exact privileged
  * maintenance-only step and is deliberately absent from this registry; the
