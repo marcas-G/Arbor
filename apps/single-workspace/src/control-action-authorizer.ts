@@ -5,7 +5,12 @@ import {
   permissionGrantMatchesExecution,
 } from "@arbor/agent-runtime";
 import { newUuid7 } from "@arbor/application";
-import type { CommandId, WorkspacePolicy } from "@arbor/domain";
+import type {
+  CommandId,
+  PermissionGrant,
+  ProjectId,
+  WorkspacePolicy,
+} from "@arbor/domain";
 import {
   type AssignWorkControlAuthorizationEvidence,
   Clock,
@@ -125,6 +130,43 @@ const ttlOf = (policy: WorkspacePolicy): number => {
 const addSeconds = (instant: string, seconds: number): string =>
   new Date(Date.parse(instant) + seconds * 1000).toISOString();
 
+const assignWorkPermissionGrantEvidence = (input: {
+  readonly grant: PermissionGrant;
+  readonly projectId: ProjectId;
+  readonly targetRef: string;
+  readonly actionDigest: string;
+  readonly controlBasisDigest: string;
+}): AssignWorkControlAuthorizationEvidence | undefined => {
+  const { grant } = input;
+  const subject = grant.subject;
+  if (
+    (subject?._tag !== "WorkspaceAgent" && subject?._tag !== "Execution") ||
+    grant.capability !== "core.control.assign-work" ||
+    grant.target !== input.targetRef ||
+    grant.revision === undefined ||
+    grant.validFrom === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    _tag: "PermissionGrant",
+    permissionGrantId: grant.permissionGrantId,
+    permissionGrantRevision: grant.revision,
+    projectId: input.projectId,
+    subjectKind: subject._tag,
+    subjectRef:
+      subject._tag === "WorkspaceAgent"
+        ? subject.workspaceId
+        : subject.executionId,
+    capability: "core.control.assign-work",
+    targetRef: input.targetRef,
+    validFrom: grant.validFrom,
+    expiresAt: grant.expiresAt ?? null,
+    actionDigest: input.actionDigest,
+    controlBasisDigest: input.controlBasisDigest,
+  };
+};
+
 export const ControlActionAuthorizerLive: Layer.Layer<
   ControlActionAuthorizer,
   never,
@@ -201,9 +243,6 @@ export const ControlActionAuthorizerLive: Layer.Layer<
             }
             if (prior.value.resolution === "Committed") {
               if (currentWorkspaceAssignWork) {
-                const approval = yield* tx.transact(
-                  approvals.findById(approvalId),
-                );
                 let receiptWorkspaceId: unknown;
                 try {
                   receiptWorkspaceId = JSON.parse(
@@ -212,21 +251,30 @@ export const ControlActionAuthorizerLive: Layer.Layer<
                 } catch {
                   receiptWorkspaceId = undefined;
                 }
-                if (
-                  Option.isSome(approval) &&
-                  approval.value.state === "Consumed" &&
-                  approval.value.bindingProven === true &&
-                  approval.value.revision === 2 &&
-                  approval.value.consumedBy === priorCommandId &&
-                  approval.value.projectId === input.execution.projectId &&
-                  approval.value.workspaceId === input.execution.workspaceId &&
-                  approval.value.executionId === input.execution.executionId &&
-                  approval.value.stableActionId === stableActionId &&
-                  approval.value.actionDigest === actionDigest &&
-                  approval.value.targetRef === targetRef &&
-                  approval.value.controlBasisDigest === controlBasisDigest &&
-                  receiptWorkspaceId === input.execution.workspaceId
-                ) {
+                if (receiptWorkspaceId !== input.execution.workspaceId) {
+                  return { _tag: "RecoveryBlocked" as const };
+                }
+                const approval = yield* tx.transact(
+                  approvals.findById(approvalId),
+                );
+                if (Option.isSome(approval)) {
+                  if (
+                    approval.value.state !== "Consumed" ||
+                    approval.value.bindingProven !== true ||
+                    approval.value.revision !== 2 ||
+                    approval.value.consumedBy !== priorCommandId ||
+                    approval.value.projectId !== input.execution.projectId ||
+                    approval.value.workspaceId !==
+                      input.execution.workspaceId ||
+                    approval.value.executionId !==
+                      input.execution.executionId ||
+                    approval.value.stableActionId !== stableActionId ||
+                    approval.value.actionDigest !== actionDigest ||
+                    approval.value.targetRef !== targetRef ||
+                    approval.value.controlBasisDigest !== controlBasisDigest
+                  ) {
+                    return { _tag: "RecoveryBlocked" as const };
+                  }
                   const authority = {
                     _tag: "ActionApproval" as const,
                     approvalId: approval.value.approvalId,
@@ -256,7 +304,50 @@ export const ControlActionAuthorizerLive: Layer.Layer<
                     },
                   };
                 }
-                return { _tag: "RecoveryBlocked" as const };
+
+                const activeGrants = yield* tx.transact(
+                  grants.activeGrants(input.execution.projectId),
+                );
+                const grant = activeGrants.find((candidate) => {
+                  const evidence = assignWorkPermissionGrantEvidence({
+                    grant: candidate,
+                    projectId: input.execution.projectId,
+                    targetRef,
+                    actionDigest,
+                    controlBasisDigest,
+                  });
+                  return (
+                    evidence !== undefined &&
+                    permissionGrantMatchesExecution(candidate, {
+                      execution: input.execution,
+                      principal: input.context.principal,
+                      capability: stableActionId,
+                      targetRef,
+                      now,
+                    })
+                  );
+                });
+                const authority =
+                  grant === undefined
+                    ? undefined
+                    : assignWorkPermissionGrantEvidence({
+                        grant,
+                        projectId: input.execution.projectId,
+                        targetRef,
+                        actionDigest,
+                        controlBasisDigest,
+                      });
+                if (authority === undefined) {
+                  return { _tag: "RecoveryBlocked" as const };
+                }
+                return {
+                  _tag: "Authorized" as const,
+                  authorityRef:
+                    "receipt-first:assign-work-current-workspace-grant",
+                  actionDigest,
+                  controlBasisDigest,
+                  assignWorkEvidence: authority,
+                };
               }
               return {
                 _tag: "Authorized" as const,
@@ -316,45 +407,31 @@ export const ControlActionAuthorizerLive: Layer.Layer<
               now,
             }) &&
             (input.action._tag !== "AssignWork" ||
-              (candidate.target === targetRef &&
-                candidate.capability === stableActionId &&
-                candidate.revision !== undefined &&
-                candidate.subject?._tag !== undefined &&
-                candidate.subject._tag !== "HumanPrincipal")),
+              assignWorkPermissionGrantEvidence({
+                grant: candidate,
+                projectId: input.execution.projectId,
+                targetRef,
+                actionDigest,
+                controlBasisDigest,
+              }) !== undefined),
         );
         if (grant !== undefined) {
+          const assignWorkEvidence =
+            input.action._tag === "AssignWork"
+              ? assignWorkPermissionGrantEvidence({
+                  grant,
+                  projectId: input.execution.projectId,
+                  targetRef,
+                  actionDigest,
+                  controlBasisDigest,
+                })
+              : undefined;
           return {
             _tag: "Authorized" as const,
             authorityRef: `grant:${grant.permissionGrantId}`,
             actionDigest,
             controlBasisDigest,
-            ...(input.action._tag === "AssignWork" &&
-            (grant.subject?._tag === "WorkspaceAgent" ||
-              grant.subject?._tag === "Execution") &&
-            grant.capability === stableActionId &&
-            grant.target === targetRef &&
-            grant.validFrom !== undefined &&
-            grant.revision !== undefined
-              ? {
-                  assignWorkEvidence: {
-                    _tag: "PermissionGrant" as const,
-                    permissionGrantId: grant.permissionGrantId,
-                    permissionGrantRevision: grant.revision,
-                    projectId: input.execution.projectId,
-                    subjectKind: grant.subject._tag,
-                    subjectRef:
-                      grant.subject._tag === "WorkspaceAgent"
-                        ? grant.subject.workspaceId
-                        : grant.subject.executionId,
-                    capability: stableActionId as "core.control.assign-work",
-                    targetRef,
-                    validFrom: grant.validFrom,
-                    expiresAt: grant.expiresAt ?? null,
-                    actionDigest,
-                    controlBasisDigest,
-                  } satisfies AssignWorkControlAuthorizationEvidence,
-                }
-              : {}),
+            ...(assignWorkEvidence === undefined ? {} : { assignWorkEvidence }),
           };
         }
         if (mode === "AllowWithinGrant") {
