@@ -3049,95 +3049,132 @@ describe("AH19 restart binding qualification", () => {
     expect(fixture.daemonErrors).toEqual([]);
   }, 150_000);
 
-  it.each([
-    "logicalStepNo",
-    "repairAttempt",
-    "providerTurnId",
-    "executionId",
-    "bindingFingerprint",
-  ] as const)(
-    "fails closed on an ordinary Native manifest with corrupted %s evidence",
-    async (field) => {
-      const scenario = await startOrdinaryNativeAtCheckpointBoundary(
-        "AH17AfterCheckpointEpochCommit",
-      );
-      const { fixture, project, workId, native, probe, childOutput } = scenario;
-      const executionId = probe.executionId;
-      const ids = { sessionId: project.rootSessionId, executionId, workId };
-      const beforeKill = readSnapshot(fixture.databaseFile, ids);
-      const originalNativeRow = beforeKill.providerTurns.find(
+  const failClosedOnOrdinaryNativeManifestCorruption = async (
+    field:
+      | "logicalStepNo"
+      | "repairAttempt"
+      | "providerTurnId"
+      | "executionId"
+      | "bindingFingerprint",
+    withPhaseDiagnostics: boolean,
+  ) => {
+    const diagnostic = withPhaseDiagnostics
+      ? beginAh19PhaseDiagnostics(
+          `fails closed on an ordinary Native manifest with corrupted ${field} evidence`,
+          `ordinary-native-manifest-${field}`,
+        )
+      : undefined;
+    const scenario = await startOrdinaryNativeAtCheckpointBoundary(
+      "AH17AfterCheckpointEpochCommit",
+    );
+    const { fixture, project, workId, native, probe, childOutput } = scenario;
+    const executionId = probe.executionId;
+    const ids = { sessionId: project.rootSessionId, executionId, workId };
+    diagnostic?.attach(fixture, childOutput);
+    diagnostic?.setSnapshot(() => readSnapshot(fixture.databaseFile, ids));
+    diagnostic?.phase("child START/LISTEN gen0 complete", { executionId });
+    const beforeKill = readSnapshot(fixture.databaseFile, ids);
+    const originalNativeRow = beforeKill.providerTurns.find(
+      (turn) => turn.provider_turn_id === native.providerTurnId,
+    );
+    expect(beforeKill.session?.context_epoch).toBe(1);
+    expect(beforeKill.checkpoints).toHaveLength(1);
+    expect(
+      beforeKill.providerLinks.some(
+        (link) =>
+          link.provider_turn_id === native.providerTurnId &&
+          link.role === "OverflowCompaction",
+      ),
+    ).toBe(false);
+    await fixture.crash();
+    diagnostic?.phase("crash gen0 complete", {
+      nativeTurnId: native.providerTurnId,
+    });
+    await expireLeaseAfterOldDaemonExit(
+      fixture,
+      project.rootSessionId,
+      executionId,
+      workId,
+    );
+    diagnostic?.phase("lease expired after old daemon exit", {
+      leases: readSnapshot(fixture.databaseFile, ids).leases,
+    });
+    corruptOrdinaryNativeSourceIdentity(
+      fixture.databaseFile,
+      native.providerTurnId,
+      field,
+    );
+    diagnostic?.phase("manifest mutated", {
+      providerTurnId: native.providerTurnId,
+      field,
+    });
+    await fixture
+      .restart({
+        entry: childEntry,
+        daemonEnvironment: {
+          ARBOR_AH19_BOUNDARY: "none",
+          ARBOR_AH19_BINDING_VARIANT: "B",
+          ARBOR_AH19_CAPTURE_EXIT: "1",
+        },
+      })
+      .catch(() => undefined);
+    diagnostic?.phase("gen1 restart returned", {
+      childStart: childOutput.filter((line) =>
+        line.includes("AH19_CHILD_START"),
+      ),
+    });
+    const childError = await waitForPublic(
+      async () =>
+        childOutput
+          .map((line) => {
+            try {
+              return JSON.parse(line) as {
+                tag?: string;
+                error?: { reason?: string };
+              };
+            } catch {
+              return undefined;
+            }
+          })
+          .find((event) => event?.tag === "AH19_CHILD_ERROR"),
+      (event) => event !== undefined,
+      20_000,
+    );
+    expect(childError?.error?.reason).toBe(
+      "AgentLoopStepReplayBindingMismatch",
+    );
+    diagnostic?.phase("failclosed marker observed", {
+      reason: childError?.error?.reason,
+    });
+    const rejected = readSnapshot(fixture.databaseFile, ids);
+    expect(rejected.session?.context_epoch).toBe(1);
+    expect(rejected.checkpoints).toEqual(beforeKill.checkpoints);
+    expect(
+      rejected.providerTurns.find(
         (turn) => turn.provider_turn_id === native.providerTurnId,
-      );
-      expect(beforeKill.session?.context_epoch).toBe(1);
-      expect(beforeKill.checkpoints).toHaveLength(1);
-      expect(
-        beforeKill.providerLinks.some(
-          (link) =>
-            link.provider_turn_id === native.providerTurnId &&
-            link.role === "OverflowCompaction",
-        ),
-      ).toBe(false);
-      await fixture.crash();
-      await expireLeaseAfterOldDaemonExit(
-        fixture,
-        project.rootSessionId,
-        executionId,
-        workId,
-      );
-      corruptOrdinaryNativeSourceIdentity(
-        fixture.databaseFile,
-        native.providerTurnId,
-        field,
-      );
-      await fixture
-        .restart({
-          entry: childEntry,
-          daemonEnvironment: {
-            ARBOR_AH19_BOUNDARY: "none",
-            ARBOR_AH19_BINDING_VARIANT: "B",
-            ARBOR_AH19_CAPTURE_EXIT: "1",
-          },
-        })
-        .catch(() => undefined);
-      const childError = await waitForPublic(
-        async () =>
-          childOutput
-            .map((line) => {
-              try {
-                return JSON.parse(line) as {
-                  tag?: string;
-                  error?: { reason?: string };
-                };
-              } catch {
-                return undefined;
-              }
-            })
-            .find((event) => event?.tag === "AH19_CHILD_ERROR"),
-        (event) => event !== undefined,
-        20_000,
-      );
-      expect(childError?.error?.reason).toBe(
-        "AgentLoopStepReplayBindingMismatch",
-      );
-      const rejected = readSnapshot(fixture.databaseFile, ids);
-      expect(rejected.session?.context_epoch).toBe(1);
-      expect(rejected.checkpoints).toEqual(beforeKill.checkpoints);
-      expect(
-        rejected.providerTurns.find(
-          (turn) => turn.provider_turn_id === native.providerTurnId,
-        ),
-      ).toMatchObject({
-        manifest_id: originalNativeRow?.manifest_id,
-        settled_at: originalNativeRow?.settled_at,
-      });
-      expect(rejected.execution?.settled_at).toBeNull();
-      expect(rejected.leases.at(-1)?.generation).toBe(1);
-      expect(
-        providerRequests.filter((request) => request.bindingVariant === "B"),
-      ).toHaveLength(0);
-      expect(fixture.daemonErrors).toEqual([]);
-    },
+      ),
+    ).toMatchObject({
+      manifest_id: originalNativeRow?.manifest_id,
+      settled_at: originalNativeRow?.settled_at,
+    });
+    expect(rejected.execution?.settled_at).toBeNull();
+    expect(rejected.leases.at(-1)?.generation).toBe(1);
+    expect(
+      providerRequests.filter((request) => request.bindingVariant === "B"),
+    ).toHaveLength(0);
+    expect(fixture.daemonErrors).toEqual([]);
+  };
+
+  it.each(["logicalStepNo", "providerTurnId", "bindingFingerprint"] as const)(
+    "fails closed on an ordinary Native manifest with corrupted %s evidence",
+    async (field) => failClosedOnOrdinaryNativeManifestCorruption(field, false),
     160_000,
+  );
+
+  it.each(["repairAttempt", "executionId"] as const)(
+    "fails closed on an ordinary Native manifest with corrupted %s evidence",
+    async (field) => failClosedOnOrdinaryNativeManifestCorruption(field, true),
+    180_000,
   );
 
   it.each(["compiledRequestHash", "contextEpoch"] as const)(
