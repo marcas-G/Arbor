@@ -2,7 +2,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
+import {
+  expireExecutionLeaseAfterOwnerExitForQualification,
+  waitForLiveOwnerLeaseExpiryForQualification,
+} from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -23,6 +26,7 @@ interface Probe {
   readonly boundary: string;
   readonly executionId: string;
   readonly fencingGeneration?: number;
+  readonly pauseRequested?: boolean;
   readonly providerTurnId?: string;
   readonly logicalActionId?: string;
   readonly actionKind?: string;
@@ -720,6 +724,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       ).toHaveLength(0);
 
       let priorCommittedCommandId: string | undefined;
+      let oldLeasePause: Probe | undefined;
       if (crashSide === "committed") {
         releaseGate(fixture, "old", "action-intent");
         const controlReturned = await waitForPublic(
@@ -802,7 +807,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         expect(assignWorkCalls).toHaveLength(1);
         await fixture.crash();
       } else {
-        const oldLeasePause = await waitForPublic(
+        oldLeasePause = await waitForPublic(
           async () =>
             events.find(
               (event) =>
@@ -818,14 +823,34 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         }
         expect(oldLeasePause.fencingGeneration).toBe(0);
       }
-      await expireExecutionLeaseForQualification({
-        databaseFile: fixture.databaseFile,
-        executionId: oldAction.executionId,
-        daemon: {
-          crash: fixture.crash,
-          snapshot: fixture.daemonProcessSnapshot,
-        },
-      });
+      if (crashSide === "committed") {
+        await expireExecutionLeaseAfterOwnerExitForQualification({
+          databaseFile: fixture.databaseFile,
+          executionId: oldAction.executionId,
+          daemon: {
+            crash: fixture.crash,
+            snapshot: fixture.daemonProcessSnapshot,
+          },
+        });
+      } else {
+        if (oldLeasePause === undefined) {
+          throw new Error(
+            "Direct-child AssignWork old lease pause evidence absent",
+          );
+        }
+        await waitForLiveOwnerLeaseExpiryForQualification({
+          databaseFile: fixture.databaseFile,
+          executionId: oldAction.executionId,
+          pauseEvidence: {
+            boundary: "AH10BeforeLeaseRenewal",
+            pauseRequested: oldLeasePause.pauseRequested === true,
+            executionId: oldLeasePause.executionId,
+            fencingGeneration: oldLeasePause.fencingGeneration ?? -1,
+          },
+          expected: { generation: 0 },
+          daemon: { snapshot: fixture.daemonProcessSnapshot },
+        });
+      }
 
       const newDaemon = await fixture.startAdditionalDaemon({
         entry: ah10Child,

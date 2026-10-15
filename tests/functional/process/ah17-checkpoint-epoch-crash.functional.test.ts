@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
+import { expireExecutionLeaseAfterOwnerExitForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -658,18 +658,19 @@ describe("AH17 CompactionCheckpoint and ContextEpoch process crash", () => {
       );
       if (oldLease === undefined)
         throw new Error("AH17 old execution lease is absent after daemon exit");
-      const expiredLease = await expireExecutionLeaseForQualification({
-        databaseFile: fixture.databaseFile,
-        executionId: boundary.executionId,
-        expected: {
-          generation: Number(oldLease.generation),
-          expiresAt: oldLease.expires_at,
-        },
-        daemon: {
-          crash: fixture.crash,
-          snapshot: fixture.daemonProcessSnapshot,
-        },
-      });
+      const expiredLease =
+        await expireExecutionLeaseAfterOwnerExitForQualification({
+          databaseFile: fixture.databaseFile,
+          executionId: boundary.executionId,
+          expected: {
+            generation: Number(oldLease.generation),
+            expiresAt: oldLease.expires_at,
+          },
+          daemon: {
+            crash: fixture.crash,
+            snapshot: fixture.daemonProcessSnapshot,
+          },
+        });
       expect(expiredLease.before).toMatchObject({
         execution_id: boundary.executionId,
         generation: oldLease.generation,

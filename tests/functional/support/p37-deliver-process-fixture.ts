@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { newUuid7 } from "../../../packages/application/src/index.js";
 import {
-  expireExecutionLeaseForQualification,
+  expireExecutionLeaseAfterOwnerExitForQualification,
   type QualificationDaemonController,
   type QualificationLeaseOwnerEvidence,
 } from "./lease-qualification.js";
@@ -1199,7 +1199,7 @@ export const expireP37LeaseForQualification = async (input: {
       })}`,
     );
   }
-  return expireExecutionLeaseForQualification({
+  return expireExecutionLeaseAfterOwnerExitForQualification({
     databaseFile: input.databaseFile,
     executionId: input.executionId,
     expected: {

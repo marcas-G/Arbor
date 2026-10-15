@@ -2,7 +2,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { expireExecutionLeaseForQualification } from "../support/lease-qualification.js";
+import {
+  expireExecutionLeaseAfterOwnerExitForQualification,
+  waitForLiveOwnerLeaseExpiryForQualification,
+} from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -23,6 +26,7 @@ interface Ah10Probe {
   readonly boundary: string;
   readonly executionId: string;
   readonly fencingGeneration?: number;
+  readonly pauseRequested?: boolean;
   readonly providerTurnId?: string;
   readonly logicalActionId?: string;
   readonly actionKind?: string;
@@ -582,17 +586,31 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
         (event) => event !== undefined,
         20_000,
       );
+      if (oldLeasePause === undefined) {
+        throw new Error(
+          "AH10 old SelectCurrentWork lease pause evidence absent",
+        );
+      }
       expect(oldLeasePause?.fencingGeneration).toBe(0);
       const oldLease = staged.leases.find(
         (lease) => lease.execution_id === oldAction.executionId,
       );
       expect(oldLease?.generation).toBe(0);
       if (oldLease === undefined) throw new Error("gen0 lease row is absent");
-      await expireExecutionLeaseForQualification({
+      await waitForLiveOwnerLeaseExpiryForQualification({
         databaseFile: fixture.databaseFile,
         executionId: oldAction.executionId,
+        pauseEvidence: {
+          boundary: "AH10BeforeLeaseRenewal",
+          pauseRequested: oldLeasePause.pauseRequested === true,
+          executionId: oldLeasePause.executionId,
+          fencingGeneration: oldLeasePause.fencingGeneration ?? -1,
+        },
+        expected: {
+          generation: 0,
+          expiresAt: oldLease.expires_at,
+        },
         daemon: {
-          crash: fixture.crash,
           snapshot: fixture.daemonProcessSnapshot,
         },
       });
@@ -1146,14 +1164,15 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
         ),
       ),
     ).toHaveLength(0);
-    const expiredLease = await expireExecutionLeaseForQualification({
-      databaseFile: fixture.databaseFile,
-      executionId: oldAction.executionId,
-      daemon: {
-        crash: fixture.crash,
-        snapshot: fixture.daemonProcessSnapshot,
-      },
-    });
+    const expiredLease =
+      await expireExecutionLeaseAfterOwnerExitForQualification({
+        databaseFile: fixture.databaseFile,
+        executionId: oldAction.executionId,
+        daemon: {
+          crash: fixture.crash,
+          snapshot: fixture.daemonProcessSnapshot,
+        },
+      });
     expect(expiredLease.before.generation).toBe(0);
     expect(expiredLease.after.generation).toBe(0);
 
