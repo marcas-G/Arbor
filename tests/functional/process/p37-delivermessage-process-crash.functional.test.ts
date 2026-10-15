@@ -10,7 +10,6 @@ import {
   findDeliverReplayFact,
   fixtures,
   p37Child,
-  p37LeaseOwnerEvidence,
   prepareContradictoryCommittedReceipt,
   publicDeliverReplayRows,
   readP37Snapshot,
@@ -451,11 +450,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       databaseFile: prepared.fixture.databaseFile,
       executionId: prepared.action.execution_id,
       daemon: initialOwnerController,
-      ownerEvidence: p37LeaseOwnerEvidence({
-        probes: prepared.probes,
-        executionId: prepared.action.execution_id,
-        daemon: initialOwnerController,
-      }),
+      probes: prepared.probes,
+      daemonErrors: prepared.fixture.daemonErrors,
     });
     const recovery = await startP37RecoveryDaemon(
       prepared.fixture,
@@ -524,11 +520,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       databaseFile: prepared.fixture.databaseFile,
       executionId: prepared.action.execution_id,
       daemon: recoveryOwnerController,
-      ownerEvidence: p37LeaseOwnerEvidence({
-        probes: prepared.probes,
-        executionId: prepared.action.execution_id,
-        daemon: recoveryOwnerController,
-      }),
+      probes: prepared.probes,
+      daemonErrors: recovery.daemonErrors,
     });
     await restartP37Normally(prepared.fixture);
     const finalWithFact = await waitForPublic(
@@ -590,11 +583,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       databaseFile: prepared.fixture.databaseFile,
       executionId: prepared.action.execution_id,
       daemon: leaseOwnerController,
-      ownerEvidence: p37LeaseOwnerEvidence({
-        probes: prepared.probes,
-        executionId: prepared.action.execution_id,
-        daemon: leaseOwnerController,
-      }),
+      probes: prepared.probes,
+      daemonErrors: prepared.fixture.daemonErrors,
     });
     const recovery = await startP37RecoveryDaemon(
       prepared.fixture,
@@ -715,11 +705,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
           databaseFile: prepared.fixture.databaseFile,
           executionId: p9Probe.executionId,
           daemon: expiredOwnerDaemon,
-          ownerEvidence: p37LeaseOwnerEvidence({
-            probes: prepared.probes,
-            executionId: p9Probe.executionId,
-            daemon: expiredOwnerDaemon,
-          }),
+          probes: prepared.probes,
+          daemonErrors: recovery.daemonErrors,
         });
       }
       await restartP37Normally(prepared.fixture);
@@ -838,11 +825,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       databaseFile: seed.fixture.databaseFile,
       executionId,
       daemon: initialOwnerController,
-      ownerEvidence: p37LeaseOwnerEvidence({
-        probes: seed.probes,
-        executionId,
-        daemon: initialOwnerController,
-      }),
+      probes: seed.probes,
+      daemonErrors: seed.fixture.daemonErrors,
     });
 
     const recovery = await startP37RecoveryDaemon(
@@ -908,11 +892,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       databaseFile: seed.fixture.databaseFile,
       executionId,
       daemon: recoveryOwnerController,
-      ownerEvidence: p37LeaseOwnerEvidence({
-        probes: seed.probes,
-        executionId,
-        daemon: recoveryOwnerController,
-      }),
+      probes: seed.probes,
+      daemonErrors: recovery.daemonErrors,
     });
     await restartP37Normally(seed.fixture);
     const finalWithFact = await waitForPublic(
@@ -1063,11 +1044,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
           databaseFile: prepared.fixture.databaseFile,
           executionId: projectionProbe.executionId,
           daemon: expiredOwnerDaemon,
-          ownerEvidence: p37LeaseOwnerEvidence({
-            probes: prepared.probes,
-            executionId: projectionProbe.executionId,
-            daemon: expiredOwnerDaemon,
-          }),
+          probes: prepared.probes,
+          daemonErrors: recovery.daemonErrors,
         });
       }
       await restartP37Normally(prepared.fixture);
@@ -1140,11 +1118,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       databaseFile: prepared.fixture.databaseFile,
       executionId: prepared.held.executionId,
       daemon: expiredOwnerDaemon,
-      ownerEvidence: p37LeaseOwnerEvidence({
-        probes: prepared.probes,
-        executionId: prepared.held.executionId,
-        daemon: expiredOwnerDaemon,
-      }),
+      probes: prepared.probes,
+      daemonErrors: recovery.daemonErrors,
     });
     await restartP37Normally(prepared.fixture);
     const attentionRows = await waitForPublic(
