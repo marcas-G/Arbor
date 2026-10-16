@@ -990,36 +990,142 @@ export const ToolRuntimeLive = (
           const persistNoEffectInterruption = (
             invocation: ToolInvocationIntent | undefined,
             settledAt: string,
-          ) => {
-            const failure = operationalFailure(
-              "IntentJournal",
-              String(intent.invocationId),
-            );
-            const write =
-              Option.isSome(observationEvidence) && invocation !== undefined
-                ? Effect.gen(function* () {
-                    const result =
-                      yield* observationEvidence.value.settleOrReadWinner({
-                        invocation,
-                        settlement: { _tag: "Interrupted" },
-                        resultRef: null,
-                        observation: { _tag: "Interrupted" },
-                        settledAt,
-                        executionFence: context.executionFence,
-                        fenceNow: settledAt,
-                      });
-                    return result.evidence.observation._tag === "Interrupted";
-                  }).pipe(Effect.mapError(failure))
-                : store
-                    .recordNoEffectInterruption(
-                      intent.invocationId,
+          ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
+            Effect.gen(function* () {
+              const failure = operationalFailure(
+                "IntentJournal",
+                String(intent.invocationId),
+              );
+              const current = yield* findInvocationFenced(
+                intent.invocationId,
+                context,
+                "IntentJournal",
+              );
+              if (Option.isNone(current))
+                return { _tag: "Interrupted" as const };
+              const currentRecord = current.value;
+              if (currentRecord.settlement !== null) {
+                if (currentRecord.settlement._tag === "Denied") {
+                  return denied(currentRecord.settlement.reasonCode);
+                }
+                if (currentRecord.settlement._tag === "Interrupted") {
+                  return Option.isSome(observationEvidence)
+                    ? yield* decodeRecordedEvidence(
+                        intent,
+                        context,
+                        currentRecord,
+                      )
+                    : { _tag: "Interrupted" as const };
+                }
+                if (Option.isSome(observationEvidence)) {
+                  return yield* decodeRecordedEvidence(
+                    intent,
+                    context,
+                    currentRecord,
+                  );
+                }
+                return {
+                  _tag: "OutcomeUnknown" as const,
+                  reconciliationRefs: [String(intent.invocationId)],
+                };
+              }
+              if (currentRecord.effectAdmissionState !== "NotAdmitted") {
+                return {
+                  _tag: "OutcomeUnknown" as const,
+                  reconciliationRefs: [String(intent.invocationId)],
+                };
+              }
+              if (
+                Option.isSome(observationEvidence) &&
+                invocation !== undefined
+              ) {
+                const winner = yield* tx
+                  .transact(
+                    observationEvidence.value.settleOrReadWinner({
+                      invocation,
+                      settlement: { _tag: "Interrupted" },
+                      resultRef: null,
+                      observation: { _tag: "Interrupted" },
                       settledAt,
-                      context.executionFence,
-                      settledAt,
-                    )
-                    .pipe(Effect.mapError(failure));
-            return tx.transact(write).pipe(Effect.mapError(failure));
-          };
+                      executionFence: context.executionFence,
+                      fenceNow: settledAt,
+                    }),
+                  )
+                  .pipe(Effect.mapError(failure));
+                if (winner._tag === "Applied") {
+                  return { _tag: "Interrupted" as const };
+                }
+                if (winner._tag === "ExistingDenied") {
+                  return denied(winner.reasonCode);
+                }
+                const committed = yield* findInvocationFenced(
+                  intent.invocationId,
+                  context,
+                  "IntentJournal",
+                );
+                if (Option.isSome(committed)) {
+                  if (committed.value.settlement?._tag === "Denied") {
+                    return denied(committed.value.settlement.reasonCode);
+                  }
+                  if (committed.value.settlement !== null) {
+                    return yield* decodeRecordedEvidence(
+                      intent,
+                      context,
+                      committed.value,
+                    );
+                  }
+                }
+                return yield* Effect.fail<ToolRuntimeError>(
+                  failure({
+                    _tag: "NoEffectInterruptionWinnerMissing",
+                  }),
+                );
+              }
+              const interrupted = yield* tx
+                .transact(
+                  store.recordNoEffectInterruption(
+                    intent.invocationId,
+                    settledAt,
+                    context.executionFence,
+                    settledAt,
+                  ),
+                )
+                .pipe(Effect.mapError(failure));
+              if (interrupted) return { _tag: "Interrupted" as const };
+              const winner = yield* findInvocationFenced(
+                intent.invocationId,
+                context,
+                "IntentJournal",
+              );
+              if (Option.isNone(winner))
+                return { _tag: "Interrupted" as const };
+              if (winner.value.settlement?._tag === "Denied") {
+                return denied(winner.value.settlement.reasonCode);
+              }
+              if (
+                winner.value.settlement?._tag === "Interrupted" &&
+                Option.isNone(observationEvidence)
+              ) {
+                return { _tag: "Interrupted" as const };
+              }
+              if (
+                winner.value.settlement !== null &&
+                Option.isSome(observationEvidence)
+              ) {
+                return yield* decodeRecordedEvidence(
+                  intent,
+                  context,
+                  winner.value,
+                );
+              }
+              if (winner.value.effectAdmissionState !== "NotAdmitted") {
+                return {
+                  _tag: "OutcomeUnknown" as const,
+                  reconciliationRefs: [String(intent.invocationId)],
+                };
+              }
+              return { _tag: "Interrupted" as const };
+            });
           const recordNoEffectDenial = (
             sideEffectSemantics: ToolDefinition["sideEffectSemantics"],
             resolvedRegions: ReadonlyArray<CanonicalResourceRegion>,
@@ -1139,7 +1245,7 @@ export const ToolRuntimeLive = (
                   ),
                 );
               if (recorded === "ExecutionStopping") {
-                const interrupted = yield* persistNoEffectInterruption(
+                return yield* persistNoEffectInterruption(
                   Option.isSome(current)
                     ? {
                         invocationId: intent.invocationId,
@@ -1158,13 +1264,6 @@ export const ToolRuntimeLive = (
                     : undefined,
                   settledAt,
                 );
-                if (!interrupted && Option.isSome(current)) {
-                  return {
-                    _tag: "OutcomeUnknown" as const,
-                    reconciliationRefs: [String(intent.invocationId)],
-                  };
-                }
-                return { _tag: "Interrupted" as const };
               }
               return denied(
                 recorded.settlement?._tag === "Denied"
@@ -2357,7 +2456,7 @@ export const ToolRuntimeLive = (
               );
             }
             const settledAt = yield* clock.now();
-            const interrupted = yield* persistNoEffectInterruption(
+            return yield* persistNoEffectInterruption(
               Option.isSome(prior)
                 ? {
                     invocationId: intent.invocationId,
@@ -2376,23 +2475,6 @@ export const ToolRuntimeLive = (
                 : undefined,
               settledAt,
             );
-            if (!interrupted) {
-              const current = yield* findInvocationFenced(
-                intent.invocationId,
-                context,
-                "IntentJournal",
-              );
-              if (
-                Option.isSome(current) &&
-                current.value.effectAdmissionState !== "NotAdmitted"
-              ) {
-                return {
-                  _tag: "OutcomeUnknown" as const,
-                  reconciliationRefs: [String(intent.invocationId)],
-                };
-              }
-            }
-            return { _tag: "Interrupted" as const };
           }
 
           if (options.qualificationProbe !== undefined) {
@@ -2819,6 +2901,9 @@ export const ToolRuntimeLive = (
                     callRef: intent.callRef,
                   }) ?? Promise.resolve(),
               );
+            }
+            if (p40Write.value._tag === "ExistingDenied") {
+              return denied(p40Write.value.reasonCode);
             }
             return p40Write.value.evidence
               .observation as CanonicalToolObservation;

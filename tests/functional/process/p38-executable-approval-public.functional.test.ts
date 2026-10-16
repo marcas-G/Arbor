@@ -1077,6 +1077,135 @@ describe("pending P38 public Executable approval qualification", () => {
     },
   );
 
+  it("keeps StopRequested as the Execution cause when a P4 Denied winner committed first", async () => {
+    const marker = `P38-STOP-DENIED-WINNER-${crypto.randomUUID().slice(0, 8)}`;
+    const probes: Array<{
+      readonly tag?: string;
+      readonly role?: string;
+      readonly boundary?: string;
+      readonly executionId?: string;
+      readonly invocationId?: string;
+      readonly outcomeTag?: string;
+    }> = [];
+    const run = await startExecutableApproval(marker, {
+      firstDaemonEntry: p4FenceChild,
+      daemonEnvironment: {
+        ARBOR_P4_FENCE_ROLE: "old",
+        ARBOR_P4_FENCE_ADMISSION_BOUNDARY:
+          "P4ExecutableToolRuntimeOutcomeDenied",
+      },
+      onDaemonStdout: (line) => {
+        try {
+          const event = JSON.parse(line) as (typeof probes)[number];
+          if (event.tag === "P4_FENCE_PROBE") probes.push(event);
+        } catch {
+          // Ordinary daemon output is diagnostic data, not a probe.
+        }
+      },
+    });
+    await resolveApproval(
+      run.client,
+      run.project.projectId,
+      run.approvalId,
+      run.revision,
+      "Reject",
+    );
+    const deniedPause = await waitForPublic(
+      async () =>
+        probes.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "P4ExecutableToolRuntimeOutcome" &&
+            event.outcomeTag === "Denied",
+        ),
+      (event) => event !== undefined,
+      60_000,
+    );
+    if (deniedPause === undefined) {
+      throw new Error("P38 committed-Denied pre-AgentLoop pause was absent");
+    }
+    expect(deniedPause.executionId).toBe(run.before.approval?.execution_id);
+    expect(deniedPause.invocationId).toBe(
+      run.before.approval?.tool_invocation_id,
+    );
+    const deniedBeforeStop = run.snapshot();
+    expect(deniedBeforeStop.execution?.settlement_kind).toBeNull();
+    expect(deniedBeforeStop.approval).toMatchObject({
+      state: "Rejected",
+      revision: run.revision + 1,
+    });
+    expect(deniedBeforeStop.invocation).toMatchObject({
+      invocation_id: run.before.approval?.tool_invocation_id,
+      approval_id: run.approvalId,
+      effect_admission_state: "NotAdmitted",
+      settlement_kind: "Denied",
+    });
+    expect(deniedBeforeStop.effectCount).toBe(0);
+
+    const stopResponse = await run.client.command(
+      run.project.projectId,
+      "StopExecution",
+      { executionId: run.before.approval?.execution_id },
+    );
+    expect(stopResponse).toMatchObject({ body: { resolution: "Committed" } });
+    const beforeOwnerExit = run.snapshot();
+    expect(beforeOwnerExit.execution?.stop_requested_at).not.toBeNull();
+    expect(beforeOwnerExit.execution?.settlement_kind).toBeNull();
+    expect(beforeOwnerExit.invocation).toEqual(deniedBeforeStop.invocation);
+    expect(beforeOwnerExit.executionStopEventCount).toBe(1);
+    expect(
+      beforeOwnerExit.approvalEvents.filter(
+        (event) => event.event_type === "ExecutableApprovalResolved",
+      ),
+    ).toHaveLength(1);
+
+    const expired = await expireStoppedInitialOwner(run);
+    expect(expired.before.generation).toBe(expired.after.generation);
+    expect(Date.parse(expired.after.expires_at)).toBeLessThan(Date.now());
+    const peer = await run.fixture.startAdditionalDaemon({
+      entry: p4FenceChild,
+      daemonEnvironment: { ARBOR_P4_FENCE_ROLE: "new" },
+    });
+    try {
+      const recovered = await waitForPublic(
+        async () => run.snapshot(),
+        (snapshot) =>
+          snapshot.execution?.settlement_kind === "Interrupted" &&
+          snapshot.action !== undefined &&
+          snapshot.action.state !== "Applied" &&
+          snapshot.effectCount === 0,
+        60_000,
+      );
+      expect(
+        JSON.parse(recovered.execution?.settlement_json ?? "{}"),
+      ).toMatchObject({
+        _tag: "Interrupted",
+        result: { _tag: "StopRequested" },
+      });
+      expect(recovered.approval).toEqual(deniedBeforeStop.approval);
+      expect(recovered.invocation).toEqual(deniedBeforeStop.invocation);
+      expect(recovered.action?.state).toMatch(/^(Pending|TerminalRejected)$/u);
+      expect(recovered.approval?.logical_action_id).toBe(
+        run.before.approval?.logical_action_id,
+      );
+      expect(recovered.step?.provider_turn_id).toBe(
+        run.before.step?.provider_turn_id,
+      );
+      expect(recovered.executionStopEventCount).toBe(1);
+      expect(
+        recovered.approvalEvents.filter(
+          (event) => event.event_type === "ExecutableApprovalResolved",
+        ),
+      ).toHaveLength(1);
+      expect(recovered.inboxConsumedAt).not.toBeNull();
+      expect(recovered.effectCount).toBe(0);
+      expect(run.fixture.daemonErrors).toEqual([]);
+      expect(peer.daemonErrors).toEqual([]);
+    } finally {
+      await peer.crash();
+    }
+  });
+
   it("reuses a committed same-Step approval claim after a process crash before effect admission", async () => {
     const marker = `P38-CLAIM-CRASH-${crypto.randomUUID().slice(0, 8)}`;
     const probes: Array<{

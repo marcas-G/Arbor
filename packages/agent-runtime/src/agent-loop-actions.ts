@@ -39,7 +39,11 @@ import type {
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { MAX_TURNS, safetyStop } from "./agent-loop-policy.js";
+import {
+  MAX_TURNS,
+  safetyStop,
+  stopRequestedSettlement,
+} from "./agent-loop-policy.js";
 import {
   type AgentActionError,
   type ControlToolRegistryService,
@@ -1379,6 +1383,15 @@ export const executeAgentLoopActions = (
             isLeaseFencingRejected(executed.cause.cause)
           ) {
             return yield* Effect.fail(failure(executed.cause.cause));
+          }
+          const stopSettlement = stopRequestedSettlement(input.execution);
+          if (stopSettlement !== undefined) {
+            yield* persistActionRejection(
+              stopSettlement,
+              "ExecutionStopping",
+              "Interrupted",
+            );
+            return { _tag: "Settle", settlement: stopSettlement };
           }
           if (executed.cause._tag === "AgentActionRejected") {
             const disposition = `ModelUsable:${executed.cause.code}`;

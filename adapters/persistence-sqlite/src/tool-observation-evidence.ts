@@ -1,5 +1,6 @@
 import type { ExecutionId, ToolInvocationId } from "@arbor/domain";
 import {
+  type NoEffectDenialCode,
   P4_TOOL_OBSERVATION_FORMAT_V1,
   P4_TOOL_OBSERVATION_MAX_TEXT_UTF16_CODE_UNITS,
   type ToolExecutionContext,
@@ -82,6 +83,54 @@ const settlementFromRow = (
     return value as ToolObservationSettlement;
   } catch {
     return null;
+  }
+};
+
+const noEffectDenialReasonFromRow = (
+  row: EvidenceInvocationRow,
+): NoEffectDenialCode | undefined => {
+  if (
+    row.settlement_kind !== "Denied" ||
+    row.effect_admission_state !== "NotAdmitted" ||
+    row.settled_at === null ||
+    row.result_ref !== null ||
+    row.settlement_provenance !== "Ordinary" ||
+    row.selected_attempt_no !== null ||
+    row.selected_fact_id !== null
+  ) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(row.settlement_json ?? "null") as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      Object.keys(parsed).sort().join(",") !==
+        ["_tag", "projectionVersion", "reasonCode"].sort().join(",") ||
+      (parsed as { readonly _tag?: unknown })._tag !== "Denied" ||
+      (parsed as { readonly projectionVersion?: unknown }).projectionVersion !==
+        1
+    ) {
+      return undefined;
+    }
+    const reasonCode = (parsed as { readonly reasonCode?: unknown }).reasonCode;
+    const codes: ReadonlyArray<string> = [
+      "InvocationAuthorityDenied",
+      "ApprovalRequired",
+      "ApprovalNotFound",
+      "ApprovalMismatch",
+      "ApprovalExpired",
+      "ApprovalConsumedByOtherInvocation",
+      "ResourceResolutionDenied",
+      "ResourceAdmissionDenied",
+      "ApprovalNoLongerAuthorized",
+    ];
+    return typeof reasonCode === "string" && codes.includes(reasonCode)
+      ? (reasonCode as NoEffectDenialCode)
+      : undefined;
+  } catch {
+    return undefined;
   }
 };
 
@@ -415,6 +464,10 @@ export const ToolObservationEvidenceStoreLive: Layer.Layer<
           );
           const row = yield* validateIntent(rows[0], candidate.invocation);
           if (row.settled_at !== null) {
+            const denied = noEffectDenialReasonFromRow(row);
+            if (denied !== undefined) {
+              return { _tag: "ExistingDenied" as const, reasonCode: denied };
+            }
             const evidence = yield* decodeRow(row);
             return { _tag: "Existing" as const, evidence };
           }

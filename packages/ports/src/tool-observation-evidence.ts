@@ -104,7 +104,13 @@ export interface ToolObservationEvidenceCandidate {
 
 export type ToolObservationEvidenceSettlement =
   | { readonly _tag: "Applied"; readonly evidence: ToolObservationEvidence }
-  | { readonly _tag: "Existing"; readonly evidence: ToolObservationEvidence };
+  | { readonly _tag: "Existing"; readonly evidence: ToolObservationEvidence }
+  | {
+      /** P4 Denied rows intentionally have no P40 observation bytes. They are
+       * still a committed winner that a racing Stop must not rewrite. */
+      readonly _tag: "ExistingDenied";
+      readonly reasonCode: import("./tool.js").NoEffectDenialCode;
+    };
 
 export interface ToolObservationEvidenceStoreService {
   /** Validates current P2 ownership before any terminal invocation-row read.

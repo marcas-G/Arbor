@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
+import { stopRequestedSettlement } from "../src/agent-loop-policy.js";
 import { toExecutionDriverError } from "../src/execution-driver-failure.js";
 
 describe("ExecutionDriver failure translation", () => {
+  it("gives a durable StopRequested proposal precedence over a no-effect action rejection", () => {
+    expect(stopRequestedSettlement({ stopRequestedAt: null })).toBeUndefined();
+    expect(
+      stopRequestedSettlement({
+        stopRequestedAt: "2026-10-16T00:00:00.000Z",
+      }),
+    ).toEqual({
+      _tag: "Interrupted",
+      result: { _tag: "StopRequested" },
+    });
+  });
+
   it("turns lease fencing into ownership loss without retaining a generic cause", () => {
     expect(
       toExecutionDriverError({
