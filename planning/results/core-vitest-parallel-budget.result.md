@@ -1,7 +1,8 @@
 # Root core Vitest worker budget
 
 Date: 2026-10-16
-A/B base: `c4154319`; one-worker preference confirmed on `95301852`.
+A/B base: `c4154319`; corrected two-worker confirmation: `953018520b55cd78222c529d4fcc882b2f91f15b`.
+Current review baseline: `ce4b1ccd39d89ca42ea59e496831bd7d993e8f9d`.
 
 ## Decision
 
@@ -26,11 +27,21 @@ The core suite was measured on `c4154319` with existing test assertions:
 | 2 | 36m30s run: no OOM, six then-current schema-fixture failures | 36m30s | ~2.02 GB | ~394 MB |
 | 2 | corrected current suite: 373/373 pass; no new resource sample in this handoff | — | — | — |
 
+The corrected two-worker 373/373 confirmation was run at exact HEAD
+`953018520b55cd78222c529d4fcc882b2f91f15b` using ordinary `pnpm test` (the
+root script's plain `vitest run`, without a worker override). That run had no
+new memory telemetry. It establishes the corrected suite was green at two
+workers, but does not establish comparable resource use and must not be
+compared as a memory sample against the `c4154319` A/B measurements above.
+
 The earlier two-worker resource sample had less virtual-memory headroom than
 the one-worker sample; no comparable resource data was supplied for the later
-green run. Per the user's explicit priority, this host's reliability takes
-precedence over suite duration; performance optimization is deferred. No
-further A/B run is planned for this change.
+green run. Subsequently, the user selected `maxWorkers: 1` in commit
+`4d6147a4` as a reliability policy for the weak host, despite the corrected
+two-worker green result; performance optimization is deferred and no further
+A/B is planned. The current review baseline is `ce4b1ccd39d89ca42ea59e496831bd7d993e8f9d`,
+so final-gate status must be established on that exact HEAD before making any
+current validation claim.
 
 ## Machine context and verification boundary
 
