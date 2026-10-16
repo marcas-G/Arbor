@@ -33,11 +33,28 @@ describe("P38 legacy Control approval migration boundary", () => {
              )`,
           );
 
-          const p38Rejected = yield* Effect.match(
+          const migrationFailure = yield* Effect.match(
             runMigrations(P38_MIGRATIONS),
             {
-              onFailure: () => true,
-              onSuccess: () => false,
+              onFailure: (cause) => {
+                const error = cause as {
+                  readonly _tag?: unknown;
+                  readonly message?: unknown;
+                  readonly reason?: {
+                    readonly cause?: {
+                      readonly errcode?: unknown;
+                      readonly errstr?: unknown;
+                    };
+                  };
+                };
+                return {
+                  tag: String(error._tag ?? "unknown"),
+                  message: String(error.message ?? cause),
+                  sqliteErrorCode: Number(error.reason?.cause?.errcode),
+                  sqliteErrorMessage: String(error.reason?.cause?.errstr),
+                };
+              },
+              onSuccess: () => null,
             },
           );
           const version = yield* sql.unsafe<{ user_version: number }>(
@@ -60,7 +77,7 @@ describe("P38 legacy Control approval migration boundary", () => {
               WHERE type = 'table' AND name = 'action_approvals_p38'`,
           );
           return {
-            p38Rejected,
+            migrationFailure,
             userVersion: Number(version[0]?.user_version),
             rows,
             p38TableCount: Number(p38Table[0]?.count),
@@ -70,7 +87,13 @@ describe("P38 legacy Control approval migration boundary", () => {
       ),
     );
 
-    expect(result.p38Rejected).toBe(true);
+    expect(result.migrationFailure).not.toBeNull();
+    expect(result.migrationFailure).toMatchObject({
+      tag: "SqlError",
+      message: "Failed to execute statement",
+      sqliteErrorCode: 275,
+      sqliteErrorMessage: "constraint failed",
+    });
     expect(result.userVersion).toBe(37);
     expect(result.rows).toEqual([
       {
