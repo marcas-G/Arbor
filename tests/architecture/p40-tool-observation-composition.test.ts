@@ -7,6 +7,25 @@ const sourceOf = (relative: string) =>
   readFileSync(join(repoRoot, relative), "utf8");
 
 describe("P39/P40 production tool-runtime composition", () => {
+  it("reuses one TransactionPort layer across runtime consumers", () => {
+    const composition = sourceOf("apps/single-workspace/src/composition.ts");
+    expect(composition.match(/makeTransactionPortLive\(/gu)).toHaveLength(1);
+    expect(composition).toMatch(
+      /const transactionPortLayer = Layer\.provide\(\s*makeTransactionPortLive\(config\.transactionBeginQualificationProbe\),\s*infra,\s*\)/u,
+    );
+    for (const consumer of [
+      "providerRuntime",
+      "repos",
+      "runnableSource",
+      "scheduler",
+    ]) {
+      const declaration = composition.match(
+        new RegExp(`const ${consumer} =([\\s\\S]*?);\\s*const `, "u"),
+      )?.[1];
+      expect(declaration).toContain("transactionPortLayer");
+    }
+  });
+
   it("injects recovery binding and canonical observation stores", () => {
     const composition = sourceOf("apps/single-workspace/src/composition.ts");
     const recoveryBindingStore = sourceOf(

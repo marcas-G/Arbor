@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Effect } from "effect";
 import {
@@ -95,6 +95,23 @@ emit({
 
 const toolQualificationProbe = async (event) => {
   if (
+    process.env.ARBOR_P4_P39_BEGIN_GATE === "1" &&
+    event.boundary === "P38P39ClaimBeforeTransaction"
+  ) {
+    const target = JSON.parse(
+      readFileSync(join(gateDirectory, "p4-p39-target.json"), "utf8"),
+    );
+    if (
+      event.executionId === target.executionId &&
+      event.invocationId === target.invocationId &&
+      event.approvalId === target.approvalId
+    ) {
+      p39BeginGateArmed = true;
+      emit(event);
+    }
+    return;
+  }
+  if (
     role === "old" &&
     event.boundary === process.env.ARBOR_P4_FENCE_ADMISSION_BOUNDARY
   ) {
@@ -155,15 +172,6 @@ const executableApprovalExpiryQualificationProbe = async (event) => {
 };
 
 const gatewayQualificationProbe = async (event) => {
-  if (
-    role === "old" &&
-    event.boundary === "P38ResolveApprovalBeforeCommit" &&
-    process.env.ARBOR_P4_P39_BEGIN_GATE === "1"
-  ) {
-    writeFileSync(join(gateDirectory, "p4-p39-begin.request"), "release");
-    emit(event);
-    return;
-  }
   const race = process.env.ARBOR_P4_STOP_TTL_RACE;
   if (
     role !== "old" ||
@@ -308,6 +316,7 @@ const executableToolQualificationProbe = async (event) => {
   }
 };
 
+let p39BeginGateArmed = false;
 const p39RecoveryBindingQualificationProbe = async (event) => {
   if (role !== "old") return;
   if (
@@ -321,13 +330,17 @@ const p39RecoveryBindingQualificationProbe = async (event) => {
   }
   emit(event);
 };
+let p39BeginGateTaken = false;
 const transactionBeginQualificationProbe = async (event) => {
   if (
     process.env.ARBOR_P4_P39_BEGIN_GATE !== "1" ||
-    !existsSync(join(gateDirectory, "p4-p39-begin.request"))
+    !p39BeginGateArmed ||
+    p39BeginGateTaken ||
+    !existsSync(join(gateDirectory, "p4-p39-target.json"))
   ) {
     return;
   }
+  p39BeginGateTaken = true;
   emit({
     boundary: "P38P39BeforeBegin",
     transactionBoundary: event.boundary,
