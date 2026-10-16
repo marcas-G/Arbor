@@ -1,11 +1,20 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import rootVitestConfig from "../../vitest.config.js";
 
 const root = join(import.meta.dirname, "..", "..");
 const source = (path: string) => readFileSync(join(root, path), "utf8");
 
 describe("functional-test trust boundary", () => {
+  it("bounds the root core Vitest workers on the default pnpm test path", () => {
+    const packageJson = JSON.parse(source("package.json")) as {
+      scripts: Record<string, string>;
+    };
+    expect(packageJson.scripts.test).toBe("vitest run");
+    expect(rootVitestConfig.test?.maxWorkers).toBe(2);
+  });
+
   it("keeps architecture and public-process suites out of core Vitest", () => {
     const coreConfig = source("vitest.config.ts");
     const architectureConfig = source("vitest.architecture.config.ts");
