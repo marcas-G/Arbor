@@ -10,7 +10,15 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { pathToFileURL } from "node:url";
 import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -33,7 +41,7 @@ import {
   type SourceFile as TypeScriptSourceFile,
 } from "typescript/unstable/ast";
 import { API as TypeScriptAPI } from "typescript/unstable/sync";
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
   ClockLive,
   CommandStoreLive,
@@ -207,8 +215,108 @@ import { fileTreeBoundaryJson } from "./support/resource-boundary-fixture.js";
 
 const ROOT_WS = "ws_018f2b3c-4d5e-7abc-8def-0123456789c1";
 
-const durableFile = (label: string): string =>
-  join(mkdtempSync(join(tmpdir(), `arbor-p9-accept-${label}-`)), `${label}.db`);
+const P9_DURABLE_TEMP_PREFIX = "arbor-p9-accept-";
+const runOwnedDurableRoots = new Set<string>();
+const cleanupFailures: unknown[] = [];
+const expectedThrowCleanupRoots = new Set<string>();
+
+const validateRunOwnedDurableRoot = (path: string) => {
+  if (!runOwnedDurableRoots.has(path)) {
+    throw new Error(`refusing to remove an unregistered P9 temp root: ${path}`);
+  }
+  const realRoot = realpathSync(path);
+  if (realRoot !== path) {
+    throw new Error(`refusing to remove a redirected P9 temp root: ${path}`);
+  }
+  const realTempRoot = realpathSync(tmpdir());
+  const relativeRoot = relative(realTempRoot, realRoot);
+  if (
+    relativeRoot === "" ||
+    relativeRoot === ".." ||
+    relativeRoot.startsWith(`..${sep}`) ||
+    isAbsolute(relativeRoot)
+  ) {
+    throw new Error(
+      `refusing to remove a P9 temp root outside system Temp: ${path}`,
+    );
+  }
+  const rootName = basename(realRoot);
+  if (
+    !rootName.startsWith(P9_DURABLE_TEMP_PREFIX) ||
+    rootName.length <= P9_DURABLE_TEMP_PREFIX.length
+  ) {
+    throw new Error(
+      `refusing to remove a P9 temp root with an unexpected name: ${path}`,
+    );
+  }
+  return realRoot;
+};
+
+const cleanupRunOwnedDurableRoots = () => {
+  const failures: unknown[] = [];
+  for (const registeredRoot of [...runOwnedDurableRoots]) {
+    try {
+      const realRoot = validateRunOwnedDurableRoot(registeredRoot);
+      rmSync(realRoot, { recursive: true, force: false });
+      if (existsSync(realRoot))
+        throw new Error(`P9 temp root still exists after cleanup: ${realRoot}`);
+      runOwnedDurableRoots.delete(registeredRoot);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      "Failed to clean P9-owned SQLite temp roots",
+    );
+  }
+};
+
+afterEach(() => {
+  try {
+    cleanupRunOwnedDurableRoots();
+  } catch (error) {
+    cleanupFailures.push(error);
+    throw error;
+  }
+  for (const root of expectedThrowCleanupRoots) {
+    if (existsSync(root)) {
+      const error = new Error(
+        `P9 temp root leaked after a throwing test: ${root}`,
+      );
+      cleanupFailures.push(error);
+      throw error;
+    }
+  }
+  expectedThrowCleanupRoots.clear();
+});
+
+afterAll(() => {
+  try {
+    cleanupRunOwnedDurableRoots();
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(
+      cleanupFailures,
+      "P9 durable temp-root cleanup failed during the test file",
+    );
+  }
+  if (expectedThrowCleanupRoots.size > 0)
+    throw new Error("P9 throw-cleanup assertions were not completed");
+});
+
+const durableFile = (label: string): string => {
+  const createdRoot = mkdtempSync(
+    join(tmpdir(), `${P9_DURABLE_TEMP_PREFIX}${label}-`),
+  );
+  const realRoot = realpathSync(createdRoot);
+  runOwnedDurableRoots.add(realRoot);
+  validateRunOwnedDurableRoot(realRoot);
+  return join(realRoot, `${label}.db`);
+};
 
 const defectOf = <A, E>(exit: Exit.Exit<A, E>): unknown =>
   Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
@@ -221,7 +329,7 @@ const runOn = <A>(
 ): Promise<A> =>
   Effect.runPromise(
     // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
-    Effect.provide(program, app) as Effect.Effect<A, any, never>,
+    Effect.scoped(Effect.provide(program, app) as Effect.Effect<A, any, never>),
   );
 
 const sqlCount = (text: string, params: ReadonlyArray<unknown> = []) =>
@@ -3950,6 +4058,52 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
       rmSync(outsideRoot, { recursive: true, force: true });
     }
 
+    const firstOwnedFile = durableFile("cleanup-first");
+    const secondOwnedFile = durableFile("cleanup-second");
+    expect(runOwnedDurableRoots.size).toBe(2);
+    cleanupRunOwnedDurableRoots();
+    expect(existsSync(dirname(firstOwnedFile))).toBe(false);
+    expect(existsSync(dirname(secondOwnedFile))).toBe(false);
+    expect(runOwnedDurableRoots.size).toBe(0);
+    expect(() => cleanupRunOwnedDurableRoots()).not.toThrow();
+
+    const prefixSpoofRoot = mkdtempSync(
+      join(tmpdir(), `${P9_DURABLE_TEMP_PREFIX}not-owned-`),
+    );
+    try {
+      const realSpoofRoot = realpathSync(prefixSpoofRoot);
+      expect(() => validateRunOwnedDurableRoot(realSpoofRoot)).toThrow(
+        "refusing to remove an unregistered P9 temp root",
+      );
+      expect(existsSync(realSpoofRoot)).toBe(true);
+    } finally {
+      rmSync(prefixSpoofRoot, { recursive: true, force: false });
+    }
+
+    const externalPrefixSpoofRoot = mkdtempSync(
+      join(REPO_ROOT, `${P9_DURABLE_TEMP_PREFIX}external-`),
+    );
+    const realExternalPrefixSpoofRoot = realpathSync(externalPrefixSpoofRoot);
+    runOwnedDurableRoots.add(realExternalPrefixSpoofRoot);
+    try {
+      expect(() =>
+        validateRunOwnedDurableRoot(realExternalPrefixSpoofRoot),
+      ).toThrow("refusing to remove a P9 temp root outside system Temp");
+      expect(() => cleanupRunOwnedDurableRoots()).toThrow(
+        "Failed to clean P9-owned SQLite temp roots",
+      );
+      expect(existsSync(realExternalPrefixSpoofRoot)).toBe(true);
+    } finally {
+      runOwnedDurableRoots.delete(realExternalPrefixSpoofRoot);
+      rmSync(externalPrefixSpoofRoot, { recursive: true, force: false });
+    }
+
     expect(scripts.test ?? "").toContain("vitest run");
+  });
+
+  it.fails("cleans run-owned SQLite roots after the test body throws", () => {
+    const filename = durableFile("expected-throw");
+    expectedThrowCleanupRoots.add(dirname(filename));
+    throw new Error("synthetic expected P9 test failure");
   });
 });
