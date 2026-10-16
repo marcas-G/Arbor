@@ -43,3 +43,31 @@ Inspection found that the test child emitted that event only when the explicit
 pause flag was set. The test-only trace flag now emits the event for both roles;
 only G0's pause flag blocks. The successful run above used this corrected
 observation point. No production code changed in this qualification increment.
+
+## 2026-10-17 source-lookup process-kill case (pending serial execution)
+
+Added an independent real-daemon scenario, `restarts after SIGKILL during
+reconciliation source lookup`, using the same test-only source-I/O pause gate.
+The old daemon is killed while its source query is held before return. A fresh
+read-only SQLite connection checks before and after the kill that attempt 0 is
+the only effect attempt, no reconciliation fact or P4 selection/settlement is
+durable, and the test-source call remains unreturned. After the recorded lease
+expires, the fixture restarts under a new daemon generation and the exact same
+test profile re-queries attempt 0. The assertions require one selected
+`NotOccurred` fact, attempts 0 and 1 sharing the effect key, one test external
+effect, one P40 observation hash, one P3 ToolResult/Applied action and one
+workspace marker effect.
+
+This case has **not been executed**. Per serial-run coordination, no daemon
+functional test was started in this checkpoint. Static checks completed:
+
+- `pnpm exec biome check --write tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts` — PASS.
+- `pnpm typecheck` — PASS.
+- `git diff --check` — PASS.
+
+After the main thread releases the daemon-test window, run:
+
+`pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts -t "restarts after SIGKILL during reconciliation source lookup" --maxWorkers=1 --no-file-parallelism --retry=0 --reporter=verbose`
+
+Until that run passes and the recorded observations are reviewed, this scenario
+is pending evidence and does not extend the qualification status above.
