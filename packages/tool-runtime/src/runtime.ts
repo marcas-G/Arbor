@@ -1674,21 +1674,16 @@ export const ToolRuntimeLive = (
                 (context.executableApproval?.approvalId ?? intent.approvalId) &&
               (binding.approvalId === null ||
                 binding.approvalConsumedBy === intent.invocationId) &&
-              binding.profileId === trustedProfile?.profileId &&
-              binding.profileVersion === trustedProfile?.profileVersion &&
-              binding.profileHash === trustedProfile?.profileHash &&
-              binding.profileProtocol === trustedProfile?.profileProtocol &&
-              binding.effectKey === trustedEffectKey &&
               attempt.invocationId === intent.invocationId &&
               attempt.admissionState === "MayHaveStarted" &&
               attempt.sideEffectSemantics === "Reconcilable" &&
               attempt.bindingSha256 === bound.bindingSha256 &&
               attempt.toolDefinitionHash === binding.toolDefinitionHash &&
-              attempt.profileId === trustedProfile?.profileId &&
-              attempt.profileVersion === trustedProfile?.profileVersion &&
-              attempt.profileHash === trustedProfile?.profileHash &&
-              attempt.profileProtocol === trustedProfile?.profileProtocol &&
-              attempt.effectKey === trustedEffectKey;
+              binding.profileId === attempt.profileId &&
+              binding.profileVersion === attempt.profileVersion &&
+              binding.profileHash === attempt.profileHash &&
+              binding.profileProtocol === attempt.profileProtocol &&
+              binding.effectKey === attempt.effectKey;
             if (verified === null || !bindingMatchesIdentity) {
               return yield* Effect.fail<ToolRuntimeError>(
                 operationalFailure(
@@ -1696,6 +1691,25 @@ export const ToolRuntimeLive = (
                   String(intent.invocationId),
                 )({ _tag: "RecoveryBindingReplayMismatch" }),
               );
+            }
+            const currentProfileMatchesPersistedAttempt =
+              trustedProfile !== undefined &&
+              trustedEffectKey !== null &&
+              binding.profileId === trustedProfile.profileId &&
+              binding.profileVersion === trustedProfile.profileVersion &&
+              binding.profileHash === trustedProfile.profileHash &&
+              binding.profileProtocol === trustedProfile.profileProtocol &&
+              binding.effectKey === trustedEffectKey &&
+              attempt.profileId === trustedProfile.profileId &&
+              attempt.profileVersion === trustedProfile.profileVersion &&
+              attempt.profileHash === trustedProfile.profileHash &&
+              attempt.profileProtocol === trustedProfile.profileProtocol &&
+              attempt.effectKey === trustedEffectKey;
+            if (!currentProfileMatchesPersistedAttempt) {
+              return {
+                _tag: "OutcomeUnknown" as const,
+                reconciliationRefs: [String(intent.invocationId)],
+              };
             }
             verifiedReplayBinding = verified;
           }

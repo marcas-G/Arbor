@@ -454,6 +454,12 @@ const readTestReconciliationCallCount = (
 ) => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
+    const table = db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ah7_test_reconciliation_calls'",
+      )
+      .get();
+    if (table === undefined) return 0;
     return (
       db
         .prepare(
@@ -1151,20 +1157,6 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         expect(existsSync(join(fixture.workspaceDirectory, effectFile))).toBe(
           false,
         );
-
-        // The original exact profile can still authenticate the preserved P39
-        // binding and continue the same invocation after the failed closed pass.
-        await fixture.crash();
-        await fixture.restart({
-          entry: reconciliationChild,
-          daemonEnvironment: {
-            ARBOR_AH10_ROLE: "old",
-            ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
-            ARBOR_AH7_TEST_RECONCILIATION_MODE:
-              reconciliationMode ?? "NotOccurred",
-            ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
-          },
-        });
       } else if (
         reconciliationMode !== undefined &&
         noEffectRetryDenied &&
@@ -1755,6 +1747,21 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                   ).length === 1
                 );
               }
+              if (profileDrift !== undefined) {
+                return (
+                  value.actions.some(
+                    (action) =>
+                      action.execution_id === targetExecutionId &&
+                      action.call_ref === hit?.callRef &&
+                      action.state === "ReconciliationPending",
+                  ) &&
+                  value.executions.some(
+                    (execution) =>
+                      execution.execution_id === targetExecutionId &&
+                      execution.settlement_kind === "OutcomeUnknown",
+                  )
+                );
+              }
               if (
                 reconciliationMode === "NotOccurred" ||
                 reconciliationMode === "Occurred"
@@ -1851,15 +1858,33 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         reconciliationMode === undefined
           ? []
           : readTestExternalEffects(fixture.databaseFile);
-      if (reconciliationMode === "NotOccurred") {
-        if (profileDrift !== undefined) {
-          expect(
-            readTestReconciliationCallCount(
-              fixture.databaseFile,
-              hit.invocationId,
-            ),
-          ).toBe(1);
-        }
+      if (profileDrift !== undefined) {
+        expect(reconciliationFacts).toEqual([]);
+        expect(effectAttempts).toEqual(attemptsBeforeRecovery);
+        expect(effectAttempts).toHaveLength(1);
+        expect(effectAttempts[0]).toMatchObject({
+          attempt_no: 0,
+          admission_state: "MayHaveStarted",
+        });
+        expect(
+          readP39RecoveryBinding(fixture.databaseFile, hit.invocationId),
+        ).toEqual(bindingBeforeRecovery);
+        expect(externalEffects).toEqual([]);
+        expect(
+          readTestReconciliationCallCount(
+            fixture.databaseFile,
+            hit.invocationId,
+          ),
+        ).toBe(0);
+        expect(recoveredInvocationBinding).toMatchObject({
+          effect_admission_state: "MayHaveStarted",
+          result_ref: null,
+          settlement_kind: null,
+          settled_at: null,
+          selected_attempt_no: null,
+          selected_fact_id: null,
+        });
+      } else if (reconciliationMode === "NotOccurred") {
         expect(reconciliationFacts).toHaveLength(1);
         expect(reconciliationFacts[0]).toMatchObject({
           attempt_no: 0,
@@ -2010,7 +2035,10 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ?.stop_requested_at,
         ).not.toBeNull();
       }
-      if (resumesUnadmittedIntent) {
+      if (profileDrift !== undefined) {
+        expect(settledInvocation?.settled_at).toBeNull();
+        expect(settledInvocation?.settlement_kind).toBeNull();
+      } else if (resumesUnadmittedIntent) {
         expect(settledInvocation?.settled_at).not.toBeNull();
         expect(settledInvocation?.settlement_kind).toBe("Success");
       } else if (noEffectRetryDenied) {
@@ -2057,11 +2085,13 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             logical_action_id: crashedAction.logical_action_id,
             call_ref: crashedAction.call_ref,
             state:
-              resumesUnadmittedIntent ||
-              reconciliationMode === "NotOccurred" ||
-              reconciliationMode === "Occurred"
-                ? "Applied"
-                : "ReconciliationPending",
+              profileDrift !== undefined
+                ? "ReconciliationPending"
+                : resumesUnadmittedIntent ||
+                    reconciliationMode === "NotOccurred" ||
+                    reconciliationMode === "Occurred"
+                  ? "Applied"
+                  : "ReconciliationPending",
           }),
         ]);
       }
@@ -2071,7 +2101,10 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       const contentAfter = existsSync(effectPath)
         ? readFileSync(effectPath, "utf8")
         : null;
-      if (!resumesUnadmittedIntent && reconciliationMode === "StillUnknown") {
+      if (
+        profileDrift !== undefined ||
+        (!resumesUnadmittedIntent && reconciliationMode === "StillUnknown")
+      ) {
         expect(recoveredExecution).toMatchObject({
           settlement_kind: "OutcomeUnknown",
         });
@@ -2213,6 +2246,12 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             .split(/\r?\n/u)
             .filter((line) => line === marker),
         ).toHaveLength(1);
+      } else if (profileDrift !== undefined) {
+        expect(recoveredTarget.providerTurns).toEqual(
+          crashedTarget.providerTurns,
+        );
+        expect(targetProviderCalls).toBe(1);
+        expect(contentAfter).toBeNull();
       } else if (
         reconciliationMode === "NotOccurred" ||
         reconciliationMode === "Occurred"
