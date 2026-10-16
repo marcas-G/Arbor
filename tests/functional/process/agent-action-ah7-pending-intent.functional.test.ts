@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
@@ -34,7 +35,7 @@ type Ah7PendingIntentBoundary = (typeof ah7PendingIntentBoundaries)[number];
 type Ah7CrashSnapshotExpectation = {
   readonly actionState: "Pending" | "Applied";
   readonly actionCursor: 0 | 1;
-  readonly p4Intent: "Absent" | "Pending" | "Success";
+  readonly p4Intent: "Absent" | "Pending" | "Success" | "ExpectedFailure";
   readonly toolResultCount: 0 | 1;
   readonly artifactCount: 0 | 1;
   readonly probeIdentity: "Action" | "Invocation";
@@ -105,6 +106,16 @@ const ah7CrashSnapshotExpectations = {
     timeoutMs: 120_000,
   },
 } satisfies Record<Ah7PendingIntentBoundary, Ah7CrashSnapshotExpectation>;
+const ah7PendingIntentScenarios = [
+  ...ah7PendingIntentBoundaries.map((boundary) => ({
+    boundary,
+    expectedSettlement: "Success" as const,
+  })),
+  {
+    boundary: "AH7AfterToolSettlementCommit",
+    expectedSettlement: "ExpectedFailure" as const,
+  },
+] as const;
 interface RawP4InvocationRow {
   readonly invocation_id: string;
   readonly execution_id: string;
@@ -174,13 +185,22 @@ afterEach(async () => {
 });
 
 describe("AH7 AgentLoop and P4 tool intent process crash", () => {
-  for (const boundary of ah7PendingIntentBoundaries) {
-    const testName = `reuses the same action and tool identity after ${boundary}`;
-    const expectedCrash = ah7CrashSnapshotExpectations[boundary];
+  for (const scenario of ah7PendingIntentScenarios) {
+    const { boundary, expectedSettlement } = scenario;
+    const testName =
+      expectedSettlement === "ExpectedFailure"
+        ? "replays the committed P40 ExpectedFailure observation after process crash"
+        : `reuses the same action and tool identity after ${boundary}`;
+    const baseCrash = ah7CrashSnapshotExpectations[boundary];
+    const expectedCrash: Ah7CrashSnapshotExpectation =
+      expectedSettlement === "ExpectedFailure"
+        ? { ...baseCrash, p4Intent: "ExpectedFailure", artifactCount: 0 }
+        : baseCrash;
     it(
       testName,
       async () => {
         const marker = `AH7-${crypto.randomUUID().slice(0, 8)}`;
+        const lateProofPath = `ah7-late-proof-${marker}.txt`;
         const hits: AhProbeHit[] = [];
         const daemonOutput: string[] = [];
         let targetProviderCalls = 0;
@@ -240,6 +260,22 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
               };
             }
             if (context.includes(marker) && targetWorkTurn) {
+              const expectedFailureResult = call.messages.some(
+                (message) =>
+                  message.role === "tool" &&
+                  message.content?.includes(
+                    "filesystem target could not be resolved or accessed inside the sandbox",
+                  ) === true,
+              );
+              if (
+                expectedSettlement === "ExpectedFailure" &&
+                expectedFailureResult
+              ) {
+                return {
+                  _tag: "Text",
+                  text: `Recovered original ExpectedFailure for ${marker}`,
+                };
+              }
               const readResult = call.messages.some(
                 (message) =>
                   message.role === "tool" &&
@@ -251,7 +287,13 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
                     _tag: "ToolCall",
                     name: "read",
                     arguments: {
-                      target: { mount: "workspace", path: "proof.txt" },
+                      target: {
+                        mount: "workspace",
+                        path:
+                          expectedSettlement === "ExpectedFailure"
+                            ? lateProofPath
+                            : "proof.txt",
+                      },
                       limit: 200,
                     },
                   };
@@ -429,6 +471,9 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         const targetArtifacts = crashed.artifacts.filter(
           (artifact) => artifact.invocation_id === targetInvocationId,
         );
+        let committedObservationBytes: Uint8Array | undefined;
+        let committedObservationVersion: string | null | undefined;
+        let committedObservationHash: string | null | undefined;
         expect(rawTargetInvocations).toHaveLength(
           expectedCrash.p4Intent === "Absent" ? 0 : 1,
         );
@@ -465,15 +510,19 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
               result_ref: null,
             }),
           ]);
-        } else if (expectedCrash.p4Intent === "Success") {
+        } else if (
+          expectedCrash.p4Intent === "Success" ||
+          expectedCrash.p4Intent === "ExpectedFailure"
+        ) {
           expect(targetInvocations).toEqual([
             expect.objectContaining({
               execution_id: hit?.executionId,
               tool_name: "read",
               side_effect_semantics: "ReadOnly",
               settled_at: expect.any(String),
-              settlement_kind: "Success",
-              result_ref: expect.any(String),
+              settlement_kind: expectedSettlement,
+              result_ref:
+                expectedSettlement === "Success" ? expect.any(String) : null,
             }),
           ]);
         }
@@ -484,6 +533,58 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
             targetArtifacts[0]?.artifact_id,
           );
         }
+        if (expectedSettlement === "ExpectedFailure") {
+          const schema44 = new DatabaseSync(fixture.databaseFile, {
+            readOnly: true,
+          });
+          try {
+            const version = schema44.prepare("PRAGMA user_version").get() as
+              | { readonly user_version?: number }
+              | undefined;
+            expect(Number(version?.user_version)).toBe(44);
+          } finally {
+            schema44.close();
+          }
+          const raw = rawTargetInvocations[0];
+          if (raw === undefined || raw.observation_json === null) {
+            throw new Error(
+              "P40 ExpectedFailure evidence absent at the post-settlement crash boundary",
+            );
+          }
+          committedObservationBytes = Uint8Array.from(raw.observation_json);
+          committedObservationVersion = raw.observation_format_version;
+          committedObservationHash = raw.observation_sha256;
+          if (
+            committedObservationVersion === null ||
+            committedObservationHash === null
+          ) {
+            throw new Error("P40 ExpectedFailure version/hash is absent");
+          }
+          expect(
+            JSON.parse(new TextDecoder().decode(raw.observation_json)),
+          ).toMatchObject({
+            _tag: "ExpectedFailure",
+            observation: {
+              text: "filesystem target could not be resolved or accessed inside the sandbox",
+              truncated: false,
+            },
+          });
+          expect(raw.observation_format_version).toBe(
+            "p4-canonical-tool-observation-v1",
+          );
+          expect(raw.observation_sha256).toMatch(/^[0-9a-f]{64}$/u);
+          expect(
+            createHash("sha256")
+              .update(`${committedObservationVersion}\n`)
+              .update(committedObservationBytes)
+              .digest("hex"),
+          ).toBe(committedObservationHash);
+          expect(raw.settlement_json).toBe(
+            JSON.stringify({ _tag: "ExpectedFailure" }),
+          );
+          expect(raw.result_ref).toBeNull();
+          expect(targetArtifacts).toHaveLength(0);
+        }
         const logicalActionId = (
           targetActions[0] as { logical_action_id?: string } | undefined
         )?.logical_action_id;
@@ -491,6 +592,15 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           throw new Error("AH7 committed action identity absent");
         }
 
+        if (expectedSettlement === "ExpectedFailure") {
+          // If recovery accidentally re-enters the Read executor, the same
+          // request would now succeed. P40 replay must return the exact
+          // already-committed ExpectedFailure instead.
+          writeFileSync(
+            join(fixture.workspaceDirectory, lateProofPath),
+            "must not be read by replayed invocation",
+          );
+        }
         await fixture.restart();
         activePhase = "recovery-daemon-ready";
         const recovered = await waitForPublic(
@@ -516,10 +626,12 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
               actions[0]?.state === "Applied" &&
               invocations.length === 1 &&
               invocations[0]?.tool_name === "read" &&
-              invocations[0]?.settlement_kind === "Success" &&
-              invocations[0]?.result_ref === artifacts[0]?.artifact_id &&
+              invocations[0]?.settlement_kind === expectedSettlement &&
+              (expectedSettlement === "ExpectedFailure"
+                ? invocations[0]?.result_ref === null && artifacts.length === 0
+                : invocations[0]?.result_ref === artifacts[0]?.artifact_id &&
+                  artifacts.length === 1) &&
               toolResults.length === 1 &&
-              artifacts.length === 1 &&
               (expectedCrash.actionState !== "Applied" ||
                 value.steps.some(
                   (step) =>
@@ -581,8 +693,9 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
             execution_id: hit?.executionId,
             tool_name: "read",
             side_effect_semantics: "ReadOnly",
-            settlement_kind: "Success",
-            result_ref: expect.any(String),
+            settlement_kind: expectedSettlement,
+            result_ref:
+              expectedSettlement === "Success" ? expect.any(String) : null,
           }),
         ]);
         expect(recoveredRawInvocations).toHaveLength(1);
@@ -597,8 +710,11 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           tool_name: "read",
           side_effect_semantics: "ReadOnly",
           approval_id: null,
-          settlement_kind: "Success",
-          result_ref: recoveredTargetArtifacts[0]?.artifact_id,
+          settlement_kind: expectedSettlement,
+          result_ref:
+            expectedSettlement === "Success"
+              ? recoveredTargetArtifacts[0]?.artifact_id
+              : null,
         });
         expect(
           recoveredRawInvocation.tool_version.trim().length,
@@ -620,9 +736,13 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           );
         }
         expect(recoveredTargetToolResults).toHaveLength(1);
-        expect(recoveredTargetArtifacts).toHaveLength(1);
+        expect(recoveredTargetArtifacts).toHaveLength(
+          expectedSettlement === "Success" ? 1 : 0,
+        );
         expect(recoveredTargetInvocations[0]?.result_ref).toBe(
-          recoveredTargetArtifacts[0]?.artifact_id,
+          expectedSettlement === "Success"
+            ? recoveredTargetArtifacts[0]?.artifact_id
+            : null,
         );
         if (expectedCrash.artifactCount === 1) {
           expect(recoveredTargetArtifacts).toEqual(targetArtifacts);
@@ -631,7 +751,10 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           expect(p4ImmutableBinding(recoveredRawInvocation)).toEqual(
             p4ImmutableBinding(rawTargetInvocations[0] as RawP4InvocationRow),
           );
-        } else if (expectedCrash.p4Intent === "Success") {
+        } else if (
+          expectedCrash.p4Intent === "Success" ||
+          expectedCrash.p4Intent === "ExpectedFailure"
+        ) {
           expect(recoveredRawInvocations).toEqual(rawTargetInvocations);
           expect(recoveredTargetInvocations).toEqual(targetInvocations);
         }
@@ -640,7 +763,14 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         });
         const recoveredToolResult = JSON.parse(
           String(recoveredTargetToolResults[0]?.payload_json),
-        ) as { callRef?: string; observationRef?: string };
+        ) as {
+          callRef?: string;
+          observationRef?: string;
+          status?: string;
+          outputText?: string;
+          truncated?: boolean;
+          artifactRefs?: ReadonlyArray<string>;
+        };
         expect(recoveredToolResult).toMatchObject({
           callRef: hit?.callRef,
           observationRef: recoveredTargetActions[0]?.observation_source_ref,
@@ -654,6 +784,37 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
               result.source_ref === recoveredToolResult.observationRef,
           ),
         ).toHaveLength(1);
+        if (expectedSettlement === "ExpectedFailure") {
+          expect(recoveredRawInvocation.observation_format_version).toBe(
+            committedObservationVersion,
+          );
+          expect(recoveredRawInvocation.observation_sha256).toBe(
+            committedObservationHash,
+          );
+          expect(recoveredRawInvocation.observation_json).toEqual(
+            committedObservationBytes,
+          );
+          expect(recoveredRawInvocation.settlement_json).toBe(
+            JSON.stringify({ _tag: "ExpectedFailure" }),
+          );
+          expect(recoveredToolResult).toMatchObject({
+            status: "Failed",
+            outputText:
+              "filesystem target could not be resolved or accessed inside the sandbox",
+            truncated: false,
+            artifactRefs: [],
+          });
+          expect(targetProviderCalls).toBe(1);
+          expect(
+            fixture.providerCalls
+              .slice(targetProviderCallStart)
+              .filter(
+                (call) =>
+                  JSON.stringify(call.messages).includes(marker) &&
+                  call.tools.some((tool) => tool.function?.name === "read"),
+              ),
+          ).toHaveLength(1);
+        }
         expect(
           JSON.stringify(recoveredTargetToolResults[0]).includes(
             hit?.callRef ?? "",
