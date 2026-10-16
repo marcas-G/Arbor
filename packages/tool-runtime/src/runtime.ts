@@ -714,7 +714,10 @@ export const ToolRuntimeLive = (
           });
         });
 
-      const decodeRecordedEvidence = (
+      const NOT_P39_RECEIPT = { _tag: "NotP39Receipt" } as const;
+      type NotP39Receipt = typeof NOT_P39_RECEIPT;
+
+      const decodeRecordedEvidenceResult = (
         intent: ToolIntent,
         context: ToolExecutionContext,
         recorded: {
@@ -732,12 +735,15 @@ export const ToolRuntimeLive = (
           readonly resultRef?: string | null;
         },
         terminalP39Receipt?: {
-          readonly expectedOutcome: "NotOccurred" | "Occurred";
+          readonly allowMissingSelected?: boolean;
           readonly definition: ToolDefinition;
           readonly profile: ToolReconciliationProfile;
           readonly effectKey: string;
         },
-      ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
+      ): Effect.Effect<
+        CanonicalToolObservation | NotP39Receipt,
+        ToolRuntimeError
+      > =>
         Effect.gen(function* () {
           if (Option.isNone(observationEvidence)) {
             return yield* Effect.fail(
@@ -835,8 +841,6 @@ export const ToolRuntimeLive = (
           }
           const observation = read.value.evidence
             .observation as CanonicalToolObservation;
-          const expectedP39Outcome =
-            terminalP39Receipt?.expectedOutcome ?? "NotOccurred";
           const requiresSelectedFact =
             terminalP39Receipt !== undefined ||
             observation._tag === "ReconciledNoEffect";
@@ -850,24 +854,46 @@ export const ToolRuntimeLive = (
               );
             }
             const selected = read.value.selected;
+            if (Option.isNone(selected)) {
+              if (terminalP39Receipt?.allowMissingSelected === true) {
+                return NOT_P39_RECEIPT;
+              }
+              return yield* recordReplayFailure(
+                intent,
+                context,
+                "SettlementMismatch",
+                yield* clock.now(),
+              );
+            }
+            const selectedOutcome = selected.value.fact.outcome;
+            if (
+              selectedOutcome !== "NotOccurred" &&
+              selectedOutcome !== "Occurred"
+            ) {
+              return yield* recordReplayFailure(
+                intent,
+                context,
+                "SettlementMismatch",
+                yield* clock.now(),
+              );
+            }
+            const expectedP39Outcome = terminalP39Receipt
+              ? selectedOutcome
+              : "NotOccurred";
             const factId =
               expectedP39Outcome === "NotOccurred"
                 ? observation._tag === "ReconciledNoEffect"
                   ? observation.reconciliationFactRef
                   : ""
-                : Option.isSome(selected)
-                  ? selected.value.fact.factId
-                  : "";
+                : selected.value.fact.factId;
             if (
-              Option.isNone(selected) ||
-              (Option.isSome(selected) &&
-                !matchesAuthenticatedP39Evidence({
-                  selected: selected.value,
-                  intent,
-                  context,
-                  factId,
-                  expectedOutcome: expectedP39Outcome,
-                }))
+              !matchesAuthenticatedP39Evidence({
+                selected: selected.value,
+                intent,
+                context,
+                factId,
+                expectedOutcome: expectedP39Outcome,
+              })
             ) {
               return yield* recordReplayFailure(
                 intent,
@@ -929,9 +955,12 @@ export const ToolRuntimeLive = (
                       selectedEvidence.fact.factId &&
                     recorded.settlement.reconciliationFactRef ===
                       selectedEvidence.fact.factId
-                  : observation._tag === "Success" &&
-                    recorded.settlement?._tag === "Success" &&
-                    observation.resultRef === selectedEvidence.fact.resultRef &&
+                  : (observation._tag === "Success" ||
+                      observation._tag === "ExpectedFailure") &&
+                    recorded.settlement?._tag === observation._tag &&
+                    (observation._tag !== "Success" ||
+                      observation.resultRef ===
+                        selectedEvidence.fact.resultRef) &&
                     recorded.resultRef === selectedEvidence.fact.resultRef;
               if (!exactReceiptSource || !observationMatchesReceipt) {
                 return yield* recordReplayFailure(
@@ -945,6 +974,24 @@ export const ToolRuntimeLive = (
           }
           return observation;
         });
+
+      const decodeRecordedEvidence = (
+        intent: ToolIntent,
+        context: ToolExecutionContext,
+        recorded: Parameters<typeof decodeRecordedEvidenceResult>[2],
+      ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
+        decodeRecordedEvidenceResult(intent, context, recorded).pipe(
+          Effect.flatMap((result) =>
+            result._tag === "NotP39Receipt"
+              ? Effect.fail<ToolRuntimeError>(
+                  operationalFailure(
+                    "SettlementJournal",
+                    String(intent.invocationId),
+                  )({ _tag: "UnexpectedNotP39Receipt" }),
+                )
+              : Effect.succeed(result),
+          ),
+        );
 
       const findInvocationFenced = (
         invocationId: ToolIntent["invocationId"],
@@ -1496,16 +1543,9 @@ export const ToolRuntimeLive = (
               )({ _tag: "ToolInvocationIdentityConflict" }),
             );
           }
-          const terminalP39Outcome =
-            priorRecord?.settlement?._tag === "ReconciledNoEffect"
-              ? ("NotOccurred" as const)
-              : priorRecord?.settlement?._tag === "Success"
-                ? ("Occurred" as const)
-                : undefined;
           const terminalP39ReceiptCandidate =
             priorRecord !== undefined &&
             priorModelIdentityMatches &&
-            terminalP39Outcome !== undefined &&
             priorRecord.settlement !== null &&
             priorRecord.sideEffectSemantics === "Reconcilable" &&
             priorRecord.effectAdmissionState === "MayHaveStarted" &&
@@ -1518,17 +1558,19 @@ export const ToolRuntimeLive = (
             priorRecord.approvalId === intent.approvalId &&
             (context.executableApproval === undefined ||
               context.executableApproval.approvalId === priorRecord.approvalId);
-          if (
-            terminalP39ReceiptCandidate &&
-            priorRecord !== undefined &&
-            terminalP39Outcome !== undefined
-          ) {
-            return yield* decodeRecordedEvidence(intent, context, priorRecord, {
-              expectedOutcome: terminalP39Outcome,
-              definition,
-              profile: trustedProfile,
-              effectKey: trustedEffectKey as string,
-            });
+          if (terminalP39ReceiptCandidate && priorRecord !== undefined) {
+            const receipt = yield* decodeRecordedEvidenceResult(
+              intent,
+              context,
+              priorRecord,
+              {
+                allowMissingSelected: true,
+                definition,
+                profile: trustedProfile,
+                effectKey: trustedEffectKey as string,
+              },
+            );
+            if (receipt._tag !== "NotP39Receipt") return receipt;
           }
           const exactReconcilableReplayCandidate =
             priorModelIdentityMatches &&

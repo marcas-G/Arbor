@@ -433,23 +433,33 @@ const p39NotOccurredRetryCase = (
 };
 
 const p39TerminalReceiptCase = (
-  outcome: "NotOccurred" | "Occurred" = "NotOccurred",
+  terminalKind: "NotOccurred" | "Success" | "ExpectedFailure" = "NotOccurred",
 ) => {
   const retry = p39NotOccurredRetryCase("ResourceSnapshotChanged");
   const resultRef = "art_p4_occurred_terminal_result";
+  const factOutcome =
+    terminalKind === "NotOccurred" ? "NotOccurred" : "Occurred";
   const p40Observation =
-    outcome === "NotOccurred"
+    terminalKind === "NotOccurred"
       ? retry.settlementEvidence.observation
-      : {
-          _tag: "Success" as const,
-          observation: {
-            text: "authoritative effect result",
-            truncated: false,
-          },
-          resultRef,
-        };
+      : terminalKind === "Success"
+        ? {
+            _tag: "Success" as const,
+            observation: {
+              text: "authoritative effect result",
+              truncated: false,
+            },
+            resultRef,
+          }
+        : {
+            _tag: "ExpectedFailure" as const,
+            observation: {
+              text: "authoritative effect result was an expected failure",
+              truncated: false,
+            },
+          };
   const settlementEvidence: ToolObservationEvidence =
-    outcome === "NotOccurred"
+    terminalKind === "NotOccurred"
       ? retry.settlementEvidence
       : {
           formatVersion: "p4-canonical-tool-observation-v1",
@@ -467,11 +477,11 @@ const p39TerminalReceiptCase = (
     factOrigin: "ProfileReconciliation",
     legacyReason: null,
     factDisposition: "RecoveryInput",
-    outcome,
+    outcome: factOutcome,
     reasonCode: null,
     evidenceRef: "art_p4_reconcile_proof",
     evidenceSha256: "b".repeat(64),
-    resultRef: outcome === "Occurred" ? resultRef : null,
+    resultRef: factOutcome === "Occurred" ? resultRef : null,
     observedAt: "2026-01-01T00:00:03.000Z",
   };
   return {
@@ -481,14 +491,16 @@ const p39TerminalReceiptCase = (
       ...retry.prior,
       settledAt: "2026-01-01T00:00:04.000Z",
       settlement:
-        outcome === "NotOccurred"
+        terminalKind === "NotOccurred"
           ? {
               _tag: "ReconciledNoEffect" as const,
               reasonCode: "ResourceSnapshotChanged" as const,
               reconciliationFactRef: retry.factId,
             }
-          : { _tag: "Success" as const },
-      resultRef: outcome === "Occurred" ? resultRef : null,
+          : terminalKind === "Success"
+            ? { _tag: "Success" as const }
+            : { _tag: "ExpectedFailure" as const },
+      resultRef: factOutcome === "Occurred" ? resultRef : null,
     } satisfies ToolInvocationRecord,
     selected: {
       binding: retry.verifiedBinding,
@@ -1594,7 +1606,7 @@ describe("P4 tool runtime pipeline", () => {
     },
   );
 
-  it.each(["NotOccurred", "Occurred"] as const)(
+  it.each(["NotOccurred", "Success", "ExpectedFailure"] as const)(
     "returns a terminal P40 %s receipt before current-region admission or reconciliation",
     async (terminalOutcome) => {
       const receipt = p39TerminalReceiptCase(terminalOutcome);
@@ -1693,6 +1705,72 @@ describe("P4 tool runtime pipeline", () => {
     },
   );
 
+  it("falls back to strict replay when a terminal Reconcilable Success has no P39 selected fact", async () => {
+    const receipt = p39TerminalReceiptCase("Success");
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      p40WinnerEvidence: receipt.settlementEvidence,
+      reconciliationRetry: {
+        profile: receipt.profile,
+        verifiedBinding: receipt.verifiedBinding,
+        attempt: receipt.attempt,
+        authority: receipt.authority,
+        result: receipt.result,
+        factId: receipt.factId,
+        settlementEvidence: receipt.settlementEvidence,
+      },
+    };
+    let executorCalls = 0;
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const runtime = yield* ToolRuntimePort;
+          return yield* runtime.invoke(
+            {
+              ...intent(receipt.argumentsJson),
+              toolName: "shell",
+              toolVersion: "2",
+              invocationId,
+              approvalId: null,
+            } as never,
+            receipt.context,
+          );
+        }),
+        app(
+          false,
+          {
+            name: "shell",
+            write: true,
+            requiresApproval: () => false,
+            execute: () => {
+              executorCalls += 1;
+              return Effect.die(new Error("ordinary receipt replay executed"));
+            },
+          },
+          {},
+          trace,
+          undefined,
+          false,
+          receipt.prior,
+          "rev",
+          trace.reconciliationRetry,
+        ),
+      ),
+    );
+
+    expect(result).toEqual(receipt.settlementEvidence.observation);
+    expect(trace.p40ReadInvocations).toHaveLength(2);
+    expect(trace.resourceAdmissionCalls).toBe(1);
+    expect(trace.reconciliationCalls ?? 0).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(executorCalls).toBe(0);
+  });
+
   it("keeps strict current-region identity for ordinary settled receipts", async () => {
     const receipt = p39TerminalReceiptCase();
     const ordinarySettled = {
@@ -1768,7 +1846,7 @@ describe("P4 tool runtime pipeline", () => {
         cause: { _tag: "ToolInvocationIdentityConflict" },
       });
     }
-    expect(trace.p40ReadInvocations ?? []).toHaveLength(0);
+    expect(trace.p40ReadInvocations ?? []).toHaveLength(1);
     expect(trace.reconciliationCalls ?? 0).toBe(0);
     expect(trace.resourceAdmissionCalls ?? 0).toBe(0);
     expect(trace.effectAdmissions).toBe(0);
@@ -1810,6 +1888,14 @@ describe("P4 tool runtime pipeline", () => {
             : { p39SelectedEvidence: receipt.selected }),
         ...(invalidReceipt === "fence-transition"
           ? { p39SelectedFenceReject: true }
+          : {}),
+        ...(invalidReceipt === "missing-selected"
+          ? {
+              workspaceBoundaryAddresses: [
+                { _tag: "GitWorktree" as const, path: "/repo/b" },
+              ],
+              workspaceRevisionSequence: [1, 1],
+            }
           : {}),
         reconciliationRetry: {
           profile: receipt.profile,
@@ -1932,7 +2018,9 @@ describe("P4 tool runtime pipeline", () => {
         invalidReceipt === "callRef" ||
         invalidReceipt === "approval-id"
           ? 0
-          : 1;
+          : invalidReceipt === "missing-selected"
+            ? 1
+            : 1;
       expect(trace.p40ReadInvocations ?? []).toHaveLength(readCount);
       expect(trace.p40ReadFences ?? []).toHaveLength(readCount);
       expect(trace.reconciliationCalls ?? 0).toBe(0);
@@ -1940,7 +2028,9 @@ describe("P4 tool runtime pipeline", () => {
       expect(trace.resourceAdmissionCalls ?? 0).toBe(0);
       expect(trace.effectAdmissions).toBe(0);
       expect(executorCalls).toBe(0);
-      expect(trace.environmentResolutions ?? 0).toBe(0);
+      expect(trace.environmentResolutions ?? 0).toBe(
+        invalidReceipt === "missing-selected" ? 2 : 0,
+      );
     },
   );
 

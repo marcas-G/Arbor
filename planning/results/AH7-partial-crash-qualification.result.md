@@ -124,3 +124,11 @@ and selected P39 evidence now run in one transaction. Focused receipt cases
 pass 11/11 and the complete P4 pipeline passes 55/55; typecheck, Biome and
 `git diff --check` pass. This remains unit/code evidence; no real-process run
 or AH7 closure is claimed.
+
+The subsequent provenance correction makes selected P39 evidence, rather than
+the terminal settlement tag, authorize region-drift receipt replay. A missing
+selection falls back to strict current-region handling; a present mismatched
+selection fails closed. Occurred ExpectedFailure receipts now have explicit
+resultRef matching. Focused B2 tests pass 13/13 and full P4 pipeline 57/57;
+typecheck, Biome, and diff-check pass. Still no real-process run for this
+checkpoint; AH7 remains PARTIAL / OPEN.
