@@ -82,13 +82,19 @@ immediately loses visibility under current query authorization and the new
 recipient receives the same-key entry. If the command cannot update the Inbox
 recipient projection in that same transaction, the owner-change command
 returns a typed terminal rejection (recommended existing
-`AuthorityDenied`) and writes no canonical owner/Parent change, Inbox move,
-Event or receipt. Do not add an asynchronous window or a durable
-`InboxRouteReconciliationRequired` fact.
+`AuthorityDenied`) through the existing P1 Gateway. The Gateway persists the
+normal terminal-rejection receipt and attempt; this is not a pre-Gateway
+error. The command makes no canonical Work/Workspace/owner change, Event,
+Inbox move, or UnboundLegacy disposition mutation. Do not add an asynchronous
+window or a durable `InboxRouteReconciliationRequired` fact.
 
 The same rule applies to any owner/Parent governance edit: its command either
-atomically updates the same-key Inbox route or rejects without writes. A
-separately invoked rebuild/repair runs in one transaction against current
+atomically updates the same-key Inbox route or receives the typed terminal
+rejection above, with only the normal P1 command receipt/attempt persisted.
+Replaying the same CommandId and tuple returns that same terminal receipt;
+using a different CommandId independently reaches the same rejection. The
+normal P1 receipt crash/commit boundaries apply before and after the receipt
+transaction commits. A separately invoked rebuild/repair runs in one transaction against current
 canonical Work/Workspace facts; stale row recipient is not authorization and
 the old recipient remains denied. If the P6 Inbox physically resides outside
 the P1 transaction boundary, that physical architecture is insufficient for
@@ -134,6 +140,12 @@ informational and cannot unblock the command.
   enum or Attention source extension.
 - **P8 `01-verification-commands.md` / `06-acceptance.md`:** reference the
   accepted P6 route mechanics without changing P8 current-auth/replay rules.
+- **P1 `01-command-processing.md` / `03-command-lifecycle.md`:** specify that
+  unavailable atomic route movement is an ordinary Gateway
+  `TerminalRejected(AuthorityDenied)` outcome (or the narrowest existing
+  typed rejection), including same-CommandId replay and different-CommandId
+  behavior and the normal receipt crash boundary; require zero canonical
+  Work/Workspace/Event/Inbox/disposition mutation, not zero receipt writes.
 - **P1 `04-sqlite-schema.md`:** add source WorkId/VerificationId to the
   disposition and specify the Inbox row's P1 transaction/createdAt/updatedAt/
   revision representation. Migration ID remains TBD. P1 `03` owns the atomic
@@ -155,8 +167,12 @@ accept a compatible physical design; do not substitute asynchronous repair.
    is typed corruption, not overwrite.
 3. Owner/Parent change before/after commit crash: rollback leaves canonical
    owner relation and Inbox recipient unchanged; commit makes both new. If
-   same-transaction Inbox move is unavailable, owner-change command returns
-   typed rejection with zero canonical/Event/Inbox/receipt writes.
+   same-transaction Inbox move is unavailable, owner-change command reaches
+   the existing Gateway and persists its normal terminal-rejection receipt
+   and attempt, with zero canonical Work/Workspace/Event/Inbox/disposition
+   mutation. Same CommandId/tuple replays that receipt; a different CommandId
+   independently rejects. Exercise the P1 before/after receipt commit crash
+   boundary; no rejection path bypasses Gateway or reads a receipt early.
 4. Immediately after committed route change, old recipient query is denied and
    current recipient query returns the same-key entry. No asynchronously
    reconciled visibility interval exists.

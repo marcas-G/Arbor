@@ -29,12 +29,18 @@ depends on or decodes the permanent receipt. It reuses the existing
 CommandId-based key and subtype/payload distinction. Recipient is dynamic from
 current canonical Work/Workspace and P8 governance facts, not stored as an
 immutable snapshot. Same-key route moves occur only in the same P1 owner/Parent
-change transaction; if the Inbox move cannot commit atomically, the owner
-change is a typed no-write rejection. The proposal forbids durable async route
-reconciliation facts/windows. It also specifies revision/created_at/updated_at,
-read-only/no-consume semantics, and rebuild solely from disposition plus
-canonical facts, even if receipts or Events are corrupt/pruned. These are
-recommendations only; no design file records these mechanics as accepted.
+change transaction; if the Inbox move cannot commit atomically, the command
+reaches the existing P1 Gateway and persists its normal terminal-rejection
+receipt and attempt, while making no canonical Work/Workspace/Event/Inbox/
+disposition mutation. Same CommandId/tuple replays that receipt; a different
+CommandId independently rejects. The proposal requires normal P1
+before/after receipt-commit crash behavior and forbids pre-Gateway rejection,
+durable async route reconciliation facts, or windows. It also specifies
+revision/created_at/updated_at, read-only/no-consume semantics, and rebuild
+solely from disposition plus canonical facts, even if receipts or Events are
+corrupt/pruned. P1 `01` and `03` are included in the owning-doc/consistency
+scope for receipt and transaction semantics. These are recommendations only;
+no design file records these mechanics as accepted.
 
 The proposed exact token is
 `ACCEPT_F23_P6_UNBOUND_LEGACY_GOVERNANCE_INBOX_MECHANICS`. Its acceptance
