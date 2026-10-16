@@ -12,34 +12,50 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  canonicalArgumentsDigestV1,
+  canonicalizeRecoveryBindingV1,
   EnvironmentRevisionStore,
   type ExecutableApprovalRecord,
   ExecutableApprovalStore,
   type ExecutableApprovalStoreService,
   type InvocationApproval,
+  makeToolReconciliationProfileRegistry,
   type NoEffectDenialCode,
   P39RecoveryEvidenceStore,
   ProjectEnvironmentPort,
   type RecoveryBindingV1,
   ResourceAdmission,
+  reconciliationFactId,
+  recoveryBindingV1Digest,
   SandboxPort,
+  type SelectedP39EffectAttempt,
   ToolAuthorityResolver,
   ToolDefinitionStore,
   type ToolInvocationRecord,
   ToolInvocationStore,
   type ToolObservationEvidence,
+  type ToolObservationEvidenceCandidate,
   ToolObservationEvidenceStore,
+  ToolReconciliationFactStore,
+  ToolReconciliationPort,
+  type ToolReconciliationProfile,
+  ToolReconciliationProfileRegistry,
+  type ToolReconciliationRequest,
+  type ToolReconciliationResult,
   type ToolRuntimeError,
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
   targetResourceIdentityDigestV1,
+  toolDefinitionIdentityDigestV1,
+  verifyRecoveryBindingV1,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Exit, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   actionDigestOf,
+  LEGACY_SHELL_DEFINITION,
   reconciliationRetryDenialReasonCode,
   ToolDefinitionStoreLive,
   type ToolExecutor,
@@ -193,6 +209,223 @@ const p39ApprovedCase = (
   return { argumentsJson, approval, approvedContext, executor, approvalId };
 };
 
+const p39NotOccurredRetryCase = (
+  denialReasonCode:
+    | "AuthoritySnapshotChanged"
+    | "ResourceSnapshotChanged" = "AuthoritySnapshotChanged",
+) => {
+  const argumentsJson = JSON.stringify({
+    command: "echo p4-reconciliation-retry",
+    cwd: { mount: "workspace", path: "." },
+  });
+  const callRef = "c";
+  const providerTurnId = parse(ProviderTurnId)(
+    "ptn_018f2b3c-4d5e-7abc-8def-0123456789a3",
+  );
+  const logicalActionId = "lac_p4_reconciliation_retry_denied";
+  const controlBasisDigest = "d".repeat(64);
+  const authoritySourceRevision = JSON.stringify({
+    workspacePolicyRevision: 0,
+    activeGrants: [],
+    verifierId: null,
+  });
+  const shellAuthority = {
+    ...authority,
+    toolName: "shell",
+    toolVersion: "2",
+    sourceRevision: authoritySourceRevision,
+    resourceSpaceIds: ["filesystem"],
+    allowedCapabilities: ["shell:exec"],
+    controlBasisDigest,
+  };
+  const retryContext: import("@arbor/ports").ToolExecutionContext = {
+    ...context,
+    authority: shellAuthority,
+    controlBasisDigest,
+    recoveryBindingIdentity: {
+      executionId,
+      providerTurnId,
+      logicalStepNo: 0,
+      repairAttempt: 0,
+      logicalActionId,
+      actionIndex: 0,
+      callRef,
+    },
+    recoveryBindingPolicyRevisions: {
+      workspacePolicyRevision: 0,
+      projectPolicyRevision: 0,
+    },
+  };
+  const regions = [
+    {
+      resourceSpaceId: "filesystem",
+      normalizedRegion: { _tag: "GitWorktree" as const, path: "/repo/a" },
+    },
+  ];
+  const profile: ToolReconciliationProfile = {
+    toolName: "shell",
+    toolVersion: "2",
+    toolDefinitionHash: LEGACY_SHELL_DEFINITION.hash,
+    profileId: "p4-pipeline-retry-gate",
+    profileVersion: "1",
+    profileHash: "a".repeat(64),
+    profileProtocol: "p4-pipeline-test-v1",
+    effectKey: ({ invocationId: id }) => `p4-test:${id}`,
+    reconstructOccurred: () => null,
+  };
+  const effectKey = profile.effectKey({ invocationId, argumentsJson });
+  if (effectKey === null) throw new Error("test profile effect key missing");
+  const binding: RecoveryBindingV1 = {
+    bindingVersion: 1,
+    digestAlgorithm: "SHA-256",
+    executionId,
+    invocationId,
+    providerTurnId,
+    logicalStepNo: 0,
+    repairAttempt: 0,
+    logicalActionId,
+    actionIndex: 0,
+    callRef,
+    toolName: "shell",
+    toolVersion: "2",
+    toolDefinitionHash: toolDefinitionIdentityDigestV1(
+      LEGACY_SHELL_DEFINITION.hash,
+    ),
+    sideEffectSemantics: "Reconcilable",
+    canonicalArgumentsDigest: canonicalArgumentsDigestV1(
+      JSON.parse(argumentsJson),
+    ),
+    targetResourceIdentityDigest: targetResourceIdentityDigestV1(regions),
+    resourceBoundaryRevision: 0,
+    environmentRevision: "rev",
+    authoritySourceRevision,
+    principalId: String(principal),
+    capability: ["shell:exec"],
+    permissionGrantRevisions: [],
+    workspacePolicyRevision: 0,
+    projectPolicyRevision: 0,
+    controlBasisDigest,
+    approvalId: null,
+    approvalSubject: null,
+    approvalPreConsumeRevision: null,
+    approvalConsumedRevision: null,
+    approvalExpiresAt: null,
+    approvalTargetDigest: null,
+    approvalActionDigest: null,
+    approvalConsumedBy: null,
+    profileId: profile.profileId,
+    profileVersion: profile.profileVersion,
+    profileHash: profile.profileHash,
+    profileProtocol: profile.profileProtocol,
+    effectKey,
+  };
+  const canonicalJson = canonicalizeRecoveryBindingV1(binding);
+  const bindingSha256 = recoveryBindingV1Digest(binding);
+  const verifiedBinding = verifyRecoveryBindingV1({
+    invocationId,
+    canonicalJson,
+    bindingSha256,
+  });
+  if (verifiedBinding === null) {
+    throw new Error("test RecoveryBindingV1 did not verify");
+  }
+  const result: ToolReconciliationResult = {
+    _tag: "NotOccurred",
+    proof: {
+      invocationId,
+      attemptNo: 0,
+      bindingSha256,
+      profileHash: profile.profileHash,
+      effectKey,
+      sourceRevision: "p4-test-ledger-v1",
+      sourceWatermark: "p4-test-final-watermark",
+      observedAt: "2026-01-01T00:00:03.000Z",
+      visibilityScopeSha256: binding.targetResourceIdentityDigest,
+      evidenceRef: "art_p4_reconcile_proof",
+      evidenceSha256: "b".repeat(64),
+      finality: {
+        _tag: "ExternallyFenced",
+        confirmationRef: "p4-test-no-effect-fence",
+        confirmedAt: "2026-01-01T00:00:03.000Z",
+      },
+    },
+  };
+  const factId = reconciliationFactId({
+    request: {
+      invocationId,
+      attemptNo: 0,
+      bindingSha256,
+      profileHash: profile.profileHash,
+      effectKey,
+      visibilityScopeSha256: binding.targetResourceIdentityDigest,
+    },
+    result,
+    factDisposition: "RecoveryInput",
+    evidenceSha256:
+      result._tag === "NotOccurred" ? result.proof.evidenceSha256 : null,
+  });
+  const observation = {
+    _tag: "ReconciledNoEffect" as const,
+    reasonCode: denialReasonCode,
+    reconciliationFactRef: factId,
+    observation: {
+      text: "authoritative source confirmed no effect",
+      truncated: false,
+    },
+    resultRef: "art_p4_reconcile_observation",
+  };
+  const settlementEvidence: ToolObservationEvidence = {
+    formatVersion: "p4-canonical-tool-observation-v1",
+    bytes: new TextEncoder().encode(JSON.stringify(observation)),
+    sha256: "c".repeat(64),
+    observation,
+  };
+  const attempt: SelectedP39EffectAttempt = {
+    invocationId,
+    attemptNo: 0,
+    admissionState: "MayHaveStarted",
+    bindingSha256,
+    toolDefinitionHash: binding.toolDefinitionHash,
+    sideEffectSemantics: "Reconcilable",
+    profileId: profile.profileId,
+    profileVersion: profile.profileVersion,
+    profileHash: profile.profileHash,
+    profileProtocol: profile.profileProtocol,
+    effectKey,
+    admittedAt: "2026-01-01T00:00:02.000Z",
+    admissionSource: "P39Admission",
+    admissionTimePrecision: "TransactionTimestamp",
+  };
+  const prior: ToolInvocationRecord = {
+    invocationId,
+    executionId,
+    workspaceId,
+    toolName: "shell",
+    toolVersion: "2",
+    sideEffectSemantics: "Reconcilable",
+    argumentsJson,
+    resolvedRegions: regions,
+    approvalId: null,
+    effectAdmissionState: "MayHaveStarted",
+    intentAt: "2026-01-01T00:00:01.000Z",
+    settledAt: null,
+    settlement: null,
+    resultRef: null,
+  };
+  return {
+    argumentsJson,
+    context: retryContext,
+    profile,
+    verifiedBinding,
+    attempt,
+    result,
+    factId,
+    settlementEvidence,
+    prior,
+    authority: shellAuthority,
+  };
+};
+
 interface PipelineFaults {
   readonly workspaceLookup?: boolean;
   readonly environmentResolution?: boolean;
@@ -212,11 +445,28 @@ interface PipelineTrace {
   effectAdmissions: number;
   approvalConsumes: number;
   effectAdmissionDenial?: NoEffectDenialCode;
+  resourceAdmissionDeniedAtCall?: number;
   afterAuthorityResolved?: () => Promise<void>;
   environmentResolutions?: number;
   resourceAdmissionCalls?: number;
   p39BindingCalls?: number;
   p39SelectedReads?: number;
+  authorityResolutionCalls?: number;
+  readonly reconciliationRetry?: {
+    readonly profile: ToolReconciliationProfile;
+    readonly verifiedBinding: NonNullable<
+      ReturnType<typeof verifyRecoveryBindingV1>
+    >;
+    readonly attempt: SelectedP39EffectAttempt;
+    readonly authority: import("@arbor/ports").InvocationAuthority;
+    readonly result: ToolReconciliationResult;
+    readonly factId: string;
+    readonly settlementEvidence: ToolObservationEvidence;
+    readonly denyAuthorityOnCall?: number | null;
+  };
+  reconciliationFactWrites?: number;
+  retryAttemptNumbers?: Array<number>;
+  p40Candidates?: Array<ToolObservationEvidenceCandidate>;
   readonly existingInvocationAfterStop?: ToolInvocationRecord;
   legacyInterruptedInvocation?: ToolInvocationRecord;
   legacyNoEffectInterruptionWrites?: number;
@@ -271,6 +521,7 @@ const app = (
   authorityDeniedOrDeniedReplay: boolean | ToolInvocationRecord = false,
   suppliedP39DeniedReplay?: ToolInvocationRecord,
   p39CurrentEnvironmentRevision?: string,
+  reconciliationRetry?: NonNullable<PipelineTrace["reconciliationRetry"]>,
 ) => {
   const authorityDenied =
     typeof authorityDeniedOrDeniedReplay === "boolean"
@@ -283,6 +534,7 @@ const app = (
       : undefined);
   const p39BindingEnabled =
     p39DeniedReplay !== undefined ||
+    reconciliationRetry !== undefined ||
     p39CurrentEnvironmentRevision !== undefined ||
     trace?.currentEnvironmentRevisionValues !== undefined;
   let environmentResolutionIndex = 0;
@@ -334,9 +586,11 @@ const app = (
           import("@arbor/domain").CanonicalResourceRegion
         >;
       }) => {
+        let admissionCall = 0;
         if (p39BindingEnabled && trace !== undefined) {
           trace.resourceAdmissionCalls =
             (trace.resourceAdmissionCalls ?? 0) + 1;
+          admissionCall = trace.resourceAdmissionCalls;
           if (trace.resourceAdmissionRegions === undefined) {
             trace.resourceAdmissionRegions = [];
           }
@@ -354,7 +608,8 @@ const app = (
               cause: "admission-failure",
             })
           : Effect.succeed(
-              admissionDeny
+              admissionDeny ||
+                trace?.resourceAdmissionDeniedAtCall === admissionCall
                 ? { _tag: "Denied" as const, reason: "no" }
                 : { _tag: "Admitted" as const },
             );
@@ -597,14 +852,30 @@ const app = (
               }),
           } as never),
         );
-  const deps = authorityDenied
-    ? Layer.mergeAll(
-        evidenceDeps,
-        Layer.succeed(ToolAuthorityResolver, {
+  const authorityResolverLayer = reconciliationRetry
+    ? Layer.succeed(ToolAuthorityResolver, {
+        resolve: (() => {
+          let calls = 0;
+          return () => {
+            calls += 1;
+            if (trace !== undefined) {
+              trace.authorityResolutionCalls = calls;
+            }
+            return reconciliationRetry.denyAuthorityOnCall === calls
+              ? Effect.fail({ _tag: "ToolAuthorityDenied" as const })
+              : Effect.succeed(reconciliationRetry.authority);
+          };
+        })(),
+      })
+    : authorityDenied
+      ? Layer.succeed(ToolAuthorityResolver, {
           resolve: () => Effect.fail({ _tag: "ToolAuthorityDenied" as const }),
-        }),
-      )
-    : evidenceDeps;
+        })
+      : undefined;
+  const deps =
+    authorityResolverLayer !== undefined
+      ? Layer.mergeAll(evidenceDeps, authorityResolverLayer)
+      : evidenceDeps;
   const executableApprovalDeps =
     executableApproval === undefined
       ? deps
@@ -706,16 +977,32 @@ const app = (
             }
             return Effect.succeed("Bound" as const);
           },
-          findBinding: () => Effect.succeed(Option.none()),
+          findBinding: () =>
+            Effect.succeed(
+              reconciliationRetry === undefined
+                ? Option.none()
+                : Option.some(reconciliationRetry.verifiedBinding),
+            ),
           findSelected: () => {
             if (trace !== undefined) {
               trace.p39SelectedReads = (trace.p39SelectedReads ?? 0) + 1;
             }
             return Effect.succeed(Option.none());
           },
-          findLatestAttempt: () => Effect.succeed(Option.none()),
+          findLatestAttempt: () =>
+            Effect.succeed(
+              reconciliationRetry === undefined
+                ? Option.none()
+                : Option.some(reconciliationRetry.attempt),
+            ),
           admitFirstAttempt: () => Effect.void,
-          admitRetryAttempt: () => Effect.void,
+          admitRetryAttempt: () => {
+            if (trace !== undefined) {
+              trace.retryAttemptNumbers ??= [0];
+              trace.retryAttemptNumbers.push(1);
+            }
+            return Effect.void;
+          },
           findTerminalUnboundDenial: (id: typeof invocationId) =>
             Effect.succeed(
               p39DeniedReplay !== undefined &&
@@ -728,7 +1015,60 @@ const app = (
             ),
         } as never),
       );
-  return Layer.mergeAll(p39Deps, Layer.provide(toolRuntime, p39Deps));
+  const reconciliationDeps =
+    reconciliationRetry === undefined
+      ? p39Deps
+      : Layer.mergeAll(
+          p39Deps,
+          Layer.succeed(
+            ToolReconciliationProfileRegistry,
+            makeToolReconciliationProfileRegistry([
+              reconciliationRetry.profile,
+            ]),
+          ),
+          Layer.succeed(ToolReconciliationPort, {
+            reconcile: (_request: ToolReconciliationRequest) =>
+              Effect.succeed(reconciliationRetry.result),
+          }),
+          Layer.succeed(ToolReconciliationFactStore, {
+            record: (
+              request: ToolReconciliationRequest,
+              result: ToolReconciliationResult,
+            ) =>
+              Effect.sync(() => {
+                if (trace !== undefined) {
+                  trace.reconciliationFactWrites =
+                    (trace.reconciliationFactWrites ?? 0) + 1;
+                }
+                return {
+                  factId: reconciliationRetry.factId,
+                  invocationId: request.invocationId,
+                  attemptNo: request.attemptNo,
+                  factDisposition: "RecoveryInput" as const,
+                  outcome: result._tag,
+                };
+              }),
+          } as never),
+          Layer.succeed(ToolObservationEvidenceStore, {
+            assertCurrentFence: () => Effect.void,
+            read: () => Effect.succeed(reconciliationRetry.settlementEvidence),
+            settleOrReadWinner: (candidate: ToolObservationEvidenceCandidate) =>
+              Effect.sync(() => {
+                if (trace !== undefined) {
+                  trace.p40Candidates ??= [];
+                  trace.p40Candidates.push(candidate);
+                }
+                return {
+                  _tag: "Applied" as const,
+                  evidence: reconciliationRetry.settlementEvidence,
+                };
+              }),
+          } as never),
+        );
+  return Layer.mergeAll(
+    reconciliationDeps,
+    Layer.provide(toolRuntime, reconciliationDeps),
+  );
 };
 
 const run = (
@@ -814,6 +1154,91 @@ const runFailure = (
   );
 
 describe("P4 tool runtime pipeline", () => {
+  it.each(["AuthoritySnapshotChanged", "ResourceSnapshotChanged"] as const)(
+    "settles a denied P39 NotOccurred retry after %s without a second effect admission",
+    async (denialReasonCode) => {
+      const retry = p39NotOccurredRetryCase(denialReasonCode);
+      const trace: PipelineTrace = {
+        noEffectDenials: [],
+        events: [],
+        approvalConsumer: null,
+        intentWrites: 0,
+        effectAdmissions: 0,
+        approvalConsumes: 0,
+        retryAttemptNumbers: [0],
+        reconciliationRetry: {
+          profile: retry.profile,
+          verifiedBinding: retry.verifiedBinding,
+          attempt: retry.attempt,
+          authority: retry.authority,
+          result: retry.result,
+          factId: retry.factId,
+          settlementEvidence: retry.settlementEvidence,
+          denyAuthorityOnCall:
+            denialReasonCode === "AuthoritySnapshotChanged" ? 2 : null,
+        },
+      };
+      if (denialReasonCode === "ResourceSnapshotChanged") {
+        trace.resourceAdmissionDeniedAtCall = 2;
+      }
+      const executor: ToolExecutor = {
+        name: "shell",
+        write: true,
+        requiresApproval: () => false,
+        execute: () =>
+          Effect.die(new Error("a denied NotOccurred retry must not execute")),
+      };
+      const result = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            const runtime = yield* ToolRuntimePort;
+            return yield* runtime.invoke(
+              {
+                callRef: "c",
+                toolName: "shell",
+                toolVersion: "2",
+                argumentsJson: retry.argumentsJson,
+                invocationId,
+                approvalId: null,
+              } as never,
+              retry.context,
+            );
+          }),
+          app(
+            false,
+            executor,
+            {},
+            trace,
+            undefined,
+            false,
+            retry.prior,
+            "rev",
+            trace.reconciliationRetry,
+          ),
+        ),
+      );
+
+      expect(result).toEqual(retry.settlementEvidence.observation);
+      expect(trace.reconciliationFactWrites).toBe(1);
+      expect(trace.authorityResolutionCalls).toBe(
+        denialReasonCode === "AuthoritySnapshotChanged" ? 2 : 1,
+      );
+      expect(trace.resourceAdmissionCalls).toBe(2);
+      expect(trace.effectAdmissions).toBe(0);
+      expect(trace.retryAttemptNumbers).toEqual([0]);
+      expect(trace.noEffectDenials).toEqual([]);
+      expect(trace.p40Candidates).toHaveLength(1);
+      expect(trace.p40Candidates?.[0]).toMatchObject({
+        settlement: {
+          _tag: "ReconciledNoEffect",
+          reasonCode: denialReasonCode,
+          reconciliationFactRef: retry.factId,
+        },
+        reconciliationSelection: { attemptNo: 0, factId: retry.factId },
+      });
+    },
+  );
+
   it("distinguishes post-I/O authority denial from executable approval denial", () => {
     expect(
       reconciliationRetryDenialReasonCode("InvocationAuthorityDenied"),

@@ -141,3 +141,28 @@ the P39 fact transaction to commit, but the authority-denial path still does
 not reach terminal P4 settlement. The exact RNO reason, P40 selection,
 attempt-0-only admission, and zero-effect assertions therefore remain
 unproven. Approval and Stop cases were not run. AH7 remains PARTIAL.
+
+### Retry-gate terminal handoff correction — unit-qualified, process rerun pending
+
+The failure above was traced to fallthrough after the fenced retry gate had
+already rejected a retry and populated `recoveredToolOutcome` plus
+`pendingReconciliation`. P4 then re-entered the ordinary effect-authority,
+approval and admission path. On authority denial that path attempted generic
+`recordNoEffectDenial`; on resource drift it could admit another effect. Both
+paths obscured the exact P39 denial and prevented the intended P40 terminal
+selection.
+
+The runtime now bypasses the ordinary new-effect gate whenever the recovered
+outcome is `ReconciledNoEffect`. It proceeds directly through the existing
+recovered execution bundle and authenticated P39/P40 terminal-selection path.
+Other recovered outcomes and newly claimed actions retain the ordinary gate.
+
+P4 pipeline tests now exercise actual P39 recovery with attempt 0 and a trusted
+test profile, for both `AuthoritySnapshotChanged` and `ResourceSnapshotChanged`.
+Both assert the exact P40 settlement reason and selected attempt-0 fact,
+`effectAdmissions = 0`, retry attempt ledger `[0]`, no generic denial, and no
+executor call. The focused pair passed 2/2; the full
+`packages/tool-runtime/test/p4-pipeline.test.ts` passed 41/41. `pnpm typecheck`,
+Biome and `git diff --check` passed. The real-process authority case has not
+been rerun after this correction, and approval/Stop drift process cases remain
+unrun; no process qualification or AH7 closure is claimed.
