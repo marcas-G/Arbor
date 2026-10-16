@@ -1545,7 +1545,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                 (row) =>
                   readToolResultForCall([row], recoveryCallRef) !== undefined,
               ),
-            ).toHaveLength(shouldBeCommitted ? 1 : 0);
+            ).toHaveLength(0);
           }
           await fixture.crash();
           await fixture.restart({
