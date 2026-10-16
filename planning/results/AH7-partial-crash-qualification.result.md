@@ -178,5 +178,18 @@ AH7BeforeActionResultCommit` (105.024s) and `recovers NotOccurred across
 AH7AfterActionResultCommit` (81.591s). Both sides recover the same selected
 P39/P40 no-effect fact into one Action result and one ToolResult, without a
 second shell effect; the before-commit snapshot is Pending/no ToolResult and
-the after-commit snapshot is Applied with its committed ToolResult.
-Occurred and StillUnknown P3 cells remain unrun; AH7 remains PARTIAL / OPEN.
+the after-commit snapshot is Applied with its committed ToolResult. At that
+checkpoint, Occurred and StillUnknown P3 cells remained unrun.
+
+### P3 Occurred ActionResult-commit checkpoint
+
+The Occurred P3 projection pair passes in isolated serial real-process runs
+with zero retries: `recovers Occurred across AH7BeforeActionResultCommit`
+(105.032s) and `recovers Occurred across AH7AfterActionResultCommit`
+(81.429s). For these P3 cells the first crash is after the actual shell
+effect and result artifact but before settlement, allowing the trusted
+profile to return Occurred from its external-effect ledger. Both sides
+converge the authenticated P39 selection/P40 Success into one Applied Action
+and one ToolResult while preserving the single real external effect. P3
+NotOccurred and Occurred now pass both ActionResult commit sides; StillUnknown
+P3 cells remain unrun, and AH7 remains PARTIAL / OPEN.
