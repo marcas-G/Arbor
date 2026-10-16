@@ -29,13 +29,17 @@ import {
   recoveryBindingV1Digest,
   SandboxPort,
   type SelectedP39EffectAttempt,
+  type SelectedP39ReconciliationFact,
+  type SelectedP39RecoveryEvidence,
   ToolAuthorityResolver,
   ToolDefinitionStore,
+  type ToolInvocationIntent,
   type ToolInvocationRecord,
   ToolInvocationStore,
   type ToolObservationEvidence,
   type ToolObservationEvidenceCandidate,
   ToolObservationEvidenceStore,
+  type ToolObservationReplayFailureCode,
   ToolReconciliationFactStore,
   ToolReconciliationPort,
   type ToolReconciliationProfile,
@@ -242,6 +246,8 @@ const p39NotOccurredRetryCase = (
     ...context,
     authority: shellAuthority,
     controlBasisDigest,
+    providerTurnId,
+    logicalActionId,
     recoveryBindingIdentity: {
       executionId,
       providerTurnId,
@@ -426,6 +432,44 @@ const p39NotOccurredRetryCase = (
   };
 };
 
+const p39TerminalReceiptCase = () => {
+  const retry = p39NotOccurredRetryCase("ResourceSnapshotChanged");
+  const fact: SelectedP39ReconciliationFact = {
+    factId: retry.factId,
+    invocationId,
+    attemptNo: 0,
+    bindingSha256: retry.verifiedBinding.bindingSha256,
+    profileHash: retry.profile.profileHash,
+    effectKey: retry.attempt.effectKey,
+    factOrigin: "ProfileReconciliation",
+    legacyReason: null,
+    factDisposition: "RecoveryInput",
+    outcome: "NotOccurred",
+    reasonCode: null,
+    evidenceRef: "art_p4_reconcile_proof",
+    evidenceSha256: "b".repeat(64),
+    resultRef: null,
+    observedAt: "2026-01-01T00:00:03.000Z",
+  };
+  return {
+    ...retry,
+    prior: {
+      ...retry.prior,
+      settledAt: "2026-01-01T00:00:04.000Z",
+      settlement: {
+        _tag: "ReconciledNoEffect" as const,
+        reasonCode: "ResourceSnapshotChanged" as const,
+        reconciliationFactRef: retry.factId,
+      },
+    } satisfies ToolInvocationRecord,
+    selected: {
+      binding: retry.verifiedBinding,
+      attempt: retry.attempt,
+      fact,
+    } satisfies SelectedP39RecoveryEvidence,
+  };
+};
+
 interface PipelineFaults {
   readonly workspaceLookup?: boolean;
   readonly environmentResolution?: boolean;
@@ -471,6 +515,13 @@ interface PipelineTrace {
   reconciliationFactWrites?: number;
   reconciliationCalls?: number;
   reconciliationRequests?: Array<ToolReconciliationRequest>;
+  p39SelectedEvidence?: SelectedP39RecoveryEvidence;
+  p40ReadInvocations?: Array<ToolInvocationIntent>;
+  p40ReadFences?: Array<
+    NonNullable<import("@arbor/ports").ToolExecutionContext["executionFence"]>
+  >;
+  p40ReadFenceTimes?: Array<string>;
+  p40ReadFailure?: ToolObservationReplayFailureCode;
   retryAttemptNumbers?: Array<number>;
   p40Candidates?: Array<ToolObservationEvidenceCandidate>;
   readonly existingInvocationAfterStop?: ToolInvocationRecord;
@@ -852,10 +903,29 @@ const app = (
           baseDeps,
           Layer.succeed(ToolObservationEvidenceStore, {
             assertCurrentFence: () => Effect.void,
-            read: () =>
-              Effect.succeed(
-                trace.p40WinnerEvidence as ToolObservationEvidence,
-              ),
+            read: (
+              invocation: ToolInvocationIntent,
+              _fence: NonNullable<
+                import("@arbor/ports").ToolExecutionContext["executionFence"]
+              >,
+              _fenceNow: string,
+            ) => {
+              trace.p40ReadInvocations ??= [];
+              trace.p40ReadInvocations.push(invocation);
+              trace.p40ReadFences ??= [];
+              trace.p40ReadFences.push(_fence);
+              trace.p40ReadFenceTimes ??= [];
+              trace.p40ReadFenceTimes.push(_fenceNow);
+              return trace.p40ReadFailure === undefined
+                ? Effect.succeed(
+                    trace.p40WinnerEvidence as ToolObservationEvidence,
+                  )
+                : Effect.fail({
+                    _tag: "ToolObservationReplayEvidenceFailure" as const,
+                    invocationId: invocation.invocationId,
+                    failureCode: trace.p40ReadFailure,
+                  });
+            },
             settleOrReadWinner: () =>
               Effect.succeed({
                 _tag: "Existing" as const,
@@ -1001,7 +1071,11 @@ const app = (
             if (trace !== undefined) {
               trace.p39SelectedReads = (trace.p39SelectedReads ?? 0) + 1;
             }
-            return Effect.succeed(Option.none());
+            return Effect.succeed(
+              trace?.p39SelectedEvidence === undefined
+                ? Option.none()
+                : Option.some(trace.p39SelectedEvidence),
+            );
           },
           findLatestAttempt: () =>
             Effect.succeed(
@@ -1073,7 +1147,29 @@ const app = (
           } as never),
           Layer.succeed(ToolObservationEvidenceStore, {
             assertCurrentFence: () => Effect.void,
-            read: () => Effect.succeed(reconciliationRetry.settlementEvidence),
+            read: (
+              invocation: ToolInvocationIntent,
+              _fence: NonNullable<
+                import("@arbor/ports").ToolExecutionContext["executionFence"]
+              >,
+              _fenceNow: string,
+            ) => {
+              if (trace !== undefined) {
+                trace.p40ReadInvocations ??= [];
+                trace.p40ReadInvocations.push(invocation);
+                trace.p40ReadFences ??= [];
+                trace.p40ReadFences.push(_fence);
+                trace.p40ReadFenceTimes ??= [];
+                trace.p40ReadFenceTimes.push(_fenceNow);
+              }
+              return trace?.p40ReadFailure === undefined
+                ? Effect.succeed(reconciliationRetry.settlementEvidence)
+                : Effect.fail({
+                    _tag: "ToolObservationReplayEvidenceFailure" as const,
+                    invocationId: invocation.invocationId,
+                    failureCode: trace.p40ReadFailure,
+                  });
+            },
             settleOrReadWinner: (candidate: ToolObservationEvidenceCandidate) =>
               Effect.sync(() => {
                 if (trace !== undefined) {
@@ -1457,6 +1553,206 @@ describe("P4 tool runtime pipeline", () => {
       }
       expect(trace.reconciliationCalls ?? 0).toBe(0);
       expect(trace.reconciliationFactWrites ?? 0).toBe(0);
+      expect(trace.effectAdmissions).toBe(0);
+      expect(executorCalls).toBe(0);
+    },
+  );
+
+  it("returns a terminal P40 RNO receipt before current-region admission or reconciliation", async () => {
+    const receipt = p39TerminalReceiptCase();
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      workspaceBoundaryAddresses: [{ _tag: "GitWorktree", path: "/repo/b" }],
+      workspaceRevisionSequence: [1, 1],
+      p39SelectedEvidence: receipt.selected,
+      p40WinnerEvidence: receipt.settlementEvidence,
+      reconciliationRetry: {
+        profile: receipt.profile,
+        verifiedBinding: receipt.verifiedBinding,
+        attempt: receipt.attempt,
+        authority: receipt.authority,
+        result: receipt.result,
+        factId: receipt.factId,
+        settlementEvidence: receipt.settlementEvidence,
+      },
+    };
+    let executorCalls = 0;
+    const outcome = await Effect.runPromise(
+      Effect.provide(
+        Effect.match(
+          Effect.gen(function* () {
+            const runtime = yield* ToolRuntimePort;
+            return yield* runtime.invoke(
+              {
+                ...intent(receipt.argumentsJson),
+                toolName: "shell",
+                toolVersion: "2",
+                invocationId,
+                approvalId: null,
+              } as never,
+              receipt.context,
+            );
+          }),
+          {
+            onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
+            onSuccess: (value) => ({ _tag: "Success" as const, value }),
+          },
+        ),
+        app(
+          false,
+          {
+            name: "shell",
+            write: true,
+            requiresApproval: () => false,
+            execute: () => {
+              executorCalls += 1;
+              return Effect.die(new Error("terminal receipt replay executed"));
+            },
+          },
+          {},
+          trace,
+          undefined,
+          false,
+          receipt.prior,
+          "rev",
+          trace.reconciliationRetry,
+        ),
+      ),
+    );
+
+    expect(outcome).toEqual({
+      _tag: "Success",
+      value: receipt.settlementEvidence.observation,
+    });
+    expect(trace.p40ReadInvocations).toEqual([
+      expect.objectContaining({
+        invocationId,
+        executionId,
+        workspaceId,
+        toolName: "shell",
+        toolVersion: "2",
+        sideEffectSemantics: "Reconcilable",
+        argumentsJson: receipt.argumentsJson,
+        resolvedRegions: receipt.prior.resolvedRegions,
+        approvalId: null,
+      }),
+    ]);
+    expect(trace.p40ReadFences).toEqual([receipt.context.executionFence]);
+    expect(trace.p40ReadFenceTimes).toEqual(["2026-01-01T00:00:00.000Z"]);
+    expect(trace.p39SelectedReads).toBe(1);
+    expect(trace.reconciliationCalls ?? 0).toBe(0);
+    expect(trace.reconciliationFactWrites ?? 0).toBe(0);
+    expect(trace.resourceAdmissionCalls ?? 0).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(executorCalls).toBe(0);
+  });
+
+  it.each(["model-identity", "corrupt-evidence"] as const)(
+    "fails closed receipt-first when terminal %s is invalid",
+    async (invalidReceipt) => {
+      const receipt = p39TerminalReceiptCase();
+      const trace: PipelineTrace = {
+        noEffectDenials: [],
+        events: [],
+        approvalConsumer: null,
+        intentWrites: 0,
+        effectAdmissions: 0,
+        approvalConsumes: 0,
+        p39SelectedEvidence: receipt.selected,
+        p40WinnerEvidence: receipt.settlementEvidence,
+        ...(invalidReceipt === "corrupt-evidence"
+          ? { p40ReadFailure: "HashMismatch" as const }
+          : {}),
+        reconciliationRetry: {
+          profile: receipt.profile,
+          verifiedBinding: receipt.verifiedBinding,
+          attempt: receipt.attempt,
+          authority: receipt.authority,
+          result: receipt.result,
+          factId: receipt.factId,
+          settlementEvidence: receipt.settlementEvidence,
+        },
+      };
+      const mismatchedPrior =
+        invalidReceipt === "model-identity"
+          ? { ...receipt.prior, argumentsJson: `${receipt.argumentsJson} ` }
+          : receipt.prior;
+      let executorCalls = 0;
+      const outcome = await Effect.runPromise(
+        Effect.provide(
+          Effect.match(
+            Effect.gen(function* () {
+              const runtime = yield* ToolRuntimePort;
+              return yield* runtime.invoke(
+                {
+                  ...intent(receipt.argumentsJson),
+                  toolName: "shell",
+                  toolVersion: "2",
+                  invocationId,
+                  approvalId: null,
+                } as never,
+                receipt.context,
+              );
+            }),
+            {
+              onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
+              onSuccess: (value) => ({ _tag: "Success" as const, value }),
+            },
+          ),
+          app(
+            false,
+            {
+              name: "shell",
+              write: true,
+              requiresApproval: () => false,
+              execute: () => {
+                executorCalls += 1;
+                return Effect.succeed({
+                  settlement: { _tag: "Success" as const },
+                  observation: { text: "should not execute", truncated: false },
+                  resultRef: null,
+                });
+              },
+            },
+            {},
+            trace,
+            undefined,
+            false,
+            mismatchedPrior,
+            "rev",
+            trace.reconciliationRetry,
+          ),
+        ),
+      );
+
+      expect(outcome._tag).toBe("Failure");
+      if (outcome._tag === "Failure") {
+        expect(outcome.cause).toMatchObject({
+          _tag: "ToolRuntimeOperationalFailure",
+          stage:
+            invalidReceipt === "model-identity"
+              ? "IntentJournal"
+              : "SettlementJournal",
+          cause:
+            invalidReceipt === "model-identity"
+              ? { _tag: "ToolInvocationIdentityConflict" }
+              : { _tag: "ToolObservationReplayEscalationUnavailable" },
+        });
+      }
+      expect(trace.p40ReadInvocations ?? []).toHaveLength(
+        invalidReceipt === "model-identity" ? 0 : 1,
+      );
+      expect(trace.p40ReadFences ?? []).toHaveLength(
+        invalidReceipt === "model-identity" ? 0 : 1,
+      );
+      expect(trace.reconciliationCalls ?? 0).toBe(0);
+      expect(trace.reconciliationFactWrites ?? 0).toBe(0);
+      expect(trace.resourceAdmissionCalls ?? 0).toBe(0);
       expect(trace.effectAdmissions).toBe(0);
       expect(executorCalls).toBe(0);
     },

@@ -1375,6 +1375,7 @@ export const ToolRuntimeLive = (
           const priorRecord = Option.isSome(prior) ? prior.value : undefined;
           const priorModelIdentityMatches =
             priorRecord !== undefined &&
+            priorRecord.invocationId === intent.invocationId &&
             priorRecord.executionId === context.executionId &&
             priorRecord.workspaceId === context.workspaceId &&
             priorRecord.toolName === intent.toolName &&
@@ -1384,6 +1385,68 @@ export const ToolRuntimeLive = (
             priorRecord.argumentsJson === intent.argumentsJson &&
             priorRecord.approvalId ===
               (context.executableApproval?.approvalId ?? intent.approvalId);
+          if (priorRecord !== undefined && !priorModelIdentityMatches) {
+            return yield* Effect.fail<ToolRuntimeError>(
+              operationalFailure(
+                "IntentJournal",
+                String(intent.invocationId),
+              )({ _tag: "ToolInvocationIdentityConflict" }),
+            );
+          }
+          if (priorRecord !== undefined && priorRecord.settlement !== null) {
+            if (priorRecord.settlement._tag === "Denied") {
+              return denied(priorRecord.settlement.reasonCode);
+            }
+            if (
+              priorRecord.settlement._tag === "Interrupted" &&
+              Option.isNone(observationEvidence)
+            ) {
+              return { _tag: "Interrupted" as const };
+            }
+            if (Option.isSome(observationEvidence)) {
+              return yield* decodeRecordedEvidence(
+                intent,
+                context,
+                priorRecord,
+              );
+            }
+            if (
+              priorRecord.settlement._tag === "Success" &&
+              priorRecord.resultRef !== null &&
+              Option.isSome(artifactService)
+            ) {
+              let artifactId: ArtifactId;
+              try {
+                artifactId = parse(ArtifactId)(priorRecord.resultRef);
+              } catch {
+                return {
+                  _tag: "OutcomeUnknown" as const,
+                  reconciliationRefs: [String(intent.invocationId)],
+                };
+              }
+              const bytes = yield* tx
+                .transact(artifactService.value.load(artifactId))
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "SettlementJournal",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              if (Option.isSome(bytes)) {
+                return {
+                  _tag: "Success" as const,
+                  observation: bounded(new TextDecoder().decode(bytes.value)),
+                  resultRef: priorRecord.resultRef,
+                };
+              }
+            }
+            return {
+              _tag: "OutcomeUnknown" as const,
+              reconciliationRefs: [String(intent.invocationId)],
+            };
+          }
           const exactReconcilableReplayCandidate =
             priorModelIdentityMatches &&
             priorRecord.settlement === null &&
@@ -2829,56 +2892,6 @@ export const ToolRuntimeLive = (
                   selection: { attemptNo: attempt.attemptNo, factId },
                 };
               }
-            }
-            if (recorded.settlement !== null) {
-              if (recorded.settlement._tag === "Denied") {
-                return denied(recorded.settlement.reasonCode);
-              }
-              if (
-                recorded.settlement._tag === "Interrupted" &&
-                Option.isNone(observationEvidence)
-              ) {
-                return { _tag: "Interrupted" as const };
-              }
-              if (Option.isSome(observationEvidence)) {
-                return yield* decodeRecordedEvidence(intent, context, recorded);
-              }
-              if (
-                recorded.settlement._tag === "Success" &&
-                recorded.resultRef !== null &&
-                Option.isSome(artifactService)
-              ) {
-                let artifactId: ArtifactId;
-                try {
-                  artifactId = parse(ArtifactId)(recorded.resultRef);
-                } catch {
-                  return {
-                    _tag: "OutcomeUnknown" as const,
-                    reconciliationRefs: [String(intent.invocationId)],
-                  };
-                }
-                const bytes = yield* tx
-                  .transact(artifactService.value.load(artifactId))
-                  .pipe(
-                    Effect.mapError(
-                      operationalFailure(
-                        "SettlementJournal",
-                        String(intent.invocationId),
-                      ),
-                    ),
-                  );
-                if (Option.isSome(bytes)) {
-                  return {
-                    _tag: "Success" as const,
-                    observation: bounded(new TextDecoder().decode(bytes.value)),
-                    resultRef: recorded.resultRef,
-                  };
-                }
-              }
-              return {
-                _tag: "OutcomeUnknown" as const,
-                reconciliationRefs: [String(intent.invocationId)],
-              };
             }
             if (
               recorded.effectAdmissionState !== "NotAdmitted" &&
