@@ -79,3 +79,47 @@ functional-suite claim is made; AH7 remains PARTIAL.
 
 The process evidence above uses only a test-owned deterministic profile and
 external state fixture. It does not qualify a production source/profile.
+
+## 2026-10-17 drift-matrix implementation checkpoint (not process-qualified)
+
+The NotOccurred retry-denial matrix was extended with test-owned mutations of
+the actual retry-gate sources during reconciliation I/O:
+
+- Authority revokes the project's active `permission_grants`; the production
+  resolver derives its authority input and source revision from those active
+  grants.
+- Approval expires the exact consumed Executable `action_approvals` row bound
+  to the invocation.
+- Stop sets `executions.stop_requested_at` on the exact active execution.
+- The pre-existing resource-boundary drift case remains in the same scenario
+  family.
+
+Every scenario is authored to require the exact `ReconciledNoEffect` reason,
+one P39 attempt-0 `NotOccurred`/`RecoveryInput` fact selected by the P40
+observation, only attempt 0, zero test-ledger external effects, and no Applied
+P3 action. The authority scenario was the only new real-process scenario run
+after serial execution was authorized. It reached the runtime
+`AH7BeforeReconciliationFactCommit` probe but timed out before settlement;
+the diagnostic snapshot had no P39 fact and the invocation remained
+`MayHaveStarted`. This is not a PASS and does not qualify any drift case.
+
+The failure led to a minimal implementation correction in
+`ToolAuthorityResolverLive`: it now reads the permission/workspace/verification
+snapshot in the current `TransactionScope` when called inside an existing
+transaction, while top-level calls still use `TransactionPort.transact`. The
+transaction adapter rejects nested transactions, and the retry gate performs
+authority revalidation inside the transaction that records/selects the P39
+fact. The correction keeps that source read in the retry-gate transaction.
+
+Verification after this correction:
+
+- `pnpm typecheck` — PASS.
+- Biome checks for the changed implementation and tests — PASS.
+- `pnpm exec vitest run apps/single-workspace/test/tool-authority-resolver-denial.test.ts --maxWorkers=1 --no-file-parallelism --retry=0` — PASS, 3/3. Covers top-level resolver transaction use and existing-scope reuse with a transaction port that rejects nested transactions.
+- The Web production build completed successfully before the focused real-process attempt.
+- The post-correction AH7 authority real-process case has not yet been rerun.
+  Approval and Stop real-process cases were not run. No result here claims the
+  exact RNO/P39/P40/effect-count qualification for the drift matrix.
+
+This checkpoint leaves AH7 PARTIAL and awaits independent review before
+further real-process qualification.
