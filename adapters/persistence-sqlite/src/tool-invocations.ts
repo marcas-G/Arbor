@@ -627,6 +627,8 @@ export const ToolInvocationStoreLive: Layer.Layer<
             return { _tag: "ExecutionStopping" } as const;
           }
           const record = toRecord(row);
+          const alreadyAdmitted =
+            record.effectAdmissionState === "MayHaveStarted";
           if (record.settlement !== null) {
             return yield* Effect.fail(
               persistenceCorruption(
@@ -636,10 +638,10 @@ export const ToolInvocationStoreLive: Layer.Layer<
               ),
             );
           }
-          if (record.effectAdmissionState === "MayHaveStarted") {
-            return { _tag: "Admitted" } as const;
-          }
-          if (record.effectAdmissionState !== "NotAdmitted") {
+          if (
+            record.effectAdmissionState !== "NotAdmitted" &&
+            !alreadyAdmitted
+          ) {
             return yield* Effect.fail(
               persistenceCorruption(
                 "ToolInvocationStore",
@@ -780,6 +782,10 @@ export const ToolInvocationStoreLive: Layer.Layer<
               } as const;
             }
           }
+          // A retry/reconciliation admission must revalidate current authority,
+          // resource coverage and approval even when the invocation's original
+          // effect marker is already MayHaveStarted.
+          if (alreadyAdmitted) return { _tag: "Admitted" } as const;
           const updated = yield* run(
             sql.unsafe(
               `UPDATE tool_invocations

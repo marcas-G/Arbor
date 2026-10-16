@@ -119,6 +119,7 @@ import {
   sqliteAdapterError,
   ToolInvocationStoreLive,
   ToolObservationEvidenceStoreLive,
+  ToolReconciliationFactStoreLive,
   type TransactionBeginQualificationProbe,
   VerificationRepositoryLive,
   WorkReadmissionGateStoreLive,
@@ -146,6 +147,7 @@ import {
   type MessageStore,
   type ModelDeployment,
   makeProviderRegistry,
+  makeToolReconciliationProfileRegistry,
   type PermissionGrantRepository,
   type PersistenceHealthProbe,
   type ProjectDirectory,
@@ -167,6 +169,10 @@ import {
   type SessionRepository,
   SkillRegistry,
   type ToolCatalogPort,
+  ToolReconciliationPort,
+  type ToolReconciliationPortService,
+  type ToolReconciliationProfile,
+  ToolReconciliationProfileRegistry,
   type TransactionPort,
   type WorkReadmissionGateStore,
   type WorkRepository,
@@ -191,6 +197,7 @@ import {
   ResourceAdmissionLive,
   ToolCatalogPortLive,
   ToolDefinitionStoreLive,
+  type ToolExecutor,
   ToolRuntimeLive,
   type ToolRuntimeQualificationProbe,
 } from "@arbor/tool-runtime";
@@ -381,6 +388,14 @@ export interface SingleWorkspaceConfig {
   /** Test-only process-local pause point around the Executable TTL transaction. */
   readonly executableApprovalExpiryQualificationProbe?: ExecutableApprovalExpiryQualificationProbe;
   readonly toolQualificationProbe?: ToolRuntimeQualificationProbe;
+  /** Explicit test-child-only injection for AH7 proof/recovery process tests.
+   * Ordinary production startup leaves this absent; no profile or external
+   * reconciliation source is registered by default. */
+  readonly testOnlyToolReconciliation?: {
+    readonly profiles: ReadonlyArray<ToolReconciliationProfile>;
+    readonly port: ToolReconciliationPortService;
+    readonly executors?: ReadonlyArray<ToolExecutor>;
+  };
   /** Test-only catalog visibility diagnostic; ordinary startup leaves absent. */
   readonly executableToolQualificationProbe?: ExecutableToolHandlerQualificationProbe;
   /** Test-only P39 claim branch trace; ordinary startup leaves absent. */
@@ -668,6 +683,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(AgentLoopStepStoreLive, infra),
     Layer.provide(ProviderTurnStoreLive, infra),
     Layer.provide(ToolInvocationStoreLive, infra),
+    Layer.provide(ToolReconciliationFactStoreLive, infra),
     Layer.provide(
       makeP39RecoveryEvidenceStoreLive(
         config.p39RecoveryBindingQualificationProbe,
@@ -753,15 +769,32 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(repos, infra),
   );
   const toolRuntime = Layer.provide(
-    ToolRuntimeLive(BUILTIN_EXECUTORS, {
-      ...(config.toolQualificationProbe === undefined
-        ? {}
-        : { qualificationProbe: config.toolQualificationProbe }),
-    }),
+    ToolRuntimeLive(
+      config.testOnlyToolReconciliation?.executors ?? BUILTIN_EXECUTORS,
+      {
+        ...(config.toolQualificationProbe === undefined
+          ? {}
+          : { qualificationProbe: config.toolQualificationProbe }),
+      },
+    ),
     Layer.mergeAll(
       repos,
       admission,
       ToolDefinitionStoreLive,
+      Layer.succeed(
+        ToolReconciliationProfileRegistry,
+        makeToolReconciliationProfileRegistry(
+          config.testOnlyToolReconciliation?.profiles ?? [],
+        ),
+      ),
+      ...(config.testOnlyToolReconciliation === undefined
+        ? []
+        : [
+            Layer.succeed(
+              ToolReconciliationPort,
+              config.testOnlyToolReconciliation.port,
+            ),
+          ]),
       SandboxPortLive,
       infra,
       toolAuthority,

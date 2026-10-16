@@ -319,6 +319,74 @@ export const ToolObservationEvidenceStoreLive: Layer.Layer<
         }
       });
 
+    const verifyOccurredReconciliation = (
+      row: EvidenceInvocationRow,
+      selection: NonNullable<
+        ToolObservationEvidenceCandidate["reconciliationSelection"]
+      >,
+      resultRef: string | null,
+    ) =>
+      Effect.gen(function* () {
+        if (
+          row.recovery_binding_state !== "Bound" ||
+          row.recovery_binding_sha256 === null
+        ) {
+          return yield* Effect.fail<ToolObservationEvidenceStoreError>(
+            replayFailure(
+              row.invocation_id as ToolInvocationId,
+              "SettlementMismatch",
+            ),
+          );
+        }
+        const facts = yield* run(
+          sql.unsafe<{ readonly fact_id: string }>(
+            `SELECT f.fact_id
+               FROM tool_reconciliation_facts AS f
+               JOIN tool_invocation_effect_attempts AS a
+                 ON a.invocation_id = f.invocation_id
+                AND a.attempt_no = f.attempt_no
+               JOIN tool_invocation_recovery_bindings AS b
+                 ON b.invocation_id = f.invocation_id
+                AND b.binding_sha256 = f.binding_sha256
+               JOIN artifacts AS evidence
+                 ON evidence.artifact_id = f.evidence_ref
+               JOIN artifacts AS result
+                 ON result.artifact_id = f.result_ref
+              WHERE f.fact_id = ?
+                AND f.invocation_id = ?
+                AND f.attempt_no = ?
+                AND f.fact_origin = 'ProfileReconciliation'
+                AND f.fact_disposition = 'RecoveryInput'
+                AND f.binding_sha256 = ?
+                AND f.profile_hash = a.profile_hash
+                AND f.effect_key = a.effect_key
+                AND a.binding_sha256 = f.binding_sha256
+                AND a.admission_state = 'MayHaveStarted'
+                AND f.outcome = 'Occurred'
+                AND f.reason_code IS NULL
+                AND f.evidence_sha256 = evidence.content_hash
+                AND f.result_ref IS NOT NULL
+                AND (? IS NULL OR f.result_ref = ?)`,
+            [
+              selection.factId,
+              row.invocation_id,
+              selection.attemptNo,
+              row.recovery_binding_sha256,
+              resultRef,
+              resultRef,
+            ],
+          ),
+        );
+        if (facts.length === 0) {
+          return yield* Effect.fail<ToolObservationEvidenceStoreError>(
+            replayFailure(
+              row.invocation_id as ToolInvocationId,
+              "SettlementMismatch",
+            ),
+          );
+        }
+      });
+
     const verifyEffectAdmissionAndProvenance = (
       row: EvidenceInvocationRow,
       observation: ToolObservationEvidence["observation"],
@@ -505,16 +573,21 @@ export const ToolObservationEvidenceStoreLive: Layer.Layer<
                 authenticatedEvidence.fact.outcome !== "NotOccurred" ||
                 authenticatedEvidence.fact.factDisposition !==
                   "RecoveryInput")) ||
-            (isReconciledNoEffect && authenticatedEvidence === undefined) ||
             (!isReconciledNoEffect && authenticatedEvidence !== undefined) ||
-            (!isReconciledNoEffect && selection !== undefined)
+            (!isReconciledNoEffect &&
+              selection !== undefined &&
+              candidate.observation._tag !== "Success" &&
+              candidate.observation._tag !== "ExpectedFailure") ||
+            (!isReconciledNoEffect &&
+              selection !== undefined &&
+              selection.factId.length !== 64)
           ) {
             return yield* Effect.fail<ToolObservationEvidenceStoreError>(
               replayFailure(invocationId, "SettlementMismatch"),
             );
           }
           const candidateRow =
-            isReconciledNoEffect && selection !== undefined
+            selection !== undefined
               ? {
                   ...row,
                   selected_attempt_no: selection.attemptNo,
@@ -577,6 +650,17 @@ export const ToolObservationEvidenceStoreLive: Layer.Layer<
                 settlement_provenance: "Reconciliation",
               },
               encoded.evidence,
+            );
+          }
+          if (
+            selection !== undefined &&
+            (observation._tag === "Success" ||
+              observation._tag === "ExpectedFailure")
+          ) {
+            yield* verifyOccurredReconciliation(
+              candidateRow,
+              selection,
+              resultRef,
             );
           }
           const updated = yield* run(

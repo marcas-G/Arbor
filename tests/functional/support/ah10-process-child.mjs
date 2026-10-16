@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,6 +11,10 @@ import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
+import {
+  BUILTIN_EXECUTORS,
+  SHELL_DEFINITION,
+} from "../../../packages/tool-runtime/dist/index.js";
 import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
 
 const role = process.env.ARBOR_AH10_ROLE;
@@ -25,6 +30,192 @@ const projectResourceProfiles = makeProjectResourceProfilePort(
 );
 const gateDirectory = join(dirname(databaseFile), "ah10-gates");
 const recoveryProbeEvents = new Set();
+const reconciliationMode = process.env.ARBOR_AH7_TEST_RECONCILIATION_MODE;
+const reconciliationProfileHash = createHash("sha256")
+  .update("arbor-ah7-test-reconciliation-profile-v1")
+  .digest("hex");
+
+let testReconciliationConfig;
+if (reconciliationMode !== undefined) {
+  if (
+    reconciliationMode !== "NotOccurred" &&
+    reconciliationMode !== "Occurred" &&
+    reconciliationMode !== "StillUnknown"
+  ) {
+    throw new Error(
+      `unsupported AH7 test reconciliation mode: ${reconciliationMode}`,
+    );
+  }
+  // The isolated test child replaces the production shell definition with a
+  // synthetic, version/hash-bound Reconcilable descriptor. Ordinary daemon
+  // composition continues to expose shell@3 as NonIdempotent.
+  SHELL_DEFINITION.hash = "shell-v3-ah7-test-reconciliation";
+  SHELL_DEFINITION.sideEffectSemantics = "Reconcilable";
+  const db = new DatabaseSync(databaseFile);
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS ah7_test_external_effects (
+      effect_key TEXT PRIMARY KEY,
+      result_ref TEXT,
+      recorded_at TEXT NOT NULL
+    )`);
+  } finally {
+    db.close();
+  }
+
+  const profile = {
+    toolName: "shell",
+    toolVersion: SHELL_DEFINITION.version,
+    toolDefinitionHash: SHELL_DEFINITION.hash,
+    profileId: "ah7-test-external-ledger",
+    profileVersion: "1",
+    profileHash: reconciliationProfileHash,
+    profileProtocol: "ah7-test-ledger-v1",
+    effectKey: ({ invocationId }) => `ah7-test:${invocationId}`,
+    reconstructOccurred: ({ bytes, settlement }) => ({
+      settlement,
+      observation: {
+        text: new TextDecoder().decode(bytes),
+        truncated: false,
+      },
+    }),
+  };
+  const effectKey = (invocationId) => `ah7-test:${invocationId}`;
+  const testReconciliationPort = {
+    reconcile: (request) =>
+      Effect.sync(() => {
+        const source = new DatabaseSync(databaseFile, { readOnly: true });
+        try {
+          const effect = source
+            .prepare(
+              "SELECT result_ref FROM ah7_test_external_effects WHERE effect_key = ?",
+            )
+            .get(effectKey(request.invocationId));
+          const evidence = source
+            .prepare(
+              "SELECT artifact_id, content_hash FROM artifacts WHERE kind = 'tool-result:read' ORDER BY created_at, artifact_id",
+            )
+            .all();
+          const evidenceArtifact = evidence[0];
+          if (reconciliationMode === "StillUnknown") {
+            return {
+              _tag: "StillUnknown",
+              reasonCode: "AttemptNotFinal",
+              evidenceRef: null,
+            };
+          }
+          if (reconciliationMode === "Occurred" && effect?.result_ref) {
+            if (evidenceArtifact === undefined) {
+              return {
+                _tag: "StillUnknown",
+                reasonCode: "ResultEvidenceUnavailable",
+                evidenceRef: null,
+              };
+            }
+            return {
+              _tag: "Occurred",
+              proof: {
+                invocationId: request.invocationId,
+                attemptNo: request.attemptNo,
+                bindingSha256: request.bindingSha256,
+                profileHash: request.profileHash,
+                effectKey: request.effectKey,
+                sourceRevision: "test-ledger-v1",
+                sourceWatermark: "test-ledger-final-watermark",
+                observedAt: new Date().toISOString(),
+                visibilityScopeSha256: request.visibilityScopeSha256,
+                evidenceRef: evidenceArtifact.artifact_id,
+                evidenceSha256: evidenceArtifact.content_hash,
+                finality: {
+                  _tag: "FinalityHorizonElapsed",
+                  horizon: "test-ledger-terminal-watermark",
+                  elapsedAt: new Date().toISOString(),
+                },
+              },
+              settlement: "Success",
+              resultRef: effect.result_ref,
+            };
+          }
+          if (
+            reconciliationMode === "NotOccurred" &&
+            effect === undefined &&
+            evidenceArtifact !== undefined
+          ) {
+            return {
+              _tag: "NotOccurred",
+              proof: {
+                invocationId: request.invocationId,
+                attemptNo: request.attemptNo,
+                bindingSha256: request.bindingSha256,
+                profileHash: request.profileHash,
+                effectKey: request.effectKey,
+                sourceRevision: "test-ledger-v1",
+                sourceWatermark: "test-ledger-final-watermark",
+                observedAt: new Date().toISOString(),
+                visibilityScopeSha256: request.visibilityScopeSha256,
+                evidenceRef: evidenceArtifact.artifact_id,
+                evidenceSha256: evidenceArtifact.content_hash,
+                finality: {
+                  _tag: "ExternallyFenced",
+                  confirmationRef: "test-ledger-no-effect-fence",
+                  confirmedAt: new Date().toISOString(),
+                },
+              },
+            };
+          }
+          return {
+            _tag: "StillUnknown",
+            reasonCode: "AttemptNotFinal",
+            evidenceRef: null,
+          };
+        } finally {
+          source.close();
+        }
+      }),
+  };
+  const shell = BUILTIN_EXECUTORS.find((executor) => executor.name === "shell");
+  if (shell === undefined)
+    throw new Error("AH7 test shell executor unavailable");
+  const testShell = {
+    ...shell,
+    execute: (input) =>
+      shell.execute(input).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            if (outcome.settlement._tag !== "Success") return;
+            const source = new DatabaseSync(databaseFile);
+            try {
+              const artifacts = source
+                .prepare(
+                  "SELECT artifact_id FROM artifacts WHERE kind = 'tool-result:read' ORDER BY created_at, artifact_id",
+                )
+                .all();
+              const resultRef =
+                artifacts[1]?.artifact_id ?? artifacts[0]?.artifact_id ?? null;
+              source
+                .prepare(
+                  `INSERT INTO ah7_test_external_effects (effect_key, result_ref, recorded_at)
+                   VALUES (?, ?, ?) ON CONFLICT(effect_key) DO NOTHING`,
+                )
+                .run(
+                  effectKey(input.intent.invocationId),
+                  resultRef,
+                  new Date().toISOString(),
+                );
+            } finally {
+              source.close();
+            }
+          }),
+        ),
+      ),
+  };
+  testReconciliationConfig = {
+    profiles: [profile],
+    port: testReconciliationPort,
+    executors: BUILTIN_EXECUTORS.map((executor) =>
+      executor.name === "shell" ? testShell : executor,
+    ),
+  };
+}
 
 const waitForGate = async (name, event) => {
   const gatePath = join(gateDirectory, `${role}-${name}.release`);
@@ -119,11 +310,11 @@ const executionLeaseQualificationProbe = async (event) => {
     const delayedPause =
       role === "old" &&
       process.env.ARBOR_AH10_DELAY_LEASE_RENEWAL_PAUSE === "1";
-    const pauseRequested =
-      !delayedPause ||
-      existsSync(join(gateDirectory, "old-lease-renewal.pause"));
+    const pauseRequested = delayedPause
+      ? existsSync(join(gateDirectory, "old-lease-renewal.pause"))
+      : process.env.ARBOR_AH10_PAUSE_LEASE_RENEWAL === "1";
     emit({ ...event, pauseRequested });
-    if (delayedPause && !pauseRequested) {
+    if (!pauseRequested) {
       return;
     }
     await waitForGate("lease-renewal", event);
@@ -180,6 +371,33 @@ const gatewayQualificationProbe = async (event) => {
   }
 };
 
+const toolQualificationProbe = async (event) => {
+  if (reconciliationMode === undefined) return;
+  emit({ ...event, runtimeProbe: true });
+  const testCrashBoundary = process.env.ARBOR_AH7_TEST_CRASH_BOUNDARY;
+  if (event.boundary === testCrashBoundary) {
+    emit(event);
+    process.stdout.write(`${JSON.stringify({ tag: "AH_PROBE", ...event })}\n`);
+    await waitForGate("test-reconciliation-crash", event);
+    return;
+  }
+  if (event.boundary === "AH7AfterToolEffectBeforeSettlement") {
+    emit(event);
+    process.stdout.write(`${JSON.stringify({ tag: "AH_PROBE", ...event })}\n`);
+  }
+  if (
+    event.boundary !== "AH7BeforeReconciliationFactCommit" &&
+    event.boundary !== "AH7AfterReconciliationFactCommit"
+  )
+    return;
+  const requested = process.env.ARBOR_AH7_TEST_RECONCILIATION_FACT_BOUNDARY;
+  emit(event);
+  process.stdout.write(`${JSON.stringify({ tag: "AH_PROBE", ...event })}\n`);
+  if (event.boundary === requested) {
+    await waitForGate("reconciliation-fact", event);
+  }
+};
+
 const pauseAttentionBoundary = async (event) => {
   const requested = process.env.ARBOR_AH10_BINDING_ATTENTION_BOUNDARY;
   const side =
@@ -209,6 +427,10 @@ const config = {
   executionSettlementQualificationProbe,
   submittedDecisionRecoveryQualificationProbe,
   gatewayQualificationProbe,
+  toolQualificationProbe,
+  ...(testReconciliationConfig === undefined
+    ? {}
+    : { testOnlyToolReconciliation: testReconciliationConfig }),
   recoveryAttentionFactQualificationProbe: pauseAttentionBoundary,
   assignWorkBindingAttentionQualificationProbe: pauseAttentionBoundary,
 };
