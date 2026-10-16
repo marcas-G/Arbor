@@ -538,6 +538,7 @@ interface PipelineTrace {
   authorityResolutionCalls?: number;
   readonly reconciliationRetry?: {
     readonly profile: ToolReconciliationProfile;
+    readonly registryProfileOverride?: ToolReconciliationProfile;
     readonly verifiedBinding: NonNullable<
       ReturnType<typeof verifyRecoveryBindingV1>
     >;
@@ -1159,7 +1160,8 @@ const app = (
           Layer.succeed(
             ToolReconciliationProfileRegistry,
             makeToolReconciliationProfileRegistry([
-              reconciliationRetry.profile,
+              reconciliationRetry.registryProfileOverride ??
+                reconciliationRetry.profile,
             ]),
           ),
           Layer.succeed(ToolReconciliationPort, {
@@ -1603,6 +1605,101 @@ describe("P4 tool runtime pipeline", () => {
       expect(trace.reconciliationFactWrites ?? 0).toBe(0);
       expect(trace.effectAdmissions).toBe(0);
       expect(executorCalls).toBe(0);
+    },
+  );
+
+  it.each(["version", "hash", "effect-key"] as const)(
+    "returns OutcomeUnknown without reconciliation when only the trusted profile %s drifts",
+    async (drift) => {
+      const retry = p39NotOccurredRetryCase("ResourceSnapshotChanged");
+      const currentProfile: ToolReconciliationProfile = {
+        ...retry.profile,
+        ...(drift === "version" ? { profileVersion: "2" } : {}),
+        ...(drift === "hash" ? { profileHash: "f".repeat(64) } : {}),
+        ...(drift === "effect-key"
+          ? { effectKey: ({ invocationId: id }) => `changed:${id}` }
+          : {}),
+      };
+      const trace: PipelineTrace = {
+        noEffectDenials: [],
+        events: [],
+        approvalConsumer: null,
+        intentWrites: 0,
+        effectAdmissions: 0,
+        approvalConsumes: 0,
+        reconciliationRetry: {
+          profile: retry.profile,
+          registryProfileOverride: currentProfile,
+          verifiedBinding: retry.verifiedBinding,
+          attempt: retry.attempt,
+          authority: retry.authority,
+          result: retry.result,
+          factId: retry.factId,
+          settlementEvidence: retry.settlementEvidence,
+        },
+      };
+      let executorCalls = 0;
+      const outcome = await Effect.runPromise(
+        Effect.provide(
+          Effect.match(
+            Effect.gen(function* () {
+              const runtime = yield* ToolRuntimePort;
+              return yield* runtime.invoke(
+                {
+                  ...intent(retry.argumentsJson),
+                  toolName: "shell",
+                  toolVersion: "2",
+                  invocationId,
+                  approvalId: null,
+                } as never,
+                retry.context,
+              );
+            }),
+            {
+              onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
+              onSuccess: (value) => ({ _tag: "Success" as const, value }),
+            },
+          ),
+          app(
+            false,
+            {
+              name: "shell",
+              write: true,
+              requiresApproval: () => false,
+              execute: () => {
+                executorCalls += 1;
+                return Effect.succeed({
+                  settlement: { _tag: "Success" as const },
+                  observation: { text: "must not execute", truncated: false },
+                  resultRef: null,
+                });
+              },
+            },
+            {},
+            trace,
+            undefined,
+            false,
+            retry.prior,
+            "rev",
+            trace.reconciliationRetry,
+          ),
+        ),
+      );
+
+      expect(outcome).toEqual({
+        _tag: "Success",
+        value: {
+          _tag: "OutcomeUnknown",
+          reconciliationRefs: [String(invocationId)],
+        },
+      });
+      expect(trace.reconciliationCalls ?? 0).toBe(0);
+      expect(trace.reconciliationFactWrites ?? 0).toBe(0);
+      expect(trace.retryAttemptNumbers).toEqual(undefined);
+      expect(trace.effectAdmissions).toBe(0);
+      expect(trace.intentWrites).toBe(0);
+      expect(executorCalls).toBe(0);
+      expect(trace.noEffectDenials).toEqual([]);
     },
   );
 
