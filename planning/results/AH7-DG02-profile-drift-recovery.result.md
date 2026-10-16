@@ -36,24 +36,27 @@ mismatch returns `OutcomeUnknown` before reconciliation or execution. Corrupt
 binding/P3 identity/regions evidence remains a typed operational failure for
 the existing Attention route. Unit cases assert both classifications.
 
-## Verification so far
+## Verification
 
 - Changed-file Biome check — PASS.
 - `pnpm typecheck` — PASS.
 - `pnpm exec vitest run packages/tool-runtime/test/p4-pipeline.test.ts packages/ports/test/tool-reconciliation-profile-registry.test.ts --maxWorkers=1 --no-file-parallelism --retry=0` — PASS, 2 files / 62 tests.
 - `git diff --check` — PASS.
 
-## Process qualification boundary
+### Real daemon profile-drift qualification — PASS
 
-The three new real-daemon cases have not been run. The coordinating agent is
-serializing daemon-heavy suites; wait for that explicit release before starting
-the process test. Proposed focused command after release:
+`pnpm build` and `pnpm --filter @arbor/web build` both passed. The three cases
+ran serially with `--maxWorkers=1 --no-file-parallelism --retry=0`:
 
 ```powershell
-pnpm build
-pnpm --filter @arbor/web build
 pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts -t "fails closed on trusted profile" --maxWorkers=1 --no-file-parallelism --retry=0 --reporter=verbose
 ```
 
-No real-process qualification, AH7 closure, or release-readiness claim is made
-by this unit checkpoint.
+Result: 1 file passed; version drift 45.515s, hash drift 44.780s, effect-key
+drift 44.711s; 3 passed / 18 skipped. Each mismatch restart remained
+`OutcomeUnknown` / `ReconciliationPending`, retained the original binding and
+attempt 0, wrote no P39 fact, made zero reconciliation-source calls, produced
+no external effect, and left P4 unsettled.
+
+This closes only the scoped profile-version/hash/effect-key drift qualification.
+It does not close AH7 or claim release readiness.
