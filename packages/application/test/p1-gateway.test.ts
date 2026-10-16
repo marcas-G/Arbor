@@ -589,6 +589,52 @@ describe("command gateway", () => {
     expect(executions).toBe(0);
   });
 
+  it("fails an exact-tuple corrupt receipt closed without a new attempt or handler effect", async () => {
+    let executions = 0;
+    const payload = { x: 1 };
+    const { app, state } = buildApp([
+      handler(() => {
+        executions += 1;
+        return ok({ result: { ok: true }, events: [] });
+      }),
+    ]);
+    const stored = {
+      commandId,
+      projectId,
+      semanticRequestFingerprint: fpFor(payload),
+      schemaVersion: "2",
+      fingerprintAlgorithmVersion: 1,
+      resolution: "Committed" as const,
+      resultJson: JSON.stringify({ unexpected: "private-sentinel" }),
+      terminalErrorJson: null,
+      createdAt: "t0",
+      settledAt: "t1",
+    } satisfies StoredCommandResolution;
+    state.rows.set(commandId, stored);
+
+    const failure = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway
+          .execute(envelope(payload), externalContext, authorityFor(payload))
+          .pipe(Effect.flip);
+      }),
+      app,
+    );
+
+    expect(failure).toMatchObject({
+      _tag: "PersistenceCorruption",
+      repository: "CommandStore",
+      operation: "decodeReceipt",
+      reason: "stored command receipt does not match its registered schema",
+    });
+    expect(JSON.stringify(failure)).not.toContain("private-sentinel");
+    expect(state.rows.get(commandId)).toEqual(stored);
+    expect(state.attempts).toEqual([]);
+    expect(state.appended).toEqual([]);
+    expect(executions).toBe(0);
+  });
+
   it("persists a terminal rejection with no event", async () => {
     const { app, state } = buildApp([
       handler(() =>

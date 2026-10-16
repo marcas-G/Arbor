@@ -4,7 +4,11 @@ import {
   type ControlActionAuthorizerService,
   permissionGrantMatchesExecution,
 } from "@arbor/agent-runtime";
-import { newUuid7 } from "@arbor/application";
+import {
+  CommandHandlerRegistry,
+  decodeRegisteredCommandReceipt,
+  newUuid7,
+} from "@arbor/application";
 import type {
   CommandId,
   PermissionGrant,
@@ -173,6 +177,7 @@ export const ControlActionAuthorizerLive: Layer.Layer<
   ControlActionAuthorizer,
   never,
   | Clock
+  | CommandHandlerRegistry
   | ControlApprovalStore
   | CommandStore
   | InboxProjectionStore
@@ -183,6 +188,7 @@ export const ControlActionAuthorizerLive: Layer.Layer<
   ControlActionAuthorizer,
   Effect.gen(function* () {
     const clock = yield* Clock;
+    const commandHandlers = yield* CommandHandlerRegistry;
     const approvals = yield* ControlApprovalStore;
     const commands = yield* CommandStore;
     const inbox = yield* InboxProjectionStore;
@@ -245,15 +251,33 @@ export const ControlActionAuthorizerLive: Layer.Layer<
             }
             if (prior.value.resolution === "Committed") {
               if (currentWorkspaceAssignWork) {
-                let receiptWorkspaceId: unknown;
-                try {
-                  receiptWorkspaceId = JSON.parse(
-                    prior.value.resultJson ?? "null",
-                  )?.workspaceId;
-                } catch {
-                  receiptWorkspaceId = undefined;
+                const handler = commandHandlers.lookup("AssignWork");
+                if (
+                  Option.isNone(handler) ||
+                  handler.value.commandType !== "AssignWork"
+                ) {
+                  return { _tag: "RecoveryBlocked" as const };
                 }
-                if (receiptWorkspaceId !== input.execution.workspaceId) {
+                const decoded = yield* Effect.match(
+                  decodeRegisteredCommandReceipt<unknown>(
+                    prior.value,
+                    "AssignWork",
+                    handler.value.schemaVersion,
+                  ),
+                  {
+                    onSuccess: (value) => ({ _tag: "Decoded" as const, value }),
+                    onFailure: () => ({ _tag: "Corrupt" as const }),
+                  },
+                );
+                if (
+                  decoded._tag === "Corrupt" ||
+                  decoded.value.resolution._tag !== "Committed" ||
+                  typeof decoded.value.resolution.result !== "object" ||
+                  decoded.value.resolution.result === null ||
+                  !("workspaceId" in decoded.value.resolution.result) ||
+                  decoded.value.resolution.result.workspaceId !==
+                    input.execution.workspaceId
+                ) {
                   return { _tag: "RecoveryBlocked" as const };
                 }
                 const approval = yield* tx.transact(

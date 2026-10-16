@@ -295,10 +295,14 @@ const concludeVerificationResult: Validator = (value) =>
     );
   })();
 
-type ResultDecoderRegistry = Readonly<
-  Record<ReceiptCommandType, Readonly<Record<string, Validator>>>
->;
 type ReceiptCommandType = RegisteredCommandType | "UpdateResourceBoundary";
+type ReceiptSchemaVersion = "1" | "2";
+type ResultDecoderRegistry = Readonly<
+  Record<
+    ReceiptCommandType,
+    Readonly<Partial<Record<ReceiptSchemaVersion, Validator>>>
+  >
+>;
 
 /** Strict JSON DTO decoders for the current registered Handler/result pairs.
  * Command-specific result shape remains owned by each command contract. */
@@ -557,6 +561,31 @@ const resultDecoders: ResultDecoderRegistry = {
   },
 };
 
+export interface CommandReceiptDecoderDescriptor {
+  readonly commandType: ReceiptCommandType;
+  readonly schemaVersion: ReceiptSchemaVersion;
+  readonly source: "External" | "Internal";
+  /** False only for ResolveControlApproval, whose handler is optional. */
+  readonly required: boolean;
+}
+
+/** Trusted, closed inventory of decodable receipt pairs. It is deliberately
+ * independent of persisted row contents: a row cannot select its own codec. */
+export const COMMAND_RECEIPT_DECODER_DESCRIPTORS: ReadonlyArray<CommandReceiptDecoderDescriptor> =
+  Object.freeze(
+    Object.entries(resultDecoders).flatMap(([commandType, versions]) =>
+      Object.keys(versions).map((schemaVersion) => ({
+        commandType: commandType as ReceiptCommandType,
+        schemaVersion: schemaVersion as ReceiptSchemaVersion,
+        source:
+          commandType === "UpdateResourceBoundary"
+            ? ("Internal" as const)
+            : ("External" as const),
+        required: commandType !== "ResolveControlApproval",
+      })),
+    ),
+  );
+
 const rejectionDecoders = {
   IdempotencyConflict: tagged("IdempotencyConflict", {
     commandId: id("CommandId"),
@@ -670,6 +699,9 @@ export const decodeRegisteredCommandReceipt = <R>(
       return Effect.fail(corruption());
     }
     const byVersion = resultDecoders[commandType as ReceiptCommandType];
+    if (schemaVersion !== "1" && schemaVersion !== "2") {
+      return Effect.fail(corruption());
+    }
     if (!Object.hasOwn(byVersion, schemaVersion)) {
       return Effect.fail(corruption());
     }

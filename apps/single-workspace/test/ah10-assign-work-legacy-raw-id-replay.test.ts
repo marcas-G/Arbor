@@ -1,5 +1,5 @@
 import { ControlActionAuthorizer } from "@arbor/agent-runtime";
-import { newUuid7 } from "@arbor/application";
+import { CommandHandlerRegistry, newUuid7 } from "@arbor/application";
 import {
   CommandId,
   ExecutionId,
@@ -128,6 +128,12 @@ const authorizeRawChildAction = async (
           settledAt: "2026-10-10T00:00:00.000Z",
         };
   const services = Layer.mergeAll(
+    Layer.succeed(CommandHandlerRegistry, {
+      lookup: (commandType: string) =>
+        commandType === "AssignWork"
+          ? Option.some({ commandType: "AssignWork", schemaVersion: "1" })
+          : Option.none(),
+    } as never),
     Layer.succeed(Clock, {
       now: () => Effect.succeed("2026-10-10T00:00:00.000Z"),
     } as never),
