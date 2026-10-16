@@ -26,22 +26,34 @@ version, hash and exact Observation bytes, writes one failed P3 ToolResult,
 applies the original action, advances its cursor once, and does not invoke a
 second provider tool decision. No Artifact is created.
 
+The crash snapshot contains exactly one matching `(execution_id,
+logical_step_no)` AgentLoopStep at `next_action_index=0`. After recovery the
+same execution/logical step is unique at `next_action_index=1`; its exact
+ProviderTurn is unchanged. There is exactly one Action for that same step and
+callRef, plus exactly one ToolResult whose source ref equals the Action's
+Observation source. This is the evidence behind the “cursor advances once”
+claim; ToolResult rows themselves expose source identity rather than direct
+Execution/step columns.
+
 Command:
 
 ```text
 pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-pending-intent.functional.test.ts -t "replays the committed P40 ExpectedFailure observation after process crash" --testTimeout 180000
 ```
 
-Result: **1 passed / 7 filtered out**, 47.985 seconds test time. This is one
+Result after cursor-uniqueness assertions: **1 passed / 7 filtered out**,
+48.942 seconds test time. This is one
 real daemon crash/restart qualification, not a full AH7 matrix or full
 functional run.
 
 The first observable run reached recovery and passed the P4/P40 evidence and
 P3 projection checks, then failed only because the new test oracle expected a
-second Provider call. The production P3 path completed from the recovered
-tool result without another Provider request. The oracle was corrected to
-require exactly one original Provider tool decision and no replay; the final
-run above passed. This was not a runtime failure.
+second Provider call. A later run showed the normal AgentLoop may issue one
+completion Provider request after P3 projection. The final oracle counts
+exactly one `read` ToolCall decision, permits at most one completion request,
+and requires that request—if present—to contain the original ExpectedFailure.
+The cursor-uniqueness rerun above passed; these were test-oracle corrections,
+not runtime failures.
 
 ## Schema-44 adapter fail-closed boundaries
 

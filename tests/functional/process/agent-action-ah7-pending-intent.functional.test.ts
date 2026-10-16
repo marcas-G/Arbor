@@ -204,6 +204,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         const hits: AhProbeHit[] = [];
         const daemonOutput: string[] = [];
         let targetProviderCalls = 0;
+        let targetReadToolCalls = 0;
         let probeArmed = false;
         let latestToolResult = "<none>";
         const fixture = await startProductionFixture({
@@ -281,6 +282,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
                   message.role === "tool" &&
                   message.content?.includes("FUNCTIONAL_VERIFIED") === true,
               );
+              if (!readResult) targetReadToolCalls += 1;
               return readResult
                 ? { _tag: "Text", text: `Read evidence for ${marker}` }
                 : {
@@ -688,6 +690,38 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         expect(recoveredActionStep?.provider_turn_id).toBe(
           targetSteps[0]?.provider_turn_id,
         );
+        if (expectedSettlement === "ExpectedFailure") {
+          expect(targetSteps).toHaveLength(1);
+          expect(targetSteps[0]).toMatchObject({
+            execution_id: hit?.executionId,
+            next_action_index: 0,
+          });
+          const recoveredMatchingSteps = recovered.steps.filter(
+            (step) =>
+              step.execution_id === hit?.executionId &&
+              step.logical_step_no === recoveredActionRecord?.logical_step_no,
+          );
+          expect(recoveredMatchingSteps).toHaveLength(1);
+          expect(recoveredMatchingSteps[0]).toMatchObject({
+            execution_id: hit?.executionId,
+            provider_turn_id: targetSteps[0]?.provider_turn_id,
+            next_action_index: 1,
+          });
+          const recoveredMatchingActions = recovered.actions.filter(
+            (action) =>
+              action.execution_id === hit?.executionId &&
+              action.logical_step_no === recoveredActionRecord?.logical_step_no,
+          );
+          expect(recoveredMatchingActions).toHaveLength(1);
+          expect(recoveredMatchingActions[0]).toMatchObject({
+            logical_action_id: logicalActionId,
+            call_ref: hit?.callRef,
+          });
+          expect(recoveredTargetToolResults).toHaveLength(1);
+          expect(recoveredTargetToolResults[0]?.source_ref).toBe(
+            recoveredMatchingActions[0]?.observation_source_ref,
+          );
+        }
         expect(recoveredTargetInvocations).toEqual([
           expect.objectContaining({
             execution_id: hit?.executionId,
@@ -783,7 +817,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
             (result) =>
               result.source_ref === recoveredToolResult.observationRef,
           ),
-        ).toHaveLength(1);
+        ).toHaveLength(targetProviderCalls);
         if (expectedSettlement === "ExpectedFailure") {
           expect(recoveredRawInvocation.observation_format_version).toBe(
             committedObservationVersion,
@@ -804,16 +838,13 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
             truncated: false,
             artifactRefs: [],
           });
-          expect(targetProviderCalls).toBe(1);
-          expect(
-            fixture.providerCalls
-              .slice(targetProviderCallStart)
-              .filter(
-                (call) =>
-                  JSON.stringify(call.messages).includes(marker) &&
-                  call.tools.some((tool) => tool.function?.name === "read"),
-              ),
-          ).toHaveLength(1);
+          expect(targetReadToolCalls).toBe(1);
+          expect(targetProviderCalls).toBeLessThanOrEqual(2);
+          if (targetProviderCalls === 2) {
+            expect(latestToolResult).toContain(
+              "filesystem target could not be resolved or accessed inside the sandbox",
+            );
+          }
         }
         expect(
           JSON.stringify(recoveredTargetToolResults[0]).includes(
