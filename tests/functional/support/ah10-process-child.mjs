@@ -157,6 +157,57 @@ if (reconciliationMode !== undefined) {
                 .run(request.invocationId, new Date().toISOString());
             }
           }
+          const reconciliationDrift =
+            process.env.ARBOR_AH7_TEST_DRIFT_ON_RECONCILE;
+          if (
+            reconciliationMode === "NotOccurred" &&
+            ["authority", "approval", "stop"].includes(reconciliationDrift)
+          ) {
+            const changed = source
+              .prepare(
+                "SELECT 1 FROM ah7_test_reconciliation_controls WHERE invocation_id = ?",
+              )
+              .get(request.invocationId);
+            if (changed === undefined) {
+              const invocation = source
+                .prepare(
+                  `SELECT i.execution_id, w.project_id
+                     FROM tool_invocations i
+                     JOIN workspaces w ON w.workspace_id = i.workspace_id
+                    WHERE i.invocation_id = ?`,
+                )
+                .get(request.invocationId);
+              if (invocation === undefined) {
+                throw new Error(
+                  "AH7 test profile could not resolve drift target",
+                );
+              }
+              if (reconciliationDrift === "authority") {
+                source
+                  .prepare(
+                    "UPDATE permission_grants SET state = 'Revoked' WHERE project_id = ? AND state = 'Active'",
+                  )
+                  .run(invocation.project_id);
+              } else if (reconciliationDrift === "approval") {
+                source
+                  .prepare(
+                    "UPDATE action_approvals SET expires_at = '2000-01-01T00:00:00.000Z' WHERE tool_invocation_id = ? AND route_kind = 'Executable' AND state = 'Consumed'",
+                  )
+                  .run(request.invocationId);
+              } else {
+                source
+                  .prepare(
+                    "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ? AND stop_requested_at IS NULL AND settled_at IS NULL",
+                  )
+                  .run(new Date().toISOString(), invocation.execution_id);
+              }
+              source
+                .prepare(
+                  "INSERT INTO ah7_test_reconciliation_controls (invocation_id, resource_boundary_changed_at) VALUES (?,?)",
+                )
+                .run(request.invocationId, new Date().toISOString());
+            }
+          }
           if (reconciliationMode === "StillUnknown") {
             return {
               _tag: "StillUnknown",

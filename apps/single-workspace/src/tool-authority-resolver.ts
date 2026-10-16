@@ -7,10 +7,11 @@ import {
   sha256Hex,
   ToolAuthorityResolver,
   TransactionPort,
+  TransactionScope,
   VerificationRepository,
   WorkspaceRepository,
 } from "@arbor/ports";
-import { Effect, Layer, Option } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
 
 export const ToolAuthorityResolverLive = (
   governance: ParentUserGovernanceFacts,
@@ -46,26 +47,44 @@ export const ToolAuthorityResolverLive = (
           "GovernanceOverrideDenied",
           "ApprovalIntentMismatch",
         ].includes(cause._tag);
+      const readSnapshot = (input: {
+        readonly projectId: import("@arbor/domain").ProjectId;
+        readonly workspaceId: import("@arbor/domain").WorkspaceId;
+        readonly executionId: import("@arbor/domain").ExecutionId;
+      }) =>
+        Effect.gen(function* () {
+          const project = yield* projects.findById(input.projectId);
+          const workspace = yield* workspaces.findById(input.workspaceId);
+          const activeGrants = yield* grants.activeGrants(input.projectId);
+          const verification = yield* verifications.findByExecutionId(
+            input.executionId,
+          );
+          return { project, workspace, activeGrants, verification };
+        });
       return ToolAuthorityResolver.of({
         resolve: (input) =>
           Effect.gen(function* () {
-            const snapshot = yield* tx.transact(
-              Effect.gen(function* () {
-                const project = yield* projects.findById(
-                  input.context.projectId,
-                );
-                const workspace = yield* workspaces.findById(
-                  input.context.workspaceId,
-                );
-                const activeGrants = yield* grants.activeGrants(
-                  input.context.projectId,
-                );
-                const verification = yield* verifications.findByExecutionId(
-                  input.context.executionId,
-                );
-                return { project, workspace, activeGrants, verification };
-              }),
+            const existingTransaction = Context.getOption(
+              yield* Effect.context<never>(),
+              TransactionScope,
             );
+            const snapshot = Option.isSome(existingTransaction)
+              ? yield* readSnapshot({
+                  projectId: input.context.projectId,
+                  workspaceId: input.context.workspaceId,
+                  executionId: input.context.executionId,
+                }).pipe(
+                  Effect.provideService(TransactionScope)(
+                    existingTransaction.value,
+                  ),
+                )
+              : yield* tx.transact(
+                  readSnapshot({
+                    projectId: input.context.projectId,
+                    workspaceId: input.context.workspaceId,
+                    executionId: input.context.executionId,
+                  }),
+                );
             if (Option.isNone(snapshot.workspace)) {
               return yield* Effect.fail({
                 _tag: "ToolAuthorityResolutionError" as const,
