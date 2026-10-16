@@ -263,3 +263,18 @@ counts, first-run observation defect and correction are recorded in
 
 This qualifies only the covered G0/G1 `NotOccurred` source-I/O case. AH7 stays
 PARTIAL; no production Reconcilable profile or complete AH7 closure is claimed.
+
+### Terminal P40 receipt-first correction — unit checkpoint, process qualification pending
+
+Moved settled-invocation replay ahead of current Workspace resolution, region
+comparison, admission and reconciliation. The receipt path first requires exact
+execution/workspace/tool/version/semantics/arguments/approval identity, then
+uses the existing P40 evidence reader and P39 selected-fact verification for
+RNO. Denied and Interrupted receipt behavior remains intact. Corrupt or
+mismatched terminal receipts fail closed before Executor/admission/reconcile.
+
+Focused receipt cases: **3/3 PASS**. Complete P4 pipeline:
+`packages/tool-runtime/test/p4-pipeline.test.ts` **47/47 PASS**.
+`pnpm typecheck`, changed-file Biome and `git diff --check` pass. This is a
+unit/code checkpoint only; no real-process receipt or P40/P3 crash matrix was
+run for this correction. AH7 remains PARTIAL.

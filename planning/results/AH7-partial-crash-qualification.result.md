@@ -109,3 +109,11 @@ NotOccurred-before-P40-commit case failed to converge on the pre-fix candidate;
 it has not yet been rerun against this repair. P40 real-process qualification
 and all P3 crash-side qualification therefore remain pending; AH7 remains
 PARTIAL / OPEN.
+
+The earlier 44-test code checkpoint was superseded by the B1 terminal receipt
+change: settled RNO now replays through exact model/persisted identity and the
+fenced P40 reader before any current-region admission or reconciliation.
+Focused receipt tests pass 3/3; the complete P4 pipeline passes 47/47, with
+typecheck, Biome and `git diff --check` passing. This is still unit/code
+evidence only; no real-process qualification was run for B1. AH7 remains
+PARTIAL / OPEN.
