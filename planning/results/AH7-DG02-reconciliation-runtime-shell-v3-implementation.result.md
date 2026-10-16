@@ -71,11 +71,13 @@ Authorization reaffirmed by the user on 2026-10-17 after independent review:
 
 The remaining authorized matrix for authority/approval/Stop changes and
 concurrent stale-generation takeover during an in-flight source read remains
-open. The additional P40 terminal-selection and P3 projection crash matrix is
-now represented in
+open. The additional P40 terminal-selection and P3 terminal projection crash
+matrix is represented in
 `tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts`:
-four P40 cases (NotOccurred/Occurred × before/after settlement COMMIT) and six
-P3 cases (NotOccurred/Occurred/StillUnknown × before/after ActionResult COMMIT).
+four P40 cases (NotOccurred/Occurred × before/after settlement COMMIT) and
+four P3 cases (NotOccurred/Occurred × before/after ActionResult COMMIT).
+StillUnknown is qualified through its independent terminal recovery scenario,
+not through an ActionResult COMMIT boundary that the runtime does not reach.
 The child-process test probe pauses at those exact existing transaction
 boundaries. The P40 cases use the test-only resource-change gate so
 NotOccurred selects a terminal `ReconciledNoEffect`; P3 cases retain the normal
@@ -92,6 +94,26 @@ suite claim is made; AH7 remains PARTIAL.
 
 The process evidence above uses only a test-owned deterministic profile and
 external state fixture. It does not qualify a production source/profile.
+
+## 2026-10-17 P40/P3 terminal matrix qualification update
+
+The isolated process matrix passes all four P40 settlement-commit cells and
+all four P3 ActionResult-commit cells: NotOccurred/Occurred × before/after
+commit. The two proposed StillUnknown × ActionResult cases were removed
+because the runtime persists the P39 StillUnknown fact and returns
+`OutcomeUnknown` before reaching the ToolRuntime ActionResult boundary. The
+existing independent `recovers StillUnknown from a test-only trusted profile
+after a daemon restart` case passes 1/1 (75.188s): the initial crash occurs
+after effect admission and before the first P39 fact; after restart, the
+exact unknown fact commits and the process is killed again after that commit,
+then a second restart converges. P4 remains unsettled; P3 reports
+`OutcomeUnknown`/`ReconciliationPending`; no Executor replay, external effect,
+or inferred result is produced.
+
+Typecheck, changed-file Biome, and `git diff --check` pass. This closes only
+the scoped P40/P3 terminal crash matrix; AH7 remains PARTIAL / OPEN. Production
+profile-version drift and the separately authorized authority/approval/Stop
+and concurrency takeover cells remain open.
 
 ## 2026-10-17 exact P39 replay identity checkpoint
 

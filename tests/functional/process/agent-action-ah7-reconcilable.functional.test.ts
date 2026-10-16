@@ -523,19 +523,18 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         resourceChangeDuringReconcile: true,
       })),
     ),
-    ...(["NotOccurred", "Occurred", "StillUnknown"] as const).flatMap(
-      (reconciliationMode) =>
-        (
-          ["AH7BeforeActionResultCommit", "AH7AfterActionResultCommit"] as const
-        ).map((recoveryCrashBoundary) => ({
-          boundary:
-            reconciliationMode === "Occurred"
-              ? ("AH7AfterToolEffectBeforeSettlement" as const)
-              : ("AH7AfterEffectAdmissionCommit" as const),
-          semantics: "Reconcilable" as const,
-          reconciliationMode,
-          recoveryCrashBoundary,
-        })),
+    ...(["NotOccurred", "Occurred"] as const).flatMap((reconciliationMode) =>
+      (
+        ["AH7BeforeActionResultCommit", "AH7AfterActionResultCommit"] as const
+      ).map((recoveryCrashBoundary) => ({
+        boundary:
+          reconciliationMode === "Occurred"
+            ? ("AH7AfterToolEffectBeforeSettlement" as const)
+            : ("AH7AfterEffectAdmissionCommit" as const),
+        semantics: "Reconcilable" as const,
+        reconciliationMode,
+        recoveryCrashBoundary,
+      })),
     ),
   ];
   for (const scenario of scenarios) {
