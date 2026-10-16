@@ -117,7 +117,7 @@ const settledExpectedFailure: ToolInvocationRecord = {
 };
 
 describe("pending AH7 ToolResult recovery", () => {
-  it("restores the settled ExpectedFailure observation when Session append has not happened", async () => {
+  it("fails closed when a legacy fake runtime has no P40 observation evidence store", async () => {
     let executorCalls = 0;
     let settlementWrites = 0;
     const executor: ToolExecutor = {
@@ -196,8 +196,8 @@ describe("pending AH7 ToolResult recovery", () => {
     );
 
     expect(result).toEqual({
-      _tag: "ExpectedFailure",
-      observation: priorObservation,
+      _tag: "OutcomeUnknown",
+      reconciliationRefs: [String(invocationId)],
     });
     expect(executorCalls).toBe(0);
     expect(settlementWrites).toBe(0);

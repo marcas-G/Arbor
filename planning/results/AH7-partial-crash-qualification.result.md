@@ -55,3 +55,22 @@ action 是 `ReconciliationPending`，Execution 是 `OutcomeUnknown`。这些用�
 包含从该提交的干净检出测试，零重试。隔离 AH7-DG-01 红灯仍失败，不计入
 正式 PASS。治理审阅见 `planning/results/AH7-DG-01-governance-readiness.review.md`。
 AH8–AH14 仍 OPEN。
+
+## 2026-10-16 P40 schema-44 qualification addendum
+
+The earlier DG01 paragraph above is historical and is superseded by the
+accepted DID v1.41 P40 Observation contract. On schema 44, P4 persists the
+bounded terminal Observation/version/hash with settlement. The focused result
+`planning/results/AH7-DG-01-P40-expectedfailure-process-replay.result.md`
+qualifies one real-daemon ExpectedFailure boundary: P4/P40 commit → SIGKILL →
+P3 ToolResult/Action/cursor recovery, with exact evidence bytes and no executor
+re-entry. Schema-44 SQLite adapter tests separately prove Missing and
+HashMismatch evidence fail closed; those adapter tests are not process
+qualification.
+
+The earlier DG03 review requiring approval consumption and terminal
+settlement in one transaction is also superseded by the accepted
+`ACCEPT_TOOL_APPROVAL_SETTLEMENT_ATOMICITY` contract: exact approval consume is
+atomic with P4 intent claim, while terminal settlement remains separate.
+AH7 remains PARTIAL / OPEN; positive production Reconcilable proof/recovery
+and the remaining crash/concurrency matrix are not qualified by this addendum.
