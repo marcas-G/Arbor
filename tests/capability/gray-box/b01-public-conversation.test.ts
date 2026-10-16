@@ -18,9 +18,9 @@ import {
 } from "../../../packages/domain/src/index.js";
 import type { ModelCatalog } from "../../../packages/model-context/src/index.js";
 import {
-  createSchema42TestDatabaseFactory,
-  withSchema42TestDatabase,
-} from "../../support/schema42-database.js";
+  createSchema44TestDatabaseFactory,
+  withSchema44TestDatabase,
+} from "../../support/schema44-database.js";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
 import {
   makePublicProject,
@@ -53,15 +53,15 @@ const modelCatalog: ModelCatalog = {
 };
 
 const directories: string[] = [];
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
+  schema44Factory = await createSchema44TestDatabaseFactory({
     prefix: "b01-public-conversation-template-",
   });
 }, 120_000);
-afterAll(() => schema42Factory.cleanup());
+afterAll(() => schema44Factory.cleanup());
 
 afterEach(() => {
   for (const directory of directories.splice(0)) {
@@ -74,7 +74,7 @@ describe("B01 L2 — public Human Input to durable transcript", () => {
     metadataFor("B01", "L2"),
     "submits through HTTP, runs the production daemon, and reads one Assistant turn",
     async () =>
-      withSchema42TestDatabase(schema42Factory, async (database) => {
+      withSchema44TestDatabase(schema44Factory, async (database) => {
         const directory = mkdtempSync(join(tmpdir(), "arbor-b01-public-"));
         directories.push(directory);
         const databaseFile = database.databaseFilename;

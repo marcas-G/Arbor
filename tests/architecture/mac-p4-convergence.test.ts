@@ -42,10 +42,10 @@ describe("MAC-P4 final active-runtime convergence", () => {
       ),
     ).toContain("migrationVersion: 38");
     expect(migrations).toContain(
-      "export const CURRENT_SCHEMA_VERSION = 42 as const;",
+      "export const CURRENT_SCHEMA_VERSION = 44 as const;",
     );
     expect(migrations).toMatch(
-      /export const CURRENT_MIGRATIONS:[\s\S]*?\.\.\.P38_MIGRATIONS,[\s\S]*?P40_TOOL_OBSERVATION_REPLAY_MIGRATION,[\s\S]*?P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,[\s\S]*?P42_PROJECT_RESOURCE_SOURCE_MIGRATION/,
+      /export const CURRENT_MIGRATIONS:[\s\S]*?\.\.\.P38_MIGRATIONS,[\s\S]*?P40_TOOL_OBSERVATION_REPLAY_MIGRATION,[\s\S]*?P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,[\s\S]*?P42_PROJECT_RESOURCE_SOURCE_MIGRATION,[\s\S]*?P43_MIGRATION,[\s\S]*?P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION/,
     );
     expect(migrations).toContain("export const P39_MAINTENANCE_MIGRATIONS:");
     const currentRegistryStart = migrations.indexOf(
@@ -66,10 +66,12 @@ describe("MAC-P4 final active-runtime convergence", () => {
       "P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION",
     );
     expect(currentRegistry).toContain("P42_PROJECT_RESOURCE_SOURCE_MIGRATION");
+    expect(currentRegistry).toContain("P43_MIGRATION");
+    expect(currentRegistry).toContain(
+      "P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION",
+    );
     expect(currentRegistry).not.toContain("P39_RECONCILIATION_MIGRATION");
     expect(currentRegistry).not.toContain("P39_MAINTENANCE_MIGRATIONS");
-    expect(currentRegistry).not.toContain("P43_BLOCKED_WORKEPISODE_MIGRATION");
-    expect(migrations).not.toContain("P43_BLOCKED_WORKEPISODE_MIGRATION");
     expect(migrations).toContain(
       "export const CURRENT_MIGRATION_BASELINE = CURRENT_SCHEMA_VERSION;",
     );

@@ -34,7 +34,7 @@ import {
   p7SeedWork,
   runP7,
 } from "./support/p7-app.js";
-import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
 
 const WORK_CONSUMER = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789b1");
 const CMD_CONSUMER = parse(CommandId)(
@@ -122,16 +122,16 @@ const seedWakeFixture = Effect.gen(function* () {
 const waitOf = (deps: WakeSinkDependencies, workId: WorkId) =>
   deps.tx.transact(deps.waits.findByWork(workId));
 
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 
 describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
   beforeAll(async () => {
-    schema42Factory = await createSchema42TestDatabaseFactory();
+    schema44Factory = await createSchema44TestDatabaseFactory();
   }, 120_000);
 
-  afterAll(() => schema42Factory?.cleanup(), 120_000);
+  afterAll(() => schema44Factory?.cleanup(), 120_000);
 
   it("DependencySatisfied clears the exact wait without requiring revision advance and reevaluates", async () => {
     const { calls, app } = makeWakeApp();
@@ -309,7 +309,7 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
   });
 
   it("composition smoke: builds against a real schema-42 database", async () => {
-    const database = schema42Factory.create();
+    const database = schema44Factory.create();
     try {
       const app = buildSingleWorkspaceLayer({
         databaseFile: database.databaseFilename,

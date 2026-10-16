@@ -29,11 +29,11 @@ import {
   TransactionPort,
   WorkspaceResourceActivationStore,
 } from "../../../packages/ports/src/index.js";
-import { upgradeSchema42TestDatabase } from "../../support/schema42-database.js";
+import { upgradeSchema44TestDatabase } from "../../support/schema44-database.js";
 import {
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
-} from "../support/schema42-bootstrap.js";
+} from "../support/schema44-bootstrap.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-012345670020");
 const workspaceId = parse(WorkspaceId)(
@@ -351,7 +351,7 @@ test("P10 Story L rebuild rolls back snapshot/offset rewind on kill and lineariz
       databaseFile,
       pinnedPathFor(databaseFile),
     );
-    await upgradeSchema42TestDatabase({
+    await upgradeSchema44TestDatabase({
       databaseFilename: databaseFile,
       p39ReportFilename: join(directory, "p39-report.sqlite"),
     });
@@ -447,7 +447,7 @@ test("P10 Story L after-commit kill preserves snapshot and restarted consumer ca
       databaseFile,
       pinnedPathFor(databaseFile),
     );
-    await upgradeSchema42TestDatabase({
+    await upgradeSchema44TestDatabase({
       databaseFilename: databaseFile,
       p39ReportFilename: join(directory, "p39-report.sqlite"),
     });

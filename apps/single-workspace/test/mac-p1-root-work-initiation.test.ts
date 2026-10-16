@@ -21,7 +21,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
@@ -37,15 +37,15 @@ const human = parse(Principal)("user:mac-p1-approver");
 const humanActor = parse(Actor)("user:mac-p1-approver");
 
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema42TestDatabaseFactory({
-    prefix: ".mac-p1-root-schema42-",
+  fixtureFactory = await createSchema44TestDatabaseFactory({
+    prefix: ".mac-p1-root-schema44-",
   });
 }, 120_000);
 

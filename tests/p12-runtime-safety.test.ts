@@ -61,17 +61,17 @@ import {
   type AttentionReadDeps,
   loadAttentionFacts,
 } from "../packages/projection-runtime/src/index.js";
-import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
 
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
+  schema44Factory = await createSchema44TestDatabaseFactory({
     prefix: "p12-runtime-safety-template-",
   });
 }, 120_000);
-afterAll(() => schema42Factory.cleanup());
+afterAll(() => schema44Factory.cleanup());
 
 const itWithCurrentAppTimeout = (name: string, body: () => Promise<unknown>) =>
   it(name, body, 120_000);
@@ -647,7 +647,7 @@ const runScenario = async (
     resourceProfileRef: profile.resourceProfileRef,
     version: profile.version,
   });
-  const database = schema42Factory.create();
+  const database = schema44Factory.create();
   const app = buildSingleWorkspaceLayer({
     databaseFile: database.databaseFilename,
     providerTurns,

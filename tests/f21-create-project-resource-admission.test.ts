@@ -40,16 +40,16 @@ import {
   WorkspaceRepository,
 } from "../packages/ports/src/index.js";
 import {
-  createSchema42TestDatabaseFactory,
-  withSchema42TestDatabase,
-} from "./support/schema42-database.js";
+  createSchema44TestDatabaseFactory,
+  withSchema44TestDatabase,
+} from "./support/schema44-database.js";
 
 const roots: string[] = [];
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
+  schema44Factory = await createSchema44TestDatabaseFactory({
     prefix: "f21-create-project-resource-template-",
   });
 }, 120_000);
@@ -58,7 +58,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
   }
 });
-afterAll(() => schema42Factory.cleanup());
+afterAll(() => schema44Factory.cleanup());
 
 const tempRoot = (): string => {
   const root = mkdtempSync(join(tmpdir(), "arbor-f21-create-project-"));
@@ -66,10 +66,10 @@ const tempRoot = (): string => {
   return root;
 };
 
-const itWithSchema42TestDatabase = (
+const itWithSchema44TestDatabase = (
   name: string,
-  body: Parameters<typeof withSchema42TestDatabase>[1],
-) => it(name, () => withSchema42TestDatabase(schema42Factory, body), 120_000);
+  body: Parameters<typeof withSchema44TestDatabase>[1],
+) => it(name, () => withSchema44TestDatabase(schema44Factory, body), 120_000);
 
 const HUMAN = parse(Principal)("user:test");
 const ACTOR = parse(Actor)("user:test");
@@ -205,7 +205,7 @@ const readCounts = Effect.gen(function* () {
 });
 
 describe("F21 CreateProject v2 host resource admission", () => {
-  itWithSchema42TestDatabase(
+  itWithSchema44TestDatabase(
     "rejects raw or mixed caller boundaries before receipt or aggregate writes",
     async (database) => {
       const root = tempRoot();
@@ -265,7 +265,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
     },
   );
 
-  itWithSchema42TestDatabase(
+  itWithSchema44TestDatabase(
     "commits the exact trusted Profile boundary atomically and makes ConversationOnly explicitly empty",
     async (database) => {
       const root = tempRoot();
@@ -450,7 +450,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
     },
   );
 
-  itWithSchema42TestDatabase(
+  itWithSchema44TestDatabase(
     "terminally records unavailable, forged, and stale selections without canonical writes",
     async (database) => {
       const root = tempRoot();
@@ -569,7 +569,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
     },
   );
 
-  itWithSchema42TestDatabase(
+  itWithSchema44TestDatabase(
     "restarts from the durable Workspace boundary and does not rebind after the Profile version changes",
     async (database) => {
       const root = tempRoot();
@@ -694,7 +694,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
     },
   );
 
-  itWithSchema42TestDatabase(
+  itWithSchema44TestDatabase(
     "returns Gateway's non-disclosing v1 tuple-conflict receipt and leaves its row unchanged",
     async (database) => {
       const root = tempRoot();

@@ -144,7 +144,7 @@ const expectedP40Guard = (name: string): string => {
     .replace(/;\s*$/u, "");
 };
 
-describe("unregistered P44 ApprovalRejected no-effect migration", () => {
+describe("P44 ApprovalRejected no-effect migration", () => {
   it("refuses direct application on schema 42 without changing the version or P40 guards", async () => {
     const fixture = await createSchema42TestDatabase();
     try {

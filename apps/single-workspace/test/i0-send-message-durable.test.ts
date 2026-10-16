@@ -24,7 +24,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { admitExecution, buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
@@ -52,15 +52,15 @@ const principal = parse(Principal)("worker:i0");
 const body = "The requested analysis is complete.";
 const invalidRootReportBody = "root-report-must-fail-closed-i0-20260927";
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema42TestDatabaseFactory({
-    prefix: ".i0-send-message-schema42-",
+  fixtureFactory = await createSchema44TestDatabaseFactory({
+    prefix: ".i0-send-message-schema44-",
   });
 }, 120_000);
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { SecretStorePort, secretRef } from "@arbor/ports";
 import { Effect, type Layer } from "effect";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   type ArborProviderConfigFile,
@@ -18,8 +18,8 @@ import {
  */
 
 const tempDirs: string[] = [];
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 const withConfig = (content: string): { dir: string; path: string } => {
   const dir = mkdtempSync(join(tmpdir(), "arbor-config-"));
@@ -36,10 +36,10 @@ afterEach(() => {
 });
 
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory();
+  schema44Factory = await createSchema44TestDatabaseFactory();
 }, 120_000);
 
-afterAll(() => schema42Factory?.cleanup(), 120_000);
+afterAll(() => schema44Factory?.cleanup(), 120_000);
 
 describe("arbor.config.json — standard provider configuration", () => {
   it("a full env-secret config builds the ModelDeployment with SecretRef only", () => {
@@ -120,7 +120,7 @@ describe("arbor.config.json — standard provider configuration", () => {
   });
 
   it("the inline secret store rejects every ref except its sentinel", async () => {
-    const database = schema42Factory.create();
+    const database = schema44Factory.create();
     const app = buildSingleWorkspaceLayer({
       databaseFile: database.databaseFilename,
       secretRef: secretRef("arbor:inline-secret"),

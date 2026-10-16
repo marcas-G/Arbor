@@ -8,10 +8,10 @@ import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createSchema42TestDatabaseFactory,
-  type Schema42TestDatabaseFactory,
-  withSchema42TestDatabase,
-} from "../../../tests/support/schema42-database.js";
+  createSchema44TestDatabaseFactory,
+  type Schema44TestDatabaseFactory,
+  withSchema44TestDatabase,
+} from "../../../tests/support/schema44-database.js";
 import {
   layer,
   ToolReconciliationFactStoreLive,
@@ -37,27 +37,27 @@ const runDb = <A>(
 ) =>
   Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp(filename))));
 
-let schema42Factory: Schema42TestDatabaseFactory | undefined;
+let schema44Factory: Schema44TestDatabaseFactory | undefined;
 
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
+  schema44Factory = await createSchema44TestDatabaseFactory({
     prefix: ".p39-tool-reconciliation-template-",
   });
 }, 120_000);
 
-afterAll(() => schema42Factory?.cleanup());
+afterAll(() => schema44Factory?.cleanup());
 
-const requireSchema42Factory = () => {
-  if (schema42Factory === undefined) {
+const requireSchema44Factory = () => {
+  if (schema44Factory === undefined) {
     throw new Error("Schema-42 test database factory was not prepared.");
   }
-  return schema42Factory;
+  return schema44Factory;
 };
 
 describe("P39 ToolReconciliationFactStore", () => {
   it("stores exact bound proof facts idempotently and never invents Success", async () => {
-    await withSchema42TestDatabase(
-      requireSchema42Factory(),
+    await withSchema44TestDatabase(
+      requireSchema44Factory(),
       async (database) => {
         const result = await runDb(
           database.databaseFilename,

@@ -46,9 +46,9 @@ import {
   p7SeedProject,
 } from "../../support/p7-app.js";
 import {
-  createSchema42TestDatabaseFactory,
-  withSchema42TestDatabase,
-} from "../../support/schema42-database.js";
+  createSchema44TestDatabaseFactory,
+  withSchema44TestDatabase,
+} from "../../support/schema44-database.js";
 
 interface ViewObservation {
   readonly status: number;
@@ -78,11 +78,11 @@ interface WebSocketOpenObservation {
 
 const handles: WebTransportHandle[] = [];
 const directories: string[] = [];
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
+  schema44Factory = await createSchema44TestDatabaseFactory({
     prefix: "p12-view-auth-template-",
   });
 }, 120_000);
@@ -175,15 +175,15 @@ afterEach(async () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
-afterAll(() => schema42Factory.cleanup());
+afterAll(() => schema44Factory.cleanup());
 
-const itWithSchema42Database = (
+const itWithSchema44Database = (
   name: string,
-  body: Parameters<typeof withSchema42TestDatabase>[1],
-) => it(name, () => withSchema42TestDatabase(schema42Factory, body), 120_000);
+  body: Parameters<typeof withSchema44TestDatabase>[1],
+) => it(name, () => withSchema44TestDatabase(schema44Factory, body), 120_000);
 
 describe("pending P12 view read authentication boundary", () => {
-  itWithSchema42Database(
+  itWithSchema44Database(
     "denies remote unauthenticated/foreign reads without hiding local authorized paths",
     async (database) => {
       let projectionReads = 0;
@@ -876,7 +876,7 @@ describe("pending P12 view read authentication boundary", () => {
     },
   );
 
-  itWithSchema42Database(
+  itWithSchema44Database(
     "uses explicit local-single-user configuration, not Composition's fallback object, for wildcard reads",
     async (database) => {
       const directory = mkdtempSync(

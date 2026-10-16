@@ -30,9 +30,9 @@ import {
 } from "../packages/ports/src/index.js";
 import { deriveProjectAttention } from "../packages/projection-runtime/src/attention-loader.js";
 import {
-  createSchema42TestDatabaseFactory,
-  type Schema42TestDatabase,
-} from "./support/schema42-database.js";
+  createSchema44TestDatabaseFactory,
+  type Schema44TestDatabase,
+} from "./support/schema44-database.js";
 
 const projectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789b1";
 const workspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789b1";
@@ -47,14 +47,14 @@ const incarnationId = "incarnation:p40-p9-p10";
 const consumerId = "p10:attention:p40-test";
 const now = "2026-10-12T00:00:01.000Z";
 const failureCode = "Missing" as const;
-const databases: Schema42TestDatabase[] = [];
-let schema42Factory:
-  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+const databases: Schema44TestDatabase[] = [];
+let schema44Factory:
+  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
   | undefined;
 
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
-    prefix: ".p40-p9-p10-production-recovery-schema42-",
+  schema44Factory = await createSchema44TestDatabaseFactory({
+    prefix: ".p40-p9-p10-production-recovery-schema44-",
   });
 }, 300_000);
 
@@ -102,7 +102,7 @@ afterEach(() => {
   }
 }, 120_000);
 
-afterAll(() => schema42Factory?.cleanup(), 120_000);
+afterAll(() => schema44Factory?.cleanup(), 120_000);
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -203,9 +203,9 @@ const withTxFault = (
 
 describe("P40 P9/P10 durable replay-failure recovery", () => {
   it("keeps P9 fact/event atomic and projects exactly one P10 row through restart and rebuild", async () => {
-    if (schema42Factory === undefined)
+    if (schema44Factory === undefined)
       throw new Error("Schema 42 factory is missing");
-    const database = schema42Factory.create();
+    const database = schema44Factory.create();
     databases.push(database);
     const { app } = makeFixture(database.databaseFilename);
     await Effect.runPromise(

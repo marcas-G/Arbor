@@ -9,7 +9,7 @@ import {
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
 } from "../../../tests/support/p39-windows-deployment-test.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { createSchema44TestDatabase } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   PersistenceHealthProbeSqliteLive,
@@ -90,8 +90,8 @@ const readReadiness = (filename: string) => {
   );
 };
 
-describe("schema 42 runtime startup boundary", () => {
-  it.each([38, 39, 40, 41])(
+describe("schema 44 runtime startup boundary", () => {
+  it.each([38, 39, 40, 41, 42, 43])(
     "refuses schema %i during composition before exposing runtime services",
     async (version) => {
       const filename = databaseFile();
@@ -114,14 +114,14 @@ describe("schema 42 runtime startup boundary", () => {
       }
 
       expect(JSON.stringify(failure)).toContain(
-        `database user_version ${version} requires an offline upgrade to schema 42`,
+        `database user_version ${version} requires an offline upgrade to schema 44`,
       );
       expect(await readVersion(filename)).toBe(version);
     },
     60_000,
   );
 
-  it.each([38, 39, 40, 41])(
+  it.each([38, 39, 40, 41, 42, 43])(
     "refuses schema %i on the direct --once path before migration or Web bind",
     async (version) => {
       const filename = databaseFile();
@@ -151,7 +151,7 @@ describe("schema 42 runtime startup boundary", () => {
       }
 
       expect(JSON.stringify(failure)).toContain(
-        `database user_version ${version} requires an offline upgrade to schema 42`,
+        `database user_version ${version} requires an offline upgrade to schema 44`,
       );
       expect(webListening).toBe(false);
       expect(await readVersion(filename)).toBe(version);
@@ -159,9 +159,9 @@ describe("schema 42 runtime startup boundary", () => {
     60_000,
   );
 
-  it("admits exactly schema 42 and makes the production migration hook a no-op", async () => {
+  it("admits exactly schema 44 and makes the production migration hook a no-op", async () => {
     const filename = databaseFile();
-    await seedVersion(filename, 42);
+    await seedVersion(filename, 44);
 
     const result = await Effect.runPromise(
       Effect.scoped(
@@ -178,12 +178,12 @@ describe("schema 42 runtime startup boundary", () => {
     );
 
     expect(result).toBe(0);
-    expect(await readVersion(filename)).toBe(42);
+    expect(await readVersion(filename)).toBe(44);
   });
 
-  it("completes a real --once daemon startup and Web bind from the schema-42 fixture", async () => {
-    const fixture = await createSchema42TestDatabase({
-      prefix: ".schema-42-runtime-once-",
+  it("completes a real --once daemon startup and Web bind from the schema-44 fixture", async () => {
+    const fixture = await createSchema44TestDatabase({
+      prefix: ".schema-44-runtime-once-",
     });
     const startupDiagnosticProbe = (_phase: string) => {
       throw new Error("test-only startup observer failure");
@@ -211,7 +211,7 @@ describe("schema 42 runtime startup boundary", () => {
         ),
       );
       expect(listeningPort).toBeGreaterThan(0);
-      expect(await readVersion(fixture.databaseFilename)).toBe(42);
+      expect(await readVersion(fixture.databaseFilename)).toBe(44);
     } finally {
       fixture.cleanup();
     }
@@ -219,7 +219,7 @@ describe("schema 42 runtime startup boundary", () => {
 
   it("rejects schemas newer than the explicit runtime target", async () => {
     const filename = databaseFile();
-    await seedVersion(filename, 43);
+    await seedVersion(filename, 45);
 
     let failure: unknown;
     try {
@@ -238,12 +238,12 @@ describe("schema 42 runtime startup boundary", () => {
     }
 
     expect(JSON.stringify(failure)).toContain(
-      "database user_version 43 is newer than latest migration 42",
+      "database user_version 45 is newer than latest migration 44",
     );
-    expect(await readVersion(filename)).toBe(43);
+    expect(await readVersion(filename)).toBe(45);
   });
 
-  it("marks readiness only when user_version exactly matches schema 42", async () => {
+  it("marks readiness only when user_version exactly matches schema 44", async () => {
     const filename = databaseFile();
     await seedVersion(filename, 41);
     expect(await readReadiness(filename)).toEqual({
@@ -252,7 +252,7 @@ describe("schema 42 runtime startup boundary", () => {
       t1RecoveryComplete: false,
     });
 
-    await seedVersion(filename, 42);
+    await seedVersion(filename, 44);
     expect(await readReadiness(filename)).toEqual({
       dbOpen: true,
       migrationBaseline: true,
@@ -260,15 +260,17 @@ describe("schema 42 runtime startup boundary", () => {
     });
   });
 
-  it("keeps P39 maintenance outside the ordinary 40–42 schema suffix", () => {
-    expect(PersistenceSqlite.CURRENT_SCHEMA_VERSION).toBe(42);
-    expect(PersistenceSqlite.CURRENT_MIGRATION_BASELINE).toBe(42);
+  it("keeps P39 maintenance outside the ordinary 40–44 schema suffix", () => {
+    expect(PersistenceSqlite.CURRENT_SCHEMA_VERSION).toBe(44);
+    expect(PersistenceSqlite.CURRENT_MIGRATION_BASELINE).toBe(44);
     expect(PersistenceSqlite.P38_MIGRATIONS.at(-1)?.id).toBe(38);
     expect(PersistenceSqlite.CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual([
       ...PersistenceSqlite.P38_MIGRATIONS.map(({ id }) => id),
       40,
       41,
       42,
+      43,
+      44,
     ]);
     expect(
       PersistenceSqlite.CURRENT_MIGRATIONS.some(({ id }) => id === 39),
@@ -288,5 +290,13 @@ describe("schema 42 runtime startup boundary", () => {
       PersistenceSqlite.CURRENT_MIGRATIONS.find(({ id }) => id === 42)
         ?.requiresUserVersion,
     ).toBe(41);
+    expect(
+      PersistenceSqlite.CURRENT_MIGRATIONS.find(({ id }) => id === 43)
+        ?.requiresUserVersion,
+    ).toBe(42);
+    expect(
+      PersistenceSqlite.CURRENT_MIGRATIONS.find(({ id }) => id === 44)
+        ?.requiresUserVersion,
+    ).toBe(43);
   });
 });

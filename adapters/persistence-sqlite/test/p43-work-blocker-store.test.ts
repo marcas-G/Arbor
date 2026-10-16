@@ -178,11 +178,11 @@ const applyP43AndSeed = Effect.gen(function* () {
   yield* seed;
 });
 
-describe("unregistered P43 WorkBlocker and Inbox sequence adapters", () => {
-  it("keeps the descriptor out of the production migration prefix", () => {
-    expect(CURRENT_MIGRATIONS.some((migration) => migration.id === 43)).toBe(
-      false,
-    );
+describe("P43 WorkBlocker and Inbox sequence adapters", () => {
+  it("registers P43 and P44 after the accepted 42 prefix", () => {
+    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-5)).toEqual([
+      40, 41, 42, 43, 44,
+    ]);
   });
 
   it("keeps legacy Inbox admission functional before P43", async () => {

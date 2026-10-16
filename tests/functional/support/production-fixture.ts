@@ -12,10 +12,10 @@ import {
   waitForDaemonListening as waitForNonceBoundPort,
 } from "./daemon-process-lifecycle.js";
 import {
-  cloneFunctionalSchema42Database,
+  cloneFunctionalSchema44Database,
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
-} from "./schema42-bootstrap.js";
+} from "./schema44-bootstrap.js";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
 const NONCE_DAEMON_ENTRY = resolve(
@@ -436,7 +436,7 @@ export const startProductionFixture = async (input: {
     workspaceDirectory = join(directory, "workspace");
     mkdirSync(workspaceDirectory, { recursive: true });
     writeFileSync(join(workspaceDirectory, "proof.txt"), "FUNCTIONAL_VERIFIED");
-    const clones = cloneFunctionalSchema42Database(directory);
+    const clones = cloneFunctionalSchema44Database(directory);
     databaseFile = clones.databaseFile;
     await input.setupProbe?.({ stage: "after-clone", directory });
     provider = await startProvider(

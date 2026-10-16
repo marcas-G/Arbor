@@ -28,16 +28,16 @@ import {
   type SecretRef,
 } from "../../../packages/ports/dist/provider.js";
 import {
-  createSchema42TestDatabaseFactory,
-  type Schema42TestDatabase,
-  type Schema42TestDatabaseFactory,
-} from "../../support/schema42-database.js";
+  createSchema44TestDatabaseFactory,
+  type Schema44TestDatabase,
+  type Schema44TestDatabaseFactory,
+} from "../../support/schema44-database.js";
 
-const publicConversationDatabases = new Map<string, Schema42TestDatabase>();
-let publicConversationFactory: Schema42TestDatabaseFactory;
+const publicConversationDatabases = new Map<string, Schema44TestDatabase>();
+let publicConversationFactory: Schema44TestDatabaseFactory;
 
 beforeAll(async () => {
-  publicConversationFactory = await createSchema42TestDatabaseFactory({
+  publicConversationFactory = await createSchema44TestDatabaseFactory({
     prefix: "public-conversation-template-",
   });
 }, 120_000);

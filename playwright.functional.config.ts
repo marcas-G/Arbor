@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
-  globalSetup: "./tests/functional/support/schema42-playwright-global-setup.ts",
+  globalSetup: "./tests/functional/support/schema44-playwright-global-setup.ts",
   testDir: "./tests/functional/ui",
   fullyParallel: false,
   workers: 1,

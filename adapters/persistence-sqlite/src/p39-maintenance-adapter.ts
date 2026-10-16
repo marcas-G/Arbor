@@ -118,12 +118,12 @@ export const runP39SqliteMaintenanceWithPermit = (
         | "writer-lock-acquisition"
         | "manifest-validation"
         | "p39-reservation-and-gate"
-        | "p40-p42-continuation"
-        | "version42-closed-readonly-no-op",
+        | "p40-p44-continuation"
+        | "version44-closed-readonly-no-op",
     ) => void;
     readonly p39AlreadyCommitted?: boolean;
     readonly reportMustAlreadyExist?: boolean;
-    /** After a version-42 primary client has been closed, perform an explicit
+    /** After a version-44 primary client has been closed, perform an explicit
      * read-only no-op verification while MaintenanceExclusive is still held. */
     readonly afterPrimaryClosedNoOp?: (
       permit: P39DatabaseWriterPermit,
@@ -258,7 +258,7 @@ export const runP39SqliteMaintenanceWithPermit = (
         );
       const operation = yield* Effect.exit(
         Effect.gen(function* () {
-          const verifyVersion42AfterClose = yield* Effect.scoped(
+          const verifyVersion44AfterClose = yield* Effect.scoped(
             Effect.provide(
               Effect.gen(function* () {
                 const primary = yield* P39PrimarySqlClient;
@@ -347,7 +347,7 @@ export const runP39SqliteMaintenanceWithPermit = (
                     "PRAGMA user_version",
                   );
                   userVersion = Number(version[0]?.user_version);
-                  if (userVersion < 39 || userVersion > 42) {
+                  if (userVersion < 39 || userVersion > 44) {
                     return yield* Effect.fail(
                       failure("P39_MIGRATION_PREFIX_INVALID"),
                     );
@@ -380,18 +380,18 @@ export const runP39SqliteMaintenanceWithPermit = (
                 }
                 if (
                   p39AlreadyCommitted &&
-                  userVersion === 42 &&
+                  userVersion === 44 &&
                   settings.afterPrimaryClosedNoOp !== undefined
                 ) {
                   return true;
                 }
-                settings.onPhase?.("p40-p42-continuation");
+                settings.onPhase?.("p40-p44-continuation");
                 yield* continuation(primary, permit);
                 const completedVersion = yield* primary.unsafe<UserVersionRow>(
                   "PRAGMA user_version",
                 );
                 if (
-                  Number(completedVersion[0]?.user_version) === 42 &&
+                  Number(completedVersion[0]?.user_version) === 44 &&
                   settings.afterPrimaryClosedNoOp !== undefined
                 ) {
                   return true;
@@ -401,8 +401,8 @@ export const runP39SqliteMaintenanceWithPermit = (
               primaryService,
             ),
           );
-          if (verifyVersion42AfterClose) {
-            settings.onPhase?.("version42-closed-readonly-no-op");
+          if (verifyVersion44AfterClose) {
+            settings.onPhase?.("version44-closed-readonly-no-op");
             if (settings.afterPrimaryClosedNoOp === undefined) {
               return yield* Effect.fail(
                 failure("P39_MIGRATION_PREFIX_INVALID"),

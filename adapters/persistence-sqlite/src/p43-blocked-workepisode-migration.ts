@@ -1,10 +1,9 @@
 /**
  * Accepted Blocked WorkEpisode storage extension.
  *
- * This descriptor intentionally is not included in P38_MIGRATIONS or
- * CURRENT_MIGRATIONS. Governance reserves 0043 as the first free slot after
- * accepted P39, P40, P41, and F21/0042. Registration and execution require
- * the corresponding implementation-prefix authorization.
+ * The raw descriptor keeps its migrationVersion form for P43-owned modules.
+ * The current ordered registry adapts it to MigrationFile after P43/P44
+ * activation authorization.
  */
 export const P43_BLOCKED_WORKEPISODE_MIGRATION = {
   migrationVersion: 43,

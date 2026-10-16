@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     globalSetup: [
       "./tests/support/p39-windows-global-setup.ts",
-      "./tests/functional/support/schema42-global-setup.ts",
+      "./tests/functional/support/schema44-global-setup.ts",
     ],
     setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
     include: [

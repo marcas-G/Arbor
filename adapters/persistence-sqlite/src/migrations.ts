@@ -2,6 +2,7 @@ import type { MigrationFile } from "./migrate.js";
 import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "./p38-executable-approval-migration.js";
 import { P39_RECONCILIATION_DDL } from "./p39-reconciliation-ddl.js";
 import { P42_PROJECT_RESOURCE_SOURCE_MIGRATION } from "./p42-project-resource-source-migration.js";
+import { P43_BLOCKED_WORKEPISODE_MIGRATION } from "./p43-blocked-workepisode-migration.js";
 
 const DDL = `
 CREATE TABLE projects (
@@ -2546,7 +2547,7 @@ const p40InvocationObservationGuardsForP44 = (() => {
 
 /** P4 approval rejection is a frozen terminal no-effect Denied outcome. This
  * one-way repair preserves the P40 trigger predicates and adds only its reason
- * code; the descriptor remains unregistered pending activation governance. */
+ * code. */
 export const P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION = {
   id: 44,
   name: "approval_rejected_no_effect_denial",
@@ -2559,15 +2560,24 @@ ${p40InvocationObservationGuardsForP44}
 } satisfies MigrationFile & { readonly requiresUserVersion: 43 };
 
 /**
- * Schema 42 is the current runtime target. P39 remains an exact privileged
+ * Schema 44 is the current runtime target. P39 remains an exact privileged
  * maintenance-only step and is deliberately absent from this registry; the
  * trusted offline coordinator applies it before this ordinary suffix.
  */
-export const CURRENT_SCHEMA_VERSION = 42 as const;
+export const P43_MIGRATION = {
+  id: P43_BLOCKED_WORKEPISODE_MIGRATION.migrationVersion,
+  name: "blocked_workepisode_and_inbox_workspace_sequence",
+  requiresUserVersion: 42,
+  sql: P43_BLOCKED_WORKEPISODE_MIGRATION.sql,
+} satisfies MigrationFile & { readonly requiresUserVersion: 42 };
+
+export const CURRENT_SCHEMA_VERSION = 44 as const;
 export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   ...P38_MIGRATIONS,
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
   P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
+  P43_MIGRATION,
+  P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION,
 ]);
 export const CURRENT_MIGRATION_BASELINE = CURRENT_SCHEMA_VERSION;

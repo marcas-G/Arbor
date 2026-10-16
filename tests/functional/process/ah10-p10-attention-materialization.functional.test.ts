@@ -55,11 +55,11 @@ import { subtreeAttentionAggregate } from "../../../packages/projection-runtime/
 import type { AttentionReadDeps } from "../../../packages/projection-runtime/src/attention-loader.js";
 import { deriveProjectAttention } from "../../../packages/projection-runtime/src/attention-loader.js";
 import { projectionReadError } from "../../../packages/projection-runtime/src/errors.js";
-import { upgradeSchema42TestDatabase } from "../../support/schema42-database.js";
+import { upgradeSchema44TestDatabase } from "../../support/schema44-database.js";
 import {
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
-} from "../support/schema42-bootstrap.js";
+} from "../support/schema44-bootstrap.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ac");
 const parentWorkspaceId = parse(WorkspaceId)(
@@ -792,7 +792,7 @@ describe("AH10/P10 Attention materialization", () => {
       const result = await Effect.runPromise(
         Effect.provide(program, makeApp(databaseFile)),
       );
-      await upgradeSchema42TestDatabase({
+      await upgradeSchema44TestDatabase({
         databaseFilename: databaseFile,
         p39ReportFilename: join(directory, "p39-report.sqlite"),
       });
@@ -952,7 +952,7 @@ describe("AH10/P10 Attention materialization", () => {
       expect(result.rowsAfterRebuild).toEqual([]);
       expect(result.deliverRowsAfterRebuild).toEqual([]);
 
-      await upgradeSchema42TestDatabase({
+      await upgradeSchema44TestDatabase({
         databaseFilename: databaseFile,
         p39ReportFilename: join(directory, "p39-report.sqlite"),
       });
@@ -1081,7 +1081,7 @@ describe("AH10/P10 Attention materialization", () => {
       const facts = await Effect.runPromise(
         Effect.scoped(Effect.provide(seed, makeApp(databaseFile))),
       );
-      await upgradeSchema42TestDatabase({
+      await upgradeSchema44TestDatabase({
         databaseFilename: databaseFile,
         p39ReportFilename: join(directory, "p39-report.sqlite"),
       });
