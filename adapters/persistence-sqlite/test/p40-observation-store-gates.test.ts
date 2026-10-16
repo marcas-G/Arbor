@@ -612,42 +612,42 @@ describe("P40 P4 persistent observation admission gates", () => {
     },
   );
 
-  it("returns a committed P4 Denied row as ExistingDenied to a later Stop candidate", async () => {
-    const database = await createSchema42TestDatabase();
-    databases.push(database);
-    const app = makeApp(database.databaseFilename);
-    const program = Effect.gen(function* () {
-      yield* seedWorkspaceExecution;
-      const tx = yield* TransactionPort;
-      const invocations = yield* ToolInvocationStore;
-      const evidenceStore = yield* ToolObservationEvidenceStore;
-      yield* tx.transact(
-        invocations.recordNoEffectDenial(
-          intent,
-          "InvocationAuthorityDenied",
-          now,
-          fence,
-          now,
-        ),
-      );
-      return yield* tx.transact(
-        evidenceStore.settleOrReadWinner({
-          invocation: intent,
-          settlement: { _tag: "Interrupted" },
-          resultRef: null,
-          observation: { _tag: "Interrupted" },
-          settledAt: now,
-          executionFence: fence,
-          fenceNow: now,
-        }),
-      );
-    });
-    const result = await Effect.runPromise(Effect.provide(program, app));
-    expect(result).toEqual({
-      _tag: "ExistingDenied",
-      reasonCode: "InvocationAuthorityDenied",
-    });
-  }, 120_000);
+  it.each(["InvocationAuthorityDenied", "ApprovalRejected"] as const)(
+    "returns a committed P4 $0 row as ExistingDenied to a later Stop candidate",
+    async (reasonCode) => {
+      const database = await createSchema42TestDatabase({
+        targetSchemaVersion: 44,
+      });
+      databases.push(database);
+      const app = makeApp(database.databaseFilename);
+      const program = Effect.gen(function* () {
+        yield* seedWorkspaceExecution;
+        const tx = yield* TransactionPort;
+        const invocations = yield* ToolInvocationStore;
+        const evidenceStore = yield* ToolObservationEvidenceStore;
+        yield* tx.transact(
+          invocations.recordNoEffectDenial(intent, reasonCode, now, fence, now),
+        );
+        return yield* tx.transact(
+          evidenceStore.settleOrReadWinner({
+            invocation: intent,
+            settlement: { _tag: "Interrupted" },
+            resultRef: null,
+            observation: { _tag: "Interrupted" },
+            settledAt: now,
+            executionFence: fence,
+            fenceNow: now,
+          }),
+        );
+      });
+      const result = await Effect.runPromise(Effect.provide(program, app));
+      expect(result).toEqual({
+        _tag: "ExistingDenied",
+        reasonCode,
+      });
+    },
+    120_000,
+  );
 
   it("returns only the committed winner to a fenced loser and rejects that same fence after takeover", async () => {
     const database = await createSchema42TestDatabase();

@@ -133,6 +133,8 @@ interface PipelineTrace {
   p39BindingCalls?: number;
   p39SelectedReads?: number;
   readonly existingInvocationAfterStop?: ToolInvocationRecord;
+  legacyInterruptedInvocation?: ToolInvocationRecord;
+  legacyNoEffectInterruptionWrites?: number;
   readonly p40WinnerEvidence?: ToolObservationEvidence;
   readonly stopAtEffectAdmission?: boolean;
 }
@@ -275,7 +277,22 @@ const app = (
             resultRef: null,
           };
         }),
-      recordNoEffectInterruption: () => Effect.succeed(false),
+      recordNoEffectInterruption: (
+        _id: typeof invocationId,
+        settledAt: string,
+      ) => {
+        if (trace?.existingInvocationAfterStop !== undefined) {
+          trace.legacyNoEffectInterruptionWrites =
+            (trace.legacyNoEffectInterruptionWrites ?? 0) + 1;
+          trace.legacyInterruptedInvocation = {
+            ...trace.existingInvocationAfterStop,
+            settledAt,
+            settlement: { _tag: "Interrupted" },
+          };
+          return Effect.succeed(true);
+        }
+        return Effect.succeed(false);
+      },
       admitEffect: () => {
         if (trace !== undefined) {
           trace.effectAdmissions += 1;
@@ -321,9 +338,11 @@ const app = (
           calls += 1;
           if (trace?.existingInvocationAfterStop !== undefined) {
             return Effect.succeed(
-              calls === 1
-                ? Option.none()
-                : Option.some(trace.existingInvocationAfterStop),
+              trace.legacyInterruptedInvocation !== undefined
+                ? Option.some(trace.legacyInterruptedInvocation)
+                : calls === 1
+                  ? Option.none()
+                  : Option.some(trace.existingInvocationAfterStop),
             );
           }
           if (p39DeniedReplay !== undefined) {
@@ -807,6 +826,55 @@ describe("P4 tool runtime pipeline", () => {
       reasonCode: "InvocationAuthorityDenied",
     });
     expect(trace.effectAdmissions).toBe(1);
+  });
+
+  it("uses the legacy no-P40 interruption writer idempotently for a Stop before effect admission", async () => {
+    const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
+    const existing: ToolInvocationRecord = {
+      invocationId,
+      executionId,
+      workspaceId,
+      toolName: "read",
+      toolVersion: "2",
+      sideEffectSemantics: "ReadOnly",
+      argumentsJson,
+      resolvedRegions: [
+        {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { _tag: "GitWorktree", path: "/repo/a" },
+        },
+      ],
+      approvalId: null,
+      effectAdmissionState: "NotAdmitted",
+      intentAt: "2026-01-01T00:00:00.000Z",
+      settledAt: null,
+      settlement: null,
+      resultRef: null,
+    };
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      existingInvocationAfterStop: existing,
+      stopAtEffectAdmission: true,
+    };
+    const layer = app(false, okExecutor, {}, trace);
+    const first = await run(layer, argumentsJson);
+    const replay = await run(layer, argumentsJson);
+
+    expect(first).toEqual({ _tag: "Interrupted" });
+    expect(replay).toEqual({ _tag: "Interrupted" });
+    expect(trace.legacyNoEffectInterruptionWrites).toBe(1);
+    expect(trace.legacyInterruptedInvocation).toMatchObject({
+      effectAdmissionState: "NotAdmitted",
+      settlement: { _tag: "Interrupted" },
+    });
+    expect(trace.intentWrites).toBe(1);
+    expect(trace.effectAdmissions).toBe(1);
+    expect(trace.approvalConsumes).toBe(0);
   });
 
   it("fails closed when P39 does not return authenticated selected evidence for RNO", async () => {

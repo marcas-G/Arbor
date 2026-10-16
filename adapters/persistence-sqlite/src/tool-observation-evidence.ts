@@ -118,6 +118,7 @@ const noEffectDenialReasonFromRow = (
     const codes: ReadonlyArray<string> = [
       "InvocationAuthorityDenied",
       "ApprovalRequired",
+      "ApprovalRejected",
       "ApprovalNotFound",
       "ApprovalMismatch",
       "ApprovalExpired",
