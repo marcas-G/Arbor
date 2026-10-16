@@ -163,12 +163,23 @@ Execution ID prove the same CommandId, project, actor, source, and successor
 identities. If a physical verifier Execution/binding has been admitted, it
 must agree. Missing/pruned/duplicate/malformed/conflicting evidence is never
 guessed from receipt JSON, Session text, or pruned Events. The migration
-preserves the old receipt, records
-`UnboundLegacy`, and admits the human-only P6 Governance Inbox item described
-in P6 `02`; an UnboundLegacy external replay is a generic Resolver denial.
-The item-specific P6 key, recipient, query/consumption and rebuild mechanics
-remain owner-gated and require separate P6 acceptance before migration
-implementation/registration.
+preserves the old receipt, records `UnboundLegacy`, and admits the human-only
+P6 Governance Inbox item described in P6 `02`; an UnboundLegacy external replay
+is a generic Resolver denial.
+
+#### Accepted P6 current-route mechanics (DID v1.47)
+
+The accepted P6 item uses the existing `Governance` kind and stable
+`retry-verification-unbound:<commandId>` key, with typed
+`RetryVerificationUnboundLegacy` content derived from the immutable
+disposition. Its recipient is recomputed from current canonical Work/Workspace
+governance facts and current P8 human authorization; the Inbox row is not
+authority. Root Work follows current Root-local human governance, and child
+Work follows its current exact direct Parent Workspace human route. The item is
+human-only, queryable only under that current route, and read-only/no-consume;
+it is not promoted to Agent Session or P10 Attention. Route moves and failure
+to move atomically follow P6 `02` / P1 `03`; these mechanics do not relax this
+P8 section's current-authorization-before-Gateway rule.
 This migration disposition is not a P10 Attention source and does not add a
 new command or automatic retry loop.
 

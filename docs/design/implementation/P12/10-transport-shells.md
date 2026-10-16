@@ -79,6 +79,14 @@ first execution; replay-only authority never reaches that handler. Gateway
 remains the sole receipt lookup and compares the complete tuple in its
 transaction. The action is unavailable to Agent/model, RecoveryController,
 scheduler, or Attention-consumer paths.
+
+The P6 `UnboundLegacy` Governance Inbox entry remains on the existing
+authenticated Inbox-view surface; no route or authentication exception is
+added. Its displayed Workspace is a current route projection, not authority.
+Before returning the entry, the existing view authorization must allow the
+current Root-local or exact direct-Parent human for the canonical Work route;
+P6/P12 must not authorize from a stale `inbox_entries.workspace_id` alone.
+Reads do not consume the entry or access/decode a Command receipt.
 - For sensitive read surfaces, transport authentication and the existing
   supported local-principal check (`user:local`) MUST complete before any
   projection, directory, progress-stream source, or invalidation broadcast is

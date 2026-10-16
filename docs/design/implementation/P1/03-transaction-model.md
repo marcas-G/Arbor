@@ -156,6 +156,21 @@ COMMIT
 No Domain Event. `terminal_error_json` carries a `CommandRejection`
 (DID §6A.15).
 
+For the accepted P6 UnboundLegacy Governance Inbox route, if an owner/Parent
+change cannot move the stable Inbox key in the same command transaction, that
+command uses this ordinary terminal-rejection path with the existing
+`AuthorityDenied` (or narrowest existing typed rejection). The transaction
+commits the normal `TerminalRejected` receipt and resolving attempt, while
+committing no canonical Work/Workspace/owner mutation, Domain Event, Inbox
+route mutation or UnboundLegacy disposition mutation. The same CommandId and
+tuple replays this receipt; a different CommandId independently reaches the
+rejection. A crash before COMMIT leaves neither the rejection receipt/attempt
+nor canonical changes; a crash after COMMIT preserves the receipt/attempt and
+still leaves canonical/Inbox/disposition state unchanged. This path enters
+through Gateway and performs no pre-Gateway receipt read/rejection. If the
+Inbox move can be done, it shares this P1 command transaction with the
+canonical owner/Parent change.
+
 ### 3.3 Retryable operational failure (no authoritative resolution)
 
 ```text

@@ -7,7 +7,7 @@
 > fulfillment must be represented separately. See
 > `docs/design/implementation/MAC/**`.
 
-**Authority:** DID v1.9 §11 P6, G3 (v1.9), G5 (v1.7); SD v1.3 §7.2–§7.5, §8.1–§8.3, §13.5, §14; Scenarios v1.2 S1.4, S2; P1 `01`/`02`, P2 `01`/`05`, P3 `03`, P4 `02`, P5 `03`.
+**Authority:** DID v1.9 §11 P6, G3 (v1.9), G5 (v1.7), and v1.47 P8 UnboundLegacy route amendment; SD v1.3 §7.2–§7.5, §8.1–§8.3, §13.5, §14; Scenarios v1.2 S1.4, S2; P1 `01`/`02`/`03`/`04`, P2 `01`/`05`, P3 `03`, P4 `02`, P5 `03`.
 **Status:** FROZEN — manual governance adoption (D1–D4 confirmed with binding constraints); four-way review Blocking=0.
 
 ## Documents
@@ -33,6 +33,17 @@ Human Steer
 
 - P6 实现 `ProposeChildWorkspace` 与 specialist spawn（P5 中为 `DirectiveUnsupported`，DID v1.9 G3）。采纳后 P5 `03` §2 表中仅 `DeclareDependency` 保持 `DirectiveUnsupported`（P7）。
 - P6 建立在 P1 `CreateChildWorkspace` 与 P2 generic `ExecutionBound` admission 之上（DID v1.7 G5）。
+
+## P8 `UnboundLegacy` Governance Inbox owner amendment (DID v1.47)
+
+P6 `02` owns the human-only `RetryVerificationUnboundLegacy` Governance
+Inbox subtype, stable CommandId key, dynamic current human recipient, query
+authorization, read-only/no-consume behavior, rebuild and same-key route-move
+semantics. P6 reuses the existing `Governance` kind; this amendment adds no
+Inbox kind, Agent consumer, P10 Attention source or automatic wake. The P1
+physical transaction and row representation are in P1 `01`/`03`/`04`; the
+P8 current-human authorization rule remains owned by P8 `01` and P12 `02`/`10`.
+P7/P14 require no enum extension.
 
 ## DID / SD governance inputs mapping
 
