@@ -278,3 +278,20 @@ Focused receipt cases: **3/3 PASS**. Complete P4 pipeline:
 `pnpm typecheck`, changed-file Biome and `git diff --check` pass. This is a
 unit/code checkpoint only; no real-process receipt or P40/P3 crash matrix was
 run for this correction. AH7 remains PARTIAL.
+
+### B2 receipt-candidate narrowing — unit checkpoint, process qualification pending
+
+The region-drift receipt-first fast path is now limited to an exact terminal
+P39 candidate: settled Reconcilable `MayHaveStarted`, both intent approval ID
+and context Executable approval ID (when present) matching the recorded row,
+trusted profile/P39 evidence services present, and an authenticated selected
+fact. Other settled receipts follow the existing current-region strict path.
+The P40 evidence read, current-fence assertion, and P39 selected-fact read now
+share one transaction. RNO fact identity is matched to the P40 observation ref;
+Occurred Success matches the selected fact ID, result artifact, source call
+identity and trusted profile/attempt tuple.
+
+Focused B2 cases: **11/11 PASS**. Complete P4 pipeline:
+`packages/tool-runtime/test/p4-pipeline.test.ts` **55/55 PASS**.
+`pnpm typecheck`, changed-file Biome, and `git diff --check` pass. No real
+process was run for this correction; B2 remains a code/unit checkpoint only.
