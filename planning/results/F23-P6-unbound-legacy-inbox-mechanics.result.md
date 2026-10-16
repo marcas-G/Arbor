@@ -22,24 +22,27 @@ landing decision/review records.
 
 ## Recommended package and verification
 
-The B2 proposal now includes source WorkId/VerificationId in the durable
-UnboundLegacy disposition so Inbox rebuild never depends on or decodes the
-permanent receipt. It recommends a stable
-`RetryVerificationUnboundLegacy` key by CommandId, with a recipient dynamically
-derived from current canonical Work/Workspace and P8 governance facts rather
-than stored as an immutable snapshot. Route changes move the same key; the old
-recipient loses visibility as soon as current authorization changes, and the
-new recipient sees the item after same-transaction route update or durable
-required reconciliation. It also fixes timestamp/revision behavior,
-read-only/no-consume semantics, and current-route rebuild/upsert. These are
+The B2 proposal now includes source WorkId/VerificationId and existing P1
+`created_at` in the durable UnboundLegacy disposition so Inbox rebuild never
+depends on or decodes the permanent receipt. It reuses the existing
+`Governance` Inbox kind (no P6/P7/P14/P10 enum extension), with a stable
+CommandId-based key and subtype/payload distinction. Recipient is dynamic from
+current canonical Work/Workspace and P8 governance facts, not stored as an
+immutable snapshot. Same-key route moves occur only in the same P1 owner/Parent
+change transaction; if the Inbox move cannot commit atomically, the owner
+change is a typed no-write rejection. The proposal forbids durable async route
+reconciliation facts/windows. It also specifies revision/created_at/updated_at,
+read-only/no-consume semantics, and rebuild solely from disposition plus
+canonical facts, even if receipts or Events are corrupt/pruned. These are
 recommendations only; no design file records these mechanics as accepted.
 
 The proposed exact token is
 `ACCEPT_F23_P6_UNBOUND_LEGACY_GOVERNANCE_INBOX_MECHANICS`. Its acceptance
-would authorize only fixed P6/P8/P1 design-document landing and consistency
-review. Production implementation, DDL, migration registration/execution,
-tests, and online upgrade require separate authorization.
+would authorize only fixed P6/P8/P1/P12 design-document landing and
+consistency review. Production implementation, DDL, migration
+registration/execution, tests, and online upgrade require separate
+authorization.
 
 No code, test, schema, production behavior, or `docs/design/**` was changed
-for this supplemental proposal. Raw SHA-256 of the proposal is recorded after
-the text is finalized: `61372B11E729245A3C972190AD1C4FC8E3B967475FC42FC56A5B6437C7C09235`.
+for this supplemental proposal. Raw SHA-256 of the proposal:
+`357D467C05D89E4FAAAE04020C7C5C74C7AB1356E8C3753140CC1E79D03DD93E`.
