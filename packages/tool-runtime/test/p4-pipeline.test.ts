@@ -570,6 +570,7 @@ interface PipelineTrace {
   retryAttemptNumbers?: Array<number>;
   p40Candidates?: Array<ToolObservationEvidenceCandidate>;
   readonly existingInvocationAfterStop?: ToolInvocationRecord;
+  readonly profilelessLegacyInvocation?: ToolInvocationRecord;
   legacyInterruptedInvocation?: ToolInvocationRecord;
   legacyNoEffectInterruptionWrites?: number;
   readonly p40WinnerEvidence?: ToolObservationEvidence;
@@ -842,6 +843,11 @@ const app = (
                 : calls === 1
                   ? Option.none()
                   : Option.some(trace.existingInvocationAfterStop),
+            );
+          }
+          if (trace?.profilelessLegacyInvocation !== undefined) {
+            return Effect.succeed(
+              Option.some(trace.profilelessLegacyInvocation),
             );
           }
           if (p39DeniedReplay !== undefined) {
@@ -1527,6 +1533,78 @@ describe("P4 tool runtime pipeline", () => {
       }
     },
   );
+
+  it("keeps historical profile-less shell@2 MayHaveStarted recovery unknown and idempotent", async () => {
+    const argumentsJson = JSON.stringify({
+      command: "pwd",
+      cwd: { mount: "workspace", path: "." },
+    });
+    // Permitted legacy shape: exact shell@2 semantics and durable admission,
+    // with no trusted P39 profile, binding, or reconciliation fact.
+    const legacy: ToolInvocationRecord = {
+      invocationId,
+      executionId,
+      workspaceId,
+      toolName: "shell",
+      toolVersion: "2",
+      sideEffectSemantics: "Reconcilable",
+      argumentsJson,
+      resolvedRegions: [
+        {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { _tag: "GitWorktree", path: "/repo/a" },
+        },
+      ],
+      approvalId: null,
+      effectAdmissionState: "MayHaveStarted",
+      intentAt: "2026-01-01T00:00:00.000Z",
+      settledAt: null,
+      settlement: null,
+      resultRef: null,
+    };
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      profilelessLegacyInvocation: legacy,
+    };
+    let executorCalls = 0;
+    const executor: ToolExecutor = {
+      ...okExecutor,
+      name: "shell",
+      write: true,
+      execute: (input) => {
+        executorCalls += 1;
+        return okExecutor.execute(input);
+      },
+    };
+    const appLayer = app(false, executor, {}, trace);
+
+    const first = await runShell(appLayer, "pwd");
+    const restartReplay = await runShell(appLayer, "pwd");
+
+    expect(first).toEqual({
+      _tag: "OutcomeUnknown",
+      reconciliationRefs: [String(invocationId)],
+    });
+    expect(restartReplay).toEqual(first);
+    expect(executorCalls).toBe(0);
+    expect(trace.reconciliationCalls ?? 0).toBe(0);
+    expect(trace.reconciliationFactWrites ?? 0).toBe(0);
+    expect(trace.p39BindingCalls ?? 0).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(trace.intentWrites).toBe(0);
+    expect(trace.noEffectDenials).toEqual([]);
+    expect(legacy).toMatchObject({
+      effectAdmissionState: "MayHaveStarted",
+      settledAt: null,
+      settlement: null,
+      resultRef: null,
+    });
+  });
 
   it.each(["AuthoritySnapshotChanged", "ResourceSnapshotChanged"] as const)(
     "settles a denied P39 NotOccurred retry after %s without a second effect admission",
