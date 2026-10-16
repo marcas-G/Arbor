@@ -426,6 +426,37 @@ export interface P39RecoveryEvidenceStoreService {
     RepositoryFailure<"P39RecoveryEvidenceStore">,
     TransactionScope
   >;
+  /** Returns the latest exact bound attempt, including a not-yet-settled
+   * attempt that recovery must reconcile before any Executor call. */
+  readonly findLatestAttempt: (
+    invocationId: ToolInvocationId,
+  ) => Effect.Effect<
+    Option.Option<SelectedP39EffectAttempt>,
+    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    TransactionScope
+  >;
+  /** Marks the claimed attempt 0 as MayHaveStarted in the same fenced
+   * transaction as ToolInvocationStore.admitEffect. */
+  readonly admitFirstAttempt: (
+    invocationId: ToolInvocationId,
+    admittedAt: string,
+  ) => Effect.Effect<
+    void,
+    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    TransactionScope
+  >;
+  /** Creates attempt 1 only from an exact attempt-0 authoritative
+   * NotOccurred RecoveryInput fact. Caller owns current Worker/authority/
+   * resource/approval/Stop gates in the surrounding transaction. */
+  readonly admitRetryAttempt: (input: {
+    readonly invocationId: ToolInvocationId;
+    readonly factId: string;
+    readonly admittedAt: string;
+  }) => Effect.Effect<
+    void,
+    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    TransactionScope
+  >;
   /** Read-only terminal storage projection for a P4 no-effect Denied that
    * committed before any P39 binding claim. This marker is never recovery
    * evidence and carries no authority or denial reason. */

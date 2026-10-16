@@ -23,6 +23,7 @@ import {
   ProjectEnvironmentPort,
   type RecoveryBindingV1,
   ResourceAdmission,
+  reconciliationFactId,
   recoveryBindingV1Digest,
   type SandboxHandle,
   SandboxPort,
@@ -38,11 +39,18 @@ import {
   ToolObservationEvidenceStore,
   ToolObservationReplayAttentionFactStore,
   type ToolObservationReplayFailureCode,
+  ToolReconciliationFactStore,
+  ToolReconciliationPort,
+  type ToolReconciliationProfile,
+  ToolReconciliationProfileRegistry,
+  type ToolReconciliationRequest,
+  type ToolReconciliationResult,
   type ToolRuntimeError,
   ToolRuntimePort,
   TransactionPort,
   targetResourceIdentityDigestV1,
   toolDefinitionIdentityDigestV1,
+  validateToolReconciliationResult,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -90,6 +98,8 @@ export interface ToolRuntimeQualificationEvent {
     | "AH7BeforeToolSettlementTransaction"
     | "AH7BeforeToolSettlementCommit"
     | "AH7AfterToolSettlementCommit"
+    | "AH7BeforeReconciliationFactCommit"
+    | "AH7AfterReconciliationFactCommit"
     | "AH7ToolSettlementFenceRejected"
     | "AH7AfterEffectAuthorityResolvedBeforeAdmission"
     | "P38StopInvocationLookup"
@@ -110,6 +120,9 @@ export interface ToolRuntimeQualificationEvent {
   readonly priorSettlementKind?: string | null;
   readonly admissionResult?: string;
   readonly admissionDenialReason?: string;
+  readonly outcomeTag?: "NotOccurred" | "Occurred" | "StillUnknown";
+  readonly attemptNo?: 0 | 1;
+  readonly factId?: string;
 }
 
 export type ToolRuntimeQualificationProbe = (
@@ -359,6 +372,8 @@ const makeRecoveryBindingV1 = (input: {
   readonly resourceBoundaryRevision: number;
   readonly environmentRevision: string;
   readonly approval: RecoveryApprovalSnapshot | null;
+  readonly profile?: ToolReconciliationProfile;
+  readonly effectKey?: string | null;
 }): RecoveryBindingV1 => {
   const identity = input.context.recoveryBindingIdentity;
   const policyRevisions = input.context.recoveryBindingPolicyRevisions;
@@ -422,11 +437,11 @@ const makeRecoveryBindingV1 = (input: {
         : approvalTargetDigestV1(approval.targetResourceSpaceIds),
     approvalActionDigest: approval?.actionDigest ?? null,
     approvalConsumedBy: approval?.consumedBy ?? null,
-    profileId: null,
-    profileVersion: null,
-    profileHash: null,
-    profileProtocol: null,
-    effectKey: null,
+    profileId: input.profile?.profileId ?? null,
+    profileVersion: input.profile?.profileVersion ?? null,
+    profileHash: input.profile?.profileHash ?? null,
+    profileProtocol: input.profile?.profileProtocol ?? null,
+    effectKey: input.effectKey ?? null,
   };
 };
 
@@ -587,7 +602,15 @@ export const ToolRuntimeLive = (
       const p39RecoveryEvidence = yield* Effect.serviceOption(
         P39RecoveryEvidenceStore,
       );
-
+      const reconciliationProfiles = yield* Effect.serviceOption(
+        ToolReconciliationProfileRegistry,
+      );
+      const reconciliationPort = yield* Effect.serviceOption(
+        ToolReconciliationPort,
+      );
+      const reconciliationFacts = yield* Effect.serviceOption(
+        ToolReconciliationFactStore,
+      );
       const operationalFailure =
         (
           stage: import("@arbor/ports").ToolRuntimeOperationalStage,
@@ -853,6 +876,32 @@ export const ToolRuntimeLive = (
         staleRefreshCount = 0,
       ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
         Effect.gen(function* () {
+          const probeReconciliation = (
+            boundary:
+              | "AH7BeforeReconciliationFactCommit"
+              | "AH7AfterReconciliationFactCommit",
+            input: {
+              readonly attemptNo: 0 | 1;
+              readonly outcomeTag: "NotOccurred" | "Occurred" | "StillUnknown";
+              readonly factId?: string;
+            },
+          ) =>
+            options.qualificationProbe === undefined
+              ? Effect.void
+              : Effect.promise(
+                  () =>
+                    options.qualificationProbe?.({
+                      boundary,
+                      executionId: context.executionId,
+                      invocationId: intent.invocationId,
+                      callRef: intent.callRef,
+                      attemptNo: input.attemptNo,
+                      outcomeTag: input.outcomeTag,
+                      ...(input.factId === undefined
+                        ? {}
+                        : { factId: input.factId }),
+                    }) ?? Promise.resolve(),
+                );
           const completeFence = hasCompleteExecutionFence(
             context.executionFence,
           );
@@ -879,6 +928,37 @@ export const ToolRuntimeLive = (
             return denied("InvocationAuthorityDenied");
           }
           const definition = definitionOption.value;
+          const trustedProfile =
+            definition.sideEffectSemantics === "Reconcilable" &&
+            Option.isSome(reconciliationProfiles)
+              ? reconciliationProfiles.value.resolve({
+                  toolName: definition.name,
+                  toolVersion: definition.version,
+                  toolDefinitionHash: definition.hash,
+                })
+              : undefined;
+          let trustedEffectKey: string | null = null;
+          if (trustedProfile !== undefined) {
+            try {
+              trustedEffectKey = trustedProfile.effectKey({
+                invocationId: intent.invocationId,
+                argumentsJson: intent.argumentsJson,
+              });
+            } catch {
+              trustedEffectKey = null;
+            }
+            if (
+              typeof trustedEffectKey !== "string" ||
+              trustedEffectKey.trim().length === 0
+            ) {
+              return yield* Effect.fail<ToolRuntimeError>(
+                operationalFailure(
+                  "RecoveryBinding",
+                  String(intent.invocationId),
+                )({ _tag: "ReconciliationEffectIdentityUnavailable" }),
+              );
+            }
+          }
           const executor = executors.find(
             (entry) => entry.name === intent.toolName,
           );
@@ -1771,6 +1851,22 @@ export const ToolRuntimeLive = (
             context,
             "IntentJournal",
           );
+          let recoveredToolOutcome: ToolExecutionResult | undefined;
+          let pendingReconciliation:
+            | {
+                readonly request: ToolReconciliationRequest;
+                readonly result: Exclude<
+                  ToolReconciliationResult,
+                  { readonly _tag: "StillUnknown" }
+                >;
+                readonly observedAt: string;
+                readonly selection: {
+                  readonly attemptNo: 0 | 1;
+                  readonly factId: string;
+                };
+              }
+            | undefined;
+          let retryAdmitted = false;
           if (options.qualificationProbe !== undefined) {
             const priorRecord = Option.isSome(prior) ? prior.value : undefined;
             yield* Effect.promise(
@@ -1810,6 +1906,8 @@ export const ToolRuntimeLive = (
           }
           if (Option.isSome(prior)) {
             const recorded = prior.value;
+            let replayBindingValue: RecoveryBindingV1 | undefined;
+            let replayBindingSha256: string | undefined;
             const sameIntent =
               recorded.executionId === context.executionId &&
               recorded.workspaceId === context.workspaceId &&
@@ -1829,6 +1927,20 @@ export const ToolRuntimeLive = (
                   _tag: "ToolInvocationIdentityConflict",
                 }),
               );
+            }
+            if (
+              recorded.settlement === null &&
+              recorded.sideEffectSemantics === "Reconcilable" &&
+              recorded.effectAdmissionState !== "NotAdmitted" &&
+              trustedProfile === undefined
+            ) {
+              // Historical shell@2 and any other profile-less legacy row are
+              // ambiguous external effects. Do not synthesize P39 identity or
+              // enter the Executor path during recovery.
+              return {
+                _tag: "OutcomeUnknown" as const,
+                reconciliationRefs: [String(intent.invocationId)],
+              };
             }
             const replayAdmission = yield* Effect.match(
               checkCapturedSnapshotAndAdmit(),
@@ -1879,6 +1991,12 @@ export const ToolRuntimeLive = (
                     capturedWorkspace.resourceBoundaryRevision,
                   environmentRevision: resolved.observedEnvironmentRevision,
                   approval: approvalSnapshot,
+                  ...(trustedProfile === undefined
+                    ? {}
+                    : {
+                        profile: trustedProfile,
+                        effectKey: trustedEffectKey,
+                      }),
                 });
               } catch (cause) {
                 return yield* Effect.fail<ToolRuntimeError>(
@@ -1889,7 +2007,19 @@ export const ToolRuntimeLive = (
                 );
               }
               const bound = yield* tx
-                .transact(p39Recovery.value.findBinding(intent.invocationId))
+                .transact(
+                  Effect.gen(function* () {
+                    if (Option.isSome(observationEvidence)) {
+                      yield* observationEvidence.value.assertCurrentFence(
+                        context.executionFence,
+                        yield* clock.now(),
+                      );
+                    }
+                    return yield* p39Recovery.value.findBinding(
+                      intent.invocationId,
+                    );
+                  }),
+                )
                 .pipe(
                   Effect.mapError(
                     operationalFailure(
@@ -1911,6 +2041,425 @@ export const ToolRuntimeLive = (
                     String(intent.invocationId),
                   )({ _tag: "RecoveryBindingReplayMismatch" }),
                 );
+              }
+              replayBindingValue = bound.value.value;
+              replayBindingSha256 = bound.value.bindingSha256;
+            }
+            if (
+              recorded.settlement === null &&
+              recorded.effectAdmissionState === "MayHaveStarted" &&
+              recorded.sideEffectSemantics === "Reconcilable"
+            ) {
+              if (
+                trustedProfile === undefined ||
+                replayBindingValue === undefined ||
+                replayBindingSha256 === undefined ||
+                !Option.isSome(p39Recovery) ||
+                !Option.isSome(reconciliationPort) ||
+                !Option.isSome(reconciliationFacts) ||
+                !Option.isSome(observationEvidence)
+              ) {
+                return {
+                  _tag: "OutcomeUnknown" as const,
+                  reconciliationRefs: [String(intent.invocationId)],
+                };
+              }
+              const latestAttempt = yield* tx
+                .transact(
+                  Effect.gen(function* () {
+                    yield* observationEvidence.value.assertCurrentFence(
+                      context.executionFence,
+                      yield* clock.now(),
+                    );
+                    return yield* p39Recovery.value.findLatestAttempt(
+                      intent.invocationId,
+                    );
+                  }),
+                )
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "RecoveryBinding",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              if (Option.isNone(latestAttempt)) {
+                return {
+                  _tag: "OutcomeUnknown" as const,
+                  reconciliationRefs: [String(intent.invocationId)],
+                };
+              }
+              const attempt = latestAttempt.value;
+              if (
+                attempt.admissionState !== "MayHaveStarted" ||
+                attempt.bindingSha256 !== replayBindingSha256 ||
+                attempt.profileId !== trustedProfile.profileId ||
+                attempt.profileVersion !== trustedProfile.profileVersion ||
+                attempt.profileHash !== trustedProfile.profileHash ||
+                attempt.profileProtocol !== trustedProfile.profileProtocol ||
+                attempt.effectKey === null ||
+                trustedEffectKey === null ||
+                attempt.effectKey !== trustedEffectKey
+              ) {
+                return {
+                  _tag: "OutcomeUnknown" as const,
+                  reconciliationRefs: [String(intent.invocationId)],
+                };
+              }
+              const request: ToolReconciliationRequest = {
+                invocationId: intent.invocationId,
+                attemptNo: attempt.attemptNo,
+                bindingSha256: replayBindingSha256,
+                profileHash: trustedProfile.profileHash,
+                effectKey: attempt.effectKey,
+                visibilityScopeSha256:
+                  replayBindingValue.targetResourceIdentityDigest,
+              };
+              yield* tx
+                .transact(
+                  observationEvidence.value.assertCurrentFence(
+                    context.executionFence,
+                    yield* clock.now(),
+                  ),
+                )
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "RecoveryBinding",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              const portResult = yield* Effect.match(
+                reconciliationPort.value.reconcile(request),
+                {
+                  onFailure: () => ({
+                    _tag: "StillUnknown" as const,
+                    reasonCode: "ExternalSourceUnavailable" as const,
+                    evidenceRef: null,
+                  }),
+                  onSuccess: (value) =>
+                    validateToolReconciliationResult(request, value)
+                      ? value
+                      : {
+                          _tag: "StillUnknown" as const,
+                          reasonCode: "EvidenceBindingMismatch" as const,
+                          evidenceRef: null,
+                        },
+                },
+              );
+              const persistUnknownFact = (
+                result: Extract<
+                  ToolReconciliationResult,
+                  { readonly _tag: "StillUnknown" }
+                >,
+                observedAt: string,
+              ) =>
+                tx.transact(
+                  Effect.gen(function* () {
+                    const fenceNow = yield* clock.now();
+                    yield* observationEvidence.value.assertCurrentFence(
+                      context.executionFence,
+                      fenceNow,
+                    );
+                    yield* probeReconciliation(
+                      "AH7BeforeReconciliationFactCommit",
+                      {
+                        attemptNo: request.attemptNo,
+                        outcomeTag: result._tag,
+                      },
+                    );
+                    yield* reconciliationFacts.value.record(
+                      request,
+                      result,
+                      observedAt,
+                    );
+                  }),
+                );
+              if (portResult._tag === "StillUnknown") {
+                const observedAt = yield* clock.now();
+                yield* persistUnknownFact(portResult, observedAt).pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "SettlementJournal",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+                yield* probeReconciliation("AH7AfterReconciliationFactCommit", {
+                  attemptNo: request.attemptNo,
+                  outcomeTag: portResult._tag,
+                });
+                return {
+                  _tag: "OutcomeUnknown" as const,
+                  reconciliationRefs: [String(intent.invocationId)],
+                };
+              }
+              const observedAt = portResult.proof.observedAt;
+              const factId = reconciliationFactId({
+                request,
+                result: portResult,
+                factDisposition: "RecoveryInput",
+                evidenceSha256: portResult.proof.evidenceSha256,
+              });
+              if (portResult._tag === "NotOccurred") {
+                if (attempt.attemptNo === 0) {
+                  const retryGate = yield* tx
+                    .transact(
+                      Effect.gen(function* () {
+                        const gateNow = yield* clock.now();
+                        const admitted = yield* store.admitEffect(
+                          intent.invocationId,
+                          resolvedAuthority,
+                          gateNow,
+                          context.executionFence,
+                        );
+                        yield* probeReconciliation(
+                          "AH7BeforeReconciliationFactCommit",
+                          {
+                            attemptNo: request.attemptNo,
+                            outcomeTag: portResult._tag,
+                            factId,
+                          },
+                        );
+                        const fact = yield* reconciliationFacts.value.record(
+                          request,
+                          portResult,
+                          observedAt,
+                        );
+                        if (fact.factId !== factId) {
+                          return yield* Effect.fail({
+                            _tag: "P39ReconciliationFactIdentityMismatch",
+                          });
+                        }
+                        if (admitted._tag === "Admitted") {
+                          yield* p39Recovery.value.admitRetryAttempt({
+                            invocationId: intent.invocationId,
+                            factId,
+                            admittedAt: gateNow,
+                          });
+                        }
+                        return admitted;
+                      }),
+                    )
+                    .pipe(
+                      Effect.mapError(
+                        operationalFailure(
+                          "RecoveryBinding",
+                          String(intent.invocationId),
+                        ),
+                      ),
+                    );
+                  yield* probeReconciliation(
+                    "AH7AfterReconciliationFactCommit",
+                    {
+                      attemptNo: request.attemptNo,
+                      outcomeTag: portResult._tag,
+                      factId,
+                    },
+                  );
+                  if (retryGate._tag === "Admitted") {
+                    retryAdmitted = true;
+                  } else {
+                    recoveredToolOutcome = {
+                      settlement: {
+                        _tag: "ReconciledNoEffect",
+                        reasonCode:
+                          retryGate._tag === "ExecutionStopping"
+                            ? "StopRequested"
+                            : "AuthoritySnapshotChanged",
+                        reconciliationFactRef: factId,
+                      },
+                      observation: bounded(
+                        "authoritative source confirmed that the effect attempt did not occur",
+                      ),
+                      resultRef: null,
+                    };
+                    pendingReconciliation = {
+                      request,
+                      result: portResult,
+                      observedAt,
+                      selection: { attemptNo: attempt.attemptNo, factId },
+                    };
+                  }
+                } else {
+                  const fact = yield* tx
+                    .transact(
+                      Effect.gen(function* () {
+                        yield* observationEvidence.value.assertCurrentFence(
+                          context.executionFence,
+                          yield* clock.now(),
+                        );
+                        yield* probeReconciliation(
+                          "AH7BeforeReconciliationFactCommit",
+                          {
+                            attemptNo: request.attemptNo,
+                            outcomeTag: portResult._tag,
+                            factId,
+                          },
+                        );
+                        return yield* reconciliationFacts.value.record(
+                          request,
+                          portResult,
+                          observedAt,
+                        );
+                      }),
+                    )
+                    .pipe(
+                      Effect.mapError(
+                        operationalFailure(
+                          "SettlementJournal",
+                          String(intent.invocationId),
+                        ),
+                      ),
+                    );
+                  yield* probeReconciliation(
+                    "AH7AfterReconciliationFactCommit",
+                    {
+                      attemptNo: request.attemptNo,
+                      outcomeTag: portResult._tag,
+                      factId,
+                    },
+                  );
+                  if (fact.factId !== factId) {
+                    return yield* Effect.fail<ToolRuntimeError>(
+                      operationalFailure(
+                        "SettlementJournal",
+                        String(intent.invocationId),
+                      )({ _tag: "P39ReconciliationFactIdentityMismatch" }),
+                    );
+                  }
+                  recoveredToolOutcome = {
+                    settlement: {
+                      _tag: "ReconciledNoEffect",
+                      reasonCode: "ReplayLimitReached",
+                      reconciliationFactRef: factId,
+                    },
+                    observation: bounded(
+                      "authoritative source confirmed that the single retry did not occur",
+                    ),
+                    resultRef: null,
+                  };
+                  pendingReconciliation = {
+                    request,
+                    result: portResult,
+                    observedAt,
+                    selection: { attemptNo: attempt.attemptNo, factId },
+                  };
+                }
+              } else {
+                let resultBytes: Uint8Array | undefined;
+                if (Option.isSome(artifactService)) {
+                  try {
+                    const resultArtifactId = parse(ArtifactId)(
+                      portResult.resultRef,
+                    );
+                    const loaded = yield* tx
+                      .transact(artifactService.value.load(resultArtifactId))
+                      .pipe(
+                        Effect.mapError(
+                          operationalFailure(
+                            "SettlementJournal",
+                            String(intent.invocationId),
+                          ),
+                        ),
+                      );
+                    if (Option.isSome(loaded)) resultBytes = loaded.value;
+                  } catch {
+                    resultBytes = undefined;
+                  }
+                }
+                const reconstructed =
+                  resultBytes === undefined
+                    ? null
+                    : trustedProfile.reconstructOccurred({
+                        bytes: resultBytes,
+                        settlement: portResult.settlement,
+                      });
+                if (
+                  reconstructed === null ||
+                  reconstructed.settlement !== portResult.settlement
+                ) {
+                  const unknown = {
+                    _tag: "StillUnknown" as const,
+                    reasonCode: "ResultEvidenceUnavailable" as const,
+                    evidenceRef: portResult.proof.evidenceRef,
+                  };
+                  const unknownAt = yield* clock.now();
+                  yield* persistUnknownFact(unknown, unknownAt).pipe(
+                    Effect.mapError(
+                      operationalFailure(
+                        "SettlementJournal",
+                        String(intent.invocationId),
+                      ),
+                    ),
+                  );
+                  return {
+                    _tag: "OutcomeUnknown" as const,
+                    reconciliationRefs: [String(intent.invocationId)],
+                  };
+                }
+                recoveredToolOutcome = {
+                  settlement:
+                    portResult.settlement === "Success"
+                      ? { _tag: "Success" }
+                      : { _tag: "ExpectedFailure" },
+                  observation: reconstructed.observation,
+                  resultRef:
+                    portResult.settlement === "Success"
+                      ? portResult.resultRef
+                      : null,
+                };
+                const fact = yield* tx
+                  .transact(
+                    Effect.gen(function* () {
+                      yield* observationEvidence.value.assertCurrentFence(
+                        context.executionFence,
+                        yield* clock.now(),
+                      );
+                      yield* probeReconciliation(
+                        "AH7BeforeReconciliationFactCommit",
+                        {
+                          attemptNo: request.attemptNo,
+                          outcomeTag: portResult._tag,
+                          factId,
+                        },
+                      );
+                      return yield* reconciliationFacts.value.record(
+                        request,
+                        portResult,
+                        observedAt,
+                      );
+                    }),
+                  )
+                  .pipe(
+                    Effect.mapError(
+                      operationalFailure(
+                        "SettlementJournal",
+                        String(intent.invocationId),
+                      ),
+                    ),
+                  );
+                yield* probeReconciliation("AH7AfterReconciliationFactCommit", {
+                  attemptNo: request.attemptNo,
+                  outcomeTag: portResult._tag,
+                  factId,
+                });
+                if (fact.factId !== factId) {
+                  return yield* Effect.fail<ToolRuntimeError>(
+                    operationalFailure(
+                      "SettlementJournal",
+                      String(intent.invocationId),
+                    )({ _tag: "P39ReconciliationFactIdentityMismatch" }),
+                  );
+                }
+                pendingReconciliation = {
+                  request,
+                  result: portResult,
+                  observedAt,
+                  selection: { attemptNo: attempt.attemptNo, factId },
+                };
               }
             }
             if (recorded.settlement !== null) {
@@ -1965,6 +2514,8 @@ export const ToolRuntimeLive = (
             }
             if (
               recorded.effectAdmissionState !== "NotAdmitted" &&
+              recoveredToolOutcome === undefined &&
+              !retryAdmitted &&
               (recorded.sideEffectSemantics === "NonIdempotent" ||
                 recorded.sideEffectSemantics === "Reconcilable")
             ) {
@@ -2047,6 +2598,18 @@ export const ToolRuntimeLive = (
               };
             }
           } else {
+            if (
+              p39BindingEnabled &&
+              definition.sideEffectSemantics === "Reconcilable" &&
+              trustedProfile === undefined
+            ) {
+              return yield* Effect.fail<ToolRuntimeError>(
+                operationalFailure(
+                  "RecoveryBinding",
+                  String(intent.invocationId),
+                )({ _tag: "ReconciliationProfileUnavailable" }),
+              );
+            }
             const invocation = {
               invocationId: intent.invocationId,
               executionId: context.executionId,
@@ -2213,6 +2776,12 @@ export const ToolRuntimeLive = (
                         environmentRevision:
                           resolved.observedEnvironmentRevision,
                         approval: approvalSnapshot,
+                        ...(trustedProfile === undefined
+                          ? {}
+                          : {
+                              profile: trustedProfile,
+                              effectKey: trustedEffectKey,
+                            }),
                       });
                     } catch (cause) {
                       return yield* Effect.fail<ToolRuntimeError>(
@@ -2421,20 +2990,38 @@ export const ToolRuntimeLive = (
                 }) ?? Promise.resolve(),
             );
           }
-          const effectAdmission = yield* Effect.match(
-            tx.transact(
-              store.admitEffect(
-                intent.invocationId,
-                effectAuthority,
-                effectGateNow,
-                context.executionFence,
-              ),
-            ),
-            {
-              onFailure: (cause) => ({ _tag: "Failed" as const, cause }),
-              onSuccess: (value) => ({ _tag: "Succeeded" as const, value }),
-            },
-          );
+          const effectAdmission = retryAdmitted
+            ? {
+                _tag: "Succeeded" as const,
+                value: { _tag: "Admitted" as const },
+              }
+            : yield* Effect.match(
+                tx.transact(
+                  Effect.gen(function* () {
+                    const admissionResult = yield* store.admitEffect(
+                      intent.invocationId,
+                      effectAuthority,
+                      effectGateNow,
+                      context.executionFence,
+                    );
+                    if (
+                      admissionResult._tag === "Admitted" &&
+                      p39BindingEnabled &&
+                      Option.isSome(p39Recovery)
+                    ) {
+                      yield* p39Recovery.value.admitFirstAttempt(
+                        intent.invocationId,
+                        effectGateNow,
+                      );
+                    }
+                    return admissionResult;
+                  }),
+                ),
+                {
+                  onFailure: (cause) => ({ _tag: "Failed" as const, cause }),
+                  onSuccess: (value) => ({ _tag: "Succeeded" as const, value }),
+                },
+              );
           if (effectAdmission._tag === "Failed") {
             return yield* Effect.fail<ToolRuntimeError>(
               isLeaseFencingRejected(effectAdmission.cause)
@@ -2446,13 +3033,28 @@ export const ToolRuntimeLive = (
             );
           }
           if (effectAdmission.value._tag === "Denied") {
-            return yield* recordNoEffectDenial(
-              definition.sideEffectSemantics,
-              regions,
-              approvalAlreadyConsumedBySelf
-                ? "ApprovalNoLongerAuthorized"
-                : effectAdmission.value.reasonCode,
-            );
+            if (
+              recoveredToolOutcome?.settlement._tag === "ReconciledNoEffect"
+            ) {
+              recoveredToolOutcome = {
+                ...recoveredToolOutcome,
+                settlement: {
+                  ...recoveredToolOutcome.settlement,
+                  reasonCode: "AuthoritySnapshotChanged",
+                },
+              };
+            } else if (recoveredToolOutcome !== undefined) {
+              // A known Occurred fact is accounted under the current fence even
+              // if current authority no longer admits new effects.
+            } else {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                approvalAlreadyConsumedBySelf
+                  ? "ApprovalNoLongerAuthorized"
+                  : effectAdmission.value.reasonCode,
+              );
+            }
           }
           if (effectAdmission.value._tag === "ExecutionStopping") {
             if (options.qualificationProbe !== undefined) {
@@ -2471,29 +3073,47 @@ export const ToolRuntimeLive = (
                   }) ?? Promise.resolve(),
               );
             }
-            const settledAt = yield* clock.now();
-            return yield* persistNoEffectInterruption(
-              Option.isSome(prior)
-                ? {
-                    invocationId: intent.invocationId,
-                    executionId: context.executionId,
-                    workspaceId: context.workspaceId,
-                    toolName: intent.toolName,
-                    toolVersion: intent.toolVersion,
-                    sideEffectSemantics: definition.sideEffectSemantics,
-                    argumentsJson: intent.argumentsJson,
-                    resolvedRegions: regions,
-                    approvalId:
-                      context.executableApproval?.approvalId ??
-                      intent.approvalId,
-                    intentAt: prior.value.intentAt,
-                  }
-                : undefined,
-              settledAt,
-            );
+            if (
+              recoveredToolOutcome?.settlement._tag === "ReconciledNoEffect"
+            ) {
+              recoveredToolOutcome = {
+                ...recoveredToolOutcome,
+                settlement: {
+                  ...recoveredToolOutcome.settlement,
+                  reasonCode: "StopRequested",
+                },
+              };
+            } else if (recoveredToolOutcome !== undefined) {
+              // Stop gates new execution; it does not discard a confirmed
+              // external outcome.
+            } else {
+              const settledAt = yield* clock.now();
+              return yield* persistNoEffectInterruption(
+                Option.isSome(prior)
+                  ? {
+                      invocationId: intent.invocationId,
+                      executionId: context.executionId,
+                      workspaceId: context.workspaceId,
+                      toolName: intent.toolName,
+                      toolVersion: intent.toolVersion,
+                      sideEffectSemantics: definition.sideEffectSemantics,
+                      argumentsJson: intent.argumentsJson,
+                      resolvedRegions: regions,
+                      approvalId:
+                        context.executableApproval?.approvalId ??
+                        intent.approvalId,
+                      intentAt: prior.value.intentAt,
+                    }
+                  : undefined,
+                settledAt,
+              );
+            }
           }
 
-          if (options.qualificationProbe !== undefined) {
+          if (
+            options.qualificationProbe !== undefined &&
+            recoveredToolOutcome === undefined
+          ) {
             yield* Effect.promise(
               () =>
                 options.qualificationProbe?.({
@@ -2533,49 +3153,67 @@ export const ToolRuntimeLive = (
             );
           }
 
-          const handle = yield* sandbox
-            .open(
-              address === undefined || region === undefined
-                ? {
-                    executionId: context.executionId,
-                    workspaceId: context.workspaceId,
-                    regions,
-                  }
-                : {
-                    executionId: context.executionId,
-                    workspaceId: context.workspaceId,
-                    mounts: [
-                      {
-                        ref: "workspace",
-                        address,
-                        region,
-                        access: executor.write ? "ReadWrite" : "ReadOnly",
-                      },
-                    ],
+          const executionBundle =
+            recoveredToolOutcome !== undefined
+              ? {
+                  executed: {
+                    ok: true as const,
+                    value: recoveredToolOutcome,
                   },
-            )
-            .pipe(
-              Effect.mapError(
-                operationalFailure("SandboxOpen", String(intent.invocationId)),
-              ),
-            );
-          const executed = yield* Effect.match(
-            executor.execute({
-              intent,
-              definition,
-              context,
-              sandbox: handle,
-              regions,
-            }),
-            {
-              onFailure: (cause) => ({ ok: false as const, cause }),
-              onSuccess: (value) => ({ ok: true as const, value }),
-            },
-          );
-          const closed = yield* Effect.match(sandbox.close(handle), {
-            onFailure: (cause) => ({ ok: false as const, cause }),
-            onSuccess: () => ({ ok: true as const }),
-          });
+                  closed: { ok: true as const },
+                }
+              : yield* Effect.gen(function* () {
+                  const handle = yield* sandbox
+                    .open(
+                      address === undefined || region === undefined
+                        ? {
+                            executionId: context.executionId,
+                            workspaceId: context.workspaceId,
+                            regions,
+                          }
+                        : {
+                            executionId: context.executionId,
+                            workspaceId: context.workspaceId,
+                            mounts: [
+                              {
+                                ref: "workspace",
+                                address,
+                                region,
+                                access: executor.write
+                                  ? "ReadWrite"
+                                  : "ReadOnly",
+                              },
+                            ],
+                          },
+                    )
+                    .pipe(
+                      Effect.mapError(
+                        operationalFailure(
+                          "SandboxOpen",
+                          String(intent.invocationId),
+                        ),
+                      ),
+                    );
+                  const executed = yield* Effect.match(
+                    executor.execute({
+                      intent,
+                      definition,
+                      context,
+                      sandbox: handle,
+                      regions,
+                    }),
+                    {
+                      onFailure: (cause) => ({ ok: false as const, cause }),
+                      onSuccess: (value) => ({ ok: true as const, value }),
+                    },
+                  );
+                  const closed = yield* Effect.match(sandbox.close(handle), {
+                    onFailure: (cause) => ({ ok: false as const, cause }),
+                    onSuccess: () => ({ ok: true as const }),
+                  });
+                  return { executed, closed };
+                });
+          const { executed, closed } = executionBundle;
           if (!closed.ok) {
             return yield* Effect.fail<ToolRuntimeError>({
               _tag: "ToolRuntimeCleanupFailure",
@@ -2606,7 +3244,10 @@ export const ToolRuntimeLive = (
             });
           }
           const outcome = executed.value;
-          if (options.qualificationProbe !== undefined) {
+          if (
+            options.qualificationProbe !== undefined &&
+            recoveredToolOutcome === undefined
+          ) {
             yield* Effect.promise(
               () =>
                 options.qualificationProbe?.({
@@ -2640,37 +3281,50 @@ export const ToolRuntimeLive = (
                 _tag: "P39RecoveryEvidenceStoreUnavailable",
               });
             }
-            const selectedRead = yield* Effect.match(
-              tx.transact(
-                p39RecoveryEvidence.value.findSelected(intent.invocationId),
-              ),
-              {
-                onFailure: (cause) => ({ ok: false as const, cause }),
-                onSuccess: (value) => ({ ok: true as const, value }),
-              },
-            );
-            if (!selectedRead.ok) {
-              return yield* rejectUnverifiedSelection(selectedRead.cause);
-            }
-            if (Option.isNone(selectedRead.value)) {
-              return yield* rejectUnverifiedSelection({
-                _tag: "P39SelectedRecoveryEvidenceMissing",
-              });
-            }
-            const selected = selectedRead.value.value;
             if (
-              !matchesAuthenticatedP39Evidence({
-                selected,
-                intent,
-                context,
-                factId: outcome.settlement.reconciliationFactRef,
-              })
+              pendingReconciliation !== undefined &&
+              pendingReconciliation.result._tag === "NotOccurred" &&
+              outcome.settlement.reconciliationFactRef ===
+                pendingReconciliation.selection.factId
             ) {
-              return yield* rejectUnverifiedSelection({
-                _tag: "P39SelectedRecoveryEvidenceMismatch",
-              });
+              // This invocation just recorded the exact RecoveryInput fact.
+              // The P4 winner transaction validates the fact/binding/attempt
+              // tuple and selects it atomically with the terminal Observation;
+              // findSelected is intentionally reserved for replay of an
+              // already-selected terminal winner.
+            } else {
+              const selectedRead = yield* Effect.match(
+                tx.transact(
+                  p39RecoveryEvidence.value.findSelected(intent.invocationId),
+                ),
+                {
+                  onFailure: (cause) => ({ ok: false as const, cause }),
+                  onSuccess: (value) => ({ ok: true as const, value }),
+                },
+              );
+              if (!selectedRead.ok) {
+                return yield* rejectUnverifiedSelection(selectedRead.cause);
+              }
+              if (Option.isNone(selectedRead.value)) {
+                return yield* rejectUnverifiedSelection({
+                  _tag: "P39SelectedRecoveryEvidenceMissing",
+                });
+              }
+              const selected = selectedRead.value.value;
+              if (
+                !matchesAuthenticatedP39Evidence({
+                  selected,
+                  intent,
+                  context,
+                  factId: outcome.settlement.reconciliationFactRef,
+                })
+              ) {
+                return yield* rejectUnverifiedSelection({
+                  _tag: "P39SelectedRecoveryEvidenceMismatch",
+                });
+              }
+              authenticatedRecoveryEvidence = selected;
             }
-            authenticatedRecoveryEvidence = selected;
           }
 
           let resultRef = outcome.resultRef;
@@ -2821,6 +3475,12 @@ export const ToolRuntimeLive = (
                       factId: authenticatedRecoveryEvidence.fact.factId,
                     },
                     authenticatedRecoveryEvidence,
+                  }),
+              ...(pendingReconciliation === undefined ||
+              outcome.settlement._tag === "ReconciledNoEffect"
+                ? {}
+                : {
+                    reconciliationSelection: pendingReconciliation.selection,
                   }),
               ...(Option.isSome(artifactService) && resultRef === null
                 ? {

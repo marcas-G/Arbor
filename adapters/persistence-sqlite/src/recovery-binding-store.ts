@@ -4,6 +4,7 @@ import {
   P39RecoveryEvidenceStore,
   type RecoveryBindingV1,
   recoveryBindingV1Digest,
+  type SelectedP39EffectAttempt,
   TransactionScope,
   verifyRecoveryBindingV1,
 } from "@arbor/ports";
@@ -531,6 +532,213 @@ export const makeP39RecoveryEvidenceStoreLive = (
           }),
         findBinding,
         findTerminalUnboundDenial,
+        findLatestAttempt: (invocationId) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const rows = yield* run(
+              sql.unsafe<{
+                readonly recovery_binding_state: string;
+                readonly recovery_binding_sha256: string | null;
+                readonly binding_version: number | null;
+                readonly canonical_binding_json: string | null;
+                readonly stored_binding_sha256: string | null;
+                readonly attempt_no: number | null;
+                readonly admission_state: string | null;
+                readonly attempt_binding_sha256: string | null;
+                readonly tool_definition_hash: string | null;
+                readonly side_effect_semantics: string | null;
+                readonly profile_id: string | null;
+                readonly profile_version: string | null;
+                readonly profile_hash: string | null;
+                readonly profile_protocol: string | null;
+                readonly effect_key: string | null;
+                readonly admitted_at: string | null;
+                readonly admission_source: string | null;
+                readonly admission_time_precision: string | null;
+              }>(
+                `SELECT i.recovery_binding_state, i.recovery_binding_sha256,
+                        b.binding_version, b.canonical_binding_json,
+                        b.binding_sha256 AS stored_binding_sha256,
+                        a.attempt_no, a.admission_state,
+                        a.binding_sha256 AS attempt_binding_sha256,
+                        a.tool_definition_hash, a.side_effect_semantics,
+                        a.profile_id, a.profile_version, a.profile_hash,
+                        a.profile_protocol, a.effect_key, a.admitted_at,
+                        a.admission_source, a.admission_time_precision
+                   FROM tool_invocations i
+                   LEFT JOIN tool_invocation_recovery_bindings b
+                     ON b.invocation_id = i.invocation_id
+                    AND b.binding_sha256 = i.recovery_binding_sha256
+                   LEFT JOIN tool_invocation_effect_attempts a
+                     ON a.invocation_id = i.invocation_id
+                  WHERE i.invocation_id = ?
+                  ORDER BY a.attempt_no DESC LIMIT 1`,
+                [invocationId],
+              ),
+            );
+            const row = rows[0];
+            if (row === undefined) return Option.none();
+            if (
+              row.recovery_binding_state !== "Bound" ||
+              row.recovery_binding_sha256 === null ||
+              row.binding_version !== 1 ||
+              row.canonical_binding_json === null ||
+              row.stored_binding_sha256 !== row.recovery_binding_sha256 ||
+              (row.attempt_no !== 0 && row.attempt_no !== 1) ||
+              (row.admission_state !== "NotAdmitted" &&
+                row.admission_state !== "MayHaveStarted") ||
+              row.attempt_binding_sha256 !== row.recovery_binding_sha256 ||
+              row.tool_definition_hash === null ||
+              !isSideEffectSemantics(row.side_effect_semantics) ||
+              row.profile_id === null ||
+              row.profile_version === null ||
+              row.profile_hash === null ||
+              row.profile_protocol === null ||
+              row.effect_key === null ||
+              !row.admission_source ||
+              !row.admission_time_precision
+            ) {
+              return yield* corrupt(
+                "latest P39 attempt is not a complete bound profile tuple",
+              );
+            }
+            const binding = verifyRecoveryBindingV1({
+              invocationId,
+              canonicalJson: row.canonical_binding_json,
+              bindingSha256: row.recovery_binding_sha256,
+            });
+            if (
+              binding === null ||
+              binding.value.profileId !== row.profile_id ||
+              binding.value.profileVersion !== row.profile_version ||
+              binding.value.profileHash !== row.profile_hash ||
+              binding.value.profileProtocol !== row.profile_protocol ||
+              binding.value.effectKey !== row.effect_key ||
+              binding.value.toolDefinitionHash !== row.tool_definition_hash ||
+              binding.value.sideEffectSemantics !== row.side_effect_semantics
+            ) {
+              return yield* corrupt(
+                "latest P39 attempt conflicts with its canonical RecoveryBinding",
+              );
+            }
+            return Option.some({
+              invocationId,
+              attemptNo: row.attempt_no as 0 | 1,
+              admissionState: row.admission_state as
+                | "NotAdmitted"
+                | "MayHaveStarted",
+              bindingSha256: row.attempt_binding_sha256,
+              toolDefinitionHash: row.tool_definition_hash,
+              sideEffectSemantics: row.side_effect_semantics,
+              profileId: row.profile_id,
+              profileVersion: row.profile_version,
+              profileHash: row.profile_hash,
+              profileProtocol: row.profile_protocol,
+              effectKey: row.effect_key,
+              admittedAt: row.admitted_at,
+              admissionSource:
+                row.admission_source as SelectedP39EffectAttempt["admissionSource"],
+              admissionTimePrecision:
+                row.admission_time_precision as SelectedP39EffectAttempt["admissionTimePrecision"],
+            } satisfies SelectedP39EffectAttempt);
+          }),
+        admitFirstAttempt: (invocationId, admittedAt) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            if (!admittedAt.trim()) {
+              return yield* corrupt("P39 first-attempt timestamp is empty");
+            }
+            const rows = yield* run(
+              sql.unsafe<{ readonly attempt_no: number }>(
+                `UPDATE tool_invocation_effect_attempts
+                    SET admission_state = 'MayHaveStarted',
+                        admitted_at = ?, admission_source = 'P39Admission',
+                        admission_time_precision = 'TransactionTimestamp'
+                  WHERE invocation_id = ? AND attempt_no = 0
+                    AND admission_state = 'NotAdmitted'
+                    AND EXISTS (
+                      SELECT 1 FROM tool_invocations i
+                       WHERE i.invocation_id = ?
+                         AND i.recovery_binding_state = 'Bound'
+                         AND i.recovery_binding_sha256 =
+                             tool_invocation_effect_attempts.binding_sha256
+                         AND i.effect_admission_state = 'MayHaveStarted'
+                         AND i.settled_at IS NULL)
+                  RETURNING attempt_no`,
+                [admittedAt, invocationId, invocationId],
+              ),
+            );
+            if (rows.length > 0) return;
+            const current = yield* run(
+              sql.unsafe<{ readonly admission_state: string }>(
+                `SELECT admission_state FROM tool_invocation_effect_attempts
+                  WHERE invocation_id = ? AND attempt_no = 0`,
+                [invocationId],
+              ),
+            );
+            if (current[0]?.admission_state === "MayHaveStarted") return;
+            return yield* corrupt(
+              "P39 attempt-0 could not transition with its admitted invocation",
+            );
+          }),
+        admitRetryAttempt: (input) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            if (
+              !input.admittedAt.trim() ||
+              !/^[0-9a-f]{64}$/u.test(input.factId)
+            ) {
+              return yield* corrupt(
+                "P39 retry admission identity is malformed",
+              );
+            }
+            const rows = yield* run(
+              sql.unsafe<{ readonly attempt_no: number }>(
+                `INSERT INTO tool_invocation_effect_attempts (
+                   invocation_id, attempt_no, admission_state,
+                   tool_definition_hash, side_effect_semantics, profile_id,
+                   profile_version, profile_hash, profile_protocol, effect_key,
+                   binding_sha256, admitted_at, admission_source,
+                   admission_time_precision
+                 )
+                 SELECT a.invocation_id, 1, 'MayHaveStarted',
+                        a.tool_definition_hash, a.side_effect_semantics,
+                        a.profile_id, a.profile_version, a.profile_hash,
+                        a.profile_protocol, a.effect_key, a.binding_sha256,
+                        ?, 'P39Admission', 'TransactionTimestamp'
+                   FROM tool_invocation_effect_attempts a
+                   JOIN tool_invocations i
+                     ON i.invocation_id = a.invocation_id
+                   JOIN tool_reconciliation_facts f
+                     ON f.invocation_id = a.invocation_id
+                    AND f.attempt_no = a.attempt_no
+                    AND f.binding_sha256 = a.binding_sha256
+                    AND f.profile_hash = a.profile_hash
+                    AND f.effect_key = a.effect_key
+                  WHERE a.invocation_id = ? AND a.attempt_no = 0
+                    AND a.admission_state = 'MayHaveStarted'
+                    AND i.recovery_binding_state = 'Bound'
+                    AND i.recovery_binding_sha256 = a.binding_sha256
+                    AND i.effect_admission_state = 'MayHaveStarted'
+                    AND i.settled_at IS NULL
+                    AND f.fact_id = ?
+                    AND f.fact_origin = 'ProfileReconciliation'
+                    AND f.fact_disposition = 'RecoveryInput'
+                    AND f.outcome = 'NotOccurred' AND f.reason_code IS NULL
+                    AND NOT EXISTS (
+                      SELECT 1 FROM tool_invocation_effect_attempts retry
+                       WHERE retry.invocation_id = a.invocation_id
+                         AND retry.attempt_no = 1)
+                 RETURNING attempt_no`,
+                [input.admittedAt, input.invocationId, input.factId],
+              ),
+            );
+            if (rows.length === 0) {
+              return yield* corrupt(
+                "attempt 1 requires the exact current attempt-0 NotOccurred fact and an unsettled bound invocation",
+              );
+            }
+          }),
         findSelected: (invocationId) =>
           Effect.gen(function* () {
             yield* TransactionScope;

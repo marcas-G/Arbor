@@ -129,7 +129,7 @@ export const PATCH_DEFINITION: ToolDefinition = {
   source: "Builtin",
 };
 
-export const SHELL_DEFINITION: ToolDefinition = {
+export const LEGACY_SHELL_DEFINITION: ToolDefinition = {
   name: "shell",
   version: "2",
   hash: "shell-v2-mount-relative-cwd",
@@ -140,6 +140,13 @@ export const SHELL_DEFINITION: ToolDefinition = {
   capabilityMetadata: ["shell:exec"],
   sideEffectSemantics: "Reconcilable",
   source: "Builtin",
+};
+
+export const SHELL_DEFINITION: ToolDefinition = {
+  ...LEGACY_SHELL_DEFINITION,
+  version: "3",
+  hash: "shell-v3-unrestricted-non-idempotent",
+  sideEffectSemantics: "NonIdempotent",
 };
 
 /** P12 `12` §6: a non-`read`/`patch`/`shell` builtin, added through the
@@ -167,7 +174,7 @@ export const BUILTIN_TOOLS: ReadonlyArray<ToolDefinition> = [
 export const ToolDefinitionStoreLive: Layer.Layer<ToolDefinitionStore> =
   Layer.succeed(ToolDefinitionStore, {
     definition: (name: string, version: string) => {
-      const found = BUILTIN_TOOLS.find(
+      const found = [...BUILTIN_TOOLS, LEGACY_SHELL_DEFINITION].find(
         (tool) => tool.name === name && tool.version === version,
       );
       return Effect.succeed(

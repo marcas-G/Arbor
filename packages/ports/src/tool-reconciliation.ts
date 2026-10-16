@@ -96,6 +96,82 @@ export class ToolReconciliationPort extends Context.Service<
   ToolReconciliationPortService
 >()("arbor/ToolReconciliationPort") {}
 
+/** Composition-owned proof capability. Provider output can select only a
+ * registered ToolDefinitionRef; profile identity and effect keys stay trusted
+ * Runtime facts. */
+export interface ToolReconciliationProfile {
+  readonly toolName: string;
+  readonly toolVersion: string;
+  readonly toolDefinitionHash: string;
+  readonly profileId: string;
+  readonly profileVersion: string;
+  readonly profileHash: string;
+  readonly profileProtocol: string;
+  readonly effectKey: (input: {
+    readonly invocationId: ToolInvocationId;
+    readonly argumentsJson: string;
+  }) => string | null;
+  /** Decodes the trusted result Artifact into the canonical P4 observation.
+   * No workspace-state inference is permitted. */
+  readonly reconstructOccurred: (input: {
+    readonly bytes: Uint8Array;
+    readonly settlement: "Success" | "ExpectedFailure";
+  }) => {
+    readonly settlement: "Success" | "ExpectedFailure";
+    readonly observation: {
+      readonly text: string;
+      readonly truncated: boolean;
+    };
+  } | null;
+}
+
+export interface ToolReconciliationProfileRegistryService {
+  readonly resolve: (input: {
+    readonly toolName: string;
+    readonly toolVersion: string;
+    readonly toolDefinitionHash: string;
+  }) => ToolReconciliationProfile | undefined;
+}
+
+export class ToolReconciliationProfileRegistry extends Context.Service<
+  ToolReconciliationProfileRegistry,
+  ToolReconciliationProfileRegistryService
+>()("arbor/ToolReconciliationProfileRegistry") {}
+
+export const makeToolReconciliationProfileRegistry = (
+  profiles: ReadonlyArray<ToolReconciliationProfile>,
+): ToolReconciliationProfileRegistryService => {
+  const byDescriptor = new Map<string, ToolReconciliationProfile>();
+  for (const profile of profiles) {
+    if (
+      !profile.toolName.trim() ||
+      !profile.toolVersion.trim() ||
+      !profile.toolDefinitionHash.trim() ||
+      !profile.profileId.trim() ||
+      !profile.profileVersion.trim() ||
+      !/^[0-9a-f]{64}$/u.test(profile.profileHash) ||
+      !profile.profileProtocol.trim() ||
+      typeof profile.effectKey !== "function" ||
+      typeof profile.reconstructOccurred !== "function"
+    ) {
+      throw new TypeError("incomplete trusted ToolReconciliationProfile");
+    }
+    const key = `${profile.toolName}\u0000${profile.toolVersion}\u0000${profile.toolDefinitionHash}`;
+    if (byDescriptor.has(key)) {
+      throw new TypeError(
+        "duplicate trusted ToolReconciliationProfile descriptor",
+      );
+    }
+    byDescriptor.set(key, Object.freeze({ ...profile }));
+  }
+  return {
+    resolve: (input) =>
+      byDescriptor.get(
+        `${input.toolName}\u0000${input.toolVersion}\u0000${input.toolDefinitionHash}`,
+      ),
+  };
+};
+
 export interface RecordedReconciliationFact {
   readonly factId: string;
   readonly invocationId: ToolInvocationId;

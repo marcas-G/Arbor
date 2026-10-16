@@ -712,6 +712,9 @@ const app = (
             }
             return Effect.succeed(Option.none());
           },
+          findLatestAttempt: () => Effect.succeed(Option.none()),
+          admitFirstAttempt: () => Effect.void,
+          admitRetryAttempt: () => Effect.void,
           findTerminalUnboundDenial: (id: typeof invocationId) =>
             Effect.succeed(
               p39DeniedReplay !== undefined &&
