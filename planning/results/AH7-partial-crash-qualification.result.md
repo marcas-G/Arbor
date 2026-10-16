@@ -117,3 +117,10 @@ Focused receipt tests pass 3/3; the complete P4 pipeline passes 47/47, with
 typecheck, Biome and `git diff --check` passing. This is still unit/code
 evidence only; no real-process qualification was run for B1. AH7 remains
 PARTIAL / OPEN.
+
+B2 narrows that path to exact terminal P39 candidates and keeps ordinary
+settled receipts on strict current-region replay. P40 read, fence assertion,
+and selected P39 evidence now run in one transaction. Focused receipt cases
+pass 11/11 and the complete P4 pipeline passes 55/55; typecheck, Biome and
+`git diff --check` pass. This remains unit/code evidence; no real-process run
+or AH7 closure is claimed.

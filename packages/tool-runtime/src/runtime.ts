@@ -520,8 +520,15 @@ const matchesAuthenticatedP39Evidence = (input: {
   readonly intent: ToolIntent;
   readonly context: ToolExecutionContext;
   readonly factId: string;
+  readonly expectedOutcome?: "NotOccurred" | "Occurred";
 }): boolean => {
-  const { selected, intent, context, factId } = input;
+  const {
+    selected,
+    intent,
+    context,
+    factId,
+    expectedOutcome = "NotOccurred",
+  } = input;
   const binding = selected.binding.value;
   const sourceIdentity = context.recoveryBindingIdentity;
   const policyRevisions = context.recoveryBindingPolicyRevisions;
@@ -564,7 +571,7 @@ const matchesAuthenticatedP39Evidence = (input: {
     selected.fact.factDisposition === "RecoveryInput" &&
     selected.fact.legacyReason === null &&
     selected.fact.reasonCode === null &&
-    selected.fact.outcome === "NotOccurred"
+    selected.fact.outcome === expectedOutcome
   );
 };
 export const ToolRuntimeLive = (
@@ -721,6 +728,14 @@ export const ToolRuntimeLive = (
           readonly resolvedRegions: ReadonlyArray<CanonicalResourceRegion>;
           readonly approvalId: string | null;
           readonly intentAt: string;
+          readonly settlement?: import("@arbor/ports").ToolInvocationRecord["settlement"];
+          readonly resultRef?: string | null;
+        },
+        terminalP39Receipt?: {
+          readonly expectedOutcome: "NotOccurred" | "Occurred";
+          readonly definition: ToolDefinition;
+          readonly profile: ToolReconciliationProfile;
+          readonly effectKey: string;
         },
       ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
         Effect.gen(function* () {
@@ -761,15 +776,33 @@ export const ToolRuntimeLive = (
           } as const;
           const read = yield* Effect.match(
             tx.transact(
-              observationEvidence.value.read(
-                invocation,
-                fence,
-                yield* clock.now(),
-              ),
+              Effect.gen(function* () {
+                yield* observationEvidence.value.assertCurrentFence(
+                  fence,
+                  yield* clock.now(),
+                );
+                const evidence = yield* observationEvidence.value.read(
+                  invocation,
+                  fence,
+                  yield* clock.now(),
+                );
+                let selected = Option.none<SelectedP39RecoveryEvidence>();
+                if (
+                  terminalP39Receipt !== undefined ||
+                  evidence.observation._tag === "ReconciledNoEffect"
+                ) {
+                  if (Option.isSome(p39RecoveryEvidence)) {
+                    selected = yield* p39RecoveryEvidence.value.findSelected(
+                      intent.invocationId,
+                    );
+                  }
+                }
+                return { evidence, selected };
+              }),
             ),
             {
               onFailure: (cause) => ({ ok: false as const, cause }),
-              onSuccess: (evidence) => ({ ok: true as const, evidence }),
+              onSuccess: (value) => ({ ok: true as const, value }),
             },
           );
           if (!read.ok) {
@@ -785,6 +818,14 @@ export const ToolRuntimeLive = (
                 yield* clock.now(),
               );
             }
+            if (terminalP39Receipt !== undefined) {
+              return yield* recordReplayFailure(
+                intent,
+                context,
+                "SettlementMismatch",
+                yield* clock.now(),
+              );
+            }
             return yield* Effect.fail<ToolRuntimeError>(
               operationalFailure(
                 "SettlementJournal",
@@ -792,9 +833,14 @@ export const ToolRuntimeLive = (
               )(read.cause),
             );
           }
-          const observation = read.evidence
+          const observation = read.value.evidence
             .observation as CanonicalToolObservation;
-          if (observation._tag === "ReconciledNoEffect") {
+          const expectedP39Outcome =
+            terminalP39Receipt?.expectedOutcome ?? "NotOccurred";
+          const requiresSelectedFact =
+            terminalP39Receipt !== undefined ||
+            observation._tag === "ReconciledNoEffect";
+          if (requiresSelectedFact) {
             if (Option.isNone(p39RecoveryEvidence)) {
               return yield* recordReplayFailure(
                 intent,
@@ -803,34 +849,24 @@ export const ToolRuntimeLive = (
                 yield* clock.now(),
               );
             }
-            const selected = yield* Effect.match(
-              tx.transact(
-                p39RecoveryEvidence.value.findSelected(intent.invocationId),
-              ),
-              {
-                onFailure: (cause) => ({ ok: false as const, cause }),
-                onSuccess: (value) => ({ ok: true as const, value }),
-              },
-            );
-            if (!selected.ok) {
-              if (isLeaseFencingRejected(selected.cause)) {
-                return yield* Effect.fail<ToolRuntimeError>(selected.cause);
-              }
-              return yield* recordReplayFailure(
-                intent,
-                context,
-                "SettlementMismatch",
-                yield* clock.now(),
-              );
-            }
+            const selected = read.value.selected;
+            const factId =
+              expectedP39Outcome === "NotOccurred"
+                ? observation._tag === "ReconciledNoEffect"
+                  ? observation.reconciliationFactRef
+                  : ""
+                : Option.isSome(selected)
+                  ? selected.value.fact.factId
+                  : "";
             if (
-              Option.isNone(selected.value) ||
-              (Option.isSome(selected.value) &&
+              Option.isNone(selected) ||
+              (Option.isSome(selected) &&
                 !matchesAuthenticatedP39Evidence({
-                  selected: selected.value.value,
+                  selected: selected.value,
                   intent,
                   context,
-                  factId: observation.reconciliationFactRef,
+                  factId,
+                  expectedOutcome: expectedP39Outcome,
                 }))
             ) {
               return yield* recordReplayFailure(
@@ -839,6 +875,72 @@ export const ToolRuntimeLive = (
                 "SettlementMismatch",
                 yield* clock.now(),
               );
+            }
+            if (terminalP39Receipt !== undefined) {
+              const selectedEvidence = selected.value;
+              const binding = selectedEvidence.binding.value;
+              let argumentsDigest: string | null;
+              try {
+                argumentsDigest = canonicalArgumentsDigestV1(
+                  JSON.parse(recorded.argumentsJson),
+                );
+              } catch {
+                argumentsDigest = null;
+              }
+              const exactReceiptSource =
+                binding.sideEffectSemantics === "Reconcilable" &&
+                binding.toolName === recorded.toolName &&
+                binding.toolVersion === recorded.toolVersion &&
+                binding.toolDefinitionHash ===
+                  recoveryBindingToolDefinitionHashV1(
+                    terminalP39Receipt.definition,
+                  ) &&
+                binding.canonicalArgumentsDigest === argumentsDigest &&
+                binding.targetResourceIdentityDigest ===
+                  targetResourceIdentityDigestV1(recorded.resolvedRegions) &&
+                binding.approvalId === recorded.approvalId &&
+                binding.approvalId === intent.approvalId &&
+                (context.executableApproval === undefined ||
+                  context.executableApproval.approvalId ===
+                    recorded.approvalId) &&
+                binding.profileId === terminalP39Receipt.profile.profileId &&
+                binding.profileVersion ===
+                  terminalP39Receipt.profile.profileVersion &&
+                binding.profileHash ===
+                  terminalP39Receipt.profile.profileHash &&
+                binding.profileProtocol ===
+                  terminalP39Receipt.profile.profileProtocol &&
+                binding.effectKey === terminalP39Receipt.effectKey &&
+                selectedEvidence.attempt.profileId ===
+                  terminalP39Receipt.profile.profileId &&
+                selectedEvidence.attempt.profileVersion ===
+                  terminalP39Receipt.profile.profileVersion &&
+                selectedEvidence.attempt.profileHash ===
+                  terminalP39Receipt.profile.profileHash &&
+                selectedEvidence.attempt.profileProtocol ===
+                  terminalP39Receipt.profile.profileProtocol &&
+                selectedEvidence.attempt.effectKey ===
+                  terminalP39Receipt.effectKey;
+              const observationMatchesReceipt =
+                expectedP39Outcome === "NotOccurred"
+                  ? observation._tag === "ReconciledNoEffect" &&
+                    recorded.settlement?._tag === "ReconciledNoEffect" &&
+                    observation.reconciliationFactRef ===
+                      selectedEvidence.fact.factId &&
+                    recorded.settlement.reconciliationFactRef ===
+                      selectedEvidence.fact.factId
+                  : observation._tag === "Success" &&
+                    recorded.settlement?._tag === "Success" &&
+                    observation.resultRef === selectedEvidence.fact.resultRef &&
+                    recorded.resultRef === selectedEvidence.fact.resultRef;
+              if (!exactReceiptSource || !observationMatchesReceipt) {
+                return yield* recordReplayFailure(
+                  intent,
+                  context,
+                  "SettlementMismatch",
+                  yield* clock.now(),
+                );
+              }
             }
           }
           return observation;
@@ -1383,8 +1485,9 @@ export const ToolRuntimeLive = (
             priorRecord.sideEffectSemantics ===
               definition.sideEffectSemantics &&
             priorRecord.argumentsJson === intent.argumentsJson &&
-            priorRecord.approvalId ===
-              (context.executableApproval?.approvalId ?? intent.approvalId);
+            priorRecord.approvalId === intent.approvalId &&
+            (context.executableApproval === undefined ||
+              context.executableApproval.approvalId === priorRecord.approvalId);
           if (priorRecord !== undefined && !priorModelIdentityMatches) {
             return yield* Effect.fail<ToolRuntimeError>(
               operationalFailure(
@@ -1393,59 +1496,39 @@ export const ToolRuntimeLive = (
               )({ _tag: "ToolInvocationIdentityConflict" }),
             );
           }
-          if (priorRecord !== undefined && priorRecord.settlement !== null) {
-            if (priorRecord.settlement._tag === "Denied") {
-              return denied(priorRecord.settlement.reasonCode);
-            }
-            if (
-              priorRecord.settlement._tag === "Interrupted" &&
-              Option.isNone(observationEvidence)
-            ) {
-              return { _tag: "Interrupted" as const };
-            }
-            if (Option.isSome(observationEvidence)) {
-              return yield* decodeRecordedEvidence(
-                intent,
-                context,
-                priorRecord,
-              );
-            }
-            if (
-              priorRecord.settlement._tag === "Success" &&
-              priorRecord.resultRef !== null &&
-              Option.isSome(artifactService)
-            ) {
-              let artifactId: ArtifactId;
-              try {
-                artifactId = parse(ArtifactId)(priorRecord.resultRef);
-              } catch {
-                return {
-                  _tag: "OutcomeUnknown" as const,
-                  reconciliationRefs: [String(intent.invocationId)],
-                };
-              }
-              const bytes = yield* tx
-                .transact(artifactService.value.load(artifactId))
-                .pipe(
-                  Effect.mapError(
-                    operationalFailure(
-                      "SettlementJournal",
-                      String(intent.invocationId),
-                    ),
-                  ),
-                );
-              if (Option.isSome(bytes)) {
-                return {
-                  _tag: "Success" as const,
-                  observation: bounded(new TextDecoder().decode(bytes.value)),
-                  resultRef: priorRecord.resultRef,
-                };
-              }
-            }
-            return {
-              _tag: "OutcomeUnknown" as const,
-              reconciliationRefs: [String(intent.invocationId)],
-            };
+          const terminalP39Outcome =
+            priorRecord?.settlement?._tag === "ReconciledNoEffect"
+              ? ("NotOccurred" as const)
+              : priorRecord?.settlement?._tag === "Success"
+                ? ("Occurred" as const)
+                : undefined;
+          const terminalP39ReceiptCandidate =
+            priorRecord !== undefined &&
+            priorModelIdentityMatches &&
+            terminalP39Outcome !== undefined &&
+            priorRecord.settlement !== null &&
+            priorRecord.sideEffectSemantics === "Reconcilable" &&
+            priorRecord.effectAdmissionState === "MayHaveStarted" &&
+            definition.sideEffectSemantics === "Reconcilable" &&
+            trustedProfile !== undefined &&
+            trustedEffectKey !== null &&
+            Option.isSome(p39Recovery) &&
+            Option.isSome(p39RecoveryEvidence) &&
+            Option.isSome(observationEvidence) &&
+            priorRecord.approvalId === intent.approvalId &&
+            (context.executableApproval === undefined ||
+              context.executableApproval.approvalId === priorRecord.approvalId);
+          if (
+            terminalP39ReceiptCandidate &&
+            priorRecord !== undefined &&
+            terminalP39Outcome !== undefined
+          ) {
+            return yield* decodeRecordedEvidence(intent, context, priorRecord, {
+              expectedOutcome: terminalP39Outcome,
+              definition,
+              profile: trustedProfile,
+              effectKey: trustedEffectKey as string,
+            });
           }
           const exactReconcilableReplayCandidate =
             priorModelIdentityMatches &&
@@ -2892,6 +2975,56 @@ export const ToolRuntimeLive = (
                   selection: { attemptNo: attempt.attemptNo, factId },
                 };
               }
+            }
+            if (recorded.settlement !== null) {
+              if (recorded.settlement._tag === "Denied") {
+                return denied(recorded.settlement.reasonCode);
+              }
+              if (
+                recorded.settlement._tag === "Interrupted" &&
+                Option.isNone(observationEvidence)
+              ) {
+                return { _tag: "Interrupted" as const };
+              }
+              if (Option.isSome(observationEvidence)) {
+                return yield* decodeRecordedEvidence(intent, context, recorded);
+              }
+              if (
+                recorded.settlement._tag === "Success" &&
+                recorded.resultRef !== null &&
+                Option.isSome(artifactService)
+              ) {
+                let artifactId: ArtifactId;
+                try {
+                  artifactId = parse(ArtifactId)(recorded.resultRef);
+                } catch {
+                  return {
+                    _tag: "OutcomeUnknown" as const,
+                    reconciliationRefs: [String(intent.invocationId)],
+                  };
+                }
+                const bytes = yield* tx
+                  .transact(artifactService.value.load(artifactId))
+                  .pipe(
+                    Effect.mapError(
+                      operationalFailure(
+                        "SettlementJournal",
+                        String(intent.invocationId),
+                      ),
+                    ),
+                  );
+                if (Option.isSome(bytes)) {
+                  return {
+                    _tag: "Success" as const,
+                    observation: bounded(new TextDecoder().decode(bytes.value)),
+                    resultRef: recorded.resultRef,
+                  };
+                }
+              }
+              return {
+                _tag: "OutcomeUnknown" as const,
+                reconciliationRefs: [String(intent.invocationId)],
+              };
             }
             if (
               recorded.effectAdmissionState !== "NotAdmitted" &&
