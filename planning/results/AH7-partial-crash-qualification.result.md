@@ -147,3 +147,24 @@ the P40 oracle now permits cursor 0 or 1 and records the observed cursor;
 non-P40 recovery cases still require cursor 1. This does not qualify P3
 projection convergence or the other P40 matrix cells. AH7 remains PARTIAL /
 OPEN.
+
+### P40 reconciliation settlement-commit matrix progress
+
+Three of the four P40 settlement-commit cells have isolated serial
+real-process PASS evidence (zero retries): NotOccurred × before commit
+(75.252s), NotOccurred × after commit (51.454s), and Occurred × before
+commit (111.027s). The Occurred case models the real causal ordering: the
+first daemon reaches
+`AH7AfterToolEffectBeforeSettlement`, so the external effect and result
+artifact exist before recovery returns Occurred. Resource drift is injected
+during reconciliation, but the terminal Success must retain reconciliation
+provenance, selected fact/resultRef and the single external effect. The test
+oracle only treats NotOccurred resource/authority/approval/stop drift as a
+no-effect retry denial; P40-only source-step cursor remains 0 or 1 while its
+provider-turn identity/hash/session sequence stay exact. Occurred × after
+commit and the P3 projection crash cells in this matrix remain unrun. The
+initial Occurred fixture used a pre-executor kill and could not yield a real
+Occurred result; after correcting that boundary, P40 Success committed but a
+shared RNO-only wait predicate still timed out. Both were test-fixture/oracle
+issues; the final Occurred × before-commit run passed. No AH7 closure is
+claimed.
