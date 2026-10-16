@@ -123,3 +123,21 @@ Verification after this correction:
 
 This checkpoint leaves AH7 PARTIAL and awaits independent review before
 further real-process qualification.
+
+### Authority drift after resolver correction — still not qualified
+
+After independent review, only the authority case was rerun, serially, using
+the built checkpoint and the command:
+
+`pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts -t "authority drift during reconciliation I/O" --maxWorkers=1 --no-file-parallelism --retry=0 --reporter=verbose`
+
+The case reached both `AH7BeforeReconciliationFactCommit` and
+`AH7AfterReconciliationFactCommit`. The final diagnostic snapshot contains
+exactly one attempt-0 `NotOccurred`/`RecoveryInput` P39 fact, while the P4
+invocation remains `MayHaveStarted` with no settlement, selected fact, or P40
+observation. The 90-second test wait expired (Vitest test duration 111.55s;
+whole run 128.15s). This confirms the transaction-scope correction permits
+the P39 fact transaction to commit, but the authority-denial path still does
+not reach terminal P4 settlement. The exact RNO reason, P40 selection,
+attempt-0-only admission, and zero-effect assertions therefore remain
+unproven. Approval and Stop cases were not run. AH7 remains PARTIAL.
