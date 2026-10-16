@@ -122,9 +122,52 @@ captured owner snapshot; human authority is resolved against the Work's
 current governing owner. It atomically writes the old immutable
 `Unknown(Orphaned)` conclusion/event, one successor Verification with the
 existing frozen mission and current owner snapshot, durable verifier-spawn
-intent, and the Command receipt. A failure commits none of these facts. Exact
-CommandId replay returns the same successor IDs and receipt; changed payload
-is an idempotency conflict. No evidence or PASS is fabricated.
+intent, immutable retry-origin fact, and the Command receipt. A failure commits
+none of these facts. Exact CommandId replay returns the same successor IDs and
+receipt only after the current P12 visibility and human-authorization check
+still succeeds for the same original actor and source Work/Verification. A
+revoked authorization, changed governing owner that no longer authorizes the
+original actor, different actor/project/source, or foreign target is denied by
+the Resolver before Gateway reads any receipt. No evidence or PASS is
+fabricated.
+
+### Permanent exact replay origin (DID v1.46)
+
+`retry_verification_origins` is the permanent canonical non-receipt fact that
+binds the originating CommandId to its project, original actor, source
+Verification/Work, successor Verification/verifier Execution, and creation
+time. The physical fields, uniqueness/FK/immutability rules, retention and
+migration placeholder are owned by P1 `04`; the row lives at least as long as
+its permanent Command receipt and is independent of Domain Event pruning. It
+does not store summary content, expected revision, payload, fingerprint,
+Handler schema version, fingerprint algorithm version, or receipt JSON.
+
+For a historical Concluded source, P12 resolves the candidate CommandId only
+through that origin fact and rechecks the original actor, project, source
+Work/Verification scope, and current human governance authority. The replay-
+only authority is not accepted by the `RetryVerification` handler. Resolver
+does not compare summary, expected revision, or successor IDs: with the same
+CommandId and source scope, a changed value reaches Gateway's full tuple
+comparison and returns the existing non-disclosing
+`TerminalRejected(IdempotencyConflict)` receipt. A different source/project/
+actor is rejected before Gateway. If the origin exists but its receipt is
+absent, Gateway returns the fixed safe
+`PersistenceCorruption<"CommandStore">` disposition without invoking the
+handler or writing an attempt, receipt, Event, Verification, Execution, or
+spawn intent.
+
+Legacy successful P8 receipts acquire an origin only when the retained
+`VerificationConcluded(Unknown, Orphaned)` and `VerificationStarted` event pair
+plus the canonical successor Verification's persisted preallocated verifier
+Execution ID prove the same CommandId, project, actor, source, and successor
+identities. If a physical verifier Execution/binding has been admitted, it
+must agree. Missing/pruned/duplicate/malformed/conflicting evidence is never
+guessed from receipt JSON, Session text, or pruned Events. The migration
+preserves the old receipt, records
+`UnboundLegacy`, and admits the human-only P6 Governance Inbox item described
+in P6 `02`; an UnboundLegacy external replay is a generic Resolver denial.
+This migration disposition is not a P10 Attention source and does not add a
+new command or automatic retry loop.
 
 After commit, the existing P8 VerificationRuntime performs admission and
 binding backfill with the same preallocated successor IDs. Restart/replay

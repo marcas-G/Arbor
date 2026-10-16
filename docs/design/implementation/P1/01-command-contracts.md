@@ -153,7 +153,9 @@ CommandGateway.execute(envelope, submissionContext, verifiedCommandAuthority)
   1. compute semanticRequestFingerprint + schemaVersion + algorithmVersion
   2. transact (03-transaction-model.md):
      a. read stored resolution metadata and raw result/error JSON by command_id
-         - absent -> continue
+         - absent -> if authority is `RetryVerificationReplayOnlyAuthority`,
+           fail `PersistenceCorruption<"CommandStore">` and roll back with no
+           attempt/handler/write; otherwise continue
          - exists: compare (fingerprint, schemaVersion, algorithmVersion)
            before interpreting either raw JSON field
              - any tuple field differs -> TerminalRejected(IdempotencyConflict);
@@ -238,6 +240,43 @@ Resolver/Gateway and is not part of `CommandRejection`, `CommandResolution`,
 or receipt vocabulary. This external boundary does not widen P1 `07`'s sole
 old-Committed direct-child AssignWork recovery exception; that exception still
 requires the accepted AH10 binding proof.
+
+### 3B. P8 permanent RetryVerification receipt origin (DID v1.46)
+
+The external ordering above remains unchanged: authentication/codec/Actor
+binding and the current P12 Resolver visibility/authorization check complete
+before Gateway can inspect a receipt. For the historical P8
+`RetryVerification` source, Composition loads the immutable
+`retry_verification_origins` fact by candidate CommandId into declared
+canonical authority inputs. This is a non-receipt source fact; there is no
+external CommandStore pre-read, alternate tuple comparator, historical decoder,
+or resolver cache. The Resolver requires the bound project, original actor,
+source Work/Verification scope and current P8 human governance permission.
+Current authorization is required on every replay; revoked/changed-owner
+authorization or a different actor/project/source is a generic Resolver denial
+before Gateway.
+
+An existing but malformed, duplicate, contradictory, or corrupt origin-store
+fact fails closed as typed
+`PersistenceCorruption<"RetryVerificationOriginStore">`, mapped to the
+existing fixed non-retryable `persistence/corruption` Problem before Gateway.
+The response carries no origin/receipt fields or decoder/database detail.
+
+For an authorized origin and same source/CommandId, the Resolver intentionally
+does not compare candidate summary content, expected Work revision, successor
+Verification ID, successor Execution ID, fingerprint, Handler schema version,
+or fingerprint algorithm version. Gateway `BEGIN IMMEDIATE` remains the sole
+receipt lookup and full
+`(semantic_request_fingerprint, schema_version,
+fingerprint_algorithm_version)` comparison point. An exact tuple returns the
+existing typed receipt; a changed tuple remains the existing
+`TerminalRejected(IdempotencyConflict)` branch before JSON decode, with no
+receipt/event/canonical write. The replay-only authority is not accepted by the
+P8 handler. If it reaches Gateway with no receipt row, Gateway returns the
+fixed safe `PersistenceCorruption<"CommandStore">` failure, rolls back and
+does not record an attempt or invoke a handler. The P8 origin, source
+conclusion, successor, spawn intent and successful receipt are one transaction
+under P1 `03` §3.1; an origin is not a substitute for a receipt.
 
 > **P2 evolution:** the `authority` parameter is generalized to
 > `CommandAuthorityFact`; `CommandHandler` declares an explicit `stopAdmission`

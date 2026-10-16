@@ -67,9 +67,18 @@ P8 `RetryVerification` uses only the existing authenticated `/commands`
 external envelope. The shell supplies authenticated actor and stable
 CommandId; strict payload fields include exact Work, Verification, expected
 Work revision and bounded summary content, never a BlobRef or authority.
-Resolver visibility alone does not authorize submission: P8 revalidates the
-exact human role and canonical facts at commit. The action is unavailable to
-Agent/model, RecoveryController, scheduler, or Attention-consumer paths.
+For a historical exact retry, Application/Composition may load the immutable
+P8 `retry_verification_origins` fact by candidate CommandId into declared
+Resolver input; this is not a CommandStore/receipt read. Resolver still
+re-evaluates current actor/project/source visibility and exact current human
+governance: Root-local human for Root Work or the authenticated human of the
+exact current direct Parent Workspace for child Work. Revoked authority,
+changed owner, foreign principal, or changed source scope is a generic deny
+before Gateway. The P8 handler still revalidates the original open source on
+first execution; replay-only authority never reaches that handler. Gateway
+remains the sole receipt lookup and compares the complete tuple in its
+transaction. The action is unavailable to Agent/model, RecoveryController,
+scheduler, or Attention-consumer paths.
 - For sensitive read surfaces, transport authentication and the existing
   supported local-principal check (`user:local`) MUST complete before any
   projection, directory, progress-stream source, or invalidation broadcast is

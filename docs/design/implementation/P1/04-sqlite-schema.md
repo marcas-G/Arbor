@@ -32,6 +32,8 @@ Only the Arbor Runtime writes this DB (DID §9.2).
 | `workspace_resource_activation_intents` | `WorkspaceResourceActivationIntent` (P1 operational convergence fact; FT-DG-01 OPEN-3) |
 | `environment_revisions` | environment revision anchor |
 | `commands` | `CommandReceipt` (authoritative resolution) |
+| `retry_verification_origins` | immutable P8 originating-command/source/successor identity (non-receipt canonical fact) |
+| `retry_verification_legacy_dispositions` | immutable P8 `UnboundLegacy` replay disposition (non-receipt canonical fact) |
 | `command_attempts` | `CommandAttempt` (non-authoritative trace) |
 | `domain_events` | `DomainEvent` (durable outbox) |
 | `project_event_sequences` | project-local sequence counter |
@@ -600,10 +602,103 @@ run against the preserved user database under this authorization. When the
 required prefix is integrated and qualified, 0042 is appended to
 `CURRENT_MIGRATIONS` and the high-water mark advances to 42.
 
+### P8 permanent RetryVerification origin and legacy disposition (DID v1.46)
+
+The ordered forward-only migration is accepted at design level, but its
+migration ID/name is **TBD** and it is not registered, implemented, or
+authorized for execution. At activation it must follow the then-current
+integrated migration prefix under the existing strict `user_version` gate and
+commit DDL, backfill, `UnboundLegacy` facts, and matching P6 Governance Inbox
+admissions atomically. Reapplying a committed migration is a no-op; a failed
+or interrupted application leaves neither partial schema nor partial
+backfill. No downgrade or online/preserved-DB upgrade is authorized here.
+
+The permanent origin relation has exactly the following P8 facts and no
+payload/tuple material:
+
+```sql
+CREATE TABLE retry_verification_origins (
+  command_id                       TEXT PRIMARY KEY,
+  project_id                       TEXT NOT NULL REFERENCES projects(project_id),
+  actor                            TEXT NOT NULL,
+  source_verification_id           TEXT NOT NULL REFERENCES verifications(verification_id),
+  source_work_id                   TEXT NOT NULL REFERENCES works(work_id),
+  successor_verification_id        TEXT NOT NULL REFERENCES verifications(verification_id),
+  successor_verifier_execution_id  TEXT NOT NULL,
+  created_at                       TEXT NOT NULL,
+  UNIQUE (source_verification_id),
+  UNIQUE (successor_verification_id),
+  UNIQUE (successor_verifier_execution_id),
+  FOREIGN KEY (command_id) REFERENCES commands(command_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE retry_verification_legacy_dispositions (
+  command_id    TEXT PRIMARY KEY REFERENCES commands(command_id),
+  project_id    TEXT NOT NULL REFERENCES projects(project_id),
+  disposition   TEXT NOT NULL CHECK (disposition = 'UnboundLegacy'),
+  reason_code   TEXT NOT NULL CHECK (reason_code = 'OriginEvidenceIncomplete'),
+  created_at    TEXT NOT NULL
+);
+
+CREATE TRIGGER retry_verification_origins_immutable_update
+BEFORE UPDATE ON retry_verification_origins
+BEGIN SELECT RAISE(ABORT, 'retry_verification_origin_immutable'); END;
+CREATE TRIGGER retry_verification_origins_immutable_delete
+BEFORE DELETE ON retry_verification_origins
+BEGIN SELECT RAISE(ABORT, 'retry_verification_origin_immutable'); END;
+CREATE TRIGGER retry_verification_legacy_dispositions_immutable_update
+BEFORE UPDATE ON retry_verification_legacy_dispositions
+BEGIN SELECT RAISE(ABORT, 'retry_verification_legacy_disposition_immutable'); END;
+CREATE TRIGGER retry_verification_legacy_dispositions_immutable_delete
+BEFORE DELETE ON retry_verification_legacy_dispositions
+BEGIN SELECT RAISE(ABORT, 'retry_verification_legacy_disposition_immutable'); END;
+```
+
+The Application verifies that source/successor rows and project/work
+relationships agree before insert. The successor verifier Execution ID has
+no FK because P8 `02` creates it later through post-commit `AdmitExecution`
+and binding backfill; that existing P8 intent boundary must remain intact.
+Update and delete are prohibited; the
+origin has the same effective lifetime as its never-hard-deleted Command
+receipt and is not subject to Domain Event retention. It stores no fingerprint,
+Handler schema version, fingerprint algorithm version, summary, expected
+revision, payload JSON, or result JSON. The deferred Command FK permits the
+origin to be inserted by the P8 handler inside the Gateway transaction before
+Gateway inserts the successful receipt; both are present at commit or neither
+is.
+
+The separate `retry_verification_legacy_dispositions` fact marks a recognized
+successful old P8 receipt for which origin cannot be proven. It stores only
+`command_id`, `project_id`, fixed disposition `UnboundLegacy`, bounded
+reason code `OriginEvidenceIncomplete`, and `created_at`; it never copies the
+receipt payload/result. It is immutable, retained, and paired atomically with
+the P6 human-only Governance Inbox entry keyed
+`retry-verification-unbound:<commandId>`. If migration cannot resolve the
+current P8 governance Workspace for that entry, it fails closed and rolls back
+the migration/backfill rather than routing the item to a broader principal.
+
+Backfill an origin only if one strict Committed RetryVerification result and
+exactly one retained `VerificationConcluded(Unknown, Orphaned)` plus one
+`VerificationStarted` event prove the same CommandId, ProjectId, actor, source
+Work/Verification/revision and successor Verification; the successor
+Verification's persisted preallocated `verification_execution_ids` must bind
+the exact verifier Execution ID from the typed result; if a physical
+`verification_executions`/Execution binding has already been admitted, it
+must agree. Missing/pruned, duplicate, malformed, or conflicting evidence is
+never inferred from Session text or a partial row: preserve the receipt,
+insert `UnboundLegacy`, and admit the P6 entry in the same migration
+transaction. Current Command receipts and historical JSON are never rewritten
+or deleted.
+
 ## 6. Retention / delete (P1-DG-09)
 
 ```text
 commands         NEVER hard-deleted (stable idempotency guarantee).
+retry_verification_origins
+                 NEVER hard-deleted; same lifetime as originating Command.
+retry_verification_legacy_dispositions
+                 retained as an immutable governance disposition.
 command_attempts non-authoritative trace; retention/archival allowed.
 domain_events    append-only; no hard DELETE before the retention horizon;
                  project_event_sequences persists the counter so pruning

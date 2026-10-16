@@ -116,6 +116,32 @@ consumed entry. The resolved fact is the durable P2 wake source for the same
 Execution; Inbox admission/consumption never creates a new Execution or
 ProviderTurn.
 
+### P8 UnboundLegacy RetryVerification Governance Inbox entry (DID v1.46)
+
+The ordered P8 origin migration admits one human-only route-specific
+`InboxEntry.kind=RetryVerificationUnboundLegacy` when a recognized historical
+successful RetryVerification receipt cannot be bound by exact retained event
+and successor evidence. Its stable `entryKey` is
+`retry-verification-unbound:<commandId>`. For Root Work the recipient is the
+Project's root Workspace; for child Work the recipient is the exact direct
+Parent Workspace. Migration derives the route only from the receipt's strict
+RetryVerification result and current canonical Project/Work/Workspace facts;
+if that route cannot be proven, the migration fails closed and rolls back.
+
+The matching immutable `retry_verification_legacy_dispositions` row and Inbox
+entry are admitted in the same migration transaction. The entry exposes only
+the CommandId and fixed `UnboundLegacy` / `OriginEvidenceIncomplete` reason,
+never receipt JSON, summary content, raw event JSON, or path/host data. This is
+a human-readable governance warning, not a Message, approval, Agent
+instruction, or P10 Attention source. Admission is upsert-by-key; duplicate
+backfill/reconciliation is a no-op. The Governance Inbox query exposes the
+pending row to that human route; reading it is not consumption and does not
+clear it. A rebuild re-derives the same entry from the retained immutable
+disposition fact. It is not promoted to Agent Session and has no automatic
+consumer or mutation action. Any future consume/resolve action requires its
+own accepted contract. An UnboundLegacy command replay remains a generic
+Resolver denial.
+
 ### Typed WorkBlocked Parent input (accepted WorkEpisode amendment)
 
 For a child WorkEpisode that commits `Completed(Blocked)`, the deterministic
