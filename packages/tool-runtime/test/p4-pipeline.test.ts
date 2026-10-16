@@ -19,6 +19,7 @@ import {
   type NoEffectDenialCode,
   P39RecoveryEvidenceStore,
   ProjectEnvironmentPort,
+  type RecoveryBindingV1,
   ResourceAdmission,
   SandboxPort,
   ToolAuthorityResolver,
@@ -31,6 +32,7 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
+  targetResourceIdentityDigestV1,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Exit, Layer, Option } from "effect";
@@ -137,6 +139,18 @@ interface PipelineTrace {
   legacyNoEffectInterruptionWrites?: number;
   readonly p40WinnerEvidence?: ToolObservationEvidence;
   readonly stopAtEffectAdmission?: boolean;
+  readonly resolvedEnvironmentRevisionSequence?: ReadonlyArray<string>;
+  readonly currentEnvironmentRevisionValues?: ReadonlyArray<string | null>;
+  readonly workspaceBoundaryAddresses?: ReadonlyArray<
+    import("@arbor/domain").ResourceAddress
+  >;
+  resourceAdmissionRegions?: Array<
+    ReadonlyArray<import("@arbor/domain").CanonicalResourceRegion>
+  >;
+  resourceAdmissionBoundaryRegions?: Array<
+    ReadonlyArray<import("@arbor/domain").CanonicalResourceRegion>
+  >;
+  claimedBindings?: Array<RecoveryBindingV1>;
 }
 
 const app = (
@@ -162,7 +176,10 @@ const app = (
       : undefined);
   const p39BindingEnabled =
     p39DeniedReplay !== undefined ||
-    p39CurrentEnvironmentRevision !== undefined;
+    p39CurrentEnvironmentRevision !== undefined ||
+    trace?.currentEnvironmentRevisionValues !== undefined;
+  let environmentResolutionIndex = 0;
+  let environmentRevisionReadIndex = 0;
   let approval =
     initialApprovalOrExecutableApproval !== undefined &&
     !("routeKind" in initialApprovalOrExecutableApproval)
@@ -201,10 +218,27 @@ const app = (
           : Effect.succeed(true),
     }),
     Layer.succeed(ResourceAdmission, {
-      admit: () => {
+      admit: (input: {
+        readonly regions: ReadonlyArray<
+          import("@arbor/domain").CanonicalResourceRegion
+        >;
+        readonly resolvedBoundaryRegions: ReadonlyArray<
+          import("@arbor/domain").CanonicalResourceRegion
+        >;
+      }) => {
         if (p39BindingEnabled && trace !== undefined) {
           trace.resourceAdmissionCalls =
             (trace.resourceAdmissionCalls ?? 0) + 1;
+          if (trace.resourceAdmissionRegions === undefined) {
+            trace.resourceAdmissionRegions = [];
+          }
+          trace.resourceAdmissionRegions.push(input.regions);
+          if (trace.resourceAdmissionBoundaryRegions === undefined) {
+            trace.resourceAdmissionBoundaryRegions = [];
+          }
+          trace.resourceAdmissionBoundaryRegions.push(
+            input.resolvedBoundaryRegions,
+          );
         }
         return faults.resourceAdmission === true
           ? Effect.fail({
@@ -363,6 +397,11 @@ const app = (
           trace.environmentResolutions =
             (trace.environmentResolutions ?? 0) + 1;
         }
+        const observedEnvironmentRevision =
+          trace?.resolvedEnvironmentRevisionSequence?.[
+            environmentResolutionIndex
+          ] ?? "rev";
+        environmentResolutionIndex += 1;
         return faults.environmentResolution === true
           ? Effect.fail({
               _tag: "EnvironmentError" as const,
@@ -373,7 +412,7 @@ const app = (
                 resourceSpaceId: "filesystem",
                 normalizedRegion: a,
               })),
-              observedEnvironmentRevision: "rev",
+              observedEnvironmentRevision,
             });
       },
     }),
@@ -393,7 +432,9 @@ const app = (
                 projectId,
                 resourceBoundaryRevision: 0,
                 resourceBoundary: {
-                  addresses: [{ _tag: "GitWorktree", path: "/repo/a" }],
+                  addresses: trace?.workspaceBoundaryAddresses ?? [
+                    { _tag: "GitWorktree", path: "/repo/a" },
+                  ],
                 },
               }),
             ),
@@ -499,19 +540,33 @@ const app = (
     : Layer.mergeAll(
         executableApprovalDeps,
         Layer.succeed(EnvironmentRevisionStore, {
-          current: () =>
-            Effect.succeed(
-              p39CurrentEnvironmentRevision === undefined
-                ? Option.none()
-                : Option.some(p39CurrentEnvironmentRevision as never),
-            ),
+          current: () => {
+            const value =
+              trace?.currentEnvironmentRevisionValues?.[
+                environmentRevisionReadIndex
+              ];
+            environmentRevisionReadIndex += 1;
+            return Effect.succeed(
+              value !== undefined
+                ? value === null
+                  ? Option.none()
+                  : Option.some(value as never)
+                : p39CurrentEnvironmentRevision === undefined
+                  ? Option.none()
+                  : Option.some(p39CurrentEnvironmentRevision as never),
+            );
+          },
           record: () => Effect.void,
           lazyInitAnchor: () => Effect.void,
         }),
         Layer.succeed(P39RecoveryEvidenceStore, {
-          bindClaim: () => {
+          bindClaim: ({ binding }: { readonly binding: RecoveryBindingV1 }) => {
             if (trace !== undefined) {
               trace.p39BindingCalls = (trace.p39BindingCalls ?? 0) + 1;
+              if (trace.claimedBindings === undefined) {
+                trace.claimedBindings = [];
+              }
+              trace.claimedBindings.push(binding);
             }
             return Effect.succeed("Bound" as const);
           },
@@ -1010,6 +1065,14 @@ describe("P4 tool runtime pipeline", () => {
     };
     const p39Context = {
       ...context,
+      authority: {
+        ...authority,
+        sourceRevision: JSON.stringify({
+          workspacePolicyRevision: 0,
+          activeGrants: [],
+          verifierId: null,
+        }),
+      },
       recoveryBindingIdentity: {
         executionId,
         providerTurnId: parse(ProviderTurnId)(
@@ -1071,6 +1134,14 @@ describe("P4 tool runtime pipeline", () => {
     };
     const p39Context = {
       ...context,
+      authority: {
+        ...authority,
+        sourceRevision: JSON.stringify({
+          workspacePolicyRevision: 0,
+          activeGrants: [],
+          verifierId: null,
+        }),
+      },
       recoveryBindingIdentity: {
         executionId,
         providerTurnId: parse(ProviderTurnId)(
@@ -1125,6 +1196,203 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.effectAdmissions).toBe(0);
     expect(trace.noEffectDenials).toEqual([]);
     expect(executorCalls).toBe(0);
+  });
+
+  it("accepts P39 environment None only for observed revision zero and binds only the selected target region", async () => {
+    const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      resolvedEnvironmentRevisionSequence: ["0", "0"],
+      currentEnvironmentRevisionValues: [null, null],
+      workspaceBoundaryAddresses: [
+        { _tag: "GitWorktree", path: "/repo/a" },
+        { _tag: "ExternalResource", address: "https://example.test" },
+      ],
+    };
+    const p39Context = {
+      ...context,
+      authority: {
+        ...authority,
+        sourceRevision: JSON.stringify({
+          workspacePolicyRevision: 0,
+          activeGrants: [],
+          verifierId: null,
+        }),
+      },
+      recoveryBindingIdentity: {
+        executionId,
+        providerTurnId: parse(ProviderTurnId)(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789c1",
+        ),
+        logicalStepNo: 10,
+        repairAttempt: 0,
+        logicalActionId: "action-p39-none-zero",
+        actionIndex: 0,
+        callRef: "c",
+      },
+      recoveryBindingPolicyRevisions: {
+        workspacePolicyRevision: 0,
+        projectPolicyRevision: 0,
+      },
+    } as import("@arbor/ports").ToolExecutionContext;
+
+    const result = await run(
+      app(false, okExecutor, {}, trace),
+      argumentsJson,
+      null,
+      p39Context,
+    );
+    const targetRegions = trace.resourceAdmissionRegions?.[0];
+    const boundaryRegions = trace.resourceAdmissionBoundaryRegions?.[0];
+    const binding = trace.claimedBindings?.[0];
+
+    expect(result).toMatchObject({ _tag: "Success" });
+    expect(trace.environmentResolutions).toBe(2);
+    expect(targetRegions).toHaveLength(1);
+    expect(boundaryRegions).toHaveLength(2);
+    expect(targetResourceIdentityDigestV1(targetRegions ?? [])).toBe(
+      binding?.targetResourceIdentityDigest,
+    );
+    expect(targetResourceIdentityDigestV1(targetRegions ?? [])).not.toBe(
+      targetResourceIdentityDigestV1(boundaryRegions ?? []),
+    );
+    expect(binding?.environmentRevision).toBe("0");
+    expect(trace.intentWrites).toBe(1);
+    expect(trace.p39BindingCalls).toBe(1);
+    expect(trace.effectAdmissions).toBe(1);
+  });
+
+  it("refreshes exactly once after the first stale P39 revision, then consumes the fresh snapshot", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      resolvedEnvironmentRevisionSequence: ["rev1", "rev1", "rev2", "rev2"],
+      currentEnvironmentRevisionValues: [null, "rev2", "rev2"],
+      resourceAdmissionCalls: 0,
+    };
+    const p39Context = {
+      ...context,
+      authority: {
+        ...authority,
+        sourceRevision: JSON.stringify({
+          workspacePolicyRevision: 0,
+          activeGrants: [],
+          verifierId: null,
+        }),
+      },
+      recoveryBindingIdentity: {
+        executionId,
+        providerTurnId: parse(ProviderTurnId)(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789c2",
+        ),
+        logicalStepNo: 11,
+        repairAttempt: 0,
+        logicalActionId: "action-p39-refresh-once",
+        actionIndex: 0,
+        callRef: "c",
+      },
+      recoveryBindingPolicyRevisions: {
+        workspacePolicyRevision: 0,
+        projectPolicyRevision: 0,
+      },
+    } as import("@arbor/ports").ToolExecutionContext;
+    const result = await run(
+      app(false, okExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      p39Context,
+    );
+
+    expect(result).toMatchObject({ _tag: "Success" });
+    expect(trace.environmentResolutions).toBe(4);
+    expect(trace.resourceAdmissionCalls).toBe(1);
+    expect(trace.intentWrites).toBe(1);
+    expect(trace.approvalConsumes).toBe(0);
+    expect(trace.p39BindingCalls).toBe(1);
+    expect(trace.effectAdmissions).toBe(1);
+  });
+
+  it("fails closed after the single allowed P39 stale-snapshot refresh", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      resolvedEnvironmentRevisionSequence: ["rev1", "rev1", "rev2", "rev2"],
+      currentEnvironmentRevisionValues: [null, "still-stale"],
+      resourceAdmissionCalls: 0,
+      p39BindingCalls: 0,
+    };
+    const p39Context = {
+      ...context,
+      authority: {
+        ...authority,
+        sourceRevision: JSON.stringify({
+          workspacePolicyRevision: 0,
+          activeGrants: [],
+          verifierId: null,
+        }),
+      },
+      recoveryBindingIdentity: {
+        executionId,
+        providerTurnId: parse(ProviderTurnId)(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789c3",
+        ),
+        logicalStepNo: 12,
+        repairAttempt: 0,
+        logicalActionId: "action-p39-stale-twice",
+        actionIndex: 0,
+        callRef: "c",
+      },
+      recoveryBindingPolicyRevisions: {
+        workspacePolicyRevision: 0,
+        projectPolicyRevision: 0,
+      },
+    } as import("@arbor/ports").ToolExecutionContext;
+    const outcome = await Effect.runPromise(
+      Effect.provide(
+        Effect.match(
+          Effect.gen(function* () {
+            const runtime = yield* ToolRuntimePort;
+            return yield* runtime.invoke(
+              intent('{"target":{"mount":"workspace","path":"."}}') as never,
+              p39Context,
+            );
+          }),
+          {
+            onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
+            onSuccess: (value) => ({ _tag: "Success" as const, value }),
+          },
+        ),
+        app(false, okExecutor, {}, trace),
+      ),
+    );
+
+    expect(outcome._tag).toBe("Failure");
+    if (outcome._tag === "Failure") {
+      expect(outcome.cause).toMatchObject({
+        _tag: "ToolRuntimeOperationalFailure",
+        stage: "ResourceResolutionStale",
+      });
+    }
+    expect(trace.environmentResolutions).toBe(4);
+    expect(trace.resourceAdmissionCalls).toBe(0);
+    expect(trace.intentWrites).toBe(0);
+    expect(trace.approvalConsumes).toBe(0);
+    expect(trace.p39BindingCalls).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(trace.noEffectDenials).toEqual([]);
   });
 
   it("returns ExpectedFailure on invalid input", async () => {
