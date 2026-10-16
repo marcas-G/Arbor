@@ -4,6 +4,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   layer,
+  makeTransactionPortLive,
   P1_MIGRATIONS,
   runMigrations,
   sqliteAdapterError,
@@ -106,5 +107,39 @@ describe("transaction port", () => {
       "concurrent-a",
       "concurrent-b",
     ]);
+  });
+
+  it("keeps the qualification probe pre-BEGIN and fail-silent", async () => {
+    const events: string[] = [];
+    const qualificationApp = Layer.provideMerge(
+      makeTransactionPortLive(async (event) => {
+        events.push(event.boundary);
+        throw new Error("test-only observer failure");
+      }),
+      layer({ filename: ":memory:" }),
+    );
+    const qualification = Effect.gen(function* () {
+      yield* runMigrations(P1_MIGRATIONS);
+      const tx = yield* TransactionPort;
+      yield* tx.transact(
+        Effect.gen(function* () {
+          events.push("body");
+          const sql = yield* SqlClient;
+          yield* sql.unsafe(
+            "INSERT INTO project_event_sequences (project_id, last_sequence) VALUES ('probe-fail-silent', 1)",
+          );
+        }),
+      );
+      const sql = yield* SqlClient;
+      return yield* sql.unsafe<{ project_id: string }>(
+        "SELECT project_id FROM project_event_sequences WHERE project_id = 'probe-fail-silent'",
+      );
+    });
+
+    const rows = await Effect.runPromise(
+      Effect.provide(qualification, qualificationApp),
+    );
+    expect(events).toEqual(["BeforeBegin", "body"]);
+    expect(rows).toEqual([{ project_id: "probe-fail-silent" }]);
   });
 });

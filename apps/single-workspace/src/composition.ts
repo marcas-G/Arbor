@@ -87,6 +87,7 @@ import {
   makeAttentionProjectionStoreLive,
   makeP39RecoveryEvidenceStoreLive,
   makeRecoveryAttentionFactStoreLive,
+  makeTransactionPortLive,
   OwnershipWriteServiceLive,
   OwnershipWriteServiceWithQualificationProbe,
   P12_MIGRATIONS,
@@ -118,7 +119,7 @@ import {
   sqliteAdapterError,
   ToolInvocationStoreLive,
   ToolObservationEvidenceStoreLive,
-  TransactionPortLive,
+  type TransactionBeginQualificationProbe,
   VerificationRepositoryLive,
   WorkReadmissionGateStoreLive,
   WorkRepositoryLive,
@@ -219,6 +220,7 @@ import {
 } from "./health.js";
 import {
   type ConversationResponseQualificationProbe,
+  type ExecutableApprovalExpiryQualificationProbe,
   type ProductionDaemonService,
   ProductionDaemonServiceLive,
   type ProductionDaemonServices,
@@ -299,6 +301,8 @@ export interface SingleWorkspaceConfig {
   readonly databaseFile: string;
   /** Test-only startup trace; absent from ordinary production composition. */
   readonly startupDiagnosticProbe?: (phase: string) => void;
+  /** Test-only pre-BEGIN barrier; ordinary production composition leaves it absent. */
+  readonly transactionBeginQualificationProbe?: TransactionBeginQualificationProbe;
   /** P12 cross-contract completeness correction: the runtime project whose
    * committed Project-tool registrations are unioned into the model-facing
    * catalog. Absent => the catalogued set is the builtins only. */
@@ -374,6 +378,8 @@ export interface SingleWorkspaceConfig {
   /** Test-only trace of P41 Stop recovery branch decisions. */
   readonly submittedDecisionRecoveryQualificationProbe?: SubmittedDecisionRecoveryQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
+  /** Test-only process-local pause point around the Executable TTL transaction. */
+  readonly executableApprovalExpiryQualificationProbe?: ExecutableApprovalExpiryQualificationProbe;
   readonly toolQualificationProbe?: ToolRuntimeQualificationProbe;
   /** Test-only catalog visibility diagnostic; ordinary startup leaves absent. */
   readonly executableToolQualificationProbe?: ExecutableToolHandlerQualificationProbe;
@@ -604,7 +610,10 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(
       provider,
       Layer.provide(ProviderTurnStoreLive, infra),
-      Layer.provide(TransactionPortLive, infra),
+      Layer.provide(
+        makeTransactionPortLive(config.transactionBeginQualificationProbe),
+        infra,
+      ),
       secretStore,
       infra,
     ),
@@ -643,7 +652,10 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(infra, domainEventJournal, inboxProjection),
   );
   const repos = Layer.mergeAll(
-    Layer.provide(TransactionPortLive, infra),
+    Layer.provide(
+      makeTransactionPortLive(config.transactionBeginQualificationProbe),
+      infra,
+    ),
     Layer.provide(CommandStoreLive, infra),
     domainEventJournal,
     Layer.provide(ProjectRepositoryLive, infra),
@@ -884,7 +896,14 @@ export const buildSingleWorkspaceLayer = (
   );
   const runnableSource = Layer.provide(
     DependencyAwareRunnableWorkSourceLive,
-    Layer.mergeAll(repos, infra, Layer.provide(TransactionPortLive, infra)),
+    Layer.mergeAll(
+      repos,
+      infra,
+      Layer.provide(
+        makeTransactionPortLive(config.transactionBeginQualificationProbe),
+        infra,
+      ),
+    ),
   );
   const reconciliation = Layer.provide(ReconciliationSourceLive, repos);
   const scheduler = Layer.provide(
@@ -893,7 +912,10 @@ export const buildSingleWorkspaceLayer = (
       repos,
       runnableSource,
       infra,
-      Layer.provide(TransactionPortLive, infra),
+      Layer.provide(
+        makeTransactionPortLive(config.transactionBeginQualificationProbe),
+        infra,
+      ),
     ),
   );
   const workflowSignals = Layer.provide(
@@ -1017,6 +1039,12 @@ export const buildSingleWorkspaceLayer = (
         : {
             conversationResponseQualificationProbe:
               config.conversationResponseQualificationProbe,
+          }),
+      ...(config.executableApprovalExpiryQualificationProbe === undefined
+        ? {}
+        : {
+            executableApprovalExpiryQualificationProbe:
+              config.executableApprovalExpiryQualificationProbe,
           }),
     }),
     Layer.mergeAll(coreAll, t1Recovery, recordEnvironmentChange),

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ExecutionId, Principal, parse } from "@arbor/domain";
@@ -7,9 +7,12 @@ import {
   ExecutableApprovalStore,
   IdGenerator,
   type InboxProjectionStore,
+  type TransactionOperationalFailure,
   TransactionPort,
+  type TransactionPortService,
+  TransactionScope,
 } from "@arbor/ports";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -34,12 +37,16 @@ const toolInvocationId = "tin_expiry_test";
 const expiredAt = "2026-10-11T00:15:00.000Z";
 const expiryObservedAt = "2026-10-11T00:15:00.001Z";
 
-const makeApp = (filename = ":memory:") => {
+const makeApp = (
+  filename = ":memory:",
+  transactionBarrier?: { readonly wait: () => Promise<void> },
+  idPrefix = "evt_expiry",
+) => {
   const db = layer({ filename });
   let sequence = 0;
   const ids = Layer.succeed(IdGenerator, {
     generate: <T>(_kind: string) =>
-      Effect.succeed(`evt_expiry_${++sequence}` as T),
+      Effect.succeed(`${idPrefix}_${++sequence}` as T),
   });
   const inbox = Layer.provide(InboxProjectionStoreLive, db);
   const journal = Layer.provide(
@@ -50,23 +57,77 @@ const makeApp = (filename = ":memory:") => {
     ExecutableApprovalStoreLive,
     Layer.mergeAll(db, ids, inbox, journal),
   );
-  return Layer.mergeAll(
-    db,
-    ids,
-    inbox,
-    journal,
-    approvals,
-    Layer.provide(TransactionPortLive, db),
-  );
+  const transactionPort =
+    transactionBarrier === undefined
+      ? Layer.provide(TransactionPortLive, db)
+      : Layer.provide(
+          Layer.effect(
+            TransactionPort,
+            Effect.gen(function* () {
+              const sql = yield* SqlClient;
+              const run = (statement: string) =>
+                sql.unsafe(statement).pipe(
+                  Effect.mapError(
+                    (cause): TransactionOperationalFailure => ({
+                      _tag: "TransactionOperationalFailure",
+                      cause: { statement, cause },
+                    }),
+                  ),
+                );
+              const transact: TransactionPortService["transact"] = <A, E, R>(
+                body: Effect.Effect<A, E, R | TransactionScope>,
+              ) =>
+                Effect.gen(function* () {
+                  yield* Effect.promise(() => transactionBarrier.wait());
+                  yield* run("BEGIN IMMEDIATE");
+                  const exit = yield* Effect.exit(
+                    Effect.provideService(body, TransactionScope, {
+                      session: { id: "p38-race" },
+                    }),
+                  );
+                  if (Exit.isSuccess(exit)) {
+                    yield* run("COMMIT");
+                    return exit.value;
+                  }
+                  yield* run("ROLLBACK");
+                  return yield* Effect.failCause(exit.cause);
+                });
+              return TransactionPort.of({ transact });
+            }),
+          ),
+          db,
+        );
+  return Layer.mergeAll(db, ids, inbox, journal, approvals, transactionPort);
+};
+
+const makeStartBarrier = (participants: number) => {
+  let arrivals = 0;
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    wait: async () => {
+      arrivals += 1;
+      if (arrivals === participants) release();
+      await released;
+    },
+  };
 };
 
 const seedApproval = (input: {
   readonly state: "Pending" | "Approved";
   readonly revision: number;
   readonly inboxConsumedAt: string | null;
+  readonly approvalId?: string;
+  readonly logicalActionId?: string;
+  readonly toolInvocationId?: string;
 }) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
+    const rowApprovalId = input.approvalId ?? approvalId;
+    const rowLogicalActionId = input.logicalActionId ?? logicalActionId;
+    const rowToolInvocationId = input.toolInvocationId ?? toolInvocationId;
     yield* sql.unsafe(
       `INSERT INTO action_approvals (
          approval_id, route_kind, project_id, workspace_id, execution_id,
@@ -84,7 +145,7 @@ const seedApproval = (input: {
          '2026-10-11T00:00:00.000Z', ?, ?, ?, ?, NULL, NULL, 1, NULL,
          2, 0, 0, ?, 'call-expiry', ?, NULL, NULL, NULL)`,
       [
-        approvalId,
+        rowApprovalId,
         projectId,
         workspaceId,
         executionId,
@@ -94,8 +155,8 @@ const seedApproval = (input: {
         input.state === "Approved" ? "2026-10-11T00:01:00.000Z" : null,
         input.state === "Approved" ? "user:expiry-test" : null,
         input.state === "Approved" ? "Approve" : null,
-        logicalActionId,
-        toolInvocationId,
+        rowLogicalActionId,
+        rowToolInvocationId,
       ],
     );
     yield* sql.unsafe(
@@ -105,8 +166,8 @@ const seedApproval = (input: {
        ) VALUES (?, ?, 'Governance', '{}', ?, '2026-10-11T00:00:00.000Z', ?)`,
       [
         workspaceId,
-        `eap:${approvalId}:0`,
-        logicalActionId,
+        `eap:${rowApprovalId}:0`,
+        rowLogicalActionId,
         input.inboxConsumedAt,
       ],
     );
@@ -485,4 +546,291 @@ describe("EA-DG-01 executable approval expiration", () => {
       }),
       makeRetainedDatabaseFile("stop-wins-ttl-race"),
     ));
+
+  it("arbitrates human Reject versus TTL expiry once across independent barrier-synchronized SQLite connections", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "arbor-p38-resolve-ttl-race-"),
+    );
+    const databaseFile = join(directory, "approval.sqlite");
+    try {
+      await runDb(
+        Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          yield* runMigrations(P38_MIGRATIONS);
+          yield* tx.transact(seedStopExecution);
+        }),
+        databaseFile,
+      );
+
+      for (let round = 0; round < 8; round += 1) {
+        const suffix = `round_${round}`;
+        const raceApprovalId = `eap_${suffix}`;
+        const raceLogicalActionId = `lac_${suffix}`;
+        const raceToolInvocationId = `tin_${suffix}`;
+        await runDb(
+          Effect.gen(function* () {
+            const tx = yield* TransactionPort;
+            yield* tx.transact(
+              seedApproval({
+                state: "Pending",
+                revision: 0,
+                inboxConsumedAt: null,
+                approvalId: raceApprovalId,
+                logicalActionId: raceLogicalActionId,
+                toolInvocationId: raceToolInvocationId,
+              }),
+            );
+          }),
+          databaseFile,
+        );
+
+        const barrier = makeStartBarrier(2);
+        const humanLayer = makeApp(databaseFile, barrier, `evt_human_${round}`);
+        const expiryLayer = makeApp(
+          databaseFile,
+          barrier,
+          `evt_expiry_${round}`,
+        );
+        const humanDecision = Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          const store = yield* ExecutableApprovalStore;
+          return yield* tx.transact(
+            store.decide({
+              approvalId: raceApprovalId,
+              commandId: `cmd_${suffix}` as never,
+              expectedRevision: 0,
+              decision: "Reject",
+              decidedAt: "2026-10-11T00:14:59.999Z",
+              decidedBy: parse(Principal)("user:expiry-test"),
+              reason: `barrier race ${suffix}`,
+            }),
+          );
+        });
+        const ttlExpiry = Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          const store = yield* ExecutableApprovalStore;
+          return yield* tx.transact(
+            store.expireDue({
+              now: expiryObservedAt,
+              expiredBy: parse(Principal)("runtime:system"),
+            }),
+          );
+        });
+        const [decision, expired] = await Promise.all([
+          Effect.runPromise(
+            Effect.scoped(Effect.provide(humanDecision, humanLayer)),
+          ),
+          Effect.runPromise(
+            Effect.scoped(Effect.provide(ttlExpiry, expiryLayer)),
+          ),
+        ]);
+
+        const humanWon = Option.isSome(decision);
+        const ttlWon = expired.length === 1;
+        expect(Number(humanWon) + Number(ttlWon)).toBe(1);
+        if (humanWon) {
+          expect(decision.value).toMatchObject({
+            state: "Rejected",
+            revision: 1,
+          });
+          expect(expired).toEqual([]);
+        } else {
+          expect(expired[0]).toMatchObject({ state: "Expired", revision: 1 });
+        }
+
+        const persisted = await runDb(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            const rows = yield* sql.unsafe<{
+              readonly state: string;
+              readonly revision: number;
+            }>(
+              "SELECT state, revision FROM action_approvals WHERE approval_id = ?",
+              [raceApprovalId],
+            );
+            const inbox = yield* sql.unsafe<{
+              readonly consumed_at: string | null;
+            }>(
+              "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
+              [workspaceId, `eap:${raceApprovalId}:0`],
+            );
+            const events = yield* sql.unsafe<{
+              readonly payload_json: string;
+            }>(
+              `SELECT payload_json FROM domain_events
+                WHERE event_type = 'ExecutableApprovalResolved'
+                  AND aggregate_ref = ?`,
+              [raceApprovalId],
+            );
+            return { rows, inbox, events };
+          }),
+          databaseFile,
+        );
+        expect(persisted.rows).toEqual([
+          {
+            state: humanWon ? "Rejected" : "Expired",
+            revision: 1,
+          },
+        ]);
+        expect(persisted.inbox).toHaveLength(1);
+        expect(persisted.inbox[0]?.consumed_at).toEqual(expect.any(String));
+        expect(persisted.events).toHaveLength(1);
+        expect(
+          JSON.parse(persisted.events[0]?.payload_json ?? "{}"),
+        ).toMatchObject({
+          resolution: humanWon ? "Rejected" : "Expired",
+          revision: 1,
+          ...(humanWon ? {} : { reasonCode: "TTLExpired" }),
+        });
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it("arbitrates Stop cancellation versus TTL expiry once across independent barrier-synchronized SQLite connections", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "arbor-p38-stop-ttl-race-"));
+    const databaseFile = join(directory, "approval.sqlite");
+    try {
+      await runDb(
+        Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          yield* runMigrations(P38_MIGRATIONS);
+          yield* tx.transact(seedStopExecution);
+        }),
+        databaseFile,
+      );
+
+      for (let round = 0; round < 8; round += 1) {
+        const suffix = `stop_round_${round}`;
+        const raceApprovalId = `eap_${suffix}`;
+        const raceLogicalActionId = `lac_${suffix}`;
+        const raceToolInvocationId = `tin_${suffix}`;
+        await runDb(
+          Effect.gen(function* () {
+            const tx = yield* TransactionPort;
+            yield* tx.transact(
+              seedApproval({
+                state: "Pending",
+                revision: 0,
+                inboxConsumedAt: null,
+                approvalId: raceApprovalId,
+                logicalActionId: raceLogicalActionId,
+                toolInvocationId: raceToolInvocationId,
+              }),
+            );
+          }),
+          databaseFile,
+        );
+
+        const barrier = makeStartBarrier(2);
+        const stopLayer = makeApp(databaseFile, barrier, `evt_stop_${round}`);
+        const expiryLayer = makeApp(
+          databaseFile,
+          barrier,
+          `evt_stop_ttl_${round}`,
+        );
+        const stopCancellation = Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          const store = yield* ExecutableApprovalStore;
+          const sql = yield* SqlClient;
+          return yield* tx.transact(
+            Effect.gen(function* () {
+              yield* sql.unsafe(
+                "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ?",
+                ["2026-10-11T00:01:00.000Z", executionId],
+              );
+              return yield* store.cancelForExecution({
+                executionId,
+                cancelledAt: "2026-10-11T00:01:00.000Z",
+                cancelledBy: parse(Principal)("user:p38-stop-race"),
+                reason: "StopRequested",
+              });
+            }),
+          );
+        });
+        const ttlExpiry = Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          const store = yield* ExecutableApprovalStore;
+          return yield* tx.transact(
+            store.expireDue({
+              now: expiryObservedAt,
+              expiredBy: parse(Principal)("runtime:system"),
+            }),
+          );
+        });
+        const [cancelled, expired] = await Promise.all([
+          Effect.runPromise(
+            Effect.scoped(Effect.provide(stopCancellation, stopLayer)),
+          ),
+          Effect.runPromise(
+            Effect.scoped(Effect.provide(ttlExpiry, expiryLayer)),
+          ),
+        ]);
+        const stopWon = cancelled.length === 1;
+        const ttlWon = expired.length === 1;
+        expect(Number(stopWon) + Number(ttlWon)).toBe(1);
+        if (stopWon) {
+          expect(cancelled[0]).toMatchObject({
+            state: "Cancelled",
+            revision: 1,
+          });
+          expect(expired).toEqual([]);
+        } else {
+          expect(expired[0]).toMatchObject({ state: "Expired", revision: 1 });
+          expect(cancelled).toEqual([]);
+        }
+
+        const persisted = await runDb(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            const rows = yield* sql.unsafe<{
+              readonly state: string;
+              readonly revision: number;
+              readonly cancelled_at: string | null;
+            }>(
+              "SELECT state, revision, cancelled_at FROM action_approvals WHERE approval_id = ?",
+              [raceApprovalId],
+            );
+            const inbox = yield* sql.unsafe<{
+              readonly consumed_at: string | null;
+            }>(
+              "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
+              [workspaceId, `eap:${raceApprovalId}:0`],
+            );
+            const events = yield* sql.unsafe<{
+              readonly payload_json: string;
+            }>(
+              `SELECT payload_json FROM domain_events
+                WHERE event_type = 'ExecutableApprovalResolved'
+                  AND aggregate_ref = ?`,
+              [raceApprovalId],
+            );
+            return { rows, inbox, events };
+          }),
+          databaseFile,
+        );
+        expect(persisted.rows).toEqual([
+          {
+            state: stopWon ? "Cancelled" : "Expired",
+            revision: 1,
+            cancelled_at: stopWon ? "2026-10-11T00:01:00.000Z" : null,
+          },
+        ]);
+        expect(persisted.inbox).toHaveLength(1);
+        expect(persisted.inbox[0]?.consumed_at).toEqual(expect.any(String));
+        expect(persisted.events).toHaveLength(ttlWon ? 1 : 0);
+        if (ttlWon) {
+          expect(
+            JSON.parse(persisted.events[0]?.payload_json ?? "{}"),
+          ).toMatchObject({
+            resolution: "Expired",
+            revision: 1,
+          });
+        }
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 180_000);
 });

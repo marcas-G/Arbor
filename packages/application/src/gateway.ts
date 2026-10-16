@@ -44,16 +44,32 @@ export * from "./project-admission.js";
 
 /** Process-local crash qualification seam. Product composition leaves it
  * absent; only an explicitly injected test child can pause this transaction. */
-export type CommandGatewayQualificationProbe = (event: {
-  readonly boundary:
-    | "AH10BeforeFencedReceiptCommit"
-    | "AH10BeforeAssignWorkBindingCommit"
-    | "AH12BeforeSettleExecutionCommit";
-  readonly commandId: CommandId;
-  readonly projectId: ProjectId;
-  readonly executionId: ExecutionId;
-  readonly fencingGeneration: LeaseGeneration;
-}) => Promise<void>;
+export type CommandGatewayQualificationProbe = (
+  event:
+    | {
+        readonly boundary:
+          | "AH10BeforeFencedReceiptCommit"
+          | "AH10BeforeAssignWorkBindingCommit"
+          | "AH12BeforeSettleExecutionCommit";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+        readonly executionId: ExecutionId;
+        readonly fencingGeneration: LeaseGeneration;
+      }
+    | {
+        readonly boundary:
+          | "P38StopExecutionBeforeTransaction"
+          | "P38StopExecutionBeforeCommit";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+        readonly executionId: ExecutionId;
+      }
+    | {
+        readonly boundary: "P38ResolveApprovalBeforeCommit";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+      },
+) => Promise<void>;
 
 export const makeCommandGatewayLive = (
   qualificationProbe?: CommandGatewayQualificationProbe,
@@ -89,6 +105,27 @@ export const makeCommandGatewayLive = (
         CommandGatewayError
       > =>
         Effect.gen(function* () {
+          const stopExecutionId =
+            envelope.commandType === "StopExecution" &&
+            typeof envelope.payload === "object" &&
+            envelope.payload !== null &&
+            "executionId" in envelope.payload &&
+            typeof envelope.payload.executionId === "string"
+              ? (envelope.payload.executionId as ExecutionId)
+              : undefined;
+          if (
+            qualificationProbe !== undefined &&
+            stopExecutionId !== undefined
+          ) {
+            yield* Effect.promise(() =>
+              qualificationProbe({
+                boundary: "P38StopExecutionBeforeTransaction",
+                commandId: envelope.commandId,
+                projectId: envelope.projectId,
+                executionId: stopExecutionId,
+              }),
+            );
+          }
           const handlerOption = registry.lookup(envelope.commandType);
           if (Option.isNone(handlerOption)) {
             return yield* Effect.die(
@@ -360,6 +397,18 @@ export const makeCommandGatewayLive = (
             );
             if (
               qualificationProbe !== undefined &&
+              envelope.commandType === "ResolveExecutableApproval"
+            ) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "P38ResolveApprovalBeforeCommit",
+                  commandId: envelope.commandId,
+                  projectId: envelope.projectId,
+                }),
+              );
+            }
+            if (
+              qualificationProbe !== undefined &&
               envelope.commandType === "SettleExecution" &&
               context._tag === "ExecutionOrigin"
             ) {
@@ -370,6 +419,19 @@ export const makeCommandGatewayLive = (
                   projectId: envelope.projectId,
                   executionId: context.executionId,
                   fencingGeneration: context.fencingGeneration,
+                }),
+              );
+            }
+            if (
+              qualificationProbe !== undefined &&
+              stopExecutionId !== undefined
+            ) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "P38StopExecutionBeforeCommit",
+                  commandId: envelope.commandId,
+                  projectId: envelope.projectId,
+                  executionId: stopExecutionId,
                 }),
               );
             }
