@@ -10,162 +10,176 @@ This proposal supplements the accepted P8 permanent replay-origin package
 SHA-256 `6BEEC14ED975D7322003C95D28F63D161C82F4EFA4B584ECAA99D1120BE712CA`).
 The P8 package fixes the high-level requirement that an unprovable legacy
 success preserves its Command receipt and gets a human-only, queryable
-`UnboundLegacy` Governance Inbox item. P6 item identity/routing, owner-change
-reconciliation, query/consumption, and rebuild mechanics were deliberately
-left outside that accepted package. This proposal is a recommendation only;
-it does not edit design files or authorize code, DDL, tests, migration
+`UnboundLegacy` Governance Inbox item. It expressly leaves the P6 entry kind,
+key, dynamic recipient, query/consumption and rebuild mechanics to separate P6
+owner acceptance. This proposal is a recommendation only; it does not edit
+design files or authorize production code/DDL/tests, migration
 registration/execution, or online database upgrade.
 
-## 1. Required disposition source, independent of receipts
+## 1. Permanent disposition, independent of receipt retention
 
 The P8/P1-owned immutable `retry_verification_legacy_dispositions` fact must
-contain enough identity to recreate the Inbox warning without reading or
+contain enough source identity to rebuild its Inbox warning without reading or
 decoding the permanent Command receipt. Recommended minimum fields are:
 
 | Field | Purpose |
 |---|---|
 | `command_id` | Stable source/Inbox key and Command correlation |
 | `project_id` | Project scope |
-| `source_work_id` | Canonical Work from the exact decoded P8 result at legacy classification |
+| `source_work_id` | Canonical Work identity from the exact decoded P8 result at legacy classification |
 | `source_verification_id` | Exact orphaned source Verification identity |
 | `disposition` | Fixed value `UnboundLegacy` |
 | `reason_code` | Fixed bounded value `OriginEvidenceIncomplete` |
-| `recorded_at` | Immutable disposition time |
+| `created_at` | Existing P1 timestamp spelling; immutable disposition creation time |
 
-No result JSON, summary content, fingerprint/schema, event JSON, or recipient
-snapshot is stored. `source_work_id` and `source_verification_id` are the
-minimum additional route/rebuild identity; other current-route identity must
-be derived from canonical Work/Workspace/governance facts, not copied as an
-immutable recipient. The disposition is permanent and is sufficient to
-rebuild the P6 Inbox projection after Domain Event pruning, Command receipt
-corruption, or receipt JSON retention/decoding failure. Rebuild must not
-depend on CommandStore or re-decode the receipt.
+The row stores no result JSON, summary, fingerprint/schema, event JSON, or
+recipient Workspace snapshot. `source_work_id` and `source_verification_id`
+are the minimum durable route identity. The disposition has the Command
+receipt's lifetime and is sufficient to reconstruct the Inbox entry after
+Domain Event pruning, receipt corruption, or receipt JSON decode failure.
+Rebuild never queries `CommandStore` or re-decodes a receipt. The P1
+disposition row is immutable; a missing/malformed source identity is typed
+corruption and never triggers a fallback recipient.
 
-Malformed/conflicting disposition identity is a typed persistence-corruption
-condition and produces no fallback recipient. The legacy migration only
-creates this fact for a receipt it has recognized as a successful P8 result;
-the original receipt bytes/resolution are never rewritten or deleted.
+## 2. Reuse the existing Governance Inbox kind; keep one stable key
 
-## 2. Recommended stable entry and dynamic current route
+Do not add a new `InboxEntry.kind`. Reuse the existing `Governance` kind and
+distinguish this entry by the stable key and typed payload subtype:
 
-Recommended entry:
+- `kind = Governance` (no enum extension in P6, P7, P14 or P10).
+- `entryKey = "retry-verification-unbound:" + commandId`.
+- payload subtype `RetryVerificationUnboundLegacy`, containing only
+  CommandId, ProjectId, source WorkId/VerificationId, fixed disposition and
+  reason code, plus the Inbox row's timestamps/revision. No receipt JSON,
+  summary content, source event JSON, fingerprint, path, or host detail is
+  exposed.
+- one logical disposition has one stable key. Same source/disposition with a
+  different recipient is a legal route move, not a key/content conflict.
+  CommandId, ProjectId, source WorkId, source VerificationId, disposition, or
+  reason mismatch for that key is typed integrity corruption, not an
+  overwrite.
 
-- `InboxEntry.kind = RetryVerificationUnboundLegacy`.
-- Stable `entryKey = "retry-verification-unbound:" + commandId`; the key is
-  independent of recipient so owner/Parent changes move the same logical
-  warning rather than creating a second item.
-- Query payload is bounded to CommandId, ProjectId, source Work/Verification
-  IDs, fixed disposition/reason, and timestamps. It excludes receipt/result
-  JSON, summary content, source event JSON, fingerprint, path/host data, and
-  provider/model content.
-- The recipient is **not** an immutable origin-time snapshot. Every admission,
-  rebuild, query, and route reconciliation derives current visibility from
-  canonical Work/Workspace plus P8's current human-governance facts: Root Work
-  uses its current Root-local human route; child Work uses its current exact
-  direct Parent human route. P8 query authorization is checked at read time;
-  an Inbox row never grants authority.
-- A change to current Work ownership or Parent-governance relation is a route
-  move, not a content conflict. The same key/source/disposition with a
-  different current recipient is legal. CommandId, ProjectId, source Work,
-  source Verification, disposition, or reason mismatch for that key is a
-  typed integrity failure, not an overwrite or a route move.
-- If the source tuple stays identical and only the authorized recipient
-  changes, reconcile the recipient under the same stable key. Prefer doing so
-  in the same transaction as the canonical owner/Parent relation change; if
-  the P6 integration point cannot do that, the owner-change transaction must
-  persist a durable `InboxRouteReconciliationRequired` fact that restart
-  processing can complete idempotently. Do not rely on volatile callbacks.
-- The disposition's `recorded_at` and Inbox row `created_at` are immutable.
-  Each actual route move increments the Inbox row's safe-integer `revision`
-  and sets `updated_at`; a no-op reconciliation changes neither. The legacy
-  disposition itself is never updated or cleared.
+The entry is human-only, queryable under current P8 authorization, and is not
+a Message, approval, Agent instruction, or P10 Attention source. Reading is
+not consumption: no ACK/clear action, automatic consumer, Agent Session
+promotion, command, wake, or ProviderTurn exists in this v1 scope. The
+immutable disposition remains after the Inbox row is rebuilt.
 
-### Stale projection, visibility and crash semantics
+## 3. Dynamic current recipient and atomic route moves
 
-Every query re-resolves the source Work and current governance route; a stale
-stored recipient is not an authorization input. Immediately after an owner or
-Parent relation change, the old recipient fails the current authorization
-filter even if the Inbox projection has not yet moved. The new recipient sees
-the item in the same owner-change transaction or after the durable required
-reconciliation completes; until then there is no broader visibility. A crash
-before a same-transaction route move leaves the old canonical route and old
-Inbox row together. A crash after commit leaves the new route and row together.
-For a separately durable reconciliation, restart repeats the same key/source
-move without duplication.
+Recipient is not an immutable origin-time snapshot. Every admission, query,
+rebuild and route reconciliation derives the current human governance route
+from the disposition's Project/Work IDs and canonical Work/Workspace facts,
+then applies the current P8 authorization check. Root Work uses its current
+Root-local human governance route; child Work uses its current exact direct
+Parent Workspace human route. The Inbox row itself grants no authority.
 
-## 3. Query, consumption, rebuild and replay
+An owner or Parent-governance relation change moves the same stable Inbox key
+to the newly authorized route; it does not create a duplicate. This recipient
+projection move must commit in the **same P1 command transaction** as the
+canonical owner/Parent relation change. At that commit, the old recipient
+immediately loses visibility under current query authorization and the new
+recipient receives the same-key entry. If the command cannot update the Inbox
+recipient projection in that same transaction, the owner-change command
+returns a typed terminal rejection (recommended existing
+`AuthorityDenied`) and writes no canonical owner/Parent change, Inbox move,
+Event or receipt. Do not add an asynchronous window or a durable
+`InboxRouteReconciliationRequired` fact.
 
-- The Governance Inbox query returns a pending warning only to a human who
-  currently passes the P8 governance check for the derived route. The fixed
-  `UnboundLegacy`/`OriginEvidenceIncomplete` reason is a warning, not an
-  approval or permission grant.
-- Recommended v1 behavior is read-only: reading does not acknowledge, consume,
-  clear, or promote the entry; no Agent Session, command, ProviderTurn, wake,
-  or P10 Attention item is created. Any explicit dismissal/resolution action
-  requires separate design acceptance.
-- Inbox rebuild uses only the retained disposition and canonical Work/
-  Workspace/governance facts. It upserts the same `entryKey`, recomputes the
-  current recipient, preserves `created_at`, and advances `revision` /
-  `updated_at` only for a real route move. A conflicting same-key source
-  disposition fails closed; it does not inspect a receipt to repair the row.
-- Migration/backfill writes disposition and initial Inbox item atomically.
-  If current route cannot be proved, the migration rolls back rather than
-  falling back to Project root or a previous recipient.
-- UnboundLegacy has no P8 origin and cannot acquire replay authority. Its
-  external replay remains a generic current Resolver denial before Gateway;
-  Inbox visibility never changes that result.
+The same rule applies to any owner/Parent governance edit: its command either
+atomically updates the same-key Inbox route or rejects without writes. A
+separately invoked rebuild/repair runs in one transaction against current
+canonical Work/Workspace facts; stale row recipient is not authorization and
+the old recipient remains denied. If the P6 Inbox physically resides outside
+the P1 transaction boundary, that physical architecture is insufficient for
+this contract: its owning design/migration must bring the route row into the
+same P1 database/transaction before owner-changing commands can be accepted.
 
-## 4. Required owning-document changes if accepted
+### Identity and timestamps
 
-- **P6 `02-communication-protocol.md`:** entry kind/stable key, dynamic
-  recipient, current query authorization, route-move conflict algebra,
-  revision/timestamp rules, read-only/no-consume behavior, restartable route
-  reconciliation, and receipt-independent rebuild source.
-- **P6 `06-acceptance.md`:** Root and child recipients; owner/Parent change
-  before/after transaction crashes; old-recipient query denial/new-recipient
-  access; stale projection repair; duplicate and mismatch negatives;
-  no-consume/no-Agent/no-Attention assertions.
-- **P6 `00-contract-index.md`:** index the route-specific P8 governance
-  warning and its query/rebuild owner.
-- **P8 `01-verification-commands.md` / `06-acceptance.md`:** cross-reference
-  the accepted P6 mechanics while keeping the origin/current-authorization
-  and no-replay semantics unchanged.
-- **P1 `04-sqlite-schema.md`:** extend the unbound disposition with source
-  Work/Verification IDs and timestamp; preserve migration ID TBD and the
-  atomic disposition+Inbox write. P1 `03`/migration owner defines transactional
-  owner-change reconciliation only if the P6 design chooses that integration.
-- **P12 `10-transport-shells.md` (and `02` only if needed):** define the
-  authorized Inbox query boundary without turning an Inbox row into authority.
-  No P10 document change is proposed.
+- The disposition `created_at` is immutable and never changes on route move.
+- Inbox `created_at` is preserved for the stable key; each actual recipient
+  move increments the Inbox `revision` and updates `updated_at` in the same
+  P1 transaction. Identical route reconciliation is a no-op with no timestamp
+  or revision change.
+- The route move does not rewrite/delete the disposition, origin, receipt or
+  receipt JSON.
 
-## 5. Qualification after design acceptance
+## 4. Rebuild and replay behavior
 
-1. Exact key/schema and Root/child route derivation; wrong/foreign human sees
-   no item or source details.
-2. Same source/disposition with a new recipient is an idempotent route move;
-   same key with different CommandId/ProjectId/Work/Verification/disposition
+Inbox rebuild derives the row only from the retained
+`retry_verification_legacy_dispositions` fact and canonical Project/Work/
+Workspace/governance facts. It does not read, parse, or validate the permanent
+Command receipt or retained Domain Events. It uses the same stable key and
+subtype; same-source current-recipient changes update the recipient legally,
+while mismatching source/disposition identity fails typed and closed.
+
+An UnboundLegacy CommandId has no permanent P8 origin. Its External replay is
+the existing generic current Resolver denial before Gateway/receipt lookup;
+Inbox presence never grants authority. P8/P1 current-authorized origin replay
+and Gateway tuple behavior otherwise remain unchanged. The Inbox entry is
+informational and cannot unblock the command.
+
+## 5. Required owning-document landing if accepted
+
+- **P6 `02-communication-protocol.md`:** reuse `Governance` kind; define the
+  stable key/subtype/payload, current recipient derivation, query filter,
+  read-only/no-consume behavior, same-key route-move conflict algebra, and
+  P1-transaction requirement.
+- **P6 `06-acceptance.md`:** owner/Parent change tests, same-transaction route
+  move, typed no-write rejection when atomic move is unavailable, old/new
+  recipient query behavior, and stale-projection rebuild.
+- **P6 `00-contract-index.md`:** cross-reference the P8 warning subtype; P7,
+  P14 and P10 need only owner references if applicable, with no Inbox kind
+  enum or Attention source extension.
+- **P8 `01-verification-commands.md` / `06-acceptance.md`:** reference the
+  accepted P6 route mechanics without changing P8 current-auth/replay rules.
+- **P1 `04-sqlite-schema.md`:** add source WorkId/VerificationId to the
+  disposition and specify the Inbox row's P1 transaction/createdAt/updatedAt/
+  revision representation. Migration ID remains TBD. P1 `03` owns the atomic
+  owner-change transaction boundary.
+- **P12 `10-transport-shells.md` / `02-authority-resolver.md`:** query reads
+  re-evaluate current P8 human authorization; Inbox row is not authority.
+
+No P10 Attention source is proposed. If current P6/P1 physical storage cannot
+support the same P1 transaction, implementation is blocked until those owners
+accept a compatible physical design; do not substitute asynchronous repair.
+
+## 6. Qualification required after acceptance
+
+1. Existing `Governance` kind is reused; there is no P6/P7/P14/P10 enum
+   extension. Stable key/subtype/payload and current-route query authorization
+   are exact.
+2. Same source/disposition with a new recipient is a legal same-key route
+   move; changed CommandId/ProjectId/WorkId/VerificationId/disposition/reason
    is typed corruption, not overwrite.
-3. Owner/Parent change before/after crash: old recipient is denied as soon as
-   current authorization changes; new recipient gains access in the same
-   transaction or only after durable route reconciliation completes.
-4. Stale projection repair: remove only the Inbox projection row in a
-   disposable fixture; rebuild from the disposition without receipt reads or
-   decoding, preserve `created_at`, and produce one current-route item.
-5. Verify route `revision` / `updated_at` changes on move, stays stable on
-   duplicate/no-op rebuild; disposition `recorded_at` never changes.
-6. Corrupt/prune the permanent Command receipt and prune Events; the
-   disposition still rebuilds the same current route. Exact legacy replay
-   stays generic-denied and no receipt is repaired.
-7. Migration/owner-change crash matrix proves atomic disposition+Inbox and
-   same-key recipient move, with no duplicate, Agent Session, command,
-   ProviderTurn, wake, or Attention effects.
+3. Owner/Parent change before/after commit crash: rollback leaves canonical
+   owner relation and Inbox recipient unchanged; commit makes both new. If
+   same-transaction Inbox move is unavailable, owner-change command returns
+   typed rejection with zero canonical/Event/Inbox/receipt writes.
+4. Immediately after committed route change, old recipient query is denied and
+   current recipient query returns the same-key entry. No asynchronously
+   reconciled visibility interval exists.
+5. Remove only the Inbox projection row in a disposable fixture, corrupt or
+   prune the receipt and prune the Events; rebuild from disposition and
+   canonical Work/Workspace only, preserve `created_at`, and produce one
+   current-recipient row. This proves receipt-independent reconstruction.
+6. Verify `revision`/`updated_at` advance once on a recipient move, remain
+   unchanged on duplicate/no-op rebuild, and disposition `created_at` never
+   changes. Read does not consume/clear; no Agent Session, command, ProviderTurn,
+   wake, or P10 Attention effect occurs.
+7. Migration crash before/after commit proves disposition + Governance Inbox
+   entry are both absent before commit and both present after commit. The
+   disposition retains source IDs so rebuild does not consult receipt/event
+   retention.
 
-## 6. Acceptance boundary
+## 7. Acceptance boundary
 
 Recommended exact token:
 `ACCEPT_F23_P6_UNBOUND_LEGACY_GOVERNANCE_INBOX_MECHANICS`.
 
-Acceptance authorizes only the fixed P6/P8/P1/P12 design-document amendments
-and a post-landing consistency review. It does not authorize production code,
-Inbox/route DDL, migration registration/execution, tests, or online database
-upgrade. Those remain separately authorized after the P6 design landing.
+Acceptance would authorize only the fixed P6/P8/P1/P12 design-document
+amendments and post-landing consistency review. It would not authorize
+production code, Inbox/route DDL, migration registration/execution, tests, or
+online database upgrade. Those remain separately gated after the P6 design
+landing.
