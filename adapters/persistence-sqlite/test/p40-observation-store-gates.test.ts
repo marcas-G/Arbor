@@ -17,8 +17,10 @@ import {
   type ToolExecutionContext,
   type ToolInvocationIntent,
   ToolInvocationStore,
+  type ToolObservationEvidenceObservation,
   ToolObservationEvidenceStore,
   ToolObservationReplayAttentionFactStore,
+  type ToolObservationSettlement,
   TransactionPort,
   verifyRecoveryBindingV1,
 } from "@arbor/ports";
@@ -461,6 +463,11 @@ describe("P40 P4 persistent observation admission gates", () => {
       const repeated = yield* tx.transact(
         evidenceStore.settleOrReadWinner(candidate),
       );
+      if (first._tag !== "Applied" || repeated._tag !== "Existing") {
+        throw new Error(
+          "Interrupted Stop candidate did not preserve its winner",
+        );
+      }
       const rows = yield* sql.unsafe<{
         readonly effect_admission_state: string;
         readonly settlement_kind: string | null;
@@ -493,6 +500,153 @@ describe("P40 P4 persistent observation admission gates", () => {
         result.row?.observation_json ?? new Uint8Array(),
       ),
     ).toBe('{"_tag":"Interrupted"}');
+  }, 120_000);
+
+  it.each([
+    {
+      name: "Success",
+      effectAdmissionState: "MayHaveStarted",
+      settlement: { _tag: "Success" },
+      observation: {
+        _tag: "Success",
+        observation: { text: "committed-success", truncated: false },
+        resultRef: null,
+      },
+    },
+    {
+      name: "ExpectedFailure",
+      effectAdmissionState: "MayHaveStarted",
+      settlement: { _tag: "ExpectedFailure" },
+      observation: {
+        _tag: "ExpectedFailure",
+        observation: { text: "committed-failure", truncated: false },
+      },
+    },
+    {
+      name: "OutcomeUnknown",
+      effectAdmissionState: "MayHaveStarted",
+      settlement: {
+        _tag: "OutcomeUnknown",
+        reconciliationRefs: [String(invocationId)],
+      },
+      observation: {
+        _tag: "OutcomeUnknown",
+        reconciliationRefs: [String(invocationId)],
+      },
+    },
+    {
+      name: "RuntimeFailure",
+      effectAdmissionState: "MayHaveStarted",
+      settlement: { _tag: "RuntimeFailure", cause: "committed-runtime-error" },
+      observation: { _tag: "RuntimeFailure", cause: "committed-runtime-error" },
+    },
+  ] as const)(
+    "a Stop candidate preserves an already committed $name P40 winner",
+    async (winnerCase) => {
+      const database = await createSchema42TestDatabase();
+      databases.push(database);
+      const app = makeApp(database.databaseFilename);
+      const program = Effect.gen(function* () {
+        yield* seedWorkspaceExecution;
+        const tx = yield* TransactionPort;
+        const invocations = yield* ToolInvocationStore;
+        const evidenceStore = yield* ToolObservationEvidenceStore;
+        const sql = yield* SqlClient;
+        yield* tx.transact(invocations.recordIntent(intent, fence, now));
+        yield* bindP39Intent();
+        if (winnerCase.effectAdmissionState === "MayHaveStarted") {
+          yield* sql.unsafe(
+            "UPDATE tool_invocations SET effect_admission_state = 'MayHaveStarted' WHERE invocation_id = ?",
+            [invocationId],
+          );
+        }
+        const winningObservation =
+          winnerCase.observation as ToolObservationEvidenceObservation;
+        const winningSettlement =
+          winnerCase.settlement as ToolObservationSettlement;
+        const winner = yield* tx.transact(
+          evidenceStore.settleOrReadWinner({
+            invocation: intent,
+            settlement: winningSettlement,
+            resultRef: null,
+            observation: winningObservation,
+            settledAt: now,
+            executionFence: fence,
+            fenceNow: now,
+          }),
+        );
+        const stopRacer = yield* tx.transact(
+          evidenceStore.settleOrReadWinner({
+            invocation: intent,
+            settlement: { _tag: "Interrupted" },
+            resultRef: null,
+            observation: { _tag: "Interrupted" },
+            settledAt: now,
+            executionFence: fence,
+            fenceNow: now,
+          }),
+        );
+        const rows = yield* sql.unsafe<{
+          readonly effect_admission_state: string;
+          readonly settlement_kind: string | null;
+        }>(
+          `SELECT effect_admission_state, settlement_kind
+             FROM tool_invocations WHERE invocation_id = ?`,
+          [invocationId],
+        );
+        return { winner, stopRacer, row: rows[0] };
+      });
+      const result = await Effect.runPromise(Effect.provide(program, app));
+      expect(result.winner._tag).toBe("Applied");
+      expect(result.stopRacer._tag).toBe("Existing");
+      if (result.stopRacer._tag !== "Existing") {
+        throw new Error("Stop candidate did not return the committed winner");
+      }
+      expect(result.stopRacer.evidence.observation).toEqual(
+        winnerCase.observation,
+      );
+      expect(result.row).toEqual({
+        effect_admission_state: winnerCase.effectAdmissionState,
+        settlement_kind: winnerCase.name,
+      });
+    },
+  );
+
+  it("returns a committed P4 Denied row as ExistingDenied to a later Stop candidate", async () => {
+    const database = await createSchema42TestDatabase();
+    databases.push(database);
+    const app = makeApp(database.databaseFilename);
+    const program = Effect.gen(function* () {
+      yield* seedWorkspaceExecution;
+      const tx = yield* TransactionPort;
+      const invocations = yield* ToolInvocationStore;
+      const evidenceStore = yield* ToolObservationEvidenceStore;
+      yield* tx.transact(
+        invocations.recordNoEffectDenial(
+          intent,
+          "InvocationAuthorityDenied",
+          now,
+          fence,
+          now,
+        ),
+      );
+      return yield* tx.transact(
+        evidenceStore.settleOrReadWinner({
+          invocation: intent,
+          settlement: { _tag: "Interrupted" },
+          resultRef: null,
+          observation: { _tag: "Interrupted" },
+          settledAt: now,
+          executionFence: fence,
+          fenceNow: now,
+        }),
+      );
+    });
+    const result = await Effect.runPromise(Effect.provide(program, app));
+    expect(result).toEqual({
+      _tag: "ExistingDenied",
+      reasonCode: "InvocationAuthorityDenied",
+    });
   }, 120_000);
 
   it("returns only the committed winner to a fenced loser and rejects that same fence after takeover", async () => {
@@ -556,6 +710,17 @@ describe("P40 P4 persistent observation admission gates", () => {
           fenceNow: now,
         }),
       );
+      const stopRacer = yield* tx.transact(
+        evidenceStore.settleOrReadWinner({
+          invocation: intent,
+          settlement: { _tag: "Interrupted" },
+          resultRef: null,
+          observation: { _tag: "Interrupted" },
+          settledAt: now,
+          executionFence: fence,
+          fenceNow: now,
+        }),
+      );
       yield* sql.unsafe(
         "UPDATE execution_leases SET generation = 1 WHERE execution_id = ?",
         [executionId],
@@ -563,13 +728,19 @@ describe("P40 P4 persistent observation admission gates", () => {
       const staleRead = yield* Effect.exit(
         tx.transact(evidenceStore.read(intent, fence, now)),
       );
-      return { winner, loser, staleRead, loserMaterializeCalls };
+      return { winner, loser, stopRacer, staleRead, loserMaterializeCalls };
     });
     const result = await Effect.runPromise(Effect.provide(program, app));
     expect(result.winner._tag).toBe("Applied");
     expect(result.loser).toMatchObject({
       _tag: "Existing",
       evidence: { observation: { observation: { text: "winner" } } },
+    });
+    expect(result.stopRacer).toMatchObject({
+      _tag: "Existing",
+      evidence: {
+        observation: { _tag: "Success", observation: { text: "winner" } },
+      },
     });
     expect(result.loserMaterializeCalls).toBe(0);
     expect(Exit.isFailure(result.staleRead)).toBe(true);
@@ -885,6 +1056,17 @@ describe("P40 P4 persistent observation admission gates", () => {
         }),
       );
       const replay = yield* tx.transact(evidenceStore.read(intent, fence, now));
+      const stopRacer = yield* tx.transact(
+        evidenceStore.settleOrReadWinner({
+          invocation: intent,
+          settlement: { _tag: "Interrupted" },
+          resultRef: null,
+          observation: { _tag: "Interrupted" },
+          settledAt: now,
+          executionFence: fence,
+          fenceNow: now,
+        }),
+      );
       const rewritten = yield* Effect.exit(
         sql.unsafe(
           "UPDATE tool_invocations SET selected_fact_id = ? WHERE invocation_id = ?",
@@ -903,7 +1085,7 @@ describe("P40 P4 persistent observation admission gates", () => {
            FROM tool_invocations WHERE invocation_id = ?`,
         [factId, invocationId],
       );
-      return { applied, replay, rewritten, selection: selection[0] };
+      return { applied, replay, stopRacer, rewritten, selection: selection[0] };
     });
     const result = await Effect.runPromise(Effect.provide(program, app));
     expect(result.applied._tag).toBe("Applied");
@@ -913,6 +1095,10 @@ describe("P40 P4 persistent observation admission gates", () => {
       reconciliationFactRef: factId,
       observation: { text: "effect did not occur", truncated: false },
       resultRef: artifactId,
+    });
+    expect(result.stopRacer).toMatchObject({
+      _tag: "Existing",
+      evidence: { observation: { _tag: "ReconciledNoEffect" } },
     });
     expect(Exit.isFailure(result.rewritten)).toBe(true);
     expect(result.selection).toEqual({

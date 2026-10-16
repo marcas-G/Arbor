@@ -25,6 +25,8 @@ import {
   ToolDefinitionStore,
   type ToolInvocationRecord,
   ToolInvocationStore,
+  type ToolObservationEvidence,
+  ToolObservationEvidenceStore,
   type ToolRuntimeError,
   ToolRuntimePort,
   TransactionPort,
@@ -130,6 +132,9 @@ interface PipelineTrace {
   resourceAdmissionCalls?: number;
   p39BindingCalls?: number;
   p39SelectedReads?: number;
+  readonly existingInvocationAfterStop?: ToolInvocationRecord;
+  readonly p40WinnerEvidence?: ToolObservationEvidence;
+  readonly stopAtEffectAdmission?: boolean;
 }
 
 const app = (
@@ -277,12 +282,14 @@ const app = (
           trace.events.push("effect-admission");
         }
         return Effect.succeed(
-          trace?.effectAdmissionDenial === undefined
-            ? { _tag: "Admitted" as const }
-            : {
-                _tag: "Denied" as const,
-                reasonCode: trace.effectAdmissionDenial,
-              },
+          trace?.stopAtEffectAdmission === true
+            ? { _tag: "ExecutionStopping" as const }
+            : trace?.effectAdmissionDenial === undefined
+              ? { _tag: "Admitted" as const }
+              : {
+                  _tag: "Denied" as const,
+                  reasonCode: trace.effectAdmissionDenial,
+                },
         );
       },
       findApproval: () =>
@@ -312,6 +319,13 @@ const app = (
         };
         return () => {
           calls += 1;
+          if (trace?.existingInvocationAfterStop !== undefined) {
+            return Effect.succeed(
+              calls === 1
+                ? Option.none()
+                : Option.some(trace.existingInvocationAfterStop),
+            );
+          }
           if (p39DeniedReplay !== undefined) {
             return Effect.succeed(Option.some(p39DeniedReplay));
           }
@@ -369,14 +383,32 @@ const app = (
       now: () => Effect.succeed("2026-01-01T00:00:00.000Z"),
     }),
   );
+  const evidenceDeps =
+    trace?.p40WinnerEvidence === undefined
+      ? baseDeps
+      : Layer.merge(
+          baseDeps,
+          Layer.succeed(ToolObservationEvidenceStore, {
+            assertCurrentFence: () => Effect.void,
+            read: () =>
+              Effect.succeed(
+                trace.p40WinnerEvidence as ToolObservationEvidence,
+              ),
+            settleOrReadWinner: () =>
+              Effect.succeed({
+                _tag: "Existing" as const,
+                evidence: trace.p40WinnerEvidence as ToolObservationEvidence,
+              }),
+          } as never),
+        );
   const deps = authorityDenied
     ? Layer.mergeAll(
-        baseDeps,
+        evidenceDeps,
         Layer.succeed(ToolAuthorityResolver, {
           resolve: () => Effect.fail({ _tag: "ToolAuthorityDenied" as const }),
         }),
       )
-    : baseDeps;
+    : evidenceDeps;
   const executableApprovalDeps =
     executableApproval === undefined
       ? deps
@@ -641,6 +673,140 @@ describe("P4 tool runtime pipeline", () => {
       '{"target":{"mount":"workspace","path":"."}}',
     );
     expect(result._tag).toBe("Success");
+  });
+
+  it.each([
+    {
+      name: "Success",
+      effectAdmissionState: "MayHaveStarted",
+      settlement: { _tag: "Success" },
+      observation: {
+        _tag: "Success",
+        observation: { text: "committed-success", truncated: false },
+        resultRef: null,
+      },
+    },
+    {
+      name: "ExpectedFailure",
+      effectAdmissionState: "MayHaveStarted",
+      settlement: { _tag: "ExpectedFailure" },
+      observation: {
+        _tag: "ExpectedFailure",
+        observation: { text: "committed-failure", truncated: false },
+      },
+    },
+    {
+      name: "Interrupted",
+      effectAdmissionState: "NotAdmitted",
+      settlement: { _tag: "Interrupted" },
+      observation: { _tag: "Interrupted" },
+    },
+    {
+      name: "OutcomeUnknown",
+      effectAdmissionState: "MayHaveStarted",
+      settlement: {
+        _tag: "OutcomeUnknown",
+        reconciliationRefs: [String(invocationId)],
+      },
+      observation: {
+        _tag: "OutcomeUnknown",
+        reconciliationRefs: [String(invocationId)],
+      },
+    },
+    {
+      name: "RuntimeFailure",
+      effectAdmissionState: "MayHaveStarted",
+      settlement: { _tag: "RuntimeFailure", cause: "committed-runtime-error" },
+      observation: { _tag: "RuntimeFailure", cause: "committed-runtime-error" },
+    },
+  ] as const)(
+    "P4 Stop re-entry projects the committed $name winner without rerunning the executor",
+    async (winnerCase) => {
+      const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
+      const observation =
+        winnerCase.observation as import("@arbor/ports").ToolObservationEvidenceObservation;
+      const evidence: ToolObservationEvidence = {
+        formatVersion: "p4-canonical-tool-observation-v1",
+        bytes: new TextEncoder().encode(JSON.stringify(observation)),
+        sha256: "a".repeat(64),
+        observation,
+      };
+      const existing: ToolInvocationRecord = {
+        invocationId,
+        executionId,
+        workspaceId,
+        toolName: "read",
+        toolVersion: "2",
+        sideEffectSemantics: "ReadOnly",
+        argumentsJson,
+        resolvedRegions: [],
+        approvalId: null,
+        effectAdmissionState: winnerCase.effectAdmissionState,
+        intentAt: "2026-01-01T00:00:00.000Z",
+        settledAt: "2026-01-01T00:00:01.000Z",
+        settlement: winnerCase.settlement as ToolInvocationRecord["settlement"],
+        resultRef: null,
+      };
+      const trace: PipelineTrace = {
+        noEffectDenials: [],
+        events: [],
+        approvalConsumer: null,
+        intentWrites: 0,
+        effectAdmissions: 0,
+        approvalConsumes: 0,
+        existingInvocationAfterStop: existing,
+        p40WinnerEvidence: evidence,
+        stopAtEffectAdmission: true,
+      };
+      let executorCalls = 0;
+      const executor: ToolExecutor = {
+        ...okExecutor,
+        execute: (input) => {
+          executorCalls += 1;
+          return okExecutor.execute(input);
+        },
+      };
+      const result = await run(app(false, executor, {}, trace), argumentsJson);
+      expect(result).toEqual(observation);
+      expect(executorCalls).toBe(0);
+      expect(trace.effectAdmissions).toBe(1);
+    },
+  );
+
+  it("keeps the canonical P4 Denied winner when Stop arrives before the effect gate", async () => {
+    const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
+    const deniedRecord: ToolInvocationRecord = {
+      invocationId,
+      executionId,
+      workspaceId,
+      toolName: "read",
+      toolVersion: "2",
+      sideEffectSemantics: "ReadOnly",
+      argumentsJson,
+      resolvedRegions: [],
+      approvalId: null,
+      effectAdmissionState: "NotAdmitted",
+      intentAt: "2026-01-01T00:00:00.000Z",
+      settledAt: "2026-01-01T00:00:01.000Z",
+      settlement: { _tag: "Denied", reasonCode: "InvocationAuthorityDenied" },
+      resultRef: null,
+    };
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      existingInvocationAfterStop: deniedRecord,
+      stopAtEffectAdmission: true,
+    };
+    const result = await run(app(false, okExecutor, {}, trace), argumentsJson);
+    expect(result).toMatchObject({
+      _tag: "Denied",
+      reasonCode: "InvocationAuthorityDenied",
+    });
+    expect(trace.effectAdmissions).toBe(1);
   });
 
   it("fails closed when P39 does not return authenticated selected evidence for RNO", async () => {

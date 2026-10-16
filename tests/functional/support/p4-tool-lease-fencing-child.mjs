@@ -239,6 +239,15 @@ const executableToolQualificationProbe = async (event) => {
       (role === "new" && process.env.ARBOR_P4_FENCE_TRACE_NEW === "1"))
   ) {
     emit(event);
+    if (
+      role === "old" &&
+      process.env.ARBOR_P4_FENCE_ADMISSION_BOUNDARY ===
+        "P4ExecutableToolRuntimeOutcomeDenied" &&
+      event.boundary === "P4ExecutableToolRuntimeOutcome" &&
+      event.outcomeTag === "Denied"
+    ) {
+      await waitForGate("tool-admission", event);
+    }
   }
 };
 

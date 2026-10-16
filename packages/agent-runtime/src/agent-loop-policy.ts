@@ -50,6 +50,16 @@ export const safetyStop = (reason: string): ExecutionSettlement => ({
   result: { _tag: "ControlledInterruption", reason },
 });
 
+/** An authorized Stop request dominates a downstream no-effect action
+ * rejection. The P4 row may remain Denied, but the Execution keeps the P2
+ * StopRequested cause rather than being rewritten as a handler failure. */
+export const stopRequestedSettlement = (
+  execution: Pick<Execution, "stopRequestedAt">,
+): ExecutionSettlement | undefined =>
+  execution.stopRequestedAt === null
+    ? undefined
+    : { _tag: "Interrupted", result: { _tag: "StopRequested" } };
+
 export const isProviderTurnBindingChanged = (
   cause: unknown,
 ): cause is ProviderFailure & {
