@@ -1,5 +1,5 @@
 import { ControlActionAuthorizer } from "@arbor/agent-runtime";
-import { newUuid7 } from "@arbor/application";
+import { CommandHandlerRegistry, newUuid7 } from "@arbor/application";
 import {
   CommandId,
   ExecutionId,
@@ -111,7 +111,7 @@ const committedReceipt = (
   fingerprintAlgorithmVersion: 1,
   resolution: "Committed",
   resultJson: JSON.stringify({
-    workId: "wrk_committed_current_assign_work",
+    workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789a2",
     workspaceId: resultWorkspaceId,
     lifecycle: "Open",
     revision: 0,
@@ -236,8 +236,19 @@ const authorizePriorReceipt = async (input: {
 }) => {
   let pendingApprovals = 0;
   let inboxAdmissions = 0;
+  let decoderLookups = 0;
+  let activeGrantReads = 0;
+  let approvalReads = 0;
   const receipt = input.receipt ?? committedReceipt();
+  const receiptBefore = structuredClone(receipt);
   const services = Layer.mergeAll(
+    Layer.succeed(CommandHandlerRegistry, {
+      lookup: (commandType: string) => {
+        if (commandType !== "AssignWork") return Option.none();
+        decoderLookups += 1;
+        return Option.some({ commandType: "AssignWork", schemaVersion: "1" });
+      },
+    } as never),
     Layer.succeed(Clock, {
       now: () => Effect.succeed("2026-10-15T12:00:00.000Z"),
     } as never),
@@ -250,11 +261,12 @@ const authorizePriorReceipt = async (input: {
     }),
     Layer.succeed(ControlApprovalStore, {
       findById: (id: string) =>
-        Effect.succeed(
-          input.approval?.approvalId === id
+        Effect.sync(() => {
+          approvalReads += 1;
+          return input.approval?.approvalId === id
             ? Option.some(input.approval)
-            : Option.none(),
-        ),
+            : Option.none();
+        }),
       putPending: () =>
         Effect.sync(() => {
           pendingApprovals += 1;
@@ -267,7 +279,11 @@ const authorizePriorReceipt = async (input: {
         }),
     } as never),
     Layer.succeed(PermissionGrantRepository, {
-      activeGrants: () => Effect.succeed(input.grants ?? []),
+      activeGrants: () =>
+        Effect.sync(() => {
+          activeGrantReads += 1;
+          return input.grants ?? [];
+        }),
     } as never),
     Layer.succeed(TransactionPort, {
       transact: (effect: Effect.Effect<unknown, unknown, never>) => effect,
@@ -305,7 +321,16 @@ const authorizePriorReceipt = async (input: {
       authorizerLayer,
     ),
   );
-  return { result, pendingApprovals, inboxAdmissions };
+  return {
+    result,
+    pendingApprovals,
+    inboxAdmissions,
+    decoderLookups,
+    activeGrantReads,
+    approvalReads,
+    receiptBefore,
+    receiptAfter: structuredClone(receipt),
+  };
 };
 
 describe("AH10 current-Workspace AssignWork receipt-first authorization", () => {
@@ -457,4 +482,69 @@ describe("AH10 current-Workspace AssignWork receipt-first authorization", () => 
     expect(pendingApprovals).toBe(0);
     expect(inboxAdmissions).toBe(0);
   });
+
+  it("blocks a corrupt exact AssignWork receipt before approval or grant effects", async () => {
+    const corrupt = {
+      ...committedReceipt(),
+      resultJson: JSON.stringify({ workspaceId: "private-sentinel" }),
+    };
+    const rerun = await authorizePriorReceipt({
+      grants: [exactGrant],
+      receipt: corrupt,
+    });
+
+    expect(rerun.result).toEqual({ _tag: "RecoveryBlocked" });
+    expect(rerun.pendingApprovals).toBe(0);
+    expect(rerun.inboxAdmissions).toBe(0);
+  });
+
+  it.each([
+    "bad-json",
+    "wrong-shape",
+    "unknown-stored-version",
+    "command-id-mismatch",
+    "project-mismatch",
+  ] as const)(
+    "fails closed for the current-Workspace AssignWork prior receipt: %s",
+    async (vector) => {
+      const sentinel = `CURRENT-ASSIGN-${vector}-${crypto.randomUUID()}`;
+      const base = committedReceipt();
+      const corrupt: StoredCommandResolution = {
+        ...base,
+        commandId:
+          vector === "command-id-mismatch"
+            ? parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789ae")
+            : base.commandId,
+        projectId:
+          vector === "project-mismatch"
+            ? parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ae")
+            : base.projectId,
+        schemaVersion: vector === "unknown-stored-version" ? "99" : "1",
+        resultJson:
+          vector === "bad-json" ||
+          vector === "command-id-mismatch" ||
+          vector === "project-mismatch"
+            ? `{"private":"${sentinel}`
+            : JSON.stringify({ workspaceId, private: sentinel }),
+      };
+      const outcome = await authorizePriorReceipt({
+        grants: [exactGrant],
+        receipt: corrupt,
+      });
+
+      expect(outcome.result).toEqual({ _tag: "RecoveryBlocked" });
+      expect(outcome.pendingApprovals).toBe(0);
+      expect(outcome.inboxAdmissions).toBe(0);
+      expect(outcome.activeGrantReads).toBe(0);
+      expect(outcome.approvalReads).toBe(0);
+      expect(outcome.receiptBefore).toEqual(corrupt);
+      expect(outcome.receiptAfter).toEqual(outcome.receiptBefore);
+      expect(JSON.stringify(outcome.result)).not.toContain(sentinel);
+      expect(outcome.decoderLookups).toBe(
+        vector === "command-id-mismatch" || vector === "project-mismatch"
+          ? 0
+          : 1,
+      );
+    },
+  );
 });

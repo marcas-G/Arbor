@@ -818,7 +818,7 @@ export const buildSingleWorkspaceLayer = (
   );
   const controlAuthorizer = Layer.provide(
     ControlActionAuthorizerLive,
-    Layer.mergeAll(repos, infra),
+    Layer.mergeAll(repos, infra, registry),
   );
   const executableInvocation = Layer.provide(
     ExecutableToolHandlerLive(
