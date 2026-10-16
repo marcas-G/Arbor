@@ -66,12 +66,18 @@ authorization after this landing.
 8. `docs/design/implementation/P12/10-transport-shells.md` — authenticated
    P8 route and non-receipt origin composition boundary.
 9. `docs/design/implementation/P6/02-communication-protocol.md` — stable
-   human-only `UnboundLegacy` Governance Inbox admission, recipient and
-   non-promotion behavior.
+   human-only, queryable `UnboundLegacy` Governance Inbox requirement. Exact
+   entry kind/key, recipient, query/consumption and rebuild mechanics remain
+   owner-gated by separate P6 acceptance; see the supplemental proposal below.
 
 P10 files were not changed: this package chooses Governance Inbox and adds no
 P10 Attention source. The accepted proposal and pending RED evidence remain
 unchanged.
+
+The supplemental P6 Inbox mechanics proposal is
+`planning/proposals/F23-P6-unbound-legacy-inbox-mechanics-draft.md`; it is not
+accepted by the P8 origin token and does not change this landing's authorization
+scope.
 
 ## Verification boundary
 

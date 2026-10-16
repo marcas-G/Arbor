@@ -34,10 +34,11 @@ owning-document changes listed in
   successor/execution proof for origin backfill. Missing/pruned/conflicting
   evidence preserves the old receipt and yields UnboundLegacy plus P6 Inbox;
   no raw JSON/Session/Event guess is specified.
-- **P6/P10:** P6 defines stable key
-  `retry-verification-unbound:<commandId>`, current P8 governance recipient,
-  same-transaction admission, no Agent promotion and no automatic clearing.
-  No P10 Attention source or P10 file change was introduced.
+- **P6/P10:** P6's accepted landing is limited to a human-only, queryable
+  UnboundLegacy Governance Inbox requirement and same-migration admission.
+  Exact entry kind/key, recipient, query/consumption and rebuild mechanics are
+  not included in this acceptance and remain separately owner-gated. No P10
+  Attention source or P10 file change was introduced.
 - **Authorization scope:** the landing authorizes only these design-document
   changes and this review. No production code, DDL, schema migration
   registration/execution, tests, runtime behavior, or online DB upgrade is

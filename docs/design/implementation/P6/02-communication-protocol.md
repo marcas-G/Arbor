@@ -118,29 +118,25 @@ ProviderTurn.
 
 ### P8 UnboundLegacy RetryVerification Governance Inbox entry (DID v1.46)
 
-The ordered P8 origin migration admits one human-only route-specific
-`InboxEntry.kind=RetryVerificationUnboundLegacy` when a recognized historical
-successful RetryVerification receipt cannot be bound by exact retained event
-and successor evidence. Its stable `entryKey` is
-`retry-verification-unbound:<commandId>`. For Root Work the recipient is the
-Project's root Workspace; for child Work the recipient is the exact direct
-Parent Workspace. Migration derives the route only from the receipt's strict
-RetryVerification result and current canonical Project/Work/Workspace facts;
-if that route cannot be proven, the migration fails closed and rolls back.
+The ordered P8 origin migration admits one human-only, queryable Governance
+Inbox item when a recognized historical successful RetryVerification receipt
+cannot be bound by exact retained event and successor evidence. It is visible
+only through a currently authorized P8 human governance route, never through
+an Agent/Session consumer. Its entry kind/key, recipient mapping, query
+visibility, consumption/acknowledgement, and rebuild behavior are **TBD pending
+separate accepted P6 owner scope**; this P8/P1 design landing does not choose
+those P6 mechanics. Migration implementation/registration is blocked on that
+P6 acceptance. The P8 authorization boundary still requires the current
+authenticated human route; inability to establish that route fails closed.
 
 The matching immutable `retry_verification_legacy_dispositions` row and Inbox
-entry are admitted in the same migration transaction. The entry exposes only
-the CommandId and fixed `UnboundLegacy` / `OriginEvidenceIncomplete` reason,
-never receipt JSON, summary content, raw event JSON, or path/host data. This is
-a human-readable governance warning, not a Message, approval, Agent
-instruction, or P10 Attention source. Admission is upsert-by-key; duplicate
-backfill/reconciliation is a no-op. The Governance Inbox query exposes the
-pending row to that human route; reading it is not consumption and does not
-clear it. A rebuild re-derives the same entry from the retained immutable
-disposition fact. It is not promoted to Agent Session and has no automatic
-consumer or mutation action. Any future consume/resolve action requires its
-own accepted contract. An UnboundLegacy command replay remains a generic
-Resolver denial.
+entry are admitted atomically in the migration transaction under the
+eventual accepted P6 entry contract. The item exposes only bounded identity
+and the fixed `UnboundLegacy` / `OriginEvidenceIncomplete` disposition, never
+receipt JSON, summary content, raw event JSON, or path/host data. It is a human
+governance warning, not a Message, approval, Agent instruction, or P10
+Attention source. An UnboundLegacy command replay remains a generic Resolver
+denial.
 
 ### Typed WorkBlocked Parent input (accepted WorkEpisode amendment)
 

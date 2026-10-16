@@ -673,10 +673,13 @@ successful old P8 receipt for which origin cannot be proven. It stores only
 `command_id`, `project_id`, fixed disposition `UnboundLegacy`, bounded
 reason code `OriginEvidenceIncomplete`, and `created_at`; it never copies the
 receipt payload/result. It is immutable, retained, and paired atomically with
-the P6 human-only Governance Inbox entry keyed
-`retry-verification-unbound:<commandId>`. If migration cannot resolve the
-current P8 governance Workspace for that entry, it fails closed and rolls back
-the migration/backfill rather than routing the item to a broader principal.
+the P6 human-only, queryable Governance Inbox item under the separately
+accepted P6 entry contract. Exact entry kind/key, recipient, query,
+consumption/acknowledgement and rebuild mechanics are not fixed here; migration
+implementation/registration is blocked until P6 owner acceptance defines
+them. If the current authorized human route cannot be established, migration
+fails closed and rolls back rather than routing the item to a broader
+principal.
 
 Backfill an origin only if one strict Committed RetryVerification result and
 exactly one retained `VerificationConcluded(Unknown, Orphaned)` plus one

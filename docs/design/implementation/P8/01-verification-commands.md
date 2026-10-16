@@ -166,6 +166,9 @@ guessed from receipt JSON, Session text, or pruned Events. The migration
 preserves the old receipt, records
 `UnboundLegacy`, and admits the human-only P6 Governance Inbox item described
 in P6 `02`; an UnboundLegacy external replay is a generic Resolver denial.
+The item-specific P6 key, recipient, query/consumption and rebuild mechanics
+remain owner-gated and require separate P6 acceptance before migration
+implementation/registration.
 This migration disposition is not a P10 Attention source and does not add a
 new command or automatic retry loop.
 
