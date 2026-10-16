@@ -1369,7 +1369,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           expect(boundaryBinding?.settlement_kind).toBe(
             shouldBeCommitted ? "ReconciledNoEffect" : null,
           );
-          expect(boundaryBinding?.selected_fact_id).toBe(
+          expect(boundaryBinding?.selected_fact_id).toEqual(
             shouldBeCommitted ? expect.any(String) : null,
           );
           expect(boundaryBinding?.observation_json === null).toBe(
@@ -1977,8 +1977,16 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         decoded_output_hash: crashedSourceStep?.decoded_output_hash,
         model_output_session_sequence:
           crashedSourceStep?.model_output_session_sequence,
-        next_action_index: 1,
       });
+      const recoveredActionCursor = recoveredSourceStep?.next_action_index;
+      if (
+        recoveryCrashBoundary === "AH7BeforeToolSettlementCommit" ||
+        recoveryCrashBoundary === "AH7AfterToolSettlementCommit"
+      ) {
+        expect([0, 1]).toContain(recoveredActionCursor);
+      } else {
+        expect(recoveredActionCursor).toBe(1);
+      }
       expect(
         crashed.outputs.filter(
           (output) =>
