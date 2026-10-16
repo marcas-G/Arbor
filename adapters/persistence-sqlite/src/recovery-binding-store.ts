@@ -112,9 +112,7 @@ export type P39RecoveryBindingClaimBranch =
   | "Attempt0AlreadyExists"
   | "BoundTransitionMismatch";
 
-export type P39RecoveryBindingQualificationProbe = (event: {
-  readonly boundary: "P4P39BindClaimBranch";
-  readonly branch: P39RecoveryBindingClaimBranch;
+interface P39RecoveryBindingClaimProbeIdentity {
   readonly executionId: string;
   readonly invocationId: string;
   readonly providerTurnId: string;
@@ -126,7 +124,18 @@ export type P39RecoveryBindingQualificationProbe = (event: {
   readonly toolName: string;
   readonly toolVersion: string;
   readonly approvalId: string | null;
-}) => Promise<void>;
+}
+
+export type P39RecoveryBindingQualificationProbe = (
+  event:
+    | (P39RecoveryBindingClaimProbeIdentity & {
+        readonly boundary: "P4P39BindClaimBranch";
+        readonly branch: P39RecoveryBindingClaimBranch;
+      })
+    | (P39RecoveryBindingClaimProbeIdentity & {
+        readonly boundary: "P4P39ClaimBeforeCommit";
+      }),
+) => Promise<void>;
 
 export const makeP39RecoveryEvidenceStoreLive = (
   qualificationProbe?: P39RecoveryBindingQualificationProbe,
@@ -500,6 +509,24 @@ export const makeP39RecoveryEvidenceStoreLive = (
                 ],
               ),
             );
+            if (qualificationProbe !== undefined) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "P4P39ClaimBeforeCommit",
+                  executionId: input.binding.executionId,
+                  invocationId: input.binding.invocationId,
+                  providerTurnId: input.binding.providerTurnId,
+                  logicalStepNo: input.binding.logicalStepNo,
+                  repairAttempt: input.binding.repairAttempt,
+                  logicalActionId: input.binding.logicalActionId,
+                  actionIndex: input.binding.actionIndex,
+                  callRef: input.binding.callRef,
+                  toolName: input.binding.toolName,
+                  toolVersion: input.binding.toolVersion,
+                  approvalId: input.binding.approvalId,
+                }),
+              );
+            }
             return "Bound" as const;
           }),
         findBinding,

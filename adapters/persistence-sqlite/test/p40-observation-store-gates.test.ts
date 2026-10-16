@@ -11,6 +11,7 @@ import {
   Clock,
   canonicalizeRecoveryBindingV1,
   IdGenerator,
+  type InvocationAuthority,
   type RecoveryBindingV1,
   recoveryBindingV1Digest,
   type ToolExecutionContext,
@@ -410,6 +411,88 @@ describe("P40 P4 persistent observation admission gates", () => {
     expect(Exit.isFailure(result.rejected)).toBe(true);
     expect(result.materializeCalls).toBe(0);
     expect(result.state).toEqual({ settled_at: null, result_artifacts: 0 });
+  }, 120_000);
+
+  it("persists and idempotently replays a Stop-winning NotAdmitted Interrupted observation", async () => {
+    const database = await createSchema42TestDatabase();
+    databases.push(database);
+    const app = makeApp(database.databaseFilename);
+    const program = Effect.gen(function* () {
+      yield* seedWorkspaceExecution;
+      const tx = yield* TransactionPort;
+      const invocations = yield* ToolInvocationStore;
+      const evidenceStore = yield* ToolObservationEvidenceStore;
+      const sql = yield* SqlClient;
+      yield* tx.transact(invocations.recordIntent(intent, fence, now));
+      yield* bindP39Intent();
+      yield* sql.unsafe(
+        "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ?",
+        [now, executionId],
+      );
+      const authority: InvocationAuthority = {
+        principal: "user:p40" as never,
+        workspaceId,
+        executionId,
+        toolName: intent.toolName,
+        toolVersion: intent.toolVersion,
+        resourceSpaceIds: [],
+        allowedCapabilities: [],
+        controlBasisDigest: "control-basis",
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        delegationDepth: 0,
+        sourceRevision: "source-revision",
+      };
+      const admission = yield* tx.transact(
+        invocations.admitEffect(invocationId, authority, now, fence),
+      );
+      const candidate = {
+        invocation: intent,
+        settlement: { _tag: "Interrupted" as const },
+        resultRef: null,
+        observation: { _tag: "Interrupted" as const },
+        settledAt: now,
+        executionFence: fence,
+        fenceNow: now,
+      };
+      const first = yield* tx.transact(
+        evidenceStore.settleOrReadWinner(candidate),
+      );
+      const replay = yield* tx.transact(evidenceStore.read(intent, fence, now));
+      const repeated = yield* tx.transact(
+        evidenceStore.settleOrReadWinner(candidate),
+      );
+      const rows = yield* sql.unsafe<{
+        readonly effect_admission_state: string;
+        readonly settlement_kind: string | null;
+        readonly observation_format_version: string | null;
+        readonly observation_json: Uint8Array | null;
+        readonly observation_sha256: string | null;
+      }>(
+        `SELECT effect_admission_state, settlement_kind,
+                observation_format_version, observation_json,
+                observation_sha256
+           FROM tool_invocations WHERE invocation_id = ?`,
+        [invocationId],
+      );
+      return { admission, first, replay, repeated, row: rows[0] };
+    });
+    const result = await Effect.runPromise(Effect.provide(program, app));
+    expect(result.admission).toEqual({ _tag: "ExecutionStopping" });
+    expect(result.first._tag).toBe("Applied");
+    expect(result.replay.observation).toEqual({ _tag: "Interrupted" });
+    expect(result.repeated._tag).toBe("Existing");
+    expect(result.repeated.evidence).toEqual(result.first.evidence);
+    expect(result.row).toMatchObject({
+      effect_admission_state: "NotAdmitted",
+      settlement_kind: "Interrupted",
+      observation_format_version: "p4-canonical-tool-observation-v1",
+      observation_sha256: result.first.evidence.sha256,
+    });
+    expect(
+      new TextDecoder().decode(
+        result.row?.observation_json ?? new Uint8Array(),
+      ),
+    ).toBe('{"_tag":"Interrupted"}');
   }, 120_000);
 
   it("returns only the committed winner to a fenced loser and rejects that same fence after takeover", async () => {

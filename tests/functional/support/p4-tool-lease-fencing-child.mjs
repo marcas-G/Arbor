@@ -99,7 +99,8 @@ const toolQualificationProbe = async (event) => {
     return;
   }
   if (
-    role === "old" &&
+    (role === "old" ||
+      (role === "new" && process.env.ARBOR_P4_FENCE_TRACE_NEW === "1")) &&
     [
       "AH7AfterToolIntentCommit",
       "AH7AfterEffectAuthorityResolvedBeforeAdmission",
@@ -110,6 +111,8 @@ const toolQualificationProbe = async (event) => {
       "AH7BeforeToolSettlementCommit",
       "AH7AfterToolSettlementCommit",
       "AH7ToolSettlementFenceRejected",
+      "P38StopInvocationLookup",
+      "P38StopEffectAdmissionResult",
     ].includes(event.boundary)
   ) {
     emit(event);
@@ -157,6 +160,11 @@ const executionLeaseQualificationProbe = async (event) => {
     emit(event);
     if (role === "new" && process.env.ARBOR_P4_FENCE_PAUSE_NEW === "1") {
       await waitForGate("new-driver", event);
+    } else if (
+      role === "old" &&
+      existsSync(join(gateDirectory, "old-driver.request"))
+    ) {
+      await waitForGate("old-driver", event);
     }
     return;
   }
@@ -225,13 +233,23 @@ const schedulerQualificationProbe = (event) => {
 };
 
 const executableToolQualificationProbe = async (event) => {
-  if (role === "old" && event.toolName === "shell") {
+  if (
+    event.toolName === "shell" &&
+    (role === "old" ||
+      (role === "new" && process.env.ARBOR_P4_FENCE_TRACE_NEW === "1"))
+  ) {
     emit(event);
   }
 };
 
 const p39RecoveryBindingQualificationProbe = async (event) => {
-  if (role === "old") emit(event);
+  if (role !== "old") return;
+  if (event.boundary === process.env.ARBOR_P4_FENCE_ADMISSION_BOUNDARY) {
+    emit(event);
+    await waitForGate("tool-admission", event);
+    return;
+  }
+  emit(event);
 };
 const port = Number(process.env.ARBOR_HTTP_PORT);
 const config = {
