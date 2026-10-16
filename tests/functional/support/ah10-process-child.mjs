@@ -150,7 +150,9 @@ if (reconciliationMode !== undefined) {
                 "UPDATE ah7_test_reconciliation_calls SET returned_at = ? WHERE call_no = ?",
               )
               .run(new Date().toISOString(), Number(call.lastInsertRowid));
-            if (process.env.ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE === "1") {
+            if (
+              process.env.ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE === "1"
+            ) {
               const changed = source
                 .prepare(
                   "SELECT 1 FROM ah7_test_reconciliation_controls WHERE invocation_id = ?",
