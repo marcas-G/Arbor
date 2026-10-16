@@ -748,6 +748,41 @@ exact DDL and initialization behavior are TBD for the separately authorized
 implementation package. This accepted contract does not reserve a migration
 number, register or execute DDL, or authorize implementation.
 
+### Accepted AH14 legacy adoption evidence storage contract (DID v1.49)
+
+Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,
+proposal raw SHA-256
+`71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+accepted 2026-10-17. P1 owns the shared persistence and transaction boundary;
+P9 owns the immutable source facts and P10 owns rebuildable markers.
+
+The accepted P9 source relations are `legacy_adoption_attention_facts` and
+`legacy_adoption_attention_resolution_facts`. The failure relation binds
+`attention_fact_id`, unique `event_id`, exact project/Execution/Workspace/
+ProviderTurn/Step/repair identities, closed `failure_code`, canonical
+`evidence_sha256`, and immutable `first_detected_at`; unique identity includes
+`(execution_id, evidence_sha256)`. The resolution relation binds one original
+failure fact and its evidence hash to a unique resolution event, exact
+project/Execution/Workspace/ProviderTurn identities, canonical resolution
+evidence hash, bounded canonical disposition summary plus its hash, derived
+closed resolution code and immutable resolution time. At most one resolution
+exists per failure. P10's `legacy_adoption_attention_rows` marker is keyed by
+`(project_id, attention_fact_id)`, stores the exact `workspace_id`, and has a
+composite reference on `(attention_fact_id, project_id, workspace_id)` to the
+corresponding P9 failure fact.
+
+The v1 identity/hash formulas, full evidence tuple fields, exact failure and
+resolution event payloads/envelopes, summary encoding and consistency checks
+are owned by P9 `07` and P10 `02`; this section adds no alternative encoding.
+P9 failure/resolution facts are permanent in v1 and independent of journal
+retention. P10 markers are rebuildable. Migration ID assignment, exact DDL,
+indexes/triggers and initialization are implementation-package details for
+separate authorization. No migration ID is assigned or reserved here; no DDL
+is registered or activated, and prior migrations are unchanged. A later
+implementation authorization must pin the then-current next migration ID,
+exact SQL hash, ordered offline-upgrade prefix, runtime schema target and
+disposable fixture baseline; it may not renumber or edit an earlier migration.
+
 ## 6. Retention / delete (P1-DG-09)
 
 ```text

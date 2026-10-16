@@ -247,3 +247,25 @@ covers P9 fact creation on either side of the rebuild. Event pruning does not
 remove the fact source; P1 continues to own retained-floor refusal and journal
 retention. P10 rebuild does not mutate P9 facts, canonical Execution/Step/
 Action, Work, selection, Command, receipt or journal event.
+
+## Accepted AH14 legacy adoption Attention rebuild and retention (DID v1.49)
+
+Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,
+proposal raw SHA-256
+`71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+accepted 2026-10-17. The marker in
+`legacy_adoption_attention_rows` is rebuildable; the P9
+`legacy_adoption_attention_facts` and
+`legacy_adoption_attention_resolution_facts` are permanent v1 source facts.
+Their authority is independent of `domain_events` retention.
+
+For one project, a full Attention rebuild transaction resets all project
+Attention markers, reads a consistent snapshot of retained P9 failure and
+resolution facts, recreates exactly one marker for each failure fact without
+an exact resolution fact, and rewinds the existing P1 Attention offset to
+`floor - 1`. Reset, source snapshot/seed and offset rewind commit or roll back
+together; retained journal events replay after commit through the normal
+consumer and validate against the exact facts. A pruned original failure or
+resolution event does not erase its P9 fact or prevent correct rebuild.
+Resolved failure markers are not revived. P10 never deletes or modifies either
+P9 fact, and below-retained-floor refusal remains the existing P1/P10 rule.

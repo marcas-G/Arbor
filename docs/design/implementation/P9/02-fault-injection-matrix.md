@@ -272,6 +272,28 @@ evidence protocol (per daemon restart / suite run):
   SD §10.7): storage-media loss / region loss are outside the envelope and
   are reported truthfully (P2 `06` §7).
 
+## Accepted AH14 legacy adoption evidence Attention fault matrix (DID v1.49)
+
+Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,
+proposal raw SHA-256
+`71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+accepted 2026-10-17. P9 `07` owns the exact trigger and evidence contract.
+
+| Boundary | Injected failure | Required durable state and recovery |
+|---|---|---|
+| Before `LegacyAdoptionEvidenceEscalated` fact/event COMMIT | Kill/restart or transaction failure | Neither fact nor event exists; Step/action/Session/settlement remain unchanged; no Provider/action/output work; retry recomputes the same tuple |
+| After failure fact/event COMMIT | Kill/restart | Exactly one immutable fact/event pair exists; recovery returns blocked without Provider request, action replay, sourced output or duplicate event |
+| Stale/expired Execution lease | Attempt failure-fact read/write | Lease fencing rejects before this path can read/write; no fact/event, adoption, Provider/action work, or Attention claim |
+| Before atomic resolution + normal Step progression COMMIT | Kill/restart or transaction failure | Neither resolution fact/event nor Step adoption/progression commits; original failure fact remains and P10 marker stays active |
+| After atomic resolution + normal Step progression COMMIT | Kill/restart | One exact resolution fact/event and normal adoption/progression exist; replay returns them without duplicates; matching P10 marker is removed only through its consumer transaction |
+| Resolution tuple/evidence conflict | Mismatched or incomplete action, P4, hash, summary or derived code | Typed corruption; no resolution fact/event or Step progression; Attention stays active |
+
+The resolution case requires the complete non-empty decoded action set and the
+same-action P4 terminal evidence described in P9 `07`. A may-have-started
+effect uses the existing P4 reconciliation/OutcomeUnknown gate before
+resolution. P10 marker and offset crash sides are specified in P10 `02`/`04`;
+they are not inferred from these P9 boundaries.
+
 ## 13. Must Not Decide
 
 The full DID v1.20 AgentLoopStep handoff matrix AH1–AH14 is owned by `07`; it is
