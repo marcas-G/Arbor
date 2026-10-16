@@ -469,6 +469,19 @@ const approvalDenialCode = (reason: string): NoEffectDenialCode => {
   return "ApprovalMismatch";
 };
 
+export const reconciliationRetryDenialReasonCode = (
+  reasonCode: NoEffectDenialCode,
+): "ApprovalNoLongerAuthorized" | "AuthoritySnapshotChanged" =>
+  reasonCode === "ApprovalRequired" ||
+  reasonCode === "ApprovalRejected" ||
+  reasonCode === "ApprovalNotFound" ||
+  reasonCode === "ApprovalMismatch" ||
+  reasonCode === "ApprovalExpired" ||
+  reasonCode === "ApprovalConsumedByOtherInvocation" ||
+  reasonCode === "ApprovalNoLongerAuthorized"
+    ? "ApprovalNoLongerAuthorized"
+    : "AuthoritySnapshotChanged";
+
 const isLeaseFencingRejected = (
   cause: unknown,
 ): cause is LeaseFencingRejected =>
@@ -2209,11 +2222,9 @@ export const ToolRuntimeLive = (
                     .transact(
                       Effect.gen(function* () {
                         const gateNow = yield* clock.now();
-                        const admitted = yield* store.admitEffect(
-                          intent.invocationId,
-                          resolvedAuthority,
-                          gateNow,
+                        yield* observationEvidence.value.assertCurrentFence(
                           context.executionFence,
+                          gateNow,
                         );
                         yield* probeReconciliation(
                           "AH7BeforeReconciliationFactCommit",
@@ -2233,14 +2244,165 @@ export const ToolRuntimeLive = (
                             _tag: "P39ReconciliationFactIdentityMismatch",
                           });
                         }
-                        if (admitted._tag === "Admitted") {
-                          yield* p39Recovery.value.admitRetryAttempt({
-                            invocationId: intent.invocationId,
-                            factId,
-                            admittedAt: gateNow,
-                          });
+
+                        const snapshotAdmission = yield* Effect.match(
+                          validateCapturedSnapshotAndAdmit(),
+                          {
+                            onFailure: (cause) =>
+                              isP39ResourceResolutionStale(cause)
+                                ? { _tag: "ResourceSnapshotChanged" as const }
+                                : { _tag: "Failure" as const, cause },
+                            onSuccess: (value) =>
+                              value._tag === "Denied"
+                                ? { _tag: "ResourceSnapshotChanged" as const }
+                                : { _tag: "Admitted" as const },
+                          },
+                        );
+                        if (snapshotAdmission._tag === "Failure") {
+                          return yield* Effect.fail(
+                            operationalFailure(
+                              "ResourceAdmission",
+                              String(intent.invocationId),
+                            )(snapshotAdmission.cause),
+                          );
                         }
-                        return admitted;
+                        if (snapshotAdmission._tag !== "Admitted") {
+                          return snapshotAdmission;
+                        }
+
+                        const currentAuthority = Option.isSome(
+                          authorityResolver,
+                        )
+                          ? yield* authorityResolver.value
+                              .resolve({
+                                intent,
+                                definition,
+                                context,
+                                regions,
+                                now: gateNow,
+                              })
+                              .pipe(
+                                Effect.catchTag("ToolAuthorityDenied", () =>
+                                  Effect.succeed(undefined),
+                                ),
+                                Effect.mapError(
+                                  operationalFailure(
+                                    "AuthorityResolution",
+                                    String(intent.invocationId),
+                                  ),
+                                ),
+                              )
+                          : context.authority;
+                        if (
+                          currentAuthority === undefined ||
+                          checkInvocationAuthority({
+                            authority: currentAuthority,
+                            definition,
+                            intent,
+                            context,
+                            regions,
+                            now: gateNow,
+                            maxDelegationDepth: options.maxDelegationDepth ?? 1,
+                          })._tag === "Denied"
+                        ) {
+                          return {
+                            _tag: "AuthoritySnapshotChanged" as const,
+                          };
+                        }
+
+                        if (
+                          needsApproval &&
+                          intent.approvalId !== null &&
+                          context.executableApproval !== undefined
+                        ) {
+                          if (Option.isNone(executableApprovals)) {
+                            return {
+                              _tag: "ApprovalNoLongerAuthorized" as const,
+                            };
+                          }
+                          const currentApproval =
+                            yield* executableApprovals.value
+                              .findById(context.executableApproval.approvalId)
+                              .pipe(
+                                Effect.mapError(
+                                  operationalFailure(
+                                    "ApprovalLookup",
+                                    String(intent.invocationId),
+                                  ),
+                                ),
+                              );
+                          if (
+                            Option.isNone(currentApproval) ||
+                            currentApproval.value.state !== "Consumed" ||
+                            currentApproval.value.consumedBy !==
+                              intent.invocationId ||
+                            currentApproval.value.revision !==
+                              context.executableApproval.expectedRevision + 1 ||
+                            currentApproval.value.expiresAt <= gateNow ||
+                            !executableApprovalBindingMatches(
+                              currentApproval.value,
+                              context.executableApproval.binding,
+                            )
+                          ) {
+                            return {
+                              _tag: "ApprovalNoLongerAuthorized" as const,
+                            };
+                          }
+                        } else if (
+                          needsApproval &&
+                          intent.approvalId !== null &&
+                          context.executableApproval === undefined
+                        ) {
+                          const approval = yield* store
+                            .findApproval(intent.approvalId)
+                            .pipe(
+                              Effect.mapError(
+                                operationalFailure(
+                                  "ApprovalLookup",
+                                  String(intent.invocationId),
+                                ),
+                              ),
+                            );
+                          if (
+                            Option.isNone(approval) ||
+                            matchApproval({
+                              approval: approval.value,
+                              intent,
+                              definition,
+                              context,
+                              regions,
+                              now: gateNow,
+                              replayOfRecordedInvocation: true,
+                            })._tag === "Denied"
+                          ) {
+                            return {
+                              _tag: "ApprovalNoLongerAuthorized" as const,
+                            };
+                          }
+                        }
+
+                        const admitted = yield* store.admitEffect(
+                          intent.invocationId,
+                          currentAuthority,
+                          gateNow,
+                          context.executionFence,
+                        );
+                        if (admitted._tag === "ExecutionStopping") {
+                          return admitted;
+                        }
+                        if (admitted._tag === "Denied") {
+                          return {
+                            _tag: reconciliationRetryDenialReasonCode(
+                              admitted.reasonCode,
+                            ),
+                          };
+                        }
+                        yield* p39Recovery.value.admitRetryAttempt({
+                          invocationId: intent.invocationId,
+                          factId,
+                          admittedAt: gateNow,
+                        });
+                        return { _tag: "Admitted" as const };
                       }),
                     )
                     .pipe(
@@ -2268,7 +2430,7 @@ export const ToolRuntimeLive = (
                         reasonCode:
                           retryGate._tag === "ExecutionStopping"
                             ? "StopRequested"
-                            : "AuthoritySnapshotChanged",
+                            : retryGate._tag,
                         reconciliationFactRef: factId,
                       },
                       observation: bounded(
@@ -3476,8 +3638,7 @@ export const ToolRuntimeLive = (
                     },
                     authenticatedRecoveryEvidence,
                   }),
-              ...(pendingReconciliation === undefined ||
-              outcome.settlement._tag === "ReconciledNoEffect"
+              ...(pendingReconciliation === undefined
                 ? {}
                 : {
                     reconciliationSelection: pendingReconciliation.selection,
