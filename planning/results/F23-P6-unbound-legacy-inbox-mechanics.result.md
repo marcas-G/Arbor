@@ -22,13 +22,17 @@ landing decision/review records.
 
 ## Recommended package and verification
 
-The supplemental proposal recommends a stable `RetryVerificationUnboundLegacy`
-entry keyed by CommandId, routed to the current P8 governance Workspace,
-queried only with current human authorization, read-only/non-consuming, and
-rebuildable from the immutable P1 disposition row. It includes no Agent
-promotion, new action, P10 Attention source, receipt disclosure, or replay
-authority. It is a recommendation only; no design file currently records those
-specific mechanics as accepted.
+The B2 proposal now includes source WorkId/VerificationId in the durable
+UnboundLegacy disposition so Inbox rebuild never depends on or decodes the
+permanent receipt. It recommends a stable
+`RetryVerificationUnboundLegacy` key by CommandId, with a recipient dynamically
+derived from current canonical Work/Workspace and P8 governance facts rather
+than stored as an immutable snapshot. Route changes move the same key; the old
+recipient loses visibility as soon as current authorization changes, and the
+new recipient sees the item after same-transaction route update or durable
+required reconciliation. It also fixes timestamp/revision behavior,
+read-only/no-consume semantics, and current-route rebuild/upsert. These are
+recommendations only; no design file records these mechanics as accepted.
 
 The proposed exact token is
 `ACCEPT_F23_P6_UNBOUND_LEGACY_GOVERNANCE_INBOX_MECHANICS`. Its acceptance
@@ -38,4 +42,4 @@ tests, and online upgrade require separate authorization.
 
 No code, test, schema, production behavior, or `docs/design/**` was changed
 for this supplemental proposal. Raw SHA-256 of the proposal is recorded after
-the text is finalized: `784D1F32383998C7FDFE2DA25095C0E91EAC33281305A7BE8E1AFA31D6C7CAB6`.
+the text is finalized: `61372B11E729245A3C972190AD1C4FC8E3B967475FC42FC56A5B6437C7C09235`.
