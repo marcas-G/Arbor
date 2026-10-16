@@ -513,7 +513,10 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           "AH7AfterToolSettlementCommit",
         ] as const
       ).map((recoveryCrashBoundary) => ({
-        boundary: "AH7AfterEffectAdmissionCommit" as const,
+        boundary:
+          reconciliationMode === "Occurred"
+            ? ("AH7AfterToolEffectBeforeSettlement" as const)
+            : ("AH7AfterEffectAdmissionCommit" as const),
         semantics: "Reconcilable" as const,
         reconciliationMode,
         recoveryCrashBoundary,
@@ -559,7 +562,8 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
           : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
     const noEffectRetryDenied =
-      resourceChangeDuringReconcile || reconciliationDrift !== undefined;
+      reconciliationMode === "NotOccurred" &&
+      (resourceChangeDuringReconcile || reconciliationDrift !== undefined);
     it(testName, async () => {
       const marker = `AH7-SHELL-${crypto.randomUUID().slice(0, 8)}`;
       const steerMarker = `AH7-SHELL-STEER-${crypto.randomUUID().slice(0, 8)}`;
@@ -1500,11 +1504,39 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             const shouldBeCommitted =
               recoveryCrashBoundary === "AH7AfterToolSettlementCommit";
             expect(boundaryBinding?.settlement_kind).toBe(
-              shouldBeCommitted ? "ReconciledNoEffect" : null,
+              shouldBeCommitted
+                ? reconciliationMode === "Occurred"
+                  ? "Success"
+                  : "ReconciledNoEffect"
+                : null,
             );
-            expect(boundaryBinding?.selected_fact_id).toBe(
+            expect(boundaryBinding?.selected_fact_id).toEqual(
               shouldBeCommitted ? expect.any(String) : null,
             );
+            if (reconciliationMode === "Occurred" && shouldBeCommitted) {
+              const selectedFact = readReconciliationFacts(
+                fixture.databaseFile,
+                recoveryHit.invocationId,
+              )[0];
+              expect(boundaryBinding).toMatchObject({
+                settlement_provenance: "Reconciliation",
+                selected_attempt_no: 0,
+                result_ref: expect.stringMatching(/^art_/u),
+              });
+              expect(boundaryBinding?.selected_fact_id).toBe(
+                selectedFact?.fact_id,
+              );
+              expect(boundaryBinding?.result_ref).toBe(
+                selectedFact?.result_ref,
+              );
+              const boundaryEffects = readTestExternalEffects(
+                fixture.databaseFile,
+              );
+              expect(boundaryEffects).toHaveLength(1);
+              expect(boundaryEffects[0]?.result_ref).toBe(
+                selectedFact?.result_ref,
+              );
+            }
             expect(boundaryBinding?.observation_json === null).toBe(
               !shouldBeCommitted,
             );
@@ -1535,10 +1567,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       const resumesUnadmittedIntent = boundary === "AH7AfterToolIntentCommit";
       let recovered: ReturnType<typeof durableSnapshot>;
       try {
-        if (
-          resourceChangeDuringReconcile ||
-          reconciliationDrift !== undefined
-        ) {
+        if (noEffectRetryDenied) {
           await waitForPublic(
             async () =>
               readP4InvocationApprovalBinding(
