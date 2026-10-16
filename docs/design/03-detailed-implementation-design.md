@@ -30,8 +30,10 @@
   the exact retained conclusion/start Event pair, and canonical successor /
   verifier-binding facts. Unprovable recognized successes preserve their
   receipts, receive immutable `UnboundLegacy` disposition, and admit one
-  human-only P6 Governance Inbox item; replay is generic-denied. This is not a
-  P10 Attention source, not an Agent instruction, and not an automatic retry.
+  human-only, queryable P6 Governance Inbox item; replay is generic-denied.
+  The item-specific P6 key/recipient/query/consumption/rebuild mechanism is
+  separately gated by P6 owner acceptance. This is not a P10 Attention source,
+  not an Agent instruction, and not an automatic retry.
 - P1 `04` reserves an ordered origin/disposition migration, ID/name **TBD**;
   no migration is registered or executable under this design landing. Its
   atomicity, immutable FK/uniqueness, repeat-upgrade, retention and evidence-
