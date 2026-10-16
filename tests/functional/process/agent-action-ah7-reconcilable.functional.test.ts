@@ -528,7 +528,10 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         (
           ["AH7BeforeActionResultCommit", "AH7AfterActionResultCommit"] as const
         ).map((recoveryCrashBoundary) => ({
-          boundary: "AH7AfterEffectAdmissionCommit" as const,
+          boundary:
+            reconciliationMode === "Occurred"
+              ? ("AH7AfterToolEffectBeforeSettlement" as const)
+              : ("AH7AfterEffectAdmissionCommit" as const),
           semantics: "Reconcilable" as const,
           reconciliationMode,
           recoveryCrashBoundary,
