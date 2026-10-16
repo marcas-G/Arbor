@@ -874,6 +874,7 @@ describe("pending P38 public Executable approval qualification", () => {
       readonly branch?: string;
       readonly executionId?: string;
       readonly invocationId?: string;
+      readonly approvalId?: string | null;
     }> = [];
     const run = await startExecutableApproval(marker, {
       firstDaemonEntry: p4FenceChild,
@@ -1459,8 +1460,27 @@ describe("pending P38 public Executable approval qualification", () => {
       readonly boundary?: string;
       readonly executionId?: string;
       readonly invocationId?: string;
+      readonly approvalId?: string | null;
     }> = [];
     const contenderProbes: Array<Record<string, unknown>> = [];
+    const summarizeStages = (probes: ReadonlyArray<Record<string, unknown>>) =>
+      probes
+        .filter(
+          (event) =>
+            String(event.boundary).startsWith("P38P39") ||
+            event.boundary === "P4P39ClaimBeforeCommit" ||
+            event.boundary === "AH7AfterToolIntentCommit" ||
+            event.boundary === "AH10LeaseAcquisitionRejected" ||
+            event.boundary === "AH10PreDispatchSkippedLiveLease",
+        )
+        .map((event) => ({
+          role: event.role,
+          boundary: event.boundary,
+          executionId: event.executionId,
+          invocationId: event.invocationId,
+          approvalId: event.approvalId,
+          source: event.source,
+        }));
     const run = await startExecutableApproval(marker, {
       firstDaemonEntry: p4FenceChild,
       daemonEnvironment: {
@@ -1486,10 +1506,17 @@ describe("pending P38 public Executable approval qualification", () => {
       "p4-fence-gates",
     );
     mkdirSync(gateDirectory, { recursive: true });
+    writeFileSync(
+      join(gateDirectory, "p4-p39-target.json"),
+      JSON.stringify({
+        executionId: targetExecutionId,
+        invocationId: run.before.approval?.tool_invocation_id,
+        approvalId: run.approvalId,
+      }),
+    );
 
-    // Start both daemons before the owner holds the claim transaction. The
-    // contender waits at its explicit-runExecution gate, then competes for
-    // the same execution lease while the owner's claim commit is paused.
+    // Start both daemons before approval. Each qualifying same-Step P4/P39
+    // claim pauses immediately before BEGIN, while no SQLite write lock is held.
     const contender = await run.fixture.startAdditionalDaemon({
       entry: p4FenceChild,
       daemonEnvironment: {
@@ -1517,17 +1544,93 @@ describe("pending P38 public Executable approval qualification", () => {
     );
 
     try {
+      const ownerClaim = await waitForPublic(
+        async () =>
+          ownerProbes.find(
+            (event) =>
+              event.boundary === "P38P39ClaimBeforeTransaction" &&
+              event.executionId === targetExecutionId &&
+              event.invocationId === run.before.approval?.tool_invocation_id &&
+              event.approvalId === run.approvalId,
+          ),
+        (event) => event !== undefined,
+        25_000,
+      );
+      expect(ownerClaim).toBeTruthy();
+      const ownerBeforeBegin = await waitForPublic(
+        async () =>
+          ownerProbes.find(
+            (event) =>
+              event.boundary === "P38P39BeforeBegin" && event.role === "old",
+          ),
+        (event) => event !== undefined,
+        25_000,
+      );
+      expect(ownerBeforeBegin).toBeTruthy();
+
       writeFileSync(
         join(gateDirectory, "new-explicit-runExecution.release"),
         "release",
       );
-      let contenderStarted: Record<string, unknown> | undefined;
+      let contenderLeaseLoss: Record<string, unknown> | undefined;
       try {
-        contenderStarted = await waitForPublic(
+        contenderLeaseLoss = await waitForPublic(
           async () =>
             contenderProbes.find(
               (event) =>
-                event.boundary === "P4ExplicitRunExecutionStart" &&
+                event.boundary === "AH10LeaseAcquisitionRejected" &&
+                event.executionId === targetExecutionId &&
+                event.source === "test-runExecution",
+            ),
+          (event) => event !== undefined,
+          25_000,
+        );
+      } catch (error) {
+        throw new Error(
+          `${String(error)}; ownerStages=${JSON.stringify(summarizeStages(ownerProbes))}; contenderStages=${JSON.stringify(summarizeStages(contenderProbes))}; ownerErrors=${JSON.stringify(run.fixture.daemonErrors)}; contenderErrors=${JSON.stringify(contender.daemonErrors)}`,
+        );
+      }
+      expect(contenderLeaseLoss).toMatchObject({
+        executionId: targetExecutionId,
+        source: "test-runExecution",
+      });
+      expect(
+        contenderProbes.some(
+          (event) =>
+            event.boundary === "P38P39ClaimBeforeTransaction" &&
+            event.executionId === targetExecutionId,
+        ),
+      ).toBe(false);
+      expect(
+        contenderProbes.some(
+          (event) =>
+            event.boundary === "P38P39BeforeBegin" &&
+            event.executionId === targetExecutionId,
+        ),
+      ).toBe(false);
+
+      writeFileSync(join(gateDirectory, "old-p39-begin.release"), "release");
+      const ownerClaimCommitted = await waitForPublic(
+        async () =>
+          ownerProbes.find(
+            (event) =>
+              event.boundary === "P4P39ClaimBeforeCommit" &&
+              event.executionId === targetExecutionId &&
+              event.invocationId === run.before.approval?.tool_invocation_id,
+          ),
+        (event) => event !== undefined,
+        25_000,
+      );
+      expect(ownerClaimCommitted).toBeTruthy();
+
+      let ownerAfterCommit: (typeof ownerProbes)[number] | undefined;
+      try {
+        ownerAfterCommit = await waitForPublic(
+          async () =>
+            ownerProbes.find(
+              (event) =>
+                event.role === "old" &&
+                event.boundary === "AH7AfterToolIntentCommit" &&
                 event.executionId === targetExecutionId,
             ),
           (event) => event !== undefined,
@@ -1535,61 +1638,11 @@ describe("pending P38 public Executable approval qualification", () => {
         );
       } catch (error) {
         throw new Error(
-          `${String(error)}; contenderProbes=${JSON.stringify(contenderProbes)}; contenderErrors=${JSON.stringify(contender.daemonErrors)}; ownerProbes=${JSON.stringify(ownerProbes)}; ownerErrors=${JSON.stringify(run.fixture.daemonErrors)}`,
+          `${String(error)}; ownerProbes=${JSON.stringify(ownerProbes)}; contenderProbes=${JSON.stringify(contenderProbes)}; ownerErrors=${JSON.stringify(run.fixture.daemonErrors)}; contenderErrors=${JSON.stringify(contender.daemonErrors)}; snapshot=${JSON.stringify(run.snapshot())}`,
         );
       }
-      expect(contenderStarted).toMatchObject({
-        executionId: targetExecutionId,
-      });
-
-      const beforeBegin = await waitForPublic(
-        async () =>
-          (ownerProbes.some(
-            (event) =>
-              event.boundary === "P38P39BeforeBegin" && event.role === "old",
-          ) &&
-            contenderProbes.some(
-              (event) =>
-                event.boundary === "P38P39BeforeBegin" && event.role === "new",
-            )) ||
-          undefined,
-        (event) => event !== undefined,
-        60_000,
-      );
-      expect(beforeBegin).toBeTruthy();
-      await Promise.all([
-        writeFile(join(gateDirectory, "old-p39-begin.release"), "release"),
-        writeFile(join(gateDirectory, "new-p39-begin.release"), "release"),
-      ]);
-
-      const ownerAfterCommit = await waitForPublic(
-        async () =>
-          ownerProbes.find(
-            (event) =>
-              event.role === "old" &&
-              event.boundary === "AH7AfterToolIntentCommit" &&
-              event.executionId === targetExecutionId,
-          ),
-        (event) => event !== undefined,
-        60_000,
-      );
       if (ownerAfterCommit === undefined) {
         throw new Error("old owner did not pause after claim commit");
-      }
-
-      const contenderLeaseLoss = await waitForPublic(
-        async () =>
-          contenderProbes.find(
-            (event) =>
-              event.boundary === "AH10LeaseAcquisitionRejected" &&
-              event.executionId === targetExecutionId &&
-              event.source === "test-runExecution",
-          ),
-        (event) => event !== undefined,
-        60_000,
-      );
-      if (contenderLeaseLoss === undefined) {
-        throw new Error("same-Step contender did not lose the P2 lease CAS");
       }
 
       const claimed = run.snapshot();

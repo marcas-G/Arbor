@@ -19,14 +19,17 @@ contract changes.
   transactions are released together for SQLite arbitration. Both iterations
   ended with one terminal approval event, consumed Inbox, durable Stop cause,
   and zero effect.
-- Same-Step P38/P4/P39 dual-daemon overlap: 1 real process qualification. Both
-  daemons reach an explicitly injected, test-only pre-`BEGIN IMMEDIATE` gate
-  while no SQLite write lock is held; simultaneous release lets SQLite
-  serialize the exact claim attempts. The public approval is consumed once,
-  one P4 intent/RecoveryBinding/attempt-0 is persisted, the competing daemon
-  loses the live Execution lease, and the original owner produces exactly one
-  effect and settles. This is an overlap/arbitration test, not a kill/replay
-  substitute. The ordinary production composition leaves the probe absent.
+- Same-Step P38/P4/P39 dual-daemon overlap: 1 real process qualification.
+  The owner pauses at the exact same-Step claim immediately before
+  `BEGIN IMMEDIATE`, while no SQLite write lock is held. The second daemon
+  simultaneously attempts `runExecution` for that Execution and is rejected by
+  the live exclusive P2 lease before any claim transaction; it writes no P38,
+  P4, or P39 claim fact. Releasing the owner yields one consumed approval,
+  intent/RecoveryBinding/attempt-0 and exactly one effect/settlement. This does
+  not claim that two daemons enter the P39 transaction: P2 lease ownership
+  correctly arbitrates first. The independent-connection adapter races above
+  separately prove transaction-level approval/TTL CAS behavior. The ordinary
+  production composition leaves the probe absent.
 - Transaction-port qualification seam: default composition remains covered by
   existing transaction-port tests; an injected probe is observed before the
   transaction body and a throwing observer is fail-silent, with the write
@@ -35,9 +38,10 @@ contract changes.
 ## Commands
 
 - `pnpm exec vitest run --maxWorkers=1 --no-file-parallelism --retry=0 adapters/persistence-sqlite/test/transaction.test.ts adapters/persistence-sqlite/test/p38-executable-approval-expiry.test.ts -t "qualification probe is pre-BEGIN|barrier-synchronized SQLite connections|transaction port"` — PASS, 5 passed / 6 skipped.
-- `pnpm exec vitest run --config vitest.functional.config.ts --maxWorkers=1 --no-file-parallelism --retry=0 tests/functional/process/p38-executable-approval-public.functional.test.ts -t "public Stop and TTL expiry race on exact approval revision|overlaps same-Step P38/P4/P39 claim attempts from two daemons without duplicate claim facts"` — PASS, 3 passed / 11 skipped (Stop-vs-TTL iterations 0/1 and same-Step overlap).
+- `pnpm exec vitest run --config vitest.functional.config.ts --maxWorkers=1 --no-file-parallelism --retry=0 tests/functional/process/p38-executable-approval-public.functional.test.ts -t "public Stop and TTL expiry race on exact approval revision"` — PASS, 2 passed / 12 skipped.
+- `pnpm exec vitest run --config vitest.functional.config.ts --maxWorkers=1 --no-file-parallelism --retry=0 tests/functional/process/p38-executable-approval-public.functional.test.ts -t "overlaps same-Step P38/P4/P39 claim attempts from two daemons without duplicate claim facts"` — PASS, 1 passed / 13 skipped. The daemon loser is rejected at P2 lease acquisition before entering the P39 claim transaction; independent adapter races are the SQLite transaction-level arbitration evidence.
 - `pnpm typecheck` — PASS.
-- `pnpm exec vitest run --config vitest.architecture.config.ts --maxWorkers=1 --no-file-parallelism --retry=0` — PASS, 32 files / 163 tests.
+- `pnpm exec vitest run --config vitest.architecture.config.ts --maxWorkers=1 --no-file-parallelism --retry=0` — PASS, 32 files / 164 tests.
 - `pnpm exec biome check --write` on the eight changed implementation/test files — PASS.
 - `git diff --check` — PASS.
 

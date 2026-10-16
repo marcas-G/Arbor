@@ -483,6 +483,10 @@ export const buildSingleWorkspaceLayer = (
     RuntimeClockLive,
     IdGeneratorLive,
   );
+  const transactionPortLayer = Layer.provide(
+    makeTransactionPortLive(config.transactionBeginQualificationProbe),
+    infra,
+  );
   // P12 `09` §5: production wires the REAL resolver (not the fake
   // `environment-local` adapter). `ProjectEnvironmentPort` — consumed by
   // ownership writes and tool admission — is the resolver projection.
@@ -610,10 +614,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(
       provider,
       Layer.provide(ProviderTurnStoreLive, infra),
-      Layer.provide(
-        makeTransactionPortLive(config.transactionBeginQualificationProbe),
-        infra,
-      ),
+      transactionPortLayer,
       secretStore,
       infra,
     ),
@@ -652,10 +653,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(infra, domainEventJournal, inboxProjection),
   );
   const repos = Layer.mergeAll(
-    Layer.provide(
-      makeTransactionPortLive(config.transactionBeginQualificationProbe),
-      infra,
-    ),
+    transactionPortLayer,
     Layer.provide(CommandStoreLive, infra),
     domainEventJournal,
     Layer.provide(ProjectRepositoryLive, infra),
@@ -896,27 +894,12 @@ export const buildSingleWorkspaceLayer = (
   );
   const runnableSource = Layer.provide(
     DependencyAwareRunnableWorkSourceLive,
-    Layer.mergeAll(
-      repos,
-      infra,
-      Layer.provide(
-        makeTransactionPortLive(config.transactionBeginQualificationProbe),
-        infra,
-      ),
-    ),
+    Layer.mergeAll(repos, infra, transactionPortLayer),
   );
   const reconciliation = Layer.provide(ReconciliationSourceLive, repos);
   const scheduler = Layer.provide(
     ExecutionSchedulerLive,
-    Layer.mergeAll(
-      repos,
-      runnableSource,
-      infra,
-      Layer.provide(
-        makeTransactionPortLive(config.transactionBeginQualificationProbe),
-        infra,
-      ),
-    ),
+    Layer.mergeAll(repos, runnableSource, infra, transactionPortLayer),
   );
   const workflowSignals = Layer.provide(
     WorkflowSignalConsumerLive,

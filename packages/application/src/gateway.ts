@@ -63,11 +63,6 @@ export type CommandGatewayQualificationProbe = (
         readonly commandId: CommandId;
         readonly projectId: ProjectId;
         readonly executionId: ExecutionId;
-      }
-    | {
-        readonly boundary: "P38ResolveApprovalBeforeCommit";
-        readonly commandId: CommandId;
-        readonly projectId: ProjectId;
       },
 ) => Promise<void>;
 
@@ -395,18 +390,6 @@ export const makeCommandGatewayLive = (
               startedAt,
               settledAt,
             );
-            if (
-              qualificationProbe !== undefined &&
-              envelope.commandType === "ResolveExecutableApproval"
-            ) {
-              yield* Effect.promise(() =>
-                qualificationProbe({
-                  boundary: "P38ResolveApprovalBeforeCommit",
-                  commandId: envelope.commandId,
-                  projectId: envelope.projectId,
-                }),
-              );
-            }
             if (
               qualificationProbe !== undefined &&
               envelope.commandType === "SettleExecution" &&

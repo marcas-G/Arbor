@@ -93,10 +93,12 @@ export interface ToolRuntimeQualificationEvent {
     | "AH7ToolSettlementFenceRejected"
     | "AH7AfterEffectAuthorityResolvedBeforeAdmission"
     | "P38StopInvocationLookup"
-    | "P38StopEffectAdmissionResult";
+    | "P38StopEffectAdmissionResult"
+    | "P38P39ClaimBeforeTransaction";
   readonly executionId: string;
   readonly invocationId: string;
   readonly callRef: string;
+  readonly approvalId?: string | null;
   readonly logicalActionId?: string | undefined;
   readonly inputHash?: string;
   readonly toolName?: string;
@@ -2062,6 +2064,20 @@ export const ToolRuntimeLive = (
             const approvalClaimLost = { _tag: "AH7ApprovalClaimLost" as const };
             let approvalReceipt: ExecutableApprovalConsumptionReceipt | null =
               null;
+            if (p39BindingEnabled && options.qualificationProbe !== undefined) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "P38P39ClaimBeforeTransaction",
+                    executionId: context.executionId,
+                    invocationId: intent.invocationId,
+                    callRef: intent.callRef,
+                    approvalId:
+                      context.executableApproval?.approvalId ??
+                      intent.approvalId,
+                  }) ?? Promise.resolve(),
+              );
+            }
             const claim = yield* Effect.match(
               tx.transact(
                 Effect.gen(function* () {
