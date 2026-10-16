@@ -8,6 +8,10 @@ import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  CURRENT_SCHEMA44_SUFFIX_IDS,
+  HISTORICAL_SCHEMA42_SUFFIX_IDS,
+} from "../../../tests/support/schema-prefix-contract.js";
+import {
   createSchema42TestDatabaseFactory,
   type Schema42TestDatabaseFactory,
 } from "../../../tests/support/schema42-database.js";
@@ -229,9 +233,16 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
     });
     expect(P36_MIGRATIONS.some(({ id }) => id === 41)).toBe(false);
     expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
-    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-3)).toEqual([
-      40, 41, 42,
-    ]);
+    const currentSuffixIds = CURRENT_MIGRATIONS.map(({ id }) => id).filter(
+      (id) => id >= 40,
+    );
+    expect(currentSuffixIds).toEqual(CURRENT_SCHEMA44_SUFFIX_IDS);
+    expect(
+      CURRENT_SCHEMA44_SUFFIX_IDS.slice(
+        0,
+        HISTORICAL_SCHEMA42_SUFFIX_IDS.length,
+      ),
+    ).toEqual(HISTORICAL_SCHEMA42_SUFFIX_IDS);
     expect(CURRENT_MIGRATIONS.find(({ id }) => id === 41)).toMatchObject({
       id: 41,
       name: "p41_submitted_decision_binding_attention",

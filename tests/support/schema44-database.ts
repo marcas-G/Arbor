@@ -6,9 +6,6 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   P32_MIGRATIONS,
   P38_MIGRATIONS,
-  P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
-  P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
-  P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
   P43_MIGRATION,
   P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION,
   runMigrations,
@@ -20,12 +17,7 @@ import {
   removeP39PrivateTestDirectory,
   setP39PrivateWindowsAcl,
 } from "./p39-windows-deployment-test.js";
-
-const schema42StandaloneSuffix = [
-  P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
-  P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
-  P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
-] as const;
+import { HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS } from "./schema-prefix-contract.js";
 
 export class Schema42TestDatabaseSetupError extends Error {
   readonly code: "P39_UNSUPPORTED_DEPLOYMENT" | "SCHEMA42_SETUP_FAILED";
@@ -327,7 +319,7 @@ export const upgradeSchema42TestDatabase = async (input: {
     );
   }
 
-  for (const migration of schema42StandaloneSuffix) {
+  for (const migration of HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS) {
     await runPrimary(
       input.databaseFilename,
       Effect.gen(function* () {

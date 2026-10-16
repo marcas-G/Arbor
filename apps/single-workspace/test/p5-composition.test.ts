@@ -20,10 +20,10 @@ beforeAll(async () => {
 afterAll(() => schema44Factory?.cleanup());
 
 describe("P5 composition root", () => {
-  it("builds the full slice layer over a prestarted schema-42 DB", async () => {
+  it("builds the full slice layer over a prestarted schema-44 DB", async () => {
     const fixture = schema44Factory?.create();
     if (fixture === undefined) {
-      throw new Error("Schema-42 test database factory was not prepared.");
+      throw new Error("Schema-44 test database factory was not prepared.");
     }
     try {
       const result = await Effect.runPromise(
@@ -58,7 +58,7 @@ describe("P5 composition root", () => {
         >,
       );
       expect(result).toEqual({
-        version: 42,
+        version: 44,
         attentionTable: "attention_projection_rows",
       });
     } finally {
