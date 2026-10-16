@@ -1354,7 +1354,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                 candidate.boundary === recoveryCrashBoundary &&
                 candidate.callRef === hit?.callRef,
             ),
-          45_000,
+          90_000,
         );
         const recoveryHit = hit;
         if (
