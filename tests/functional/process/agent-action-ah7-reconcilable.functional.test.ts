@@ -448,6 +448,24 @@ const readTestExternalEffects = (databaseFile: string) => {
   }
 };
 
+const readTestReconciliationCallCount = (
+  databaseFile: string,
+  invocationId: string,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM ah7_test_reconciliation_calls WHERE invocation_id = ?",
+        )
+        .get(invocationId) as { readonly count: number }
+    ).count;
+  } finally {
+    db.close();
+  }
+};
+
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
@@ -458,6 +476,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
     readonly boundary: string;
     readonly semantics: "Reconcilable" | "NonIdempotent";
     readonly reconciliationMode?: "NotOccurred" | "Occurred" | "StillUnknown";
+    readonly profileDrift?: "version" | "hash" | "effect-key";
     readonly resourceChangeDuringReconcile?: boolean;
     readonly reconciliationDrift?: "authority" | "approval" | "stop";
     readonly takeoverDuringReconciliationIo?: boolean;
@@ -510,6 +529,12 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       semantics: "Reconcilable",
       reconciliationMode: "StillUnknown",
     },
+    ...(["version", "hash", "effect-key"] as const).map((profileDrift) => ({
+      boundary: "AH7AfterEffectAdmissionCommit" as const,
+      semantics: "Reconcilable" as const,
+      reconciliationMode: "NotOccurred" as const,
+      profileDrift,
+    })),
     ...(["NotOccurred", "Occurred"] as const).flatMap((reconciliationMode) =>
       (
         [
@@ -546,6 +571,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       boundary,
       semantics,
       reconciliationMode,
+      profileDrift,
       resourceChangeDuringReconcile,
       reconciliationDrift,
       takeoverDuringReconciliationIo,
@@ -564,9 +590,11 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
               : recoveryCrashBoundary === undefined
                 ? `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
                 : `recovers ${reconciliationMode} across ${recoveryCrashBoundary}`
-        : boundary === "AH7AfterToolIntentCommit"
-          ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
-          : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
+        : profileDrift !== undefined
+          ? `fails closed on trusted profile ${profileDrift} drift before source reconciliation`
+          : boundary === "AH7AfterToolIntentCommit"
+            ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
+            : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
     const noEffectRetryDenied =
       reconciliationMode === "NotOccurred" &&
       (resourceChangeDuringReconcile || reconciliationDrift !== undefined);
@@ -896,6 +924,14 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       const targetExecutionId = hit.executionId;
       const targetCallRef = hit.callRef;
       const targetInvocationId = hit.invocationId;
+      const bindingBeforeRecovery = readP39RecoveryBinding(
+        fixture.databaseFile,
+        targetInvocationId,
+      );
+      const attemptsBeforeRecovery = readEffectAttempts(
+        fixture.databaseFile,
+        targetInvocationId,
+      );
       const crashedInvocationBinding = readP4InvocationApprovalBinding(
         fixture.databaseFile,
         targetExecutionId,
@@ -1048,6 +1084,85 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           daemonEnvironment: {
             ARBOR_AH_BOUNDARY: "disabled",
             ARBOR_AH_NON_IDEMPOTENT: "1",
+          },
+        });
+      } else if (profileDrift !== undefined) {
+        await fixture.restart({
+          entry: reconciliationChild,
+          daemonEnvironment: {
+            ARBOR_AH10_ROLE: "old",
+            ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
+            ARBOR_AH7_TEST_RECONCILIATION_MODE:
+              reconciliationMode ?? "NotOccurred",
+            ARBOR_AH7_TEST_PROFILE_DRIFT: profileDrift,
+            ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
+          },
+        });
+        const drifted = await waitForPublic(
+          async () => durableSnapshot(fixture.databaseFile),
+          (value) =>
+            value.actions.some(
+              (action) =>
+                action.execution_id === targetExecutionId &&
+                action.call_ref === targetCallRef &&
+                action.state === "ReconciliationPending",
+            ) &&
+            value.executions.some(
+              (execution) =>
+                execution.execution_id === targetExecutionId &&
+                execution.settlement_kind === "OutcomeUnknown",
+            ),
+          45_000,
+        );
+        expect(
+          readP4InvocationApprovalBinding(
+            fixture.databaseFile,
+            targetExecutionId,
+            targetInvocationId,
+          ),
+        ).toMatchObject({
+          effect_admission_state: "MayHaveStarted",
+          result_ref: null,
+          settlement_kind: null,
+          settled_at: null,
+          selected_attempt_no: null,
+          selected_fact_id: null,
+        });
+        expect(
+          drifted.actions.find((action) => action.call_ref === targetCallRef)
+            ?.state,
+        ).toBe("ReconciliationPending");
+        expect(
+          readReconciliationFacts(fixture.databaseFile, targetInvocationId),
+        ).toEqual([]);
+        expect(
+          readEffectAttempts(fixture.databaseFile, targetInvocationId),
+        ).toEqual(attemptsBeforeRecovery);
+        expect(
+          readP39RecoveryBinding(fixture.databaseFile, targetInvocationId),
+        ).toEqual(bindingBeforeRecovery);
+        expect(readTestExternalEffects(fixture.databaseFile)).toEqual([]);
+        expect(
+          readTestReconciliationCallCount(
+            fixture.databaseFile,
+            targetInvocationId,
+          ),
+        ).toBe(0);
+        expect(existsSync(join(fixture.workspaceDirectory, effectFile))).toBe(
+          false,
+        );
+
+        // The original exact profile can still authenticate the preserved P39
+        // binding and continue the same invocation after the failed closed pass.
+        await fixture.crash();
+        await fixture.restart({
+          entry: reconciliationChild,
+          daemonEnvironment: {
+            ARBOR_AH10_ROLE: "old",
+            ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
+            ARBOR_AH7_TEST_RECONCILIATION_MODE:
+              reconciliationMode ?? "NotOccurred",
+            ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
           },
         });
       } else if (
@@ -1737,6 +1852,14 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           ? []
           : readTestExternalEffects(fixture.databaseFile);
       if (reconciliationMode === "NotOccurred") {
+        if (profileDrift !== undefined) {
+          expect(
+            readTestReconciliationCallCount(
+              fixture.databaseFile,
+              hit.invocationId,
+            ),
+          ).toBe(1);
+        }
         expect(reconciliationFacts).toHaveLength(1);
         expect(reconciliationFacts[0]).toMatchObject({
           attempt_no: 0,
