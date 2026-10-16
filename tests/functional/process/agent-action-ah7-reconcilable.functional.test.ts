@@ -1053,6 +1053,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       } else if (
         reconciliationMode !== undefined &&
         noEffectRetryDenied &&
+        !takeoverDuringReconciliationIo &&
         !recoveryCrashBoundary?.includes("ActionResult")
       ) {
         await fixture.restart({
@@ -1070,6 +1071,76 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ARBOR_AH7_TEST_CRASH_BOUNDARY: recoveryCrashBoundary ?? "disabled",
           },
         });
+        if (recoveryCrashBoundary !== undefined) {
+          await waitForPublic(
+            async () => hits,
+            (value) =>
+              value.some(
+                (candidate) =>
+                  candidate.boundary === recoveryCrashBoundary &&
+                  candidate.callRef === hit?.callRef,
+              ),
+            90_000,
+          );
+          const recoveryHit = hit;
+          if (
+            recoveryHit === undefined ||
+            recoveryHit.invocationId === undefined ||
+            recoveryHit.callRef === undefined
+          ) {
+            throw new Error("AH7 P40 boundary lacks the target invocation");
+          }
+          const recoveryCallRef = recoveryHit.callRef;
+          const boundaryBinding = readP4InvocationApprovalBinding(
+            fixture.databaseFile,
+            targetExecutionId,
+            recoveryHit.invocationId,
+          );
+          expect(
+            readReconciliationFacts(
+              fixture.databaseFile,
+              recoveryHit.invocationId,
+            ),
+          ).toEqual([
+            expect.objectContaining({
+              outcome: "NotOccurred",
+              fact_disposition: "RecoveryInput",
+            }),
+          ]);
+          const shouldBeCommitted =
+            recoveryCrashBoundary === "AH7AfterToolSettlementCommit";
+          expect(boundaryBinding?.settlement_kind).toBe(
+            shouldBeCommitted ? "ReconciledNoEffect" : null,
+          );
+          expect(boundaryBinding?.selected_fact_id).toEqual(
+            shouldBeCommitted ? expect.any(String) : null,
+          );
+          expect(boundaryBinding?.observation_json === null).toBe(
+            !shouldBeCommitted,
+          );
+          expect(
+            durableSnapshot(fixture.databaseFile).toolResults.filter(
+              (row) =>
+                readToolResultForCall([row], recoveryCallRef) !== undefined,
+            ),
+          ).toHaveLength(0);
+          await fixture.crash();
+          await fixture.restart({
+            entry: reconciliationChild,
+            daemonEnvironment: {
+              ARBOR_AH10_ROLE: "old",
+              ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
+              ARBOR_AH7_TEST_RECONCILIATION_MODE: reconciliationMode,
+              ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
+              ...(resourceChangeDuringReconcile
+                ? { ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE: "1" }
+                : {}),
+              ...(reconciliationDrift === undefined
+                ? {}
+                : { ARBOR_AH7_TEST_DRIFT_ON_RECONCILE: reconciliationDrift }),
+            },
+          });
+        }
       } else if (
         reconciliationMode !== undefined &&
         takeoverDuringReconciliationIo
@@ -1342,79 +1413,6 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           takeoverDb.close();
         }
         await gen1Daemon.crash();
-      } else if (
-        recoveryCrashBoundary === "AH7BeforeToolSettlementCommit" ||
-        recoveryCrashBoundary === "AH7AfterToolSettlementCommit"
-      ) {
-        await waitForPublic(
-          async () => hits,
-          (value) =>
-            value.some(
-              (candidate) =>
-                candidate.boundary === recoveryCrashBoundary &&
-                candidate.callRef === hit?.callRef,
-            ),
-          90_000,
-        );
-        const recoveryHit = hit;
-        if (
-          recoveryHit === undefined ||
-          recoveryHit.invocationId === undefined ||
-          recoveryHit.callRef === undefined
-        ) {
-          throw new Error("AH7 P40 boundary lacks the target invocation");
-        }
-        const recoveryCallRef = recoveryHit.callRef;
-        const boundaryBinding = readP4InvocationApprovalBinding(
-          fixture.databaseFile,
-          targetExecutionId,
-          recoveryHit.invocationId,
-        );
-        expect(
-          readReconciliationFacts(
-            fixture.databaseFile,
-            recoveryHit.invocationId,
-          ),
-        ).toEqual([
-          expect.objectContaining({
-            outcome: reconciliationMode,
-            fact_disposition: "RecoveryInput",
-          }),
-        ]);
-        const shouldBeCommitted =
-          recoveryCrashBoundary === "AH7AfterToolSettlementCommit";
-        expect(boundaryBinding?.settlement_kind).toBe(
-          shouldBeCommitted ? "ReconciledNoEffect" : null,
-        );
-        expect(boundaryBinding?.selected_fact_id).toEqual(
-          shouldBeCommitted ? expect.any(String) : null,
-        );
-        expect(boundaryBinding?.observation_json === null).toBe(
-          !shouldBeCommitted,
-        );
-        expect(
-          durableSnapshot(fixture.databaseFile).toolResults.filter(
-            (row) =>
-              readToolResultForCall([row], recoveryCallRef) !== undefined,
-          ),
-        ).toHaveLength(0);
-        await fixture.crash();
-        await fixture.restart({
-          entry: reconciliationChild,
-          daemonEnvironment: {
-            ARBOR_AH10_ROLE: "old",
-            ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
-            ARBOR_AH7_TEST_RECONCILIATION_MODE:
-              reconciliationMode ?? "NotOccurred",
-            ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
-            ...(resourceChangeDuringReconcile
-              ? { ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE: "1" }
-              : {}),
-            ...(reconciliationDrift === undefined
-              ? {}
-              : { ARBOR_AH7_TEST_DRIFT_ON_RECONCILE: reconciliationDrift }),
-          },
-        });
       } else if (reconciliationMode !== undefined) {
         const factBoundary =
           String(reconciliationMode) === "NotOccurred"
@@ -1471,7 +1469,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                   candidate.boundary === recoveryCrashBoundary &&
                   candidate.callRef === hit?.callRef,
               ),
-            45_000,
+            recoveryCrashBoundary.includes("ToolSettlement") ? 90_000 : 45_000,
           );
           const recoveryHit = hit;
           if (
@@ -1514,6 +1512,52 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
               );
               expect(projectedResults).toHaveLength(1);
             }
+          } else {
+            const shouldBeCommitted =
+              recoveryCrashBoundary === "AH7AfterToolSettlementCommit";
+            expect(boundaryBinding?.settlement_kind).toBe(
+              shouldBeCommitted
+                ? reconciliationMode === "Occurred"
+                  ? "Success"
+                  : "ReconciledNoEffect"
+                : null,
+            );
+            expect(boundaryBinding?.selected_fact_id).toEqual(
+              shouldBeCommitted ? expect.any(String) : null,
+            );
+            if (reconciliationMode === "Occurred" && shouldBeCommitted) {
+              const selectedFact = readReconciliationFacts(
+                fixture.databaseFile,
+                recoveryHit.invocationId,
+              )[0];
+              expect(boundaryBinding).toMatchObject({
+                settlement_provenance: "Reconciliation",
+                selected_attempt_no: 0,
+                result_ref: expect.stringMatching(/^art_/u),
+              });
+              expect(boundaryBinding?.selected_fact_id).toBe(
+                selectedFact?.fact_id,
+              );
+              expect(boundaryBinding?.result_ref).toBe(
+                selectedFact?.result_ref,
+              );
+              const boundaryEffects = readTestExternalEffects(
+                fixture.databaseFile,
+              );
+              expect(boundaryEffects).toHaveLength(1);
+              expect(boundaryEffects[0]?.result_ref).toBe(
+                selectedFact?.result_ref,
+              );
+            }
+            expect(boundaryBinding?.observation_json === null).toBe(
+              !shouldBeCommitted,
+            );
+            expect(
+              boundarySnapshot.toolResults.filter(
+                (row) =>
+                  readToolResultForCall([row], recoveryCallRef) !== undefined,
+              ),
+            ).toHaveLength(0);
           }
           await fixture.crash();
           await fixture.restart({
