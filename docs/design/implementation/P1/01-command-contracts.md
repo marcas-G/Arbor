@@ -278,6 +278,21 @@ does not record an attempt or invoke a handler. The P8 origin, source
 conclusion, successor, spawn intent and successful receipt are one transaction
 under P1 `03` §3.1; an origin is not a substitute for a receipt.
 
+### 3C. P6 UnboundLegacy current-route fallback (DID v1.47)
+
+When an existing owner/Parent-governance command cannot move the same-key P6
+UnboundLegacy Governance Inbox row in the same P1 command transaction as its
+canonical owner/Parent change, the command returns the existing typed
+`TerminalRejected(AuthorityDenied)` (or the narrowest existing typed
+rejection) through CommandGateway. This is an ordinary terminal command
+outcome, not a pre-Gateway transport/Resolver error. The normal receipt and
+`CommandAttempt` are persisted: the rejection path leaves canonical
+Work/Workspace/owner state, Domain Events, Inbox rows and the immutable
+UnboundLegacy disposition unchanged. Same CommandId/tuple replay returns that
+same terminal receipt; a different CommandId independently reaches the
+rejection. P1 `03` owns the transaction and before/after receipt-commit
+recovery boundary. No new `CommandRejection` variant is introduced.
+
 > **P2 evolution:** the `authority` parameter is generalized to
 > `CommandAuthorityFact`; `CommandHandler` declares an explicit `stopAdmission`
 > ADT, and `FenceStopCheck.check` receives it. See

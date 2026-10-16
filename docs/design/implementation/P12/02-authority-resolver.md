@@ -400,6 +400,16 @@ authorizes the original actor yields no fact and the generic denial before
 Gateway. Current visibility is re-evaluated on every replay; origin does not
 preserve authority after revocation or owner change.
 
+For the paired P6 `UnboundLegacy` Governance Inbox entry, current recipient
+visibility is derived from the disposition's Project/Work IDs and current
+canonical Work/Workspace governance owner, then checked against the same
+current Root-local or exact direct-Parent human route. A stored
+`inbox_entries.workspace_id` is a projection target, not an authority fact;
+stale recipient rows cannot make a former owner visible or authorized. The
+Inbox read does not inspect/decode Command receipts and never grants
+`RetryVerificationReplayOnlyAuthority`; an UnboundLegacy external replay
+continues to generic-deny before Gateway.
+
 Origin matching does not compare expected revision, summary, successor
 Verification/Execution IDs, semantic fingerprint, Handler schema version, or
 fingerprint algorithm. The produced authority remains exact-bound to the

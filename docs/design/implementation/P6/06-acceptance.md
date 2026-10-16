@@ -1,6 +1,6 @@
 # P6 — 06 Acceptance Stories
 
-**Authority:** S1.4 步骤 1–6, S2 §3–§7; DID v1.9 §11 P6, §5.4; P5 `05`（验收故事风格先例）; P6 `01`–`05`（含 D1–D4 约束断言）.
+**Authority:** S1.4 步骤 1–6, S2 §3–§7; DID v1.9 §11 P6, §5.4, v1.47 P8 UnboundLegacy route amendment; P5 `05`（验收故事风格先例）; P6 `01`–`05`（含 D1–D4 约束断言）.
 **Status:** FROZEN (manual governance adoption).
 
 全部故事使用 deterministic Fake Provider（沿 P5 决策），同一 durable DB，`apps/` 既有 composition root 扩展，不新建第二套 runtime。
@@ -58,7 +58,43 @@
 3. 变更实验：textVersion bump 后未跑 eval → CI/验证门拒绝（合入条件 = eval 全量绿）。
 4. 诱导性 eval：模型试图以 Report 充当交付/依赖满足 → E3 违禁断言触发。
 
-## 7. 机械断言清单（汇总）
+## 7. Story I — P8 UnboundLegacy current-route Governance Inbox（DID v1.47）
+
+1. 用可识别但无法证明 permanent replay origin 的历史成功
+   `RetryVerification` receipt 建立 fixture；migration 同一事务留下不可变
+   `UnboundLegacy/OriginEvidenceIncomplete` disposition 和一个 P6 Governance
+   Inbox entry。Inbox 使用现有 `Governance` kind 与
+   `retry-verification-unbound:<commandId>` stable key，不新增 P6/P7/P14/P10
+   kind/Attention source。
+2. 验证 typed `RetryVerificationUnboundLegacy` 内容只含 CommandId、ProjectId、
+   source WorkId/VerificationId、固定 disposition/reason 与 Inbox row
+   timestamps/revision；任何 receipt JSON、summary、event JSON、fingerprint、
+   path/host detail 都不出现在该条目。Agent/Session consumer 不获得条目；人类
+   读取不消费、不 ACK、不 clear、不发 command/wake/ProviderTurn。
+3. Root Work current route 只对当前 Root-local human 可见；child Work current
+   route 只对当前 exact direct-Parent Workspace human 可见。Foreign/unauthenticated
+   human 与 Agent 读取 fail closed。P12 每次按当前 canonical owner/Parent 与
+   current P8 auth re-evaluate，Inbox row 本身不授予权限。
+4. Owner/Parent route move 在同一 P1 command transaction 更新 canonical route 与
+   同一个 Inbox stable key。Commit 前旧 route 与 canonical owner 都不变；commit
+   后旧 recipient 立刻不可见、新 recipient 得到同一 key，无 duplicate/asynchronous
+   visibility window。Inbox createdAt 保持；真实 move 的 revision 只加一次并更新
+   updatedAt；重复/no-op reconciliation 不改 timestamps/revision。
+5. 若该 move 无法在同一 transaction 完成，命令必须走 P1 Gateway 并返回
+   `TerminalRejected(AuthorityDenied)`（或最窄现有 typed rejection），提交正常
+   terminal receipt/attempt；canonical Work/Workspace/Event/Inbox/disposition 均零
+   mutation。相同 CommandId/tuple 返回同一拒绝 receipt；不同 CommandId 独立拒绝。
+   覆盖 receipt transaction commit 前/后 crash；禁止 pre-Gateway rejection/read。
+6. 只移除 disposable fixture 的 Inbox projection row，然后 prunе/corrupt receipt
+   JSON 与相关 Domain Events；从 disposition 与当前 canonical Work/Workspace
+   facts rebuild 一个当前 recipient row，不查询/解码 receipt、不依赖 Event
+   retention。相同 stable key 的 source/disposition 内容不一致为 typed integrity
+   corruption，不覆盖原行。
+7. Ordered P8 migration 的 commit 前 crash 不留下 disposition 或对应 Inbox row；
+   commit 后二者均存在。Migration ID/physical DDL 仍按 P1 `04` 后续
+   implementation package 冻结，不在本验收中发明。
+
+## 8. 机械断言清单（汇总）
 
 ```text
 - 01 §4 两条 formation 链的每步事件序列与拒绝集与契约逐条一致
@@ -69,12 +105,16 @@
 - depth 判定纯结构计算（无模型参与）的单元证明
 - capability ceiling 四项 validate-only 检查各有正/反例
 - Inbox admission/promotion/consumption 三段各有独立可观测断言
+- Story I：Governance kind/key/payload、current P8 authorization、same-P1-transaction route move、Gateway rejection receipt replay、disposition-only rebuild 与 no-consume 断言
 - Normal/Critical steer 的中断差异可由 Execution 动作计数判定
 - 既有 P5 验收故事不回归（重构护栏）
 ```
 
-## 8. Must Not Decide
+## 9. Must Not Decide
 
 - No 真实 provider / 真实人类在线作为 gating 条件（human 角色由测试驱动）。
-- No P7/P8 行为进入断言（依赖/验证词出现即越界信号；D2 负断言除外——它断言的是"没有"）。
+- No P7/P8 owner behavior enters the assertions except the fixed DID v1.47
+  P8 `UnboundLegacy` trigger/disposition/replay boundary explicitly accepted
+  for Story I; dependency/verification behavior outside that fixed boundary
+  remains out of scope.
 - No UI/projection 呈现验收（P10）。

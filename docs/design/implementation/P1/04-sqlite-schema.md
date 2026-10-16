@@ -34,6 +34,7 @@ Only the Arbor Runtime writes this DB (DID §9.2).
 | `commands` | `CommandReceipt` (authoritative resolution) |
 | `retry_verification_origins` | immutable P8 originating-command/source/successor identity (non-receipt canonical fact) |
 | `retry_verification_legacy_dispositions` | immutable P8 `UnboundLegacy` replay disposition (non-receipt canonical fact) |
+| `inbox_entries` | P6 Inbox entry state, including the current recipient route for `UnboundLegacy` Governance entries |
 | `command_attempts` | `CommandAttempt` (non-authoritative trace) |
 | `domain_events` | `DomainEvent` (durable outbox) |
 | `project_event_sequences` | project-local sequence counter |
@@ -634,11 +635,13 @@ CREATE TABLE retry_verification_origins (
 );
 
 CREATE TABLE retry_verification_legacy_dispositions (
-  command_id    TEXT PRIMARY KEY REFERENCES commands(command_id),
-  project_id    TEXT NOT NULL REFERENCES projects(project_id),
-  disposition   TEXT NOT NULL CHECK (disposition = 'UnboundLegacy'),
-  reason_code   TEXT NOT NULL CHECK (reason_code = 'OriginEvidenceIncomplete'),
-  created_at    TEXT NOT NULL
+  command_id             TEXT PRIMARY KEY REFERENCES commands(command_id),
+  project_id             TEXT NOT NULL REFERENCES projects(project_id),
+  source_work_id         TEXT NOT NULL REFERENCES works(work_id),
+  source_verification_id TEXT NOT NULL REFERENCES verifications(verification_id),
+  disposition            TEXT NOT NULL CHECK (disposition = 'UnboundLegacy'),
+  reason_code            TEXT NOT NULL CHECK (reason_code = 'OriginEvidenceIncomplete'),
+  created_at             TEXT NOT NULL
 );
 
 CREATE TRIGGER retry_verification_origins_immutable_update
@@ -670,16 +673,37 @@ is.
 
 The separate `retry_verification_legacy_dispositions` fact marks a recognized
 successful old P8 receipt for which origin cannot be proven. It stores only
-`command_id`, `project_id`, fixed disposition `UnboundLegacy`, bounded
-reason code `OriginEvidenceIncomplete`, and `created_at`; it never copies the
-receipt payload/result. It is immutable, retained, and paired atomically with
-the P6 human-only, queryable Governance Inbox item under the separately
-accepted P6 entry contract. Exact entry kind/key, recipient, query,
-consumption/acknowledgement and rebuild mechanics are not fixed here; migration
-implementation/registration is blocked until P6 owner acceptance defines
-them. If the current authorized human route cannot be established, migration
-fails closed and rolls back rather than routing the item to a broader
-principal.
+`command_id`, `project_id`, exact `source_work_id` and
+`source_verification_id`, fixed disposition `UnboundLegacy`, bounded reason
+code `OriginEvidenceIncomplete`, and immutable `created_at`; it never copies
+the receipt payload/result or recipient snapshot. The Work/Verification IDs
+are the minimum permanent route identity and allow Inbox reconstruction after
+Domain Event pruning or receipt corruption without decoding the receipt. The
+row is immutable and retained.
+
+The paired P6 Inbox item uses the existing `Governance` kind and stable
+`entry_key = 'retry-verification-unbound:' || command_id`. Its current
+`workspace_id` is the route recipient; the typed P6 payload is derived from
+the disposition and canonical Work/Workspace facts rather than receipt JSON.
+The existing `admitted_at` timestamp is the logical Inbox `created_at` and is
+preserved for the stable key. A real recipient move updates `workspace_id`,
+increments the Inbox row `revision`, and sets `updated_at` in the same P1
+`BEGIN IMMEDIATE` transaction as the canonical owner/Parent change. An
+identical route reconciliation is a no-op; mismatched disposition/source
+identity is integrity corruption, not overwrite. The route move changes no
+disposition or P8 origin row.
+
+The current Inbox row DDL does not yet contain `revision` or `updated_at`.
+Their physical DDL, migration ID/name, and initial revision value remain
+**implementation-package TBD**; no schema/migration is activated by this
+design landing. Until that physical package is separately authorized and
+implemented, owner/Parent commands must not create an asynchronous route
+window: an unavailable same-transaction Inbox move is the ordinary P1 Gateway
+`TerminalRejected(AuthorityDenied)` path in `03`, committing only its normal
+receipt/attempt and no canonical Work/Workspace/Event/Inbox/disposition
+mutation. If the current authorized human route cannot be established, the
+ordered P8 migration fails closed and rolls back rather than routing to a
+broader principal.
 
 Backfill an origin only if one strict Committed RetryVerification result and
 exactly one retained `VerificationConcluded(Unknown, Orphaned)` plus one

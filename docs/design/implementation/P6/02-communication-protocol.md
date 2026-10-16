@@ -1,6 +1,6 @@
 # P6 — 02 Communication Protocol
 
-**Authority:** DID v1.9 §4.2, §1.8(Message), §2 表(Inbox), §5.4, §12.10 表, §8.4A and v1.39 EA-DG-01; SD v1.14 §7.1–§7.5, §13.5, 不变量 20/21/31/36; P3 `03` §3. Resolved D2.
+**Authority:** DID v1.9 §4.2, §1.8(Message), §2 表(Inbox), §5.4, §12.10 表, §8.4A, v1.39 EA-DG-01, and v1.47 P8 UnboundLegacy route amendment; SD v1.14 §7.1–§7.5, §13.5, 不变量 20/21/31/36; P3 `03` §3. Resolved D2.
 **Status:** FROZEN (manual governance adoption).
 
 ## 1. P6 的 Message 语义子集（D2 冻结闭合）
@@ -116,27 +116,51 @@ consumed entry. The resolved fact is the durable P2 wake source for the same
 Execution; Inbox admission/consumption never creates a new Execution or
 ProviderTurn.
 
-### P8 UnboundLegacy RetryVerification Governance Inbox entry (DID v1.46)
+### P8 UnboundLegacy RetryVerification Governance Inbox entry (DID v1.47)
 
 The ordered P8 origin migration admits one human-only, queryable Governance
 Inbox item when a recognized historical successful RetryVerification receipt
 cannot be bound by exact retained event and successor evidence. It is visible
 only through a currently authorized P8 human governance route, never through
-an Agent/Session consumer. Its entry kind/key, recipient mapping, query
-visibility, consumption/acknowledgement, and rebuild behavior are **TBD pending
-separate accepted P6 owner scope**; this P8/P1 design landing does not choose
-those P6 mechanics. Migration implementation/registration is blocked on that
-P6 acceptance. The P8 authorization boundary still requires the current
-authenticated human route; inability to establish that route fails closed.
+an Agent/Session consumer. The P6 entry reuses `kind=Governance`; there is no
+new Inbox kind. Its stable `entryKey` is
+`retry-verification-unbound:<commandId>`, with typed payload subtype
+`RetryVerificationUnboundLegacy`. The payload is derived from the immutable
+P1 disposition and contains only CommandId, ProjectId, source WorkId and
+VerificationId, fixed `UnboundLegacy` / `OriginEvidenceIncomplete`, and the
+entry's created/updated timestamps and revision. It never exposes receipt
+JSON, summary content, raw event JSON, fingerprint, path or host detail.
+The P1 disposition stores the minimum source identities needed for rebuild and
+is independent of Command receipt decoding and Domain Event retention.
 
-The matching immutable `retry_verification_legacy_dispositions` row and Inbox
-entry are admitted atomically in the migration transaction under the
-eventual accepted P6 entry contract. The item exposes only bounded identity
-and the fixed `UnboundLegacy` / `OriginEvidenceIncomplete` disposition, never
-receipt JSON, summary content, raw event JSON, or path/host data. It is a human
-governance warning, not a Message, approval, Agent instruction, or P10
-Attention source. An UnboundLegacy command replay remains a generic Resolver
-denial.
+The current recipient is derived on every admission, query and rebuild from
+that disposition plus current canonical Work/Workspace governance facts, then
+checked against current P8 human authorization. Root Work follows its current
+Root-local human governance route; child Work follows its current exact direct
+Parent Workspace human route. The Inbox row grants no authority. The item is
+human-only and queryable under that current route; reading does not consume or
+clear it, promote it into Session, create a Message/approval/Agent instruction,
+command, wake or ProviderTurn. It is not a P10 Attention source.
+
+An owner or Parent-governance change moves the same stable key to the newly
+authorized route in the same P1 command transaction as the canonical change.
+The old route loses visibility and the new route receives the entry at that
+commit; no asynchronous reconciliation window/fact is allowed. If an owner
+change cannot move the Inbox row atomically, it follows the existing P1
+Gateway as `TerminalRejected(AuthorityDenied)` (or the narrowest existing
+typed rejection): the normal receipt and attempt are committed, while no
+canonical Work/Workspace/owner, Event, Inbox or disposition mutation occurs.
+The same CommandId/tuple replays that terminal receipt; a different CommandId
+independently rejects. This is not a pre-Gateway error. Reconciliation of an
+identical route is a no-op; a changed source/disposition identity for the same
+key is typed integrity corruption. An UnboundLegacy command replay remains a
+generic current Resolver denial.
+
+The matching immutable `retry_verification_legacy_dispositions` row and
+Governance Inbox admission are paired atomically by the ordered P8 migration.
+That migration remains implementation/registration-gated by P1 `04` and the
+current P6 entry contract. No physical migration identifier is fixed here;
+the P1 transaction boundary and row-transition semantics are fixed below.
 
 ### Typed WorkBlocked Parent input (accepted WorkEpisode amendment)
 

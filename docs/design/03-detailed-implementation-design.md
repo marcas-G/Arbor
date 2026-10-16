@@ -1,10 +1,45 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.46\
+**Version:** 1.47\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.45\
-**Date:** 2026-10-16\
+**Supersedes:** v1.46\
+**Date:** 2026-10-17\
 **Depends on:** `Arbor System Design Specification v1.17`
+
+**Governance changes (v1.46 → v1.47): F23 P6 UnboundLegacy current-route Inbox mechanics**
+
+- The accepted P6 package reuses the existing `Governance` Inbox kind and
+  stable `retry-verification-unbound:<commandId>` key, with typed
+  `RetryVerificationUnboundLegacy` content reconstructed from the immutable
+  P1 disposition (`commandId`, project, source Work/Verification,
+  `UnboundLegacy`, `OriginEvidenceIncomplete`, `created_at`). It adds no Inbox
+  kind, Message, approval, Agent instruction, wake, command or P10 Attention
+  source. Reads are human-only and do not consume/clear the entry.
+- Recipient is current-route derived from canonical Work/Workspace governance
+  facts on every admission/query/rebuild and passes the unchanged P8 current
+  authenticated-human authorization. Root Work uses current Root-local human
+  governance; child Work uses its exact current direct Parent Workspace.
+- A same-key owner/Parent route move is atomic with the canonical owner change
+  in the existing P1 command transaction. It preserves Inbox `created_at`,
+  increments revision and updates `updated_at` once; no-op reconciliation
+  changes neither. If atomic movement is unavailable, the existing Gateway
+  persists its ordinary `TerminalRejected(AuthorityDenied)` receipt/attempt
+  and commits no canonical Work/Workspace/Event/Inbox/disposition mutation.
+  Same-CommandId replay returns that receipt; a different CommandId rejects
+  independently. No pre-Gateway rejection or asynchronous route-reconcile
+  fact/window is introduced.
+- P1 `04` adds source Work/Verification to the disposition contract and owns
+  the physical Inbox row representation. The P1 database route columns,
+  initial revision seed, and migration ID/name remain an implementation
+  package TBD; no DDL, migration registration/execution, online database
+  upgrade, or production implementation is authorized by this design landing.
+- Accepted token `ACCEPT_F23_P6_UNBOUND_LEGACY_GOVERNANCE_INBOX_MECHANICS`,
+  proposal raw SHA-256
+  `798C2CB2782E4D8FF1064CE1065E12B09A318565997EF1160460B478CFA48FDF`,
+  accepted 2026-10-17. Decision/landing record:
+  `planning/results/F23-P6-unbound-legacy-inbox-mechanics-acceptance-and-landing.record.md`;
+  post-landing consistency review:
+  `planning/results/F23-P6-unbound-legacy-inbox-mechanics-landing.review.md`.
 
 **Governance changes (v1.45 → v1.46): F23 / P8 permanent RetryVerification replay origin**
 
