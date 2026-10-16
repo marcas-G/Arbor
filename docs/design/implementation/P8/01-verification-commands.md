@@ -42,6 +42,47 @@ command with that `summaryRef`. The Verification conclusion row and
 `VerificationConcluded` event retain `summaryRef` durably. Parent governance
 supplies summary content only for `Unknown(Orphaned)`.
 
+## Accepted VCS addendum — evidence time and versioned conclusion (DID v1.48)
+
+Accepted token `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`,
+proposal raw SHA-256
+`B0C532FF66697CE1FB06B93CDE477B1A833FC310D360D48513E341D54F1FAD56`,
+accepted 2026-10-17. `RecordVerificationEvidence.recordedAt` is Runtime-bound
+from the first durable P9 ActionIntent `updatedAt`; it is not model-authored
+and is not recomputed on handler retry or owner-generation takeover. P9
+preserves that value while the Action remains Pending; an unprovable first
+intent time fails closed. See `04-evidence-binding.md` for the owning value
+contract.
+
+For ordinary `ConcludeVerification`, the canonical mission and
+`criteriaResults` snapshot, verdict, `summaryRef`, snapshot status
+`Available`, and conclusion reason (explicit null when absent) are identical
+in the canonical Verification row, `VerificationConcluded` event v2, and
+ConcludeVerification committed result/receipt v2. Runtime validates the
+complete ordered snapshot and byte-verifies `summaryRef` before the atomic
+commit. Existing v1 event and receipt decoders remain strict and read-only;
+existing v1 bytes are never relabeled or augmented.
+
+The G5 `RetryVerification` composite path is the narrow exception to the
+ordinary result/receipt versioning. In its existing single transaction, the
+orphan canonical row and `VerificationConcluded` event v2 contain identical
+`Unknown`, `Orphaned`, `NotApplicableOrphaned`, and empty `criteriaResults`,
+while retaining the complete mission snapshot. The outer
+`RetryVerificationResult` and receipt remain their unchanged strict v1 shape
+and existing `orphanedVerificationId`, `workId`, and successor IDs. They do
+not copy snapshot fields and no internal ConcludeVerification receipt is
+created. Exact retry validates the bound canonical row/event and returns the
+original receipt; missing, malformed, duplicate, or mismatched row/event state
+fails closed without repair or a replacement conclusion.
+
+Receipt-first recovery validates a Committed prior receipt against the exact
+Evidence row/source binding or exact Verification row/event/result snapshot,
+status, reason, verdict, and `summaryRef` before convergence. For the outer
+RetryVerification v1 receipt, it validates the existing ID binding against
+the canonical row and event. It does not invoke the handler or append duplicate
+facts. Missing, unsupported, malformed, or conflicting receipts/evidence fail
+closed. Migration and implementation remain separately authorized work.
+
 ## 1. `StartVerification`
 
 ### Payload

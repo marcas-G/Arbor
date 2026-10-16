@@ -718,6 +718,36 @@ insert `UnboundLegacy`, and admit the P6 entry in the same migration
 transaction. Current Command receipts and historical JSON are never rewritten
 or deleted.
 
+### Accepted VCS verification snapshot storage contract (DID v1.48)
+
+Accepted token `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`,
+proposal raw SHA-256
+`B0C532FF66697CE1FB06B93CDE477B1A833FC310D360D48513E341D54F1FAD56`,
+accepted 2026-10-17. The `verifications` canonical row owns the complete
+immutable `mission_snapshot`, `criteria_results` JSON snapshot, snapshot
+status (`Pending`, `Available`, `NotApplicableOrphaned`, or
+`UnavailableLegacy`), and the conclusion reason needed to validate the exact
+status/verdict/result combination. Existing `summary_ref`, verdict and event
+identity remain canonical facts. `Pending` is Open with a proven mission and
+no criterion result; `Available` is a complete new ordinary conclusion;
+`NotApplicableOrphaned` is exactly `Unknown`/`Orphaned`/empty results; and
+`UnavailableLegacy` marks pre-migration concluded rows without inferred
+results. Status/JSON consistency is a required storage invariant.
+
+The migration must preflight every existing Open row using its existing
+`mission_snapshot` as the sole complete source: strict codec, Verification
+identity, exact Work/revision binding, and association with its
+`VerificationStarted` event must all prove before any DDL or data write. The
+event's `missionDigest` is weak consistency only and cannot reconstruct or
+normalize snapshot content. An unprovable Open row aborts before writes.
+Every pre-migration Concluded row becomes `UnavailableLegacy`; no canonical
+conclusion rewrite or criterion-result backfill is allowed.
+
+The migration identifier and ordering against the then-registered predecessor,
+exact DDL and initialization behavior are TBD for the separately authorized
+implementation package. This accepted contract does not reserve a migration
+number, register or execute DDL, or authorize implementation.
+
 ## 6. Retention / delete (P1-DG-09)
 
 ```text

@@ -124,6 +124,28 @@ observable logging/diagnostic sink is implied by this contract. A separately
 operator-visible diagnostic requires an independently governed port and is
 not part of P1 `07`.
 
+### Accepted P8 verification action identity (DID v1.48)
+
+Accepted token `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`,
+proposal raw SHA-256
+`B0C532FF66697CE1FB06B93CDE477B1A833FC310D360D48513E341D54F1FAD56`,
+accepted 2026-10-17. For a logical `RecordVerificationEvidence` action, the
+first durable P9 ActionIntent's persisted `updatedAt` is the Runtime-selected
+`recordedAt` passed unchanged to the P8 command. Owner-generation takeover
+reuses the exact Pending intent time and payload; it does not call the clock
+again. A still-Pending transition preserves the first-intent timestamp. If
+the stored value cannot be proven to be the first-intent time, recovery fails
+closed rather than selecting a substitute. The model cannot author
+`recordedAt`.
+
+P8 command attempts retain the existing generation-scoped identity rules:
+the LogicalActionId is stable across generations, each generation's immutable
+CommandId is distinct, and operational retries of the exact request reuse its
+CommandId and fingerprint. A prior Committed P8 receipt is converged only
+after the exact P8 durable Evidence source or Verification conclusion snapshot
+has been proven, as specified by P9 `07` and P8 `01`. This does not alter the
+general Command contract or authorize implementation.
+
 ## 3. Settlement
 
 `SettlementProposed` persists one `LogicalSettlementId` and settlement hash.

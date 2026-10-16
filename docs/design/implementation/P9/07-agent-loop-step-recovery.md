@@ -684,3 +684,39 @@ re-driven: restart reuses its exact settlement and current WorkBlocker state,
 with no Provider or action request. `resolve_work_blocker` replay is likewise
 bound to the exact source WorkEpisode and later successful ToolResult refs;
 receipt/result mismatch fails closed and cannot clear or recreate a blocker.
+
+## Accepted P8 verification action time and receipt-first recovery (DID v1.48)
+
+Accepted token `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`,
+proposal raw SHA-256
+`B0C532FF66697CE1FB06B93CDE477B1A833FC310D360D48513E341D54F1FAD56`,
+accepted 2026-10-17. A Pending `RecordVerificationEvidence` ActionIntent owns
+the immutable Runtime-selected time: P9 persists the first-intent `updatedAt`
+and every same-action retry or owner-generation takeover reuses it as
+`recordedAt`. Any transition that leaves the Action Pending preserves it. If
+recovery cannot prove the stored value is the original intent time, it fails
+closed; it does not call the clock or invoke the handler with a replacement.
+
+Before a new-generation P8 command, recovery decodes known prior-generation
+receipts with the trusted registered handler/result schema. A matching
+Committed `RecordVerificationEvidence` receipt converges only when the exact
+Evidence row and Runtime-bound ToolObservation source tuple are proven. A
+matching ordinary `ConcludeVerification` receipt converges only when canonical
+row, v2 event and v2 result carry the identical complete mission snapshot,
+ordered `criteriaResults`, verdict, summary reference, `Available` status and
+conclusion reason. The `RetryVerification` G5 outer v1 receipt remains the
+exception: validate its existing source/successor ID binding against the
+canonical row and v2 event carrying `Unknown`/`Orphaned`,
+`NotApplicableOrphaned`, and empty results; return the exact receipt without
+adding snapshot fields or an inner Conclude receipt.
+
+Do not invoke a handler, append duplicate facts, repair rows, or replay the
+Provider when receipt/evidence is missing, malformed, unsupported, or
+conflicting. Such inconsistency fails closed without Observation. Ordinary
+Execution settlement continues through the existing P9/P1 path after the
+action result is durable; this addendum grants no new settlement authority.
+`TerminalRejected(FencingRejected)` permits a new-generation command only
+while the logical action remains Pending, the P8 ControlBasis is current, and
+no unresolved P4 effect exists. Any other terminal rejection is final for
+that logical action. Implementation and migration registration remain
+separately gated.

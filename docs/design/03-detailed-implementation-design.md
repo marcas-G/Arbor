@@ -1,10 +1,40 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.47\
+**Version:** 1.48\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.46\
+**Supersedes:** v1.47\
 **Date:** 2026-10-17\
 **Depends on:** `Arbor System Design Specification v1.17`
+
+**Governance changes (v1.47 → v1.48): P8 stable evidence time and conclusion snapshot**
+
+- `RecordVerificationEvidence.recordedAt` is the Runtime-selected first
+  durable P9 ActionIntent `updatedAt`. Retries and owner-generation takeover
+  reuse it; P9 preserves it while Pending and fails closed if its first-intent
+  meaning cannot be proven. The model cannot author it.
+- New P8 conclusions durably preserve the immutable mission and complete
+  ordered criterion-result snapshot. Ordinary `ConcludeVerification` writes
+  the same canonical snapshot/status/reason/verdict/summary binding to its
+  row, v2 event and v2 result/receipt; v1 history remains strict and
+  read-only. The G5 `RetryVerification` orphan branch retains its outer v1
+  receipt and ID bindings, while its row/event carry the exact
+  `Unknown`/`Orphaned`/`NotApplicableOrphaned`/empty-results exception.
+- Snapshot status is exactly `Pending`, `Available`,
+  `NotApplicableOrphaned`, or `UnavailableLegacy`. Existing open-row migration
+  proof uses only a strictly decoded and identity-associated
+  `verifications.mission_snapshot`; `missionDigest` cannot reconstruct it.
+  Existing concluded rows become `UnavailableLegacy` without inferred
+  criterion results.
+- Migration ID, exact DDL and initialization remain TBD for separately
+  authorized implementation. No migration is reserved, registered or
+  executable under this design landing. Acceptance token
+  `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`, proposal raw
+  SHA-256
+  `B0C532FF66697CE1FB06B93CDE477B1A833FC310D360D48513E341D54F1FAD56`,
+  accepted 2026-10-17. Decision/landing record:
+  `planning/results/VCS-verification-evidence-time-and-criteria-snapshot-acceptance-and-landing.record.md`;
+  independent post-landing review:
+  `planning/results/VCS-verification-evidence-time-and-criteria-snapshot-landing.review.md`.
 
 **Governance changes (v1.46 → v1.47): F23 P6 UnboundLegacy current-route Inbox mechanics**
 
