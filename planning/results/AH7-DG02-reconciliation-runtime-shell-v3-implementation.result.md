@@ -166,3 +166,45 @@ executor call. The focused pair passed 2/2; the full
 Biome and `git diff --check` passed. The real-process authority case has not
 been rerun after this correction, and approval/Stop drift process cases remain
 unrun; no process qualification or AH7 closure is claimed.
+
+### Authority drift after retry-gate handoff correction — PASS
+
+After checkpoint `2ab548c18ef60ea088a1b556d893a4c6004c6c66`, `pnpm build`
+and `pnpm --filter @arbor/web build` passed. The single authorized real-process
+case then passed serially:
+
+`pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts -t "authority drift during reconciliation I/O" --maxWorkers=1 --no-file-parallelism --retry=0 --reporter=verbose`
+
+Result: 1 passed, 9 skipped; the authority drift case took 45.152s and the
+Vitest run took 61.85s. Its assertions prove the exact P39 attempt-0
+`NotOccurred`/`RecoveryInput` fact is selected by P40 as
+`ReconciledNoEffect/AuthoritySnapshotChanged`, with attempt 0 only, no external
+effect, and no retry admission. Approval and Stop process cases were not run.
+This qualifies the authority drift case only; AH7 remains PARTIAL.
+
+### Approval drift after retry-gate handoff correction — PASS
+
+After independent release for this one case, the exact Executable approval
+drift scenario passed with the same serial command policy:
+
+`pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts -t "approval drift during reconciliation I/O" --maxWorkers=1 --no-file-parallelism --retry=0 --reporter=verbose`
+
+Result: 1 passed, 9 skipped; the case took 45.082s and the Vitest run took
+61.93s. The test proves exact `ApprovalNoLongerAuthorized`, P39 attempt-0
+`NotOccurred`/`RecoveryInput` selection by P40, no retry admission, and zero
+external effects. The Stop drift process case remains unrun. These two passing
+drift cases do not close AH7; AH7 remains PARTIAL.
+
+### Stop drift after retry-gate handoff correction — PASS
+
+The final authorized case passed serially:
+
+`pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts -t "stop drift during reconciliation I/O" --maxWorkers=1 --no-file-parallelism --retry=0 --reporter=verbose`
+
+Result: 1 passed, 9 skipped; the case took 45.000s and the Vitest run took
+61.66s. It proves exact `StopRequested`, P39 attempt-0
+`NotOccurred`/`RecoveryInput` selection by P40, no retry admission, and zero
+external effects. Authority, approval and Stop drift scenarios each now have
+one isolated real-process PASS after the retry-gate handoff correction. This
+does not establish the remaining AH7 process matrix or close AH7; AH7 remains
+PARTIAL.
