@@ -51,6 +51,7 @@ import {
   targetResourceIdentityDigestV1,
   toolDefinitionIdentityDigestV1,
   validateToolReconciliationResult,
+  verifyRecoveryBindingV1,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -1366,6 +1367,148 @@ export const ToolRuntimeLive = (
                   : reasonCode,
               );
             });
+          const prior = yield* findInvocationFenced(
+            intent.invocationId,
+            context,
+            "IntentJournal",
+          );
+          const priorRecord = Option.isSome(prior) ? prior.value : undefined;
+          const priorModelIdentityMatches =
+            priorRecord !== undefined &&
+            priorRecord.executionId === context.executionId &&
+            priorRecord.workspaceId === context.workspaceId &&
+            priorRecord.toolName === intent.toolName &&
+            priorRecord.toolVersion === intent.toolVersion &&
+            priorRecord.sideEffectSemantics ===
+              definition.sideEffectSemantics &&
+            priorRecord.argumentsJson === intent.argumentsJson &&
+            priorRecord.approvalId ===
+              (context.executableApproval?.approvalId ?? intent.approvalId);
+          const exactReconcilableReplayCandidate =
+            priorModelIdentityMatches &&
+            priorRecord.settlement === null &&
+            priorRecord.effectAdmissionState === "MayHaveStarted" &&
+            priorRecord.sideEffectSemantics === "Reconcilable" &&
+            definition.sideEffectSemantics === "Reconcilable" &&
+            trustedProfile !== undefined &&
+            Option.isSome(p39Recovery) &&
+            Option.isSome(reconciliationPort) &&
+            Option.isSome(reconciliationFacts) &&
+            Option.isSome(observationEvidence);
+          let verifiedReplayBinding:
+            | import("@arbor/ports").VerifiedRecoveryBindingV1
+            | undefined;
+          if (exactReconcilableReplayCandidate && priorRecord !== undefined) {
+            const identity = context.recoveryBindingIdentity;
+            if (Option.isNone(p39Recovery)) {
+              return yield* Effect.fail<ToolRuntimeError>(
+                operationalFailure(
+                  "RecoveryBinding",
+                  String(intent.invocationId),
+                )({ _tag: "P39RecoveryEvidenceStoreUnavailable" }),
+              );
+            }
+            const stored = yield* tx
+              .transact(
+                Effect.gen(function* () {
+                  yield* observationEvidence.value.assertCurrentFence(
+                    context.executionFence,
+                    yield* clock.now(),
+                  );
+                  const binding = yield* p39Recovery.value.findBinding(
+                    intent.invocationId,
+                  );
+                  const attempt = yield* p39Recovery.value.findLatestAttempt(
+                    intent.invocationId,
+                  );
+                  return { binding, attempt };
+                }),
+              )
+              .pipe(
+                Effect.mapError(
+                  operationalFailure(
+                    "RecoveryBinding",
+                    String(intent.invocationId),
+                  ),
+                ),
+              );
+            if (
+              Option.isNone(stored.binding) ||
+              Option.isNone(stored.attempt)
+            ) {
+              return yield* Effect.fail<ToolRuntimeError>(
+                operationalFailure(
+                  "RecoveryBinding",
+                  String(intent.invocationId),
+                )({ _tag: "RecoveryBindingReplayMismatch" }),
+              );
+            }
+            const bound = stored.binding.value;
+            const verified = verifyRecoveryBindingV1({
+              invocationId: intent.invocationId,
+              canonicalJson: bound.canonicalJson,
+              bindingSha256: bound.bindingSha256,
+            });
+            const binding = verified?.value;
+            const expectedArgumentsDigest = (() => {
+              try {
+                return canonicalArgumentsDigestV1(
+                  JSON.parse(intent.argumentsJson),
+                );
+              } catch {
+                return null;
+              }
+            })();
+            const attempt = stored.attempt.value;
+            const bindingMatchesIdentity =
+              identity !== undefined &&
+              binding !== undefined &&
+              binding.executionId === context.executionId &&
+              binding.invocationId === intent.invocationId &&
+              binding.providerTurnId === identity.providerTurnId &&
+              binding.logicalStepNo === identity.logicalStepNo &&
+              binding.repairAttempt === identity.repairAttempt &&
+              binding.logicalActionId === identity.logicalActionId &&
+              binding.actionIndex === identity.actionIndex &&
+              binding.callRef === intent.callRef &&
+              binding.toolName === intent.toolName &&
+              binding.toolVersion === intent.toolVersion &&
+              binding.toolDefinitionHash ===
+                recoveryBindingToolDefinitionHashV1(definition) &&
+              binding.sideEffectSemantics === "Reconcilable" &&
+              binding.canonicalArgumentsDigest === expectedArgumentsDigest &&
+              binding.targetResourceIdentityDigest ===
+                targetResourceIdentityDigestV1(priorRecord.resolvedRegions) &&
+              binding.approvalId === priorRecord.approvalId &&
+              binding.approvalId ===
+                (context.executableApproval?.approvalId ?? intent.approvalId) &&
+              (binding.approvalId === null ||
+                binding.approvalConsumedBy === intent.invocationId) &&
+              binding.profileId === trustedProfile?.profileId &&
+              binding.profileVersion === trustedProfile?.profileVersion &&
+              binding.profileHash === trustedProfile?.profileHash &&
+              binding.profileProtocol === trustedProfile?.profileProtocol &&
+              binding.effectKey === trustedEffectKey &&
+              attempt.invocationId === intent.invocationId &&
+              attempt.admissionState === "MayHaveStarted" &&
+              attempt.sideEffectSemantics === "Reconcilable" &&
+              attempt.bindingSha256 === bound.bindingSha256 &&
+              attempt.toolDefinitionHash === binding.toolDefinitionHash &&
+              attempt.profileId === trustedProfile?.profileId &&
+              attempt.profileVersion === trustedProfile?.profileVersion &&
+              attempt.profileHash === trustedProfile?.profileHash &&
+              attempt.profileProtocol === trustedProfile?.profileProtocol &&
+              attempt.effectKey === trustedEffectKey;
+            if (verified === null || !bindingMatchesIdentity) {
+              return yield* Effect.fail<ToolRuntimeError>(
+                operationalFailure(
+                  "RecoveryBinding",
+                  String(intent.invocationId),
+                )({ _tag: "RecoveryBindingReplayMismatch" }),
+              );
+            }
+            verifiedReplayBinding = verified;
+          }
           const mountRefs = requestedMountRefs(intent.argumentsJson);
           let address: FilesystemAddress | undefined;
           let addresses: ReadonlyArray<ResourceAddress>;
@@ -1493,7 +1636,7 @@ export const ToolRuntimeLive = (
           }
           const regions = resolved.regions;
           const boundaryRegions = resolvedBoundary.regions;
-          const validateCapturedSnapshotAndAdmit = () =>
+          const validateCapturedSnapshot = () =>
             Effect.gen(function* () {
               if (Option.isNone(workspaces)) {
                 return yield* Effect.fail(P39_RESOURCE_RESOLUTION_STALE);
@@ -1542,6 +1685,11 @@ export const ToolRuntimeLive = (
                   return yield* Effect.fail(P39_RESOURCE_RESOLUTION_STALE);
                 }
               }
+              return undefined;
+            });
+          const validateCapturedSnapshotAndAdmit = () =>
+            Effect.gen(function* () {
+              yield* validateCapturedSnapshot();
               return yield* admission.admit({
                 workspaceId: context.workspaceId,
                 regions,
@@ -1565,7 +1713,8 @@ export const ToolRuntimeLive = (
           const region = regions[0];
           if (
             address !== undefined &&
-            (region === undefined || regions.length !== 1)
+            (region === undefined || regions.length !== 1) &&
+            verifiedReplayBinding === undefined
           ) {
             return yield* recordNoEffectDenial(
               definition.sideEffectSemantics,
@@ -1574,7 +1723,7 @@ export const ToolRuntimeLive = (
             );
           }
 
-          const resolvedAuthority = Option.isSome(authorityResolver)
+          const resolvedAuthorityFromCurrent = Option.isSome(authorityResolver)
             ? yield* authorityResolver.value
                 .resolve({
                   intent,
@@ -1595,13 +1744,31 @@ export const ToolRuntimeLive = (
                   ),
                 )
             : context.authority;
-          if (resolvedAuthority === undefined) {
+          if (
+            resolvedAuthorityFromCurrent === undefined &&
+            verifiedReplayBinding === undefined
+          ) {
             return yield* recordNoEffectDenial(
               definition.sideEffectSemantics,
               regions,
               "InvocationAuthorityDenied",
             );
           }
+          const resolvedAuthority =
+            resolvedAuthorityFromCurrent ??
+            context.authority ??
+            ({
+              principal: context.authenticatedPrincipal,
+              workspaceId: context.workspaceId,
+              executionId: context.executionId,
+              toolName: intent.toolName,
+              toolVersion: intent.toolVersion,
+              resourceSpaceIds: regions.map((item) => item.resourceSpaceId),
+              allowedCapabilities: definition.capabilityMetadata,
+              controlBasisDigest: context.controlBasisDigest,
+              expiresAt: context.requestedAt,
+              delegationDepth: context.delegationDepth ?? 0,
+            } as NonNullable<ToolExecutionContext["authority"]>);
           const authority = checkInvocationAuthority({
             authority: resolvedAuthority,
             definition,
@@ -1611,7 +1778,10 @@ export const ToolRuntimeLive = (
             now,
             maxDelegationDepth: options.maxDelegationDepth ?? 1,
           });
-          if (authority._tag === "Denied") {
+          if (
+            authority._tag === "Denied" &&
+            verifiedReplayBinding === undefined
+          ) {
             return yield* recordNoEffectDenial(
               definition.sideEffectSemantics,
               regions,
@@ -1622,14 +1792,21 @@ export const ToolRuntimeLive = (
           const needsApproval = executor.requiresApproval(intent);
           let approvalAlreadyConsumedBySelf = false;
           let currentApprovalRecord: ExecutableApprovalRecord | undefined;
-          if (!needsApproval && context.executableApproval !== undefined) {
+          if (verifiedReplayBinding !== undefined) {
+            approvalAlreadyConsumedBySelf = needsApproval;
+          }
+          if (
+            verifiedReplayBinding === undefined &&
+            !needsApproval &&
+            context.executableApproval !== undefined
+          ) {
             return yield* recordNoEffectDenial(
               definition.sideEffectSemantics,
               regions,
               "ApprovalMismatch",
             );
           }
-          if (needsApproval) {
+          if (verifiedReplayBinding === undefined && needsApproval) {
             if (context.executableApproval === undefined) {
               const legacyApprovalId = intent.approvalId;
               if (p39BindingEnabled && legacyApprovalId !== null) {
@@ -1859,11 +2036,6 @@ export const ToolRuntimeLive = (
             );
           }
 
-          const prior = yield* findInvocationFenced(
-            intent.invocationId,
-            context,
-            "IntentJournal",
-          );
           let recoveredToolOutcome: ToolExecutionResult | undefined;
           let pendingReconciliation:
             | {
@@ -1928,10 +2100,13 @@ export const ToolRuntimeLive = (
               recorded.toolVersion === intent.toolVersion &&
               recorded.sideEffectSemantics === definition.sideEffectSemantics &&
               recorded.argumentsJson === intent.argumentsJson &&
-              JSON.stringify(recorded.resolvedRegions) ===
-                JSON.stringify(regions) &&
               recorded.approvalId === intent.approvalId;
-            if (!sameIntent) {
+            if (
+              !sameIntent ||
+              (verifiedReplayBinding === undefined &&
+                JSON.stringify(recorded.resolvedRegions) !==
+                  JSON.stringify(regions))
+            ) {
               return yield* Effect.fail<ToolRuntimeError>(
                 operationalFailure(
                   "IntentJournal",
@@ -1955,29 +2130,38 @@ export const ToolRuntimeLive = (
                 reconciliationRefs: [String(intent.invocationId)],
               };
             }
-            const replayAdmission = yield* Effect.match(
-              checkCapturedSnapshotAndAdmit(),
-              {
-                onFailure: (cause) => ({ ok: false as const, cause }),
-                onSuccess: (value) => ({ ok: true as const, value }),
-              },
-            );
-            if (!replayAdmission.ok) {
-              if (isP39ResourceResolutionStale(replayAdmission.cause)) {
-                return yield* refreshAfterStale(replayAdmission.cause);
+            if (verifiedReplayBinding !== undefined) {
+              replayBindingValue = verifiedReplayBinding.value;
+              replayBindingSha256 = verifiedReplayBinding.bindingSha256;
+            } else {
+              const replayAdmission = yield* Effect.match(
+                checkCapturedSnapshotAndAdmit(),
+                {
+                  onFailure: (cause) => ({ ok: false as const, cause }),
+                  onSuccess: (value) => ({ ok: true as const, value }),
+                },
+              );
+              if (!replayAdmission.ok) {
+                if (isP39ResourceResolutionStale(replayAdmission.cause)) {
+                  return yield* refreshAfterStale(replayAdmission.cause);
+                }
+                return yield* Effect.fail<ToolRuntimeError>(
+                  replayAdmission.cause as ToolRuntimeError,
+                );
               }
-              return yield* Effect.fail<ToolRuntimeError>(
-                replayAdmission.cause as ToolRuntimeError,
-              );
+              if (replayAdmission.value._tag === "Denied") {
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
+                  regions,
+                  "ResourceAdmissionDenied",
+                );
+              }
             }
-            if (replayAdmission.value._tag === "Denied") {
-              return yield* recordNoEffectDenial(
-                definition.sideEffectSemantics,
-                regions,
-                "ResourceAdmissionDenied",
-              );
-            }
-            if (p39BindingEnabled && Option.isSome(p39Recovery)) {
+            if (
+              verifiedReplayBinding === undefined &&
+              p39BindingEnabled &&
+              Option.isSome(p39Recovery)
+            ) {
               const approvalSnapshot = needsApproval
                 ? recoveryApprovalSnapshotFromRecord(
                     currentApprovalRecord,
@@ -2246,7 +2430,29 @@ export const ToolRuntimeLive = (
                         }
 
                         const snapshotAdmission = yield* Effect.match(
-                          validateCapturedSnapshotAndAdmit(),
+                          Effect.gen(function* () {
+                            yield* validateCapturedSnapshot();
+                            if (
+                              replayBindingValue === undefined ||
+                              targetResourceIdentityDigestV1(regions) !==
+                                replayBindingValue.targetResourceIdentityDigest ||
+                              capturedWorkspace.resourceBoundaryRevision !==
+                                replayBindingValue.resourceBoundaryRevision ||
+                              resolved.observedEnvironmentRevision !==
+                                replayBindingValue.environmentRevision
+                            ) {
+                              return {
+                                _tag: "Denied" as const,
+                                reason: "RecoveryBindingSnapshotChanged",
+                              };
+                            }
+                            return yield* admission.admit({
+                              workspaceId: context.workspaceId,
+                              regions,
+                              resolvedBoundaryRegions: boundaryRegions,
+                              write: executor.write,
+                            });
+                          }),
                           {
                             onFailure: (cause) =>
                               isP39ResourceResolutionStale(cause)
@@ -3042,7 +3248,7 @@ export const ToolRuntimeLive = (
           // approval, or admission path: those checks govern a new attempt
           // and can only overwrite or obscure the authenticated P39/P40
           // terminal selection below.
-          if (recoveredToolOutcome?.settlement._tag !== "ReconciledNoEffect") {
+          if (recoveredToolOutcome === undefined) {
             const effectGateNow = yield* clock.now();
             const effectAuthority = Option.isSome(authorityResolver)
               ? yield* authorityResolver.value
