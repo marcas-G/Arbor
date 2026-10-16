@@ -2,6 +2,11 @@ import type {
   AuthorityDecisionInput,
   CommandGatewayService,
 } from "@arbor/application";
+import {
+  AuthorityResolverPort,
+  AuthorityResolverPortLive,
+} from "@arbor/application";
+import { makeProjectPolicy } from "@arbor/domain";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { resolveCompositionGovernance } from "../src/composition.js";
@@ -15,6 +20,172 @@ import {
 } from "../src/transport/composition.js";
 
 describe("external command composition boundary", () => {
+  it("submits exact direct-parent approval authority and denies wrong parent or actor spoof", async () => {
+    const projectId = "prj_018ee90a-5b83-7def-8c2d-7ef1a3c5a101";
+    const workspaceId = "ws_018ee90a-5b83-7def-8c2d-7ef1a3c5a102";
+    const executionId = "exe_018ee90a-5b83-7def-8c2d-7ef1a3c5a103";
+    const approvalId = "eap_external_direct_parent";
+    const commandId = "cmd_018ee90a-5b83-7def-8c2d-7ef1a3c5a104";
+    const parent = "workspace-agent:p38-parent" as never;
+    const gatewayCalls: Array<{
+      readonly envelope: unknown;
+      readonly authority: unknown;
+    }> = [];
+    const resolver = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          return yield* AuthorityResolverPort;
+        }),
+        AuthorityResolverPortLive,
+      ),
+    );
+    const makeSubmission = (parentPrincipal: string) =>
+      makeExternalSubmission({
+        resolver,
+        gateway: {
+          execute: (...args: Parameters<CommandGatewayService["execute"]>) => {
+            const [envelope, _context, authority] = args;
+            gatewayCalls.push({ envelope, authority });
+            return Effect.succeed({
+              commandId: envelope.commandId,
+              resolution: {
+                _tag: "Committed",
+                result: {
+                  approvalId,
+                  executionId,
+                  state: "Approved",
+                  revision: 5,
+                },
+              },
+            } as never);
+          },
+        } as never,
+        registry: {
+          lookup: () => Option.some({ schemaVersion: "1" }),
+        } as never,
+        loadInputs: () =>
+          Effect.succeed({
+            canonicalFacts: {
+              projectId,
+              execution: {
+                executionId,
+                projectId,
+                workspaceId,
+                status: "Active",
+              },
+              executableApproval: {
+                approvalId,
+                projectId,
+                workspaceId,
+                executionId,
+                state: "Pending",
+                revision: 4,
+              },
+            },
+            grants: [],
+            governance: {
+              authenticatedHumans: [],
+              directParentOf: [
+                { parentPrincipal: parentPrincipal as never, workspaceId },
+              ],
+            },
+            policy: makeProjectPolicy(),
+          } as never),
+      });
+
+    const allowed = makeSubmission(parent);
+    const approved = await Effect.runPromise(
+      allowed.submit(parent, externalContext(parent), {
+        commandType: "ResolveExecutableApproval",
+        commandId,
+        projectId,
+        actor: parent,
+        issuedAt: "2026-10-16T00:00:00.000Z",
+        payload: {
+          approvalId,
+          expectedRevision: 4,
+          decision: "Approve",
+          reason: "exact direct-parent authorization",
+        },
+      }),
+    );
+    expect(approved).toMatchObject({
+      ok: true,
+      status: 200,
+      body: {
+        commandId,
+        resolution: "Committed",
+        result: { approvalId, executionId, state: "Approved", revision: 5 },
+      },
+    });
+    expect(gatewayCalls).toHaveLength(1);
+    expect(gatewayCalls[0]).toMatchObject({
+      envelope: {
+        commandType: "ResolveExecutableApproval",
+        commandId,
+        projectId,
+        actor: parent,
+        payload: { approvalId, expectedRevision: 4, decision: "Approve" },
+      },
+      authority: {
+        _tag: "ExecutableApprovalDecisionAuthority",
+        principal: parent,
+        commandId,
+        projectId,
+        approvalId,
+        workspaceId,
+        executionId,
+        expectedRevision: 4,
+      },
+    });
+
+    const beforeWrongParent = gatewayCalls.length;
+    const wrongParent = makeSubmission("workspace-agent:wrong-parent");
+    const denied = await Effect.runPromise(
+      wrongParent.submit(parent, externalContext(parent), {
+        commandType: "ResolveExecutableApproval",
+        commandId: "cmd_018ee90a-5b83-7def-8c2d-7ef1a3c5a105",
+        projectId,
+        actor: parent,
+        issuedAt: "2026-10-16T00:00:00.000Z",
+        payload: {
+          approvalId,
+          expectedRevision: 4,
+          decision: "Approve",
+          reason: "wrong parent must not reach gateway",
+        },
+      }),
+    );
+    expect(denied).toMatchObject({
+      ok: false,
+      status: 403,
+      problem: { code: "authority/denied" },
+    });
+    expect(gatewayCalls).toHaveLength(beforeWrongParent);
+
+    const spoofed = await Effect.runPromise(
+      allowed.submit(parent, externalContext(parent), {
+        commandType: "ResolveExecutableApproval",
+        commandId: "cmd_018ee90a-5b83-7def-8c2d-7ef1a3c5a106",
+        projectId,
+        actor: "workspace-agent:spoofed-parent",
+        issuedAt: "2026-10-16T00:00:00.000Z",
+        payload: {
+          approvalId,
+          expectedRevision: 4,
+          decision: "Approve",
+          reason: "actor spoof must be rejected",
+        },
+      }),
+    );
+    expect(spoofed).toMatchObject({
+      ok: false,
+      status: 403,
+      problem: { code: "authority/denied" },
+    });
+    expect(gatewayCalls).toHaveLength(beforeWrongParent);
+  });
+
   it("rejects malformed typed IDs before resolver, gateway, or receipt effects", async () => {
     const resolverCalls: unknown[] = [];
     const gatewayCalls: unknown[] = [];
