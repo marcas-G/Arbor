@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
@@ -86,202 +86,254 @@ if (reconciliationMode !== undefined) {
   const effectKey = (invocationId) => `ah7-test:${invocationId}`;
   const testReconciliationPort = {
     reconcile: (request) =>
-      Effect.sync(() => {
-        const source = new DatabaseSync(databaseFile);
-        try {
-          const effect = source
-            .prepare(
-              "SELECT result_ref FROM ah7_test_external_effects WHERE effect_key = ?",
-            )
-            .get(effectKey(request.invocationId));
-          const evidence = source
-            .prepare(
-              "SELECT artifact_id, content_hash FROM artifacts WHERE kind = 'tool-result:read' ORDER BY created_at, artifact_id",
-            )
-            .all();
-          const evidenceArtifact = evidence[0];
-          if (
-            reconciliationMode === "NotOccurred" &&
-            process.env.ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE === "1"
-          ) {
-            const changed = source
+      Effect.tryPromise({
+        try: async () => {
+          const source = new DatabaseSync(databaseFile);
+          try {
+            source.exec(`CREATE TABLE IF NOT EXISTS ah7_test_reconciliation_calls (
+            call_no INTEGER PRIMARY KEY AUTOINCREMENT,
+            invocation_id TEXT NOT NULL,
+            attempt_no INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            observed_effect INTEGER NOT NULL,
+            returned_at TEXT
+          )`);
+            const effect = source
               .prepare(
-                "SELECT 1 FROM ah7_test_reconciliation_controls WHERE invocation_id = ?",
+                "SELECT result_ref FROM ah7_test_external_effects WHERE effect_key = ?",
               )
-              .get(request.invocationId);
-            if (changed === undefined) {
-              const invocation = source
+              .get(effectKey(request.invocationId));
+            const evidence = source
+              .prepare(
+                "SELECT artifact_id, content_hash FROM artifacts WHERE kind = 'tool-result:read' ORDER BY created_at, artifact_id",
+              )
+              .all();
+            const evidenceArtifact = evidence[0];
+            const observedEffect = effect === undefined ? 0 : 1;
+            const call = source
+              .prepare(
+                `INSERT INTO ah7_test_reconciliation_calls
+                 (invocation_id, attempt_no, role, observed_effect)
+               VALUES (?, ?, ?, ?)`,
+              )
+              .run(
+                request.invocationId,
+                request.attemptNo,
+                role,
+                observedEffect,
+              );
+            const event = {
+              boundary: "AH7ReconciliationSourceIO",
+              invocationId: request.invocationId,
+              attemptNo: request.attemptNo,
+              role,
+              callNo: Number(call.lastInsertRowid),
+              observedEffect,
+            };
+            if (
+              process.env.ARBOR_AH7_TEST_TRACE_RECONCILIATION_IO === "1" ||
+              process.env.ARBOR_AH7_TEST_PAUSE_RECONCILIATION_IO === "1"
+            ) {
+              process.stdout.write(
+                `${JSON.stringify({ tag: "AH_PROBE", ...event })}\n`,
+              );
+            }
+            if (process.env.ARBOR_AH7_TEST_PAUSE_RECONCILIATION_IO === "1") {
+              writeFileSync(
+                join(gateDirectory, `${role}-reconciliation-io.started`),
+                JSON.stringify(event),
+              );
+              await waitForGate("reconciliation-io", event);
+            }
+            source
+              .prepare(
+                "UPDATE ah7_test_reconciliation_calls SET returned_at = ? WHERE call_no = ?",
+              )
+              .run(new Date().toISOString(), Number(call.lastInsertRowid));
+            if (
+              reconciliationMode === "NotOccurred" &&
+              process.env.ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE === "1"
+            ) {
+              const changed = source
                 .prepare(
-                  "SELECT workspace_id FROM tool_invocations WHERE invocation_id = ?",
+                  "SELECT 1 FROM ah7_test_reconciliation_controls WHERE invocation_id = ?",
                 )
                 .get(request.invocationId);
-              if (invocation === undefined) {
-                throw new Error(
-                  "AH7 test profile could not read invocation Workspace",
-                );
+              if (changed === undefined) {
+                const invocation = source
+                  .prepare(
+                    "SELECT workspace_id FROM tool_invocations WHERE invocation_id = ?",
+                  )
+                  .get(request.invocationId);
+                if (invocation === undefined) {
+                  throw new Error(
+                    "AH7 test profile could not read invocation Workspace",
+                  );
+                }
+                const workspace = source
+                  .prepare(
+                    "SELECT resource_boundary FROM workspaces WHERE workspace_id = ?",
+                  )
+                  .get(invocation?.workspace_id);
+                if (workspace === undefined) {
+                  throw new Error(
+                    "AH7 test profile could not read Workspace boundary",
+                  );
+                }
+                const boundary = JSON.parse(workspace.resource_boundary);
+                const addresses = Array.isArray(boundary.addresses)
+                  ? boundary.addresses
+                  : [];
+                const firstAddress = addresses[0];
+                if (
+                  typeof firstAddress !== "object" ||
+                  firstAddress === null ||
+                  typeof firstAddress.path !== "string"
+                ) {
+                  throw new Error(
+                    "AH7 test profile Workspace boundary is malformed",
+                  );
+                }
+                firstAddress.path = `${firstAddress.path}.changed-during-reconcile`;
+                source
+                  .prepare(
+                    "UPDATE workspaces SET resource_boundary = ? WHERE workspace_id = ?",
+                  )
+                  .run(JSON.stringify(boundary), invocation.workspace_id);
+                source
+                  .prepare(
+                    "INSERT INTO ah7_test_reconciliation_controls (invocation_id, resource_boundary_changed_at) VALUES (?,?)",
+                  )
+                  .run(request.invocationId, new Date().toISOString());
               }
-              const workspace = source
-                .prepare(
-                  "SELECT resource_boundary FROM workspaces WHERE workspace_id = ?",
-                )
-                .get(invocation?.workspace_id);
-              if (workspace === undefined) {
-                throw new Error(
-                  "AH7 test profile could not read Workspace boundary",
-                );
-              }
-              const boundary = JSON.parse(workspace.resource_boundary);
-              const addresses = Array.isArray(boundary.addresses)
-                ? boundary.addresses
-                : [];
-              const firstAddress = addresses[0];
-              if (
-                typeof firstAddress !== "object" ||
-                firstAddress === null ||
-                typeof firstAddress.path !== "string"
-              ) {
-                throw new Error(
-                  "AH7 test profile Workspace boundary is malformed",
-                );
-              }
-              firstAddress.path = `${firstAddress.path}.changed-during-reconcile`;
-              source
-                .prepare(
-                  "UPDATE workspaces SET resource_boundary = ? WHERE workspace_id = ?",
-                )
-                .run(JSON.stringify(boundary), invocation.workspace_id);
-              source
-                .prepare(
-                  "INSERT INTO ah7_test_reconciliation_controls (invocation_id, resource_boundary_changed_at) VALUES (?,?)",
-                )
-                .run(request.invocationId, new Date().toISOString());
             }
-          }
-          const reconciliationDrift =
-            process.env.ARBOR_AH7_TEST_DRIFT_ON_RECONCILE;
-          if (
-            reconciliationMode === "NotOccurred" &&
-            ["authority", "approval", "stop"].includes(reconciliationDrift)
-          ) {
-            const changed = source
-              .prepare(
-                "SELECT 1 FROM ah7_test_reconciliation_controls WHERE invocation_id = ?",
-              )
-              .get(request.invocationId);
-            if (changed === undefined) {
-              const invocation = source
+            const reconciliationDrift =
+              process.env.ARBOR_AH7_TEST_DRIFT_ON_RECONCILE;
+            if (
+              reconciliationMode === "NotOccurred" &&
+              ["authority", "approval", "stop"].includes(reconciliationDrift)
+            ) {
+              const changed = source
                 .prepare(
-                  `SELECT i.execution_id, w.project_id
+                  "SELECT 1 FROM ah7_test_reconciliation_controls WHERE invocation_id = ?",
+                )
+                .get(request.invocationId);
+              if (changed === undefined) {
+                const invocation = source
+                  .prepare(
+                    `SELECT i.execution_id, w.project_id
                      FROM tool_invocations i
                      JOIN workspaces w ON w.workspace_id = i.workspace_id
                     WHERE i.invocation_id = ?`,
-                )
-                .get(request.invocationId);
-              if (invocation === undefined) {
-                throw new Error(
-                  "AH7 test profile could not resolve drift target",
-                );
+                  )
+                  .get(request.invocationId);
+                if (invocation === undefined) {
+                  throw new Error(
+                    "AH7 test profile could not resolve drift target",
+                  );
+                }
+                if (reconciliationDrift === "authority") {
+                  source
+                    .prepare(
+                      "UPDATE permission_grants SET state = 'Revoked' WHERE project_id = ? AND state = 'Active'",
+                    )
+                    .run(invocation.project_id);
+                } else if (reconciliationDrift === "approval") {
+                  source
+                    .prepare(
+                      "UPDATE action_approvals SET expires_at = '2000-01-01T00:00:00.000Z' WHERE tool_invocation_id = ? AND route_kind = 'Executable' AND state = 'Consumed'",
+                    )
+                    .run(request.invocationId);
+                } else {
+                  source
+                    .prepare(
+                      "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ? AND stop_requested_at IS NULL AND settled_at IS NULL",
+                    )
+                    .run(new Date().toISOString(), invocation.execution_id);
+                }
+                source
+                  .prepare(
+                    "INSERT INTO ah7_test_reconciliation_controls (invocation_id, resource_boundary_changed_at) VALUES (?,?)",
+                  )
+                  .run(request.invocationId, new Date().toISOString());
               }
-              if (reconciliationDrift === "authority") {
-                source
-                  .prepare(
-                    "UPDATE permission_grants SET state = 'Revoked' WHERE project_id = ? AND state = 'Active'",
-                  )
-                  .run(invocation.project_id);
-              } else if (reconciliationDrift === "approval") {
-                source
-                  .prepare(
-                    "UPDATE action_approvals SET expires_at = '2000-01-01T00:00:00.000Z' WHERE tool_invocation_id = ? AND route_kind = 'Executable' AND state = 'Consumed'",
-                  )
-                  .run(request.invocationId);
-              } else {
-                source
-                  .prepare(
-                    "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ? AND stop_requested_at IS NULL AND settled_at IS NULL",
-                  )
-                  .run(new Date().toISOString(), invocation.execution_id);
-              }
-              source
-                .prepare(
-                  "INSERT INTO ah7_test_reconciliation_controls (invocation_id, resource_boundary_changed_at) VALUES (?,?)",
-                )
-                .run(request.invocationId, new Date().toISOString());
             }
-          }
-          if (reconciliationMode === "StillUnknown") {
+            if (reconciliationMode === "StillUnknown") {
+              return {
+                _tag: "StillUnknown",
+                reasonCode: "AttemptNotFinal",
+                evidenceRef: null,
+              };
+            }
+            if (reconciliationMode === "Occurred" && effect?.result_ref) {
+              if (evidenceArtifact === undefined) {
+                return {
+                  _tag: "StillUnknown",
+                  reasonCode: "ResultEvidenceUnavailable",
+                  evidenceRef: null,
+                };
+              }
+              return {
+                _tag: "Occurred",
+                proof: {
+                  invocationId: request.invocationId,
+                  attemptNo: request.attemptNo,
+                  bindingSha256: request.bindingSha256,
+                  profileHash: request.profileHash,
+                  effectKey: request.effectKey,
+                  sourceRevision: "test-ledger-v1",
+                  sourceWatermark: "test-ledger-final-watermark",
+                  observedAt: new Date().toISOString(),
+                  visibilityScopeSha256: request.visibilityScopeSha256,
+                  evidenceRef: evidenceArtifact.artifact_id,
+                  evidenceSha256: evidenceArtifact.content_hash,
+                  finality: {
+                    _tag: "FinalityHorizonElapsed",
+                    horizon: "test-ledger-terminal-watermark",
+                    elapsedAt: new Date().toISOString(),
+                  },
+                },
+                settlement: "Success",
+                resultRef: effect.result_ref,
+              };
+            }
+            if (
+              reconciliationMode === "NotOccurred" &&
+              effect === undefined &&
+              evidenceArtifact !== undefined
+            ) {
+              return {
+                _tag: "NotOccurred",
+                proof: {
+                  invocationId: request.invocationId,
+                  attemptNo: request.attemptNo,
+                  bindingSha256: request.bindingSha256,
+                  profileHash: request.profileHash,
+                  effectKey: request.effectKey,
+                  sourceRevision: "test-ledger-v1",
+                  sourceWatermark: "test-ledger-final-watermark",
+                  observedAt: new Date().toISOString(),
+                  visibilityScopeSha256: request.visibilityScopeSha256,
+                  evidenceRef: evidenceArtifact.artifact_id,
+                  evidenceSha256: evidenceArtifact.content_hash,
+                  finality: {
+                    _tag: "ExternallyFenced",
+                    confirmationRef: "test-ledger-no-effect-fence",
+                    confirmedAt: new Date().toISOString(),
+                  },
+                },
+              };
+            }
             return {
               _tag: "StillUnknown",
               reasonCode: "AttemptNotFinal",
               evidenceRef: null,
             };
+          } finally {
+            source.close();
           }
-          if (reconciliationMode === "Occurred" && effect?.result_ref) {
-            if (evidenceArtifact === undefined) {
-              return {
-                _tag: "StillUnknown",
-                reasonCode: "ResultEvidenceUnavailable",
-                evidenceRef: null,
-              };
-            }
-            return {
-              _tag: "Occurred",
-              proof: {
-                invocationId: request.invocationId,
-                attemptNo: request.attemptNo,
-                bindingSha256: request.bindingSha256,
-                profileHash: request.profileHash,
-                effectKey: request.effectKey,
-                sourceRevision: "test-ledger-v1",
-                sourceWatermark: "test-ledger-final-watermark",
-                observedAt: new Date().toISOString(),
-                visibilityScopeSha256: request.visibilityScopeSha256,
-                evidenceRef: evidenceArtifact.artifact_id,
-                evidenceSha256: evidenceArtifact.content_hash,
-                finality: {
-                  _tag: "FinalityHorizonElapsed",
-                  horizon: "test-ledger-terminal-watermark",
-                  elapsedAt: new Date().toISOString(),
-                },
-              },
-              settlement: "Success",
-              resultRef: effect.result_ref,
-            };
-          }
-          if (
-            reconciliationMode === "NotOccurred" &&
-            effect === undefined &&
-            evidenceArtifact !== undefined
-          ) {
-            return {
-              _tag: "NotOccurred",
-              proof: {
-                invocationId: request.invocationId,
-                attemptNo: request.attemptNo,
-                bindingSha256: request.bindingSha256,
-                profileHash: request.profileHash,
-                effectKey: request.effectKey,
-                sourceRevision: "test-ledger-v1",
-                sourceWatermark: "test-ledger-final-watermark",
-                observedAt: new Date().toISOString(),
-                visibilityScopeSha256: request.visibilityScopeSha256,
-                evidenceRef: evidenceArtifact.artifact_id,
-                evidenceSha256: evidenceArtifact.content_hash,
-                finality: {
-                  _tag: "ExternallyFenced",
-                  confirmationRef: "test-ledger-no-effect-fence",
-                  confirmedAt: new Date().toISOString(),
-                },
-              },
-            };
-          }
-          return {
-            _tag: "StillUnknown",
-            reasonCode: "AttemptNotFinal",
-            evidenceRef: null,
-          };
-        } finally {
-          source.close();
-        }
+        },
+        catch: (cause) => ({ _tag: "ToolReconciliationError", cause }),
       }),
   };
   const shell = BUILTIN_EXECUTORS.find((executor) => executor.name === "shell");
