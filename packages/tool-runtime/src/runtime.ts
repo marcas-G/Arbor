@@ -32,6 +32,7 @@ import {
   ToolDefinitionStore,
   type ToolExecutionContext,
   type ToolIntent,
+  type ToolInvocationIntent,
   type ToolInvocationSettlement,
   ToolInvocationStore,
   ToolObservationEvidenceStore,
@@ -90,10 +91,23 @@ export interface ToolRuntimeQualificationEvent {
     | "AH7BeforeToolSettlementCommit"
     | "AH7AfterToolSettlementCommit"
     | "AH7ToolSettlementFenceRejected"
-    | "AH7AfterEffectAuthorityResolvedBeforeAdmission";
+    | "AH7AfterEffectAuthorityResolvedBeforeAdmission"
+    | "P38StopInvocationLookup"
+    | "P38StopEffectAdmissionResult";
   readonly executionId: string;
   readonly invocationId: string;
   readonly callRef: string;
+  readonly logicalActionId?: string | undefined;
+  readonly inputHash?: string;
+  readonly toolName?: string;
+  readonly toolVersion?: string;
+  readonly fencingGeneration?: number;
+  readonly priorFound?: boolean;
+  readonly priorIdentityMatches?: boolean;
+  readonly priorEffectAdmissionState?: string | null;
+  readonly priorSettlementKind?: string | null;
+  readonly admissionResult?: string;
+  readonly admissionDenialReason?: string;
 }
 
 export type ToolRuntimeQualificationProbe = (
@@ -973,6 +987,39 @@ export const ToolRuntimeLive = (
           }
 
           const now = options.now ?? (yield* clock.now());
+          const persistNoEffectInterruption = (
+            invocation: ToolInvocationIntent | undefined,
+            settledAt: string,
+          ) => {
+            const failure = operationalFailure(
+              "IntentJournal",
+              String(intent.invocationId),
+            );
+            const write =
+              Option.isSome(observationEvidence) && invocation !== undefined
+                ? Effect.gen(function* () {
+                    const result =
+                      yield* observationEvidence.value.settleOrReadWinner({
+                        invocation,
+                        settlement: { _tag: "Interrupted" },
+                        resultRef: null,
+                        observation: { _tag: "Interrupted" },
+                        settledAt,
+                        executionFence: context.executionFence,
+                        fenceNow: settledAt,
+                      });
+                    return result.evidence.observation._tag === "Interrupted";
+                  }).pipe(Effect.mapError(failure))
+                : store
+                    .recordNoEffectInterruption(
+                      intent.invocationId,
+                      settledAt,
+                      context.executionFence,
+                      settledAt,
+                    )
+                    .pipe(Effect.mapError(failure));
+            return tx.transact(write).pipe(Effect.mapError(failure));
+          };
           const recordNoEffectDenial = (
             sideEffectSemantics: ToolDefinition["sideEffectSemantics"],
             resolvedRegions: ReadonlyArray<CanonicalResourceRegion>,
@@ -1092,23 +1139,25 @@ export const ToolRuntimeLive = (
                   ),
                 );
               if (recorded === "ExecutionStopping") {
-                const interrupted = yield* tx
-                  .transact(
-                    store.recordNoEffectInterruption(
-                      intent.invocationId,
-                      settledAt,
-                      context.executionFence,
-                      settledAt,
-                    ),
-                  )
-                  .pipe(
-                    Effect.mapError(
-                      operationalFailure(
-                        "IntentJournal",
-                        String(intent.invocationId),
-                      ),
-                    ),
-                  );
+                const interrupted = yield* persistNoEffectInterruption(
+                  Option.isSome(current)
+                    ? {
+                        invocationId: intent.invocationId,
+                        executionId: context.executionId,
+                        workspaceId: context.workspaceId,
+                        toolName: intent.toolName,
+                        toolVersion: intent.toolVersion,
+                        sideEffectSemantics,
+                        argumentsJson: intent.argumentsJson,
+                        resolvedRegions,
+                        approvalId:
+                          context.executableApproval?.approvalId ??
+                          intent.approvalId,
+                        intentAt: current.value.intentAt,
+                      }
+                    : undefined,
+                  settledAt,
+                );
                 if (!interrupted && Option.isSome(current)) {
                   return {
                     _tag: "OutcomeUnknown" as const,
@@ -1621,6 +1670,43 @@ export const ToolRuntimeLive = (
             context,
             "IntentJournal",
           );
+          if (options.qualificationProbe !== undefined) {
+            const priorRecord = Option.isSome(prior) ? prior.value : undefined;
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "P38StopInvocationLookup",
+                  executionId: context.executionId,
+                  invocationId: intent.invocationId,
+                  callRef: intent.callRef,
+                  ...((context.logicalActionId ??
+                    context.recoveryBindingIdentity?.logicalActionId) ===
+                  undefined
+                    ? {}
+                    : {
+                        logicalActionId:
+                          context.logicalActionId ??
+                          context.recoveryBindingIdentity?.logicalActionId,
+                      }),
+                  inputHash: canonicalArgumentsDigestV1(intent.argumentsJson),
+                  toolName: intent.toolName,
+                  toolVersion: intent.toolVersion,
+                  fencingGeneration: context.executionFence.fencingGeneration,
+                  priorFound: priorRecord !== undefined,
+                  priorIdentityMatches:
+                    priorRecord === undefined
+                      ? false
+                      : priorRecord.executionId === context.executionId &&
+                        priorRecord.toolName === intent.toolName &&
+                        priorRecord.toolVersion === intent.toolVersion &&
+                        priorRecord.argumentsJson === intent.argumentsJson &&
+                        priorRecord.approvalId === intent.approvalId,
+                  priorEffectAdmissionState:
+                    priorRecord?.effectAdmissionState ?? null,
+                  priorSettlementKind: priorRecord?.settlement?._tag ?? null,
+                }) ?? Promise.resolve(),
+            );
+          }
           if (Option.isSome(prior)) {
             const recorded = prior.value;
             const sameIntent =
@@ -2254,24 +2340,42 @@ export const ToolRuntimeLive = (
             );
           }
           if (effectAdmission.value._tag === "ExecutionStopping") {
-            const settledAt = yield* clock.now();
-            const interrupted = yield* tx
-              .transact(
-                store.recordNoEffectInterruption(
-                  intent.invocationId,
-                  settledAt,
-                  context.executionFence,
-                  settledAt,
-                ),
-              )
-              .pipe(
-                Effect.mapError(
-                  operationalFailure(
-                    "IntentJournal",
-                    String(intent.invocationId),
-                  ),
-                ),
+            if (options.qualificationProbe !== undefined) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "P38StopEffectAdmissionResult",
+                    executionId: context.executionId,
+                    invocationId: intent.invocationId,
+                    callRef: intent.callRef,
+                    logicalActionId:
+                      context.logicalActionId ??
+                      context.recoveryBindingIdentity?.logicalActionId,
+                    fencingGeneration: context.executionFence.fencingGeneration,
+                    admissionResult: effectAdmission.value._tag,
+                  }) ?? Promise.resolve(),
               );
+            }
+            const settledAt = yield* clock.now();
+            const interrupted = yield* persistNoEffectInterruption(
+              Option.isSome(prior)
+                ? {
+                    invocationId: intent.invocationId,
+                    executionId: context.executionId,
+                    workspaceId: context.workspaceId,
+                    toolName: intent.toolName,
+                    toolVersion: intent.toolVersion,
+                    sideEffectSemantics: definition.sideEffectSemantics,
+                    argumentsJson: intent.argumentsJson,
+                    resolvedRegions: regions,
+                    approvalId:
+                      context.executableApproval?.approvalId ??
+                      intent.approvalId,
+                    intentAt: prior.value.intentAt,
+                  }
+                : undefined,
+              settledAt,
+            );
             if (!interrupted) {
               const current = yield* findInvocationFenced(
                 intent.invocationId,
@@ -2289,6 +2393,34 @@ export const ToolRuntimeLive = (
               }
             }
             return { _tag: "Interrupted" as const };
+          }
+
+          if (options.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "P38StopEffectAdmissionResult",
+                  executionId: context.executionId,
+                  invocationId: intent.invocationId,
+                  callRef: intent.callRef,
+                  ...((context.logicalActionId ??
+                    context.recoveryBindingIdentity?.logicalActionId) ===
+                  undefined
+                    ? {}
+                    : {
+                        logicalActionId:
+                          context.logicalActionId ??
+                          context.recoveryBindingIdentity?.logicalActionId,
+                      }),
+                  fencingGeneration: context.executionFence.fencingGeneration,
+                  admissionResult: effectAdmission.value._tag,
+                  ...(effectAdmission.value._tag === "Denied"
+                    ? {
+                        admissionDenialReason: effectAdmission.value.reasonCode,
+                      }
+                    : {}),
+                }) ?? Promise.resolve(),
+            );
           }
 
           if (options.qualificationProbe !== undefined) {
