@@ -31,6 +31,7 @@ on P36 integration.
 | Workspace resource activation pending | P1 `WorkspaceResourceActivationIntent(Pending)` + `WorkspaceResourceActivationChanged` v1 | Action Required | the exact root Workspace in the intent |
 | Verifier orphan | Open verification × settled executions (derived condition, P8 `02` §3) | Attention | owner workspace |
 | WorkEpisodeBlocked | current Open `work_blockers` row at exact Open Work revision, with no bound active WorkEpisode | ActionRequired; Attention while a bound WorkEpisode is active | Work's owning Workspace; blockerId dedup |
+| Legacy adoption evidence insufficient | `legacy_adoption_attention_rows` marker joined to P9 `legacy_adoption_attention_facts`; P9 emits `LegacyAdoptionEvidenceEscalated` | ActionRequired | exact `executions.workspace_id` captured by the failure fact; internal binding retains `executionId` |
 
 The existing `VerifierOrphan` row remains derived and read-only. Its explicit
 `RetryVerification` affordance is a P8 `/commands` action shown only when the
@@ -45,10 +46,11 @@ barrier may the UI confirm the old row is absent, and the immutable
 ### RAI-DG-01 Work-revision freshness for active Attention
 
 For Work-bound source rows only, Runtime Safety Envelope,
-`ReconciliationEscalated`, AssignWork binding failure and Deliver replay
-failure are active when and only when the source Execution's validated EGP Work
-Episode `(workId, workRevision)` equals the canonical Work's current
-`(workId, revision)` in the same read snapshot. The internal read contract
+`ReconciliationEscalated`, AssignWork binding failure, Deliver replay failure
+and `LegacyAdoptionEvidenceInsufficient` are active when and only when the
+source Execution's validated EGP Work Episode `(workId, workRevision)` equals
+the canonical Work's current `(workId, revision)` in the same read snapshot.
+The internal read contract
 carries `sourceExecutionId`; this is not a wire/DTO field. Resolve it through
 `executions` and `agent_execution_state.episode_json`, then validate exact
 Project, owning Workspace and Work identity. Do not infer Work identity from
@@ -400,3 +402,56 @@ validates the event against its exact fact and authoritative Execution
 Workspace, then inserts the idempotent marker and advances the existing
 per-project Attention offset in one transaction. Conflicting bindings are
 projection corruption. Its full-rebuild transaction is specified in `04`.
+
+## Accepted AH14 LegacyAdoptionEvidenceInsufficient source (DID v1.49)
+
+Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,
+proposal raw SHA-256
+`71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+accepted 2026-10-17. P10 registers exactly source
+`LegacyAdoptionEvidenceInsufficient`, severity `ActionRequired`, target
+`workspace_id` stored on the immutable P9 failure fact (the exact
+`executions.workspace_id` at detection), and internal `sourceExecutionId` for
+authorization and Work-episode freshness checks. Public rows have
+`targetWorkspaceId`, `dedupKey=attentionFactId`,
+`failureCode=LegacyActionDispositionUnproven`,
+`occurredAt=firstDetectedAt`, and the fixed safe summary:
+`Legacy action outcome cannot be proven; operator review is required.`
+No Provider payload, action arguments, evidence tuple/digest, paths, or error
+text is exposed. Query authorization requires the reader's project/Workspace
+scope to cover this exact target.
+
+The `legacy_adoption_attention_rows` marker is keyed by
+`(project_id, attention_fact_id)`, records the exact `workspace_id`, and is
+composite-bound to that P9 fact. Applying either event validates the complete
+event envelope and exact payload key set against immutable P9 rows before
+mutation. For failure, require
+`event_id=failure.event_id`, `event_type=LegacyAdoptionEvidenceEscalated`,
+`event_version=1`, project, exact Execution aggregate,
+`correlation_ref=attention_fact_id`, null command/event causes,
+`system:recovery` actor, occurrence time equal to
+`first_detected_at`, and exact payload fields/values from the failure fact;
+`factId=attentionFactId=attention_fact_id` and evidence digest equals
+`evidence_sha256`.
+
+For resolution, validate both immutable facts and require
+`event_id=resolution.event_id`, `event_type=LegacyAdoptionEvidenceResolved`,
+`event_version=1`, exact Execution aggregate/project,
+`correlation_ref=attention_fact_id`, null command cause,
+`caused_by_event_id=originalFailureEventId`, `system:recovery` actor, and
+occurrence time equal to `resolved_at`. Exact payload keys are `factId`,
+`attentionFactId`, `projectId`, `executionId`, `targetWorkspaceId`,
+`providerTurnId`, `originalEvidenceSha256`, `resolutionEvidenceSha256`,
+`resolutionCode`, and `resolvedAt`. Bind them field-for-field to the
+resolution/failure facts, including the original and resolution hashes. Also
+recompute the canonical disposition-summary hash and the non-empty action-set
+resolution-code mapping; stored summary hash, tuple hash, row code and event
+code must agree.
+
+Missing facts, wrong envelope/field, extra or missing payload keys, tuple
+conflict, or hash/code mismatch is typed corruption: make no marker insertion
+or deletion and do not advance the Attention offset. Validation, marker
+insert/delete and offset acknowledgement occur in one transaction. Failure
+marker insertion is idempotent. Resolution deletes only the matching active
+marker; it never deletes or rewrites either P9 fact. There is no human dismiss
+command and no timeout clearing path.

@@ -720,3 +720,147 @@ while the logical action remains Pending, the P8 ControlBasis is current, and
 no unresolved P4 effect exists. Any other terminal rejection is final for
 that logical action. Implementation and migration registration remain
 separately gated.
+
+## Accepted AH14 legacy adoption disposition evidence Attention (DID v1.49)
+
+Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,
+proposal raw SHA-256
+`71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+accepted 2026-10-17. This extension covers only a legacy successful Provider
+result with uniquely bound Execution, ProviderTurn, AgentLoopStep and decoded
+actions, where durable evidence cannot prove the disposition of at least one
+action. The closed failure code is `LegacyActionDispositionUnproven`. The
+legacy result is not adopted as `ProviderResultAvailable`; Step, action ledger,
+Session output and Execution settlement remain unchanged. Recovery issues no
+Provider request, action execution/replay, sourced output, or action Command.
+Other missing or contradictory legacy identity/decoder failures stay on their
+existing typed fail-closed paths. Positive complete-evidence adoption is
+unchanged and creates no AH14 fact or Attention.
+
+### Immutable failure fact and event
+
+P9 owns `legacy_adoption_attention_facts` and event
+`LegacyAdoptionEvidenceEscalated(v1)`. Under the current unexpired Execution
+lease, P9 first validates the legacy success/action evidence, then one P1
+`TransactionScope` rechecks the fence and inserts event and fact atomically.
+The fact binds exact project, `executions.workspace_id`, Execution,
+ProviderTurn, `(logical_step_no, repair_attempt)`, failure code,
+canonical evidence SHA-256, event id, and first-detected time. It is immutable;
+identity is unique on `(execution_id, evidence_sha256)` and event id is unique.
+`first_detected_at` is the first P1 transaction-scoped clock value and remains
+immutable on exact retry.
+Exact retry returns the original pair; a conflicting tuple is typed invariant
+failure.
+
+The evidence fingerprint is lowercase SHA-256 over canonical UTF-8 JSON v1
+with exactly these top-level keys: `version`, `executionId`, `projectId`,
+`workspaceId`, `episode`, `step`, `providerSuccess`, `actions`, and
+`failureCode`. `episode` binds `kind`, `ref` and `revision`; `step` binds
+`logicalStepNo`, `repairAttempt`, `providerTurnId`, `manifestId` and
+`decoderVersion`; `providerSuccess` binds `attemptNo`, `evidenceVersion`,
+`finishReason`, `settledAt` and `canonicalEventsSha256`. Each action records
+zero-based `actionIndex`, `logicalActionId`, `callRef`, `toolName`,
+`toolSchemaVersion`, canonical `inputHash`, `stableActionId`, `actionVersion`,
+`argumentsSha256` and `disposition`. Required binding identities are validated
+before fact creation. Optional source fields use the exact
+`{"_tag":"Missing"}` value; null, omission and empty string are not
+equivalent. Actions sort by `(actionIndex, logicalActionId, callRef)`;
+object keys recursively sort by Unicode code point, strings are NFC, arrays
+retain defined order, numbers are base-10 integers, and canonical bytes are
+UTF-8 without insignificant whitespace. Provider text, raw arguments, host
+paths and database error text are excluded.
+
+`attention_fact_id` is `att_` plus lowercase SHA-256 of canonical UTF-8 JSON
+`{"version":1,"executionId":…,"evidenceSha256":…}` in that key order.
+The v1 event envelope uses exact Execution aggregate, project, fact ID
+correlation, `system:recovery` actor, null command/event causes and
+`first_detected_at` occurrence time. Exact payload keys are `factId`,
+`attentionFactId`, `projectId`, `executionId`, `targetWorkspaceId`,
+`providerTurnId`, `logicalStepNo`, `repairAttempt`, `failureCode`,
+`evidenceSha256`, and `firstDetectedAt`; both fact IDs equal
+`attention_fact_id`.
+
+Before-commit crash leaves neither fact nor event and retry recomputes the
+same tuple without Provider/action/output work. After-commit restart reads the
+same immutable pair and remains blocked without duplicate work. Storage
+failure claims no durable Attention. A stale or expired generation cannot use
+this path after lease fencing. After successful commit, return the typed
+blocked disposition and release the lease through the ordinary path.
+
+### Evidence-only resolution
+
+There is no human dismissal or timeout. P9 may resume ordinary legacy
+adoption only when new authoritative evidence proves every decoded action's
+exact disposition for the original failure fingerprint. The original failure
+fact and `evidence_sha256` never change. The canonical resolution tuple binds
+that fingerprint, full original action identity set and a one-for-one
+disposition/evidence row for every action, with exact P4 same-action
+Action/ToolInvocation evidence. Applied requires exact terminal settlement,
+canonical result and same-invocation Observation. The immutable P4 Action and
+ToolInvocation must bind the same project, Execution, ProviderTurn/Step,
+repair attempt, LogicalActionId, callRef, tool name, tool schema/executor
+version and input hash as that decoded action. Its terminal settlement binds
+the same invocation and includes terminal disposition (`Success` or
+`ExpectedFailure`), effect class, settlement version/hash/time and canonical
+result reference/hash. The exact P4 Observation binds the same
+invocation/action and includes its reference, format/evidence version and
+digest. Cross-invocation, cross-step, similar-name, OutcomeUnknown,
+RuntimeFailure, missing settlement/result/Observation, or any mismatched
+binding/hash is not proof.
+
+NotAdmitted requires an exact immutable P4 Action and ToolInvocation with
+`effectAdmissionState=NotAdmitted`, `settlementKind=Denied`,
+`terminalDisposition=Denied`, and a reason in the closed P4
+`TerminalNoEffectDenialCode` set: `InvocationAuthorityDenied`,
+`ApprovalRejected`, `ApprovalNotFound`, `ApprovalMismatch`,
+`ApprovalExpired`, `ApprovalConsumedByOtherInvocation`,
+`ResourceResolutionDenied`, `ResourceAdmissionDenied`, or
+`ApprovalNoLongerAuthorized`. Historical `ApprovalRequired` is not terminal.
+The exact denial settlement hash/version/time binds that action; result and
+Observation use explicit Missing markers. An absent P4 row, missing
+settlement, human assertion, restart without observed effect, or absence of a
+result is not no-effect proof. A may-have-started uncertainty follows existing
+P4 reconciliation before this source can resolve.
+
+The resolution tuple has exactly these top-level keys: `version`,
+`attentionFactId`, `originalEvidenceSha256`, `executionId`, `providerTurnId`,
+`logicalStepNo`, `repairAttempt`, `resolutionCode`,
+`actionDispositionSummarySha256`, and `actions`. Each action row binds
+`actionOrdinal`, `logicalActionId`, `callRef`, `toolName`,
+`toolSchemaVersion`, `inputHash`, `disposition`, and the exact P4 evidence
+object (or explicit Missing values for inapplicable optional fields).
+Every decoded action is included once in ascending ordinal with identical
+`(ordinal, logicalActionId, callRef, toolName, toolSchemaVersion, inputHash)`
+identity. Partial, empty, reordered, duplicated, mismatched or insufficiently
+proven sets reject the entire resolution. `DispositionProvenNotAdmitted`
+means every non-empty action is NotAdmitted. `DispositionProvenSettled` means
+at least one action is Applied and every action is Applied or NotAdmitted;
+every other disposition set has no valid resolution. The bounded canonical
+action-disposition summary contains only ordinal, stable identity and
+disposition; P9 recomputes its digest and the code before commit. The persisted
+resolution fact carries the canonical summary JSON and digest, derived
+resolution code, original failure/evidence binding, resolution evidence
+digest, and resolved time. P9 rejects an empty set or a caller-supplied code
+that differs from the code derived from the complete action list before
+writing any resolution fact/event or advancing the Step.
+
+The complete resolution tuple uses canonical JSON v1 rules above and includes
+`resolutionCode` and `actionDispositionSummarySha256`. Its digest is
+`resolution_evidence_sha256 = lowercaseHex(SHA256(canonicalUtf8Bytes(tuple)))`.
+The deterministic resolution ID is `alr_` plus lowercase SHA-256 of canonical
+JSON `{version:1, attentionFactId, originalEvidenceSha256,
+resolutionEvidenceSha256, resolutionCode}`. A single P1 transaction writes
+the normal Step adoption/progression and one immutable
+`LegacyAdoptionEvidenceResolved(v1)` event plus
+`legacy_adoption_attention_resolution_facts` row bound to the original
+failure, original evidence hash, resolution evidence hash, derived code,
+canonical summary and resolved time. One resolution per failure is allowed;
+exact retry returns its original fact/event, while a conflicting tuple is
+typed corruption. Resolution event causally references the failure event and
+uses `system:recovery`; `resolved_at` is fixed by the successful resolution
+transaction and is excluded from the evidence fingerprint. Its exact payload
+keys are `factId`,
+`attentionFactId`, `projectId`, `executionId`, `targetWorkspaceId`,
+`providerTurnId`, `originalEvidenceSha256`, `resolutionEvidenceSha256`,
+`resolutionCode`, and `resolvedAt`. Resolution only clears the matching P10
+marker; both immutable P9 facts remain permanently retained.

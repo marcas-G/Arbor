@@ -310,3 +310,23 @@ work.assignWork branch        -> RetirePreconditionFailed superseded by Terminal
 - Lease lifecycle (P2).
 - Exact SQL text for fence/CAS (04).
 - Offset/projection transaction boundary (05).
+
+## Accepted AH14 P9 fact and resolution transaction boundary (DID v1.49)
+
+Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,
+proposal raw SHA-256
+`71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+accepted 2026-10-17. The P9 legacy-adoption evidence failure event and
+immutable fact share one current-lease-fenced `TransactionScope`: before
+commit neither exists; after commit both exist; storage failure claims no
+durable Attention. Exact retry returns the same pair, and a conflicting tuple
+is a typed invariant failure.
+
+Evidence-driven resolution writes the P9 resolution event/fact atomically
+with the ordinary AgentLoopStep adoption/progression it authorizes. The
+resolution must prove the entire original non-empty decoded action set and
+exact terminal P4 evidence under P9 `07`; partial or conflicting proof commits
+neither resolution nor progression. Exact replay returns the immutable
+resolution, and a different tuple cannot replace it. This amendment does not
+alter `TransactionScope`, `BEGIN IMMEDIATE`, shared transaction semantics, or
+authorize implementation/migration.

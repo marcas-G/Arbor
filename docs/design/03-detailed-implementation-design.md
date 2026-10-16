@@ -1,10 +1,40 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.48\
+**Version:** 1.49\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.47\
+**Supersedes:** v1.48\
 **Date:** 2026-10-17\
 **Depends on:** `Arbor System Design Specification v1.17`
+
+**Governance changes (v1.48 → v1.49): AH14 legacy adoption evidence Attention**
+
+- P9 recognizes only the fixed `LegacyActionDispositionUnproven` case: a
+  uniquely bound legacy successful Provider result and decoded action list
+  have at least one action without provable durable disposition. It fails
+  closed before ProviderResultAvailable adoption, action/output replay, or
+  canonical mutation. P9 stores the canonical evidence fingerprint with one
+  immutable `LegacyAdoptionEvidenceEscalated` fact/event under the current
+  lease; a later resolution requires exact evidence for the complete original
+  decoded action set and binds to the original fingerprint.
+- P10 exposes exactly `LegacyAdoptionEvidenceInsufficient` at
+  `ActionRequired`, targeting the exact Execution Workspace, with a bounded
+  safe summary and `attentionFactId` deduplication. It validates failure and
+  resolution event envelopes field-by-field against permanent P9 facts before
+  atomically applying markers and offset. Rebuild recreates unresolved markers
+  from P9 facts after source-event pruning; evidence-proven resolution removes
+  only the matching marker. No manual dismissal or timeout exists.
+- P1 owns shared transaction/storage contracts. P4 `06` is reference-only for
+  existing exact same-action P4 terminal evidence; no P4 semantics change.
+  Migration ID, exact DDL and initialization are not fixed or reserved here;
+  implementation and migration qualification require separate authorization.
+  Accepted token
+  `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`, proposal raw
+  SHA-256
+  `71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+  accepted 2026-10-17. Decision/landing record:
+  `planning/results/AH14-legacy-action-disposition-attention-acceptance-and-landing.record.md`;
+  independent post-landing review:
+  `planning/results/AH14-legacy-action-disposition-attention-landing.review.md`.
 
 **Governance changes (v1.47 → v1.48): P8 stable evidence time and conclusion snapshot**
 

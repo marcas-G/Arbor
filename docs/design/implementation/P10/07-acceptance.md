@@ -123,3 +123,33 @@ success or authorized Work revision advance resolves it once; terminal Work
 supersedes it. Same-key repeated failure updates/reopens by state; event
 pruning plus P10 rebuild does not revive resolved rows. Views and Attention
 never mutate Work, call Provider, or retry an action.
+
+**Accepted AH14 legacy adoption evidence Attention design gate (DID v1.49):**
+for the single `LegacyActionDispositionUnproven` scope, prove the ambiguous
+legacy success is not adopted and leaves Step/action/Session/settlement and
+Provider count unchanged. Qualify canonical failure evidence/fact ID, first
+writer time, exact event envelope, and P9 fact/event atomicity before and after
+COMMIT. P10 must expose exactly one safe
+`LegacyAdoptionEvidenceInsufficient` `ActionRequired` row on the exact
+Execution Workspace, with `attentionFactId` dedup, fixed summary and no
+Provider/action evidence leakage; subtree summary counts it exactly once, and
+unauthorized Workspace reads reveal nothing. Verify event/fact field equality,
+marker/offset atomicity and idempotent replay, including independently
+corrupted envelope and payload fields failing closed without marker mutation
+or offset advancement. Full
+rebuild after pruning the source event reconstructs exactly unresolved rows
+from permanent P9 failure/resolution facts and does not revive resolved rows.
+Only the complete original decoded action set with exact same-action P4
+Applied terminal/result/Observation evidence or terminal no-effect NotAdmitted
+evidence may resolve; prove deterministic evidence hashes/codes/IDs, partial
+set rejection and one-resolution idempotency. No human dismissal, timeout, or
+uncertain P4 effect clears the row. Preserve the existing positive AH14
+equivalent-fixture adoption behavior without creating Attention. These are
+design qualification requirements only; migration and implementation remain
+separately authorized.
+
+After that separate authorization, migration qualification uses only a fresh
+or explicitly disposable copy of the pinned activated prefix, exercises
+offline upgrade/interruption/resume, foreign keys/indexes and runtime
+readiness, and converts only the named fixture baseline. Never open or upgrade
+the preserved database; do not renumber or modify prior migrations.
