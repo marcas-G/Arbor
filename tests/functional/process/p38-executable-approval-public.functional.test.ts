@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -22,6 +23,7 @@ interface ExecutableApprovalRow {
   readonly execution_id: string;
   readonly project_id: string;
   readonly workspace_id: string;
+  readonly subject_ref: string;
   readonly logical_step_no: number;
   readonly repair_attempt: number;
   readonly action_index: number;
@@ -29,6 +31,9 @@ interface ExecutableApprovalRow {
   readonly call_ref: string;
   readonly tool_invocation_id: string;
   readonly side_effect_semantics: string;
+  readonly action_digest: string;
+  readonly target_resource_space_ids_json: string;
+  readonly expires_at: string;
   readonly state: string;
   readonly revision: number;
   readonly cancelled_at: string | null;
@@ -276,9 +281,10 @@ const readApprovalSnapshot = (
   try {
     const approval = db
       .prepare(
-        `SELECT approval_id, execution_id, project_id, workspace_id,
+        `SELECT approval_id, execution_id, project_id, workspace_id, subject_ref,
                 logical_step_no, repair_attempt, action_index, logical_action_id,
-                call_ref, tool_invocation_id, side_effect_semantics, state,
+                call_ref, tool_invocation_id, side_effect_semantics, action_digest,
+                target_resource_space_ids_json, expires_at, state,
                 revision, cancelled_at, cancellation_reason, consumed_at,
                 consumed_by
            FROM action_approvals
@@ -452,6 +458,69 @@ const readApprovalSnapshot = (
   } finally {
     db.close();
   }
+};
+
+const expectP38ReceiptProjection = (
+  snapshot: ApprovalSnapshot,
+  run: {
+    readonly approvalId: string;
+    readonly revision: number;
+    readonly before: ApprovalSnapshot;
+  },
+) => {
+  const approval = snapshot.approval;
+  const canonicalBindingJson = snapshot.recoveryBinding?.canonical_binding_json;
+  if (
+    approval === undefined ||
+    canonicalBindingJson === null ||
+    canonicalBindingJson === undefined
+  ) {
+    throw new Error("P38 approval or P39 RecoveryBinding snapshot was absent");
+  }
+  const binding = JSON.parse(canonicalBindingJson) as Record<string, unknown>;
+  const targetResourceSpaceIds = JSON.parse(
+    approval.target_resource_space_ids_json,
+  ) as ReadonlyArray<string>;
+  const approvalTargetDigest = createHash("sha256")
+    .update(JSON.stringify({ targetResourceSpaceIds }))
+    .digest("hex");
+  expect(binding).toMatchObject({
+    executionId: approval.execution_id,
+    invocationId: approval.tool_invocation_id,
+    providerTurnId: snapshot.step?.provider_turn_id,
+    logicalStepNo: approval.logical_step_no,
+    repairAttempt: approval.repair_attempt,
+    logicalActionId: approval.logical_action_id,
+    actionIndex: approval.action_index,
+    callRef: approval.call_ref,
+    approvalId: run.approvalId,
+    approvalSubject: approval.subject_ref,
+    approvalPreConsumeRevision: run.revision + 1,
+    approvalConsumedRevision: run.revision + 2,
+    approvalExpiresAt: approval.expires_at,
+    approvalTargetDigest,
+    approvalActionDigest: approval.action_digest,
+    approvalConsumedBy: approval.tool_invocation_id,
+  });
+  expect(snapshot.recoveryBinding?.recovery_binding_state).toBe("Bound");
+  expect(snapshot.recoveryBinding?.recovery_binding_sha256).toMatch(
+    /^[0-9a-f]{64}$/u,
+  );
+  expect(snapshot.recoveryBinding?.binding_sha256).toMatch(/^[0-9a-f]{64}$/u);
+  expect(snapshot.recoveryBinding?.binding_sha256).toBe(
+    snapshot.recoveryBinding?.recovery_binding_sha256,
+  );
+  expect(snapshot.attempt0).toMatchObject({
+    attempt_no: 0,
+    admission_state: "NotAdmitted",
+    admission_source: "P39Claim",
+    binding_sha256: snapshot.recoveryBinding?.recovery_binding_sha256,
+  });
+  expect(approval).toMatchObject({
+    state: "Consumed",
+    revision: run.revision + 2,
+    consumed_by: approval.tool_invocation_id,
+  });
 };
 
 const resolveApproval = async (
@@ -886,6 +955,7 @@ describe("pending P38 public Executable approval qualification", () => {
 
       await run.fixture.crash();
       expect(run.fixture.daemonProcessSnapshot()?.alive).toBe(false);
+      await peer.crash();
       const rolledBack = run.snapshot();
       expect(rolledBack.approval).toMatchObject({
         state: "Approved",
@@ -923,38 +993,48 @@ describe("pending P38 public Executable approval qualification", () => {
       expect(expired.after.generation).toBe(lease.generation);
       expect(Date.parse(expired.after.expires_at)).toBeLessThan(Date.now());
 
-      const recovered = await waitForResumedAction(run.snapshot, "Consumed");
-      expect(recovered.approval).toMatchObject({
-        state: "Consumed",
-        revision: run.revision + 2,
-        consumed_by: run.before.approval?.tool_invocation_id,
-        execution_id: run.before.approval?.execution_id,
-        logical_step_no: run.before.approval?.logical_step_no,
-        logical_action_id: run.before.approval?.logical_action_id,
-        tool_invocation_id: run.before.approval?.tool_invocation_id,
+      const recoveryPeer = await run.fixture.startAdditionalDaemon({
+        entry: p4FenceChild,
+        daemonEnvironment: { ARBOR_P4_FENCE_ROLE: "new" },
       });
-      expect(recovered.step?.provider_turn_id).toBe(
-        run.before.step?.provider_turn_id,
-      );
-      expect(recovered.action?.state).toBe("Applied");
-      expect(recovered.invocation).toMatchObject({
-        invocation_id: run.before.approval?.tool_invocation_id,
-        approval_id: run.approvalId,
-        settlement_kind: "Success",
-      });
-      expect(recovered.effectCount).toBe(1);
-      expect(recovered.matchingInvocationCount).toBe(1);
-      expect(recovered.executionApprovalCount).toBe(1);
-      expect(recovered.recoveryBinding?.recovery_binding_state).toBe("Bound");
-      expect(recovered.attempt0).toMatchObject({
-        attempt_no: 0,
-        admission_state: "NotAdmitted",
-        admission_source: "P39Claim",
-        admission_time_precision: "NotAdmitted",
-        binding_sha256: recovered.recoveryBinding?.recovery_binding_sha256,
-      });
-      expect(run.fixture.daemonErrors).toEqual([]);
-      expect(peer.daemonErrors).toEqual([]);
+      try {
+        const recovered = await waitForResumedAction(run.snapshot, "Consumed");
+        expect(recovered.approval).toMatchObject({
+          state: "Consumed",
+          revision: run.revision + 2,
+          consumed_by: run.before.approval?.tool_invocation_id,
+          execution_id: run.before.approval?.execution_id,
+          logical_step_no: run.before.approval?.logical_step_no,
+          logical_action_id: run.before.approval?.logical_action_id,
+          tool_invocation_id: run.before.approval?.tool_invocation_id,
+        });
+        expect(recovered.step?.provider_turn_id).toBe(
+          run.before.step?.provider_turn_id,
+        );
+        expect(recovered.action?.state).toBe("Applied");
+        expect(recovered.invocation).toMatchObject({
+          invocation_id: run.before.approval?.tool_invocation_id,
+          approval_id: run.approvalId,
+          settlement_kind: "Success",
+        });
+        expect(recovered.effectCount).toBe(1);
+        expect(recovered.matchingInvocationCount).toBe(1);
+        expect(recovered.executionApprovalCount).toBe(1);
+        expect(recovered.recoveryBinding?.recovery_binding_state).toBe("Bound");
+        expectP38ReceiptProjection(recovered, run);
+        expect(recovered.attempt0).toMatchObject({
+          attempt_no: 0,
+          admission_state: "NotAdmitted",
+          admission_source: "P39Claim",
+          admission_time_precision: "NotAdmitted",
+          binding_sha256: recovered.recoveryBinding?.recovery_binding_sha256,
+        });
+        expect(run.fixture.daemonErrors).toEqual([]);
+        expect(peer.daemonErrors).toEqual([]);
+        expect(recoveryPeer.daemonErrors).toEqual([]);
+      } finally {
+        await recoveryPeer.crash();
+      }
     } finally {
       await peer.crash();
     }
@@ -1414,6 +1494,7 @@ describe("pending P38 public Executable approval qualification", () => {
       admission_time_precision: "NotAdmitted",
       binding_sha256: claimed.recoveryBinding?.recovery_binding_sha256,
     });
+    expectP38ReceiptProjection(claimed, run);
 
     const peer = await run.fixture.startAdditionalDaemon({
       entry: p4FenceChild,
@@ -1446,6 +1527,7 @@ describe("pending P38 public Executable approval qualification", () => {
       expect(recovered.executionApprovalCount).toBe(1);
       expect(recovered.recoveryBinding).toEqual(claimed.recoveryBinding);
       expect(recovered.attempt0).toEqual(claimed.attempt0);
+      expectP38ReceiptProjection(recovered, run);
       expect(run.fixture.daemonErrors).toEqual([]);
       expect(peer.daemonErrors).toEqual([]);
     } finally {
