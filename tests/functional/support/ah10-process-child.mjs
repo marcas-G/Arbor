@@ -446,6 +446,17 @@ const qualificationProbe = async (event) => {
       await waitForGate("action-intent", event);
     }
   }
+  const reconciliationCrashBoundary = process.env.ARBOR_AH7_TEST_CRASH_BOUNDARY;
+  if (
+    reconciliationMode !== undefined &&
+    event.boundary === reconciliationCrashBoundary &&
+    (event.boundary === "AH7BeforeActionResultCommit" ||
+      event.boundary === "AH7AfterActionResultCommit")
+  ) {
+    emit({ ...event, reconciliationProjectionProbe: true });
+    process.stdout.write(`${JSON.stringify({ tag: "AH_PROBE", ...event })}\n`);
+    await waitForGate("test-reconciliation-crash", event);
+  }
   if (
     role === "old" &&
     event.boundary === "AH9BeforeTerminalActionCommit" &&

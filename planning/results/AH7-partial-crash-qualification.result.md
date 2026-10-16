@@ -78,3 +78,23 @@ counterfactual). It permits zero or one completion Provider call after P3
 projection; it does not establish a general completion-response contract.
 AH7 remains PARTIAL / OPEN; positive production Reconcilable proof/recovery
 and the remaining crash/concurrency matrix are not qualified by this addendum.
+
+## 2026-10-17 AH7-DG-02 P40/P3 crash-matrix source addendum
+
+`tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts`
+now contains four P40 terminal-selection cases (NotOccurred/Occurred, each
+before and after settlement COMMIT) and six P3 ActionResult projection cases
+(NotOccurred/Occurred/StillUnknown, each before and after commit). The child
+process test probe gates those durable boundaries; each case checks the
+independently visible pre/post-commit state, then restarts and checks the
+existing exact invocation, selected fact, result, action, observation and
+external-effect invariants. NotOccurred's P40 terminal cases use the existing
+test-only resource-revision change to reach the terminal
+`ReconciledNoEffect` selection; P3 NotOccurred cases retain the ordinary
+single same-invocation retry.
+
+These are **source additions only; real-process qualification is pending**.
+The focused process run was stopped at the coordinating agent's request while
+other daemon suites competed for readiness. No PASS or phase-closure claim is
+recorded. Static checks on the changed test/probe files passed: typecheck,
+Biome, and `git diff --check`. AH7 remains PARTIAL / OPEN.

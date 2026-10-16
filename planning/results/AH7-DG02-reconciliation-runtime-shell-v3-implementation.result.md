@@ -69,13 +69,26 @@ Authorization reaffirmed by the user on 2026-10-17 after independent review:
 
 ## Qualification boundary
 
-The remaining authorized matrix for authority/approval/Stop changes,
-concurrent stale-generation takeover during an in-flight source read, P40
-terminal COMMIT on both kill sides, and P3 projection on both kill sides was
-not run in this implementation batch. Resource-change-during-I/O has the P4
-retry-gate case above, but this does not qualify the other resource or
-projection crash boundaries. No AH7 closure, release-readiness, or full
-functional-suite claim is made; AH7 remains PARTIAL.
+The remaining authorized matrix for authority/approval/Stop changes and
+concurrent stale-generation takeover during an in-flight source read remains
+open. The additional P40 terminal-selection and P3 projection crash matrix is
+now represented in
+`tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts`:
+four P40 cases (NotOccurred/Occurred × before/after settlement COMMIT) and six
+P3 cases (NotOccurred/Occurred/StillUnknown × before/after ActionResult COMMIT).
+The child-process test probe pauses at those exact existing transaction
+boundaries. The P40 cases use the test-only resource-change gate so
+NotOccurred selects a terminal `ReconciledNoEffect`; P3 cases retain the normal
+NotOccurred same-invocation retry behavior. Each case asserts the independent
+SQLite view on the interrupted side and then relies on the existing final
+identity/effect/result/observation assertions after restart.
+
+This addendum has **not yet received real-process qualification**. The focused
+Vitest attempt was stopped at the coordinating agent's request while several
+daemon suites were competing for readiness; it produced no test result. Static
+verification on the changed files: `pnpm typecheck` PASS, Biome PASS, and
+`git diff --check` PASS. No AH7 closure, release-readiness, or full functional
+suite claim is made; AH7 remains PARTIAL.
 
 The process evidence above uses only a test-owned deterministic profile and
 external state fixture. It does not qualify a production source/profile.
