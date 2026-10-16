@@ -172,12 +172,54 @@ ResponseJob `Queued` 或到期的 `RetryScheduled`。Admission 前必须同时�
 P17 `02`–`04`。
 
 
-## 5. Session 连续性（frozen）
+## 5. Session / checkpoint 连续性（AH19 accepted; DID v1.50）
 
-- 同一 Root Workspace 的所有 Coordination executions 绑定**同一**
-  WorkspacePrimary Session（`GQ-E`）；execution 各自 bounded。
-- Control Reinjection（DID §8.13）：每轮 bootstrap 从 Canonical State 重建
-  ——对话历史经 transcript/session 认知面进入，不依赖进程内存。
+Conversation continuity has one stable v1 owner: the exact Root `WorkspaceId`
+(`RootWorkspaceId`) that owns its HumanMessages. This owner is stable across
+message ID, ResponseJob revision, Attempt, Execution and
+ConversationResponseEpisode. The v1 product has one conversation stream per
+Root Workspace; a future multi-thread surface requires a separately accepted
+`ConversationId` and cannot silently reinterpret WorkspaceId.
+
+The owner checkpoint frontier covers only the contiguous FIFO prefix of
+authoritatively `Answered` HumanMessages and names its exact inclusive
+`coveredThroughMessageId`. Order is existing `created_at`, with
+`messageId` as tie-break; an implementation may choose an explicit owner-local
+sequence only if it preserves this same total order and separately identifies
+that migration. The exact current `Claimed` message remains pinned once as raw
+current input for its own ConversationResponseEpisode and is not covered until
+the response is authoritatively Answered. A checkpoint cannot cross an earlier
+HumanMessage that is not Answered (including Pending or Claimed), or a related
+ResponseJob that has not settled Answered (including RetryScheduled). The next
+episode's context is the owner's checkpoint, every durable message after its
+frontier in order, and the exact current claimed message once.
+
+A ProviderNative checkpoint is reusable across episodes only when its complete
+`ResolvedModelBinding` fingerprint matches exactly. Otherwise rebuild portable
+Summary from the owned HumanMessage prefix; never send the incompatible opaque
+reference. If checkpoint commit succeeds before its current ResponseJob becomes
+Answered, recovery resumes that same episode idempotently; it does not append
+the current message twice or replay a settled ProviderTurn/action. Compaction
+does not create a new ResponseJob attempt or widen retry behavior.
+
+The Conversation owner/frontier is physically separate from the Workspace
+Work Primary Session checkpoint state. Work and Conversation cannot read,
+advance or satisfy one another's frontier. HumanMessages remain immutable
+durable facts, and referenced portable summary/blob plus binding-bound Native
+evidence remain durable while active owner state or recovery references them.
+Existing Workspace Session checkpoints cannot be backfilled as Conversation
+ownership because they do not prove a HumanMessage prefix.
+
+Recovery validates the exact RootWorkspaceId owner, inclusive frontier, source
+HumanMessage, ResponseJob revision/Attempt, ProviderTurn Manifest and
+checkpoint evidence under the current lease. It never infers owner or covered
+prefix from Session text or ProviderTurn ID spelling.
+
+This landing fixes semantic ownership only. It does not select a dedicated
+P14 table/record versus a separately bound standard Session, any owner-state
+port/columns/indexes, or a migration ID; those require a separately authorized
+implementation package. Control Reinjection still rebuilds canonical facts at
+every sampling boundary, independent of the history frontier.
 
 ## 6. Must Not Decide
 

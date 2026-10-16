@@ -69,3 +69,14 @@ RetryScheduled, ConversationAttentionRequired, ConversationResponseAnswered
 and ConversationResponseCancelled. Job mutation + event append share the
 Command transaction. Operational Provider retry events remain observability,
 not Domain events.
+
+### AH19 checkpoint-owner interaction (DID v1.50)
+
+The P14 Conversation checkpoint owner may advance its covered prefix only
+after the authoritative HumanMessage and ResponseJob reach `Answered` through
+the existing response-settlement path. A `Claimed` HumanMessage / `Running`
+ResponseJob, `RetryScheduled`, `NeedsAttention`, and `Cancelled` do not advance
+coverage; a non-Answered earlier message blocks later Answered messages from
+crossing the gap. Context compaction preserves the current ResponseJob and
+Attempt and does not create a retry or widen P17 retry policy. P17 retains
+ownership of the Answered state transition; P14 owns the checkpoint frontier.

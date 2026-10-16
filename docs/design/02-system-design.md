@@ -1,18 +1,52 @@
 # Arbor System Design Specification
 
-**Version:** 1.17
+**Version:** 1.18
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.16
+**Supersedes:** v1.17
 
-**Date:** 2026-10-12
+**Date:** 2026-10-17
 
 **Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.4`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
 
 **Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
+
+**Governance changes (v1.17 → v1.18): AH19 Work and Conversation checkpoint ownership**
+
+- Work Session Timeline remains complete and append-only. Before its first
+  typed `CompactionCheckpoint`, the Work provider projection considers only the
+  latest 64 persisted Timeline rows by Session-local sequence; current pinned
+  input and canonical Work/control facts are independent of that row cap.
+  Existing P3 filtering does not refill the window, and a considered row that
+  is skipped is not represented or checkpoint-covered. After a checkpoint,
+  the frontier is that exact checkpoint followed by every unsummarized typed
+  entry; budget pressure invokes explicit compaction.
+- Root Workspace conversation continuity has a distinct owner keyed by exact
+  `RootWorkspaceId`, independent of HumanMessage, ResponseJob revision,
+  Attempt, Execution, ConversationResponseEpisode and the Work Session. Its
+  checkpoint covers only a contiguous FIFO prefix of `Answered` HumanMessages.
+  The exact currently `Claimed` message stays pinned once for its own episode
+  and is not covered before authoritative Answered settlement. Non-Answered
+  gaps stop coverage; Work history/checkpoints are excluded.
+- ProviderNative Conversation checkpoints cross episodes only under an exact
+  complete `ResolvedModelBinding` fingerprint; otherwise rebuild a portable
+  Summary from the retained owner prefix. HumanMessages and live referenced
+  checkpoint evidence remain durable. No checkpoint ownership is inferred
+  from old Workspace Session checkpoints.
+- Accepted packages and independent landing reviews are recorded separately:
+  Work token `ACCEPT_AH19_WORK_PRECHECKPOINT_BOUNDED_FRONTIER_V1`, raw SHA-256
+  `4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`, and
+  Conversation token `ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1`, raw
+  SHA-256 `9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`;
+  both accepted 2026-10-17. See their AH19 acceptance/landing records and
+  package-specific post-landing reviews under `planning/results/`.
+- These are design-only decisions. Conversation storage shape and migration
+  ID, and any changes to production behavior or tests, require separate
+  implementation authorization. Existing P2 Session storage is not assigned
+  a new Conversation owner by inference.
 
 **Governance changes (v1.16 → v1.17): Blocked WorkEpisode and explicit verifier-orphan governance**
 
@@ -684,6 +718,33 @@ step 从 canonical state fresh capture；Compaction 后重新注入。
 Session Timeline 可重放但不要求原样全部进入模型；active model window 可以有损压缩，
 durable Timeline、完整 Tool Result 与 Artifact 仍保留。
 
+AH19 Work bounded-frontier policy: before the first typed checkpoint, a Work
+provider projection considers only the latest 64 persisted Session Timeline
+rows by Session-local sequence. The current pinned input and fresh canonical
+Work/control facts do not consume those slots. Existing P3 filters apply to
+that selected row window without backfilling from older rows. Selected but
+skipped content is neither represented in the active context nor claimed by
+checkpoint coverage. After a typed checkpoint, the active frontier is that
+exact checkpoint plus every unsummarized typed row after it; context budget
+pressure triggers explicit compaction. Older rows remain durable, outside
+automatic context and outside any coverage claim.
+
+Root Workspace Conversation continuity has a separate checkpoint owner keyed
+by the exact `RootWorkspaceId`. It is independent of message, ResponseJob
+revision, Attempt, Execution, ConversationResponseEpisode and the Workspace
+Work Session. The frontier advances only over the contiguous FIFO prefix of
+authoritatively `Answered` HumanMessages. A current `Claimed` message is pinned
+exactly once for its own response episode and is not covered until Answered;
+no earlier HumanMessage may remain Pending/Claimed, and no related ResponseJob
+may remain RetryScheduled or otherwise non-Answered, when coverage advances
+past it. Conversation context excludes Workspace Work Session entries and
+checkpoints. Existing order is `created_at` with `messageId` tie-break unless
+a separately authorized implementation package selects an explicit owner-local
+sequence preserving the same total order. Existing HumanMessages and live
+referenced Summary/blob or binding-bound Native evidence remain durable. These
+owner semantics are the accepted AH19 design packages; Conversation physical
+storage remains TBD for separate implementation authorization.
+
 ## 3.7 Dependency
 
 Dependency 是持久关系，表示 Consumer Work 需要某个具体的 Expected Deliverable：
@@ -856,6 +917,10 @@ Parent 默认只消费：
 ```text
 Share facts and results, not entire contexts.
 ```
+
+Within a Root Workspace, Work Session history/checkpoints and Conversation
+history/checkpoints are separate continuity streams. Neither can read, advance
+or satisfy the other's checkpoint frontier.
 
 ## 4.7 Responsibility Unit Formation Test
 
@@ -1071,6 +1136,14 @@ frontier 生成 provider-neutral typed input items、tool definitions 与 manife
 
 硬信息确定性注入；软历史按需检索。
 
+For Work before its first typed checkpoint, the P2-selected input frontier is
+the latest 64 persisted rows by Session-local sequence; the latest user input
+and C0/C1 canonical facts are pinned separately. P3 projects only the selected
+rows using its existing typed branches and filters. Filtering a selected row
+does not cause an older row to be fetched in its place. The frontier records
+the considered row range, not proof that each row was represented. Manifest
+source refs identify only emitted items.
+
 ToolCall/ToolResult 必须保留 callRef；被截断的 ToolResult 必须保留 ArtifactRef 与
 truncation/epistemic status。Effect admission 不信任旧快照作为授权缓存：真正执行
 Tool/Control Action 时仍 fresh re-read ControlBasis、authority、ResourceBoundary 与
@@ -1101,6 +1174,19 @@ Timeline 走 portable Summary/recent-frontier rebuild。
 Compaction 产生 Continuation Checkpoint；Checkpoint 是认知辅助，不是 authority。
 Pinned/Protected fixed control 本身在允许的 model policy 下仍无法装入窗口时，才形成
 ContextUnsatisfiable。普通可压缩历史压力不得停止 Work/Execution 或要求用户手动重试。
+
+For pre-first-checkpoint Work history, checkpoint coverage includes only
+selected rows actually represented by the existing P3 projector; skipped rows
+and rows outside the 64-row input window remain durable but uncovered. Once a
+typed Work checkpoint exists, the frontier is its exact sequence plus all
+unsummarized typed entries after it, without the pre-checkpoint numeric cap.
+Conversation uses a separate RootWorkspaceId owner. Its checkpoint covers only
+the contiguous Answered HumanMessage prefix; the current Claimed input remains
+pinned once and uncovered until authoritative Answered settlement. Binding
+mismatch forbids reuse of ProviderNative opaque state and requires portable
+Summary reconstruction from retained HumanMessages. Compaction resumes the
+same response episode/attempt and never replays settled Provider or action
+work.
 
 ## 5.7 Memory
 

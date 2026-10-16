@@ -864,3 +864,38 @@ keys are `factId`,
 `providerTurnId`, `originalEvidenceSha256`, `resolutionEvidenceSha256`,
 `resolutionCode`, and `resolvedAt`. Resolution only clears the matching P10
 marker; both immutable P9 facts remain permanently retained.
+
+## Accepted AH19 checkpoint recovery boundaries (DID v1.50)
+
+Accepted tokens and proposal raw hashes: Work
+`ACCEPT_AH19_WORK_PRECHECKPOINT_BOUNDED_FRONTIER_V1` /
+`4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`;
+Conversation `ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1` /
+`9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`.
+Both were accepted 2026-10-17.
+
+For Work, distinguish the considered pre-checkpoint latest-64 `inputFrontier`
+from durable Timeline content and actual checkpoint coverage. A committed
+checkpoint's `retainedFrontier` is authoritative only for content represented
+under the existing P3 projector; skipped and older rows remain durable but
+uncovered. Restart before a checkpoint reconstructs the same latest-64
+projection. Restart after checkpoint commit reuses that exact checkpoint and
+post-checkpoint typed frontier; it does not replay a settled ProviderTurn or
+action. More than 64 entries after a checkpoint are not truncated by the
+pre-checkpoint bound.
+
+For Conversation, checkpoint recovery is keyed by exact RootWorkspaceId and
+the contiguous Answered HumanMessage prefix. A commit before Job.Answered
+resumes the same ResponseJob/Attempt/episode and leaves the current Claimed
+message uncovered and pinned once. It does not admit another response, append
+the message twice, or replay settled Provider/action work. Binding mismatch
+prevents old Native opaque reuse and invokes portable owner-prefix rebuild.
+Recovery validates the exact covered frontier, source HumanMessage, Job
+revision/Attempt, ProviderTurn Manifest and checkpoint evidence under the
+current lease. It never infers owner or coverage from Session text or
+ProviderTurn ID spelling.
+An earlier non-Answered HumanMessage (including Pending or Claimed), or a
+ResponseJob that has not settled Answered (including RetryScheduled), blocks
+coverage of later Answered messages and remains a fail-closed frontier after
+restart. Work Session checkpoints are not Conversation recovery evidence.
+This amendment adds no physical owner-state or migration decision.

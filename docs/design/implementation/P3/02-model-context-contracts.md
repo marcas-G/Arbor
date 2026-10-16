@@ -115,6 +115,59 @@ adapter structured-request estimator, then conservative chars/4 fallback.
 Fallback estimation may trigger early compaction but cannot alone classify
 ordinary compressible pressure as `ContextUnsatisfiable`.
 
+### AH19 Work pre-checkpoint input frontier (DID v1.50)
+
+Before the first typed `CompactionCheckpoint` for a Work Session, P2 selects
+exactly the latest 64 persisted `SessionItem` rows by Session-local sequence.
+The current pinned input appears exactly once and canonical C0/C1 Work/control
+fragments are independent of these slots. P3 applies the existing
+`projectSessionTimeline` branches and filters to this selected window; a
+skipped row does not cause an older row to be fetched as a replacement.
+`inputFrontier` records the selected
+row range considered, not the set of content represented. A skipped row emits
+no context item, source ref or checkpoint coverage claim.
+
+On every Provider request, inject the existing hard pinned fragments as
+separate identity/revision-bound sources: `WorkObjective`, `WorkConstraints`,
+`CompletionExpectation`, `VerificationMissionSummary`,
+`ResponsibilityDefinition`, `ResourceBoundary`, effective
+Authority/Permission, and every other existing C0/C1 hard fragment. Their
+presence is not established by a combined objective-text assertion, and
+Session filtering or the 64-row limit cannot evict them.
+
+The selected-row eligible union remains the P2 `SessionItem` set:
+`UserMessage`, `AssistantMessage`, `ToolCall`, `ToolResult`, `ControlResult`,
+`ContextUpdate`, `CompactionCheckpoint`, and `AttachmentRef`. Existing P3
+projection conditions remain unchanged: UserMessage excludes
+`source.kind=HumanConversation` and requires string `text`; ToolCall requires
+string `callRef`, `toolRef` and `argumentsJson`; ToolResult and ControlResult
+require string `callRef`; ContextUpdate uses its normalized projection; only
+the latest CompactionCheckpoint is eligible, with Summary `summaryText` or
+ProviderNative source/epoch/opaque-ref/binding validation; Observation
+fallbacks expose string `payload.observation.text` only for
+`entryKind=Observation`. Other types with no existing projector branch remain
+unprojected; no fallback representation is introduced.
+
+After a typed Work checkpoint, the active frontier is the exact checkpoint
+sequence followed by every unsummarized typed Session entry after it. The
+pre-checkpoint 64-row cap does not apply; if this frontier exceeds budget,
+return `NeedsCompaction` and use the existing explicit compaction protocol.
+Compaction `retainedFrontier` may claim only rows whose content was actually
+represented under the existing projector. Older or skipped rows remain
+durable and uncovered.
+
+### AH19 Conversation continuity projection (DID v1.50)
+
+Conversation input comes from the separate P14 RootWorkspaceId checkpoint
+owner, its covered Answered prefix, ordered durable HumanMessages after that
+frontier, and the exact current Claimed message once. P3 does not read Work
+Session history/checkpoints for a ConversationResponseEpisode. A current
+claimed message stays pinned and uncovered until authoritative Answered
+settlement. ProviderNative reuse requires exact complete
+ResolvedModelBinding equality; mismatch rebuilds portable Summary from the
+retained HumanMessage prefix. This defines projection semantics only and does
+not choose the owner-state storage port or physical session binding.
+
 ## 6. Plan, prepared turn, manifest
 
 ```ts

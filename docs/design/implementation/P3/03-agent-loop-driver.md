@@ -100,6 +100,25 @@ successful compaction keeps `(logicalStepNo, repairAttempt)` unchanged and must
 not repeat an already settled Provider inference/action. Provider overflow can
 trigger one physical compact/retry only before durable output/effect.
 
+### AH19 bounded Work context and Conversation checkpoint continuity (DID v1.50)
+
+For Work before its first typed checkpoint, the driver uses P2's latest-64
+persisted Session-row selection and P3's existing projector without refilling
+filtered rows; hard pinned C0/C1 facts and current input remain independent.
+`inputFrontier` records considered rows, while context refs and
+`retainedFrontier` identify only actually represented content. After a typed
+checkpoint, every unsummarized typed entry after that exact checkpoint remains
+in the active frontier; budget pressure runs the existing explicit compaction.
+
+For ConversationResponseEpisode, compaction reads the separate
+RootWorkspaceId-owned Conversation checkpoint and HumanMessage frontier,
+including the exact claimed current message once. It cannot read or advance the
+Workspace Work Session frontier. A checkpoint/binding fallback resumes the
+same ResponseJob/Attempt and response episode; it does not create a retry or
+repeat any settled ProviderTurn/action. ProviderNative continuation is reused
+only for the exact complete binding; otherwise the owner frontier is rebuilt
+portably from retained HumanMessage sources.
+
 ## 3. `decodeTurn` and invocation routing
 
 ```ts
