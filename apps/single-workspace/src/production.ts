@@ -256,6 +256,20 @@ export type ConversationResponseQualificationProbe = (event: {
   readonly executionId: string;
 }) => Promise<void>;
 
+/** Test-only pause seam around the real Executable-approval TTL transaction. */
+export type ExecutableApprovalExpiryQualificationProbe = (
+  event:
+    | {
+        readonly boundary: "P38BeforeExecutableApprovalExpiryTransaction";
+        readonly now: string;
+      }
+    | {
+        readonly boundary: "P38AfterExecutableApprovalExpiryMutationBeforeCommit";
+        readonly now: string;
+        readonly approvalIds: ReadonlyArray<string>;
+      },
+) => Promise<void>;
+
 export interface ProductionDaemonConfig {
   readonly projectId?: ProjectId;
   readonly principal: Principal;
@@ -270,6 +284,7 @@ export interface ProductionDaemonConfig {
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
   readonly submittedDecisionRecoveryQualificationProbe?: SubmittedDecisionRecoveryQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
+  readonly executableApprovalExpiryQualificationProbe?: ExecutableApprovalExpiryQualificationProbe;
   /** Process-local test seam for the durable Deliver Attention poll boundary. */
   readonly attentionPollQualificationProbe?: AttentionPollQualificationProbe;
 }
@@ -366,13 +381,38 @@ export const ProductionDaemonServiceLive = (
 
       const expireExecutableApprovals = Effect.gen(function* () {
         const now = yield* clock.now();
+        if (config.executableApprovalExpiryQualificationProbe !== undefined) {
+          yield* Effect.promise(
+            () =>
+              config.executableApprovalExpiryQualificationProbe?.({
+                boundary: "P38BeforeExecutableApprovalExpiryTransaction",
+                now,
+              }) ?? Promise.resolve(),
+          );
+        }
         yield* tx.transact(
-          executableApprovals.expireDue({
-            now,
-            expiredBy: config.principal,
-            ...(config.batchSize === undefined
-              ? {}
-              : { batchSize: config.batchSize }),
+          Effect.gen(function* () {
+            const expired = yield* executableApprovals.expireDue({
+              now,
+              expiredBy: config.principal,
+              ...(config.batchSize === undefined
+                ? {}
+                : { batchSize: config.batchSize }),
+            });
+            if (
+              config.executableApprovalExpiryQualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  config.executableApprovalExpiryQualificationProbe?.({
+                    boundary:
+                      "P38AfterExecutableApprovalExpiryMutationBeforeCommit",
+                    now,
+                    approvalIds: expired.map((approval) => approval.approvalId),
+                  }) ?? Promise.resolve(),
+              );
+            }
+            return expired;
           }),
         );
       }).pipe(Effect.orDie);

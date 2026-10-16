@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -1267,6 +1268,396 @@ describe("pending P38 public Executable approval qualification", () => {
       }
     },
   );
+
+  it.each([0, 1])(
+    "public Stop and TTL expiry race on exact approval revision in iteration %i",
+    async (iteration) => {
+      const marker = `P38-STOP-TTL-${iteration}-${crypto.randomUUID().slice(0, 8)}`;
+      const probes: Array<{
+        readonly tag?: string;
+        readonly role?: string;
+        readonly boundary?: string;
+        readonly executionId?: string;
+        readonly commandId?: string;
+        readonly outcomeTag?: string;
+        readonly approvalIds?: ReadonlyArray<string>;
+      }> = [];
+      const run = await startExecutableApproval(marker, {
+        firstDaemonEntry: p4FenceChild,
+        daemonEnvironment: {
+          ARBOR_P4_FENCE_ROLE: "old",
+          ARBOR_P4_STOP_TTL_RACE: "ttl-main-blocked",
+        },
+        onDaemonStdout: (line) => {
+          try {
+            const event = JSON.parse(line) as (typeof probes)[number];
+            if (event.tag === "P4_FENCE_PROBE") probes.push(event);
+          } catch {
+            // Ordinary daemon output is diagnostic data, not a probe.
+          }
+        },
+      });
+      const gateDirectory = join(
+        dirname(run.fixture.databaseFile),
+        "p4-fence-gates",
+      );
+      mkdirSync(gateDirectory, { recursive: true });
+      const ttlPeerEvents: Array<(typeof probes)[number]> = [];
+      const ttlPeer = await run.fixture.startAdditionalDaemon({
+        entry: p4FenceChild,
+        daemonEnvironment: {
+          ARBOR_P4_FENCE_ROLE: "new",
+          ARBOR_P4_STOP_TTL_RACE: "ttl-worker",
+        },
+        onStdout: (line) => {
+          try {
+            const event = JSON.parse(line) as (typeof probes)[number];
+            if (event.tag === "P4_FENCE_PROBE") ttlPeerEvents.push(event);
+          } catch {
+            // Ordinary daemon output is diagnostic data, not a probe.
+          }
+        },
+      });
+      writeFileSync(join(gateDirectory, "ttl-before.request"), "pause");
+      const db = new DatabaseSync(run.fixture.databaseFile);
+      try {
+        db.exec("PRAGMA busy_timeout = 5000");
+        db.prepare(
+          `UPDATE action_approvals SET expires_at = ?
+            WHERE approval_id = ? AND route_kind = 'Executable'
+              AND state = 'Pending' AND revision = ?`,
+        ).run("2000-01-01T00:00:00.000Z", run.approvalId, run.revision);
+      } finally {
+        db.close();
+      }
+      const mainTtlReady = waitForPublic(
+        async () =>
+          probes.find(
+            (event) =>
+              event.role === "old" &&
+              event.boundary === "P38TTLBeforeExpiryTransaction",
+          ),
+        (event) => event !== undefined,
+        60_000,
+      );
+      const peerTtlReady = waitForPublic(
+        async () =>
+          ttlPeerEvents.find(
+            (event) =>
+              event.role === "new" &&
+              event.boundary === "P38TTLBeforeExpiryTransaction",
+          ),
+        (event) => event !== undefined,
+        60_000,
+      );
+      await Promise.all([mainTtlReady, peerTtlReady]).catch(
+        (error: unknown) => {
+          const diagnosticDb = new DatabaseSync(run.fixture.databaseFile, {
+            readOnly: true,
+          });
+          let approvalRow: unknown;
+          let userVersion: unknown;
+          try {
+            approvalRow = diagnosticDb
+              .prepare(
+                "SELECT state, revision, expires_at FROM action_approvals WHERE approval_id = ?",
+              )
+              .get(run.approvalId);
+            userVersion = diagnosticDb.prepare("PRAGMA user_version").get();
+          } finally {
+            diagnosticDb.close();
+          }
+          throw new Error(
+            `${String(error)}; mainProbes=${JSON.stringify(probes)}; peerProbes=${JSON.stringify(ttlPeerEvents)}; mainProcess=${JSON.stringify(run.fixture.daemonProcessSnapshot())}; mainErrors=${JSON.stringify(run.fixture.daemonErrors)}; peerProcess=${JSON.stringify(ttlPeer?.daemonProcessSnapshot())}; peerErrors=${JSON.stringify(ttlPeer?.daemonErrors)}; approval=${JSON.stringify(approvalRow)}; userVersion=${JSON.stringify(userVersion)}`,
+          );
+        },
+      );
+
+      const stopPromise = run.client
+        .command(run.project.projectId, "StopExecution", {
+          executionId: run.before.approval?.execution_id,
+        })
+        .then(
+          (payload) => ({ ok: true as const, payload }),
+          (error: unknown) => ({
+            ok: false as const,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      await waitForPublic(
+        async () =>
+          probes.find(
+            (event) =>
+              event.role === "old" &&
+              event.boundary === "P38StopExecutionBeforeTransaction",
+          ),
+        (event) => event !== undefined,
+        60_000,
+      );
+      await Promise.all([
+        writeFile(join(gateDirectory, "old-ttl-before.release"), "release"),
+        writeFile(join(gateDirectory, "new-ttl-before.release"), "release"),
+      ]);
+      const stopOutcome = await stopPromise;
+      if (!stopOutcome.ok) {
+        throw new Error(
+          `public Stop failed: ${stopOutcome.error}; probes=${JSON.stringify(probes)}; daemonErrors=${JSON.stringify(run.fixture.daemonErrors)}`,
+        );
+      }
+      expect(stopOutcome.payload).toMatchObject({
+        body: { resolution: "Committed" },
+      });
+      const recovered = await waitForPublic(
+        async () => run.snapshot(),
+        (snapshot) =>
+          snapshot.execution?.settlement_kind === "Interrupted" &&
+          snapshot.effectCount === 0 &&
+          (snapshot.approval?.state === "Cancelled" ||
+            snapshot.approval?.state === "Expired"),
+        60_000,
+      );
+      expect(recovered.execution?.stop_requested_at).not.toBeNull();
+      expect(
+        JSON.parse(recovered.execution?.settlement_json ?? "{}"),
+      ).toMatchObject({
+        _tag: "Interrupted",
+        result: { _tag: "StopRequested" },
+      });
+      expect(["Cancelled", "Expired"]).toContain(recovered.approval?.state);
+      expect(recovered.approval).toMatchObject({
+        state: recovered.approval?.state,
+        revision: run.revision + 1,
+      });
+      expect(recovered.executionStopEventCount).toBe(1);
+      expect(
+        recovered.approvalEvents.filter(
+          (event) => event.event_type === "ExecutableApprovalResolved",
+        ),
+      ).toHaveLength(1);
+      expect(recovered.inboxConsumedAt).not.toBeNull();
+      if (recovered.invocation !== undefined) {
+        expect(recovered.invocation.effect_admission_state).toBe("NotAdmitted");
+        expect(recovered.invocation.settlement_kind).toBe("Denied");
+        expect(
+          JSON.parse(recovered.invocation.settlement_json ?? "{}"),
+        ).toMatchObject({
+          _tag: "Denied",
+        });
+      }
+      expect(recovered.effectCount).toBe(0);
+      expect(run.fixture.daemonErrors).toEqual([]);
+      expect(ttlPeer.daemonErrors).toEqual([]);
+      await ttlPeer.crash();
+    },
+  );
+
+  it("overlaps same-Step P38/P4/P39 claim attempts from two daemons without duplicate claim facts", async () => {
+    const marker = `P38-CLAIM-OVERLAP-${crypto.randomUUID().slice(0, 8)}`;
+    const ownerProbes: Array<{
+      readonly tag?: string;
+      readonly role?: string;
+      readonly boundary?: string;
+      readonly executionId?: string;
+      readonly invocationId?: string;
+    }> = [];
+    const contenderProbes: Array<Record<string, unknown>> = [];
+    const run = await startExecutableApproval(marker, {
+      firstDaemonEntry: p4FenceChild,
+      daemonEnvironment: {
+        ARBOR_P4_FENCE_ROLE: "old",
+        ARBOR_P4_FENCE_ADMISSION_BOUNDARY: "AH7AfterToolIntentCommit",
+        ARBOR_P4_P39_BEGIN_GATE: "1",
+      },
+      onDaemonStdout: (line) => {
+        try {
+          const event = JSON.parse(line) as (typeof ownerProbes)[number];
+          if (event.tag === "P4_FENCE_PROBE") ownerProbes.push(event);
+        } catch {
+          // Ordinary daemon output is diagnostic data, not a probe.
+        }
+      },
+    });
+    const targetExecutionId = run.before.approval?.execution_id;
+    if (targetExecutionId === undefined) {
+      throw new Error("P38 overlap execution id was absent");
+    }
+    const gateDirectory = join(
+      dirname(run.fixture.databaseFile),
+      "p4-fence-gates",
+    );
+    mkdirSync(gateDirectory, { recursive: true });
+
+    // Start both daemons before the owner holds the claim transaction. The
+    // contender waits at its explicit-runExecution gate, then competes for
+    // the same execution lease while the owner's claim commit is paused.
+    const contender = await run.fixture.startAdditionalDaemon({
+      entry: p4FenceChild,
+      daemonEnvironment: {
+        ARBOR_P4_FENCE_ROLE: "new",
+        ARBOR_P4_FENCE_EXPLICIT_EXECUTION_ID: targetExecutionId,
+        ARBOR_P4_P39_BEGIN_GATE: "1",
+        ARBOR_WORKSPACE_ID: functionalId("ws"),
+      },
+      onStdout: (line) => {
+        try {
+          const event = JSON.parse(line) as Record<string, unknown>;
+          if (event.tag === "P4_FENCE_PROBE") contenderProbes.push(event);
+        } catch {
+          // Ordinary daemon output is diagnostic data, not a probe.
+        }
+      },
+    });
+
+    await resolveApproval(
+      run.client,
+      run.project.projectId,
+      run.approvalId,
+      run.revision,
+      "Approve",
+    );
+
+    try {
+      writeFileSync(
+        join(gateDirectory, "new-explicit-runExecution.release"),
+        "release",
+      );
+      let contenderStarted: Record<string, unknown> | undefined;
+      try {
+        contenderStarted = await waitForPublic(
+          async () =>
+            contenderProbes.find(
+              (event) =>
+                event.boundary === "P4ExplicitRunExecutionStart" &&
+                event.executionId === targetExecutionId,
+            ),
+          (event) => event !== undefined,
+          60_000,
+        );
+      } catch (error) {
+        throw new Error(
+          `${String(error)}; contenderProbes=${JSON.stringify(contenderProbes)}; contenderErrors=${JSON.stringify(contender.daemonErrors)}; ownerProbes=${JSON.stringify(ownerProbes)}; ownerErrors=${JSON.stringify(run.fixture.daemonErrors)}`,
+        );
+      }
+      expect(contenderStarted).toMatchObject({
+        executionId: targetExecutionId,
+      });
+
+      const beforeBegin = await waitForPublic(
+        async () =>
+          (ownerProbes.some(
+            (event) =>
+              event.boundary === "P38P39BeforeBegin" && event.role === "old",
+          ) &&
+            contenderProbes.some(
+              (event) =>
+                event.boundary === "P38P39BeforeBegin" && event.role === "new",
+            )) ||
+          undefined,
+        (event) => event !== undefined,
+        60_000,
+      );
+      expect(beforeBegin).toBeTruthy();
+      await Promise.all([
+        writeFile(join(gateDirectory, "old-p39-begin.release"), "release"),
+        writeFile(join(gateDirectory, "new-p39-begin.release"), "release"),
+      ]);
+
+      const ownerAfterCommit = await waitForPublic(
+        async () =>
+          ownerProbes.find(
+            (event) =>
+              event.role === "old" &&
+              event.boundary === "AH7AfterToolIntentCommit" &&
+              event.executionId === targetExecutionId,
+          ),
+        (event) => event !== undefined,
+        60_000,
+      );
+      if (ownerAfterCommit === undefined) {
+        throw new Error("old owner did not pause after claim commit");
+      }
+
+      const contenderLeaseLoss = await waitForPublic(
+        async () =>
+          contenderProbes.find(
+            (event) =>
+              event.boundary === "AH10LeaseAcquisitionRejected" &&
+              event.executionId === targetExecutionId &&
+              event.source === "test-runExecution",
+          ),
+        (event) => event !== undefined,
+        60_000,
+      );
+      if (contenderLeaseLoss === undefined) {
+        throw new Error("same-Step contender did not lose the P2 lease CAS");
+      }
+
+      const claimed = run.snapshot();
+      expect(claimed.approval).toMatchObject({
+        state: "Consumed",
+        revision: run.revision + 2,
+        consumed_by: run.before.approval?.tool_invocation_id,
+      });
+      expect(claimed.invocation).toMatchObject({
+        invocation_id: run.before.approval?.tool_invocation_id,
+        approval_id: run.approvalId,
+        effect_admission_state: "NotAdmitted",
+        settlement_kind: null,
+      });
+      expect(claimed.matchingInvocationCount).toBe(1);
+      expect(claimed.executionApprovalCount).toBe(1);
+      expect(claimed.effectCount).toBe(0);
+      expectP38ReceiptProjection(claimed, run);
+      expect(claimed.attempt0).toMatchObject({
+        attempt_no: 0,
+        admission_state: "NotAdmitted",
+        admission_source: "P39Claim",
+        binding_sha256: claimed.recoveryBinding?.recovery_binding_sha256,
+      });
+      expect(
+        contenderProbes.some(
+          (event) =>
+            event.boundary === "P4P39ClaimBeforeCommit" &&
+            event.executionId === targetExecutionId,
+        ),
+      ).toBe(false);
+
+      writeFileSync(
+        join(gateDirectory, "old-tool-admission.release"),
+        "release",
+      );
+      const ownerAfterEffect = await waitForPublic(
+        async () =>
+          ownerProbes.find(
+            (event) =>
+              event.role === "old" &&
+              event.boundary === "AH7AfterToolEffectBeforeSettlement" &&
+              event.executionId === targetExecutionId,
+          ),
+        (event) => event !== undefined,
+        60_000,
+      );
+      expect(ownerAfterEffect?.invocationId).toBe(
+        run.before.approval?.tool_invocation_id,
+      );
+      writeFileSync(
+        join(gateDirectory, "old-tool-effect.release"),
+        "release effect settlement",
+      );
+      const completed = await waitForResumedAction(run.snapshot, "Consumed");
+      expect(completed.approval).toEqual(claimed.approval);
+      expect(completed.recoveryBinding).toEqual(claimed.recoveryBinding);
+      expect(completed.attempt0).toEqual(claimed.attempt0);
+      expect(completed.action?.state).toBe("Applied");
+      expect(completed.effectCount).toBe(1);
+      expect(completed.matchingInvocationCount).toBe(1);
+      expect(completed.executionApprovalCount).toBe(1);
+      expect(run.fixture.daemonErrors).toEqual([]);
+      expect(contender.daemonErrors).toEqual([]);
+    } finally {
+      await contender.crash();
+    }
+  });
 
   it("keeps StopRequested as the Execution cause when a P4 Denied winner committed first", async () => {
     const marker = `P38-STOP-DENIED-WINNER-${crypto.randomUUID().slice(0, 8)}`;

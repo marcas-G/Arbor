@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Effect } from "effect";
 import {
@@ -9,7 +9,11 @@ import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
-import { Principal, parse } from "../../../packages/domain/dist/index.js";
+import {
+  Principal,
+  parse,
+  WorkspaceId,
+} from "../../../packages/domain/dist/index.js";
 import { runExecution } from "../../../packages/execution-runtime/dist/index.js";
 import {
   BUILTIN_TOOLS,
@@ -123,6 +127,59 @@ const toolQualificationProbe = async (event) => {
   ) {
     await waitForGate("tool-effect", event);
     return;
+  }
+};
+
+let approvalTtlPauseTaken = false;
+const executableApprovalExpiryQualificationProbe = async (event) => {
+  const race = process.env.ARBOR_P4_STOP_TTL_RACE;
+  if (race === undefined) return;
+  if (
+    ((role === "old" &&
+      (race === "stop-wins" || race === "ttl-main-blocked")) ||
+      (role === "new" && race === "ttl-worker")) &&
+    event.boundary === "P38BeforeExecutableApprovalExpiryTransaction" &&
+    !approvalTtlPauseTaken &&
+    existsSync(join(gateDirectory, "ttl-before.request"))
+  ) {
+    approvalTtlPauseTaken = true;
+    emit({ ...event, boundary: "P38TTLBeforeExpiryTransaction" });
+    await waitForGate("ttl-before", event);
+    return;
+  }
+  if (
+    event.boundary === "P38AfterExecutableApprovalExpiryMutationBeforeCommit"
+  ) {
+    emit({ ...event, boundary: "P38TTLAfterExpiryScanBeforeCommit" });
+  }
+};
+
+const gatewayQualificationProbe = async (event) => {
+  if (
+    role === "old" &&
+    event.boundary === "P38ResolveApprovalBeforeCommit" &&
+    process.env.ARBOR_P4_P39_BEGIN_GATE === "1"
+  ) {
+    writeFileSync(join(gateDirectory, "p4-p39-begin.request"), "release");
+    emit(event);
+    return;
+  }
+  const race = process.env.ARBOR_P4_STOP_TTL_RACE;
+  if (
+    role !== "old" ||
+    race === undefined ||
+    (event.boundary !== "P38StopExecutionBeforeTransaction" &&
+      event.boundary !== "P38StopExecutionBeforeCommit")
+  ) {
+    return;
+  }
+  emit(event);
+  if (
+    race === "stop-wins" &&
+    event.boundary === "P38StopExecutionBeforeCommit" &&
+    existsSync(join(gateDirectory, "stop-commit.request"))
+  ) {
+    await waitForGate("stop-commit", event);
   }
 };
 
@@ -253,16 +310,36 @@ const executableToolQualificationProbe = async (event) => {
 
 const p39RecoveryBindingQualificationProbe = async (event) => {
   if (role !== "old") return;
-  if (event.boundary === process.env.ARBOR_P4_FENCE_ADMISSION_BOUNDARY) {
+  if (
+    event.boundary ===
+    (process.env.ARBOR_P4_P39_BINDING_BOUNDARY ??
+      process.env.ARBOR_P4_FENCE_ADMISSION_BOUNDARY)
+  ) {
     emit(event);
-    await waitForGate("tool-admission", event);
+    await waitForGate("p39-claim", event);
     return;
   }
   emit(event);
 };
+const transactionBeginQualificationProbe = async (event) => {
+  if (
+    process.env.ARBOR_P4_P39_BEGIN_GATE !== "1" ||
+    !existsSync(join(gateDirectory, "p4-p39-begin.request"))
+  ) {
+    return;
+  }
+  emit({
+    boundary: "P38P39BeforeBegin",
+    transactionBoundary: event.boundary,
+  });
+  await waitForGate("p39-begin", event);
+};
 const port = Number(process.env.ARBOR_HTTP_PORT);
 const config = {
   tickIntervalMs: 25,
+  ...(process.env.ARBOR_WORKSPACE_ID !== undefined
+    ? { workspaceId: parse(WorkspaceId)(process.env.ARBOR_WORKSPACE_ID) }
+    : {}),
   projectResourceProfiles: makeProjectResourceProfilePort(
     projectResourceProfilesFromEnvironment(),
   ),
@@ -277,6 +354,11 @@ const config = {
   p39RecoveryBindingQualificationProbe,
   executionLeaseQualificationProbe,
   schedulerQualificationProbe,
+  gatewayQualificationProbe,
+  executableApprovalExpiryQualificationProbe,
+  ...(process.env.ARBOR_P4_P39_BEGIN_GATE === "1"
+    ? { transactionBeginQualificationProbe }
+    : {}),
 };
 
 if (role === "new" && explicitExecutionTarget !== undefined) {
@@ -285,6 +367,10 @@ if (role === "new" && explicitExecutionTarget !== undefined) {
       executionId: explicitExecutionTarget,
     });
     explicitExecutionIds.add(explicitExecutionTarget);
+    emit({
+      boundary: "P4ExplicitRunExecutionStart",
+      executionId: explicitExecutionTarget,
+    });
     try {
       await Effect.runPromise(
         Effect.provide(
