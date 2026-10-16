@@ -500,7 +500,7 @@ const p39TerminalReceiptCase = (
           : terminalKind === "Success"
             ? { _tag: "Success" as const }
             : { _tag: "ExpectedFailure" as const },
-      resultRef: factOutcome === "Occurred" ? resultRef : null,
+      resultRef: terminalKind === "Success" ? resultRef : null,
     } satisfies ToolInvocationRecord,
     selected: {
       binding: retry.verifiedBinding,
@@ -1697,6 +1697,12 @@ describe("P4 tool runtime pipeline", () => {
       expect(trace.p40ReadFences).toEqual([receipt.context.executionFence]);
       expect(trace.p40ReadFenceTimes).toEqual(["2026-01-01T00:00:00.000Z"]);
       expect(trace.p39SelectedReads).toBe(1);
+      if (terminalOutcome === "ExpectedFailure") {
+        expect(receipt.prior.resultRef).toBeNull();
+        expect(receipt.selected.fact.resultRef).toBe(
+          "art_p4_occurred_terminal_result",
+        );
+      }
       expect(trace.reconciliationCalls ?? 0).toBe(0);
       expect(trace.reconciliationFactWrites ?? 0).toBe(0);
       expect(trace.resourceAdmissionCalls ?? 0).toBe(0);
