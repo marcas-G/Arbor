@@ -169,3 +169,14 @@ fixture used a pre-executor kill and could not yield a real Occurred result;
 after correcting that boundary, a shared RNO-only wait predicate and then an
 over-eager P3-at-P40-boundary oracle were corrected. The resulting four P40
 cells pass; this does not close AH7 or qualify the separate P3 matrix.
+
+### P3 NotOccurred ActionResult-commit checkpoint
+
+The NotOccurred P3 projection pair also passes in isolated serial real-process
+runs with zero retries: `recovers NotOccurred across
+AH7BeforeActionResultCommit` (105.024s) and `recovers NotOccurred across
+AH7AfterActionResultCommit` (81.591s). Both sides recover the same selected
+P39/P40 no-effect fact into one Action result and one ToolResult, without a
+second shell effect; the before-commit snapshot is Pending/no ToolResult and
+the after-commit snapshot is Applied with its committed ToolResult.
+Occurred and StillUnknown P3 cells remain unrun; AH7 remains PARTIAL / OPEN.
