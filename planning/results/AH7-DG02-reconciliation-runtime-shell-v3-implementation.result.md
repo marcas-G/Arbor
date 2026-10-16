@@ -1,5 +1,23 @@
 # AH7-DG-02 reconciliation runtime and shell@3 implementation result
 
+## Current qualification status — 2026-10-17
+
+The following scoped real-process qualifications are PASS: authority, approval
+and Stop drift (3/3); G0/G1 delayed source-I/O takeover; P40 settlement boundary
+matrix (4/4); P3 ActionResult boundary matrix (4/4); independent StillUnknown
+recovery; and trusted profile version/hash/effect-key drift (3/3). Evidence is
+recorded in the historical sections below and
+`planning/results/AH7-DG02-profile-drift-recovery.result.md`.
+
+AH7 remains **PARTIAL / OPEN**. These cases use a test-only trusted profile;
+production has no registered Reconcilable profile or authoritative source for
+external-effect proof. Remaining qualification includes the broader non-Success
+Observation replay/completion contract beyond the single ExpectedFailure
+process case, the production-approved Executable InvocationApproval handoff,
+and generation/concurrency/crash permutations outside the one G0/G1
+NotOccurred source-I/O case and the listed P40/P3 matrices. No overall AH7
+closure is claimed.
+
 Date: 2026-10-17
 Baseline: `fccd1c146e3ad12824cc20d6247d45bd52b57ba0`
 Authorization: `AUTHORIZE_AH7_DG02_RECONCILIATION_RUNTIME_AND_SHELL_V3_IMPLEMENTATION`
@@ -341,3 +359,26 @@ P40 hash failure, and lease-fence rejection. Full P4 pipeline:
 `packages/tool-runtime/test/p4-pipeline.test.ts` **57/57 PASS**.
 Typecheck, Biome and `git diff --check` pass. No real-process test was run;
 this remains unit/code evidence and AH7 remains PARTIAL.
+
+## Final qualification status — 2026-10-17
+
+Since the earlier checkpoints above, scoped PASS evidence now includes the
+authority/approval/Stop drift cases, G0/G1 delayed source-I/O takeover, all four
+P40 settlement-commit cases, all four P3 ActionResult-commit cases, the
+independent StillUnknown recovery, and all three trusted profile drift cases
+(version, hash, effect-key policy). The standalone profile-drift result records
+its runtime classification and count-helper verification.
+
+AH7 remains **PARTIAL / OPEN**. The remaining work is broader non-Success
+Observation replay and completion-response qualification beyond the one
+ExpectedFailure path; a production-approved Executable InvocationApproval
+handoff; and crash/concurrency permutations beyond the qualified matrices,
+including takeover states beyond the single G0/G1 NotOccurred source-I/O case.
+The test-only profile drift PASS does not establish a production
+Reconcilable profile: production registration remains empty until an
+authoritative external proof source and its effect identity/finality contract
+are approved and implemented. No AH7 phase-closure claim is made.
+
+Integration verification for this snapshot: `pnpm typecheck`, changed-file
+Biome, and `git diff --check` pass; the P4 pipeline and reconciliation-profile
+registry tests pass **62/62**. No daemon or full-suite test was run.
