@@ -239,6 +239,154 @@ export const createP32HistoricalTestImage = async (input: {
   }
 };
 
+/**
+ * Seed an owned P38 database with the common rows from a current schema-44
+ * snapshot before the explicit P39/P40/P41/P42 builder reconstructs a real
+ * schema-42 image. Ordinary entities use strict INSERT semantics so duplicate
+ * identities fail closed. Only the migration-created P10 singleton is
+ * replaced, and only by an exact UPDATE of its existing singleton key.
+ */
+export const copySchema44RowsIntoP38Seed = async (
+  sourceFilename: string,
+  targetFilename: string,
+): Promise<void> => {
+  const source = new DatabaseSync(sourceFilename, { readOnly: true });
+  const target = new DatabaseSync(targetFilename);
+  try {
+    const sourceVersion = Number(
+      (
+        source.prepare("PRAGMA user_version").get() as {
+          user_version: number;
+        }
+      ).user_version,
+    );
+    const targetVersion = Number(
+      (
+        target.prepare("PRAGMA user_version").get() as {
+          user_version: number;
+        }
+      ).user_version,
+    );
+    if (sourceVersion !== 44 || targetVersion !== 38) {
+      throw new Error(
+        `Schema snapshot copy requires current source v44 and P38 target v38; got ${sourceVersion} and ${targetVersion}`,
+      );
+    }
+
+    const sourceTables = new Set(
+      (
+        source
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+          )
+          .all() as Array<{ name: string }>
+      ).map((table) => table.name),
+    );
+    const targetTables = target
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      )
+      .all() as Array<{ name: string }>;
+    target.exec("PRAGMA foreign_keys = OFF");
+    target.exec("BEGIN IMMEDIATE");
+    try {
+      for (const { name } of targetTables) {
+        if (!sourceTables.has(name)) continue;
+        const columns = target
+          .prepare(`PRAGMA table_info(${JSON.stringify(name)})`)
+          .all() as Array<{ name: string }>;
+        const sourceColumns = new Set(
+          (
+            source
+              .prepare(`PRAGMA table_info(${JSON.stringify(name)})`)
+              .all() as Array<{ name: string }>
+          ).map((column) => column.name),
+        );
+        const commonColumns = columns
+          .map((column) => column.name)
+          .filter((column) => sourceColumns.has(column));
+        if (commonColumns.length === 0) continue;
+        const quotedTable = `"${name.replaceAll('"', '""')}"`;
+        const quotedColumns = commonColumns
+          .map((column) => `"${column.replaceAll('"', '""')}"`)
+          .join(", ");
+        const rows = source
+          .prepare(`SELECT ${quotedColumns} FROM ${quotedTable}`)
+          .all() as Array<Record<string, unknown>>;
+        if (rows.length === 0) continue;
+        const placeholders = commonColumns.map(() => "?").join(", ");
+
+        if (name === "p10_attention_dispatch_state") {
+          if (
+            commonColumns.includes("singleton") === false ||
+            rows.length !== 1 ||
+            rows[0]?.singleton !== 1
+          ) {
+            throw new Error(
+              "P10 dispatch state copy requires exactly singleton key 1",
+            );
+          }
+          const existing = target
+            .prepare("SELECT singleton FROM p10_attention_dispatch_state")
+            .all() as Array<{ singleton: number }>;
+          if (existing.length !== 1 || existing[0]?.singleton !== 1) {
+            throw new Error(
+              "P38 seed does not have exactly the expected P10 singleton row",
+            );
+          }
+          const mutableColumns = commonColumns.filter(
+            (column) => column !== "singleton",
+          );
+          const mutableValues = mutableColumns.map(
+            (column) => rows[0]?.[column],
+          );
+          const update = target.prepare(
+            `UPDATE ${quotedTable} SET ${mutableColumns
+              .map((column) => `"${column.replaceAll('"', '""')}" = ?`)
+              .join(", ")} WHERE "singleton" = ?`,
+          );
+          const changed = update.run(
+            ...(mutableValues as Parameters<typeof update.run>),
+            1,
+          );
+          if (Number(changed.changes) !== 1) {
+            throw new Error(
+              "P10 singleton UPDATE did not target exactly one row",
+            );
+          }
+          continue;
+        }
+
+        const insert = target.prepare(
+          `INSERT INTO ${quotedTable} (${quotedColumns}) VALUES (${placeholders})`,
+        );
+        for (const row of rows) {
+          insert.run(
+            ...(commonColumns.map((column) => row[column]) as Parameters<
+              typeof insert.run
+            >),
+          );
+        }
+      }
+      target.exec("COMMIT");
+    } catch (error) {
+      target.exec("ROLLBACK");
+      throw error;
+    }
+    const violations = target
+      .prepare("PRAGMA foreign_key_check")
+      .all() as Array<Record<string, unknown>>;
+    if (violations.length > 0) {
+      throw new Error(
+        `Schema snapshot copy produced foreign-key violations: ${JSON.stringify(violations.slice(0, 8))}`,
+      );
+    }
+  } finally {
+    target.close();
+    source.close();
+  }
+};
+
 /** Builds a pristine P32 migration-prefix database for exact schema checks. */
 export const createP32MigrationBaseline = async (
   filename: string,

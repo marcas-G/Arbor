@@ -1,6 +1,7 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -10,6 +11,10 @@ import {
   createSchema42TestDatabaseFactory,
   type Schema42TestDatabase,
 } from "../../../tests/support/schema42-database.js";
+import {
+  copySchema44RowsIntoP38Seed,
+  createP32HistoricalTestImage,
+} from "../../../tests/support/schema44-database.js";
 import {
   layer,
   P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
@@ -88,6 +93,164 @@ const runDatabase = <A>(
   );
 
 describe("central schema-42 test database fixture", () => {
+  it("updates only the exact P10 singleton and keeps other snapshot collisions strict", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "arbor-schema44-p38-copy-probe-"),
+    );
+    const sourceFilename = join(directory, "source-v44.sqlite");
+    const targetFilename = join(directory, "target-v38.sqlite");
+    const source = new DatabaseSync(sourceFilename);
+    const target = new DatabaseSync(targetFilename);
+    try {
+      source.exec(`
+        PRAGMA user_version = 44;
+        CREATE TABLE p10_attention_dispatch_state (
+          singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+          sequence INTEGER NOT NULL
+        );
+        INSERT INTO p10_attention_dispatch_state VALUES (1, 42);
+        CREATE TABLE strict_rows (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO strict_rows VALUES ('same-id', 'source');
+      `);
+      target.exec(`
+        PRAGMA user_version = 38;
+        CREATE TABLE p10_attention_dispatch_state (
+          singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+          sequence INTEGER NOT NULL
+        );
+        INSERT INTO p10_attention_dispatch_state VALUES (1, 0);
+        CREATE TABLE strict_rows (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO strict_rows VALUES ('same-id', 'target');
+      `);
+    } finally {
+      source.close();
+      target.close();
+    }
+
+    try {
+      await expect(
+        copySchema44RowsIntoP38Seed(sourceFilename, targetFilename),
+      ).rejects.toThrow(/UNIQUE constraint failed: strict_rows\.id/u);
+      const afterRollback = new DatabaseSync(targetFilename, {
+        readOnly: true,
+      });
+      try {
+        expect(
+          afterRollback
+            .prepare(
+              "SELECT singleton, sequence FROM p10_attention_dispatch_state",
+            )
+            .get(),
+        ).toEqual({ singleton: 1, sequence: 0 });
+        expect(
+          afterRollback.prepare("SELECT id, value FROM strict_rows").all(),
+        ).toEqual([{ id: "same-id", value: "target" }]);
+      } finally {
+        afterRollback.close();
+      }
+
+      const repair = new DatabaseSync(targetFilename);
+      try {
+        repair.prepare("DELETE FROM strict_rows WHERE id = ?").run("same-id");
+      } finally {
+        repair.close();
+      }
+      await copySchema44RowsIntoP38Seed(sourceFilename, targetFilename);
+      const copied = new DatabaseSync(targetFilename, { readOnly: true });
+      try {
+        expect(
+          copied
+            .prepare(
+              "SELECT singleton, sequence FROM p10_attention_dispatch_state",
+            )
+            .get(),
+        ).toEqual({ singleton: 1, sequence: 42 });
+        expect(
+          copied.prepare("SELECT id, value FROM strict_rows").all(),
+        ).toEqual([{ id: "same-id", value: "source" }]);
+      } finally {
+        copied.close();
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("copies rows from a verified schema-42 fixture into a real pre-binding P32 image", async () => {
+    const schema42 = await createSchema42TestDatabase({ seedP38 });
+    const p32Filename = join(schema42.directory, "historical-p32.sqlite");
+    try {
+      const source = new DatabaseSync(schema42.databaseFilename, {
+        readOnly: true,
+      });
+      try {
+        expect(
+          Number(
+            (
+              source.prepare("PRAGMA user_version").get() as {
+                user_version: number;
+              }
+            ).user_version,
+          ),
+        ).toBe(42);
+        expect(
+          source
+            .prepare("SELECT project_id FROM projects WHERE project_id = ?")
+            .get(projectId),
+        ).toBeDefined();
+        expect(
+          source
+            .prepare(
+              "SELECT execution_id FROM executions WHERE execution_id = ?",
+            )
+            .get(executionId),
+        ).toBeDefined();
+      } finally {
+        source.close();
+      }
+
+      await createP32HistoricalTestImage({
+        sourceFilename: schema42.databaseFilename,
+        targetFilename: p32Filename,
+      });
+      const p32 = new DatabaseSync(p32Filename, { readOnly: true });
+      try {
+        expect(
+          Number(
+            (
+              p32.prepare("PRAGMA user_version").get() as {
+                user_version: number;
+              }
+            ).user_version,
+          ),
+        ).toBe(32);
+        expect(
+          p32
+            .prepare("SELECT project_id FROM projects WHERE project_id = ?")
+            .get(projectId),
+        ).toBeDefined();
+        expect(
+          p32
+            .prepare(
+              "SELECT execution_id FROM executions WHERE execution_id = ?",
+            )
+            .get(executionId),
+        ).toBeDefined();
+        expect(
+          p32
+            .prepare(
+              "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assign_work_target_bindings'",
+            )
+            .all(),
+        ).toEqual([]);
+      } finally {
+        p32.close();
+      }
+    } finally {
+      schema42.cleanup();
+    }
+  }, 120_000);
+
   it("removes the exact directory if private ACL setup fails", () => {
     let createdDirectory: string | undefined;
     expect(() =>

@@ -1,11 +1,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { newUuid7 } from "../../../packages/application/src/formation-plan.js";
 import {
+  copySchema44RowsIntoP38Seed,
   createP32HistoricalTestImage,
   createP32MigrationBaseline,
+  createSchema42TestDatabase,
   upgradeSchema44TestDatabase,
 } from "../../support/schema44-database.js";
 import {
@@ -298,13 +300,92 @@ const schemaSnapshot = (db: DatabaseSync) => {
 };
 
 const makePreBindingP32Copy = async (
-  source: string,
+  currentSource: string,
   target: string,
+  priorCommittedCommandId: string,
 ): Promise<string> => {
-  await createP32HistoricalTestImage({
-    sourceFilename: source,
-    targetFilename: target,
+  const schema42 = await createSchema42TestDatabase({
+    parentDirectory: dirname(target),
+    prefix: "ah10-p32-schema42-source-",
+    seedP38: (p38Filename) =>
+      copySchema44RowsIntoP38Seed(currentSource, p38Filename),
   });
+  try {
+    const schema42Db = new DatabaseSync(schema42.databaseFilename, {
+      readOnly: true,
+    });
+    try {
+      const version = Number(
+        (
+          schema42Db.prepare("PRAGMA user_version").get() as {
+            user_version: number;
+          }
+        ).user_version,
+      );
+      if (version !== 42) {
+        throw new Error(
+          `P32 historical source must be a real schema-42 fixture; got ${version}`,
+        );
+      }
+      const committed = schema42Db
+        .prepare("SELECT resolution FROM commands WHERE command_id = ?")
+        .get(priorCommittedCommandId) as { resolution: string } | undefined;
+      if (committed?.resolution !== "Committed") {
+        throw new Error(
+          "schema-42 source omitted the exact committed AssignWork receipt",
+        );
+      }
+      const bindings = schema42Db
+        .prepare(
+          "SELECT command_id FROM assign_work_target_bindings WHERE command_id = ?",
+        )
+        .all(priorCommittedCommandId);
+      if (bindings.length !== 1) {
+        throw new Error(
+          "schema-42 source omitted the exact AssignWork binding row",
+        );
+      }
+    } finally {
+      schema42Db.close();
+    }
+    await createP32HistoricalTestImage({
+      sourceFilename: schema42.databaseFilename,
+      targetFilename: target,
+    });
+  } finally {
+    schema42.cleanup();
+  }
+
+  const p32Db = new DatabaseSync(target, { readOnly: true });
+  try {
+    const version = Number(
+      (p32Db.prepare("PRAGMA user_version").get() as { user_version: number })
+        .user_version,
+    );
+    if (version !== 32) {
+      throw new Error(`P32 historical copy ended at user_version ${version}`);
+    }
+    const committed = p32Db
+      .prepare("SELECT resolution FROM commands WHERE command_id = ?")
+      .get(priorCommittedCommandId) as { resolution: string } | undefined;
+    if (committed?.resolution !== "Committed") {
+      throw new Error(
+        "P32 copy omitted the exact committed AssignWork receipt",
+      );
+    }
+    const bindingTable = p32Db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assign_work_target_bindings'",
+      )
+      .all();
+    if (bindingTable.length !== 0) {
+      throw new Error(
+        "P32 pre-binding copy unexpectedly contains binding table",
+      );
+    }
+  } finally {
+    p32Db.close();
+  }
   return target;
 };
 
@@ -1630,6 +1711,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         recoveryDatabaseFile = await makePreBindingP32Copy(
           fixture.databaseFile,
           resolve(fixture.directory, "p32-pre-binding.db"),
+          priorCommittedCommandId ?? "",
         );
         const baselineFile = resolve(fixture.directory, "p32-baseline.db");
         await createP32MigrationBaseline(baselineFile);
@@ -1713,7 +1795,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       }
       if (crashSide === "legacy-p32-upgrade") {
         const upgraded = readRows(recoveryDatabaseFile);
-        expect(upgraded.schemaVersion).toBe(42);
+        expect(upgraded.schemaVersion).toBe(44);
         expect(upgraded.assignWorkTargetBindings).toHaveLength(0);
         expect(
           upgraded.commands.find(
