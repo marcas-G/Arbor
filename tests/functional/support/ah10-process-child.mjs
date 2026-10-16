@@ -31,8 +31,13 @@ const projectResourceProfiles = makeProjectResourceProfilePort(
 const gateDirectory = join(dirname(databaseFile), "ah10-gates");
 const recoveryProbeEvents = new Set();
 const reconciliationMode = process.env.ARBOR_AH7_TEST_RECONCILIATION_MODE;
+const reconciliationProfileDrift = process.env.ARBOR_AH7_TEST_PROFILE_DRIFT;
 const reconciliationProfileHash = createHash("sha256")
-  .update("arbor-ah7-test-reconciliation-profile-v1")
+  .update(
+    reconciliationProfileDrift === "hash"
+      ? "arbor-ah7-test-reconciliation-profile-v2"
+      : "arbor-ah7-test-reconciliation-profile-v1",
+  )
   .digest("hex");
 
 let testReconciliationConfig;
@@ -71,10 +76,13 @@ if (reconciliationMode !== undefined) {
     toolVersion: SHELL_DEFINITION.version,
     toolDefinitionHash: SHELL_DEFINITION.hash,
     profileId: "ah7-test-external-ledger",
-    profileVersion: "1",
+    profileVersion: reconciliationProfileDrift === "version" ? "2" : "1",
     profileHash: reconciliationProfileHash,
     profileProtocol: "ah7-test-ledger-v1",
-    effectKey: ({ invocationId }) => `ah7-test:${invocationId}`,
+    effectKey: ({ invocationId }) =>
+      reconciliationProfileDrift === "effect-key"
+        ? `ah7-test-v2:${invocationId}`
+        : `ah7-test:${invocationId}`,
     reconstructOccurred: ({ bytes, settlement }) => ({
       settlement,
       observation: {
