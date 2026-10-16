@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -460,6 +460,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
     readonly reconciliationMode?: "NotOccurred" | "Occurred" | "StillUnknown";
     readonly resourceChangeDuringReconcile?: boolean;
     readonly reconciliationDrift?: "authority" | "approval" | "stop";
+    readonly takeoverDuringReconciliationIo?: boolean;
   };
   const scenarios: ReadonlyArray<ReconciliationScenario> = [
     {
@@ -478,6 +479,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       boundary: "AH7AfterEffectAdmissionCommit",
       semantics: "Reconcilable",
       reconciliationMode: "NotOccurred",
+      takeoverDuringReconciliationIo: true,
     },
     {
       boundary: "AH7AfterEffectAdmissionCommit",
@@ -511,14 +513,17 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       reconciliationMode,
       resourceChangeDuringReconcile,
       reconciliationDrift,
+      takeoverDuringReconciliationIo,
     } = scenario;
     const testName =
       reconciliationMode !== undefined
-        ? resourceChangeDuringReconcile
-          ? "revalidates the Workspace resource snapshot after NotOccurred reconciliation I/O"
-          : reconciliationDrift !== undefined
-            ? `rejects NotOccurred retry after ${reconciliationDrift} drift during reconciliation I/O`
-            : `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
+        ? takeoverDuringReconciliationIo
+          ? "fences gen0 after delayed reconciliation I/O while gen1 retries the same invocation"
+          : resourceChangeDuringReconcile
+            ? "revalidates the Workspace resource snapshot after NotOccurred reconciliation I/O"
+            : reconciliationDrift !== undefined
+              ? `rejects NotOccurred retry after ${reconciliationDrift} drift during reconciliation I/O`
+              : `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
         : boundary === "AH7AfterToolIntentCommit"
           ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
           : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
@@ -536,6 +541,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           : `printf '%s\\n' '${marker}' >> '${effectFile}'`;
       const hits: AhProbeHit[] = [];
       const runtimeProbeEvents: Array<Readonly<Record<string, unknown>>> = [];
+      const processEvents: Array<Readonly<Record<string, unknown>>> = [];
       let targetProviderCalls = 0;
       let workProviderCalls = 0;
       let manualWaitCalls = 0;
@@ -658,6 +664,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           recordAhProbeLine(hits, line);
           try {
             const event = JSON.parse(line) as Record<string, unknown>;
+            processEvents.push(event);
             if (event.runtimeProbe === true) runtimeProbeEvents.push(event);
           } catch {
             // Ignore non-JSON daemon output in this test-only trace.
@@ -1018,9 +1025,281 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
           },
         });
+      } else if (
+        reconciliationMode !== undefined &&
+        takeoverDuringReconciliationIo
+      ) {
+        mkdirSync(join(fixture.directory, "ah10-gates"), { recursive: true });
+        await fixture.restart({
+          entry: reconciliationChild,
+          daemonEnvironment: {
+            ARBOR_AH10_ROLE: "old",
+            ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
+            ARBOR_AH10_PAUSE_LEASE_RENEWAL: "1",
+            ARBOR_AH7_TEST_RECONCILIATION_MODE: reconciliationMode,
+            ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
+            ARBOR_AH7_TEST_TRACE_RECONCILIATION_IO: "1",
+            ARBOR_AH7_TEST_PAUSE_RECONCILIATION_IO: "1",
+          },
+        });
+        const gen0SourceCall = await waitForPublic(
+          async () =>
+            processEvents.find(
+              (event) =>
+                event.boundary === "AH7ReconciliationSourceIO" &&
+                event.role === "old",
+            ),
+          (event) => event !== undefined,
+          30_000,
+        );
+        if (gen0SourceCall === undefined) {
+          throw new Error("AH7 gen0 source-I/O pause evidence is absent");
+        }
+        const leaseDb = new DatabaseSync(fixture.databaseFile);
+        let gen0Lease:
+          | {
+              execution_id: string;
+              worker_id: string;
+              worker_incarnation_id: string;
+              generation: number;
+              expires_at: string;
+            }
+          | undefined;
+        let gen0Generation: number;
+        try {
+          gen0Lease = leaseDb
+            .prepare(
+              `SELECT execution_id, worker_id, worker_incarnation_id, generation, expires_at
+                 FROM execution_leases WHERE execution_id = ?`,
+            )
+            .get(targetExecutionId) as typeof gen0Lease;
+          if (gen0Lease === undefined) {
+            throw new Error("AH7 old owner lease row is absent");
+          }
+          gen0Generation = Number(gen0Lease.generation);
+          const expiredAt = "1970-01-01T00:00:00.000Z";
+          const update = leaseDb
+            .prepare(
+              `UPDATE execution_leases SET expires_at = ?
+                WHERE execution_id = ? AND worker_id = ?
+                  AND worker_incarnation_id = ? AND generation = ? AND expires_at = ?`,
+            )
+            .run(
+              expiredAt,
+              targetExecutionId,
+              gen0Lease?.worker_id,
+              gen0Lease?.worker_incarnation_id,
+              gen0Lease?.generation,
+              gen0Lease?.expires_at,
+            );
+          expect(Number(update.changes)).toBe(1);
+        } finally {
+          leaseDb.close();
+        }
+        const gen1Daemon = await fixture.startAdditionalDaemon({
+          entry: reconciliationChild,
+          daemonEnvironment: {
+            ARBOR_AH10_ROLE: "new",
+            ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
+            ARBOR_AH7_TEST_RECONCILIATION_MODE: reconciliationMode,
+            ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
+            ARBOR_AH7_TEST_TRACE_RECONCILIATION_IO: "1",
+          },
+          onStdout: (line) => {
+            recordAhProbeLine(hits, line);
+            try {
+              processEvents.push(JSON.parse(line) as Record<string, unknown>);
+            } catch {
+              // Ignore non-JSON daemon output in this test-only trace.
+            }
+          },
+        });
+        const gen1Lease = await waitForPublic(
+          async () =>
+            processEvents.find(
+              (event) =>
+                event.boundary === "AH10AfterLeaseAcquired" &&
+                event.role === "new" &&
+                event.executionId === targetExecutionId,
+            ),
+          (event) => event !== undefined,
+          45_000,
+        );
+        expect(gen1Lease?.fencingGeneration).toBe(gen0Generation + 1);
+        expect(gen1Daemon.daemonProcessSnapshot().pid).not.toBe(
+          fixture.daemonProcessSnapshot()?.pid,
+        );
+        const gen1LeaseDb = new DatabaseSync(fixture.databaseFile, {
+          readOnly: true,
+        });
+        try {
+          const lease = gen1LeaseDb
+            .prepare(
+              `SELECT generation, worker_incarnation_id FROM execution_leases
+                WHERE execution_id = ?`,
+            )
+            .get(targetExecutionId) as
+            | { generation: number; worker_incarnation_id: string }
+            | undefined;
+          expect(lease).toMatchObject({
+            generation: gen0Generation + 1,
+          });
+          expect(lease?.worker_incarnation_id).not.toBe(
+            gen0Lease?.worker_incarnation_id,
+          );
+        } finally {
+          gen1LeaseDb.close();
+        }
+        const gen1SourceCall = await waitForPublic(
+          async () =>
+            processEvents.find(
+              (event) =>
+                event.boundary === "AH7ReconciliationSourceIO" &&
+                event.role === "new" &&
+                event.invocationId === hit?.invocationId,
+            ),
+          (event) => event !== undefined,
+          30_000,
+        );
+        expect(gen1SourceCall).toMatchObject({
+          attemptNo: 0,
+          observedEffect: 0,
+        });
+        const recoveredByGen1 = await waitForPublic(
+          async () => durableSnapshot(fixture.databaseFile),
+          (value) =>
+            value.toolInvocations.some(
+              (invocation) =>
+                invocation.invocation_id === hit?.invocationId &&
+                invocation.settlement_kind === "Success",
+            ) &&
+            value.actions.some(
+              (action) =>
+                action.execution_id === targetExecutionId &&
+                action.call_ref === hit?.callRef &&
+                action.state === "Applied",
+            ),
+          45_000,
+        );
+        expect(gen1Daemon.daemonProcessSnapshot().alive).toBe(true);
+        expect(recoveredByGen1.toolInvocations).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              invocation_id: hit?.invocationId,
+              settlement_kind: "Success",
+            }),
+          ]),
+        );
+        const factsBeforeGen0Return = readReconciliationFacts(
+          fixture.databaseFile,
+          targetInvocationId,
+        );
+        expect(factsBeforeGen0Return).toHaveLength(1);
+        expect(factsBeforeGen0Return[0]).toMatchObject({
+          attempt_no: 0,
+          outcome: "NotOccurred",
+          fact_disposition: "RecoveryInput",
+        });
+        const attemptsBeforeGen0Return = (() => {
+          const db = new DatabaseSync(fixture.databaseFile, {
+            readOnly: true,
+          });
+          try {
+            return db
+              .prepare(
+                `SELECT attempt_no, admission_state
+                   FROM tool_invocation_effect_attempts
+                  WHERE invocation_id = ? ORDER BY attempt_no`,
+              )
+              .all(targetInvocationId);
+          } finally {
+            db.close();
+          }
+        })();
+        expect(attemptsBeforeGen0Return).toHaveLength(2);
+        writeFileSync(
+          join(
+            fixture.directory,
+            "ah10-gates",
+            "old-reconciliation-io.release",
+          ),
+          "release stale gen0 source result",
+        );
+        await waitForPublic(
+          async () => {
+            const sourceDb = new DatabaseSync(fixture.databaseFile, {
+              readOnly: true,
+            });
+            try {
+              return sourceDb
+                .prepare(
+                  `SELECT returned_at FROM ah7_test_reconciliation_calls
+                    WHERE invocation_id = ? AND role = 'old'`,
+                )
+                .get(targetInvocationId) as
+                | { returned_at: string | null }
+                | undefined;
+            } finally {
+              sourceDb.close();
+            }
+          },
+          (row) => row?.returned_at !== null && row !== undefined,
+          20_000,
+        );
+        const takeoverDb = new DatabaseSync(fixture.databaseFile, {
+          readOnly: true,
+        });
+        try {
+          const calls = takeoverDb
+            .prepare(
+              `SELECT attempt_no, role, observed_effect, returned_at
+                 FROM ah7_test_reconciliation_calls WHERE invocation_id = ?
+                 ORDER BY call_no`,
+            )
+            .all(hit?.invocationId) as Array<Record<string, unknown>>;
+          expect(calls).toEqual([
+            expect.objectContaining({
+              attempt_no: 0,
+              role: "old",
+              observed_effect: 0,
+            }),
+            expect.objectContaining({
+              attempt_no: 0,
+              role: "new",
+              observed_effect: 0,
+              returned_at: expect.any(String),
+            }),
+          ]);
+          expect(
+            readReconciliationFacts(fixture.databaseFile, hit.invocationId),
+          ).toEqual(factsBeforeGen0Return);
+          const externalEffects = takeoverDb
+            .prepare(
+              "SELECT effect_key FROM ah7_test_external_effects WHERE effect_key = ?",
+            )
+            .all(`ah7-test:${hit.invocationId}`);
+          expect(externalEffects).toHaveLength(1);
+          const attempts = takeoverDb
+            .prepare(
+              `SELECT attempt_no, admission_state
+                 FROM tool_invocation_effect_attempts
+                WHERE invocation_id = ? ORDER BY attempt_no`,
+            )
+            .all(hit.invocationId) as Array<Record<string, unknown>>;
+          expect(attempts).toHaveLength(2);
+          expect(attempts).toEqual(attemptsBeforeGen0Return);
+          expect(attempts.map((attempt) => attempt.attempt_no)).toEqual([0, 1]);
+          expect(attempts.map((attempt) => attempt.admission_state)).toEqual([
+            "MayHaveStarted",
+            "MayHaveStarted",
+          ]);
+        } finally {
+          takeoverDb.close();
+        }
+        await gen1Daemon.crash();
       } else if (reconciliationMode !== undefined) {
         const factBoundary =
-          reconciliationMode === "NotOccurred"
+          String(reconciliationMode) === "NotOccurred"
             ? "AH7BeforeReconciliationFactCommit"
             : "AH7AfterReconciliationFactCommit";
         await fixture.restart({
