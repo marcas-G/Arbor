@@ -108,6 +108,21 @@ Resolver itself does not read receipts or mutate state. The Gateway's
 in-transaction exact receipt replay and final authority/precondition checks
 remain authoritative (DID §4.1B; P1 `01` §3; `03` §3.1).
 
+P8 v1.46 adds one declared `canonicalFacts.retryVerificationOrigin` input for
+the permanent non-receipt origin fact. Application/Composition loads this
+immutable origin by candidate CommandId through the P8 origin store after
+strict codec and Actor/Principal binding; it never reads CommandStore or a
+receipt. The Resolver remains pure (`R = never`) and consumes only that
+declared snapshot. The origin contains CommandId, ProjectId, original actor,
+source Verification/Work, successor Verification/verifier Execution and
+createdAt; it contains no fingerprint/schema/algorithm, summary, revision,
+payload, or receipt data.
+An absent origin is no replay authority. A malformed, duplicate, contradictory,
+or unreadable stored origin is not treated as absence: Composition returns
+typed `PersistenceCorruption<"RetryVerificationOriginStore">`, which the
+external boundary maps to the fixed safe non-retryable corruption Problem
+before Gateway. No row contents or receipt data are exposed.
+
 `semanticRequestFingerprint` is **computed by the Application** (P1 `01` §4); the resolver never computes or re-derives it. `canonicalFacts` / `grants` are **declared input snapshots**, not live I/O ports.
 
 ## 2A. Resolver port (entry point, E-05)
@@ -217,6 +232,10 @@ VerifiedRuntimeCommandAuthority resolver-producible variants ONLY:
                                 StopExecutionAuthority (submissionOrigin "External");
                                 SettleExecutionAuthority is NOT produced here
                                 (origin ExecutionOrigin | RecoveryController)
+RetryVerificationReplayOnlyAuthority
+                                P8 `01` §3A: only permanent origin plus current
+                                Resolver authorization; Gateway consumes it
+                                only through an existing receipt tuple branch
 InvocationAuthority             P4 `03` §2: tool capability ceiling + resource spaces
                                 (produced by resolveInvocation, NOT resolve — N-03)
 InvocationApproval              P4 `03` §4: Exact-Intent approval
@@ -369,6 +388,33 @@ independently revalidates these facts in the canonical transaction, including
 old verifier ownership against the Verification's captured owner snapshot.
 Agent grants, verifier Execution authority, RecoveryController, scheduler,
 Attention and arbitrary External command origin cannot construct this fact.
+
+For a historical source after a successful RetryVerification, the Resolver may
+produce `RetryVerificationReplayOnlyAuthority` only when the declared permanent
+origin fact matches the candidate CommandId, ProjectId, original actor, source
+Work and source Verification; the authenticated principal still equals the
+original actor and currently has the exact Root-local or direct-Parent human
+governance authority for that source. A different source/project/actor,
+missing origin, Agent, revoked authority or changed owner that no longer
+authorizes the original actor yields no fact and the generic denial before
+Gateway. Current visibility is re-evaluated on every replay; origin does not
+preserve authority after revocation or owner change.
+
+Origin matching does not compare expected revision, summary, successor
+Verification/Execution IDs, semantic fingerprint, Handler schema version, or
+fingerprint algorithm. The produced authority remains exact-bound to the
+current candidate's commandId/project/fingerprint under P1 `02A`; it does not
+compare those tuple values with the origin row. For the same CommandId and
+source scope, those candidate fields reach Gateway's existing complete tuple
+comparison, which remains the
+only receipt read and returns the existing `IdempotencyConflict` branch before
+decoding either JSON field. The `RetryVerification` handler accepts only
+`RetryVerificationAuthority`; it never accepts replay-only authority. If an
+origin exists but Gateway finds no corresponding receipt, P1 returns the
+fixed safe `PersistenceCorruption<"CommandStore">` disposition without
+handler invocation or writes. An unbound legacy disposition has no replay
+authority and is generic-denied; its human-only P6 Inbox item is not an Agent
+instruction or an Attention source.
 
 - The resolver is a deterministic function of its **declared inputs**: same
   `(principal, submissionContext, envelope, semanticRequestFingerprint, canonicalFacts,

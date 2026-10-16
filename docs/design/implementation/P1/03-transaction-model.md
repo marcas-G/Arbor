@@ -84,6 +84,8 @@ transact {
            return existing Receipt            // no domain re-execution
       else:
            return TerminalRejected(IdempotencyConflict)   // deterministic replay response; the existing row is not overwritten
+  if row absent and authority is RetryVerificationReplayOnlyAuthority:
+      fail PersistenceCorruption<"CommandStore">  // roll back; no attempt/handler/write
   if ExecutionOrigin:
       fence check   (see §4)
       stop check    (see §4)
@@ -94,6 +96,8 @@ transact {
   preconditions / invariants
   apply domain transition
   write canonical state
+  if this is a successful RetryVerification:
+      write immutable retry_verification_origins fact in this transaction
   write Committed receipt + result_json
   append Domain Events (Committed only)
   recordResolvingAttempt(Committed)
@@ -101,9 +105,16 @@ transact {
 COMMIT
 ```
 
-The existing-receipt branch precedes the authority check: an authoritative
-resolution is replayed **without** re-running the authority predicate
-(P1-DG-11). Authority is not part of `semanticRequestFingerprint`.
+The existing-receipt branch precedes the final in-transaction authority check:
+an authorized resolution is replayed **without** re-running the authority
+predicate (P1-DG-11). External requests have already passed the P12 current
+visibility/authorization check before this Gateway transaction begins.
+Authority is not part of `semanticRequestFingerprint`. The P8
+`RetryVerificationReplayOnlyAuthority` is a narrow exception to the absent-row
+continuation only: it is usable on an existing exact receipt, while the
+existing-row tuple mismatch still returns `IdempotencyConflict`; an absent
+receipt fails closed as `PersistenceCorruption<"CommandStore">` and cannot
+fall through to the handler.
 
 For the exact-tuple existing-receipt branch, the Application decoder specified
 by `01-command-contracts.md` §3A runs inside this same transaction, after the
@@ -115,7 +126,8 @@ unchanged, no handler/canonical/event/receipt write occurs, and no
 `TransactionOperationalFailure` and cannot become a receipt or
 `TerminalRejected`. No data repair is attempted.
 
-Atomic: canonical state + Committed receipt + events.
+Atomic: canonical state, optional P8 retry origin (for successful
+RetryVerification), Committed receipt, and Events.
 
 **FT-DG-01 OPEN-3 operational successor:** a non-empty Profile CreateProject
 also writes its `WorkspaceResourceActivationIntent(Pending)` and

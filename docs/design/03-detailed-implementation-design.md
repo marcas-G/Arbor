@@ -1,10 +1,49 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.45\
+**Version:** 1.46\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.44\
-**Date:** 2026-10-12\
+**Supersedes:** v1.45\
+**Date:** 2026-10-16\
 **Depends on:** `Arbor System Design Specification v1.17`
+
+**Governance changes (v1.45 → v1.46): F23 / P8 permanent RetryVerification replay origin**
+
+- The accepted scope narrows P8 exact replay to a currently authorized exact
+  retry: every replay re-runs P12 actor/project/source visibility and exact
+  current Root-local or direct-Parent human governance. Revoked/changed-owner
+  authorization or different actor/project/source returns the generic Resolver
+  denial before Gateway and reads no receipt. A same-CommandId/same-source
+  changed summary, expected revision or successor ID reaches Gateway, whose
+  existing full tuple compare alone returns `IdempotencyConflict` before JSON
+  decoding. DID §4.1B, P1 `01`/`03`, and the Gateway `BEGIN IMMEDIATE` receipt
+  linearization point remain unchanged.
+- P8 records one immutable `retry_verification_origins` fact for successful
+  handoff, with only CommandId, ProjectId, original actor, source Work and
+  Verification, successor Verification and verifier Execution, and creation
+  time. It stores no payload, summary, fingerprint, schema/algorithm version
+  or receipt. The fact has the same retention lifetime as its permanent
+  Command receipt and is independent of Domain Event pruning. If its
+  replay-only authority reaches Gateway but the receipt is absent, the existing
+  safe `PersistenceCorruption<"CommandStore">` boundary returns with no handler
+  or writes.
+- Historical origins are backfilled only from a strict successful P8 receipt,
+  the exact retained conclusion/start Event pair, and canonical successor /
+  verifier-binding facts. Unprovable recognized successes preserve their
+  receipts, receive immutable `UnboundLegacy` disposition, and admit one
+  human-only P6 Governance Inbox item; replay is generic-denied. This is not a
+  P10 Attention source, not an Agent instruction, and not an automatic retry.
+- P1 `04` reserves an ordered origin/disposition migration, ID/name **TBD**;
+  no migration is registered or executable under this design landing. Its
+  atomicity, immutable FK/uniqueness, repeat-upgrade, retention and evidence-
+  gated backfill rules are owned by the accepted P1/P8 sections. Production
+  code, DDL activation and test implementation remain separately authorized.
+- Acceptance basis: token
+  `ACCEPT_F23_P8_PERMANENT_REPLAY_ORIGIN_AND_LEGACY_DISPOSITION`, fixed
+  proposal SHA-256
+  `6BEEC14ED975D7322003C95D28F63D161C82F4EFA4B584ECAA99D1120BE712CA`;
+  decision record `planning/results/F23-retry-verification-permanent-replay-governance-acceptance-and-landing.md`;
+  post-landing consistency review
+  `planning/results/F23-retry-verification-permanent-replay-design-landing.review.md`.
 
 **Governance changes (v1.44 → v1.45): P41/0041 fact-key nullability amendment**
 
