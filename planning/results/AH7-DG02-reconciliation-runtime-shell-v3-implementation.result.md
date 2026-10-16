@@ -208,3 +208,20 @@ external effects. Authority, approval and Stop drift scenarios each now have
 one isolated real-process PASS after the retry-gate handoff correction. This
 does not establish the remaining AH7 process matrix or close AH7; AH7 remains
 PARTIAL.
+
+### G0/G1 takeover during delayed reconciliation source I/O — PASS
+
+The isolated test-only `NotOccurred` source-I/O takeover case passed on
+`3f8eb34d538b69f53206ec93f43d4e0c6518fa7a` after rebase onto production
+baseline `7d722de2ed577f9b96cfad71149b4a0fe83affd2`. G0 remained alive with its
+source result gated while G1 acquired the next fencing generation through
+LeaseService. G1 completed attempt 1 on the same invocation, one P39 fact and
+one external effect. After G0's source result returned, the fact and attempt
+records were unchanged. The workspace marker confirms one shell effect and the
+same ProviderTurn/action identity was reused. The fixture advances lease
+expiry by test-only CAS; this is not natural TTL timing evidence. Full command,
+counts, first-run observation defect and correction are recorded in
+`planning/results/AH7-DG02-G0-G1-source-io-takeover.result.md`.
+
+This qualifies only the covered G0/G1 `NotOccurred` source-I/O case. AH7 stays
+PARTIAL; no production Reconcilable profile or complete AH7 closure is claimed.
