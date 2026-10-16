@@ -83,8 +83,10 @@ and the remaining crash/concurrency matrix are not qualified by this addendum.
 
 `tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts`
 now contains four P40 terminal-selection cases (NotOccurred/Occurred, each
-before and after settlement COMMIT) and six P3 ActionResult projection cases
-(NotOccurred/Occurred/StillUnknown, each before and after commit). The child
+before and after settlement COMMIT) and four P3 terminal ActionResult
+projection cases (NotOccurred/Occurred, each before and after commit).
+StillUnknown is covered by its independent terminal recovery case, not as an
+ActionResult-commit boundary. The child
 process test probe gates those durable boundaries; each case checks the
 independently visible pre/post-commit state, then restarts and checks the
 existing exact invocation, selected fact, result, action, observation and
@@ -93,11 +95,9 @@ test-only resource-revision change to reach the terminal
 `ReconciledNoEffect` selection; P3 NotOccurred cases retain the ordinary
 single same-invocation retry.
 
-These are **source additions only; real-process qualification is pending**.
-The focused process run was stopped at the coordinating agent's request while
-other daemon suites competed for readiness. No PASS or phase-closure claim is
-recorded. Static checks on the changed test/probe files passed: typecheck,
-Biome, and `git diff --check`. AH7 remains PARTIAL / OPEN.
+At the time of this source-addendum these were **source additions only**;
+real-process qualification is recorded in the later matrix progress sections
+below. No AH7 phase-closure claim is made. AH7 remains PARTIAL / OPEN.
 
 The exact P39 replay path now has a P4 pipeline code checkpoint documented in
 `planning/results/AH7-DG02-reconciliation-runtime-shell-v3-implementation.result.md`:
@@ -163,8 +163,8 @@ oracle only treats NotOccurred resource/authority/approval/stop drift as a
 no-effect retry denial; P40-only source-step cursor remains 0 or 1 while its
 provider-turn identity/hash/session sequence stay exact. At the P40 after-
 commit probe the P3 ToolResult is still absent; after the next restart the
-final assertions require unique Action/ToolResult convergence. The P3
-projection crash cells in this matrix remain unrun. The initial Occurred
+final assertions require unique Action/ToolResult convergence. The separate
+P3 matrix evidence is recorded below. The initial Occurred
 fixture used a pre-executor kill and could not yield a real Occurred result;
 after correcting that boundary, a shared RNO-only wait predicate and then an
 over-eager P3-at-P40-boundary oracle were corrected. The resulting four P40
@@ -179,7 +179,8 @@ AH7AfterActionResultCommit` (81.591s). Both sides recover the same selected
 P39/P40 no-effect fact into one Action result and one ToolResult, without a
 second shell effect; the before-commit snapshot is Pending/no ToolResult and
 the after-commit snapshot is Applied with its committed ToolResult. At that
-checkpoint, Occurred and StillUnknown P3 cells remained unrun.
+checkpoint the Occurred P3 pair and independent StillUnknown case remained
+pending.
 
 ### P3 Occurred ActionResult-commit checkpoint
 
@@ -191,5 +192,19 @@ effect and result artifact but before settlement, allowing the trusted
 profile to return Occurred from its external-effect ledger. Both sides
 converge the authenticated P39 selection/P40 Success into one Applied Action
 and one ToolResult while preserving the single real external effect. P3
-NotOccurred and Occurred now pass both ActionResult commit sides; StillUnknown
-P3 cells remain unrun, and AH7 remains PARTIAL / OPEN.
+NotOccurred and Occurred pass both ActionResult commit sides. StillUnknown is
+qualified separately via the terminal recovery case below; AH7 remains
+PARTIAL / OPEN.
+
+### Independent StillUnknown terminal recovery
+
+The existing `recovers StillUnknown from a test-only trusted profile after a
+daemon restart` case passes 1/1 (75.188s, serial, zero retries). The initial
+crash is after effect admission but before the first P39 fact; on restart the
+unknown RecoveryInput fact commits, the daemon is killed after commit, and a
+second restart converges. P4 remains unsettled, P3 reports
+`OutcomeUnknown`/`ReconciliationPending`, and the executor/effect is not
+replayed; no result is inferred. StillUnknown does not enter the P3
+ActionResult-commit matrix because that runtime boundary is not reached. AH7
+remains PARTIAL / OPEN; production profile-version drift and other authorized
+takeover/concurrency cells remain open.
