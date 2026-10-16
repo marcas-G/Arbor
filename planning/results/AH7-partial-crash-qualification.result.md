@@ -134,3 +134,16 @@ artifact ref; Success requires three-way resultRef equality. Focused receipt
 tests pass 3/3 and full P4 pipeline 57/57; typecheck, Biome and diff-check
 pass. Still no real-process run for this checkpoint; AH7 remains PARTIAL /
 OPEN.
+
+### P40 NotOccurred settlement-commit-after checkpoint
+
+The isolated real-process case `qualifies the P40 NotOccurred selection
+across AH7AfterToolSettlementCommit` passes 1/1 (serial, no file parallelism,
+zero retries). The P40 terminal fact/selection and action projection checks
+pass. The recovered source step retains the same provider-turn id, decoded
+output hash, and model-output session sequence; the diagnostic run observed
+`next_action_index = 0`. Since this boundary qualifies P40 settlement only,
+the P40 oracle now permits cursor 0 or 1 and records the observed cursor;
+non-P40 recovery cases still require cursor 1. This does not qualify P3
+projection convergence or the other P40 matrix cells. AH7 remains PARTIAL /
+OPEN.
