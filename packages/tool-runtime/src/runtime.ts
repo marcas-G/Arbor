@@ -958,10 +958,12 @@ export const ToolRuntimeLive = (
                   : (observation._tag === "Success" ||
                       observation._tag === "ExpectedFailure") &&
                     recorded.settlement?._tag === observation._tag &&
-                    (observation._tag !== "Success" ||
-                      observation.resultRef ===
-                        selectedEvidence.fact.resultRef) &&
-                    recorded.resultRef === selectedEvidence.fact.resultRef;
+                    (observation._tag === "Success"
+                      ? observation.resultRef ===
+                          selectedEvidence.fact.resultRef &&
+                        recorded.resultRef === selectedEvidence.fact.resultRef
+                      : recorded.resultRef === null &&
+                        selectedEvidence.fact.resultRef !== null);
               if (!exactReceiptSource || !observationMatchesReceipt) {
                 return yield* recordReplayFailure(
                   intent,

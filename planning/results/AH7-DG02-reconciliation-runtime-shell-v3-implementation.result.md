@@ -306,13 +306,16 @@ current-region replay path. A selected fact is accepted only after exact P3
 source, binding, attempt, profile, outcome and artifact/result-ref checks; a
 present but mismatched selection fails closed. Occurred proofs accept P40
 Success or ExpectedFailure only when the persisted invocation resultRef and
-P40/selected-fact result references agree. Ordinary settled receipts retain
-the original strict region comparison.
+P40/selected-fact result references agree. The final ExpectedFailure
+refinement applies the P4 contract: recorded resultRef is null, while the
+authenticated selected P39 Occurred fact retains its non-null artifact ref;
+Success still requires all three references to agree. Ordinary settled
+receipts retain the original strict region comparison.
 
 Focused B2 suite: **13/13 PASS**, including terminal RNO, Occurred Success,
 Occurred ExpectedFailure, selected-none ordinary Success fallback, strict
 ordinary drift, P3 identity/approval mismatches, missing/corrupt selection,
 P40 hash failure, and lease-fence rejection. Full P4 pipeline:
 `packages/tool-runtime/test/p4-pipeline.test.ts` **57/57 PASS**.
-Typecheck, Biome and `git diff --check` pass. No real-process test was run; this
-remains unit/code evidence and AH7 remains PARTIAL.
+Typecheck, Biome and `git diff --check` pass. No real-process test was run;
+this remains unit/code evidence and AH7 remains PARTIAL.

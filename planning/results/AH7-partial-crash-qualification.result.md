@@ -128,7 +128,9 @@ or AH7 closure is claimed.
 The subsequent provenance correction makes selected P39 evidence, rather than
 the terminal settlement tag, authorize region-drift receipt replay. A missing
 selection falls back to strict current-region handling; a present mismatched
-selection fails closed. Occurred ExpectedFailure receipts now have explicit
-resultRef matching. Focused B2 tests pass 13/13 and full P4 pipeline 57/57;
-typecheck, Biome, and diff-check pass. Still no real-process run for this
-checkpoint; AH7 remains PARTIAL / OPEN.
+selection fails closed. Occurred ExpectedFailure receipts require recorded P4
+resultRef `null` while the authenticated selected P39 fact retains a non-null
+artifact ref; Success requires three-way resultRef equality. Focused receipt
+tests pass 3/3 and full P4 pipeline 57/57; typecheck, Biome and diff-check
+pass. Still no real-process run for this checkpoint; AH7 remains PARTIAL /
+OPEN.
