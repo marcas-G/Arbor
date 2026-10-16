@@ -231,6 +231,11 @@ interface PipelineTrace {
     ReadonlyArray<import("@arbor/domain").ResourceAddress>
   >;
   workspaceSnapshots?: Array<{
+    readonly phase:
+      | "InitialBoundaryResolve"
+      | "RefreshedBoundaryResolve"
+      | "FinalClaimFreshness";
+    readonly workspaceId: WorkspaceId;
     readonly revision: number;
     readonly addresses: ReadonlyArray<import("@arbor/domain").ResourceAddress>;
   }>;
@@ -242,6 +247,17 @@ interface PipelineTrace {
   >;
   claimedBindings?: Array<RecoveryBindingV1>;
 }
+
+const fixtureWorkspaceAddresses = [
+  { _tag: "GitWorktree", path: "/repo/a" },
+] as const satisfies ReadonlyArray<import("@arbor/domain").ResourceAddress>;
+
+const expectWorkspaceSnapshotPhases = (
+  trace: PipelineTrace,
+  expected: NonNullable<PipelineTrace["workspaceSnapshots"]>,
+) => {
+  expect(trace.workspaceSnapshots).toEqual(expected);
+};
 
 const app = (
   admissionDeny = false,
@@ -523,17 +539,31 @@ const app = (
         workspaceReadIndex += 1;
         const revisions = trace?.workspaceRevisionSequence;
         const addressesByRead = trace?.workspaceBoundaryAddressSequence;
+        const resolvedEnvironments = trace?.resolvedEnvironmentRevisionSequence;
+        const refreshRequired =
+          resolvedEnvironments !== undefined &&
+          resolvedEnvironments[0] !== resolvedEnvironments[1];
         const revision = revisions?.[readIndex] ?? revisions?.at(-1) ?? 0;
-        const addresses = addressesByRead?.[readIndex] ??
+        const addresses =
+          addressesByRead?.[readIndex] ??
           addressesByRead?.at(-1) ??
-          trace?.workspaceBoundaryAddresses ?? [
-            { _tag: "GitWorktree", path: "/repo/a" },
-          ];
+          trace?.workspaceBoundaryAddresses ??
+          fixtureWorkspaceAddresses;
         if (trace !== undefined) {
           if (trace.workspaceSnapshots === undefined) {
             trace.workspaceSnapshots = [];
           }
-          trace.workspaceSnapshots.push({ revision, addresses });
+          trace.workspaceSnapshots.push({
+            phase:
+              readIndex === 0
+                ? "InitialBoundaryResolve"
+                : refreshRequired && readIndex === 1
+                  ? "RefreshedBoundaryResolve"
+                  : "FinalClaimFreshness",
+            workspaceId,
+            revision,
+            addresses,
+          });
         }
         return Effect.succeed(
           Option.some({
@@ -1371,6 +1401,23 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.approvalConsumes).toBe(1);
     expect(trace.p39BindingCalls).toBe(1);
     expect(trace.claimedBindings?.[0]?.environmentRevision).toBe("rev-exact");
+    expectWorkspaceSnapshotPhases(trace, [
+      {
+        phase: "InitialBoundaryResolve",
+        workspaceId,
+        revision: 0,
+        addresses: fixtureWorkspaceAddresses,
+      },
+      {
+        phase: "FinalClaimFreshness",
+        workspaceId,
+        revision: 0,
+        addresses: fixtureWorkspaceAddresses,
+      },
+    ]);
+    expect(trace.claimedBindings?.[0]?.resourceBoundaryRevision).toBe(
+      trace.workspaceSnapshots?.[0]?.revision,
+    );
     expect(trace.effectAdmissions).toBe(1);
   });
 
@@ -1407,6 +1454,29 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.approvalConsumes).toBe(1);
     expect(trace.p39BindingCalls).toBe(1);
     expect(trace.claimedBindings?.[0]?.environmentRevision).toBe("rev-fresh");
+    expectWorkspaceSnapshotPhases(trace, [
+      {
+        phase: "InitialBoundaryResolve",
+        workspaceId,
+        revision: 0,
+        addresses: fixtureWorkspaceAddresses,
+      },
+      {
+        phase: "RefreshedBoundaryResolve",
+        workspaceId,
+        revision: 0,
+        addresses: fixtureWorkspaceAddresses,
+      },
+      {
+        phase: "FinalClaimFreshness",
+        workspaceId,
+        revision: 0,
+        addresses: fixtureWorkspaceAddresses,
+      },
+    ]);
+    expect(trace.claimedBindings?.[0]?.resourceBoundaryRevision).toBe(
+      trace.workspaceSnapshots?.[1]?.revision,
+    );
     expect(trace.effectAdmissions).toBe(1);
   });
 
@@ -1477,6 +1547,29 @@ describe("P4 tool runtime pipeline", () => {
       }
       expect(trace.environmentResolutions).toBe(4);
       expect(trace.workspaceSnapshots).toHaveLength(3);
+      expectWorkspaceSnapshotPhases(trace, [
+        {
+          phase: "InitialBoundaryResolve",
+          workspaceId,
+          revision: 0,
+          addresses: originalAddresses,
+        },
+        {
+          phase: "RefreshedBoundaryResolve",
+          workspaceId,
+          revision: 0,
+          addresses: originalAddresses,
+        },
+        {
+          phase: "FinalClaimFreshness",
+          workspaceId,
+          revision: changedWorkspaceField === "revision" ? 1 : 0,
+          addresses:
+            changedWorkspaceField === "addresses"
+              ? changedAddresses
+              : originalAddresses,
+        },
+      ]);
       expect(trace.resourceAdmissionCalls).toBe(0);
       expect(trace.intentWrites).toBe(0);
       expect(trace.approvalConsumes).toBe(0);
@@ -1706,7 +1799,7 @@ describe("P4 tool runtime pipeline", () => {
       _tag: "Denied",
       reasonCode: "ResourceAdmissionDenied",
     });
-    expect(trace).toEqual({
+    expect(trace).toMatchObject({
       noEffectDenials: ["ResourceAdmissionDenied"],
       events: ["denied"],
       approvalConsumer: null,
@@ -1714,6 +1807,20 @@ describe("P4 tool runtime pipeline", () => {
       effectAdmissions: 0,
       approvalConsumes: 0,
     });
+    expectWorkspaceSnapshotPhases(trace, [
+      {
+        phase: "InitialBoundaryResolve",
+        workspaceId,
+        revision: 0,
+        addresses: fixtureWorkspaceAddresses,
+      },
+      {
+        phase: "FinalClaimFreshness",
+        workspaceId,
+        revision: 0,
+        addresses: fixtureWorkspaceAddresses,
+      },
+    ]);
   });
 
   it("returns Denied for an unknown tool", async () => {
@@ -1754,7 +1861,7 @@ describe("P4 tool runtime pipeline", () => {
     expect(result).toMatchObject({
       _tag: "ApprovalRequired",
     });
-    expect(trace).toEqual({
+    expect(trace).toMatchObject({
       noEffectDenials: [],
       events: [],
       approvalConsumer: null,
@@ -1762,6 +1869,14 @@ describe("P4 tool runtime pipeline", () => {
       effectAdmissions: 0,
       approvalConsumes: 0,
     });
+    expectWorkspaceSnapshotPhases(trace, [
+      {
+        phase: "InitialBoundaryResolve",
+        workspaceId,
+        revision: 0,
+        addresses: fixtureWorkspaceAddresses,
+      },
+    ]);
   });
 
   it("does not accept a P38 approval id without its exact executable context", async () => {
@@ -1789,7 +1904,7 @@ describe("P4 tool runtime pipeline", () => {
       _tag: "Denied",
       reasonCode: "ApprovalNotFound",
     });
-    expect(trace).toEqual({
+    expect(trace).toMatchObject({
       noEffectDenials: ["ApprovalNotFound"],
       events: ["denied"],
       approvalConsumer: null,
@@ -1797,6 +1912,14 @@ describe("P4 tool runtime pipeline", () => {
       effectAdmissions: 0,
       approvalConsumes: 0,
     });
+    expectWorkspaceSnapshotPhases(trace, [
+      {
+        phase: "InitialBoundaryResolve",
+        workspaceId,
+        revision: 0,
+        addresses: fixtureWorkspaceAddresses,
+      },
+    ]);
   });
 
   it("fails closed when this approval's consumer has no recorded invocation", async () => {
