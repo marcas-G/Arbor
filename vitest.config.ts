@@ -5,10 +5,10 @@ export default defineConfig({
     globalSetup: ["./tests/support/p39-windows-global-setup.ts"],
     setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
     testTimeout: 30_000,
-    // Keep the root core suite within the measured memory budget on this
-    // four-logical-CPU Windows host. Functional, architecture, and Web suites
-    // use their own configs and worker budgets.
-    maxWorkers: 2,
+    // Prefer reliability on the constrained Windows host; performance tuning
+    // is deferred. Functional, architecture, and Web suites use separate
+    // configs and worker budgets.
+    maxWorkers: 1,
     include: [
       "packages/*/test/**/*.test.ts",
       "adapters/*/test/**/*.test.ts",

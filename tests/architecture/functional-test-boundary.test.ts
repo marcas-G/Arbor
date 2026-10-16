@@ -12,7 +12,7 @@ describe("functional-test trust boundary", () => {
       scripts: Record<string, string>;
     };
     expect(packageJson.scripts.test).toBe("vitest run");
-    expect(rootVitestConfig.test?.maxWorkers).toBe(2);
+    expect(rootVitestConfig.test?.maxWorkers).toBe(1);
   });
 
   it("keeps architecture and public-process suites out of core Vitest", () => {

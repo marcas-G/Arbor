@@ -1,15 +1,15 @@
 # Root core Vitest worker budget
 
 Date: 2026-10-16
-Base: `c4154319`
+A/B base: `c4154319`; one-worker preference confirmed on `95301852`.
 
 ## Decision
 
-Set `test.maxWorkers` to `2` in the root `vitest.config.ts`. This is the
+Set `test.maxWorkers` to `1` in the root `vitest.config.ts`. This is the
 configuration loaded by the root `pnpm test` script (`vitest run`); architecture,
 functional, and Web tests use separate commands/configurations and are unchanged.
 The architecture suite imports the root config object and asserts both the
-default `pnpm test` entrypoint and its single explicit two-worker budget,
+default `pnpm test` entrypoint and its single explicit one-worker budget,
 preventing an accidental return to Vitest's machine-default/unbounded worker
 selection.
 
@@ -23,12 +23,14 @@ The core suite was measured on `c4154319` with existing test assertions:
 |---:|---|---:|---:|---:|
 | default (3-worker behavior observed) | worker low-heap OOM | — | — | — |
 | 1 | 372/372 pass, no OOM | 51m19s | ~1.89 GB | ~1.29 GB |
-| 2 | no OOM; six schema-fixture tests failed after later fixture edits | 36m30s | ~2.02 GB | ~394 MB |
+| 2 | 36m30s run: no OOM, six then-current schema-fixture failures | 36m30s | ~2.02 GB | ~394 MB |
+| 2 | corrected current suite: 373/373 pass; no new resource sample in this handoff | — | — | — |
 
-The two-worker run is not reported as a green suite: its six failures were
-fixture-related and occurred after the later schema fixture changes. The
-one-worker run is the green comparison. The selected budget prioritizes the
-measured faster no-OOM run while retaining an explicit ceiling.
+The earlier two-worker resource sample had less virtual-memory headroom than
+the one-worker sample; no comparable resource data was supplied for the later
+green run. Per the user's explicit priority, this host's reliability takes
+precedence over suite duration; performance optimization is deferred. No
+further A/B run is planned for this change.
 
 ## Machine context and verification boundary
 
