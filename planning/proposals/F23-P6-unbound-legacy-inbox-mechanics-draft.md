@@ -140,7 +140,7 @@ informational and cannot unblock the command.
   enum or Attention source extension.
 - **P8 `01-verification-commands.md` / `06-acceptance.md`:** reference the
   accepted P6 route mechanics without changing P8 current-auth/replay rules.
-- **P1 `01-command-processing.md` / `03-command-lifecycle.md`:** specify that
+- **P1 `01-command-contracts.md` / `03-transaction-model.md`:** specify that
   unavailable atomic route movement is an ordinary Gateway
   `TerminalRejected(AuthorityDenied)` outcome (or the narrowest existing
   typed rejection), including same-CommandId replay and different-CommandId

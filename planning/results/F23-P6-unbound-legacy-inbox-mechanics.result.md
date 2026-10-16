@@ -51,4 +51,4 @@ authorization.
 
 No code, test, schema, production behavior, or `docs/design/**` was changed
 for this supplemental proposal. Raw SHA-256 of the proposal:
-`357D467C05D89E4FAAAE04020C7C5C74C7AB1356E8C3753140CC1E79D03DD93E`.
+`798C2CB2782E4D8FF1064CE1065E12B09A318565997EF1160460B478CFA48FDF`.
