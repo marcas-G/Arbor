@@ -552,6 +552,25 @@ The transaction summary therefore evolves `SessionRepository.appendEntry` to
 typed/idempotent item append and adds Inbox promotion/checkpoint convergence;
 long-running projection/provider work remains outside the transaction.
 
+The SessionRepository checkpoint contract remains scoped to its exact Session,
+epoch and current lease fence. AH19 Conversation continuity has a distinct
+RootWorkspaceId owner and may not read, advance or satisfy the Workspace Work
+Session frontier. This design landing does not choose whether the Conversation
+owner is stored in a dedicated P14 record or a separately bound standard
+Session, and adds no P2 port method or transaction/schema shape. The physical
+owner-state choice and atomic write contract belong to a separately authorized
+implementation package.
+
+For a Work Session before its first typed `CompactionCheckpoint`,
+`listActiveFrontier(sessionId,epoch)` selects the latest 64 persisted
+`SessionItem` rows by Session-local sequence. It does not refill from older
+rows after P3 filters a selected row. After a typed checkpoint, it returns the
+exact checkpoint sequence and every unsummarized typed item after it, without
+the 64-row cap. The current pinned input and canonical Work/control facts are
+captured separately and consume no Session row slots. This selection contract
+does not say that every returned row becomes model context or checkpoint
+coverage; P3 owns projection and coverage evidence.
+
 ## 11. Out of scope
 
 - Provider/Tool/Model Context ports (P3/P4).

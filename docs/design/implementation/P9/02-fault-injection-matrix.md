@@ -294,6 +294,29 @@ effect uses the existing P4 reconciliation/OutcomeUnknown gate before
 resolution. P10 marker and offset crash sides are specified in P10 `02`/`04`;
 they are not inferred from these P9 boundaries.
 
+## Accepted AH19 Work and Conversation checkpoint recovery matrix (DID v1.50)
+
+Accepted tokens:
+`ACCEPT_AH19_WORK_PRECHECKPOINT_BOUNDED_FRONTIER_V1` (proposal raw SHA-256
+`4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`) and
+`ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1` (proposal raw SHA-256
+`9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`), both
+accepted 2026-10-17.
+
+| Recovery boundary | Required result |
+|---|---|
+| Restart with >64 durable Work Timeline rows before first checkpoint | Reconstruct the same latest-64 row window; current pinned input occurs exactly once independent of the cap; P3 skipped rows do not cause older-row refill; Timeline remains unchanged and no checkpoint coverage is inferred |
+| Valid P3-filtered `UserMessage(source.kind=HumanConversation)` at lower edge of selected window, then real checkpoint commit and kill/restart | Filtered row has no contextRef/PortableInput item and is absent from compaction content/retainedFrontier, but remains durable; `inputFrontier` still records the considered window; restart reuses committed checkpoint without Provider/action replay |
+| Typed Work checkpoint followed by >64 unsummarized entries | Active frontier retains the exact checkpoint plus every subsequent typed entry; numeric pre-checkpoint cap is not applied |
+| Conversation checkpoint committed before current ResponseJob becomes Answered, then kill/restart | Resume same ResponseJob/Attempt/episode and owner state idempotently; current message is not appended twice and settled Provider/action work is not replayed |
+| Complete model binding changes between Conversation episodes | Old ProviderNative opaque reference is not sent; rebuild portable Summary from exact owned HumanMessage prefix and pin current message once |
+| Earlier non-Answered HumanMessage (Pending/Claimed) or RetryScheduled ResponseJob before a later Answered message | Frontier refuses to cover the later Answered message across the gap and remains stopped after restart; exact Claimed body remains pinned once for its existing episode |
+| Interleaved Work Session and Conversation history under one Root Workspace | Neither owner reads, advances or satisfies the other's checkpoint; HumanMessages and live checkpoint refs remain readable after restart |
+
+These recovery contracts do not define new storage tables or migration
+behavior. The physical Conversation owner choice and its migration require a
+separately authorized implementation package.
+
 ## 13. Must Not Decide
 
 The full DID v1.20 AgentLoopStep handoff matrix AH1–AH14 is owned by `07`; it is

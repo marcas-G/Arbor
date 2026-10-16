@@ -341,6 +341,14 @@ silently upgrades a legacy Observation into a strict ToolResult. Proven legacy
 sources may be bound explicitly; all others remain legacy-only for audit or
 portable summary.
 
+AH19 keeps this `session_entries` carrier append-only and does not delete old
+rows because they fall outside Work's 64-row pre-checkpoint provider window.
+The separate RootWorkspaceId Conversation checkpoint owner cannot be inferred
+from or assigned to existing Workspace Session checkpoint rows. This landing
+chooses no Conversation owner table/Session binding, columns, indexes or
+migration; those physical details require a separate implementation package
+and authorization.
+
 ## 4. Fence / stop / CAS queries
 
 ```sql

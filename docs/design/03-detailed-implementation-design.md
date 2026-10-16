@@ -1,10 +1,46 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.49\
+**Version:** 1.50\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.48\
+**Supersedes:** v1.49\
 **Date:** 2026-10-17\
-**Depends on:** `Arbor System Design Specification v1.17`
+**Depends on:** `Arbor System Design Specification v1.18`
+
+**Governance changes (v1.49 → v1.50): AH19 Work bounded frontier and Conversation checkpoint owner**
+
+- **Work pre-checkpoint frontier:** before the first typed
+  `CompactionCheckpoint`, select the latest 64 persisted Session Timeline
+  rows by Session-local sequence. The selected row window is the considered
+  `inputFrontier`, not proof of representation or checkpoint coverage. Apply
+  existing P3 projector branches/filters without refilling skipped rows from
+  older history. Current input and canonical C0/C1 facts are pinned outside the
+  row cap. Once a checkpoint exists, the active frontier is that exact
+  checkpoint sequence plus every unsummarized typed entry after it, without
+  the pre-checkpoint cap. Coverage can claim only content actually represented
+  by the existing projector.
+- **Conversation checkpoint owner:** exact `RootWorkspaceId` owns one v1
+  conversation stream across HumanMessages, ResponseJobs, Attempts, Executions
+  and response episodes. It advances only through the contiguous FIFO prefix
+  of authoritative `Answered` HumanMessages. The exact current `Claimed`
+  message is pinned once for its episode and stays uncovered until Answered;
+  no non-Answered gap may be crossed. Work Session history/checkpoints are
+  excluded. ProviderNative reuse requires exact complete binding fingerprint;
+  otherwise portable Summary is rebuilt from retained HumanMessage sources.
+  Messages and live checkpoint evidence remain durable; restart resumes the
+  same response episode and does not replay settled work.
+- **Physical boundary:** the Conversation owner state/table/port, message
+  ordering-key implementation, migration ID and initialization are TBD for
+  separately authorized implementation. No old Workspace Session checkpoint
+  is backfilled as Conversation ownership. P2 does not select storage shape in
+  this landing; P4 is unaffected.
+- Work package token `ACCEPT_AH19_WORK_PRECHECKPOINT_BOUNDED_FRONTIER_V1`,
+  proposal raw SHA-256
+  `4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`;
+  Conversation package token `ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1`,
+  proposal raw SHA-256
+  `9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`.
+  Both accepted 2026-10-17. Separate decision and post-landing review records
+  are listed under `planning/results/AH19-*`.
 
 **Governance changes (v1.48 → v1.49): AH14 legacy adoption evidence Attention**
 
@@ -4701,6 +4737,16 @@ Checkpoint + Recent Frontier
 
 而不是完整 Session History。
 
+Before a Work Session's first typed checkpoint, its active history projection
+selects the latest 64 persisted Session Timeline rows by Session-local
+sequence. The current input and canonical C0/C1 facts are pinned independently
+of this count. P3 applies only its existing projector branches/filters to this
+selected window; skipped rows do not cause older rows to be fetched as
+replacements. A selected row skipped by P3 has no item or contextRef. The
+selected `inputFrontier` is the considered row range, not proof of coverage.
+After a typed checkpoint, use its exact sequence and every unsummarized typed
+entry after it, without the pre-checkpoint 64-row cap.
+
 ## 8.9 Retention Class
 
 Context Fragment 使用：
@@ -4729,6 +4775,11 @@ never silently drop hard control facts
 ```
 
 若 Pinned + Protected 本身无法装入模型窗口，返回 `ContextUnsatisfiable`，不静默 truncate。
+
+The latest 64-row bound applies only before the first Work checkpoint. It
+does not bound the post-checkpoint frontier. Every request still includes the
+current pinned input and independently reconstructed canonical C0/C1 facts,
+regardless of row filtering or the bound.
 
 ## 8.10 Budget / Cache
 
@@ -4837,6 +4888,24 @@ Canonical State restores control.
 ```
 
 Compaction 可以由 token pressure、semantic boundary 或 model/provider boundary 触发，不是简单的“达到 90% 就 summarize”。
+
+Before the first typed Work checkpoint, `inputFrontier` bounds the rows
+considered; the checkpoint's `retainedFrontier` may claim coverage only for
+content actually represented by the existing P3 projector. Skipped or older
+rows remain durable but uncovered. Once a checkpoint exists, its exact
+sequence plus every unsummarized typed Session entry after it form the active
+frontier; budget pressure triggers explicit compaction rather than truncation
+by the pre-checkpoint cap.
+
+Conversation continuity uses the exact RootWorkspaceId as a separate owner.
+Only a contiguous FIFO prefix of authoritatively Answered HumanMessages may
+be covered. A current Claimed message remains pinned once for that response
+episode; non-Answered gaps stop coverage. Work Session history/checkpoints are
+excluded. ProviderNative reuse requires an exact complete
+ResolvedModelBinding fingerprint; otherwise portable Summary is rebuilt from
+retained HumanMessages. Restart retains the same response episode and does not
+replay settled Provider/action work. Owner storage and migration details remain
+separately gated.
 
 规范控制流：
 
@@ -5215,6 +5284,21 @@ ControlBasis {
   environmentRevision
 }
 ```
+
+For a Work ProviderTurn before its first typed checkpoint,
+`InputFrontier(firstSequence,lastSequence)` identifies the latest-64 considered
+Session-local row range; it does not assert that every selected row became a
+typed input. `TypedInputItemRefs[]` and context refs identify actual emitted
+content. A compaction `retainedFrontier` covers only content included under the
+existing P3 projector. For a ConversationResponseEpisode, manifest source
+identity binds the RootWorkspaceId owner, exact inclusive
+`coveredThroughMessageId`, ordered post-frontier source messages and exact
+current claimed message, ResponseJob revision/Attempt and ProviderTurn
+Manifest/checkpoint evidence; a ProviderNative checkpoint also binds the
+complete ResolvedModelBinding fingerprint. Recovery proves these identities
+from canonical owner/response facts rather than Session text or ProviderTurn ID
+spelling. These are semantic bindings, not a choice of physical storage
+encoding.
 
 Prompt/Context change 是行为代码 change，必须可追踪和可回归。
 
@@ -6713,6 +6797,13 @@ UI：`/p/:projectId` Root Workbench（Tree + Root Conversation）+ root deep-lin
 浏览器不得直连 external AdmitExecution（server-side wiring only）
 合同：docs/design/implementation/P14/**
 ```
+
+AH19 v1 adds a separate RootWorkspaceId-owned Conversation checkpoint
+frontier, distinct from the Workspace Work Session. It covers a contiguous
+Answered HumanMessage prefix; the current Claimed message is pinned once and
+remains uncovered until Answered. The exact ordering, binding, restart,
+retention and Work-isolation semantics are in SD v1.18 and P14 `02`. The
+owner-state physical design and migration remain separately authorized.
 
 ---
 
