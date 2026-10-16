@@ -220,6 +220,19 @@ const runOwnedDurableRoots = new Set<string>();
 const cleanupFailures: unknown[] = [];
 const expectedThrowCleanupRoots = new Set<string>();
 
+const isSafeP9TempRootPath = (realRoot: string, canonicalTempRoot: string) => {
+  const relativeRoot = relative(canonicalTempRoot, realRoot);
+  const rootName = basename(realRoot);
+  return (
+    relativeRoot !== "" &&
+    relativeRoot !== ".." &&
+    !relativeRoot.startsWith(`..${sep}`) &&
+    !isAbsolute(relativeRoot) &&
+    rootName.startsWith(P9_DURABLE_TEMP_PREFIX) &&
+    rootName.length > P9_DURABLE_TEMP_PREFIX.length
+  );
+};
+
 const validateRunOwnedDurableRoot = (path: string) => {
   if (!runOwnedDurableRoots.has(path)) {
     throw new Error(`refusing to remove an unregistered P9 temp root: ${path}`);
@@ -229,22 +242,18 @@ const validateRunOwnedDurableRoot = (path: string) => {
     throw new Error(`refusing to remove a redirected P9 temp root: ${path}`);
   }
   const realTempRoot = realpathSync(tmpdir());
-  const relativeRoot = relative(realTempRoot, realRoot);
-  if (
-    relativeRoot === "" ||
-    relativeRoot === ".." ||
-    relativeRoot.startsWith(`..${sep}`) ||
-    isAbsolute(relativeRoot)
-  ) {
-    throw new Error(
-      `refusing to remove a P9 temp root outside system Temp: ${path}`,
-    );
-  }
-  const rootName = basename(realRoot);
-  if (
-    !rootName.startsWith(P9_DURABLE_TEMP_PREFIX) ||
-    rootName.length <= P9_DURABLE_TEMP_PREFIX.length
-  ) {
+  if (!isSafeP9TempRootPath(realRoot, realTempRoot)) {
+    const relativeRoot = relative(realTempRoot, realRoot);
+    if (
+      relativeRoot === "" ||
+      relativeRoot === ".." ||
+      relativeRoot.startsWith(`..${sep}`) ||
+      isAbsolute(relativeRoot)
+    ) {
+      throw new Error(
+        `refusing to remove a P9 temp root outside system Temp: ${path}`,
+      );
+    }
     throw new Error(
       `refusing to remove a P9 temp root with an unexpected name: ${path}`,
     );
@@ -4080,22 +4089,62 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
       rmSync(prefixSpoofRoot, { recursive: true, force: false });
     }
 
-    const externalPrefixSpoofRoot = mkdtempSync(
-      join(REPO_ROOT, `${P9_DURABLE_TEMP_PREFIX}external-`),
+    const containmentSandbox = mkdtempSync(
+      join(tmpdir(), "arbor-p9-temp-containment-sandbox-"),
     );
-    const realExternalPrefixSpoofRoot = realpathSync(externalPrefixSpoofRoot);
-    runOwnedDurableRoots.add(realExternalPrefixSpoofRoot);
+    const validSandboxRoot = mkdtempSync(
+      join(containmentSandbox, `${P9_DURABLE_TEMP_PREFIX}valid-`),
+    );
+    const wrongPrefixRoot = mkdtempSync(
+      join(containmentSandbox, "arbor-p9-not-accepted-"),
+    );
+    const siblingRoot = mkdtempSync(
+      join(tmpdir(), `${P9_DURABLE_TEMP_PREFIX}outside-sandbox-`),
+    );
     try {
-      expect(() =>
-        validateRunOwnedDurableRoot(realExternalPrefixSpoofRoot),
-      ).toThrow("refusing to remove a P9 temp root outside system Temp");
+      const realSandbox = realpathSync(containmentSandbox);
+      const realValidRoot = realpathSync(validSandboxRoot);
+      const realWrongPrefixRoot = realpathSync(wrongPrefixRoot);
+      const realSiblingRoot = realpathSync(siblingRoot);
+      expect(isSafeP9TempRootPath(realValidRoot, realSandbox)).toBe(true);
+      expect(isSafeP9TempRootPath(realWrongPrefixRoot, realSandbox)).toBe(
+        false,
+      );
+      expect(isSafeP9TempRootPath(realSiblingRoot, realSandbox)).toBe(false);
+
+      runOwnedDurableRoots.add(realWrongPrefixRoot);
+      expect(() => validateRunOwnedDurableRoot(realWrongPrefixRoot)).toThrow(
+        "refusing to remove a P9 temp root with an unexpected name",
+      );
       expect(() => cleanupRunOwnedDurableRoots()).toThrow(
         "Failed to clean P9-owned SQLite temp roots",
       );
-      expect(existsSync(realExternalPrefixSpoofRoot)).toBe(true);
+      expect(existsSync(realWrongPrefixRoot)).toBe(true);
     } finally {
-      runOwnedDurableRoots.delete(realExternalPrefixSpoofRoot);
-      rmSync(externalPrefixSpoofRoot, { recursive: true, force: false });
+      runOwnedDurableRoots.delete(realpathSync(wrongPrefixRoot));
+      rmSync(containmentSandbox, { recursive: true, force: false });
+      rmSync(siblingRoot, { recursive: true, force: false });
+    }
+
+    const tempCheckoutParent = mkdtempSync(
+      join(tmpdir(), "arbor-p9-checkout-under-temp-"),
+    );
+    const syntheticRepositoryRoot = join(tempCheckoutParent, "checkout");
+    mkdirSync(syntheticRepositoryRoot);
+    const checkoutOwnedRoot = mkdtempSync(
+      join(syntheticRepositoryRoot, `${P9_DURABLE_TEMP_PREFIX}checkout-`),
+    );
+    const realCheckoutOwnedRoot = realpathSync(checkoutOwnedRoot);
+    runOwnedDurableRoots.add(realCheckoutOwnedRoot);
+    try {
+      expect(validateRunOwnedDurableRoot(realCheckoutOwnedRoot)).toBe(
+        realCheckoutOwnedRoot,
+      );
+      cleanupRunOwnedDurableRoots();
+      expect(existsSync(realCheckoutOwnedRoot)).toBe(false);
+    } finally {
+      runOwnedDurableRoots.delete(realCheckoutOwnedRoot);
+      rmSync(tempCheckoutParent, { recursive: true, force: false });
     }
 
     expect(scripts.test ?? "").toContain("vitest run");
