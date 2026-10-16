@@ -51,9 +51,9 @@ import {
 import { UsageService } from "../packages/projection-runtime/src/index.js";
 import { p7Project, p7RootWorkspace, p7SeedProject } from "./support/p7-app.js";
 import {
-  createSchema42TestDatabaseFactory,
-  withSchema42TestDatabase,
-} from "./support/schema42-database.js";
+  createSchema44TestDatabaseFactory,
+  withSchema44TestDatabase,
+} from "./support/schema44-database.js";
 
 /**
  * B-6 / B-7 / B-8 — the production composition root is the single runtime:
@@ -67,23 +67,23 @@ import {
  */
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "p12-production-"));
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
+  schema44Factory = await createSchema44TestDatabaseFactory({
     prefix: "p12-production-template-",
   });
 }, 120_000);
 afterAll(() => {
-  schema42Factory.cleanup();
+  schema44Factory.cleanup();
   rmSync(suiteTmp, { recursive: true, force: true });
 });
 
-const itWithSchema42Database = (
+const itWithSchema44Database = (
   name: string,
-  body: Parameters<typeof withSchema42TestDatabase>[1],
-) => it(name, () => withSchema42TestDatabase(schema42Factory, body), 120_000);
+  body: Parameters<typeof withSchema44TestDatabase>[1],
+) => it(name, () => withSchema44TestDatabase(schema44Factory, body), 120_000);
 
 const HUMAN = parse(Principal)("user:governance");
 const PROJECT = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789f1");
@@ -150,7 +150,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
     ).not.toThrow();
   });
 
-  itWithSchema42Database(
+  itWithSchema44Database(
     "B-6: production wires the P7 dependency-aware RunnableWorkSource (a waiting Open work is not runnable)",
     async (database) => {
       const outcome = await runWith(
@@ -231,7 +231,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
     },
   );
 
-  itWithSchema42Database(
+  itWithSchema44Database(
     "B-7/B-8: the composition assembles resolver, transport, worker mediation, daemons, observability, health and catalog",
     async (database) => {
       const outcome = await runWith(
@@ -341,7 +341,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
     },
   );
 
-  itWithSchema42Database(
+  itWithSchema44Database(
     "B-7: the production daemon entrypoint smoke-runs (migrate -> T1 -> scheduler/loop -> consumers -> sweep)",
     async (database) => {
       const outcome = await runWith(

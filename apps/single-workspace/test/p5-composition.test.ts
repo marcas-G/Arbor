@@ -4,24 +4,24 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createSchema42TestDatabaseFactory,
-  type Schema42TestDatabaseFactory,
-} from "../../../tests/support/schema42-database.js";
+  createSchema44TestDatabaseFactory,
+  type Schema44TestDatabaseFactory,
+} from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
-let schema42Factory: Schema42TestDatabaseFactory | undefined;
+let schema44Factory: Schema44TestDatabaseFactory | undefined;
 
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
+  schema44Factory = await createSchema44TestDatabaseFactory({
     prefix: ".p5-composition-template-",
   });
 }, 120_000);
 
-afterAll(() => schema42Factory?.cleanup());
+afterAll(() => schema44Factory?.cleanup());
 
 describe("P5 composition root", () => {
   it("builds the full slice layer over a prestarted schema-42 DB", async () => {
-    const fixture = schema42Factory?.create();
+    const fixture = schema44Factory?.create();
     if (fixture === undefined) {
       throw new Error("Schema-42 test database factory was not prepared.");
     }

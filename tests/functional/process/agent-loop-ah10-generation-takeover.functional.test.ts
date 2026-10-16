@@ -615,7 +615,7 @@ describe("AH10 real daemon generation takeover", () => {
       },
       onDaemonStdout: (line) => pushProbe(events, line),
     });
-    markPhase("schema42 fixture and primary daemon ready");
+    markPhase("schema44 fixture and primary daemon ready");
     fixtures.push(fixture);
     mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
     const client = makePublicClient(fixture.baseUrl);

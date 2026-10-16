@@ -19,7 +19,7 @@ import {
   isP39PathQualificationEnabled,
   p39WindowsAclQualificationAvailable,
 } from "../../../tests/support/p39-windows-deployment-test.js";
-import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { runDaemonOnce } from "../src/main.js";
 
@@ -33,15 +33,15 @@ const childWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789a2";
 const childSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789a2";
 const childWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789a2";
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema42TestDatabaseFactory({
-    prefix: ".blocked-workepisode-schema42-",
+  fixtureFactory = await createSchema44TestDatabaseFactory({
+    prefix: ".blocked-workepisode-schema44-",
   });
 }, 120_000);
 

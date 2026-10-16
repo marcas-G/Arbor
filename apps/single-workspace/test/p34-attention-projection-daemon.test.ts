@@ -2,25 +2,25 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ProjectId, parse } from "../../../packages/domain/src/index.js";
-import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
 } from "../src/index.js";
 
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 
 describe("P34 daemon migration wiring", () => {
   beforeAll(async () => {
-    schema42Factory = await createSchema42TestDatabaseFactory();
+    schema44Factory = await createSchema44TestDatabaseFactory();
   }, 120_000);
 
-  afterAll(() => schema42Factory?.cleanup(), 120_000);
+  afterAll(() => schema44Factory?.cleanup(), 120_000);
 
   it("creates Attention projection storage through real daemon startup", async () => {
-    const database = schema42Factory.create();
+    const database = schema44Factory.create();
     const projectId = parse(ProjectId)(
       "prj_018f2b3c-4d5e-7abc-8def-0123456789ae",
     );

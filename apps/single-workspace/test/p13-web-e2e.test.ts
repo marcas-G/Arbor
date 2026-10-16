@@ -5,7 +5,7 @@ import { Principal, parse } from "@arbor/domain";
 import { Effect, Fiber } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   ProductionDaemonService,
@@ -37,7 +37,7 @@ let runConsumers: (() => Promise<void>) | undefined;
 let startupError: unknown;
 let programFiber: ReturnType<typeof Effect.runFork> | undefined;
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
@@ -45,14 +45,14 @@ let fixture:
 
 const shutdown: Array<() => Promise<void>> = [];
 
-const schema42DatabaseFile = () => {
+const schema44DatabaseFile = () => {
   if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
   return fixture.databaseFilename;
 };
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema42TestDatabaseFactory({
-    prefix: ".p13-web-e2e-schema42-",
+  fixtureFactory = await createSchema44TestDatabaseFactory({
+    prefix: ".p13-web-e2e-schema44-",
   });
   fixture = fixtureFactory.create();
   dir = mkdtempSync(join(tmpdir(), "arbor-p13-e2e-"));
@@ -78,7 +78,7 @@ beforeAll(async () => {
                 yield* deployment.daemon.pollConsumers;
               }),
               buildSingleWorkspaceLayer({
-                databaseFile: schema42DatabaseFile(),
+                databaseFile: schema44DatabaseFile(),
                 authenticator: makeStaticAuthenticator({
                   [TOKEN]: HUMAN,
                   [READ_TOKEN]: parse(Principal)("user:local"),
@@ -107,7 +107,7 @@ beforeAll(async () => {
         yield* Effect.promise(() => new Promise<never>(() => undefined));
       }),
       buildSingleWorkspaceLayer({
-        databaseFile: schema42DatabaseFile(),
+        databaseFile: schema44DatabaseFile(),
         authenticator: makeStaticAuthenticator({
           [TOKEN]: HUMAN,
           [READ_TOKEN]: parse(Principal)("user:local"),

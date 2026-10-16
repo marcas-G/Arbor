@@ -75,10 +75,10 @@ import {
   NoPendingExecutableApprovalStoreLive,
 } from "../../../packages/testkit/src/index.js";
 import {
-  cloneFunctionalSchema42Database,
+  cloneFunctionalSchema44Database,
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
-} from "../support/schema42-bootstrap.js";
+} from "../support/schema44-bootstrap.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const workspaceId = parse(WorkspaceId)(
@@ -137,7 +137,7 @@ const denseState: DenseState = {
 const databaseDirectory = createFunctionalFixtureDirectory();
 const databaseFile = (() => {
   try {
-    return cloneFunctionalSchema42Database(databaseDirectory).databaseFile;
+    return cloneFunctionalSchema44Database(databaseDirectory).databaseFile;
   } catch (error) {
     removeFunctionalFixtureDirectory(databaseDirectory);
     throw error;

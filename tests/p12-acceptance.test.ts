@@ -263,7 +263,7 @@ import {
   ToolRuntimeLive,
 } from "../packages/tool-runtime/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
-import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
 
 // P12-013 acceptance: the `14` §1 end-to-end story across contracts `01`–`10`,
 // `12`, `13`. Mechanical evidence only; the per-contract suites carry the
@@ -275,24 +275,24 @@ const readRepoFile = (relative: string): string =>
   readFileSync(join(repoRoot, relative), "utf8");
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "p12-acceptance-"));
-const schema42Cleanups: Array<() => void> = [];
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+const schema44Cleanups: Array<() => void> = [];
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
+  schema44Factory = await createSchema44TestDatabaseFactory({
     prefix: "p12-acceptance-template-",
   });
 }, 120_000);
 afterAll(() => {
-  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
-  schema42Factory.cleanup();
+  for (const cleanup of schema44Cleanups.splice(0)) cleanup();
+  schema44Factory.cleanup();
   rmSync(suiteTmp, { recursive: true, force: true });
 });
 
-const createSchema42CaseDatabase = () => {
-  const fixture = schema42Factory.create();
-  schema42Cleanups.push(fixture.cleanup);
+const createSchema44CaseDatabase = () => {
+  const fixture = schema44Factory.create();
+  schema44Cleanups.push(fixture.cleanup);
   return fixture;
 };
 
@@ -756,7 +756,7 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
       const sentinelEnv = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
       const sentinelValue = `sentinel-value-${randomUUID()}`;
       process.env[sentinelEnv] = sentinelValue;
-      const database = createSchema42CaseDatabase();
+      const database = createSchema44CaseDatabase();
       const app = buildSingleWorkspaceLayer({
         databaseFile: database.databaseFilename,
         providerTurns: [
@@ -1728,7 +1728,7 @@ const runSafetyScenario = async (
     resourceProfileRef: profile.resourceProfileRef,
     version: profile.version,
   });
-  const database = createSchema42CaseDatabase();
+  const database = createSchema44CaseDatabase();
   const app = buildSingleWorkspaceLayer({
     databaseFile: database.databaseFilename,
     providerTurns,
@@ -2293,7 +2293,7 @@ describe("p12-acceptance story 11 — transport shells + daemons", () => {
         ]);
       }
 
-      const database = createSchema42CaseDatabase();
+      const database = createSchema44CaseDatabase();
       const outcome = await (async () => {
         try {
           return await transportRun(

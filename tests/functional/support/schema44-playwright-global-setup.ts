@@ -1,7 +1,7 @@
-import { createFunctionalSchema42Template } from "./schema42-bootstrap.js";
+import { createFunctionalSchema44Template } from "./schema44-bootstrap.js";
 
-export default async function functionalSchema42GlobalSetup() {
-  const teardown = await createFunctionalSchema42Template();
+export default async function functionalSchema44PlaywrightGlobalSetup() {
+  const teardown = await createFunctionalSchema44Template();
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;

@@ -133,7 +133,7 @@ const resumeInChildProcess = (
     });
   });
 
-describe("offline P39–P42 schema-upgrade CLI", () => {
+describe("offline P39–P44 schema-upgrade CLI", () => {
   it("loops through short manifest writes and never flushes a stalled append", () => {
     const bytes = Buffer.from("append-only-record\n", "utf8");
     let output = Buffer.alloc(0);
@@ -447,14 +447,66 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
           step: "0042",
         });
 
+        await expect(
+          runPreparedUpgrade(resumeArgs, {
+            beforeDatabaseTransaction: (version) => {
+              if (version === 43)
+                throw new Error("injected stop before migration 43");
+            },
+          }),
+        ).rejects.toThrow(/injected stop before migration 43/u);
+        expect(readUserVersion(args.database)).toBe(42);
+        expect(
+          readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
+        ).toMatchObject({ kind: "Prepared", step: "0043" });
+
+        await expect(
+          runPreparedUpgrade(resumeArgs, {
+            afterDatabaseCommit: (version) => {
+              if (version === 43)
+                throw new Error("injected stop after migration 43 commit");
+            },
+          }),
+        ).rejects.toThrow(/injected stop after migration 43 commit/u);
+        expect(readUserVersion(args.database)).toBe(43);
+        expect(
+          readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
+        ).toMatchObject({ kind: "Prepared", step: "0043" });
+
+        await expect(
+          runPreparedUpgrade(resumeArgs, {
+            beforeDatabaseTransaction: (version) => {
+              if (version === 44)
+                throw new Error("injected stop before migration 44");
+            },
+          }),
+        ).rejects.toThrow(/injected stop before migration 44/u);
+        expect(readUserVersion(args.database)).toBe(43);
+        expect(
+          readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
+        ).toMatchObject({ kind: "Prepared", step: "0044" });
+
+        await expect(
+          runPreparedUpgrade(resumeArgs, {
+            afterDatabaseCommit: (version) => {
+              if (version === 44)
+                throw new Error("injected stop after migration 44 commit");
+            },
+          }),
+        ).rejects.toThrow(/injected stop after migration 44 commit/u);
+        expect(readUserVersion(args.database)).toBe(44);
+        expect(
+          readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
+        ).toMatchObject({ kind: "Prepared", step: "0044" });
+
         const beforeNoOpDigest = logicalSqliteDigest(args.database);
-        let version42ReopenedNoOp = false;
+        let version44ReopenedNoOp = false;
         await runPreparedUpgrade(resumeArgs, {
-          afterVersion42NoOpVerification: () => {
-            version42ReopenedNoOp = true;
+          afterVersion44NoOpVerification: () => {
+            version44ReopenedNoOp = true;
           },
         });
-        expect(version42ReopenedNoOp).toBe(true);
+        expect(version44ReopenedNoOp).toBe(true);
         expect(logicalSqliteDigest(args.database)).toBe(beforeNoOpDigest);
         const completeHeadLength = readSchemaUpgradeManifest(args.copyManifest)
           .records.length;
@@ -467,7 +519,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
           await expect(runPreparedUpgrade(altered, hooks)).rejects.toThrow(
             message,
           );
-          expect(readUserVersion(args.database)).toBe(42);
+          expect(readUserVersion(args.database)).toBe(44);
           expect(logicalSqliteDigest(args.database)).toBe(targetDigest);
           expect(
             readSchemaUpgradeManifest(args.copyManifest).records,
@@ -551,11 +603,11 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         );
         const restoredVersion = new DatabaseSync(args.database);
         try {
-          restoredVersion.exec("PRAGMA user_version = 42");
+          restoredVersion.exec("PRAGMA user_version = 44");
         } finally {
           restoredVersion.close();
         }
-        expect(readUserVersion(args.database)).toBe(42);
+        expect(readUserVersion(args.database)).toBe(44);
 
         const targetBeforeTamper = logicalSqliteDigest(args.database);
         const tamperTarget = new DatabaseSync(args.database);
@@ -637,10 +689,10 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         }
         const complete = readSchemaUpgradeManifest(args.copyManifest);
         const preparedIndex = complete.records.findIndex(
-          ({ record }) => record.kind === "Prepared" && record.step === "0042",
+          ({ record }) => record.kind === "Prepared" && record.step === "0044",
         );
         if (preparedIndex < 0)
-          throw new Error("P42 Prepared boundary was not recorded");
+          throw new Error("P44 Prepared boundary was not recorded");
         const lines = readFileSync(args.copyManifest, "utf8")
           .trimEnd()
           .split("\n");
@@ -651,7 +703,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
         expect(
           readSchemaUpgradeManifest(args.copyManifest).records.filter(
             ({ record }) =>
-              record.kind === "Committed" && record.step === "0042",
+              record.kind === "Committed" && record.step === "0044",
           ),
         ).toHaveLength(1);
 
@@ -665,12 +717,12 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
           concurrent.map(({ code }) => code),
           JSON.stringify(concurrent.map(({ output }) => output)),
         ).toEqual([0, 0]);
-        expect(readUserVersion(args.database)).toBe(42);
+        expect(readUserVersion(args.database)).toBe(44);
         const completed = readSchemaUpgradeManifest(args.copyManifest);
         expect(
           completed.records.filter(
             ({ record }) =>
-              record.kind === "Committed" && record.step === "0042",
+              record.kind === "Committed" && record.step === "0044",
           ),
         ).toHaveLength(1);
         expect(completed.records.length).toBe(before + 1);
@@ -693,7 +745,7 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
     CLI_PROCESS_TIMEOUT_MS,
   );
 
-  it("creates a P42 fresh target without accepting a source", async () => {
+  it("creates a P44 fresh target without accepting a source", async () => {
     const directory = makeP39PrivateTestDirectory(
       process.cwd(),
       ".schema-upgrade-fresh-",
@@ -706,24 +758,24 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
     };
     try {
       let reopenedEvidence:
-        | { readonly userVersion: 42; readonly reopenedReadOnly: true }
+        | { readonly userVersion: 44; readonly reopenedReadOnly: true }
         | undefined;
       await runSchemaUpgrade(args, {
-        afterVersion42NoOpVerification: (evidence) => {
+        afterVersion44NoOpVerification: (evidence) => {
           reopenedEvidence = evidence;
         },
       });
       expect(reopenedEvidence).toEqual({
-        userVersion: 42,
+        userVersion: 44,
         reopenedReadOnly: true,
       });
-      expect(readUserVersion(args.database)).toBe(42);
+      expect(readUserVersion(args.database)).toBe(44);
       expect(readSchemaUpgradeManifest(args.copyManifest).header.mode).toBe(
         "fresh",
       );
       expect(
         readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
-      ).toMatchObject({ kind: "Committed", step: "0042", toVersion: 42 });
+      ).toMatchObject({ kind: "Committed", step: "0044", toVersion: 44 });
     } finally {
       removeP39PrivateTestDirectory(directory);
     }
@@ -738,25 +790,25 @@ describe("offline P39–P42 schema-upgrade CLI", () => {
     try {
       await seedVersion38(args.sourceDatabase as string);
       let reopenedEvidence:
-        | { readonly userVersion: 42; readonly reopenedReadOnly: true }
+        | { readonly userVersion: 44; readonly reopenedReadOnly: true }
         | undefined;
       await runSchemaUpgrade(args, {
         ...(p38PreviewTemplate === undefined
           ? {}
           : { previewTemplate: p38PreviewTemplate }),
-        afterVersion42NoOpVerification: (evidence) => {
+        afterVersion44NoOpVerification: (evidence) => {
           reopenedEvidence = evidence;
         },
       });
       expect(reopenedEvidence).toEqual({
-        userVersion: 42,
+        userVersion: 44,
         reopenedReadOnly: true,
       });
-      expect(readUserVersion(args.database)).toBe(42);
+      expect(readUserVersion(args.database)).toBe(44);
       expect(readUserVersion(args.sourceDatabase as string)).toBe(38);
       expect(
         readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
-      ).toMatchObject({ kind: "Committed", step: "0042", toVersion: 42 });
+      ).toMatchObject({ kind: "Committed", step: "0044", toVersion: 44 });
     } finally {
       removeP39PrivateTestDirectory(directory);
     }

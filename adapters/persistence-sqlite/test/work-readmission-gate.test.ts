@@ -12,9 +12,9 @@ import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createSchema42TestDatabaseFactory,
-  type Schema42TestDatabaseFactory,
-} from "../../../tests/support/schema42-database.js";
+  createSchema44TestDatabaseFactory,
+  type Schema44TestDatabaseFactory,
+} from "../../../tests/support/schema44-database.js";
 import {
   DomainEventJournalLive,
   IdGeneratorLive,
@@ -58,15 +58,15 @@ const makeApp = (filename: string) => {
   );
 };
 
-let schema42Factory: Schema42TestDatabaseFactory | undefined;
+let schema44Factory: Schema44TestDatabaseFactory | undefined;
 
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory();
+  schema44Factory = await createSchema44TestDatabaseFactory();
 }, 120_000);
 
 afterAll(() => {
-  schema42Factory?.cleanup();
-  schema42Factory = undefined;
+  schema44Factory?.cleanup();
+  schema44Factory = undefined;
 }, 120_000);
 
 const runDb = <A>(
@@ -82,10 +82,10 @@ const runDb = <A>(
   >,
 ) => {
   const run = async () => {
-    if (schema42Factory === undefined) {
+    if (schema44Factory === undefined) {
       throw new Error("The schema-42 test database factory is not ready.");
     }
-    const database = schema42Factory.create();
+    const database = schema44Factory.create();
     try {
       return await Effect.runPromise(
         Effect.scoped(

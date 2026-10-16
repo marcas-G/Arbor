@@ -53,17 +53,17 @@ import {
   secretRef,
   TransactionPort,
 } from "../packages/ports/dist/index.js";
-import { createSchema42TestDatabaseFactory } from "./support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
 
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
+  schema44Factory = await createSchema44TestDatabaseFactory({
     prefix: "p12-secret-template-",
   });
 }, 120_000);
-afterAll(() => schema42Factory.cleanup());
+afterAll(() => schema44Factory.cleanup());
 
 const repoRoot = join(import.meta.dirname, "..");
 
@@ -318,7 +318,7 @@ describe("P12-003 sentinel no-leak", () => {
     const sentinelValue = `sentinel-value-${randomUUID()}`;
     process.env[sentinelEnv] = sentinelValue;
 
-    const database = schema42Factory.create();
+    const database = schema44Factory.create();
     const app = buildSingleWorkspaceLayer({
       databaseFile: database.databaseFilename,
       providerTurns: turns,

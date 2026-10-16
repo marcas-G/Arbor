@@ -105,9 +105,9 @@ import type {
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import {
-  createSchema42TestDatabaseFactory,
-  withSchema42TestDatabase,
-} from "./support/schema42-database.js";
+  createSchema44TestDatabaseFactory,
+  withSchema44TestDatabase,
+} from "./support/schema44-database.js";
 
 /**
  * P12-010 (`10` §1–§5; EC-11). Mechanical evidence:
@@ -358,20 +358,20 @@ const run = <A>(
 ): Promise<A> =>
   Effect.runPromise(Effect.provide(program, makeApp(databaseFile)));
 
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema42Factory = await createSchema42TestDatabaseFactory({
+  schema44Factory = await createSchema44TestDatabaseFactory({
     prefix: "p12-transport-template-",
   });
 }, 120_000);
-afterAll(() => schema42Factory.cleanup());
+afterAll(() => schema44Factory.cleanup());
 
-const itWithSchema42Database = (
+const itWithSchema44Database = (
   name: string,
-  body: Parameters<typeof withSchema42TestDatabase>[1],
-) => it(name, () => withSchema42TestDatabase(schema42Factory, body), 120_000);
+  body: Parameters<typeof withSchema44TestDatabase>[1],
+) => it(name, () => withSchema44TestDatabase(schema44Factory, body), 120_000);
 
 const countRows = (table: string) =>
   Effect.gen(function* () {
@@ -512,7 +512,7 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
     resolverCalls = 0;
   });
 
-  itWithSchema42Database(
+  itWithSchema44Database(
     "forwards a Command; resolver runs at the composition root; no transport write",
     async (database) => {
       const outcome = await run(
@@ -643,7 +643,7 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
     }
   });
 
-  itWithSchema42Database(
+  itWithSchema44Database(
     "P15 authenticated human can rename and archive over the real external command composition",
     async (database) => {
       const outcome = await run(
@@ -761,7 +761,7 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
     },
   );
 
-  itWithSchema42Database(
+  itWithSchema44Database(
     "P15 exact WorkspaceAgent grants cannot turn static Agent credentials into project governance",
     async (database) => {
       const outcome = await run(

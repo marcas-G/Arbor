@@ -1,22 +1,22 @@
 import { CommandHandlerRegistry } from "@arbor/application";
 import { Effect, Option } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
-let schema42Factory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+let schema44Factory: Awaited<
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 
 describe("P5 slice command handler registry", () => {
   beforeAll(async () => {
-    schema42Factory = await createSchema42TestDatabaseFactory();
+    schema44Factory = await createSchema44TestDatabaseFactory();
   }, 120_000);
 
-  afterAll(() => schema42Factory?.cleanup(), 120_000);
+  afterAll(() => schema44Factory?.cleanup(), 120_000);
 
   it("resolves the P1 + P2 command set", async () => {
-    const database = schema42Factory.create();
+    const database = schema44Factory.create();
     try {
       const app = buildSingleWorkspaceLayer({
         databaseFile: database.databaseFilename,

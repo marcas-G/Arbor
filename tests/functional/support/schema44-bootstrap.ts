@@ -12,14 +12,14 @@ import {
   setP39PrivateWindowsAcl,
 } from "../../support/p39-windows-deployment-test.js";
 import {
-  createSchema42TestDatabase,
-  type Schema42TestDatabase,
-} from "../../support/schema42-database.js";
+  createSchema44TestDatabase,
+  type Schema44TestDatabase,
+} from "../../support/schema44-database.js";
 
-const manifestEnvironmentKey = "ARBOR_FUNCTIONAL_SCHEMA42_MANIFEST";
-const manifestFilename = "schema42-manifest.json";
+const manifestEnvironmentKey = "ARBOR_FUNCTIONAL_SCHEMA44_MANIFEST";
+const manifestFilename = "schema44-manifest.json";
 
-interface FunctionalSchema42Manifest {
+interface FunctionalSchema44Manifest {
   readonly version: 1;
   readonly root: string;
   readonly primary: string;
@@ -36,19 +36,19 @@ const isInside = (root: string, candidate: string): boolean => {
   );
 };
 
-export const createFunctionalSchema42Template = async (): Promise<
+export const createFunctionalSchema44Template = async (): Promise<
   () => void
 > => {
-  const root = mkdtempSync(join(cwd(), ".arbor-functional-schema42-"));
-  let template: Schema42TestDatabase | undefined;
+  const root = mkdtempSync(join(cwd(), ".arbor-functional-schema44-"));
+  let template: Schema44TestDatabase | undefined;
   let cleaned = false;
   try {
     setP39PrivateWindowsAcl(root, "directory");
-    template = await createSchema42TestDatabase({
+    template = await createSchema44TestDatabase({
       prefix: "template-",
       parentDirectory: root,
     });
-    const manifest: FunctionalSchema42Manifest = {
+    const manifest: FunctionalSchema44Manifest = {
       version: 1,
       root,
       primary: template.databaseFilename,
@@ -75,11 +75,11 @@ export const createFunctionalSchema42Template = async (): Promise<
   };
 };
 
-const readManifest = (): FunctionalSchema42Manifest => {
+const readManifest = (): FunctionalSchema44Manifest => {
   const path = process.env[manifestEnvironmentKey];
   if (path === undefined) {
     throw new Error(
-      "Functional schema-42 bootstrap is missing; run through the functional Vitest or Playwright configuration.",
+      "Functional schema-44 bootstrap is missing; run through the functional Vitest or Playwright configuration.",
     );
   }
   const absolutePath = resolve(path);
@@ -87,7 +87,7 @@ const readManifest = (): FunctionalSchema42Manifest => {
   try {
     parsed = JSON.parse(readFileSync(absolutePath, "utf8"));
   } catch (cause) {
-    throw new Error("Functional schema-42 manifest cannot be read.", { cause });
+    throw new Error("Functional schema-44 manifest cannot be read.", { cause });
   }
   if (
     typeof parsed !== "object" ||
@@ -101,9 +101,9 @@ const readManifest = (): FunctionalSchema42Manifest => {
     !("report" in parsed) ||
     typeof parsed.report !== "string"
   ) {
-    throw new Error("Functional schema-42 manifest has an invalid shape.");
+    throw new Error("Functional schema-44 manifest has an invalid shape.");
   }
-  const manifest = parsed as FunctionalSchema42Manifest;
+  const manifest = parsed as FunctionalSchema44Manifest;
   const root = resolve(manifest.root);
   if (
     !isInside(root, absolutePath) ||
@@ -112,13 +112,13 @@ const readManifest = (): FunctionalSchema42Manifest => {
     !existsSync(manifest.primary) ||
     !existsSync(manifest.report)
   ) {
-    throw new Error("Functional schema-42 manifest paths are not trusted.");
+    throw new Error("Functional schema-44 manifest paths are not trusted.");
   }
   return { ...manifest, root };
 };
 
 /** Copy both closed template databases into an ACL-protected case directory. */
-export const cloneFunctionalSchema42Database = (
+export const cloneFunctionalSchema44Database = (
   directory: string,
 ): { readonly databaseFile: string; readonly reportFile: string } => {
   const manifest = readManifest();
@@ -152,5 +152,5 @@ export const removeFunctionalFixtureDirectory = (directory: string): void => {
   removeP39PrivateTestDirectory(directory);
 };
 
-export const functionalSchema42ManifestPath = (): string | undefined =>
+export const functionalSchema44ManifestPath = (): string | undefined =>
   process.env[manifestEnvironmentKey];

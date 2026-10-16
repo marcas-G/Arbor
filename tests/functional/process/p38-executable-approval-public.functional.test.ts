@@ -49,6 +49,7 @@ interface ApprovalSnapshot {
         readonly approval_id: string | null;
         readonly effect_admission_state: string;
         readonly settlement_kind: string | null;
+        readonly settlement_json: string | null;
       }
     | undefined;
   readonly effectCount: number;
@@ -286,7 +287,7 @@ const readApprovalSnapshot = (
         : (db
             .prepare(
               `SELECT invocation_id, approval_id, effect_admission_state,
-                      settlement_kind FROM tool_invocations
+                      settlement_kind, settlement_json FROM tool_invocations
                 WHERE execution_id = ? AND invocation_id = ?`,
             )
             .get(approval.execution_id, approval.tool_invocation_id) as
@@ -460,6 +461,13 @@ describe("pending P38 public Executable approval qualification", () => {
         invocation_id: run.before.approval?.tool_invocation_id,
         approval_id: run.approvalId,
         settlement_kind: "Denied",
+      });
+      expect(
+        JSON.parse(resumed.invocation?.settlement_json ?? "{}"),
+      ).toMatchObject({
+        _tag: "Denied",
+        reasonCode:
+          resolution === "Reject" ? "ApprovalRejected" : "ApprovalExpired",
       });
       expect(resumed.effectCount).toBe(0);
     },

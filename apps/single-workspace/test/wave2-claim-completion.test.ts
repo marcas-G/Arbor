@@ -32,7 +32,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { assignWorkHandler } from "../src/control-actions.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
@@ -59,15 +59,15 @@ const context: CommandSubmissionContext = {
 };
 
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema42TestDatabaseFactory({
-    prefix: ".wave2-schema42-",
+  fixtureFactory = await createSchema44TestDatabaseFactory({
+    prefix: ".wave2-schema44-",
   });
 }, 120_000);
 

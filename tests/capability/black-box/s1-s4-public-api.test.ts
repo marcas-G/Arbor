@@ -21,7 +21,7 @@ import {
   stopChildBounded,
   waitForDaemonListening,
 } from "../../functional/support/daemon-process-lifecycle.js";
-import { createSchema42TestDatabaseFactory } from "../../support/schema42-database.js";
+import { createSchema44TestDatabaseFactory } from "../../support/schema44-database.js";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
 const DAEMON_HANDSHAKE_ENTRY = resolve(
@@ -416,7 +416,7 @@ const daemonErrors: string[] = [];
 const daemonMarkers: string[] = [];
 const daemonLifecycleDiagnostics: string[] = [];
 let databaseFactory: Awaited<
-  ReturnType<typeof createSchema42TestDatabaseFactory>
+  ReturnType<typeof createSchema44TestDatabaseFactory>
 >;
 let databaseFixture: ReturnType<typeof databaseFactory.create>;
 
@@ -682,7 +682,7 @@ let cleanupController: ReturnType<typeof createSignalSafeCleanup> | undefined;
 let primaryTestErrors: ReadonlyArray<unknown> = [];
 
 beforeAll(async () => {
-  databaseFactory = await createSchema42TestDatabaseFactory();
+  databaseFactory = await createSchema44TestDatabaseFactory();
 }, 120_000);
 
 const cleanupScenarioBody = async () => {

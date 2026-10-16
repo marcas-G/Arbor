@@ -6,8 +6,8 @@ import { newUuid7 } from "../../../packages/application/src/formation-plan.js";
 import {
   createP32HistoricalTestImage,
   createP32MigrationBaseline,
-  upgradeSchema42TestDatabase,
-} from "../../support/schema42-database.js";
+  upgradeSchema44TestDatabase,
+} from "../../support/schema44-database.js";
 import {
   expireExecutionLeaseAfterOwnerExitForQualification,
   type LiveOwnerLeasePauseEvidence,
@@ -1666,7 +1666,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           baseline.close();
           pristineP32.close();
         }
-        await upgradeSchema42TestDatabase({
+        await upgradeSchema44TestDatabase({
           databaseFilename: recoveryDatabaseFile,
           p39ReportFilename: resolve(
             fixture.directory,
