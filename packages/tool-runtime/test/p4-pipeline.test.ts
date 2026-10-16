@@ -40,6 +40,7 @@ import { Effect, Exit, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   actionDigestOf,
+  reconciliationRetryDenialReasonCode,
   ToolDefinitionStoreLive,
   type ToolExecutor,
   ToolRuntimeLive,
@@ -813,6 +814,18 @@ const runFailure = (
   );
 
 describe("P4 tool runtime pipeline", () => {
+  it("distinguishes post-I/O authority denial from executable approval denial", () => {
+    expect(
+      reconciliationRetryDenialReasonCode("InvocationAuthorityDenied"),
+    ).toBe("AuthoritySnapshotChanged");
+    expect(
+      reconciliationRetryDenialReasonCode("ApprovalNoLongerAuthorized"),
+    ).toBe("ApprovalNoLongerAuthorized");
+    expect(reconciliationRetryDenialReasonCode("ApprovalExpired")).toBe(
+      "ApprovalNoLongerAuthorized",
+    );
+  });
+
   it("uses fixed P39 target-region digest vectors preserving emitted order and multiplicity", () => {
     const fileRegion = {
       resourceSpaceId: "filesystem",

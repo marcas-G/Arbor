@@ -6,6 +6,9 @@ Authorization: `AUTHORIZE_AH7_DG02_RECONCILIATION_RUNTIME_AND_SHELL_V3_IMPLEMENT
 Canonical plan raw SHA-256 (HEAD blob bytes):
 `18C65193FD78DCB72692D79AE0DC14FCCC3C7FFC1A35397E25C206543DD18B64`
 
+Authorization reaffirmed by the user on 2026-10-17 after independent review:
+`AUTHORIZE_AH7_DG02_RECONCILIATION_RUNTIME_AND_SHELL_V3_IMPLEMENTATION`.
+
 ## Implementation
 
 - New catalog writes expose shell v3 with `NonIdempotent` semantics. Exact
@@ -34,6 +37,19 @@ Canonical plan raw SHA-256 (HEAD blob bytes):
 - `pnpm typecheck` — PASS.
 - Biome checks on all changed source/test files — PASS.
 - Targeted P4/P39/profile tests — 7 files, 52 tests PASS.
+- Retry-gate denial mapping regression — PASS: invocation-authority denial maps
+  to `AuthoritySnapshotChanged`; approval denial maps to
+  `ApprovalNoLongerAuthorized`.
+- Resource-change-during-reconciliation real daemon case — PASS (targeted
+  Vitest: 1 passed, 6 skipped). After the test-only source port changes the
+  Workspace resource addresses during `NotOccurred` reconciliation I/O, P4
+  revalidates the captured resource revision/addresses and admission inside the
+  fenced transaction. It records one exact P39 `NotOccurred` fact, selects it
+  in the P40 `ReconciledNoEffect` observation with
+  `reasonCode=ResourceSnapshotChanged`, preserves attempt 0 only, and performs
+  zero external effects/retry attempt. The public action was observed as
+  `TerminalRejected`; this case does not qualify P3 projection or its crash
+  boundaries.
 - Real daemon restart qualification, one test-only trusted profile per case:
 
   - `NotOccurred` — PASS. Kill after P4 effect admission, kill again while
@@ -53,10 +69,13 @@ Canonical plan raw SHA-256 (HEAD blob bytes):
 
 ## Qualification boundary
 
-The process evidence above uses only a test-owned deterministic profile and
-external state fixture. It does not qualify a production source/profile. The
-broader authorized matrix for authority/resource/approval/Stop changes,
+The remaining authorized matrix for authority/approval/Stop changes,
 concurrent stale-generation takeover during an in-flight source read, P40
 terminal COMMIT on both kill sides, and P3 projection on both kill sides was
-not run in this implementation batch. No AH7 closure, release-readiness, or
-full functional-suite claim is made; AH7 remains PARTIAL.
+not run in this implementation batch. Resource-change-during-I/O has the P4
+retry-gate case above, but this does not qualify the other resource or
+projection crash boundaries. No AH7 closure, release-readiness, or full
+functional-suite claim is made; AH7 remains PARTIAL.
+
+The process evidence above uses only a test-owned deterministic profile and
+external state fixture. It does not qualify a production source/profile.

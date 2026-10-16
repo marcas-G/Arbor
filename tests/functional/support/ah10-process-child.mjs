@@ -58,6 +58,10 @@ if (reconciliationMode !== undefined) {
       result_ref TEXT,
       recorded_at TEXT NOT NULL
     )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS ah7_test_reconciliation_controls (
+      invocation_id TEXT PRIMARY KEY,
+      resource_boundary_changed_at TEXT NOT NULL
+    )`);
   } finally {
     db.close();
   }
@@ -83,7 +87,7 @@ if (reconciliationMode !== undefined) {
   const testReconciliationPort = {
     reconcile: (request) =>
       Effect.sync(() => {
-        const source = new DatabaseSync(databaseFile, { readOnly: true });
+        const source = new DatabaseSync(databaseFile);
         try {
           const effect = source
             .prepare(
@@ -96,6 +100,63 @@ if (reconciliationMode !== undefined) {
             )
             .all();
           const evidenceArtifact = evidence[0];
+          if (
+            reconciliationMode === "NotOccurred" &&
+            process.env.ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE === "1"
+          ) {
+            const changed = source
+              .prepare(
+                "SELECT 1 FROM ah7_test_reconciliation_controls WHERE invocation_id = ?",
+              )
+              .get(request.invocationId);
+            if (changed === undefined) {
+              const invocation = source
+                .prepare(
+                  "SELECT workspace_id FROM tool_invocations WHERE invocation_id = ?",
+                )
+                .get(request.invocationId);
+              if (invocation === undefined) {
+                throw new Error(
+                  "AH7 test profile could not read invocation Workspace",
+                );
+              }
+              const workspace = source
+                .prepare(
+                  "SELECT resource_boundary FROM workspaces WHERE workspace_id = ?",
+                )
+                .get(invocation?.workspace_id);
+              if (workspace === undefined) {
+                throw new Error(
+                  "AH7 test profile could not read Workspace boundary",
+                );
+              }
+              const boundary = JSON.parse(workspace.resource_boundary);
+              const addresses = Array.isArray(boundary.addresses)
+                ? boundary.addresses
+                : [];
+              const firstAddress = addresses[0];
+              if (
+                typeof firstAddress !== "object" ||
+                firstAddress === null ||
+                typeof firstAddress.path !== "string"
+              ) {
+                throw new Error(
+                  "AH7 test profile Workspace boundary is malformed",
+                );
+              }
+              firstAddress.path = `${firstAddress.path}.changed-during-reconcile`;
+              source
+                .prepare(
+                  "UPDATE workspaces SET resource_boundary = ? WHERE workspace_id = ?",
+                )
+                .run(JSON.stringify(boundary), invocation.workspace_id);
+              source
+                .prepare(
+                  "INSERT INTO ah7_test_reconciliation_controls (invocation_id, resource_boundary_changed_at) VALUES (?,?)",
+                )
+                .run(request.invocationId, new Date().toISOString());
+            }
+          }
           if (reconciliationMode === "StillUnknown") {
             return {
               _tag: "StillUnknown",

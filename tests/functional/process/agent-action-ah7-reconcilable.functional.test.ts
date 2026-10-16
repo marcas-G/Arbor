@@ -300,6 +300,7 @@ const readP4InvocationApprovalBinding = (
                 tool_version, side_effect_semantics, arguments_json,
                 resolved_regions_json, approval_id, effect_admission_state,
                 result_ref, settlement_kind, settled_at,
+                settlement_json,
                 recovery_binding_sha256, settlement_provenance,
                 selected_attempt_no, selected_fact_id,
                 observation_format_version, observation_json,
@@ -321,6 +322,7 @@ const readP4InvocationApprovalBinding = (
           readonly result_ref: string | null;
           readonly settlement_kind: string | null;
           readonly settled_at: string | null;
+          readonly settlement_json: string | null;
           readonly recovery_binding_sha256: string | null;
           readonly settlement_provenance: string | null;
           readonly selected_attempt_no: number | null;
@@ -447,6 +449,12 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       reconciliationMode: "NotOccurred",
     },
     {
+      boundary: "AH7AfterEffectAdmissionCommit",
+      semantics: "Reconcilable",
+      reconciliationMode: "NotOccurred",
+      resourceChangeDuringReconcile: true,
+    },
+    {
       boundary: "AH7AfterToolEffectBeforeSettlement",
       semantics: "Reconcilable",
       reconciliationMode: "Occurred",
@@ -457,10 +465,17 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       reconciliationMode: "StillUnknown",
     },
   ] as const) {
-    const { boundary, semantics, reconciliationMode } = scenario;
+    const {
+      boundary,
+      semantics,
+      reconciliationMode,
+      resourceChangeDuringReconcile,
+    } = scenario;
     const testName =
       reconciliationMode !== undefined
-        ? `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
+        ? resourceChangeDuringReconcile
+          ? "revalidates the Workspace resource snapshot after NotOccurred reconciliation I/O"
+          : `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
         : boundary === "AH7AfterToolIntentCommit"
           ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
           : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
@@ -475,6 +490,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           ? `Add-Content -LiteralPath '${effectFile}' -Value '${marker}'`
           : `printf '%s\\n' '${marker}' >> '${effectFile}'`;
       const hits: AhProbeHit[] = [];
+      const runtimeProbeEvents: Array<Readonly<Record<string, unknown>>> = [];
       let targetProviderCalls = 0;
       let workProviderCalls = 0;
       let manualWaitCalls = 0;
@@ -562,6 +578,12 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                 .reverse()
                 .find((message) => message.role === "tool")?.content ??
               "<no tool result>";
+            if (resourceChangeDuringReconcile && targetProviderCalls > 1) {
+              return {
+                _tag: "Text",
+                text: `Resource snapshot changed during reconciliation for ${marker}`,
+              };
+            }
             if (targetProviderCalls > 5) {
               return { _tag: "HttpError", status: 429 };
             }
@@ -587,7 +609,15 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ? { ARBOR_AH_NON_IDEMPOTENT: "1" }
             : {}),
         },
-        onDaemonStdout: (line) => recordAhProbeLine(hits, line),
+        onDaemonStdout: (line) => {
+          recordAhProbeLine(hits, line);
+          try {
+            const event = JSON.parse(line) as Record<string, unknown>;
+            if (event.runtimeProbe === true) runtimeProbeEvents.push(event);
+          } catch {
+            // Ignore non-JSON daemon output in this test-only trace.
+          }
+        },
       });
       fixtures.push(fixture);
       const client = makePublicClient(fixture.baseUrl);
@@ -689,6 +719,9 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                 ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
                 ARBOR_AH7_TEST_RECONCILIATION_MODE: reconciliationMode,
                 ARBOR_AH7_TEST_CRASH_BOUNDARY: boundary,
+                ...(resourceChangeDuringReconcile
+                  ? { ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE: "1" }
+                  : {}),
               }),
         },
       });
@@ -766,6 +799,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       }
       const targetExecutionId = hit.executionId;
       const targetCallRef = hit.callRef;
+      const targetInvocationId = hit.invocationId;
       const crashedInvocationBinding = readP4InvocationApprovalBinding(
         fixture.databaseFile,
         targetExecutionId,
@@ -920,6 +954,20 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ARBOR_AH_NON_IDEMPOTENT: "1",
           },
         });
+      } else if (
+        reconciliationMode !== undefined &&
+        resourceChangeDuringReconcile
+      ) {
+        await fixture.restart({
+          entry: reconciliationChild,
+          daemonEnvironment: {
+            ARBOR_AH10_ROLE: "old",
+            ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
+            ARBOR_AH7_TEST_RECONCILIATION_MODE: reconciliationMode,
+            ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE: "1",
+            ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
+          },
+        });
       } else if (reconciliationMode !== undefined) {
         const factBoundary =
           reconciliationMode === "NotOccurred"
@@ -968,91 +1016,127 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         await fixture.restart();
       }
       const resumesUnadmittedIntent = boundary === "AH7AfterToolIntentCommit";
-      const recovered = await waitForPublic(
-        async () => durableSnapshot(fixture.databaseFile),
-        (value) => {
-          if (resumesUnadmittedIntent) {
-            const successorStep = value.steps.find(
-              (step) =>
-                step.execution_id === targetExecutionId &&
-                step.logical_step_no ===
-                  Number(crashedSourceStep?.logical_step_no ?? -1) + 1,
-            );
-            return (
-              value.actions.some(
-                (action) =>
-                  action.execution_id === targetExecutionId &&
-                  action.call_ref === hit?.callRef &&
-                  action.state === "Applied",
-              ) &&
-              value.toolInvocations.some(
-                (invocation) =>
-                  invocation.invocation_id === hit?.invocationId &&
-                  invocation.execution_id === targetExecutionId &&
-                  invocation.settlement_kind === "Success",
-              ) &&
-              value.toolResults.some((row) =>
-                isToolResultFor(
-                  row,
-                  hit?.invocationId ?? "",
-                  hit?.callRef ?? "",
-                ),
-              ) &&
-              successorStep !== undefined &&
-              successorStep.provider_turn_id !== originalProviderTurnId &&
-              value.providerTurns.some(
-                (turn) =>
-                  turn.provider_turn_id === successorStep.provider_turn_id &&
-                  turn.settled_at !== null,
-              ) &&
-              value.outputs.filter(
-                (output) =>
-                  output.source_ref ===
-                  `${successorStep.provider_turn_id}:assistant`,
-              ).length === 1
-            );
-          }
-          if (
-            reconciliationMode === "NotOccurred" ||
-            reconciliationMode === "Occurred"
-          ) {
-            return (
-              value.actions.some(
-                (action) =>
-                  action.execution_id === targetExecutionId &&
-                  action.call_ref === hit?.callRef &&
-                  action.state === "Applied",
-              ) &&
-              value.toolInvocations.some(
-                (invocation) =>
-                  invocation.invocation_id === hit?.invocationId &&
-                  invocation.settlement_kind === "Success",
-              ) &&
-              value.toolResults.some((row) =>
-                isToolResultFor(
-                  row,
-                  hit?.invocationId ?? "",
-                  hit?.callRef ?? "",
-                ),
-              )
-            );
-          }
-          return (
-            value.actions.some(
-              (action) =>
-                action.execution_id === targetExecutionId &&
-                action.call_ref === hit?.callRef &&
-                action.state === "ReconciliationPending",
-            ) &&
-            value.executions.some(
-              (execution) =>
-                execution.execution_id === targetExecutionId &&
-                execution.settlement_kind === "OutcomeUnknown",
-            )
+      let recovered: ReturnType<typeof durableSnapshot>;
+      try {
+        if (resourceChangeDuringReconcile) {
+          await waitForPublic(
+            async () =>
+              readP4InvocationApprovalBinding(
+                fixture.databaseFile,
+                targetExecutionId,
+                targetInvocationId,
+              ),
+            (value) => value?.settlement_kind === "ReconciledNoEffect",
+            45_000,
           );
-        },
-        45_000,
-      );
+          recovered = durableSnapshot(fixture.databaseFile);
+        } else {
+          recovered = await waitForPublic(
+            async () => durableSnapshot(fixture.databaseFile),
+            (value) => {
+              if (resumesUnadmittedIntent) {
+                const successorStep = value.steps.find(
+                  (step) =>
+                    step.execution_id === targetExecutionId &&
+                    step.logical_step_no ===
+                      Number(crashedSourceStep?.logical_step_no ?? -1) + 1,
+                );
+                return (
+                  value.actions.some(
+                    (action) =>
+                      action.execution_id === targetExecutionId &&
+                      action.call_ref === hit?.callRef &&
+                      action.state ===
+                        (resourceChangeDuringReconcile
+                          ? "TerminalRejected"
+                          : "Applied"),
+                  ) &&
+                  value.toolInvocations.some(
+                    (invocation) =>
+                      invocation.invocation_id === hit?.invocationId &&
+                      invocation.execution_id === targetExecutionId &&
+                      invocation.settlement_kind === "Success",
+                  ) &&
+                  value.toolResults.some((row) =>
+                    isToolResultFor(
+                      row,
+                      hit?.invocationId ?? "",
+                      hit?.callRef ?? "",
+                    ),
+                  ) &&
+                  successorStep !== undefined &&
+                  successorStep.provider_turn_id !== originalProviderTurnId &&
+                  value.providerTurns.some(
+                    (turn) =>
+                      turn.provider_turn_id ===
+                        successorStep.provider_turn_id &&
+                      turn.settled_at !== null,
+                  ) &&
+                  value.outputs.filter(
+                    (output) =>
+                      output.source_ref ===
+                      `${successorStep.provider_turn_id}:assistant`,
+                  ).length === 1
+                );
+              }
+              if (
+                reconciliationMode === "NotOccurred" ||
+                reconciliationMode === "Occurred"
+              ) {
+                if (resourceChangeDuringReconcile) {
+                  return value.toolInvocations.some(
+                    (invocation) =>
+                      invocation.invocation_id === hit?.invocationId &&
+                      invocation.settlement_kind === "ReconciledNoEffect",
+                  );
+                }
+                return (
+                  value.actions.some(
+                    (action) =>
+                      action.execution_id === targetExecutionId &&
+                      action.call_ref === hit?.callRef &&
+                      action.state === "Applied",
+                  ) &&
+                  value.toolInvocations.some(
+                    (invocation) =>
+                      invocation.invocation_id === hit?.invocationId &&
+                      invocation.settlement_kind ===
+                        (resourceChangeDuringReconcile
+                          ? "ReconciledNoEffect"
+                          : "Success"),
+                  ) &&
+                  value.toolResults.some((row) =>
+                    isToolResultFor(
+                      row,
+                      hit?.invocationId ?? "",
+                      hit?.callRef ?? "",
+                    ),
+                  )
+                );
+              }
+              return (
+                value.actions.some(
+                  (action) =>
+                    action.execution_id === targetExecutionId &&
+                    action.call_ref === hit?.callRef &&
+                    action.state === "ReconciliationPending",
+                ) &&
+                value.executions.some(
+                  (execution) =>
+                    execution.execution_id === targetExecutionId &&
+                    execution.settlement_kind === "OutcomeUnknown",
+                )
+              );
+            },
+            45_000,
+          );
+        }
+      } catch (error) {
+        if (!resourceChangeDuringReconcile) throw error;
+        throw new Error(
+          `resource-change recovery did not settle: ${error instanceof Error ? error.message : String(error)}; invocation=${JSON.stringify(readP4InvocationApprovalBinding(fixture.databaseFile, targetExecutionId, hit.invocationId))}; facts=${JSON.stringify(readReconciliationFacts(fixture.databaseFile, hit.invocationId))}; runtimeProbes=${JSON.stringify(runtimeProbeEvents.filter((event) => event.invocationId === hit.invocationId).map((event) => ({ boundary: event.boundary, outcomeTag: event.outcomeTag, admissionResult: event.admissionResult })))}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        );
+      }
       const recoveredTarget = readExecutionProviderTurns(
         fixture.databaseFile,
         targetExecutionId,
@@ -1101,25 +1185,58 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           result_ref: null,
         });
         expect(reconciliationFacts[0]?.evidence_ref).toMatch(/^art_/u);
-        expect(effectAttempts).toHaveLength(2);
-        expect(effectAttempts.map((attempt) => attempt.attempt_no)).toEqual([
-          0, 1,
-        ]);
-        expect(
-          effectAttempts.map((attempt) => attempt.admission_state),
-        ).toEqual(["MayHaveStarted", "MayHaveStarted"]);
-        expect(effectAttempts[0]?.effect_key).toBe(
-          effectAttempts[1]?.effect_key,
-        );
-        expect(externalEffects).toHaveLength(1);
-        expect(externalEffects[0]?.result_ref).toMatch(/^art_/u);
-        expect(recoveredInvocationBinding).toMatchObject({
-          settlement_kind: "Success",
-          settlement_provenance: "Ordinary",
-          selected_attempt_no: null,
-          selected_fact_id: null,
-          observation_format_version: "p4-canonical-tool-observation-v1",
-        });
+        if (resourceChangeDuringReconcile) {
+          expect(effectAttempts).toHaveLength(1);
+          expect(effectAttempts[0]).toMatchObject({
+            attempt_no: 0,
+            admission_state: "MayHaveStarted",
+          });
+          expect(externalEffects).toHaveLength(0);
+          expect(recoveredInvocationBinding).toMatchObject({
+            settlement_kind: "ReconciledNoEffect",
+            settlement_provenance: "Reconciliation",
+            selected_attempt_no: 0,
+            selected_fact_id: reconciliationFacts[0]?.fact_id,
+            observation_format_version: "p4-canonical-tool-observation-v1",
+          });
+          expect(recoveredInvocationBinding?.result_ref).toMatch(/^art_/u);
+          expect(
+            JSON.parse(String(recoveredInvocationBinding?.settlement_json)),
+          ).toMatchObject({
+            _tag: "ReconciledNoEffect",
+            reasonCode: "ResourceSnapshotChanged",
+          });
+          const observation = JSON.parse(
+            Buffer.from(
+              recoveredInvocationBinding?.observation_json ?? new Uint8Array(),
+            ).toString("utf8"),
+          );
+          expect(observation).toMatchObject({
+            _tag: "ReconciledNoEffect",
+            reasonCode: "ResourceSnapshotChanged",
+            reconciliationFactRef: reconciliationFacts[0]?.fact_id,
+          });
+        } else {
+          expect(effectAttempts).toHaveLength(2);
+          expect(effectAttempts.map((attempt) => attempt.attempt_no)).toEqual([
+            0, 1,
+          ]);
+          expect(
+            effectAttempts.map((attempt) => attempt.admission_state),
+          ).toEqual(["MayHaveStarted", "MayHaveStarted"]);
+          expect(effectAttempts[0]?.effect_key).toBe(
+            effectAttempts[1]?.effect_key,
+          );
+          expect(externalEffects).toHaveLength(1);
+          expect(externalEffects[0]?.result_ref).toMatch(/^art_/u);
+          expect(recoveredInvocationBinding).toMatchObject({
+            settlement_kind: "Success",
+            settlement_provenance: "Ordinary",
+            selected_attempt_no: null,
+            selected_fact_id: null,
+            observation_format_version: "p4-canonical-tool-observation-v1",
+          });
+        }
         expect(recoveredInvocationBinding?.observation_sha256).toMatch(
           /^[0-9a-f]{64}$/u,
         );
@@ -1185,6 +1302,9 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       if (resumesUnadmittedIntent) {
         expect(settledInvocation?.settled_at).not.toBeNull();
         expect(settledInvocation?.settlement_kind).toBe("Success");
+      } else if (resourceChangeDuringReconcile) {
+        expect(settledInvocation?.settled_at).not.toBeNull();
+        expect(settledInvocation?.settlement_kind).toBe("ReconciledNoEffect");
       } else if (
         reconciliationMode === "NotOccurred" ||
         reconciliationMode === "Occurred"
@@ -1208,19 +1328,32 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           action.execution_id === targetExecutionId &&
           action.call_ref === hit.callRef,
       );
-      expect(recoveredTargetActions).toEqual([
-        expect.objectContaining({
+      if (resourceChangeDuringReconcile) {
+        expect(recoveredTargetActions).toHaveLength(1);
+        expect(recoveredTargetActions[0]).toMatchObject({
           execution_id: targetExecutionId,
           logical_action_id: crashedAction.logical_action_id,
           call_ref: crashedAction.call_ref,
-          state:
-            resumesUnadmittedIntent ||
-            reconciliationMode === "NotOccurred" ||
-            reconciliationMode === "Occurred"
-              ? "Applied"
-              : "ReconciliationPending",
-        }),
-      ]);
+        });
+        // The P4 denial may already be visible as a terminal rejection, but
+        // this case qualifies the P4 retry gate only, not P3 projection crash
+        // convergence. In particular, it must never report an applied effect.
+        expect(recoveredTargetActions[0]?.state).not.toBe("Applied");
+      } else {
+        expect(recoveredTargetActions).toEqual([
+          expect.objectContaining({
+            execution_id: targetExecutionId,
+            logical_action_id: crashedAction.logical_action_id,
+            call_ref: crashedAction.call_ref,
+            state:
+              resumesUnadmittedIntent ||
+              reconciliationMode === "NotOccurred" ||
+              reconciliationMode === "Occurred"
+                ? "Applied"
+                : "ReconciliationPending",
+          }),
+        ]);
+      }
       const recoveredExecution = recovered.executions.find(
         (execution) => execution.execution_id === targetExecutionId,
       );
@@ -1374,12 +1507,17 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           ),
         ).toEqual(crashedTarget.providerTurns);
         expect(targetProviderCalls).toBeLessThanOrEqual(2);
-        expect(contentAfter).toBeDefined();
-        expect(
-          (contentAfter ?? "")
-            .split(/\r?\n/u)
-            .filter((line) => line === marker),
-        ).toHaveLength(1);
+        if (resourceChangeDuringReconcile) {
+          expect(contentAfter).toBeNull();
+          expect(externalEffects).toHaveLength(0);
+        } else {
+          expect(contentAfter).toBeDefined();
+          expect(
+            (contentAfter ?? "")
+              .split(/\r?\n/u)
+              .filter((line) => line === marker),
+          ).toHaveLength(1);
+        }
       } else {
         expect(recoveredTarget.providerTurns).toEqual(
           crashedTarget.providerTurns,
