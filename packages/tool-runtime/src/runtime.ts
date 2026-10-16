@@ -3036,190 +3036,237 @@ export const ToolRuntimeLive = (
             }
           }
 
-          const effectGateNow = yield* clock.now();
-          const effectAuthority = Option.isSome(authorityResolver)
-            ? yield* authorityResolver.value
-                .resolve({
-                  intent,
-                  definition,
-                  context,
-                  regions,
-                  now: effectGateNow,
-                })
+          // A NotOccurred proof whose retry gate was denied is already a
+          // complete, fenced no-effect decision. Do not send that settled
+          // recovery outcome through the ordinary new-effect authority,
+          // approval, or admission path: those checks govern a new attempt
+          // and can only overwrite or obscure the authenticated P39/P40
+          // terminal selection below.
+          if (recoveredToolOutcome?.settlement._tag !== "ReconciledNoEffect") {
+            const effectGateNow = yield* clock.now();
+            const effectAuthority = Option.isSome(authorityResolver)
+              ? yield* authorityResolver.value
+                  .resolve({
+                    intent,
+                    definition,
+                    context,
+                    regions,
+                    now: effectGateNow,
+                  })
+                  .pipe(
+                    Effect.catchTag("ToolAuthorityDenied", () =>
+                      Effect.succeed(undefined),
+                    ),
+                    Effect.mapError(
+                      operationalFailure(
+                        "AuthorityResolution",
+                        String(intent.invocationId),
+                      ),
+                    ),
+                  )
+              : context.authority;
+            if (effectAuthority === undefined) {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                approvalAlreadyConsumedBySelf
+                  ? "ApprovalNoLongerAuthorized"
+                  : "InvocationAuthorityDenied",
+              );
+            }
+            if (options.qualificationProbe !== undefined) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH7AfterEffectAuthorityResolvedBeforeAdmission",
+                    executionId: context.executionId,
+                    invocationId: intent.invocationId,
+                    callRef: intent.callRef,
+                  }) ?? Promise.resolve(),
+              );
+            }
+            if (effectAuthority.sourceRevision === undefined) {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                approvalAlreadyConsumedBySelf
+                  ? "ApprovalNoLongerAuthorized"
+                  : "InvocationAuthorityDenied",
+              );
+            }
+            const effectAuthorityCheck = checkInvocationAuthority({
+              authority: effectAuthority,
+              definition,
+              intent,
+              context,
+              regions,
+              now: effectGateNow,
+              maxDelegationDepth: options.maxDelegationDepth ?? 1,
+            });
+            if (effectAuthorityCheck._tag === "Denied") {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                approvalAlreadyConsumedBySelf
+                  ? "ApprovalNoLongerAuthorized"
+                  : "InvocationAuthorityDenied",
+              );
+            }
+            if (
+              needsApproval &&
+              intent.approvalId !== null &&
+              context.executableApproval === undefined
+            ) {
+              const approval = yield* tx
+                .transact(store.findApproval(intent.approvalId))
                 .pipe(
-                  Effect.catchTag("ToolAuthorityDenied", () =>
-                    Effect.succeed(undefined),
-                  ),
                   Effect.mapError(
                     operationalFailure(
-                      "AuthorityResolution",
+                      "ApprovalLookup",
                       String(intent.invocationId),
                     ),
                   ),
-                )
-            : context.authority;
-          if (effectAuthority === undefined) {
-            return yield* recordNoEffectDenial(
-              definition.sideEffectSemantics,
-              regions,
-              approvalAlreadyConsumedBySelf
-                ? "ApprovalNoLongerAuthorized"
-                : "InvocationAuthorityDenied",
-            );
-          }
-          if (options.qualificationProbe !== undefined) {
-            yield* Effect.promise(
-              () =>
-                options.qualificationProbe?.({
-                  boundary: "AH7AfterEffectAuthorityResolvedBeforeAdmission",
-                  executionId: context.executionId,
-                  invocationId: intent.invocationId,
-                  callRef: intent.callRef,
-                }) ?? Promise.resolve(),
-            );
-          }
-          if (effectAuthority.sourceRevision === undefined) {
-            return yield* recordNoEffectDenial(
-              definition.sideEffectSemantics,
-              regions,
-              approvalAlreadyConsumedBySelf
-                ? "ApprovalNoLongerAuthorized"
-                : "InvocationAuthorityDenied",
-            );
-          }
-          const effectAuthorityCheck = checkInvocationAuthority({
-            authority: effectAuthority,
-            definition,
-            intent,
-            context,
-            regions,
-            now: effectGateNow,
-            maxDelegationDepth: options.maxDelegationDepth ?? 1,
-          });
-          if (effectAuthorityCheck._tag === "Denied") {
-            return yield* recordNoEffectDenial(
-              definition.sideEffectSemantics,
-              regions,
-              approvalAlreadyConsumedBySelf
-                ? "ApprovalNoLongerAuthorized"
-                : "InvocationAuthorityDenied",
-            );
-          }
-          if (
-            needsApproval &&
-            intent.approvalId !== null &&
-            context.executableApproval === undefined
-          ) {
-            const approval = yield* tx
-              .transact(store.findApproval(intent.approvalId))
-              .pipe(
-                Effect.mapError(
-                  operationalFailure(
-                    "ApprovalLookup",
-                    String(intent.invocationId),
-                  ),
-                ),
-              );
-            const matched = Option.isSome(approval)
-              ? matchApproval({
-                  approval: approval.value,
-                  intent,
-                  definition,
-                  context,
+                );
+              const matched = Option.isSome(approval)
+                ? matchApproval({
+                    approval: approval.value,
+                    intent,
+                    definition,
+                    context,
+                    regions,
+                    now: effectGateNow,
+                    replayOfRecordedInvocation: approvalAlreadyConsumedBySelf,
+                  })
+                : { _tag: "Denied" as const, reason: "approval not found" };
+              if (matched._tag === "Denied") {
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
                   regions,
-                  now: effectGateNow,
-                  replayOfRecordedInvocation: approvalAlreadyConsumedBySelf,
-                })
-              : { _tag: "Denied" as const, reason: "approval not found" };
-            if (matched._tag === "Denied") {
-              return yield* recordNoEffectDenial(
-                definition.sideEffectSemantics,
-                regions,
-                approvalAlreadyConsumedBySelf
-                  ? "ApprovalNoLongerAuthorized"
-                  : approvalDenialCode(matched.reason),
-              );
-            }
-          }
-          if (options.qualificationProbe !== undefined) {
-            yield* Effect.promise(
-              () =>
-                options.qualificationProbe?.({
-                  boundary: "AH7BeforeEffectAdmission",
-                  executionId: context.executionId,
-                  invocationId: intent.invocationId,
-                  callRef: intent.callRef,
-                }) ?? Promise.resolve(),
-            );
-          }
-          const effectAdmission = retryAdmitted
-            ? {
-                _tag: "Succeeded" as const,
-                value: { _tag: "Admitted" as const },
+                  approvalAlreadyConsumedBySelf
+                    ? "ApprovalNoLongerAuthorized"
+                    : approvalDenialCode(matched.reason),
+                );
               }
-            : yield* Effect.match(
-                tx.transact(
-                  Effect.gen(function* () {
-                    const admissionResult = yield* store.admitEffect(
-                      intent.invocationId,
-                      effectAuthority,
-                      effectGateNow,
-                      context.executionFence,
-                    );
-                    if (
-                      admissionResult._tag === "Admitted" &&
-                      p39BindingEnabled &&
-                      Option.isSome(p39Recovery)
-                    ) {
-                      yield* p39Recovery.value.admitFirstAttempt(
-                        intent.invocationId,
-                        effectGateNow,
-                      );
-                    }
-                    return admissionResult;
-                  }),
-                ),
-                {
-                  onFailure: (cause) => ({ _tag: "Failed" as const, cause }),
-                  onSuccess: (value) => ({ _tag: "Succeeded" as const, value }),
-                },
-              );
-          if (effectAdmission._tag === "Failed") {
-            return yield* Effect.fail<ToolRuntimeError>(
-              isLeaseFencingRejected(effectAdmission.cause)
-                ? effectAdmission.cause
-                : operationalFailure(
-                    "IntentJournal",
-                    String(intent.invocationId),
-                  )(effectAdmission.cause),
-            );
-          }
-          if (effectAdmission.value._tag === "Denied") {
-            if (
-              recoveredToolOutcome?.settlement._tag === "ReconciledNoEffect"
-            ) {
-              recoveredToolOutcome = {
-                ...recoveredToolOutcome,
-                settlement: {
-                  ...recoveredToolOutcome.settlement,
-                  reasonCode: "AuthoritySnapshotChanged",
-                },
-              };
-            } else if (recoveredToolOutcome !== undefined) {
-              // A known Occurred fact is accounted under the current fence even
-              // if current authority no longer admits new effects.
-            } else {
-              return yield* recordNoEffectDenial(
-                definition.sideEffectSemantics,
-                regions,
-                approvalAlreadyConsumedBySelf
-                  ? "ApprovalNoLongerAuthorized"
-                  : effectAdmission.value.reasonCode,
+            }
+            if (options.qualificationProbe !== undefined) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH7BeforeEffectAdmission",
+                    executionId: context.executionId,
+                    invocationId: intent.invocationId,
+                    callRef: intent.callRef,
+                  }) ?? Promise.resolve(),
               );
             }
-          }
-          if (effectAdmission.value._tag === "ExecutionStopping") {
-            if (options.qualificationProbe !== undefined) {
+            const effectAdmission = retryAdmitted
+              ? {
+                  _tag: "Succeeded" as const,
+                  value: { _tag: "Admitted" as const },
+                }
+              : yield* Effect.match(
+                  tx.transact(
+                    Effect.gen(function* () {
+                      const admissionResult = yield* store.admitEffect(
+                        intent.invocationId,
+                        effectAuthority,
+                        effectGateNow,
+                        context.executionFence,
+                      );
+                      if (
+                        admissionResult._tag === "Admitted" &&
+                        p39BindingEnabled &&
+                        Option.isSome(p39Recovery)
+                      ) {
+                        yield* p39Recovery.value.admitFirstAttempt(
+                          intent.invocationId,
+                          effectGateNow,
+                        );
+                      }
+                      return admissionResult;
+                    }),
+                  ),
+                  {
+                    onFailure: (cause) => ({ _tag: "Failed" as const, cause }),
+                    onSuccess: (value) => ({
+                      _tag: "Succeeded" as const,
+                      value,
+                    }),
+                  },
+                );
+            if (effectAdmission._tag === "Failed") {
+              return yield* Effect.fail<ToolRuntimeError>(
+                isLeaseFencingRejected(effectAdmission.cause)
+                  ? effectAdmission.cause
+                  : operationalFailure(
+                      "IntentJournal",
+                      String(intent.invocationId),
+                    )(effectAdmission.cause),
+              );
+            }
+            if (effectAdmission.value._tag === "Denied") {
+              if (recoveredToolOutcome !== undefined) {
+                // A known Occurred fact is accounted under the current fence even
+                // if current authority no longer admits new effects.
+              } else {
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
+                  regions,
+                  approvalAlreadyConsumedBySelf
+                    ? "ApprovalNoLongerAuthorized"
+                    : effectAdmission.value.reasonCode,
+                );
+              }
+            }
+            if (effectAdmission.value._tag === "ExecutionStopping") {
+              if (options.qualificationProbe !== undefined) {
+                yield* Effect.promise(
+                  () =>
+                    options.qualificationProbe?.({
+                      boundary: "P38StopEffectAdmissionResult",
+                      executionId: context.executionId,
+                      invocationId: intent.invocationId,
+                      callRef: intent.callRef,
+                      logicalActionId:
+                        context.logicalActionId ??
+                        context.recoveryBindingIdentity?.logicalActionId,
+                      fencingGeneration:
+                        context.executionFence.fencingGeneration,
+                      admissionResult: effectAdmission.value._tag,
+                    }) ?? Promise.resolve(),
+                );
+              }
+              if (recoveredToolOutcome !== undefined) {
+                // Stop gates new execution; it does not discard a confirmed
+                // external outcome.
+              } else {
+                const settledAt = yield* clock.now();
+                return yield* persistNoEffectInterruption(
+                  Option.isSome(prior)
+                    ? {
+                        invocationId: intent.invocationId,
+                        executionId: context.executionId,
+                        workspaceId: context.workspaceId,
+                        toolName: intent.toolName,
+                        toolVersion: intent.toolVersion,
+                        sideEffectSemantics: definition.sideEffectSemantics,
+                        argumentsJson: intent.argumentsJson,
+                        resolvedRegions: regions,
+                        approvalId:
+                          context.executableApproval?.approvalId ??
+                          intent.approvalId,
+                        intentAt: prior.value.intentAt,
+                      }
+                    : undefined,
+                  settledAt,
+                );
+              }
+            }
+
+            if (
+              options.qualificationProbe !== undefined &&
+              recoveredToolOutcome === undefined
+            ) {
               yield* Effect.promise(
                 () =>
                   options.qualificationProbe?.({
@@ -3227,92 +3274,38 @@ export const ToolRuntimeLive = (
                     executionId: context.executionId,
                     invocationId: intent.invocationId,
                     callRef: intent.callRef,
-                    logicalActionId:
-                      context.logicalActionId ??
-                      context.recoveryBindingIdentity?.logicalActionId,
+                    ...((context.logicalActionId ??
+                      context.recoveryBindingIdentity?.logicalActionId) ===
+                    undefined
+                      ? {}
+                      : {
+                          logicalActionId:
+                            context.logicalActionId ??
+                            context.recoveryBindingIdentity?.logicalActionId,
+                        }),
                     fencingGeneration: context.executionFence.fencingGeneration,
                     admissionResult: effectAdmission.value._tag,
+                    ...(effectAdmission.value._tag === "Denied"
+                      ? {
+                          admissionDenialReason:
+                            effectAdmission.value.reasonCode,
+                        }
+                      : {}),
                   }) ?? Promise.resolve(),
               );
             }
-            if (
-              recoveredToolOutcome?.settlement._tag === "ReconciledNoEffect"
-            ) {
-              recoveredToolOutcome = {
-                ...recoveredToolOutcome,
-                settlement: {
-                  ...recoveredToolOutcome.settlement,
-                  reasonCode: "StopRequested",
-                },
-              };
-            } else if (recoveredToolOutcome !== undefined) {
-              // Stop gates new execution; it does not discard a confirmed
-              // external outcome.
-            } else {
-              const settledAt = yield* clock.now();
-              return yield* persistNoEffectInterruption(
-                Option.isSome(prior)
-                  ? {
-                      invocationId: intent.invocationId,
-                      executionId: context.executionId,
-                      workspaceId: context.workspaceId,
-                      toolName: intent.toolName,
-                      toolVersion: intent.toolVersion,
-                      sideEffectSemantics: definition.sideEffectSemantics,
-                      argumentsJson: intent.argumentsJson,
-                      resolvedRegions: regions,
-                      approvalId:
-                        context.executableApproval?.approvalId ??
-                        intent.approvalId,
-                      intentAt: prior.value.intentAt,
-                    }
-                  : undefined,
-                settledAt,
+
+            if (options.qualificationProbe !== undefined) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH7AfterEffectAdmissionCommit",
+                    executionId: context.executionId,
+                    invocationId: intent.invocationId,
+                    callRef: intent.callRef,
+                  }) ?? Promise.resolve(),
               );
             }
-          }
-
-          if (
-            options.qualificationProbe !== undefined &&
-            recoveredToolOutcome === undefined
-          ) {
-            yield* Effect.promise(
-              () =>
-                options.qualificationProbe?.({
-                  boundary: "P38StopEffectAdmissionResult",
-                  executionId: context.executionId,
-                  invocationId: intent.invocationId,
-                  callRef: intent.callRef,
-                  ...((context.logicalActionId ??
-                    context.recoveryBindingIdentity?.logicalActionId) ===
-                  undefined
-                    ? {}
-                    : {
-                        logicalActionId:
-                          context.logicalActionId ??
-                          context.recoveryBindingIdentity?.logicalActionId,
-                      }),
-                  fencingGeneration: context.executionFence.fencingGeneration,
-                  admissionResult: effectAdmission.value._tag,
-                  ...(effectAdmission.value._tag === "Denied"
-                    ? {
-                        admissionDenialReason: effectAdmission.value.reasonCode,
-                      }
-                    : {}),
-                }) ?? Promise.resolve(),
-            );
-          }
-
-          if (options.qualificationProbe !== undefined) {
-            yield* Effect.promise(
-              () =>
-                options.qualificationProbe?.({
-                  boundary: "AH7AfterEffectAdmissionCommit",
-                  executionId: context.executionId,
-                  invocationId: intent.invocationId,
-                  callRef: intent.callRef,
-                }) ?? Promise.resolve(),
-            );
           }
 
           const executionBundle =
