@@ -47,13 +47,13 @@ real daemon crash/restart qualification, not a full AH7 matrix or full
 functional run.
 
 The first observable run reached recovery and passed the P4/P40 evidence and
-P3 projection checks, then failed only because the new test oracle expected a
-second Provider call. A later run showed the normal AgentLoop may issue one
-completion Provider request after P3 projection. The final oracle counts
-exactly one `read` ToolCall decision, permits at most one completion request,
-and requires that request—if present—to contain the original ExpectedFailure.
-The cursor-uniqueness rerun above passed; these were test-oracle corrections,
-not runtime failures.
+P3 projection checks, then failed only because the new test oracle assumed an
+exact total Provider-call count. The final oracle proves exactly one `read`
+ToolCall decision. It permits zero or one completion Provider request after
+P3 projection; it does not claim a general completion-response contract. If
+that completion request occurs in this fixture, its test callback handles the
+specific recovered failure. The cursor-uniqueness rerun above passed; these
+were test-oracle corrections, not runtime failures.
 
 ## Schema-44 adapter fail-closed boundaries
 

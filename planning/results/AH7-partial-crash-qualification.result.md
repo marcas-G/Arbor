@@ -72,5 +72,9 @@ The earlier DG03 review requiring approval consumption and terminal
 settlement in one transaction is also superseded by the accepted
 `ACCEPT_TOOL_APPROVAL_SETTLEMENT_ATOMICITY` contract: exact approval consume is
 atomic with P4 intent claim, while terminal settlement remains separate.
+The P40 ExpectedFailure process qualification proves one original `read`
+ToolCall decision and no Executor replay (including the late-file
+counterfactual). It permits zero or one completion Provider call after P3
+projection; it does not establish a general completion-response contract.
 AH7 remains PARTIAL / OPEN; positive production Reconcilable proof/recovery
 and the remaining crash/concurrency matrix are not qualified by this addendum.
