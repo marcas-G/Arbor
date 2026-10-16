@@ -2045,6 +2045,7 @@ describe("pending P38 public Executable approval qualification", () => {
     expect(afterEffect.effectCount).toBe(1);
     expect(afterEffect.matchingInvocationCount).toBe(1);
     expect(afterEffect.executionApprovalCount).toBe(1);
+    const providerCallCountAfterEffect = run.fixture.providerCalls.length;
 
     const peer = await run.fixture.startAdditionalDaemon({
       entry: p4FenceChild,
@@ -2066,7 +2067,11 @@ describe("pending P38 public Executable approval qualification", () => {
         async () => run.snapshot(),
         (snapshot) =>
           snapshot.approval?.state === "Consumed" &&
-          snapshot.invocation?.settlement_kind === "OutcomeUnknown" &&
+          snapshot.execution?.settlement_kind === "OutcomeUnknown" &&
+          snapshot.step?.state === "SettlementProposed" &&
+          snapshot.action?.state === "ReconciliationPending" &&
+          snapshot.invocation?.effect_admission_state === "MayHaveStarted" &&
+          snapshot.invocation.settlement_kind === null &&
           snapshot.effectCount === 1 &&
           snapshot.matchingInvocationCount === 1 &&
           snapshot.executionApprovalCount === 1,
@@ -2077,12 +2082,32 @@ describe("pending P38 public Executable approval qualification", () => {
         revision: run.revision + 2,
         consumed_by: run.before.approval?.tool_invocation_id,
       });
+      expect(recovered.execution).toMatchObject({
+        stop_requested_at: null,
+        settlement_kind: "OutcomeUnknown",
+      });
+      expect(
+        JSON.parse(recovered.execution?.settlement_json ?? "{}"),
+      ).toMatchObject({
+        _tag: "OutcomeUnknown",
+        reconciliation: {
+          _tag: "ReconciliationRequired",
+          invocationRefs: [run.before.approval?.tool_invocation_id],
+        },
+      });
+      expect(recovered.step?.state).toBe("SettlementProposed");
+      expect(recovered.action?.state).toBe("ReconciliationPending");
       expect(recovered.invocation).toMatchObject({
         invocation_id: run.before.approval?.tool_invocation_id,
         approval_id: run.approvalId,
         effect_admission_state: "MayHaveStarted",
-        settlement_kind: "OutcomeUnknown",
+        settlement_kind: null,
       });
+      expect(recovered.recoveryBinding).toEqual(afterEffect.recoveryBinding);
+      expect(recovered.attempt0).toEqual(afterEffect.attempt0);
+      expect(run.fixture.providerCalls).toHaveLength(
+        providerCallCountAfterEffect,
+      );
       expect(
         probes.filter(
           (event) => event.boundary === "AH7AfterToolEffectBeforeSettlement",
