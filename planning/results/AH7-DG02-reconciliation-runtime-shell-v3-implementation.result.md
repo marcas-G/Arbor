@@ -93,6 +93,31 @@ suite claim is made; AH7 remains PARTIAL.
 The process evidence above uses only a test-owned deterministic profile and
 external state fixture. It does not qualify a production source/profile.
 
+## 2026-10-17 exact P39 replay identity checkpoint
+
+Implemented a scoped replay path for an exact persisted, unsettled
+`Reconcilable + MayHaveStarted` invocation. The path authenticates canonical
+RecoveryBinding bytes/hash, verifies the recorded regions digest, immutable
+P3/action/tool/arguments/approval identity, current trusted profile tuple, and
+the exact latest P39 attempt before reconciliation. It queries reality using
+the persisted binding's visibility digest, without comparing the old
+invocation's resource identity to resolver output from the current Workspace.
+For `NotOccurred`, the fenced retry transaction revalidates the current
+resource boundary and environment against the stored binding before resource
+admission and attempt-1 creation. A changed snapshot selects P40
+`ReconciledNoEffect(ResourceSnapshotChanged)` with no retry or Executor call.
+Ordinary and non-Reconcilable replay retain strict current-region identity
+matching.
+
+P4 pipeline qualification: `packages/tool-runtime/test/p4-pipeline.test.ts`
+**44/44 PASS**, including changed current boundary → authenticated
+`ResourceSnapshotChanged`, and fail-closed mismatched recorded regions / P39
+binding. `pnpm typecheck`, changed-file Biome, and `git diff --check` pass.
+This is a code/unit-test checkpoint only: the real-process P40
+before/after-terminal-commit matrix has not been rerun against this fix, and P3
+projection crash cases remain pending. No AH7 closure or production profile
+qualification is claimed.
+
 ## 2026-10-17 drift-matrix implementation checkpoint (not process-qualified)
 
 The NotOccurred retry-denial matrix was extended with test-owned mutations of

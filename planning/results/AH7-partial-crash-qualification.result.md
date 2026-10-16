@@ -98,3 +98,14 @@ The focused process run was stopped at the coordinating agent's request while
 other daemon suites competed for readiness. No PASS or phase-closure claim is
 recorded. Static checks on the changed test/probe files passed: typecheck,
 Biome, and `git diff --check`. AH7 remains PARTIAL / OPEN.
+
+The exact P39 replay path now has a P4 pipeline code checkpoint documented in
+`planning/results/AH7-DG02-reconciliation-runtime-shell-v3-implementation.result.md`:
+it binds recovery to the persisted RecoveryBinding/attempt/profile and delays
+the current snapshot retry decision until after reality reconciliation.
+Focused P4 pipeline tests pass 44/44, including changed-boundary denial and
+tampered binding/recorded-region fail-closed cases. The earlier real-process
+NotOccurred-before-P40-commit case failed to converge on the pre-fix candidate;
+it has not yet been rerun against this repair. P40 real-process qualification
+and all P3 crash-side qualification therefore remain pending; AH7 remains
+PARTIAL / OPEN.
