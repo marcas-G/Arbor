@@ -461,6 +461,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
     readonly resourceChangeDuringReconcile?: boolean;
     readonly reconciliationDrift?: "authority" | "approval" | "stop";
     readonly takeoverDuringReconciliationIo?: boolean;
+    readonly recoveryCrashBoundary?: string;
   };
   const scenarios: ReadonlyArray<ReconciliationScenario> = [
     {
@@ -505,6 +506,31 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       semantics: "Reconcilable",
       reconciliationMode: "StillUnknown",
     },
+    ...(["NotOccurred", "Occurred"] as const).flatMap((reconciliationMode) =>
+      (
+        [
+          "AH7BeforeToolSettlementCommit",
+          "AH7AfterToolSettlementCommit",
+        ] as const
+      ).map((recoveryCrashBoundary) => ({
+        boundary: "AH7AfterEffectAdmissionCommit" as const,
+        semantics: "Reconcilable" as const,
+        reconciliationMode,
+        recoveryCrashBoundary,
+        resourceChangeDuringReconcile: true,
+      })),
+    ),
+    ...(["NotOccurred", "Occurred", "StillUnknown"] as const).flatMap(
+      (reconciliationMode) =>
+        (
+          ["AH7BeforeActionResultCommit", "AH7AfterActionResultCommit"] as const
+        ).map((recoveryCrashBoundary) => ({
+          boundary: "AH7AfterEffectAdmissionCommit" as const,
+          semantics: "Reconcilable" as const,
+          reconciliationMode,
+          recoveryCrashBoundary,
+        })),
+    ),
   ];
   for (const scenario of scenarios) {
     const {
@@ -514,16 +540,21 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       resourceChangeDuringReconcile,
       reconciliationDrift,
       takeoverDuringReconciliationIo,
+      recoveryCrashBoundary,
     } = scenario;
     const testName =
       reconciliationMode !== undefined
         ? takeoverDuringReconciliationIo
           ? "fences gen0 after delayed reconciliation I/O while gen1 retries the same invocation"
           : resourceChangeDuringReconcile
-            ? "revalidates the Workspace resource snapshot after NotOccurred reconciliation I/O"
+            ? recoveryCrashBoundary === undefined
+              ? "revalidates the Workspace resource snapshot after NotOccurred reconciliation I/O"
+              : `qualifies the P40 ${reconciliationMode} selection across ${recoveryCrashBoundary}`
             : reconciliationDrift !== undefined
               ? `rejects NotOccurred retry after ${reconciliationDrift} drift during reconciliation I/O`
-              : `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
+              : recoveryCrashBoundary === undefined
+                ? `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
+                : `recovers ${reconciliationMode} across ${recoveryCrashBoundary}`
         : boundary === "AH7AfterToolIntentCommit"
           ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
           : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
@@ -1022,7 +1053,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ...(reconciliationDrift === undefined
               ? {}
               : { ARBOR_AH7_TEST_DRIFT_ON_RECONCILE: reconciliationDrift }),
-            ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
+            ARBOR_AH7_TEST_CRASH_BOUNDARY: recoveryCrashBoundary ?? "disabled",
           },
         });
       } else if (
@@ -1297,6 +1328,75 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           takeoverDb.close();
         }
         await gen1Daemon.crash();
+      } else if (recoveryCrashBoundary !== undefined) {
+        await waitForPublic(
+            async () => hits,
+            (value) =>
+              value.some(
+                (candidate) =>
+                  candidate.boundary === recoveryCrashBoundary &&
+                  candidate.callRef === hit?.callRef,
+              ),
+            45_000,
+          );
+          const recoveryHit = hit;
+          if (
+            recoveryHit === undefined ||
+            recoveryHit.invocationId === undefined ||
+            recoveryHit.callRef === undefined
+          ) {
+            throw new Error("AH7 P40 boundary lacks the target invocation");
+          }
+          const recoveryCallRef = recoveryHit.callRef;
+          const boundaryBinding = readP4InvocationApprovalBinding(
+            fixture.databaseFile,
+            targetExecutionId,
+            recoveryHit.invocationId,
+          );
+          expect(
+            readReconciliationFacts(
+              fixture.databaseFile,
+              recoveryHit.invocationId,
+            ),
+          ).toEqual([
+            expect.objectContaining({
+              outcome: reconciliationMode,
+              fact_disposition: "RecoveryInput",
+            }),
+          ]);
+          const shouldBeCommitted =
+            recoveryCrashBoundary === "AH7AfterToolSettlementCommit";
+          expect(boundaryBinding?.settlement_kind).toBe(
+            shouldBeCommitted ? "ReconciledNoEffect" : null,
+          );
+          expect(boundaryBinding?.selected_fact_id).toBe(
+            shouldBeCommitted ? expect.any(String) : null,
+          );
+          expect(boundaryBinding?.observation_json === null).toBe(
+            !shouldBeCommitted,
+          );
+          expect(
+            durableSnapshot(fixture.databaseFile).toolResults.filter(
+              (row) =>
+                readToolResultForCall([row], recoveryCallRef) !== undefined,
+            ),
+          ).toHaveLength(0);
+          await fixture.crash();
+          await fixture.restart({
+            entry: reconciliationChild,
+            daemonEnvironment: {
+              ARBOR_AH10_ROLE: "old",
+              ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
+              ARBOR_AH7_TEST_RECONCILIATION_MODE: reconciliationMode,
+              ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
+              ...(resourceChangeDuringReconcile
+                ? { ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE: "1" }
+                : {}),
+              ...(reconciliationDrift === undefined
+                ? {}
+                : { ARBOR_AH7_TEST_DRIFT_ON_RECONCILE: reconciliationDrift }),
+            },
+        });
       } else if (reconciliationMode !== undefined) {
         const factBoundary =
           String(reconciliationMode) === "NotOccurred"
@@ -1338,9 +1438,97 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ARBOR_AH10_ROLE: "old",
             ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
             ARBOR_AH7_TEST_RECONCILIATION_MODE: reconciliationMode,
-            ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
+            ARBOR_AH7_TEST_CRASH_BOUNDARY: recoveryCrashBoundary ?? "disabled",
+            ...(resourceChangeDuringReconcile
+              ? { ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE: "1" }
+              : {}),
           },
         });
+        if (recoveryCrashBoundary !== undefined) {
+          await waitForPublic(
+            async () => hits,
+            (value) =>
+              value.some(
+                (candidate) =>
+                  candidate.boundary === recoveryCrashBoundary &&
+                  candidate.callRef === hit?.callRef,
+              ),
+            45_000,
+          );
+          const recoveryHit = hit;
+          if (
+            recoveryHit === undefined ||
+            recoveryHit.invocationId === undefined ||
+            recoveryHit.callRef === undefined
+          ) {
+            throw new Error(
+              "AH7 recovery boundary lacks the target invocation",
+            );
+          }
+          const recoveryCallRef = recoveryHit.callRef;
+          const boundarySnapshot = durableSnapshot(fixture.databaseFile);
+          const boundaryBinding = readP4InvocationApprovalBinding(
+            fixture.databaseFile,
+            targetExecutionId,
+            recoveryHit.invocationId,
+          );
+          if (recoveryCrashBoundary.includes("ActionResult")) {
+            expect(boundaryBinding?.settlement_kind).toBe(
+              reconciliationMode === "StillUnknown" ? null : "Success",
+            );
+            const projectedAction = boundarySnapshot.actions.filter(
+              (action) => action.call_ref === recoveryCallRef,
+            );
+            const projectedResults = boundarySnapshot.toolResults.filter(
+              (row) =>
+                readToolResultForCall([row], recoveryCallRef) !== undefined,
+            );
+            if (recoveryCrashBoundary === "AH7BeforeActionResultCommit") {
+              expect(projectedAction).toHaveLength(1);
+              expect(projectedAction[0]?.state).toBe("Pending");
+              expect(projectedResults).toHaveLength(0);
+            } else {
+              expect(projectedAction).toHaveLength(1);
+              expect(projectedAction[0]?.state).toBe(
+                reconciliationMode === "StillUnknown"
+                  ? "ReconciliationPending"
+                  : "Applied",
+              );
+              expect(projectedResults).toHaveLength(1);
+            }
+          } else {
+            const shouldBeCommitted =
+              recoveryCrashBoundary === "AH7AfterToolSettlementCommit";
+            expect(boundaryBinding?.settlement_kind).toBe(
+              shouldBeCommitted ? "ReconciledNoEffect" : null,
+            );
+            expect(boundaryBinding?.selected_fact_id).toBe(
+              shouldBeCommitted ? expect.any(String) : null,
+            );
+            expect(boundaryBinding?.observation_json === null).toBe(
+              !shouldBeCommitted,
+            );
+            expect(
+              boundarySnapshot.toolResults.filter(
+                (row) =>
+                  readToolResultForCall([row], recoveryCallRef) !== undefined,
+              ),
+            ).toHaveLength(shouldBeCommitted ? 1 : 0);
+          }
+          await fixture.crash();
+          await fixture.restart({
+            entry: reconciliationChild,
+            daemonEnvironment: {
+              ARBOR_AH10_ROLE: "old",
+              ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
+              ARBOR_AH7_TEST_RECONCILIATION_MODE: reconciliationMode,
+              ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
+              ...(resourceChangeDuringReconcile
+                ? { ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE: "1" }
+                : {}),
+            },
+          });
+        }
       } else {
         await fixture.restart();
       }
