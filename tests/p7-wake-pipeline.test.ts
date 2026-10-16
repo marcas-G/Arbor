@@ -308,7 +308,7 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
     );
   });
 
-  it("composition smoke: builds against a real schema-42 database", async () => {
+  it("composition smoke: builds against a real schema-44 database", async () => {
     const database = schema44Factory.create();
     try {
       const app = buildSingleWorkspaceLayer({
@@ -337,7 +337,7 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
           never
         >,
       );
-      expect(result).toEqual({ version: 42, hasWorkWaits: true });
+      expect(result).toEqual({ version: 44, hasWorkWaits: true });
     } finally {
       database.cleanup();
     }

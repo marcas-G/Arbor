@@ -10,6 +10,11 @@ import {
   removeP39PrivateTestDirectory,
 } from "../../../tests/support/p39-windows-deployment-test.js";
 import {
+  CURRENT_SCHEMA44_SUFFIX_IDS,
+  HISTORICAL_SCHEMA42_SUFFIX_IDS,
+  HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS,
+} from "../../../tests/support/schema-prefix-contract.js";
+import {
   acquireP39MaintenanceWriterExclusion,
   CURRENT_MIGRATIONS,
   type MigrationFile,
@@ -63,9 +68,7 @@ const legacyApproval = {
 
 const cumulativeDescriptors: ReadonlyArray<MigrationFile> = [
   P39_RECONCILIATION_MIGRATION,
-  P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
-  P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
-  P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
+  ...HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS,
 ];
 
 const descriptorPins: Readonly<
@@ -90,19 +93,23 @@ const descriptorPins: Readonly<
 };
 
 const assertDescriptorPrefixAndFingerprint = () => {
-  expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(42);
-  expect(CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual([
-    ...P38_MIGRATIONS.map(({ id }) => id),
-    40,
-    41,
-    42,
-  ]);
+  const currentIds = CURRENT_MIGRATIONS.map(({ id }) => id);
+  expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(44);
+  expect(currentIds.slice(0, P38_MIGRATIONS.length)).toEqual(
+    P38_MIGRATIONS.map(({ id }) => id),
+  );
+  expect(currentIds.filter((id) => id >= 40)).toEqual(
+    CURRENT_SCHEMA44_SUFFIX_IDS,
+  );
   expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
   expect(P39_MAINTENANCE_MIGRATIONS.map(({ id }) => id)).toEqual([37, 38, 39]);
   expect(P39_MAINTENANCE_MIGRATION_MANIFEST[39]?.sha256).toBe(
     descriptorPins[39]?.sha256,
   );
   expect(cumulativeDescriptors.map(({ id }) => id)).toEqual([39, 40, 41, 42]);
+  expect(cumulativeDescriptors.slice(1).map(({ id }) => id)).toEqual(
+    HISTORICAL_SCHEMA42_SUFFIX_IDS,
+  );
 
   for (let index = 0; index < cumulativeDescriptors.length; index += 1) {
     const migration = cumulativeDescriptors[index];
