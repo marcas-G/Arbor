@@ -7,6 +7,7 @@ import type {
   SettledProviderTurnResult,
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
+import { matchesPersistedModelOutput } from "./persisted-model-output.js";
 
 export interface SubmittedDecisionCloseActionIdentity {
   readonly identity: AgentLoopStepActionRecord["identity"];
@@ -38,9 +39,14 @@ export const reconstructSubmittedDecisionStopCloseActions = (input: {
   const { step, providerResult, modelOutputEntry } = input;
   if (
     providerResult._tag !== "SettledSuccess" ||
+    providerResult.evidenceVersion !== "provider-success-v1" ||
     providerResult.turn.providerTurnId !== step.providerTurnId ||
+    providerResult.turn.executionId !== input.executionId ||
+    providerResult.turn.sessionId !== input.sessionId ||
     modelOutputEntry?.entryKind !== "ModelOutput" ||
     modelOutputEntry.sequence !== step.modelOutputSessionSequence ||
+    modelOutputEntry.source?.kind !== "ProviderTurn" ||
+    modelOutputEntry.source.ref !== `${step.providerTurnId}:assistant` ||
     step.decodedOutputHash === undefined
   ) {
     return undefined;
@@ -49,6 +55,8 @@ export const reconstructSubmittedDecisionStopCloseActions = (input: {
     providerTurnId?: unknown;
     executionId?: unknown;
     sessionId?: unknown;
+    contextEpoch?: unknown;
+    modelRef?: unknown;
     outputContractRef?: unknown;
     toolRoutes?: ReadonlyArray<{
       name: string;
@@ -66,11 +74,12 @@ export const reconstructSubmittedDecisionStopCloseActions = (input: {
     manifest.providerTurnId !== step.providerTurnId ||
     manifest.executionId !== input.executionId ||
     manifest.sessionId !== input.sessionId ||
-    (manifest.logicalStepNo !== undefined &&
-      manifest.logicalStepNo !== step.identity.logicalStepNo) ||
-    (manifest.repairAttempt !== undefined &&
-      manifest.repairAttempt !== step.identity.repairAttempt) ||
+    manifest.contextEpoch !== providerResult.turn.contextEpoch ||
+    manifest.modelRef !== providerResult.turn.modelRef ||
+    manifest.logicalStepNo !== step.identity.logicalStepNo ||
+    manifest.repairAttempt !== step.identity.repairAttempt ||
     typeof manifest.outputContractRef !== "string" ||
+    manifest.outputContractRef !== providerResult.turn.outputContractRef ||
     !Array.isArray(manifest.toolRoutes)
   ) {
     return undefined;
@@ -79,17 +88,17 @@ export const reconstructSubmittedDecisionStopCloseActions = (input: {
     providerResult.canonicalEvents as ReadonlyArray<CanonicalProviderEvent>,
   );
   if (!decoded.ok) return undefined;
-  const outputPayload = {
-    providerTurnId: step.providerTurnId,
-    outputContractRef: manifest.outputContractRef,
-    decoderVersion: "decode-turn-v1",
-    text: decoded.output.text,
-    finishReason: decoded.output.finishReason,
-    toolInvocations: decoded.output.toolInvocations,
-  };
   if (
-    sha256Hex(JSON.stringify(outputPayload)) !== step.decodedOutputHash ||
-    JSON.stringify(modelOutputEntry.payload) !== JSON.stringify(outputPayload)
+    !matchesPersistedModelOutput({
+      providerTurnId: step.providerTurnId,
+      outputContractRef: manifest.outputContractRef,
+      text: decoded.output.text,
+      finishReason: decoded.output.finishReason,
+      toolInvocations: decoded.output.toolInvocations,
+      decodedOutputHash: step.decodedOutputHash,
+      modelOutputSessionSequence: step.modelOutputSessionSequence,
+      entry: modelOutputEntry,
+    })
   ) {
     return undefined;
   }
@@ -110,8 +119,12 @@ export const reconstructSubmittedDecisionStopCloseActions = (input: {
     const prior = existingByIndex.get(index);
     if (prior === undefined || prior.state === "Pending") return undefined;
   }
-  const routes = new Map(
-    manifest.toolRoutes.map((tool) => [tool.name, tool.route]),
+  const routes = manifest.toolRoutes.filter(
+    (tool): tool is { name: string; route: "Executable" | "Control" } =>
+      typeof tool === "object" &&
+      tool !== null &&
+      typeof tool.name === "string" &&
+      (tool.route === "Executable" || tool.route === "Control"),
   );
   const actions: SubmittedDecisionCloseActionIdentity[] = [];
   for (
@@ -121,7 +134,11 @@ export const reconstructSubmittedDecisionStopCloseActions = (input: {
   ) {
     const invocation = decoded.output.toolInvocations[actionIndex];
     if (invocation === undefined) return undefined;
-    const routeKind = routes.get(invocation.toolName);
+    const matchingRoutes = routes.filter(
+      (route) => route.name === invocation.toolName,
+    );
+    if (matchingRoutes.length !== 1) return undefined;
+    const routeKind = matchingRoutes[0]?.route;
     if (routeKind === undefined) return undefined;
     const identity = step.identity;
     const logicalActionId = `lac_${sha256Hex(

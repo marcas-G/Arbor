@@ -24,6 +24,7 @@ const projectResourceProfiles = makeProjectResourceProfilePort(
   projectResourceProfilesFromEnvironment(),
 );
 const gateDirectory = join(dirname(databaseFile), "ah10-gates");
+const recoveryProbeEvents = new Set();
 
 const waitForGate = async (name, event) => {
   const gatePath = join(gateDirectory, `${role}-${name}.release`);
@@ -129,6 +130,37 @@ const executionLeaseQualificationProbe = async (event) => {
   }
 };
 
+const executionSettlementQualificationProbe = async (event) => {
+  const side =
+    event.boundary === "AH10BeforeSubmittedDecisionBindingFactCommit"
+      ? "before"
+      : event.boundary === "AH10AfterSubmittedDecisionBindingFactCommit"
+        ? "after"
+        : undefined;
+  if (
+    side === undefined ||
+    process.env.ARBOR_AH10_PAUSE_SUBMITTED_BINDING_FACT !== side
+  ) {
+    return;
+  }
+  emit(event);
+  await waitForGate("submitted-binding-fact", event);
+};
+
+const submittedDecisionRecoveryQualificationProbe = (event) => {
+  const targetExecutionId = process.env.ARBOR_AH10_P41_RECOVERY_EXECUTION_ID;
+  if (
+    targetExecutionId !== undefined &&
+    targetExecutionId !== event.executionId
+  ) {
+    return;
+  }
+  const eventKey = `${event.executionId}:${event.boundary}:${event.stage ?? ""}:${event.outcome ?? ""}`;
+  if (recoveryProbeEvents.has(eventKey)) return;
+  recoveryProbeEvents.add(eventKey);
+  emit({ ...event, recoveryProbe: true });
+};
+
 const gatewayQualificationProbe = async (event) => {
   if (
     role === "old" &&
@@ -174,6 +206,8 @@ const config = {
   qualificationProbe,
   assignWorkAuthorizedBeforeCommandProbe: qualificationProbe,
   executionLeaseQualificationProbe,
+  executionSettlementQualificationProbe,
+  submittedDecisionRecoveryQualificationProbe,
   gatewayQualificationProbe,
   recoveryAttentionFactQualificationProbe: pauseAttentionBoundary,
   assignWorkBindingAttentionQualificationProbe: pauseAttentionBoundary,

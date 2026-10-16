@@ -39,6 +39,7 @@ import {
   type ExecutionSettlementQualificationProbe,
   preDispatchCheck,
   runExecution,
+  type SubmittedDecisionRecoveryQualificationProbe,
   startupRecovery,
   sweepRecovery,
 } from "@arbor/execution-runtime";
@@ -267,6 +268,7 @@ export interface ProductionDaemonConfig {
   readonly configurationRevision: string;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
+  readonly submittedDecisionRecoveryQualificationProbe?: SubmittedDecisionRecoveryQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
   /** Process-local test seam for the durable Deliver Attention poll boundary. */
   readonly attentionPollQualificationProbe?: AttentionPollQualificationProbe;
@@ -781,7 +783,10 @@ export const ProductionDaemonServiceLive = (
               // Test-only startup diagnostics are non-authoritative.
             }
           });
-          yield* startupRecovery(config.principal);
+          yield* startupRecovery(
+            config.principal,
+            config.submittedDecisionRecoveryQualificationProbe,
+          );
           yield* Effect.sync(() => {
             try {
               config.startupDiagnosticProbe?.("daemon.startup-recovery.after");
@@ -794,7 +799,10 @@ export const ProductionDaemonServiceLive = (
         }),
         sweep: Effect.asVoid(
           Effect.flatMap(expireExecutableApprovals, () =>
-            sweepRecovery(config.principal),
+            sweepRecovery(
+              config.principal,
+              config.submittedDecisionRecoveryQualificationProbe,
+            ),
           ),
         ),
       };

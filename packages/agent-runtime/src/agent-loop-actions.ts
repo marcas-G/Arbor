@@ -48,6 +48,7 @@ import {
 } from "./control.js";
 import type { ControlActionAuthorizerService } from "./control-authorization.js";
 import { checkFreshness, requirementForAction } from "./freshness.js";
+import { matchesPersistedModelOutput } from "./persisted-model-output.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
 const actionRejectionObservation = (
@@ -562,32 +563,19 @@ export const executeAgentLoopActions = (
             const outputEntry = outputRows[0];
             if (
               outputRows.length !== 1 ||
-              outputEntry?.sequence !== step.modelOutputSessionSequence ||
-              outputEntry.entryKind !== "ModelOutput" ||
-              outputEntry.source?.kind !== "ProviderTurn" ||
-              outputEntry.source.ref !== `${step.providerTurnId}:assistant`
+              !matchesPersistedModelOutput({
+                providerTurnId: step.providerTurnId,
+                outputContractRef: preparedTurn.manifest.outputContractRef,
+                text: decodedOutput.text,
+                finishReason: decodedOutput.finishReason,
+                toolInvocations: decodedOutput.toolInvocations,
+                decodedOutputHash: step.decodedOutputHash,
+                modelOutputSessionSequence: step.modelOutputSessionSequence,
+                entry: outputEntry,
+              })
             ) {
               return undefined;
             }
-            const outputPayload = outputEntry.payload;
-            const typedOutputMatches =
-              typeof outputPayload === "object" &&
-              outputPayload !== null &&
-              "_tag" in outputPayload &&
-              outputPayload._tag === "AssistantMessage" &&
-              "providerTurnId" in outputPayload &&
-              outputPayload.providerTurnId === step.providerTurnId &&
-              "contentRef" in outputPayload &&
-              outputPayload.contentRef ===
-                `provider:${step.providerTurnId}:assistant` &&
-              "text" in outputPayload &&
-              outputPayload.text === decodedOutput.text &&
-              "finishReason" in outputPayload &&
-              outputPayload.finishReason === decodedOutput.finishReason;
-            const legacyOutputMatches =
-              JSON.stringify(outputPayload) === JSON.stringify(expectedOutput);
-            if (!typedOutputMatches && !legacyOutputMatches) return undefined;
-
             const actions = yield* loopSteps.listActions(step.identity);
             if (
               actions.length !== decodedOutput.toolInvocations.length ||

@@ -51,14 +51,27 @@ export const LEASE_TTL_MS = 30_000;
 export const LEASE_RENEW_INTERVAL_MS = LEASE_TTL_MS / 3;
 
 /** Test-only process-local seam. Production composition leaves it absent. */
-export type ExecutionSettlementQualificationProbe = (event: {
-  readonly boundary:
-    | "AH12BeforeSettleGatewaySubmission"
-    | "AH12AfterSettleCommandCommit";
-  readonly executionId: ExecutionId;
-  readonly fencingGeneration: LeaseGeneration;
-  readonly commandId: string;
-}) => Promise<void>;
+export type ExecutionSettlementQualificationProbe = (
+  event:
+    | {
+        readonly boundary:
+          | "AH12BeforeSettleGatewaySubmission"
+          | "AH12AfterSettleCommandCommit";
+        readonly executionId: ExecutionId;
+        readonly fencingGeneration: LeaseGeneration;
+        readonly commandId: string;
+      }
+    | {
+        readonly boundary:
+          | "AH10BeforeSubmittedDecisionBindingFactCommit"
+          | "AH10AfterSubmittedDecisionBindingFactCommit";
+        readonly executionId: ExecutionId;
+        readonly fencingGeneration: LeaseGeneration;
+        readonly providerTurnId: string;
+        readonly logicalActionId: string;
+        readonly failureCode: string;
+      },
+) => Promise<void>;
 
 /** Test-child-only seam for proving real lease takeover without editing the
  * durable lease. Production Composition leaves this probe absent. */
@@ -513,6 +526,18 @@ export const runExecution = (
                 causedByCommandId: null,
               },
             );
+            if (qualificationProbe !== undefined) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "AH10BeforeSubmittedDecisionBindingFactCommit",
+                  executionId,
+                  fencingGeneration: lease.generation,
+                  providerTurnId: outcome.providerTurnId,
+                  logicalActionId: outcome.logicalActionId,
+                  failureCode: outcome.failureCode,
+                }),
+              );
+            }
             if (
               Option.isNone(current) ||
               current.value.stopRequestedAt === null ||
@@ -641,6 +666,18 @@ export const runExecution = (
             );
           }),
         );
+        if (qualificationProbe !== undefined) {
+          yield* Effect.promise(() =>
+            qualificationProbe({
+              boundary: "AH10AfterSubmittedDecisionBindingFactCommit",
+              executionId,
+              fencingGeneration: lease.generation,
+              providerTurnId: outcome.providerTurnId,
+              logicalActionId: outcome.logicalActionId,
+              failureCode: outcome.failureCode,
+            }),
+          );
+        }
       }
       yield* tx
         .transact(
