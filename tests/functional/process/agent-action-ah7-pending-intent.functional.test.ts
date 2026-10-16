@@ -812,12 +812,16 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         expect(recoveredTargetToolResults[0]?.source_ref).toBe(
           recoveredToolResult.observationRef,
         );
+        // ProviderCall count includes both the decision that emits a ToolCall
+        // and a later turn that consumes its committed ToolResult. P3/P9
+        // source identity is one ToolResult per exact ObservationRef, not one
+        // ToolResult per Provider call.
         expect(
           recovered.toolResults.filter(
             (result) =>
               result.source_ref === recoveredToolResult.observationRef,
           ),
-        ).toHaveLength(targetProviderCalls);
+        ).toHaveLength(1);
         if (expectedSettlement === "ExpectedFailure") {
           expect(recoveredRawInvocation.observation_format_version).toBe(
             committedObservationVersion,
