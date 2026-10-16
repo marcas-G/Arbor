@@ -10,9 +10,11 @@ retained so a later cleanup cannot hide an earlier failure. `runOn` now scopes
 its Layer so SQLite finalizers close the database before directory removal;
 P7 and P9 runners already use scoped execution.
 
-Regression coverage exercises multiple roots, repeated cleanup, an expected
-throwing test body, an unregistered prefix lookalike, and a registered
-prefix-matching directory outside system Temp. Rejected paths remain untouched.
+Regression coverage exercises multiple roots, repeated cleanup, and an expected
+throwing test body. A pure containment check receives a canonical Temp sandbox;
+tests use a sibling candidate, prefix lookalikes, and a synthetic checkout
+inside system Temp, so containment does not depend on where the actual checkout
+lives. Rejected paths remain untouched.
 
 ## Evidence
 
