@@ -37,6 +37,7 @@ import {
   FenceStopCheckLive,
   RuntimeSafetyGateLive,
   type RuntimeSafetyPolicy,
+  type SubmittedDecisionRecoveryQualificationProbe,
 } from "@arbor/execution-runtime";
 import {
   DEFAULT_MODEL_CATALOG,
@@ -370,6 +371,8 @@ export interface SingleWorkspaceConfig {
   readonly createProjectPostCommitBeforeActivationQualificationProbe?: CreateProjectPostCommitBeforeActivationQualificationProbe;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
+  /** Test-only trace of P41 Stop recovery branch decisions. */
+  readonly submittedDecisionRecoveryQualificationProbe?: SubmittedDecisionRecoveryQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
   readonly toolQualificationProbe?: ToolRuntimeQualificationProbe;
   /** Test-only catalog visibility diagnostic; ordinary startup leaves absent. */
@@ -1002,6 +1005,12 @@ export const buildSingleWorkspaceLayer = (
         : {
             executionLeaseQualificationProbe:
               config.executionLeaseQualificationProbe,
+          }),
+      ...(config.submittedDecisionRecoveryQualificationProbe === undefined
+        ? {}
+        : {
+            submittedDecisionRecoveryQualificationProbe:
+              config.submittedDecisionRecoveryQualificationProbe,
           }),
       ...(config.conversationResponseQualificationProbe === undefined
         ? {}

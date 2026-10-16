@@ -450,3 +450,28 @@ Committed `4558ec65280ee25eb5817ce15fdf1f8df84209e0` follow-up validation:
 F20 clean checkout 1/1 PASS (46.94s); full `pnpm test:functional` PASS
 (Vitest 25/25 files, 64/64 tests; Playwright 2/2). This is not AH10 closure.
 ```
+
+## 2026-10-16 P41 Submitted DecisionEpisode real-process qualification
+
+The previously pending Workspace/Manifest binding mismatch reproduction has
+been superseded by the supported-public-origin, three-owner P41 process matrix
+in `planning/results/AH10-P41-submitted-decision-binding-process-qualification.result.md`.
+The matrix passes 4/4: gen0 dies with the original Command receipt committed
+and Action pending; gen1 is killed inside or just after the exact P9
+fact/event transaction; gen2 proves rollback-or-idempotent recovery and one
+public ActionRequired row; public Stop plus a later RecoveryController pass
+closes only the active slot and retains Attention. This is not natural-TTL
+evidence: inter-generation expiry is performed by the existing exact-owner
+post-exit qualification CAS.
+
+The stop-close failure found by that process test was a P3/P41 representation
+drift: P3 accepted the current typed `AssistantMessage` ModelOutput, while the
+P41 reconstruction helper accepted only the legacy decoded JSON shape. A shared
+persisted-output validator now serves both call sites. Focused validator/P41
+store/runtime targets pass 46/46; `pnpm typecheck`, targeted Biome and diff
+checks pass. The earlier P41 setup RED is preserved unchanged as historical
+evidence, but no longer represents current public-origin qualification.
+
+AH10 remains PARTIAL overall: P8 verifier evidence replay/criteria snapshot
+semantics still require their accepted governance/implementation boundary,
+and no full `pnpm check` or `pnpm test:functional` was run on this HEAD.

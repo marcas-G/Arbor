@@ -86,3 +86,14 @@ The Workspace and Manifest cases independently reproduce the same persisted
 state described above. The test is intentionally excluded from
 `vitest.functional.config.ts` and the root Vitest config; it remains pending
 manual disposition and is not a passing qualification.
+
+## Historical status note (2026-10-16)
+
+This RED records the pre-P41 accepted-contract implementation and the old
+unsupported-origin setup. It is preserved unchanged as historical evidence and
+is superseded for current process qualification by
+`planning/results/AH10-P41-submitted-decision-binding-process-qualification.result.md`.
+The default-process four-case P41 matrix now uses the supported human
+Root/Formation public setup and passes both Workspace and Manifest mismatch
+fact-transaction boundaries. This note does not remove the historical RED from
+the record or claim full AH10/release closure.

@@ -44,6 +44,41 @@ export interface RecoveryResult {
   readonly escalated: ReadonlyArray<string>;
 }
 
+/** Test-only synchronous trace for diagnosing the accepted P41 fact-first
+ * Stop recovery branch. Ordinary production composition leaves it absent. */
+export type SubmittedDecisionRecoveryQualificationEvent =
+  | {
+      readonly boundary: "AH10P41RecoveryCandidate";
+      readonly executionId: string;
+      readonly stopRequested: boolean;
+      readonly factPresent: boolean;
+      readonly failureCode?: string;
+    }
+  | {
+      readonly boundary: "AH10P41RecoveryLease";
+      readonly executionId: string;
+      readonly acquired: boolean;
+      readonly fencingGeneration?: number;
+      readonly errorTag?: string;
+    }
+  | {
+      readonly boundary: "AH10P41StopCloseStage";
+      readonly executionId: string;
+      readonly stage: string;
+      readonly outcome: "pass" | "blocked";
+      readonly reason?: string;
+      readonly unresolvedP4Effects?: number;
+    }
+  | {
+      readonly boundary: "AH10P41StopSettlement";
+      readonly executionId: string;
+      readonly resolution: string;
+    };
+
+export type SubmittedDecisionRecoveryQualificationProbe = (
+  event: SubmittedDecisionRecoveryQualificationEvent,
+) => void;
+
 /** P9 `01` §2 (B-2): a durable completion fact — an `ExecutionSettled`
  * event whose payload settlement is `Completed(...)` persisted in the
  * settlement trace — settles to the corresponding Completed form, never a
@@ -140,7 +175,10 @@ const fencedTakeover = (error: unknown): boolean =>
   ((error as { readonly _tag?: unknown })._tag === "LeaseFencingRejected" ||
     JSON.stringify(error).includes("LeaseFencingRejected"));
 
-export const runRecovery = (principal: Principal) =>
+export const runRecovery = (
+  principal: Principal,
+  qualificationProbe?: SubmittedDecisionRecoveryQualificationProbe,
+) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const repository = yield* ExecutionRepository;
@@ -156,6 +194,14 @@ export const runRecovery = (principal: Principal) =>
     const gateway = yield* CommandGateway;
     const clock = yield* Clock;
     const journal = yield* DomainEventJournal;
+    const reportP41 = (event: SubmittedDecisionRecoveryQualificationEvent) =>
+      Effect.sync(() => {
+        try {
+          qualificationProbe?.(event);
+        } catch {
+          // Test diagnostics cannot change recovery control flow.
+        }
+      });
 
     const now = yield* clock.now();
     const invalidated = yield* tx.transact(leases.invalidateExpired(now));
@@ -289,6 +335,20 @@ export const runRecovery = (principal: Principal) =>
         (fact) => fact.executionId === execution.executionId,
       );
       if (
+        execution.stopRequestedAt !== null ||
+        submittedDecisionBindingFact !== undefined
+      ) {
+        yield* reportP41({
+          boundary: "AH10P41RecoveryCandidate",
+          executionId: String(execution.executionId),
+          stopRequested: execution.stopRequestedAt !== null,
+          factPresent: submittedDecisionBindingFact !== undefined,
+          ...(submittedDecisionBindingFact === undefined
+            ? {}
+            : { failureCode: submittedDecisionBindingFact.failureCode }),
+        });
+      }
+      if (
         submittedDecisionBindingFact === undefined &&
         execution.stopRequestedAt !== null &&
         loopSteps._tag === "Some" &&
@@ -403,6 +463,17 @@ export const runRecovery = (principal: Principal) =>
           },
         );
         if (!acquired.ok) {
+          yield* reportP41({
+            boundary: "AH10P41RecoveryLease",
+            executionId: String(execution.executionId),
+            acquired: false,
+            errorTag:
+              typeof acquired.error === "object" &&
+              acquired.error !== null &&
+              "_tag" in acquired.error
+                ? String(acquired.error._tag)
+                : "unknown",
+          });
           if (fencedTakeover(acquired.error)) {
             escalated.push(execution.executionId);
             continue;
@@ -410,7 +481,15 @@ export const runRecovery = (principal: Principal) =>
           return yield* Effect.fail(acquired.error);
         }
         const lease = acquired.lease;
+        yield* reportP41({
+          boundary: "AH10P41RecoveryLease",
+          executionId: String(execution.executionId),
+          acquired: true,
+          fencingGeneration: Number(lease.generation),
+        });
         submittedBindingRecoveryLease = lease;
+        let submittedBindingCloseStage = "lease-revalidation";
+        let submittedBindingCloseReason = "close-guard-not-reached";
         const closed = yield* tx.transact(
           Effect.gen(function* () {
             yield* leases.renew(
@@ -425,15 +504,34 @@ export const runRecovery = (principal: Principal) =>
               current.value.stopRequestedAt === null ||
               current.value.state.status !== "Active"
             ) {
+              submittedBindingCloseReason =
+                "execution-not-active-or-stop-request-missing";
               return undefined;
             }
             const unresolved = yield* reconciliation.pending(
               execution.executionId,
             );
+            yield* reportP41({
+              boundary: "AH10P41StopCloseStage",
+              executionId: String(execution.executionId),
+              stage: "p4-gate",
+              outcome: unresolved.length === 0 ? "pass" : "blocked",
+              unresolvedP4Effects: unresolved.length,
+              ...(unresolved.length === 0
+                ? {}
+                : { reason: "unresolved-p4-side-effects" }),
+            });
             const episode = executionEpisode(current.value);
-            if (episode?._tag !== "DecisionEpisode") return undefined;
+            submittedBindingCloseStage = "episode-and-decision-store";
+            if (episode?._tag !== "DecisionEpisode") {
+              submittedBindingCloseReason = "episode-not-decision";
+              return undefined;
+            }
             const decisionStore = Option.getOrUndefined(decisionRequests);
-            if (decisionStore === undefined) return undefined;
+            if (decisionStore === undefined) {
+              submittedBindingCloseReason = "decision-store-unavailable";
+              return undefined;
+            }
             const request = yield* decisionStore.findById(episode.decisionId);
             const stepIdentity = {
               executionId: execution.executionId,
@@ -441,12 +539,17 @@ export const runRecovery = (principal: Principal) =>
               repairAttempt: submittedDecisionBindingFact.repairAttempt,
             };
             const foundStep = yield* loopSteps.value.find(stepIdentity);
-            if (Option.isNone(foundStep)) return undefined;
+            submittedBindingCloseStage = "step-and-action-binding";
+            if (Option.isNone(foundStep)) {
+              submittedBindingCloseReason = "step-not-found";
+              return undefined;
+            }
             const step = foundStep.value;
             if (
               step.providerTurnId !==
               submittedDecisionBindingFact.providerTurnId
             ) {
+              submittedBindingCloseReason = "provider-turn-mismatch";
               return undefined;
             }
             const existingActions = yield* loopSteps.value.listActions(
@@ -463,14 +566,18 @@ export const runRecovery = (principal: Principal) =>
                 exactPendingAction.actionKind !== "select_current_work" ||
                 exactPendingAction.state !== "Pending"
               ) {
+                submittedBindingCloseReason = "pending-action-mismatch";
                 return undefined;
               }
             } else if (step.state !== "SettlementProposed") {
+              submittedBindingCloseReason = "step-not-closeable";
               return undefined;
             }
             const providerResult = yield* providerTurns.value.findSettledResult(
               step.providerTurnId,
             );
+            submittedBindingCloseStage =
+              "submitted-request-and-provider-result";
             if (
               step.state === "ActionsInProgress" &&
               submittedDecisionBindingFact.failureCode ===
@@ -483,6 +590,7 @@ export const runRecovery = (principal: Principal) =>
                   request.value.state.selectedWorkId,
                 ))
             ) {
+              submittedBindingCloseReason = "decision-request-mismatch";
               return undefined;
             }
             if (
@@ -492,6 +600,7 @@ export const runRecovery = (principal: Principal) =>
               (providerResult._tag !== "SettledSuccess" ||
                 providerResult.manifestId === step.manifestId)
             ) {
+              submittedBindingCloseReason = "provider-result-mismatch";
               return undefined;
             }
             yield* recordSubmittedDecisionBindingFailure(
@@ -509,7 +618,11 @@ export const runRecovery = (principal: Principal) =>
                 causedByCommandId: null,
               },
             );
-            if (unresolved.length > 0) return undefined;
+            submittedBindingCloseStage = "reconstruction-inputs";
+            if (unresolved.length > 0) {
+              submittedBindingCloseReason = "unresolved-p4-side-effects";
+              return undefined;
+            }
             const outputEntries =
               step.modelOutputSessionSequence === undefined
                 ? []
@@ -518,16 +631,43 @@ export const runRecovery = (principal: Principal) =>
                     step.modelOutputSessionSequence - 1,
                     1,
                   );
+            const outputEntry = outputEntries[0];
+            yield* reportP41({
+              boundary: "AH10P41StopCloseStage",
+              executionId: String(execution.executionId),
+              stage: "action-reconstruction-input",
+              outcome: "pass",
+              reason: JSON.stringify({
+                providerResultTag: providerResult._tag,
+                providerTurnMatches:
+                  providerResult._tag === "SettledSuccess" &&
+                  providerResult.turn.providerTurnId === step.providerTurnId,
+                modelOutputSequence: step.modelOutputSessionSequence ?? null,
+                modelOutputEntryKind: outputEntry?.entryKind ?? null,
+                modelOutputEntrySequence: outputEntry?.sequence ?? null,
+                decodedOutputHashPresent: step.decodedOutputHash !== undefined,
+                manifestMatchesStep:
+                  providerResult._tag === "SettledSuccess" &&
+                  providerResult.manifestId === step.manifestId,
+                existingActionCount: existingActions.length,
+                nextActionIndex: step.nextActionIndex,
+              }),
+            });
             const actionIdentities =
               reconstructSubmittedDecisionStopCloseActions({
                 executionId: String(execution.executionId),
                 sessionId: String(current.value.sessionId),
                 step,
                 providerResult,
-                modelOutputEntry: outputEntries[0],
+                modelOutputEntry: outputEntry,
                 existingActions,
               });
-            if (actionIdentities === undefined) return undefined;
+            submittedBindingCloseStage = "action-ledger-reconstruction";
+            if (actionIdentities === undefined) {
+              submittedBindingCloseReason =
+                "action-ledger-reconstruction-insufficient";
+              return undefined;
+            }
             if (step.state === "SettlementProposed") {
               const currentActionIndex = actionIdentities.findIndex(
                 (action) =>
@@ -567,6 +707,7 @@ export const runRecovery = (principal: Principal) =>
                 submittedDecisionBindingFact.logicalActionId,
               updatedAt: now,
             });
+            submittedBindingCloseStage = `stop-close-plan:${plan._tag}`;
             if (plan._tag !== "Ready") return undefined;
             const fence = {
               executionId: execution.executionId,
@@ -602,6 +743,7 @@ export const runRecovery = (principal: Principal) =>
               },
               fence,
             );
+            submittedBindingCloseStage = `step-transition:${proposed.state}`;
             if (
               proposed.state !== "SettlementProposed" ||
               proposed.settlement === undefined
@@ -612,6 +754,13 @@ export const runRecovery = (principal: Principal) =>
           }),
         );
         if (closed === undefined) {
+          yield* reportP41({
+            boundary: "AH10P41StopCloseStage",
+            executionId: String(execution.executionId),
+            stage: submittedBindingCloseStage,
+            outcome: "blocked",
+            reason: submittedBindingCloseReason,
+          });
           yield* tx.transact(
             leases.release(
               execution.executionId,
@@ -624,6 +773,12 @@ export const runRecovery = (principal: Principal) =>
           escalated.push(execution.executionId);
           continue;
         }
+        yield* reportP41({
+          boundary: "AH10P41StopCloseStage",
+          executionId: String(execution.executionId),
+          stage: submittedBindingCloseStage,
+          outcome: "pass",
+        });
         settlement = closed;
       }
       const payload = { executionId: execution.executionId, settlement };
@@ -649,7 +804,7 @@ export const runRecovery = (principal: Principal) =>
         commandKind: "SettleExecution",
         executionId: execution.executionId,
       };
-      yield* gateway.execute(
+      const stopReceipt = yield* gateway.execute(
         {
           commandType: "SettleExecution",
           commandId,
@@ -661,6 +816,13 @@ export const runRecovery = (principal: Principal) =>
         { _tag: "RecoveryController", principal, causationRef: "recovery" },
         authority,
       );
+      if (submittedDecisionBindingFact !== undefined) {
+        yield* reportP41({
+          boundary: "AH10P41StopSettlement",
+          executionId: String(execution.executionId),
+          resolution: stopReceipt.resolution._tag,
+        });
+      }
       if (submittedBindingRecoveryLease !== undefined) {
         yield* tx.transact(
           leases.release(
