@@ -40,6 +40,26 @@ const predecessor = (
   parent: AgentLoopStepRecord,
 ): AgentLoopStepRecord => ({ ...child, predecessor: parent.identity });
 
+const rejectedForRetry = (
+  parent: AgentLoopStepRecord,
+  child: AgentLoopStepRecord,
+) => ({
+  ...successor(parent, child),
+  state: "OutputRejected" as const,
+  repairDisposition: {
+    _tag: "Retry",
+    successor: { ...child.identity, providerTurnId: child.providerTurnId },
+  },
+});
+
+const exhaustedRepairDisposition = {
+  _tag: "Exhausted",
+  settlement: {
+    _tag: "Failed",
+    failure: { _tag: "ExecutionFailure", reason: "ModelOutputInvalid" },
+  },
+} as const;
+
 describe("P9 AgentLoopStep resume cursor", () => {
   it("starts a fresh Execution at step zero", () => {
     expect(selectInitialAgentLoopStepCursor([])).toEqual({
@@ -58,20 +78,8 @@ describe("P9 AgentLoopStep resume cursor", () => {
     });
     const records = [
       successor(root, firstAttempt),
-      predecessor(
-        {
-          ...successor(firstAttempt, secondAttempt),
-          state: "OutputRejected" as const,
-        },
-        root,
-      ),
-      predecessor(
-        {
-          ...successor(secondAttempt, current),
-          state: "OutputRejected" as const,
-        },
-        firstAttempt,
-      ),
+      predecessor(rejectedForRetry(firstAttempt, secondAttempt), root),
+      predecessor(rejectedForRetry(secondAttempt, current), firstAttempt),
       predecessor(current, secondAttempt),
     ];
     expect(selectInitialAgentLoopStepCursor(records)).toEqual({
@@ -124,16 +132,50 @@ describe("P9 AgentLoopStep resume cursor", () => {
       [step(0, 1, { state: "ActionsInProgress" })],
     ],
     [
+      "OutputRejected terminal row without exhausted disposition",
+      [step(0, 0, { state: "OutputRejected" })],
+    ],
+    [
+      "OutputRejected terminal row with non-Exhausted disposition",
+      [
+        step(0, 0, {
+          state: "OutputRejected",
+          repairDisposition: { _tag: "Retry" },
+        }),
+      ],
+    ],
+    [
+      "OutputRejected terminal row with malformed Exhausted settlement",
+      [
+        step(0, 0, {
+          state: "OutputRejected",
+          repairDisposition: {
+            _tag: "Exhausted",
+            settlement: { _tag: "Completed" },
+          },
+        }),
+      ],
+    ],
+    [
+      "OutputRejected exhausted terminal row with contradictory successor",
+      [
+        step(0, 0, {
+          state: "OutputRejected",
+          repairDisposition: exhaustedRepairDisposition,
+          successor: {
+            executionId,
+            logicalStepNo: 1,
+            repairAttempt: 0,
+            providerTurnId: "ptn_contradictory" as ProviderTurnId,
+          },
+        }),
+      ],
+    ],
+    [
       "OutputRejected skips the next repair attempt",
       [
         successor(step(0), step(1, 0)),
-        predecessor(
-          {
-            ...successor(step(1, 0), step(2, 0)),
-            state: "OutputRejected" as const,
-          },
-          step(0),
-        ),
+        predecessor(rejectedForRetry(step(1, 0), step(2, 0)), step(0)),
         predecessor(step(2, 0, { state: "ActionsInProgress" }), step(1, 0)),
       ],
     ],
@@ -183,6 +225,17 @@ describe("P9 AgentLoopStep resume cursor", () => {
     ],
   ])("fails closed on %s", (_reason, records) => {
     expect(selectInitialAgentLoopStepCursor(records)).toBeUndefined();
+  });
+
+  it("resumes an exact repair-exhaustion frontier at the same step without a successor", () => {
+    expect(
+      selectInitialAgentLoopStepCursor([
+        step(0, 0, {
+          state: "OutputRejected",
+          repairDisposition: exhaustedRepairDisposition,
+        }),
+      ]),
+    ).toEqual({ logicalStepNo: 0, repairAttempt: 0 });
   });
 
   it("validates a Prepared row against its persisted ProviderTurn manifest", () => {

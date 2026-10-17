@@ -51,6 +51,10 @@ import {
 } from "./agent-loop-policy.js";
 import { completeAgentLoopStep } from "./agent-loop-step-completion.js";
 import {
+  decodeExhaustedRepairDisposition,
+  retryDispositionMatchesSuccessor,
+} from "./agent-loop-step-recovery.js";
+import {
   type ControlToolRegistryService,
   type ExecutableInvocationHandler,
   makeControlToolRegistry,
@@ -146,6 +150,12 @@ export const selectInitialAgentLoopStepCursor = (
     ) {
       return undefined;
     }
+    if (
+      previous.state === "OutputRejected" &&
+      !retryDispositionMatchesSuccessor(previous, current)
+    ) {
+      return undefined;
+    }
   }
 
   const current = ordered.at(-1);
@@ -153,7 +163,8 @@ export const selectInitialAgentLoopStepCursor = (
     current === undefined ||
     current.successor !== undefined ||
     current.state === "NextStepReady" ||
-    current.state === "OutputRejected"
+    (current.state === "OutputRejected" &&
+      decodeExhaustedRepairDisposition(current.repairDisposition) === undefined)
   ) {
     return undefined;
   }

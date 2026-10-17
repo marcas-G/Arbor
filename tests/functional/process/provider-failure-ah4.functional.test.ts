@@ -181,7 +181,12 @@ describe("AH4 terminal Provider failure to SettlementProposed", () => {
         (row) =>
           (row as { provider_turn_id: string }).provider_turn_id ===
           hits[0]?.providerTurnId,
-      ) as { execution_id: string; state: string; repair_attempt: number };
+      ) as {
+        execution_id: string;
+        provider_turn_id: string;
+        state: string;
+        repair_attempt: number;
+      };
       expect(finalStep).toMatchObject({
         repair_attempt: 2,
         state:
@@ -217,6 +222,13 @@ describe("AH4 terminal Provider failure to SettlementProposed", () => {
         );
       }
       expect(fixture.providerCalls).toHaveLength(providerCallsBeforeRestart);
+      expect(
+        recovered.steps.find(
+          (row) =>
+            (row as { provider_turn_id: string }).provider_turn_id ===
+            finalStep.provider_turn_id,
+        ),
+      ).toMatchObject({ state: "SettlementProposed" });
       expect(
         recovered.events.filter(
           (event) =>

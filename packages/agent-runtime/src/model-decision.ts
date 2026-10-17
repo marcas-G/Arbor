@@ -77,6 +77,7 @@ import {
   runtimeSafetyFragment,
   safetyStop,
 } from "./agent-loop-policy.js";
+import { decodeExhaustedRepairDisposition } from "./agent-loop-step-recovery.js";
 import {
   commitRecoveredNativeCompaction,
   commitRecoveredSummaryCompaction,
@@ -1184,6 +1185,43 @@ export const runModelDecision = (
             }),
           )
           .pipe(Effect.mapError(failure));
+        if (loopStep.state === "OutputRejected") {
+          const settlement = decodeExhaustedRepairDisposition(
+            loopStep.repairDisposition,
+          );
+          if (
+            settlement === undefined ||
+            loopStep.successor !== undefined ||
+            loopStep.providerTurnId !== providerTurnId ||
+            loopStep.identity.logicalStepNo !== turn ||
+            loopStep.identity.repairAttempt !== repairAttempt
+          ) {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
+          const exhaustedStep = loopStep;
+          loopStep = yield* tx
+            .transact(
+              loopSteps.transition(
+                {
+                  identity: exhaustedStep.identity,
+                  expectedRevision: exhaustedStep.revision,
+                  expectedState: "OutputRejected",
+                  next: {
+                    ...exhaustedStep,
+                    state: "SettlementProposed",
+                    settlement,
+                    revision: exhaustedStep.revision + 1,
+                    updatedAt: yield* now(),
+                  },
+                },
+                loopStepFence,
+              ),
+            )
+            .pipe(Effect.mapError(failure));
+          return { _tag: "Settle", settlement };
+        }
         if (
           overflowRecoveryAttempt === 0 &&
           loopStep.state === "Prepared" &&
