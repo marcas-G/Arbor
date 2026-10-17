@@ -300,6 +300,7 @@ describe("migration 0046 verification evidence snapshots", () => {
       for (const invalid of [
         ["Open", "Pass", null, "blob:summary", "[]", "Available"],
         ["Concluded", "Pass", null, "blob:summary", "[]", "Pending"],
+        ["Concluded", "Unknown", "Orphaned", "blob:summary", "[]", "Available"],
         [
           "Concluded",
           "Pass",

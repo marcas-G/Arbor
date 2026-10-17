@@ -108,7 +108,13 @@ describe("work aggregate", () => {
       targetWorkRevision: parse(WorkRevision)(3),
       missionSnapshot: mission,
     });
-    const concluded = concludeVerification(started, "Pass", "summary:test");
+    const concluded = concludeVerification(
+      started,
+      "Pass",
+      "summary:test",
+      undefined,
+      [],
+    );
     if (!concluded.ok) {
       throw new Error("expected conclude");
     }
@@ -153,7 +159,13 @@ describe("work aggregate", () => {
       targetWorkRevision: parse(WorkRevision)(1),
       missionSnapshot: mission,
     });
-    const concluded = concludeVerification(started, "Fail", "summary:test");
+    const concluded = concludeVerification(
+      started,
+      "Fail",
+      "summary:test",
+      undefined,
+      [],
+    );
     if (!concluded.ok) {
       throw new Error("expected conclude");
     }

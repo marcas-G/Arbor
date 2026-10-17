@@ -187,6 +187,7 @@ describe("P8-002 DDL + repositories", () => {
           "Unknown",
           "summary:orphaned",
           "Orphaned",
+          [],
         );
         expect(orphaned.ok).toBe(true);
         const concluded = yield* tx.transact(

@@ -157,8 +157,8 @@ export const concludeVerification = (
   verification: Verification,
   verdict: VerificationVerdict,
   summaryRef: string,
-  conclusionReason?: ConclusionReason,
-  criteriaResults: ReadonlyArray<VerificationCriterionResult> | null = null,
+  conclusionReason: ConclusionReason | undefined,
+  criteriaResults: ReadonlyArray<VerificationCriterionResult>,
 ): DomainResult<Verification> => {
   if (verification.state.status !== "Open") {
     return err(concludedError());
