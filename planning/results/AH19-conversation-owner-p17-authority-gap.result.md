@@ -1,7 +1,8 @@
 # AH19 Conversation owner × P17 authority Design Gap
 
-Status: **Stopped for manual governance. No implementation or qualification
-closure is claimed.**
+Status: **Resolved at the design layer by accepted reconciliation; production
+implementation remains paused pending post-landing review and refreshed
+authorization. No implementation or qualification closure is claimed.**
 
 ## Provenance and authorization
 
@@ -17,17 +18,20 @@ closure is claimed.**
   `planning/proposals/AH19-conversation-owner-p17-authority-reconciliation-draft.md`.
 - Proposal raw-byte SHA-256 at this result checkpoint:
   `92EF668AFFBE3A5D1C651107C33006C7CB987E7021FFFC02037B3603FD276B75`.
-- Independent review: final read-only review **PASS**, no B1 remains after
-  corrections. The reviewer verified P17/05's exact landing scope,
-  Running-other prefix blocking, exact Job/Attempt/Execution settlement and
-  admission-revision binding, paired Assistant response source, manifest/test
-  consequences, and migration-retention assertions. No proposal acceptance
-  token exists.
+- Independent proposal review: final read-only **PASS**, no B1 remains after
+  corrections.
+- Acceptance/landing record:
+  `planning/results/AH19-conversation-owner-p17-authority-reconciliation-acceptance-and-landing.record.md`.
+- Manual acceptance token:
+  `RECONCILE_AH19_CONVERSATION_OWNER_WITH_P17_JOB_AUTHORITY`, accepted
+  2026-10-18.
+- Independent post-landing review: pending.
 
-The implementation authorization is scoped to the fixed plan hash above. It
-does not authorize replacing its HumanMessage-state assumptions with a
-different semantic contract. No code was committed and no design file was
-modified.
+The implementation authorization is scoped to the fixed plan hash above. The
+accepted reconciliation supersedes its legacy HumanMessage-state assumptions,
+so that authorization does not cover the revised source model. No code was
+committed in the governance landing; only accepted design hunks and the
+acceptance/landing record were added.
 
 ## Concrete failure evidence
 
@@ -95,7 +99,7 @@ tests to prove legacy HumanMessage fields and unowned Session checkpoints are
 unchanged. P17/05's AH19 addendum is included in the exact landing scope; P17
 retry/lifecycle semantics otherwise remain unchanged.
 
-Manual acceptance, owning-document landing, and a new fixed implementation
-authorization are required before resuming code changes. See the proposal for
-the complete requested contract and implementation/test delta. No
-`docs/design/**` file has been modified.
+The design gap is resolved by the accepted landing record. Production changes
+remain paused until the independent post-landing review, a refreshed fixed
+implementation plan/review and a new exact implementation authorization are
+complete. See the accepted proposal for the reconciled contract and test delta.

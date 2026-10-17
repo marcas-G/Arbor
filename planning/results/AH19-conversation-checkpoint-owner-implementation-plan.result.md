@@ -1,11 +1,13 @@
 # AH19 Conversation Checkpoint Owner — Implementation Plan Result
 
-Status: **Implementation token received; implementation is stopped pending manual Design Gap reconciliation and no implementation/qualification claim is made.**
+Status: **Original implementation token received; its plan is superseded by accepted design reconciliation. Implementation remains stopped pending independent post-landing review, refreshed plan and a new exact authorization.**
 
 ## Provenance
 
 - Preparation baseline HEAD: `58aae35b08738019749ba5bba17a26f564f0cd57`.
-- Governing design: System Design v1.18 / DID v1.50.
+- Governing design at plan preparation: System Design v1.18 / DID v1.50;
+  superseded for the AH19 Conversation authority model by SD v1.19 / DID v1.51
+  on 2026-10-18.
 - Accepted governance token: `ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1`.
 - Accepted proposal raw SHA-256:
   `9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`.
@@ -13,10 +15,10 @@ Status: **Implementation token received; implementation is stopped pending manua
 - Fixed plan: `planning/proposals/AH19-conversation-checkpoint-owner-implementation-plan.md`.
 - Fixed plan raw SHA-256:
   `C642BB4F5F9F61F5A4FEF51107213CE6FD3331C7BF39B7AFE884BF0DBC1BE681`.
-- Requested, not yet granted, implementation token:
+- Implementation token originally requested at plan preparation:
   `AUTHORIZE_AH19_CONVERSATION_CHECKPOINT_OWNER_IMPLEMENTATION`.
 
-## 2026-10-17 authorization and Design Gap disposition
+## 2026-10-17 authorization and 2026-10-18 Design Gap reconciliation
 
 The user explicitly authorized
 `AUTHORIZE_AH19_CONVERSATION_CHECKPOINT_OWNER_IMPLEMENTATION` in the current
@@ -29,12 +31,15 @@ changing that plan to resolve the gap.
 The implementation is paused. No implementation commit or migration/runtime
 qualification is claimed. The exact reconciliation request is
 `planning/proposals/AH19-conversation-owner-p17-authority-reconciliation-draft.md`;
-its raw-byte SHA-256 at this checkpoint is
-`92EF668AFFBE3A5D1C651107C33006C7CB987E7021FFFC02037B3603FD276B75`. A new
-manual acceptance is required before its exact owning
-document edits. Independent final review of the proposal passed with no
-remaining B1. A refreshed fixed implementation package/token is required
-before implementation resumes.
+its raw-byte SHA-256 is
+`92EF668AFFBE3A5D1C651107C33006C7CB987E7021FFFC02037B3603FD276B75`. It was
+accepted under `RECONCILE_AH19_CONVERSATION_OWNER_WITH_P17_JOB_AUTHORITY` on
+2026-10-18 and landed as System Design v1.19 / DID v1.51 plus the exact P14/P17
+owning hunks. See
+`planning/results/AH19-conversation-owner-p17-authority-reconciliation-acceptance-and-landing.record.md`.
+Independent proposal review passed with no B1; independent post-landing review
+is pending. A refreshed fixed implementation package/token is required before
+implementation resumes.
 
 P17 source/result evidence is `docs/design/implementation/P14/01-human-message.md`
 §9, `docs/design/implementation/P17-conversation-delivery-runtime/01-domain-storage.md`
@@ -74,14 +79,19 @@ response or second Assistant turn from the later Answered message.
 This parameterization was added during independent review; Work plan scope is
 unchanged.
 
+This fixed plan's HumanMessage `Answered`/`Claimed` predicates and corresponding
+P48 qualification matrix are historical and are no longer an implementation
+contract. The accepted reconciliation requires a new fixed plan using immutable
+HumanMessage source identity plus exact ResponseJob/Attempt/Execution authority.
+
 ## Verification and boundary
 
 - Whitespace-only `git diff --no-index --check -- /dev/null <plan>` reported no
   whitespace errors. Exit 1 is expected because the plan is new; Git emitted
   only the LF-to-CRLF normalization advisory.
 - No tests, builds, migrations, or database operations were run.
-- No design, production, test, or migration file was changed for this plan.
-  No file was staged or committed.
-- The requested token is a separate gate. If authorized later, migration 0048
+- No design, production, test, or migration file was changed while preparing
+  the original plan. Its later design landing is documented separately.
+- The original token did not authorize the reconciled source model. Migration 0048
   work is limited to fresh/disposable database copies and offline CLI; live or
   preserved database upgrades, deployment, and release remain excluded.

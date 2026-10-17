@@ -70,13 +70,21 @@ and ConversationResponseCancelled. Job mutation + event append share the
 Command transaction. Operational Provider retry events remain observability,
 not Domain events.
 
-### AH19 checkpoint-owner interaction (DID v1.50)
+### AH19 checkpoint-owner interaction (DID v1.51)
 
-The P14 Conversation checkpoint owner may advance its covered prefix only
-after the authoritative HumanMessage and ResponseJob reach `Answered` through
-the existing response-settlement path. A `Claimed` HumanMessage / `Running`
-ResponseJob, `RetryScheduled`, `NeedsAttention`, and `Cancelled` do not advance
-coverage; a non-Answered earlier message blocks later Answered messages from
-crossing the gap. Context compaction preserves the current ResponseJob and
-Attempt and does not create a retry or widen P17 retry policy. P17 retains
-ownership of the Answered state transition; P14 owns the checkpoint frontier.
+The P14 Conversation checkpoint owner uses the immutable HumanMessage only as
+message identity, root/project, FIFO ordering, and body source. Its legacy
+lifecycle, claim, attempt, settlement and response columns are not scheduler or
+answer truth and are not written by P17. The covered prefix may advance only
+when the exact ResponseJob is `Answered` and its unique ConversationAttempt and
+terminal ConversationResponseEpisode Execution prove the same
+`(messageId, attemptNo, executionId)` successful response; the bounded
+Assistant response body comes from the Answered Job. A current raw HumanMessage
+body is pinned once only for its exact `Running` Job, active Attempt/Execution
+and current lease, and is not covered until the Job is Answered. A Running Job
+for another episode, `RetryScheduled`, `NeedsAttention`, `Cancelled`, missing
+or malformed Job/Attempt is not current input; an earlier non-Answered or
+other-episode Running fact blocks later coverage. Compaction preserves the
+current ResponseJob and Attempt and does not create a retry or widen P17 retry
+policy. P17 retains ownership of Job/Attempt answer and settlement truth; P14
+owns the checkpoint frontier.

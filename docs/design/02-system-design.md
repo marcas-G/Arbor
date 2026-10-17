@@ -1,12 +1,12 @@
 # Arbor System Design Specification
 
-**Version:** 1.18
+**Version:** 1.19
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.17
+**Supersedes:** v1.18
 
-**Date:** 2026-10-17
+**Date:** 2026-10-18
 
 **Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.4`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
@@ -14,7 +14,7 @@
 **Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
 
-**Governance changes (v1.17 → v1.18): AH19 Work and Conversation checkpoint ownership**
+**Governance changes (v1.18 → v1.19): AH19 Conversation checkpoint owner × P17 Job authority reconciliation**
 
 - Work Session Timeline remains complete and append-only. Before its first
   typed `CompactionCheckpoint`, the Work provider projection considers only the
@@ -25,12 +25,19 @@
   the frontier is that exact checkpoint followed by every unsummarized typed
   entry; budget pressure invokes explicit compaction.
 - Root Workspace conversation continuity has a distinct owner keyed by exact
-  `RootWorkspaceId`, independent of HumanMessage, ResponseJob revision,
-  Attempt, Execution, ConversationResponseEpisode and the Work Session. Its
-  checkpoint covers only a contiguous FIFO prefix of `Answered` HumanMessages.
-  The exact currently `Claimed` message stays pinned once for its own episode
-  and is not covered before authoritative Answered settlement. Non-Answered
-  gaps stop coverage; Work history/checkpoints are excluded.
+  `RootWorkspaceId`, independent of message, ResponseJob revision, Attempt,
+  Execution, ConversationResponseEpisode and the Work Session. The immutable
+  HumanMessage supplies only message identity, project/root, `created_at`
+  ordering and `bodyRef`; its legacy lifecycle/claim/response columns are not
+  answer or scheduler truth. Coverage is the contiguous FIFO prefix whose
+  exact ResponseJob is `Answered` and whose unique ConversationAttempt and
+  terminal ConversationResponseEpisode Execution prove the same
+  `(messageId, attemptNo, executionId)` successful response. The exact current
+  `Running` Job is pinned once only with its matching active Attempt, exact
+  Episode/Execution and current lease fence; its immutable HumanMessage body
+  remains uncovered until the Job becomes Answered. Any earlier non-Answered,
+  malformed or other-episode Running Job blocks later coverage. Work
+  history/checkpoints are excluded.
 - ProviderNative Conversation checkpoints cross episodes only under an exact
   complete `ResolvedModelBinding` fingerprint; otherwise rebuild a portable
   Summary from the retained owner prefix. HumanMessages and live referenced
@@ -41,8 +48,13 @@
   `4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`, and
   Conversation token `ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1`, raw
   SHA-256 `9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`;
-  both accepted 2026-10-17. See their AH19 acceptance/landing records and
-  package-specific post-landing reviews under `planning/results/`.
+  both accepted 2026-10-17. Their P17 authority reconciliation is accepted
+  under `RECONCILE_AH19_CONVERSATION_OWNER_WITH_P17_JOB_AUTHORITY`, proposal
+  raw SHA-256
+  `92EF668AFFBE3A5D1C651107C33006C7CB987E7021FFFC02037B3603FD276B75`, on
+  2026-10-18. See
+  `planning/results/AH19-conversation-owner-p17-authority-reconciliation-acceptance-and-landing.record.md`
+  and the package-specific post-landing review under `planning/results/`.
 - These are design-only decisions. Conversation storage shape and migration
   ID, and any changes to production behavior or tests, require separate
   implementation authorization. Existing P2 Session storage is not assigned
@@ -732,18 +744,25 @@ automatic context and outside any coverage claim.
 Root Workspace Conversation continuity has a separate checkpoint owner keyed
 by the exact `RootWorkspaceId`. It is independent of message, ResponseJob
 revision, Attempt, Execution, ConversationResponseEpisode and the Workspace
-Work Session. The frontier advances only over the contiguous FIFO prefix of
-authoritatively `Answered` HumanMessages. A current `Claimed` message is pinned
-exactly once for its own response episode and is not covered until Answered;
-no earlier HumanMessage may remain Pending/Claimed, and no related ResponseJob
-may remain RetryScheduled or otherwise non-Answered, when coverage advances
-past it. Conversation context excludes Workspace Work Session entries and
-checkpoints. Existing order is `created_at` with `messageId` tie-break unless
-a separately authorized implementation package selects an explicit owner-local
-sequence preserving the same total order. Existing HumanMessages and live
-referenced Summary/blob or binding-bound Native evidence remain durable. These
-owner semantics are the accepted AH19 design packages; Conversation physical
-storage remains TBD for separate implementation authorization.
+Work Session. HumanMessage is the immutable submitted-user source identity and
+ordering/body fact; its legacy lifecycle, claim and response columns are not
+answer or scheduler truth. The frontier advances only over the contiguous FIFO
+prefix of immutable HumanMessages whose exact ResponseJob is Answered and
+whose unique Attempt and terminal ConversationResponseEpisode Execution prove
+the same `(messageId, attemptNo, executionId)` successful response. A current
+message is pinned exactly once from its immutable HumanMessage body only for
+the exact Running ResponseJob, active Attempt, active Episode Execution and
+current lease; it remains uncovered until the Job is Answered. An earlier
+non-Answered, malformed or other-episode Running Job blocks later coverage.
+Conversation context excludes Workspace Work Session entries and checkpoints.
+Existing order is `created_at` with `messageId` tie-break unless a separately
+authorized implementation package selects an explicit owner-local sequence
+preserving the same total order. For each covered HumanMessage, portable
+Conversation Summary preserves its paired authoritative Answered Job response
+in user/assistant order. Existing HumanMessages and live referenced
+Summary/blob or binding-bound Native evidence remain durable. These owner
+semantics are the accepted AH19 design packages; Conversation physical storage
+remains TBD for separate implementation authorization.
 
 ## 3.7 Dependency
 
@@ -1180,13 +1199,18 @@ selected rows actually represented by the existing P3 projector; skipped rows
 and rows outside the 64-row input window remain durable but uncovered. Once a
 typed Work checkpoint exists, the frontier is its exact sequence plus all
 unsummarized typed entries after it, without the pre-checkpoint numeric cap.
-Conversation uses a separate RootWorkspaceId owner. Its checkpoint covers only
-the contiguous Answered HumanMessage prefix; the current Claimed input remains
-pinned once and uncovered until authoritative Answered settlement. Binding
-mismatch forbids reuse of ProviderNative opaque state and requires portable
-Summary reconstruction from retained HumanMessages. Compaction resumes the
-same response episode/attempt and never replays settled Provider or action
-work.
+Conversation uses a separate RootWorkspaceId owner. HumanMessage supplies
+immutable identity/order/body only; its legacy lifecycle, claim and response
+columns are not answer or scheduler truth. The checkpoint covers only the
+contiguous FIFO prefix with exact Answered ResponseJobs and matching Attempts
+and terminal ConversationResponseEpisode Executions. The current raw message
+is pinned once only for its exact Running Job, active Attempt/Execution and
+current lease; other-episode Running or earlier non-Answered/malformed jobs
+block coverage. Binding mismatch forbids reuse of ProviderNative opaque state
+and requires portable Summary reconstruction from retained HumanMessage
+sources paired with their authoritative Answered Job responses. Compaction
+resumes the same response episode/attempt and never replays settled Provider
+or action work.
 
 ## 5.7 Memory
 
