@@ -2303,6 +2303,47 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           observation_json: null,
           observation_sha256: null,
         });
+        const escalationDb = new DatabaseSync(fixture.databaseFile, {
+          readOnly: true,
+        });
+        let escalationRows: ReadonlyArray<{
+          event_type: string;
+          payload_json: string;
+        }>;
+        try {
+          escalationRows = escalationDb
+            .prepare(
+              "SELECT event_type, payload_json FROM domain_events WHERE event_type = 'ReconciliationEscalated' AND aggregate_ref = ?",
+            )
+            .all(targetExecutionId) as unknown as typeof escalationRows;
+        } finally {
+          escalationDb.close();
+        }
+        expect(escalationRows).toHaveLength(1);
+        expect(JSON.parse(String(escalationRows[0]?.payload_json))).toEqual({
+          executionId: targetExecutionId,
+          invocationRefsFingerprint: hit.invocationId,
+          refs: [hit.invocationId],
+        });
+        const attention = await client.view<{
+          rows: ReadonlyArray<{
+            source?: string;
+            severity?: string;
+            targetWorkspaceId?: string;
+            dedupKey?: string;
+          }>;
+        }>("attention", { projectId: project.projectId });
+        const visibleEscalations = attention.rows.filter(
+          (row) =>
+            row.source === "ReconciliationEscalated" &&
+            row.dedupKey ===
+              `reconciliation-escalated:${targetExecutionId}:${hit.invocationId}`,
+        );
+        expect(visibleEscalations).toHaveLength(1);
+        expect(visibleEscalations[0]).toMatchObject({
+          severity: "ActionRequired",
+          targetWorkspaceId: project.rootWorkspaceId,
+        });
       }
       const recoveredApproval = readExecutableApprovalAfterRecovery(
         fixture.databaseFile,

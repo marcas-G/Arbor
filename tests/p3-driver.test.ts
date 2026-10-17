@@ -25,6 +25,7 @@ import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import {
   type AgentActionHandler,
   AgentLoopDriverLive,
+  type AgentLoopDriverOptions,
   type AgentLoopQualificationProbe,
   type ControlActionAuthorizerService,
   type ExecutableInvocationHandler,
@@ -144,6 +145,7 @@ const makeApp = (
     readonly providerFailures?: ReadonlyArray<ProviderFailureKind>;
     readonly controlAuthorizer?: ControlActionAuthorizerService;
     readonly qualificationProbe?: AgentLoopQualificationProbe;
+    readonly recordReconciliationEscalation?: AgentLoopDriverOptions["recordReconciliationEscalation"];
   } = {},
 ) => {
   const base = layer({ filename: ":memory:" });
@@ -300,6 +302,12 @@ const makeApp = (
       ...(options.executableHandler !== undefined
         ? { executableInvocationHandler: options.executableHandler }
         : {}),
+      ...(options.recordReconciliationEscalation === undefined
+        ? {}
+        : {
+            recordReconciliationEscalation:
+              options.recordReconciliationEscalation,
+          }),
       ...(options.executionPolicyOverrides !== undefined
         ? { executionPolicyOverrides: options.executionPolicyOverrides }
         : {}),
@@ -1108,6 +1116,11 @@ describe("P3-013 agent driver", () => {
   });
 
   it("keeps an OutcomeUnknown action pending reconciliation instead of marking it applied", async () => {
+    const escalationCalls: Array<{
+      readonly executionId: string;
+      readonly fenceExecutionId: string;
+      readonly invocationRefs: ReadonlyArray<string>;
+    }> = [];
     const app = makeApp([readToolTurn], {
       toolDefinitions: [
         {
@@ -1133,6 +1146,14 @@ describe("P3-013 agent driver", () => {
             },
           }),
       },
+      recordReconciliationEscalation: (input) => {
+        escalationCalls.push({
+          executionId: input.execution.executionId,
+          fenceExecutionId: input.fence.executionId,
+          invocationRefs: input.invocationRefs,
+        });
+        return Effect.void;
+      },
     });
     const program = Effect.gen(function* () {
       yield* runMigrations(P17_MIGRATIONS);
@@ -1155,6 +1176,13 @@ describe("P3-013 agent driver", () => {
 
     const result = await run(program, app);
     expect(result.settlement._tag).toBe("OutcomeUnknown");
+    expect(escalationCalls).toEqual([
+      {
+        executionId,
+        fenceExecutionId: executionId,
+        invocationRefs: ["tin_unknown"],
+      },
+    ]);
     expect(result.actions).toEqual([{ state: "ReconciliationPending" }]);
     expect(result.step).toEqual(
       expect.objectContaining({

@@ -373,6 +373,15 @@ export interface AgentLoopActionDependencies {
   readonly controlRegistry: ControlToolRegistryService;
   readonly controlAuthorizer?: ControlActionAuthorizerService;
   readonly executableInvocationHandler?: ExecutableInvocationHandler;
+  /** P9-owned durable escalation for an unresolved P4 effect. It runs before
+   * P3 persists the terminal OutcomeUnknown action so P9 can use the current
+   * Worker fence and unsettled Execution required by DID v1.40. */
+  readonly recordReconciliationEscalation?: (input: {
+    readonly execution: Execution;
+    readonly fence: AgentLoopStepFence;
+    readonly principal: import("@arbor/domain").Principal;
+    readonly invocationRefs: ReadonlyArray<string>;
+  }) => Effect.Effect<void, unknown>;
   readonly currentControlBasis: () => Effect.Effect<
     ControlBasis,
     ExecutionDriverError
@@ -1057,22 +1066,38 @@ export const executeAgentLoopActions = (
       const persistActionSettlement = (
         settlement: ExecutionSettlement,
       ): Effect.Effect<void, ExecutionDriverError> =>
-        persistTerminalAction({
-          settlement,
-          actionState:
-            settlement._tag === "OutcomeUnknown"
-              ? "ReconciliationPending"
-              : "Applied",
-          status:
-            settlement._tag === "OutcomeUnknown"
-              ? "OutcomeUnknown"
-              : settlement._tag === "Interrupted"
-                ? "Interrupted"
-                : settlement._tag === "Failed"
-                  ? "Failed"
-                  : "Succeeded",
-          disposition: `ExecutionSettlement:${settlement._tag}`,
-          outputText: `Control action settled the execution (${settlement._tag})`,
+        Effect.gen(function* () {
+          if (
+            settlement._tag === "OutcomeUnknown" &&
+            loopStepFence !== undefined &&
+            dependencies.recordReconciliationEscalation !== undefined
+          ) {
+            yield* dependencies
+              .recordReconciliationEscalation({
+                execution: input.execution,
+                fence: loopStepFence,
+                principal: input.context.principal,
+                invocationRefs: settlement.reconciliation.invocationRefs,
+              })
+              .pipe(Effect.mapError(failure));
+          }
+          yield* persistTerminalAction({
+            settlement,
+            actionState:
+              settlement._tag === "OutcomeUnknown"
+                ? "ReconciliationPending"
+                : "Applied",
+            status:
+              settlement._tag === "OutcomeUnknown"
+                ? "OutcomeUnknown"
+                : settlement._tag === "Interrupted"
+                  ? "Interrupted"
+                  : settlement._tag === "Failed"
+                    ? "Failed"
+                    : "Succeeded",
+            disposition: `ExecutionSettlement:${settlement._tag}`,
+            outputText: `Control action settled the execution (${settlement._tag})`,
+          });
         });
 
       const persistActionRejection = (
