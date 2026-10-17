@@ -76,6 +76,13 @@ export interface AgentLoopDriverOptions {
   readonly controlAuthorizer?: ControlActionAuthorizerService;
   readonly turnProfileResolver?: TurnProfileResolverService;
   readonly executableInvocationHandler?: ExecutableInvocationHandler;
+  /** P9 durable recovery escalation for unknown external effects. */
+  readonly recordReconciliationEscalation?: (input: {
+    readonly execution: Execution;
+    readonly fence: AgentLoopStepFence;
+    readonly principal: import("@arbor/domain").Principal;
+    readonly invocationRefs: ReadonlyArray<string>;
+  }) => Effect.Effect<void, unknown>;
   /** Adapter identity recorded on manifests (P14 conversation audit). */
   readonly providerRef?: string;
   /** Presentation-only progress tap (conversation streaming): receives every
@@ -394,6 +401,12 @@ export const AgentLoopDriverLive = (
                 : {
                     executableInvocationHandler:
                       options.executableInvocationHandler,
+                  }),
+              ...(options.recordReconciliationEscalation === undefined
+                ? {}
+                : {
+                    recordReconciliationEscalation:
+                      options.recordReconciliationEscalation,
                   }),
               currentControlBasis,
               admit,

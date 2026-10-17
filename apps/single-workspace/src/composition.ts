@@ -35,6 +35,7 @@ import {
   ExecutionSchedulerLive,
   type ExecutionSettlementQualificationProbe,
   FenceStopCheckLive,
+  makeReconciliationEscalationRecorder,
   RuntimeSafetyGateLive,
   type RuntimeSafetyPolicy,
   type SubmittedDecisionRecoveryQualificationProbe,
@@ -132,18 +133,19 @@ import {
 import {
   type AgentLoopStepStore,
   type CanonicalProviderEvent,
-  type Clock,
+  Clock,
   type CommandStore,
   type DecisionRequestStore,
   type DeliverableRepository,
-  type DomainEventJournal,
+  DomainEventJournal,
   type ExecutionDriverPort,
-  type ExecutionRepository,
+  ExecutionRepository,
   type ExecutionScheduler,
   type HealthPort,
   type HumanMessageStore,
-  type IdGenerator,
+  IdGenerator,
   type InboxProjectionStore,
+  LeaseService,
   type MessageStore,
   type ModelDeployment,
   makeProviderRegistry,
@@ -173,7 +175,7 @@ import {
   type ToolReconciliationPortService,
   type ToolReconciliationProfile,
   ToolReconciliationProfileRegistry,
-  type TransactionPort,
+  TransactionPort,
   type WorkReadmissionGateStore,
   type WorkRepository,
   type WorkspaceKnowledgePort,
@@ -875,6 +877,15 @@ export const buildSingleWorkspaceLayer = (
         const executableHandler = yield* ExecutableToolHandler;
         const turnProfileResolver = yield* TurnProfileResolver;
         const authorizer = yield* ControlActionAuthorizer;
+        const reconciliationEscalationRecorder =
+          makeReconciliationEscalationRecorder({
+            tx: yield* TransactionPort,
+            repository: yield* ExecutionRepository,
+            leases: yield* LeaseService,
+            journal: yield* DomainEventJournal,
+            clock: yield* Clock,
+            ids: yield* IdGenerator,
+          });
         return Layer.provide(
           AgentLoopDriverLive({
             ...(config.secretRef !== undefined
@@ -894,6 +905,7 @@ export const buildSingleWorkspaceLayer = (
             controlAuthorizer: authorizer,
             turnProfileResolver,
             executableInvocationHandler: executableHandler,
+            recordReconciliationEscalation: reconciliationEscalationRecorder,
             ...(config.provider !== undefined
               ? { providerRef: config.provider.adapterId }
               : {}),
@@ -923,6 +935,8 @@ export const buildSingleWorkspaceLayer = (
       controlAuthorizer,
       executableInvocation,
       turnProfiles,
+      repos,
+      infra,
     ),
   );
   const runnableSource = Layer.provide(

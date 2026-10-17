@@ -1,13 +1,24 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   P8_MIGRATIONS,
+  P17_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import { Principal, parse } from "../packages/domain/dist/index.js";
-import { runRecovery } from "../packages/execution-runtime/src/index.js";
-import { TransactionPort } from "../packages/ports/src/index.js";
+import {
+  makeReconciliationEscalationRecorder,
+  runRecovery,
+} from "../packages/execution-runtime/src/index.js";
+import {
+  Clock,
+  DomainEventJournal,
+  ExecutionRepository,
+  IdGenerator,
+  LeaseService,
+  TransactionPort,
+} from "../packages/ports/src/index.js";
 import {
   makeP7App,
   p7Project,
@@ -80,6 +91,71 @@ const executionState = (executionId: string) =>
   });
 
 describe("P9-002 recovery visibility (B-1 gate I-1..I-3)", () => {
+  it("records StillUnknown escalation under the current Worker fence and deduplicates retries", async () => {
+    await runP7(
+      Effect.gen(function* () {
+        yield* runMigrations(P17_MIGRATIONS);
+        yield* p7SeedProject;
+        yield* INSERT_EXECUTION(EXE_RED, null);
+        const tx = yield* TransactionPort;
+        const repository = yield* ExecutionRepository;
+        const leases = yield* LeaseService;
+        const journal = yield* DomainEventJournal;
+        const clock = yield* Clock;
+        const ids = yield* IdGenerator;
+        const acquired = yield* tx.transact(
+          leases.acquire(EXE_RED as never, "worker:test", "incarnation:test"),
+        );
+        const executionOption = yield* tx.transact(
+          repository.findById(EXE_RED as never),
+        );
+        if (Option.isNone(executionOption)) {
+          throw new Error("test execution was not persisted");
+        }
+        const record = makeReconciliationEscalationRecorder({
+          tx,
+          repository,
+          leases,
+          journal,
+          clock,
+          ids,
+        });
+        const input = {
+          execution: executionOption.value,
+          fence: {
+            executionId: acquired.executionId,
+            workerId: acquired.workerId,
+            workerIncarnationId: acquired.workerIncarnationId,
+            fencingGeneration: acquired.generation,
+          },
+          principal,
+          invocationRefs: ["tin_still_unknown"],
+        };
+        yield* record(input);
+        yield* record(input);
+        const state = yield* executionState(EXE_RED);
+        const facts = yield* attentionFacts(EXE_RED);
+        const events = yield* tx.transact(
+          journal.readAfter(p7Project as never, 0, 1_000_000),
+        );
+        const escalation = events.find(
+          (event) =>
+            event.eventType === "ReconciliationEscalated" &&
+            event.aggregateRef === EXE_RED,
+        );
+        expect(state).toBe("missing");
+        expect(facts).toBe(1);
+        expect(escalation?.payload).toMatchObject({
+          executionId: EXE_RED,
+          invocationRefsFingerprint: "tin_still_unknown",
+          refs: ["tin_still_unknown"],
+        });
+        return { state, facts, escalation };
+      }),
+      makeP7App(),
+    );
+  });
+
   it("I-1 [crash-injected]: stopped execution + unsettled NonIdempotent NEVER settles Interrupted; OutcomeUnknown or escalation only", async () => {
     await runP7(
       Effect.gen(function* () {
