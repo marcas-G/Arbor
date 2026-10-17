@@ -1,6 +1,6 @@
 # AH10 P8 Verification Control Receipt-First Takeover — Partial Result
 
-Status: **IMPLEMENTATION PARTIAL; Evidence C/P qualified, remaining five real-process cases open**
+Status: **IMPLEMENTATION PARTIAL; the six-case P8 real-process takeover matrix is qualified**
 
 Base: `16b3fe8eee619934ef360822f921250284e47c59`.
 
@@ -32,11 +32,18 @@ changed.
   Conclude replay through v2 handler registration, fencing retry, non-fencing
   rejection, malformed result, fingerprint mismatch, missing validator, and
   canonical mismatch.
-- Added one default-suite real-process C/P test for RecordVerificationEvidence
-  at `tests/functional/process/agent-loop-ah10-verification-control-takeover.functional.test.ts`.
-  It proves gen0 Command/Evidence commit with Action Pending before the crash,
-  then gen1 receipt-first replay and Observation/Action convergence. Evidence
-  R−/R+ and all Conclude process cases remain open.
+- Fixed ConcludeVerification v2 receipt decoding: it now validates the exact v2
+  result fields directly (including the production `wakeSignals` and
+  `channel1Release` fields), rather than passing through the exact-key v1
+  decoder. V1 continues to reject v2 snapshot fields. Added v1/v2 positive and
+  negative codec coverage plus a prior-generation Conclude validator test using
+  the registered production handler and canonical v2 event/snapshot facts.
+- Added the default-suite real-process matrix for both controls at
+  `tests/functional/process/agent-loop-ah10-verification-control-takeover.functional.test.ts`:
+  committed receipt / Action Pending (C/P), stale-generation receipt fenced
+  before commit (R−), and stale-generation receipt committed before takeover
+  (R+). Each case checks generation/command identity, canonical effect and
+  Observation uniqueness, action settlement, and no repeat provider execution.
 - Added generic P9 resume cursor selection from durable `AgentLoopStep` rows,
   with binding validation against the exact persisted ProviderTurn manifest,
   plus cursor tests for in-progress resume and malformed/ambiguous histories.
@@ -61,9 +68,22 @@ changed.
   `pnpm --filter @arbor/persistence-sqlite build`, and
   `pnpm --filter @arbor/single-workspace build` — PASS.
 - Focused Biome check and `git diff --check` — PASS.
-- Evidence C/P process — PASS (1 test, 25.5 s). The gen0 command/evidence was
-  committed while Action remained Pending; gen1 replayed the prior receipt,
-  persisted the Runtime Observation, and transitioned the Action to Applied.
+- `pnpm exec vitest run packages/application/test/command-result-codec.test.ts apps/single-workspace/test/verification-control-actions.test.ts`
+  — PASS (2 files, 31 tests); after adding the Gateway atomicity regression,
+  the combined focused run of those files plus
+  `apps/single-workspace/test/gateway-fencing-receipt-atomicity.test.ts`
+  passed (3 files, 32 tests).
+- `pnpm build` — PASS; `pnpm --filter @arbor/web build` — PASS.
+- Production Gateway/two-connection fencing receipt atomicity test — PASS:
+  the independent SQLite connection saw no receipt at the in-transaction
+  pre-commit probe and exactly one receipt after transaction return.
+- Evidence process cases — C/P PASS (previous qualification run), R− PASS,
+  R+ PASS. ConcludeVerification process cases — C/P PASS (28.8 s), R− PASS
+  (55.3 s), R+ PASS (62.3 s), all through the default functional process
+  configuration with the P39 child environment intact.
+- Thus the six P8 process cases are individually qualified. This does not close
+  AH10's broader control-action/state matrix or the separate AH10 governance
+  gaps.
 - Root cause of the prior timeout was a test gate bug: the fixture sets
   `ARBOR_AH10_GATE_ACTION_KIND=record_verification_evidence` for both owners,
   but released only the old owner's `action-intent` gate. The gen1 test now
@@ -88,7 +108,8 @@ changed.
 
 ## Qualification still open
 
-The mandatory six-case real two-daemon matrix is not complete: Evidence R−/R+
-and ConcludeVerification R−/R+/C/P remain. Evidence C/P alone does not close
-AH10. No AH10 closure claim is made. Full `pnpm check` and full functional
-suite were not run.
+The P8 RecordVerificationEvidence / ConcludeVerification six-case matrix is
+complete, but AH10 remains PARTIAL: other control actions, state combinations,
+and the previously identified Deliver/verification governance gaps remain
+outside this change. No AH10 closure claim is made. Full `pnpm check` and full
+functional suite were not run.

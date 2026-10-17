@@ -45,7 +45,7 @@ describe("registered command receipt decoders", () => {
     );
 
     expect(external.filter((descriptor) => descriptor.required)).toHaveLength(
-      28,
+      29,
     );
     expect(external.filter((descriptor) => !descriptor.required)).toEqual([
       expect.objectContaining({
@@ -227,22 +227,55 @@ describe("registered command receipt decoders", () => {
     };
 
     for (const descriptor of COMMAND_RECEIPT_DECODER_DESCRIPTORS) {
-      const result = validResults[descriptor.commandType];
+      const result =
+        descriptor.commandType === "ConcludeVerification" &&
+        descriptor.schemaVersion === "2"
+          ? {
+              ...(validResults.ConcludeVerification as Record<string, unknown>),
+              verdict: "Pass",
+              missionSnapshot: {
+                goal: "goal",
+                criteria: [
+                  {
+                    criterionId: "criterion-1",
+                    requirement: "requirement-1",
+                    required: true,
+                  },
+                ],
+                riskRequirements: [],
+              },
+              criteriaResults: [
+                {
+                  criterionId: "criterion-1",
+                  requirement: "requirement-1",
+                  required: true,
+                  verdict: "Pass",
+                  evidenceRefs: [`evd_${uuid}`],
+                },
+              ],
+              snapshotStatus: "Available",
+            }
+          : validResults[descriptor.commandType];
       expect(
         result,
         `${descriptor.commandType}@${descriptor.schemaVersion}`,
       ).toBeDefined();
       const decoded = await Effect.runPromise(
-        decodeRegisteredCommandReceipt(
-          stored({
-            schemaVersion: descriptor.schemaVersion,
-            resultJson: JSON.stringify(result),
-          }),
-          descriptor.commandType,
-          descriptor.schemaVersion,
+        either(
+          decodeRegisteredCommandReceipt(
+            stored({
+              schemaVersion: descriptor.schemaVersion,
+              resultJson: JSON.stringify(result),
+            }),
+            descriptor.commandType,
+            descriptor.schemaVersion,
+          ),
         ),
       );
-      expect(decoded.resolution._tag).toBe("Committed");
+      expect(
+        decoded._tag,
+        `${descriptor.commandType}@${descriptor.schemaVersion}`,
+      ).toBe("Right");
     }
   });
 
@@ -273,6 +306,94 @@ describe("registered command receipt decoders", () => {
         "conclusionReason",
         undefined,
       );
+    }
+  });
+
+  it("keeps ConcludeVerification v1 strict while decoding its exact v2 snapshot DTO", async () => {
+    const base = {
+      verificationId: `ver_${uuid}`,
+      state: "Concluded",
+      verdict: "Pass",
+      summaryRef: "sha256:summary",
+      wakeSignals: [],
+      channel1Release: {
+        workId: `wrk_${uuid}`,
+        targetWorkRevision: 1,
+      },
+    };
+    const v1WithV2Fields = await Effect.runPromise(
+      either(
+        decodeRegisteredCommandReceipt(
+          stored({
+            resultJson: JSON.stringify({
+              ...base,
+              missionSnapshot: {
+                goal: "goal",
+                criteria: [],
+                riskRequirements: [],
+              },
+              criteriaResults: [],
+              snapshotStatus: "Available",
+            }),
+          }),
+          "ConcludeVerification",
+          "1",
+        ),
+      ),
+    );
+    expect(v1WithV2Fields._tag).toBe("Left");
+
+    const v2Result = {
+      ...base,
+      missionSnapshot: {
+        goal: "goal",
+        criteria: [
+          {
+            criterionId: "criterion-1",
+            requirement: "requirement-1",
+            required: true,
+          },
+        ],
+        riskRequirements: [],
+      },
+      criteriaResults: [
+        {
+          criterionId: "criterion-1",
+          requirement: "requirement-1",
+          required: true,
+          verdict: "Pass",
+          evidenceRefs: [`evd_${uuid}`],
+        },
+      ],
+      snapshotStatus: "Available",
+    };
+    const v2 = await Effect.runPromise(
+      decodeRegisteredCommandReceipt(
+        stored({ schemaVersion: "2", resultJson: JSON.stringify(v2Result) }),
+        "ConcludeVerification",
+        "2",
+      ),
+    );
+    expect(v2.resolution._tag).toBe("Committed");
+
+    for (const invalid of [
+      { ...v2Result, unexpected: true },
+      { ...v2Result, criteriaResults: [] },
+      {
+        ...v2Result,
+        criteriaResults: [{ ...v2Result.criteriaResults[0], verdict: "Fail" }],
+      },
+    ]) {
+      const rejected = await Effect.runPromise(
+        either(
+          decodeRegisteredCommandReceipt(
+            stored({ schemaVersion: "2", resultJson: JSON.stringify(invalid) }),
+            "ConcludeVerification",
+            "2",
+          ),
+        ),
+      );
+      expect(rejected._tag).toBe("Left");
     }
   });
 
