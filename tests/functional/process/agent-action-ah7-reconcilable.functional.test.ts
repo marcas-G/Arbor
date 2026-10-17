@@ -644,129 +644,143 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       let preseedReadCalls = 0;
       let probeArmed = false;
       let latestToolResult = "<none>";
-      const fixture = await startProductionFixture({
-        admitWorkspaceDirectory: true,
-        reply: (call) => {
-          const names = new Set(call.tools.map((tool) => tool.function?.name));
-          const context = JSON.stringify(call.messages);
-          if (
-            names.has("assign_work") &&
-            !names.has("claim_completion") &&
-            context.includes(marker)
-          ) {
-            return context.includes("WorkAssigned(")
-              ? { _tag: "Text", text: `Work admitted for ${marker}` }
-              : {
-                  _tag: "ToolCall",
-                  name: "assign_work",
-                  arguments: {
-                    objective: `Wait for a human steer, then inspect the workspace with shell for ${marker}.`,
-                    why: "qualify Reconcilable shell intent crash",
-                    constraints: [],
-                    completionExpectation:
-                      "shell effect is not blindly replayed",
-                    verificationMission: {
-                      goal: `Verify safe shell recovery for ${marker}`,
-                      criteria: [
-                        {
-                          criterionId: "shell-safe",
-                          requirement: "no ambiguous shell effect is replayed",
-                          required: true,
-                        },
-                      ],
-                      riskRequirements: [],
+      const startupStdout: string[] = [];
+      let fixture: ProductionFixture;
+      try {
+        fixture = await startProductionFixture({
+          admitWorkspaceDirectory: true,
+          reply: (call) => {
+            const names = new Set(
+              call.tools.map((tool) => tool.function?.name),
+            );
+            const context = JSON.stringify(call.messages);
+            if (
+              names.has("assign_work") &&
+              !names.has("claim_completion") &&
+              context.includes(marker)
+            ) {
+              return context.includes("WorkAssigned(")
+                ? { _tag: "Text", text: `Work admitted for ${marker}` }
+                : {
+                    _tag: "ToolCall",
+                    name: "assign_work",
+                    arguments: {
+                      objective: `Wait for a human steer, then inspect the workspace with shell for ${marker}.`,
+                      why: "qualify Reconcilable shell intent crash",
+                      constraints: [],
+                      completionExpectation:
+                        "shell effect is not blindly replayed",
+                      verificationMission: {
+                        goal: `Verify safe shell recovery for ${marker}`,
+                        criteria: [
+                          {
+                            criterionId: "shell-safe",
+                            requirement:
+                              "no ambiguous shell effect is replayed",
+                            required: true,
+                          },
+                        ],
+                        riskRequirements: [],
+                      },
+                      reason: "AH7 Reconcilable functional test",
                     },
-                    reason: "AH7 Reconcilable functional test",
-                  },
-                };
-          }
-          if (
-            names.has("claim_completion") &&
-            names.has("shell") &&
-            (context.includes(marker) ||
-              (reconciliationMode !== undefined &&
-                context.includes(steerMarker)))
-          ) {
-            workProviderCalls += 1;
-            if (!context.includes(steerMarker)) {
-              if (reconciliationMode !== undefined && preseedReadCalls < 2) {
-                const path = preseedReadCalls === 0 ? evidenceFile : resultFile;
-                preseedReadCalls += 1;
+                  };
+            }
+            if (
+              names.has("claim_completion") &&
+              names.has("shell") &&
+              (context.includes(marker) ||
+                (reconciliationMode !== undefined &&
+                  context.includes(steerMarker)))
+            ) {
+              workProviderCalls += 1;
+              if (!context.includes(steerMarker)) {
+                if (reconciliationMode !== undefined && preseedReadCalls < 2) {
+                  const path =
+                    preseedReadCalls === 0 ? evidenceFile : resultFile;
+                  preseedReadCalls += 1;
+                  return {
+                    _tag: "ToolCall",
+                    name: "read",
+                    arguments: {
+                      target: { mount: "workspace", path },
+                    },
+                  };
+                }
+                manualWaitCalls += 1;
                 return {
                   _tag: "ToolCall",
-                  name: "read",
+                  name: "wait",
                   arguments: {
-                    target: { mount: "workspace", path },
+                    reason: `waiting for ${steerMarker}`,
+                    waitSpec: {
+                      mode: "Any",
+                      conditions: [{ _tag: "Manual" }],
+                    },
                   },
                 };
               }
-              manualWaitCalls += 1;
-              return {
-                _tag: "ToolCall",
-                name: "wait",
-                arguments: {
-                  reason: `waiting for ${steerMarker}`,
-                  waitSpec: {
-                    mode: "Any",
-                    conditions: [{ _tag: "Manual" }],
-                  },
-                },
-              };
+              if (!probeArmed) {
+                return {
+                  _tag: "Text",
+                  text: `Steer reached before the AH7 probe was armed: ${steerMarker}`,
+                };
+              }
+              targetProviderCalls += 1;
+              latestToolResult =
+                [...call.messages]
+                  .reverse()
+                  .find((message) => message.role === "tool")?.content ??
+                "<no tool result>";
+              if (resourceChangeDuringReconcile && targetProviderCalls > 1) {
+                return {
+                  _tag: "Text",
+                  text: `Resource snapshot changed during reconciliation for ${marker}`,
+                };
+              }
+              if (targetProviderCalls > 5) {
+                return { _tag: "HttpError", status: 429 };
+              }
+              return targetProviderCalls === 1
+                ? {
+                    _tag: "ToolCall",
+                    name: "shell",
+                    arguments: {
+                      command,
+                      cwd: { mount: "workspace", path: "." },
+                      timeoutMs: 5_000,
+                    },
+                  }
+                : { _tag: "Text", text: `Observed ${marker}` };
             }
-            if (!probeArmed) {
-              return {
-                _tag: "Text",
-                text: `Steer reached before the AH7 probe was armed: ${steerMarker}`,
-              };
+            return { _tag: "Text", text: `Waiting ${marker}` };
+          },
+          firstDaemonEntry: crashChild,
+          daemonEnvironment: {
+            ARBOR_AH_BOUNDARY:
+              reconciliationMode === undefined ? boundary : "disabled",
+            ...(semantics === "NonIdempotent"
+              ? { ARBOR_AH_NON_IDEMPOTENT: "1" }
+              : {}),
+          },
+          onDaemonStdout: (line) => {
+            startupStdout.push(line);
+            recordAhProbeLine(hits, line);
+            try {
+              const event = JSON.parse(line) as Record<string, unknown>;
+              processEvents.push(event);
+              if (event.runtimeProbe === true) runtimeProbeEvents.push(event);
+            } catch {
+              // Ignore non-JSON daemon output in this test-only trace.
             }
-            targetProviderCalls += 1;
-            latestToolResult =
-              [...call.messages]
-                .reverse()
-                .find((message) => message.role === "tool")?.content ??
-              "<no tool result>";
-            if (resourceChangeDuringReconcile && targetProviderCalls > 1) {
-              return {
-                _tag: "Text",
-                text: `Resource snapshot changed during reconciliation for ${marker}`,
-              };
-            }
-            if (targetProviderCalls > 5) {
-              return { _tag: "HttpError", status: 429 };
-            }
-            return targetProviderCalls === 1
-              ? {
-                  _tag: "ToolCall",
-                  name: "shell",
-                  arguments: {
-                    command,
-                    cwd: { mount: "workspace", path: "." },
-                    timeoutMs: 5_000,
-                  },
-                }
-              : { _tag: "Text", text: `Observed ${marker}` };
-          }
-          return { _tag: "Text", text: `Waiting ${marker}` };
-        },
-        firstDaemonEntry: crashChild,
-        daemonEnvironment: {
-          ARBOR_AH_BOUNDARY:
-            reconciliationMode === undefined ? boundary : "disabled",
-          ...(semantics === "NonIdempotent"
-            ? { ARBOR_AH_NON_IDEMPOTENT: "1" }
-            : {}),
-        },
-        onDaemonStdout: (line) => {
-          recordAhProbeLine(hits, line);
-          try {
-            const event = JSON.parse(line) as Record<string, unknown>;
-            processEvents.push(event);
-            if (event.runtimeProbe === true) runtimeProbeEvents.push(event);
-          } catch {
-            // Ignore non-JSON daemon output in this test-only trace.
-          }
-        },
-      });
+          },
+        });
+      } catch (error) {
+        throw new Error(
+          `AH7 daemon startup diagnostics: stdout=${startupStdout.join("\n") || "<empty>"}; cause=${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        );
+      }
       fixtures.push(fixture);
       const client = makePublicClient(fixture.baseUrl);
       const project = await createFunctionalProject(
