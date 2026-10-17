@@ -34,4 +34,4 @@
 
 ## 当前状态
 
-VCS/0046 与 AH14/0047 已完成实现、独立审查和主线合并检查；主候选数据库版本为 47。下一项为 AH19 Conversation/0048。AH19 Work 已合并到主候选，合并后检查通过：focused unit 30/30、真实进程 3/3、typecheck、Biome 与 diff-check 均通过。AH10 P8 控制动作的通用持久游标恢复已有部分实现和单元证据，但真实双 daemon 接管尚未闭合，因此仍保持未完成。后续严格按上面的顺序逐项完成和打勾。
+VCS/0046 与 AH14/0047 已完成实现、独立审查和主线合并检查；主候选数据库版本为 47。AH10 的 RecordVerificationEvidence/ConcludeVerification 已完成 generation receipt-first、持久游标恢复、Exhausted repair 恢复和六个双 daemon 接管场景，已独立复审并合入主线；AH10 整体仍因 Deliver、SendMessage Report 等剩余矩阵保持未完成。AH19 Conversation/0048 已完成迁移、owner store 和投影第一层，但发现 P17 权威来源冲突，当前等待人工接受已复审通过的 reconciliation proposal。后续严格按上面的顺序逐项完成和打勾。
