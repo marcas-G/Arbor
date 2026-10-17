@@ -65,13 +65,33 @@ changed.
 - New P8 C/P process test — NOT QUALIFIED: it did not reach the post-handler
   boundary; gen0 C/P facts were committed, while gen1 reopened the exact
   logical step/action and route as a Control action but did not return from the
-  handler before the deadline. A one-shot structured diagnostic showed
-  `DriverCursorSelected(logicalStepNo=1, ActionsInProgress, cursor=0)`, the
-  pinned P8 manifest route, `classifyToolRoute=Control`, and
-  `decode=RecordVerificationEvidence`. This excludes wrong cursor/turn and
-  executable-vs-control misclassification. The process fixture deletes its
-  temporary directory on cleanup, so the failed run's database is not retained
-  for settlement provenance inspection.
+  handler before the deadline. In the single final detailed diagnostic, the
+  target Execution `exe_a8caf649-8e8f-71f5-8499-fdfced089c46` remained
+  unsettled under lease generation 1. Its step-0 read Action was Applied
+  (ProviderTurn `ptn_exe_a8caf649-8e8f-71f5-8499-fdfced089c46_0`, action index
+  0, logicalActionId
+  `lac_007078be233095776d489af68987b035683a63b5d7da24e92e75c11a49ca5333`,
+  callRef `call_19e7bc6594994e1db335f26d21bd98b7`, resultRef
+  `result_2a75517d2415fe81fefc7f3107f15a29bcede0ce579aaedff6d663f293caf8e5`)
+  with one canonical `Succeeded` ToolResult for invocation
+  `tin_018f2b3c-4d5e-7abc-8def-bfc9b4f67174`; step 1 was
+  `ActionsInProgress`, cursor 0, and its action was Control
+  `record_verification_evidence`, Pending (ProviderTurn
+  `ptn_exe_a8caf649-8e8f-71f5-8499-fdfced089c46_1`, action index 0,
+  logicalActionId
+  `lac_32eb67cbe08146a75661cb7c717e23305decf4eca2faf78f3080b50fee9b67c9`,
+  callRef `call_5cb9025ad99c417396f50b3b6789860a`, no resultRef).
+  The pinned route is Control v2 and the route-classification event is
+  `Control/core.control.record-verification-evidence`. The same diagnostic
+  contained no `ExecutableToolInvocationRejected` settlement and no target
+  Execution settlement. The only three `ExecutionSettled` rows were for other
+  Execution IDs and all were Completed (assign conversation, seed Wait, and
+  claim completion). Thus the earlier EITR symptom is not attributable to this
+  P8 action or target Execution; its prior-run origin remains unproven.
+  The P8 handler-return timeout itself remains unresolved. The fixture requested
+  `preserveDirectoryOnStop`, but functional Vitest global teardown removed the
+  entire `.arbor-functional-schema44-*` root after the test; no database was
+  retained.
 - Existing AH10 baseline using the same worktree and production fixture
   (`agent-loop-ah10-generation-takeover.functional.test.ts -t "recovers a committed Deliverable receipt"`)
   passed after the Web build and explicit P39 environment propagation. The
