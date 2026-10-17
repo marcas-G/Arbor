@@ -290,9 +290,9 @@ export function validateManifest(
     }
   }
 
-  if (groups.functionalVitest?.length !== 49)
+  if (groups.functionalVitest?.length !== 51)
     report(
-      `expected 49 configured functional Vitest files, found ${groups.functionalVitest?.length ?? 0}`,
+      `expected 51 configured functional Vitest files, found ${groups.functionalVitest?.length ?? 0}`,
     );
   if (groups.functionalUi?.length !== 6)
     report(
