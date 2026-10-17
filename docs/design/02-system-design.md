@@ -32,7 +32,8 @@
   answer or scheduler truth. Coverage is the contiguous FIFO prefix whose
   exact ResponseJob is `Answered` and whose unique ConversationAttempt and
   terminal ConversationResponseEpisode Execution prove the same
-  `(messageId, attemptNo, executionId)` successful response. The exact current
+  `(messageId, attemptNo, executionId)` successful response with
+  `Completed(ConversationResponseProduced(messageId))`. The exact current
   `Running` Job is pinned once only with its matching active Attempt, exact
   Episode/Execution and current lease fence; its immutable HumanMessage body
   remains uncovered until the Job becomes Answered. Any earlier non-Answered,
@@ -749,7 +750,8 @@ ordering/body fact; its legacy lifecycle, claim and response columns are not
 answer or scheduler truth. The frontier advances only over the contiguous FIFO
 prefix of immutable HumanMessages whose exact ResponseJob is Answered and
 whose unique Attempt and terminal ConversationResponseEpisode Execution prove
-the same `(messageId, attemptNo, executionId)` successful response. A current
+the same `(messageId, attemptNo, executionId)` successful response with
+`Completed(ConversationResponseProduced(messageId))`. A current
 message is pinned exactly once from its immutable HumanMessage body only for
 the exact Running ResponseJob, active Attempt, active Episode Execution and
 current lease; it remains uncovered until the Job is Answered. An earlier
