@@ -335,7 +335,7 @@ const commitInput = (overrides: Record<string, unknown> = {}) => ({
     messageId: answeredMessageId,
   },
   checkpointKind: "Summary" as const,
-  checkpointRef: "blob:summary-v1",
+  checkpointRef: "a".repeat(64),
   bindingFingerprint: null,
   sourceManifest: sourceManifest(),
   producerExecutionId: executionId,
@@ -390,7 +390,7 @@ describe("P48 ConversationCheckpointStore owner CAS", () => {
         contextEpoch: 1,
         coveredThrough: { createdAt: answeredAt, messageId: answeredMessageId },
         checkpointKind: "Summary",
-        checkpointRef: "blob:summary-v1",
+        checkpointRef: "a".repeat(64),
         producerExecutionId: executionId,
         producerProviderTurnId: providerTurnId,
       });
@@ -453,6 +453,48 @@ describe("P48 ConversationCheckpointStore owner CAS", () => {
               ),
             ),
           );
+          const nativeMissingRef = yield* Effect.exit(
+            tx.transact(
+              store.commit(
+                commitInput({
+                  checkpointKind: "ProviderNative",
+                  checkpointRef: "",
+                  bindingFingerprint: `p16fp_${"b".repeat(64)}`,
+                }) as never,
+              ),
+            ),
+          );
+          const summaryWrongRef = yield* Effect.exit(
+            tx.transact(
+              store.commit(
+                commitInput({
+                  checkpointRef: "opaque:not-a-summary-hash",
+                }) as never,
+              ),
+            ),
+          );
+          const unknownKind = yield* Effect.exit(
+            tx.transact(
+              store.commit(
+                commitInput({
+                  checkpointKind: "CorruptKind",
+                  checkpointRef: "opaque:unknown",
+                }) as never,
+              ),
+            ),
+          );
+          const unknownManifestKind = yield* Effect.exit(
+            tx.transact(
+              store.commit(
+                commitInput({
+                  sourceManifest: {
+                    ...sourceManifest(),
+                    checkpointKind: "CorruptKind",
+                  },
+                }) as never,
+              ),
+            ),
+          );
           const committed = yield* tx.transact(
             store.commit(commitInput() as never),
           );
@@ -480,11 +522,25 @@ describe("P48 ConversationCheckpointStore owner CAS", () => {
               ),
             ),
           );
-          return { gap, native, committed, stale, expired };
+          return {
+            gap,
+            native,
+            nativeMissingRef,
+            summaryWrongRef,
+            unknownKind,
+            unknownManifestKind,
+            committed,
+            stale,
+            expired,
+          };
         }),
       );
       expect(Exit.isFailure(results.gap)).toBe(true);
       expect(Exit.isFailure(results.native)).toBe(true);
+      expect(Exit.isFailure(results.nativeMissingRef)).toBe(true);
+      expect(Exit.isFailure(results.summaryWrongRef)).toBe(true);
+      expect(Exit.isFailure(results.unknownKind)).toBe(true);
+      expect(Exit.isFailure(results.unknownManifestKind)).toBe(true);
       expect(results.committed.contextEpoch).toBe(1);
       expect(Exit.isFailure(results.stale)).toBe(true);
       expect(Exit.isFailure(results.expired)).toBe(true);
@@ -556,6 +612,49 @@ describe("P48 ConversationCheckpointStore owner CAS", () => {
         contextEpoch: 1,
         coveredThrough: { createdAt: answeredAt, messageId: answeredMessageId },
       });
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("fails closed when a persisted owner checkpoint kind is corrupt", async () => {
+    const fixture = await createSchema47TestDatabase();
+    try {
+      await upgrade(fixture.databaseFilename);
+      await seed(fixture.databaseFilename);
+      await runStore(
+        fixture.databaseFilename,
+        Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          const store = yield* ConversationCheckpointStore;
+          yield* tx.transact(
+            store.initializeIfAbsent({
+              rootWorkspaceId: workspaceId,
+              initializedAt: claimedAt,
+              fence: fence(),
+            }),
+          );
+          yield* tx.transact(store.commit(commitInput() as never));
+        }),
+      );
+      const db = new DatabaseSync(fixture.databaseFilename);
+      try {
+        db.exec("PRAGMA ignore_check_constraints = ON");
+        db.prepare(
+          "UPDATE conversation_checkpoint_owners SET checkpoint_kind = 'CorruptKind' WHERE root_workspace_id = ?",
+        ).run(workspaceId);
+      } finally {
+        db.close();
+      }
+      const corruptedRead = await runStore(
+        fixture.databaseFilename,
+        Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          const store = yield* ConversationCheckpointStore;
+          return yield* Effect.exit(tx.transact(store.findOwner(workspaceId)));
+        }),
+      );
+      expect(Exit.isFailure(corruptedRead)).toBe(true);
     } finally {
       fixture.cleanup();
     }

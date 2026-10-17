@@ -207,7 +207,7 @@ const owner = (
       messageId: covered.messageId,
     },
     checkpointKind: "Summary",
-    checkpointRef: "blob:summary",
+    checkpointRef: "a".repeat(64),
     bindingFingerprint: null,
     sourceManifestJson: JSON.stringify(manifest),
     producerExecutionId: "exe_checkpoint_producer" as never,
@@ -248,6 +248,44 @@ const standardInput = (
 });
 
 describe("AH19 Conversation owner history projection", () => {
+  it.each([
+    ["unknown owner kind", { checkpointKind: "CorruptKind" as never }],
+    [
+      "unknown manifest kind",
+      {
+        sourceManifestJson: JSON.stringify({
+          ...JSON.parse(owner().sourceManifestJson ?? "{}"),
+          checkpointKind: "CorruptKind",
+        }),
+      },
+    ],
+    [
+      "Native owner without fingerprint",
+      {
+        checkpointKind: "ProviderNative" as never,
+        checkpointRef: "opaque:native-state",
+      },
+    ],
+    [
+      "Native owner without ref",
+      {
+        checkpointKind: "ProviderNative" as never,
+        checkpointRef: null,
+        bindingFingerprint: `p16fp_${"b".repeat(64)}`,
+      },
+    ],
+    [
+      "Summary owner with non-digest ref",
+      { checkpointRef: "opaque:native-state" },
+    ],
+  ])("blocks a malformed checkpoint binding: %s", (_label, ownerOverrides) => {
+    const result = projectConversationCheckpointHistory({
+      ...standardInput(),
+      owner: owner(ownerOverrides),
+    });
+    expect(result).toEqual({ _tag: "Blocked", reason: "MalformedOwner" });
+  });
+
   it("uses the inclusive owner frontier, exact Answered Job/Attempt/Execution suffix, and pins current once", () => {
     const result = projectConversationCheckpointHistory(standardInput());
 

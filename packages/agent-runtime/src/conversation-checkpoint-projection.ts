@@ -9,7 +9,11 @@ import type {
   ConversationResponseJob,
   HumanMessageRecord,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import {
+  isConversationCheckpointKind,
+  isValidConversationCheckpointBinding,
+  sha256Hex,
+} from "@arbor/ports";
 
 type Message = Pick<
   HumanMessageRecord,
@@ -125,10 +129,12 @@ const parseSourceManifest = (
     owner.sourceManifestJson === null ||
     owner.producerExecutionId === null ||
     owner.producerProviderTurnId === null ||
-    (owner.checkpointKind === "Summary" && owner.bindingFingerprint !== null) ||
-    (owner.checkpointKind === "ProviderNative" &&
-      (owner.bindingFingerprint === null ||
-        !/^p16fp_[0-9a-f]{64}$/u.test(owner.bindingFingerprint)))
+    !isConversationCheckpointKind(owner.checkpointKind) ||
+    !isValidConversationCheckpointBinding(
+      owner.checkpointKind,
+      owner.checkpointRef,
+      owner.bindingFingerprint,
+    )
   ) {
     return null;
   }
@@ -138,6 +144,7 @@ const parseSourceManifest = (
     const manifest = value as ConversationCheckpointSourceManifestV1;
     if (
       manifest.version !== 1 ||
+      !isConversationCheckpointKind(manifest.checkpointKind) ||
       manifest.rootWorkspaceId !== owner.rootWorkspaceId ||
       Number(manifest.toEpoch) !== Number(owner.contextEpoch) ||
       Number(manifest.fromEpoch) + 1 !== Number(manifest.toEpoch) ||

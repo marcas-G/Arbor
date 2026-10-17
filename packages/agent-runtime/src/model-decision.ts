@@ -66,6 +66,7 @@ import type {
 } from "@arbor/ports";
 import {
   canonicalizeLegacyAdoptionEvidenceV1,
+  isValidConversationCheckpointBinding,
   LEGACY_ADOPTION_MISSING,
   sha256Hex,
 } from "@arbor/ports";
@@ -2591,6 +2592,18 @@ export const runModelDecision = (
         claimed =
           conversationProjection.currentMessage as (typeof history)[number];
         const checkpoint = conversationProjection.checkpoint;
+        if (
+          checkpoint.checkpointKind !== null &&
+          !isValidConversationCheckpointBinding(
+            checkpoint.checkpointKind,
+            checkpoint.checkpointRef,
+            checkpoint.bindingFingerprint,
+          )
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "ConversationCheckpointEvidenceInvalid" }),
+          );
+        }
         if (checkpoint.checkpointKind !== null) {
           yield* validateConversationCheckpointReceipt({
             owner: conversationOwner,
@@ -2760,6 +2773,10 @@ export const runModelDecision = (
             }
             continue;
           }
+        } else if (checkpoint.checkpointKind !== null) {
+          return yield* Effect.fail(
+            failure({ _tag: "ConversationCheckpointEvidenceInvalid" }),
+          );
         }
         for (const answered of conversationProjection.uncoveredAnswered) {
           conversationMessages.push(
