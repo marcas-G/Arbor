@@ -3,7 +3,45 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  ClockLive,
+  SessionRepositoryLive,
+  layer as sqlitePersistenceLayer,
+  TransactionPortLive,
+} from "../../../adapters/persistence-sqlite/src/index.js";
+import { runCompaction } from "../../../packages/agent-runtime/src/compaction-coordinator.js";
+import {
+  ContextEpochNumber,
+  ExecutionId,
+  ProjectId,
+  ProviderTurnId,
+  parse,
+  SessionId,
+  WorkspaceId,
+} from "../../../packages/domain/src/index.js";
+import {
+  canonicalInstructionTrust,
+  hashInstructionContent,
+  type InstructionFragment,
+  latestSessionInputIndex,
+  ModelContext,
+  ModelContextLive,
+  projectCompressibleHistory,
+  projectSessionTimeline,
+  WORK_EXECUTION_PROGRAM,
+} from "../../../packages/model-context/src/index.js";
+import {
+  ModelCapabilityPort,
+  type ProviderRunInput,
+  type ProviderRuntimeService,
+  type SessionEntryRecord,
+  SessionRepository,
+  SkillRegistry,
+  TransactionPort,
+  TransactionScope,
+} from "../../../packages/ports/dist/index.js";
 import { expireExecutionLeaseAfterOwnerExitForQualification } from "../support/lease-qualification.js";
 import {
   type CapturedProviderCall,
@@ -1407,6 +1445,155 @@ const readTypedSessionRows = (databaseFile: string, sessionId: string) => {
   } finally {
     db.close();
   }
+};
+
+const readWorkFrontierThroughSessionRepository = (
+  databaseFile: string,
+  sessionId: string,
+): Promise<ReadonlyArray<SessionEntryRecord>> => {
+  const infrastructure = Layer.mergeAll(
+    sqlitePersistenceLayer({ filename: databaseFile }),
+    ClockLive,
+  );
+  const services = Layer.mergeAll(
+    infrastructure,
+    Layer.provide(TransactionPortLive, infrastructure),
+    Layer.provide(SessionRepositoryLive, infrastructure),
+  );
+  const read = Effect.gen(function* () {
+    const transactions = yield* TransactionPort;
+    const sessions = yield* SessionRepository;
+    return yield* transactions.transact(
+      sessions.listWorkActiveFrontier(parse(SessionId)(sessionId)),
+    );
+  });
+  return Effect.runPromise(
+    Effect.scoped(Effect.provide(read, services)) as Effect.Effect<
+      ReadonlyArray<SessionEntryRecord>,
+      unknown,
+      never
+    >,
+  );
+};
+
+const prepareActualWorkFrontier = async (input: {
+  readonly executionId: string;
+  readonly sessionId: string;
+  readonly workspaceId: string;
+  readonly workId: string;
+  readonly workRevision: number;
+  readonly contextEpoch: number;
+  readonly bindingFingerprint: string;
+  readonly controlBasis: {
+    readonly projectPolicyRevision: number;
+    readonly workspacePolicyRevision: number;
+    readonly responsibilityRevision: number;
+    readonly resourceBoundaryRevision: number;
+    readonly workId?: string;
+    readonly workRevision?: number;
+    readonly authorizationDigest: string;
+    readonly environmentRevision: string;
+  };
+  readonly entries: ReadonlyArray<SessionEntryRecord>;
+}) => {
+  const projection = projectSessionTimeline(
+    input.entries,
+    input.bindingFingerprint,
+    true,
+  );
+  const currentInputIndex = latestSessionInputIndex(projection.inputItems);
+  const compressibleIndexes = projection.inputItems.flatMap((_, index) =>
+    index === currentInputIndex ? [] : [index],
+  );
+  const history = projectCompressibleHistory({
+    inputItems: projection.inputItems,
+    sourceRefs: projection.contextRefs,
+    compressibleIndexes,
+  });
+  const objectiveText = `AH19 bounded-tail Work ${input.workId}`;
+  const objectiveFragment: InstructionFragment = {
+    identity: `work-objective:${input.workId}`,
+    revision: input.workRevision,
+    hash: hashInstructionContent(objectiveText),
+    semanticKind: "WorkObjective",
+    source: "Canonical",
+    scope: "work-objective",
+    authorityRole: "A3",
+    strength: "Hard",
+    compositionMode: "Constrain",
+    activationCondition: "always",
+    lifetime: "Protected",
+    cacheClass: "TurnDynamic",
+    budgetClass: "work",
+    modelCompatibility: [],
+    contentRef: `work-objective:${input.workId}:${input.workRevision}`,
+    provenance: canonicalInstructionTrust,
+  };
+  const capabilityLayer = Layer.succeed(ModelCapabilityPort, {
+    resolve: () =>
+      Effect.succeed({
+        modelRef: "model-ah19-native-test",
+        family: "ah19-frontier-integration",
+        contextWindow: 1024,
+        outputCeiling: 200,
+        toolProtocol: "json",
+      }),
+  });
+  const skillLayer = Layer.succeed(SkillRegistry, {
+    available: () => Effect.succeed([]),
+    load: () => Effect.die("no skills in AH19 frontier integration"),
+  });
+  const contextLayer = Layer.provide(
+    ModelContextLive,
+    Layer.mergeAll(capabilityLayer, skillLayer),
+  );
+  const services = Layer.mergeAll(capabilityLayer, skillLayer, contextLayer);
+  const preparation = Effect.gen(function* () {
+    const modelContext = yield* ModelContext;
+    return yield* modelContext.prepareTurn({
+      executionId: parse(ExecutionId)(input.executionId),
+      sessionId: parse(SessionId)(input.sessionId),
+      contextEpoch: parse(ContextEpochNumber)(input.contextEpoch),
+      providerTurnId: parse(ProviderTurnId)(
+        "ptn_018f2b3c-4d5e-7abc-8def-0123456789f2",
+      ),
+      binding: {
+        _tag: "ResponsibilityBoundAgentBinding" as const,
+        workspaceId: parse(WorkspaceId)(input.workspaceId),
+      },
+      workspaceId: parse(WorkspaceId)(input.workspaceId),
+      cognitiveMode: "execute",
+      program: WORK_EXECUTION_PROGRAM,
+      fragments: [objectiveFragment],
+      contextFragments: history.contextFragments,
+      compressibleInputItemIndexes: history.compressibleInputItemIndexes,
+      budget: {
+        modelWindow: 1024,
+        outputReserve: 200,
+        protocolReserve: 100,
+        toolReserve: 100,
+      },
+      controlBasis: input.controlBasis,
+      maxOutputTokens: 200,
+      bodySkillIds: [],
+      turnProfile: {
+        purpose: "WorkspaceWork",
+        profileVersion: "turn-profile-v1",
+        outputContractRef: "tool-invocation-v1",
+        executableTools: [],
+        controlTools: [],
+        contextPolicyRef: "workspace-work-context-v1",
+        fingerprint: "ah19-post-checkpoint-frontier",
+      },
+      instructionContents: new Map([
+        [objectiveFragment.contentRef, objectiveText],
+      ]),
+      messageContextRefs: projection.contextRefs,
+      inputItems: projection.inputItems,
+    });
+  });
+  const result = await Effect.runPromise(Effect.provide(preparation, services));
+  return { projection, history, result };
 };
 
 /** One coherent, read-only snapshot used only if AH19's public Root Work seed
@@ -3124,6 +3311,7 @@ describe("AH19 ProviderNative binding recovery", () => {
         responsibilityRevision: number;
         resourceBoundaryRevision: number;
         authorizationDigest: string;
+        environmentRevision: string;
         workId?: string;
         workRevision?: number;
       };
@@ -3131,6 +3319,8 @@ describe("AH19 ProviderNative binding recovery", () => {
         identity: string;
         revision: number;
         source: string;
+        scope: string;
+        hash: string;
       }>;
     };
     const allRowsAfterRequest = typedRowsNow();
@@ -3199,29 +3389,70 @@ describe("AH19 ProviderNative binding recovery", () => {
         environmentRevision: expect.any(String),
       });
       const turnBasis = turnManifest.controlBasis;
-      const expectedPins = [
-        [`work-objective:${workId}`, turnBasis?.workRevision],
-        [`work-constraints:${workId}`, turnBasis?.workRevision],
-        [`completion-expectation:${workId}`, turnBasis?.workRevision],
-        [`verification-mission:${workId}`, turnBasis?.workRevision],
+      const expectedPins: ReadonlyArray<readonly [string, number | undefined]> =
         [
-          `responsibility:${project.rootWorkspaceId}`,
-          turnBasis?.responsibilityRevision,
-        ],
-        [
-          `resource-boundary:${project.rootWorkspaceId}`,
-          turnBasis?.resourceBoundaryRevision,
-        ],
-      ];
+          [`work-objective:${workId}`, turnBasis?.workRevision],
+          [`work-constraints:${workId}`, turnBasis?.workRevision],
+          [`completion-expectation:${workId}`, turnBasis?.workRevision],
+          [`verification-mission:${workId}`, turnBasis?.workRevision],
+          [
+            `responsibility:${project.rootWorkspaceId}`,
+            turnBasis?.responsibilityRevision,
+          ],
+          [
+            `resource-boundary:${project.rootWorkspaceId}`,
+            turnBasis?.resourceBoundaryRevision,
+          ],
+        ];
+      const portableTurnRequest = JSON.parse(
+        turn.portable_request_json ?? "{}",
+      ) as {
+        instructions?: ReadonlyArray<{
+          slotId: string;
+          authorityRole: string;
+          text: string;
+        }>;
+      };
       for (const [identity, revision] of expectedPins) {
-        expect(turnManifest.instructionFragments).toContainEqual({
+        const fragment = turnManifest.instructionFragments?.find(
+          (candidate) => candidate.identity === identity,
+        );
+        expect(fragment).toMatchObject({
           identity,
           revision,
           hash: expect.any(String),
           source: "Canonical",
           scope: expect.any(String),
         });
+        const expectedAuthorityRole =
+          identity.startsWith("responsibility:") ||
+          identity.startsWith("resource-boundary:")
+            ? "A2"
+            : "A3";
+        const requestInstruction = portableTurnRequest.instructions?.find(
+          (instruction) => instruction.slotId === fragment?.scope,
+        );
+        expect(requestInstruction).toMatchObject({
+          slotId: fragment?.scope,
+          authorityRole: expectedAuthorityRole,
+          text: expect.any(String),
+        });
+        expect(hashInstructionContent(requestInstruction?.text ?? "")).toBe(
+          fragment?.hash,
+        );
       }
+      expect(turnManifest.controlBasis?.projectPolicyRevision).toBe(
+        controlBasis?.projectPolicyRevision,
+      );
+      expect(turnManifest.controlBasis?.workspacePolicyRevision).toBe(
+        controlBasis?.workspacePolicyRevision,
+      );
+      expect(turnManifest.controlBasis?.environmentRevision).toBe(
+        controlBasis?.environmentRevision,
+      );
+      expect(turnManifest.controlBasis?.authorizationDigest).toBe(
+        controlBasis?.authorizationDigest,
+      );
     }
     expect(fixture.daemonErrors).toEqual([]);
   }, 240_000);
@@ -3511,6 +3742,7 @@ describe("AH19 ProviderNative binding recovery", () => {
       if (nativeRequest === undefined) {
         throw new Error("filtered-row Native compaction request is missing");
       }
+      expect(nativeRequest.bindingVariant).toBe("A");
       const heldNativeRequest = await nativeGate.waitUntilEntered();
       expect(heldNativeRequest.providerTurnId).toBe(
         nativeRequest.providerTurnId,
@@ -3698,12 +3930,16 @@ describe("AH19 ProviderNative binding recovery", () => {
         nativeExecutionId,
         workId,
       );
+      const recoveryDaemonEnvironment = {
+        ...compactionDaemonEnvironment,
+        ARBOR_AH19_BOUNDARY: "none",
+        ...(boundary === "AH17AfterCheckpointEpochCommit"
+          ? { ARBOR_AH19_BINDING_VARIANT: "B" }
+          : {}),
+      };
       await fixture.restart({
         entry: childEntry,
-        daemonEnvironment: {
-          ...compactionDaemonEnvironment,
-          ARBOR_AH19_BOUNDARY: "none",
-        },
+        daemonEnvironment: recoveryDaemonEnvironment,
       });
       const recovered = await waitForPublic(
         async () =>
@@ -3750,8 +3986,8 @@ describe("AH19 ProviderNative binding recovery", () => {
           return manifest.operationKind === "CompactionSummary";
         },
       );
-      expect(providerTurnsAddedAfterBoundary.length).toBeLessThanOrEqual(2);
-      expect(addedSummaryTurns.length).toBeLessThanOrEqual(1);
+      expect(providerTurnsAddedAfterBoundary).toHaveLength(2);
+      expect(addedSummaryTurns).toHaveLength(1);
       const boundaryEpoch = atBoundary.session?.context_epoch;
       expect(boundaryEpoch).toBeDefined();
       for (const addedTurn of providerTurnsAddedAfterBoundary) {
@@ -3814,6 +4050,12 @@ describe("AH19 ProviderNative binding recovery", () => {
               request.providerTurnId === summaryTurn.provider_turn_id,
           ),
         ).toHaveLength(1);
+        const summaryProviderRequest = providerRequests.find(
+          (request) => request.providerTurnId === summaryTurn.provider_turn_id,
+        );
+        expect(summaryProviderRequest?.bindingVariant).toBe(
+          boundary === "AH17AfterCheckpointEpochCommit" ? "B" : "A",
+        );
       }
       const addedInferenceTurns = providerTurnsAddedAfterBoundary.filter(
         (turn) => {
@@ -3823,6 +4065,7 @@ describe("AH19 ProviderNative binding recovery", () => {
           return manifest.operationKind === "Inference";
         },
       );
+      expect(addedInferenceTurns).toHaveLength(1);
       const actionIdsAtBoundary = new Set(
         atBoundary.actions.map((action) => action.logical_action_id),
       );
@@ -3883,6 +4126,259 @@ describe("AH19 ProviderNative binding recovery", () => {
           source_ref: filterEntryKey,
         }),
       );
+      if (boundary === "AH17AfterCheckpointEpochCommit") {
+        const latestRecoveryCheckpoint = recovered.checkpoints.at(-1);
+        if (latestRecoveryCheckpoint === undefined) {
+          throw new Error("post-checkpoint Work summary checkpoint is absent");
+        }
+        const tailCheckpointSequence = latestRecoveryCheckpoint.sequence;
+        let postCheckpointTailCount = typedRowsNow().filter(
+          (row) => row.sequence > tailCheckpointSequence,
+        ).length;
+        for (
+          let index = 0;
+          postCheckpointTailCount < 71 && index < 24;
+          index += 1
+        ) {
+          const before: Awaited<ReturnType<typeof currentWork>> =
+            await waitForPublic(
+              currentWork,
+              (work) =>
+                work?.workId === workId &&
+                work.status === "Open" &&
+                work.activeExecution === undefined,
+              60_000,
+            );
+          if (before === null || before.workId !== workId) {
+            throw new Error(
+              "Work stopped being idle during post-checkpoint tail",
+            );
+          }
+          const rowsBefore = typedRowsNow().length;
+          const requestsBefore = providerRequests.length;
+          await client.command(project.projectId, "SteerWork", {
+            workId,
+            workspaceId: project.rootWorkspaceId,
+            expectedWorkRevision: before.revision,
+            steer: {
+              severity: "Normal",
+              guidance: `AH19 post-checkpoint small typed tail ${index} ${"t".repeat(300)}`,
+            },
+            provenance: { source: "HumanInput" },
+          });
+          await waitForPublic(
+            async () => ({
+              work: await currentWork(),
+              rows: typedRowsNow().length,
+              requests: providerRequests.length,
+            }),
+            (state) =>
+              state.work?.revision === before.revision + 1 &&
+              state.work?.activeExecution === undefined &&
+              state.rows > rowsBefore &&
+              state.requests > requestsBefore,
+            60_000,
+          );
+          postCheckpointTailCount = typedRowsNow().filter(
+            (row) => row.sequence > tailCheckpointSequence,
+          ).length;
+          expect(postCheckpointTailCount).toBeLessThanOrEqual(71);
+        }
+        expect(postCheckpointTailCount).toBe(71);
+
+        const p2Frontier = await readWorkFrontierThroughSessionRepository(
+          fixture.databaseFile,
+          project.rootSessionId,
+        );
+        expect(p2Frontier).toHaveLength(72);
+        expect(p2Frontier[0]).toMatchObject({
+          sequence: tailCheckpointSequence,
+          payload: { _tag: "CompactionCheckpoint" },
+        });
+        const p2TailSequences = p2Frontier
+          .slice(1)
+          .map((entry) => entry.sequence);
+        expect(p2TailSequences).toHaveLength(71);
+        expect(p2TailSequences).toEqual(
+          typedRowsNow()
+            .filter((row) => row.sequence > tailCheckpointSequence)
+            .map((row) => row.sequence),
+        );
+
+        const latestInference = providerRequests
+          .filter((request) => request.operationKind === "Inference")
+          .at(-1);
+        if (latestInference === undefined) {
+          throw new Error("post-checkpoint tail has no Work Inference request");
+        }
+        const latestExecutionId = readExecutionIdForProviderTurn(
+          fixture.databaseFile,
+          latestInference.providerTurnId,
+        );
+        const latestSnapshot = readSnapshot(fixture.databaseFile, {
+          sessionId: project.rootSessionId,
+          executionId: latestExecutionId,
+          workId,
+        });
+        const latestTurn = latestSnapshot.providerTurns.find(
+          (turn) => turn.provider_turn_id === latestInference.providerTurnId,
+        );
+        const latestManifest = JSON.parse(
+          latestTurn?.manifest_json ?? "{}",
+        ) as {
+          resolvedModelBindingFingerprint?: string;
+          controlBasis?: {
+            projectPolicyRevision: number;
+            workspacePolicyRevision: number;
+            responsibilityRevision: number;
+            resourceBoundaryRevision: number;
+            workId?: string;
+            workRevision?: number;
+            authorizationDigest: string;
+            environmentRevision: string;
+          };
+        };
+        expect(latestManifest.resolvedModelBindingFingerprint).toMatch(
+          /^p16fp_[0-9a-f]{64}$/u,
+        );
+        expect(latestManifest.controlBasis?.workId).toBe(workId);
+
+        const actualWorkFrontier = await prepareActualWorkFrontier({
+          executionId: latestExecutionId,
+          sessionId: project.rootSessionId,
+          workspaceId: project.rootWorkspaceId,
+          workId,
+          workRevision: latestManifest.controlBasis?.workRevision ?? 0,
+          contextEpoch: latestSnapshot.session?.context_epoch ?? 0,
+          bindingFingerprint:
+            latestManifest.resolvedModelBindingFingerprint ?? "",
+          controlBasis: latestManifest.controlBasis as NonNullable<
+            typeof latestManifest.controlBasis
+          >,
+          entries: p2Frontier,
+        });
+        expect(actualWorkFrontier.projection.frontier).toEqual({
+          firstSequence: tailCheckpointSequence,
+          lastSequence: p2Frontier.at(-1)?.sequence,
+        });
+        expect(actualWorkFrontier.result).toMatchObject({
+          _tag: "NeedsCompaction",
+          reason: "BudgetPressure",
+        });
+
+        let observedCompaction: ProviderRunInput | undefined;
+        let committedCheckpoint: unknown;
+        const providerRuntime = {
+          runTurn: (request: ProviderRunInput) => {
+            observedCompaction = request;
+            return Effect.succeed({
+              attemptNo: 0,
+              retryDecisions: [],
+              events: [
+                {
+                  _tag: "ContinuationState" as const,
+                  stateRef: "ah19-production-layer-tail-checkpoint",
+                },
+                {
+                  _tag: "TurnCompleted" as const,
+                  finishReason: "Stop" as const,
+                },
+              ],
+            });
+          },
+        } as ProviderRuntimeService;
+        const transaction = {
+          transact: <A, E, R>(
+            body: Effect.Effect<A, E, R | TransactionScope>,
+          ) =>
+            Effect.provideService(body, TransactionScope, {
+              session: { id: "ah19-work-frontier-integration" },
+            }),
+        } as never;
+        const sessionWriter = {
+          commitCompaction: (_sessionId: unknown, commit: unknown) =>
+            Effect.sync(() => {
+              committedCheckpoint = commit;
+              return {
+                sequence: (p2Frontier.at(-1)?.sequence ?? 0) + 1,
+                inserted: true,
+                newEpoch: parse(ContextEpochNumber)(
+                  (latestSnapshot.session?.context_epoch ?? 0) + 1,
+                ),
+              };
+            }),
+        } as never;
+        const execution = {
+          executionId: parse(ExecutionId)(latestExecutionId),
+          projectId: parse(ProjectId)(project.projectId),
+          workspaceId: parse(WorkspaceId)(project.rootWorkspaceId),
+          binding: {
+            _tag: "WorkspaceExecution" as const,
+            workspaceId: parse(WorkspaceId)(project.rootWorkspaceId),
+            focus: { _tag: "Coordination" as const },
+          },
+          sessionId: parse(SessionId)(project.rootSessionId),
+          admittedAt: "ah19-work-frontier-integration",
+          stopRequestedAt: null,
+          state: { status: "Active" as const, settlement: null },
+        };
+        const compacted = await Effect.runPromise(
+          runCompaction(
+            {
+              execution: execution as never,
+              logicalStepNo: 0,
+              currentEpoch: parse(ContextEpochNumber)(
+                latestSnapshot.session?.context_epoch ?? 0,
+              ),
+              modelRef: "model-ah19-native-test",
+              bindingFingerprint:
+                latestManifest.resolvedModelBindingFingerprint ?? "",
+              inputFrontier: actualWorkFrontier.projection.frontier,
+              contextRefs: actualWorkFrontier.projection.contextRefs,
+              inputItems: actualWorkFrontier.projection.inputItems,
+              fence: {
+                executionId: parse(ExecutionId)(latestExecutionId),
+                workerId: "ah19-work-frontier-integration",
+                workerIncarnationId: "ah19-work-frontier-integration",
+                fencingGeneration: 0 as never,
+              },
+              nativeSupported: true,
+            },
+            {
+              providerRuntime,
+              sessions: sessionWriter,
+              tx: transaction,
+            },
+          ),
+        );
+        expect(compacted.newEpoch).toBe(
+          (latestSnapshot.session?.context_epoch ?? 0) + 1,
+        );
+        expect(observedCompaction?.request).toMatchObject({
+          operationKind: "CompactionNative",
+          inputItems: actualWorkFrontier.projection.inputItems,
+        });
+        expect(
+          JSON.parse(observedCompaction?.manifestJson ?? "{}"),
+        ).toMatchObject({
+          inputFrontier: actualWorkFrontier.projection.frontier,
+          contextRefs: actualWorkFrontier.projection.contextRefs,
+        });
+        expect(committedCheckpoint).toMatchObject({
+          checkpoint: {
+            _tag: "CompactionCheckpoint",
+            implementation: "ProviderNative",
+          },
+          expectedEpoch: latestSnapshot.session?.context_epoch,
+          nextEpoch: (latestSnapshot.session?.context_epoch ?? 0) + 1,
+        });
+        expect(
+          readTypedSessionRows(
+            fixture.databaseFile,
+            project.rootSessionId,
+          ).filter((row) => row.sequence > tailCheckpointSequence),
+        ).toHaveLength(71);
+      }
       expect(fixture.daemonErrors).toEqual([]);
     },
     360_000,
