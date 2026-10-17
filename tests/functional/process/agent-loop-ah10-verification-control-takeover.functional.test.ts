@@ -105,10 +105,19 @@ const readSnapshot = (databaseFile: string) => {
       }>,
       actions: db
         .prepare(
-          "SELECT logical_step_no, action_index, logical_action_id, call_ref, route_kind, action_kind, state, result_ref, observation_source_ref FROM agent_loop_step_actions ORDER BY logical_step_no, action_index",
+          `SELECT a.execution_id,s.provider_turn_id,a.logical_step_no,a.repair_attempt,
+                  a.action_index,a.logical_action_id,a.call_ref,a.route_kind,a.action_kind,
+                  a.state,a.result_ref,a.settlement_ref,a.observation_source_ref
+           FROM agent_loop_step_actions a JOIN agent_loop_steps s
+             ON s.execution_id=a.execution_id AND s.logical_step_no=a.logical_step_no
+            AND s.repair_attempt=a.repair_attempt
+           ORDER BY a.execution_id,a.logical_step_no,a.repair_attempt,a.action_index`,
         )
         .all() as Array<{
+        execution_id: string;
+        provider_turn_id: string;
         logical_step_no: number;
+        repair_attempt: number;
         action_index: number;
         logical_action_id: string;
         call_ref: string;
@@ -116,6 +125,7 @@ const readSnapshot = (databaseFile: string) => {
         action_kind: string;
         state: string;
         result_ref: string | null;
+        settlement_ref: string | null;
         observation_source_ref: string | null;
       }>,
       steps: db
@@ -155,13 +165,21 @@ const readSnapshot = (databaseFile: string) => {
       }>,
       toolResults: db
         .prepare(
-          "SELECT source_kind, source_ref, payload_json FROM session_entries WHERE payload_json LIKE '%ToolResult%' ORDER BY sequence DESC LIMIT 8",
+          "SELECT session_id,sequence,entry_kind,source_kind,source_ref,payload_json FROM session_entries WHERE payload_json LIKE '%ToolResult%' OR payload_json LIKE '%ControlResult%' ORDER BY sequence DESC LIMIT 32",
         )
         .all() as Array<{
+        session_id: string;
+        sequence: number;
+        entry_kind: string;
         source_kind: string;
         source_ref: string;
         payload_json: string;
       }>,
+      settlementEvents: db
+        .prepare(
+          "SELECT event_id,sequence,event_type,occurred_at,actor,caused_by_command_id,payload_json FROM domain_events WHERE event_type='ExecutionSettled' ORDER BY sequence DESC LIMIT 32",
+        )
+        .all() as Array<Record<string, unknown>>,
       timeline: db
         .prepare(
           "SELECT sequence, entry_kind, source_kind, source_ref, payload_json FROM session_entries ORDER BY sequence DESC LIMIT 16",
@@ -511,7 +529,7 @@ describe("AH10 P8 verification control takeover", () => {
         priorTurnManifest?.tool_routes ?? "[]",
       ) as Array<{ name?: unknown; route?: unknown; stableId?: unknown }>;
       throw new Error(
-        `new daemon did not reopen the same P8 ActionIntent: ${error instanceof Error ? error.message : String(error)}; execution=${JSON.stringify(snapshot.executions.find((row) => row.execution_id === oldAction.executionId))}; leases=${JSON.stringify(snapshot.leases.filter((row) => row.execution_id === oldAction.executionId))}; steps=${JSON.stringify(snapshot.steps.filter((step) => step.execution_id === oldAction.executionId))}; persistedP8Route=${JSON.stringify(priorTurnRoutes.filter((route) => route.name === "record_verification_evidence"))}; action=${JSON.stringify(snapshot.actions.find((action) => action.logical_action_id === oldAction.logicalActionId))}; p4Invocations=${JSON.stringify(snapshot.toolInvocations.filter((row) => row.execution_id === oldAction.executionId))}; providerCalls=${JSON.stringify(fixture.providerCalls.slice(-4).map((call) => call.messages.slice(-3).map((message) => ({ role: message.role, content: message.content?.slice(-180) }))))}; timeline=${JSON.stringify(snapshot.timeline.filter((row) => row.payload_json.includes("VerificationEvidenceRecorded") || row.payload_json.includes("ControlResult") || row.payload_json.includes("record_verification_evidence") || row.payload_json.includes("FUNCTIONAL_VERIFIED")))}; p40Results=${JSON.stringify(snapshot.toolResults.filter((row) => row.payload_json.includes("record_verification_evidence") || row.payload_json.includes("FUNCTIONAL_VERIFIED")))}; newErrors=${newDaemon.daemonErrors.join(" | ")}`,
+        `new daemon did not reopen the same P8 ActionIntent: ${error instanceof Error ? error.message : String(error)}; targetExecution=${oldAction.executionId}; leaseRows=${JSON.stringify(snapshot.leases.filter((row) => row.execution_id === oldAction.executionId))}; executionSettlement=${JSON.stringify(snapshot.executions.find((row) => row.execution_id === oldAction.executionId))}; stepRows=${JSON.stringify(snapshot.steps.filter((step) => step.execution_id === oldAction.executionId))}; everyActionTuple=${JSON.stringify(snapshot.actions.filter((action) => action.execution_id === oldAction.executionId))}; correspondingToolResults=${JSON.stringify(snapshot.toolResults)}; settlementEvents=${JSON.stringify(snapshot.settlementEvents)}; pinnedP8Route=${JSON.stringify(priorTurnRoutes.filter((route) => route.name === "record_verification_evidence"))}; allToolInvocations=${JSON.stringify(snapshot.toolInvocations.filter((row) => row.execution_id === oldAction.executionId))}; providerCalls=${JSON.stringify(fixture.providerCalls.slice(-6).map((call) => ({ tools: call.tools.map((tool) => tool.function?.name), messages: call.messages.slice(-5).map((message) => ({ role: message.role, content: message.content?.slice(-240) })) })))}; timeline=${JSON.stringify(snapshot.timeline.filter((row) => row.payload_json.includes("VerificationEvidenceRecorded") || row.payload_json.includes("ControlResult") || row.payload_json.includes("record_verification_evidence") || row.payload_json.includes("FUNCTIONAL_VERIFIED")))}; newErrors=${newDaemon.daemonErrors.join(" | ")}`,
       );
     });
     expect(recoveredAction?.logicalActionId).toBe(oldAction.logicalActionId);
