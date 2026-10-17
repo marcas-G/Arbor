@@ -1291,9 +1291,10 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         }
         const invocationId = hit.invocationId;
         const oldProcess = fixture.daemonProcessSnapshot();
-        if (oldProcess?.pid === undefined) {
+        if (oldProcess?.pid === undefined || !oldProcess.alive) {
           throw new Error("AH7 old daemon PID is unavailable at source pause");
         }
+        expect(oldProcess.alive).toBe(true);
         const sourcePauseDb = new DatabaseSync(fixture.databaseFile, {
           readOnly: true,
         });
@@ -1523,6 +1524,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           callsAfterRestartDb.close();
         }
         expect(fixture.daemonProcessSnapshot()?.alive).toBe(true);
+        expect(fixture.daemonProcessSnapshot()?.pid).not.toBe(oldProcess.pid);
         expect(fixture.daemonErrors).toEqual([]);
       } else if (
         reconciliationMode !== undefined &&
