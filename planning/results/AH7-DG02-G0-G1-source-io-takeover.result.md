@@ -44,7 +44,7 @@ pause flag was set. The test-only trace flag now emits the event for both roles;
 only G0's pause flag blocks. The successful run above used this corrected
 observation point. No production code changed in this qualification increment.
 
-## 2026-10-17 source-lookup process-kill case (pending serial execution)
+## 2026-10-17 source-lookup process-kill qualification
 
 Added an independent real-daemon scenario, `restarts after SIGKILL during
 reconciliation source lookup`, using the same test-only source-I/O pause gate.
@@ -58,16 +58,37 @@ test profile re-queries attempt 0. The assertions require one selected
 effect, one P40 observation hash, one P3 ToolResult/Applied action and one
 workspace marker effect.
 
-This case has **not been executed**. Per serial-run coordination, no daemon
-functional test was started in this checkpoint. Static checks completed:
+The source-kill case passes. Before the kill, the primary fixture daemon PID is
+recorded and asserted alive. On Unix the fixture process-group stop reports
+`SIGKILL`; on Windows the test proves the old PID was alive before the forced
+stop, is not alive after it, and the restarted daemon has a different PID. An
+independent SQLite connection verifies before and after the kill that only
+attempt 0 (`MayHaveStarted`) exists, with no reconciliation fact, selected P4
+fact or settlement. The paused source-call record stays `returned_at = NULL`.
+
+After the old lease expires, the restarted daemon acquires generation G0+1 and
+queries the same invocation at attempt 0 using the same test profile. It
+records exactly one NotOccurred RecoveryInput fact. This fact admits attempt 1;
+the executor then succeeds ordinarily, so final P4 `selected_attempt_no` and
+`selected_fact_id` remain null by contract while P4 `settlement_provenance` is
+`Ordinary` and the canonical P40 observation is persisted. Attempts 0 and 1
+share the exact recovery binding, profile tuple and effect key. The test proves
+one external effect, one workspace marker, one P3 ToolResult and one Applied
+action. No second Provider decision is introduced by this recovery.
+
+Verification:
 
 - `pnpm exec biome check --write tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts` — PASS.
 - `pnpm typecheck` — PASS.
 - `git diff --check` — PASS.
+- `pnpm build` — PASS.
+- `pnpm --filter @arbor/web build` — PASS (existing large-chunk advisory only); `apps/web/dist/index.html` confirmed present before the daemon run.
+- `pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts -t "restarts after SIGKILL during reconciliation source lookup" --maxWorkers=1 --no-file-parallelism --retry=0 --reporter=verbose` — 1 passed, 21 skipped; selected case 105.592s, Vitest run 138.17s.
 
-After the main thread releases the daemon-test window, run:
-
-`pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts -t "restarts after SIGKILL during reconciliation source lookup" --maxWorkers=1 --no-file-parallelism --retry=0 --reporter=verbose`
-
-Until that run passes and the recorded observations are reviewed, this scenario
-is pending evidence and does not extend the qualification status above.
+An earlier attempt before `pnpm build` and the Web build failed in fixture
+startup because the daemon readiness endpoint returned 503. The required
+preflight then passed, `apps/web/dist/index.html` was present, and the single
+rerun above passed. A prior oracle draft incorrectly expected the NotOccurred
+recovery-input fact to remain selected after attempt 1 succeeded; the assertion
+was corrected to require null selection plus ordinary Success, consistent with
+the existing P4 contract. No production code changed.

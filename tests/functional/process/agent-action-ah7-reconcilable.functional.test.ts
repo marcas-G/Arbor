@@ -1467,9 +1467,10 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           fact_disposition: "RecoveryInput",
         });
         expect(recoveredBinding).toMatchObject({
-          selected_attempt_no: 0,
-          selected_fact_id: recoveredFacts[0]?.fact_id,
+          selected_attempt_no: null,
+          selected_fact_id: null,
           settlement_kind: "Success",
+          settlement_provenance: "Ordinary",
           observation_format_version: "p4-canonical-tool-observation-v1",
           observation_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
         });
@@ -1478,6 +1479,18 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         ]);
         expect(recoveredAttempts[0]?.effect_key).toBe(
           recoveredAttempts[1]?.effect_key,
+        );
+        expect(recoveredAttempts[0]?.binding_sha256).toBe(
+          recoveredAttempts[1]?.binding_sha256,
+        );
+        expect(recoveredAttempts[0]?.profile_id).toBe(
+          recoveredAttempts[1]?.profile_id,
+        );
+        expect(recoveredAttempts[0]?.profile_version).toBe(
+          recoveredAttempts[1]?.profile_version,
+        );
+        expect(recoveredAttempts[0]?.profile_hash).toBe(
+          recoveredAttempts[1]?.profile_hash,
         );
         expect(readTestExternalEffects(fixture.databaseFile)).toEqual([
           expect.objectContaining({
@@ -1493,6 +1506,13 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           recoveredAfterKill.toolResults.filter(
             (row) =>
               readToolResultForCall([row], hit?.callRef ?? "") !== undefined,
+          ),
+        ).toHaveLength(1);
+        expect(
+          recoveredAfterKill.actions.filter(
+            (action) =>
+              action.execution_id === targetExecutionId &&
+              action.call_ref === hit?.callRef,
           ),
         ).toHaveLength(1);
         const callsAfterRestartDb = new DatabaseSync(fixture.databaseFile, {
