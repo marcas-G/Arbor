@@ -2,6 +2,12 @@
 
 ## Current qualification status — 2026-10-17
 
+**AH7-DG-02 AUTHORIZED IMPLEMENTATION + §2 QUALIFICATION SCOPED COMPLETE at
+`28db7ffd`.** This is the bounded DG-02 implementation and qualification
+disposition from independent final audit B0, recorded in
+`planning/results/AH7-DG02-final-independent-audit.result.md`; it does not
+close AH7 overall.
+
 The following scoped qualifications are PASS: authority/approval/Stop drift
 (3/3); G0/G1 delayed source-I/O takeover and SIGKILL during source lookup;
 P40 settlement boundary matrix (4/4); P3 NotOccurred/Occurred ActionResult
@@ -459,6 +465,9 @@ waiting for Execution settlement. Those attempts did not qualify either
 proof-mismatch case. Only the two subsequent serial PASS runs above count.
 
 ## Final status — §2.6 mismatched-proof dual-daemon qualification
+
+**AH7-DG-02 AUTHORIZED IMPLEMENTATION + §2 QUALIFICATION SCOPED COMPLETE at
+`28db7ffd` (independent final audit B0).**
 
 The two real-daemon proof-mismatch cases are PASS **2/2**: wrong
 `attemptNo` and wrong `visibilityScopeSha256`. Both G1 results fail closed as
