@@ -16,6 +16,35 @@ export interface ConversationCheckpointFrontier {
 
 export type ConversationCheckpointKind = "Summary" | "ProviderNative";
 
+export const isConversationCheckpointKind = (
+  value: unknown,
+): value is ConversationCheckpointKind =>
+  value === "Summary" || value === "ProviderNative";
+
+/** Shared strict codec for persisted and projected owner checkpoint bindings. */
+export const isValidConversationCheckpointBinding = (
+  kind: unknown,
+  checkpointRef: unknown,
+  bindingFingerprint: unknown,
+): kind is ConversationCheckpointKind => {
+  if (kind === "Summary") {
+    return (
+      typeof checkpointRef === "string" &&
+      /^[0-9a-f]{64}$/u.test(checkpointRef) &&
+      bindingFingerprint === null
+    );
+  }
+  if (kind === "ProviderNative") {
+    return (
+      typeof checkpointRef === "string" &&
+      checkpointRef.length > 0 &&
+      typeof bindingFingerprint === "string" &&
+      /^p16fp_[0-9a-f]{64}$/u.test(bindingFingerprint)
+    );
+  }
+  return false;
+};
+
 export interface ConversationCheckpointSourceMessageV1 {
   readonly createdAt: string;
   readonly messageId: string;

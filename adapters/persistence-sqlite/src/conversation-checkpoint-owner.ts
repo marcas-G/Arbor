@@ -13,6 +13,8 @@ import {
   ConversationCheckpointStore,
   type ConversationCheckpointStoreError,
   type InitializeConversationCheckpointOwnerInput,
+  isConversationCheckpointKind,
+  isValidConversationCheckpointBinding,
   type LeaseFencingRejected,
   type SessionWriteFence,
   sha256Hex,
@@ -213,10 +215,14 @@ const validOwnerShape = (owner: ConversationCheckpointOwner): boolean => {
   ) {
     return false;
   }
-  return owner.checkpointKind === "ProviderNative"
-    ? owner.bindingFingerprint !== null &&
-        /^p16fp_[0-9a-f]{64}$/u.test(owner.bindingFingerprint)
-    : owner.bindingFingerprint === null;
+  return (
+    isConversationCheckpointKind(owner.checkpointKind) &&
+    isValidConversationCheckpointBinding(
+      owner.checkpointKind,
+      owner.checkpointRef,
+      owner.bindingFingerprint,
+    )
+  );
 };
 
 export const ConversationCheckpointStoreLive: Layer.Layer<
@@ -584,12 +590,11 @@ export const ConversationCheckpointStoreLive: Layer.Layer<
           return yield* Effect.fail(conflict("InvalidEpochTransition"));
         }
         if (
-          input.checkpointRef.length === 0 ||
-          (input.checkpointKind === "Summary" &&
-            input.bindingFingerprint !== null) ||
-          (input.checkpointKind === "ProviderNative" &&
-            (input.bindingFingerprint === null ||
-              !/^p16fp_[0-9a-f]{64}$/u.test(input.bindingFingerprint)))
+          !isValidConversationCheckpointBinding(
+            input.checkpointKind,
+            input.checkpointRef,
+            input.bindingFingerprint,
+          )
         ) {
           return yield* Effect.fail(conflict("InvalidCheckpointBinding"));
         }

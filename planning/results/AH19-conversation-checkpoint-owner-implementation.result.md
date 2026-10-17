@@ -36,6 +36,15 @@ Design authority: accepted AH19 P17-authority reconciliation and landing already
 
 The mismatch process case initially exposed a real runtime failure: after exact binding mismatch correctly selected portable Summary, the Conversation compaction path passed a stable composite provider-turn ID through the strict UUID-only parser, terminating the child before any B provider request. The code now constructs the deterministic composite ID using the same typed identity convention as existing compaction paths. The added unit case checks determinism and the exact manifest binding; the rebuilt real daemon then passed the mismatch case.
 
+## Independent-review correction
+
+The first independent implementation review identified a fail-open for a persisted unknown `checkpointKind`: the SQLite owner shape validator treated any non-Native kind as Summary, while projection did not reject an unknown manifest kind. Because runtime consumes only Summary and ProviderNative, this could advance the frontier without supplying either checkpoint, silently omitting covered conversation history. The implementation was corrected before final handoff:
+
+- Added shared ports validators for the exact `Summary | ProviderNative` enum and checkpoint/ref/fingerprint combination. Store owner read/write, projection owner+manifest parsing, and model-decision consumption now use the shared validation. Summary refs must be 64-character lowercase content digests; Native refs must be non-empty and have the exact binding fingerprint.
+- Added negative cases for corrupt persisted owner kind (including a test-only SQLite CHECK bypass), unknown manifest kind, Native missing fingerprint/ref, Summary wrong ref, and malformed commit inputs.
+- Focused store/projection/compaction batch after the correction: 3 files, 21 tests PASS (64.10s). Native binding mismatch real-process re-regression after rebuild: 1 file, 1 test PASS (30.33s); no prior opaque ref was sent to binding B.
+- Follow-up `pnpm build`, `pnpm exec tsc -p tsconfig.test.json`, `pnpm exec biome check` (1,226 files), `git diff --check`, and manifest validation (53 Vitest / 6 UI / 62 paths): PASS.
+
 ## Scope limits
 
 The full `pnpm check` and full `pnpm test:functional` suites were not run. Production implementation, focused tests, migration/CLI work, manifest, and this result remain intended for one implementation commit; independent implementation review is still required.
