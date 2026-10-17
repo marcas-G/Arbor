@@ -13,6 +13,7 @@ import {
 } from "@arbor/model-context";
 import {
   type AgentLoopStepFence,
+  type AgentLoopStepRecord,
   AgentLoopStepStore,
   Clock,
   ConversationResponseJobStore,
@@ -61,6 +62,50 @@ import { runModelDecision } from "./model-decision.js";
 import { recordAcceptedModelOutput } from "./model-output-journal.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
+
+export interface AgentLoopStepCursor {
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+}
+
+/** Select the durable P9 cursor for a resumed Execution. `undefined` means a
+ * fresh Execution; a completed predecessor points at its already-persisted
+ * successor, while an in-progress step (including pending ActionsInProgress)
+ * must be resumed at its own exact step and repair attempt. */
+export const selectInitialAgentLoopStepCursor = (
+  steps: ReadonlyArray<AgentLoopStepRecord>,
+): AgentLoopStepCursor | undefined => {
+  if (steps.length === 0) return { logicalStepNo: 0, repairAttempt: 0 };
+  const active = steps.filter((step) => step.state !== "NextStepReady");
+  if (active.length !== 1) return undefined;
+  const current = active[0];
+  const latest = steps.at(-1);
+  if (current === undefined || latest !== current) return undefined;
+  if (current.predecessor !== undefined) {
+    const predecessor = steps.find(
+      (step) =>
+        step.identity.executionId === current.predecessor?.executionId &&
+        step.identity.logicalStepNo === current.predecessor?.logicalStepNo &&
+        step.identity.repairAttempt === current.predecessor?.repairAttempt,
+    );
+    if (
+      predecessor === undefined ||
+      predecessor.state !== "NextStepReady" ||
+      predecessor.successor?.executionId !== current.identity.executionId ||
+      predecessor.successor.logicalStepNo !== current.identity.logicalStepNo ||
+      predecessor.successor.repairAttempt !== current.identity.repairAttempt ||
+      predecessor.successor.providerTurnId !== current.providerTurnId
+    ) {
+      return undefined;
+    }
+  } else if (current.identity.logicalStepNo !== 0) {
+    return undefined;
+  }
+  return {
+    logicalStepNo: current.identity.logicalStepNo,
+    repairAttempt: current.identity.repairAttempt,
+  };
+};
 
 export interface AgentLoopDriverOptions {
   /** P12 `03` §3: the credential reference the driver binds to a ProviderTurn.
@@ -199,6 +244,83 @@ export const AgentLoopDriverLive = (
               .pipe(Effect.mapError(failure)))
               ? configuredLoopSteps
               : undefined;
+          // Resume from the latest durable P9 cursor, not turn zero. Without
+          // this, a restart after a completed earlier step can re-open its
+          // old executable output and repair later unresolved ToolCalls as
+          // interrupted, even though a successor step is already persisted.
+          let firstLogicalStepNo = 0;
+          let firstRepairAttempt = 0;
+          if (loopSteps !== undefined) {
+            const persistedSteps = yield* tx
+              .transact(loopSteps.listByExecution(input.execution.executionId))
+              .pipe(Effect.mapError(failure));
+            const cursor = selectInitialAgentLoopStepCursor(persistedSteps);
+            if (cursor === undefined) {
+              return yield* Effect.fail(
+                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+              );
+            }
+            firstLogicalStepNo = cursor.logicalStepNo;
+            firstRepairAttempt = cursor.repairAttempt;
+            if (persistedSteps.length > 0) {
+              const current = persistedSteps.find(
+                (step) =>
+                  step.identity.logicalStepNo === cursor.logicalStepNo &&
+                  step.identity.repairAttempt === cursor.repairAttempt,
+              );
+              if (
+                current === undefined ||
+                current.identity.executionId !== input.execution.executionId
+              ) {
+                return yield* Effect.fail(
+                  failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                );
+              }
+              if (current.state !== "Prepared") {
+                if (providerTurns === undefined) {
+                  return yield* Effect.fail(
+                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                  );
+                }
+                const priorManifest = yield* tx
+                  .transact(
+                    providerTurns.findManifestByTurn(current.providerTurnId),
+                  )
+                  .pipe(Effect.mapError(failure));
+                let manifestValue: Record<string, unknown> | undefined;
+                try {
+                  const parsed: unknown =
+                    priorManifest === null
+                      ? undefined
+                      : JSON.parse(priorManifest.manifestJson);
+                  if (
+                    typeof parsed === "object" &&
+                    parsed !== null &&
+                    !Array.isArray(parsed)
+                  ) {
+                    manifestValue = parsed as Record<string, unknown>;
+                  }
+                } catch {
+                  manifestValue = undefined;
+                }
+                if (
+                  priorManifest === null ||
+                  manifestValue === undefined ||
+                  manifestValue.providerTurnId !== current.providerTurnId ||
+                  manifestValue.executionId !== input.execution.executionId ||
+                  manifestValue.sessionId !== input.execution.sessionId ||
+                  manifestValue.logicalStepNo !== cursor.logicalStepNo ||
+                  manifestValue.repairAttempt !== cursor.repairAttempt ||
+                  (current.manifestId !== undefined &&
+                    current.manifestId !== priorManifest.manifestId)
+                ) {
+                  return yield* Effect.fail(
+                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                  );
+                }
+              }
+            }
+          }
           const agentBinding: AgentBinding =
             input.execution.binding._tag === "WorkspaceExecution"
               ? {
@@ -272,6 +394,7 @@ export const AgentLoopDriverLive = (
           const decideModelOutput = (
             turn: number,
             activity: ExecutionActivity,
+            repairAttempt: number,
           ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
             runModelDecision(
               {
@@ -313,9 +436,14 @@ export const AgentLoopDriverLive = (
               },
               turn,
               activity,
+              repairAttempt,
             );
 
-          for (let turn = 0; turn < MAX_TURNS; turn += 1) {
+          for (
+            let turn = firstLogicalStepNo, repairAttempt = firstRepairAttempt;
+            turn < MAX_TURNS;
+            turn += 1, repairAttempt = 0
+          ) {
             if (
               Option.isSome(inboxOption) &&
               Option.isSome(inputPromotionOption) &&
@@ -361,7 +489,11 @@ export const AgentLoopDriverLive = (
             }
             progressedSinceBoundary = false;
 
-            const modelDecision = yield* decideModelOutput(turn, activity);
+            const modelDecision = yield* decideModelOutput(
+              turn,
+              activity,
+              repairAttempt,
+            );
             if (modelDecision._tag === "Settle") {
               return modelDecision.settlement;
             }

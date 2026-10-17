@@ -126,6 +126,13 @@ export interface AgentLoopStepStoreService {
     AgentLoopStepStoreError,
     TransactionScope
   >;
+  readonly listByExecution: (
+    executionId: ExecutionId,
+  ) => Effect.Effect<
+    ReadonlyArray<AgentLoopStepRecord>,
+    AgentLoopStepStoreError,
+    TransactionScope
+  >;
   readonly createPrepared: (
     record: AgentLoopStepRecord,
     fence: AgentLoopStepFence,
