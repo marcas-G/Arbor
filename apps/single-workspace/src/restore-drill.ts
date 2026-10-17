@@ -110,7 +110,9 @@ const readLeases = Effect.gen(function* () {
   );
 });
 
-export const runRestoreDrill = async (): Promise<RestoreDrillArtifact> => {
+export const runRestoreDrill = async (
+  options: { readonly artifactOutputPath?: string } = {},
+): Promise<RestoreDrillArtifact> => {
   const workDir = mkdtempSync(join(tmpdir(), "arbor-restore-drill-"));
   const canonicalDb = join(workDir, "canonical.db");
   const backupDb = join(workDir, "backup.db");
@@ -191,12 +193,9 @@ export const runRestoreDrill = async (): Promise<RestoreDrillArtifact> => {
       measuredRpo: toIsoDuration(measuredRpoMs),
       measuredRto: toIsoDuration(measuredRtoMs),
     };
-    const outPath = join(
-      repoRoot,
-      "planning",
-      "results",
-      "P12.restore-drill.json",
-    );
+    const outPath =
+      options.artifactOutputPath ??
+      join(repoRoot, "planning", "results", "P12.restore-drill.json");
     mkdirSync(dirname(outPath), { recursive: true });
     writeFileSync(outPath, `${JSON.stringify(artifact, null, 2)}\n`);
     return artifact;

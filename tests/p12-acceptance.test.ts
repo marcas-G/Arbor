@@ -1048,11 +1048,22 @@ describe("p12-acceptance story 6 — storage scale + durability envelope", () =>
   });
 
   it("story 6: the restore drill actually executes end-to-end and emits its artifact", async () => {
-    const artifact = await runRestoreDrill();
-    expect(artifact.migrationUserVersion).toBe(13);
-    expect(
-      withinDurabilityEnvelope(artifact, DEFAULT_DURABILITY_ENVELOPE),
-    ).toBe(true);
+    const artifactDir = mkdtempSync(
+      join(tmpdir(), "arbor-p12-restore-artifact-"),
+    );
+    const artifactPath = join(artifactDir, "restore-drill.json");
+    try {
+      const artifact = await runRestoreDrill({
+        artifactOutputPath: artifactPath,
+      });
+      expect(artifact.migrationUserVersion).toBe(13);
+      expect(
+        withinDurabilityEnvelope(artifact, DEFAULT_DURABILITY_ENVELOPE),
+      ).toBe(true);
+      expect(JSON.parse(readFileSync(artifactPath, "utf8"))).toEqual(artifact);
+    } finally {
+      rmSync(artifactDir, { recursive: true, force: true });
+    }
   });
 });
 
