@@ -8,8 +8,9 @@ P40 settlement boundary matrix (4/4); P3 NotOccurred/Occurred ActionResult
 matrix (4/4); StillUnknown restart plus P9/P10 escalation and P3 before/after
 ActionResult recovery; trusted profile version/hash/effect-key drift (3/3);
 P39 fact-write failure atomicity with safe P3 OutcomeUnknown projection; and
-historical profile-less shell@2 recovery on schema44. Evidence is recorded in
-the historical sections below and the linked focused result records.
+historical profile-less shell@2 recovery on schema44; and §2.6 G0/G1 mismatched
+proofs for wrong attempt/visibility (2/2). Evidence is recorded in the
+historical sections below and the linked focused result records.
 
 AH7 remains **PARTIAL / OPEN**. These cases use a test-only trusted profile;
 production has no registered Reconcilable profile or authoritative source for
@@ -456,3 +457,25 @@ assertion attempt also exposed that the test child pauses G1 after P3
 ActionResult commit; the case now explicitly releases that test gate before
 waiting for Execution settlement. Those attempts did not qualify either
 proof-mismatch case. Only the two subsequent serial PASS runs above count.
+
+## Final status — §2.6 mismatched-proof dual-daemon qualification
+
+The two real-daemon proof-mismatch cases are PASS **2/2**: wrong
+`attemptNo` and wrong `visibilityScopeSha256`. Both G1 results fail closed as
+`StillUnknown/EvidenceBindingMismatch`; P39 retains one unknown fact, P4 stays
+unsettled without selection/result, P3 remains `OutcomeUnknown` /
+`ReconciliationPending`, P9 records one escalation and P10 exposes one
+`ActionRequired` row. Executor/effect/result artifact counts remain zero.
+After P3 action commit is released, Execution settles `OutcomeUnknown`; stale
+G0 is then fenced and does not alter state.
+
+AH7 remains **PARTIAL / OPEN**. The dual-daemon case adds two proof-binding
+inputs to the scoped profile and recovery matrix; it does not register a
+production Reconcilable profile, provide a production authoritative proof
+source, close the production Executable InvocationApproval route, or qualify
+the remaining AH7 crash/concurrency permutations. No overall AH7 completion
+is claimed.
+
+Integration verification for this snapshot: `pnpm typecheck`, changed-file
+Biome and `git diff --check` pass; P4 pipeline plus ports profile registry
+tests pass **67/67**. No daemon or full-suite run was performed.
