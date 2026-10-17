@@ -1,10 +1,21 @@
-import type { AgentActionHandlerInput } from "@arbor/agent-runtime";
+import {
+  type AgentActionHandlerInput,
+  ControlActionAuthorizer,
+  makeControlToolRegistry,
+  selectInitialAgentLoopStepCursor,
+} from "@arbor/agent-runtime";
 import type {
   CommandGatewayService,
   CommandHandlerRegistryService,
   GatewayEnvelope,
 } from "@arbor/application";
-import { newUuid7, semanticRequestFingerprint } from "@arbor/application";
+import {
+  CommandHandlerRegistry,
+  CommandHandlerRegistryLive,
+  makeRecordVerificationEvidenceHandler,
+  newUuid7,
+  semanticRequestFingerprint,
+} from "@arbor/application";
 import {
   CommandId,
   EvidenceId,
@@ -21,6 +32,11 @@ import {
   WorkRevision,
   WorkspaceId,
 } from "@arbor/domain";
+import {
+  AgentLoopStepStoreLive,
+  layer as sqliteLayer,
+  TransactionPortLive,
+} from "@arbor/persistence-sqlite";
 import type {
   BlobStorePortService,
   ClockService,
@@ -34,9 +50,22 @@ import type {
   WorkRepositoryService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
-import { Effect, Option, Stream } from "effect";
+import {
+  AgentLoopStepStore,
+  Clock,
+  CommandStore,
+  ControlApprovalStore,
+  InboxProjectionStore,
+  PermissionGrantRepository,
+  sha256Hex,
+  TransactionPort,
+  WorkspaceRepository,
+} from "@arbor/ports";
+import { Effect, Layer, Option, Stream } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { executeAgentLoopActions } from "../../../packages/agent-runtime/src/agent-loop-actions.js";
+import { ControlActionAuthorizerLive } from "../src/control-action-authorizer.js";
 import { makeSingleWorkspaceControlActionHandlers } from "../src/control-actions.js";
 
 const executionId = parse(ExecutionId)(
@@ -116,6 +145,10 @@ const setup = (
     readonly priorConclusionFingerprintMismatch?: boolean;
     readonly priorConclusionCanonicalMismatch?: boolean;
     readonly priorConclusionMalformedResult?: boolean;
+    readonly tx?: TransactionPortService;
+    readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+    readonly invocationArgumentsJson?: string;
+    readonly invocationToolName?: string;
   } = {},
 ) => {
   const submitted: Array<GatewayEnvelope<unknown>> = [];
@@ -297,46 +330,48 @@ const setup = (
         );
       },
     } as Pick<CommandStoreService, "findResolution">,
-    commandHandlerRegistry: {
-      lookup: (commandType: string) =>
-        commandType === "RecordVerificationEvidence" &&
-        options.priorEvidenceReceipt !== undefined
-          ? Option.some({
-              commandType,
-              schemaVersion: "1",
-              ...(options.priorEvidenceValidatorMissing === true
-                ? {}
-                : {
-                    validateReceiptReplay: () => {
-                      priorValidatorCalls += 1;
-                      return options.priorEvidenceCanonicalMismatch === true
-                        ? Effect.fail({
-                            _tag: "PersistenceCorruption",
-                          } as never)
-                        : Effect.void;
-                    },
-                  }),
-            } as never)
-          : commandType === "ConcludeVerification" &&
-              options.priorConclusionReceipt !== undefined
+    commandHandlerRegistry:
+      options.commandHandlerRegistry ??
+      ({
+        lookup: (commandType: string) =>
+          commandType === "RecordVerificationEvidence" &&
+          options.priorEvidenceReceipt !== undefined
             ? Option.some({
                 commandType,
-                schemaVersion: "2",
-                priorReceiptSchemaVersions: ["1"],
-                validateReceiptReplay: () => {
-                  priorConclusionValidatorCalls += 1;
-                  return options.priorConclusionCanonicalMismatch === true
-                    ? Effect.fail({ _tag: "PersistenceCorruption" } as never)
-                    : Effect.void;
-                },
+                schemaVersion: "1",
+                ...(options.priorEvidenceValidatorMissing === true
+                  ? {}
+                  : {
+                      validateReceiptReplay: () => {
+                        priorValidatorCalls += 1;
+                        return options.priorEvidenceCanonicalMismatch === true
+                          ? Effect.fail({
+                              _tag: "PersistenceCorruption",
+                            } as never)
+                          : Effect.void;
+                      },
+                    }),
               } as never)
-            : Option.none(),
-    } as CommandHandlerRegistryService,
+            : commandType === "ConcludeVerification" &&
+                options.priorConclusionReceipt !== undefined
+              ? Option.some({
+                  commandType,
+                  schemaVersion: "2",
+                  priorReceiptSchemaVersions: ["1"],
+                  validateReceiptReplay: () => {
+                    priorConclusionValidatorCalls += 1;
+                    return options.priorConclusionCanonicalMismatch === true
+                      ? Effect.fail({ _tag: "PersistenceCorruption" } as never)
+                      : Effect.void;
+                  },
+                } as never)
+              : Option.none(),
+      } as CommandHandlerRegistryService),
     blobs,
     clock: {
       now: () => Effect.succeed("2026-10-02T00:00:00.000Z"),
     } as ClockService,
-    tx,
+    tx: options.tx ?? tx,
     verifications: {
       findByExecutionId: () => Effect.succeed(Option.some(verification)),
     } as unknown as VerificationRepositoryService,
@@ -394,8 +429,10 @@ const setup = (
             state: "Pending",
             routeKind: "Control",
             callRef: "control-1",
-            actionKind: "arbor_record_verification_evidence",
-            inputHash: sha256Hex("{}"),
+            actionKind:
+              options.invocationToolName ??
+              "arbor_record_verification_evidence",
+            inputHash: sha256Hex(options.invocationArgumentsJson ?? "{}"),
             updatedAt: "2026-10-02T00:00:00.000Z",
           },
         ]),
@@ -563,6 +600,419 @@ describe("verification control actions", () => {
     expect(result).toMatchObject({ _tag: "Observation" });
     expect(state.priorValidatorCalls()).toBe(1);
     expect(state.submitted).toHaveLength(0);
+  });
+
+  it("returns from gen1 Evidence replay with a real SQLite transaction and the registered P8 validator", async () => {
+    const occurrence = "ptn_verify:1";
+    const replayEvidenceId = parse(EvidenceId)(
+      `evd_${newUuid7("verification-evidence", occurrence)}`,
+    );
+    const replayRecordedAt = "2026-10-02T00:00:00.000Z";
+    const verificationRows = {
+      findById: (id: VerificationId) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{ verification_id: string }>(
+            "SELECT verification_id FROM p8_replay_verifications WHERE verification_id = ?",
+            [id],
+          );
+          return rows.length === 1 ? Option.some(verification) : Option.none();
+        }),
+    };
+    const evidenceRows = {
+      append: () => Effect.void,
+      listByVerification: (id: VerificationId) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{ evidence_id: string }>(
+            "SELECT evidence_id FROM p8_replay_evidence WHERE verification_id = ?",
+            [id],
+          );
+          return rows.map(() => ({
+            evidenceId: replayEvidenceId,
+            verificationId: id,
+            criterionId: "focused-test",
+            kind: "ToolObservation" as const,
+            artifactRef: null,
+            observedEnvironmentRevision: null,
+            recordedByExecutionId: executionId,
+            recordedAt: replayRecordedAt,
+            toolInvocationId,
+            observationRef: "observation:1",
+            callRef: "tool-call-1",
+          }));
+        }),
+    };
+    const registeredHandler = makeRecordVerificationEvidenceHandler({
+      verifications: verificationRows as never,
+      evidence: evidenceRows as never,
+    });
+    const registryLayer = CommandHandlerRegistryLive([
+      registeredHandler as never,
+    ]);
+    const app = Layer.provideMerge(
+      TransactionPortLive,
+      sqliteLayer({ filename: ":memory:" }),
+    );
+    const program = Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "CREATE TABLE p8_replay_verifications (verification_id TEXT PRIMARY KEY)",
+      );
+      yield* sql.unsafe(
+        "CREATE TABLE p8_replay_evidence (evidence_id TEXT PRIMARY KEY, verification_id TEXT NOT NULL)",
+      );
+      yield* sql.unsafe(
+        "INSERT INTO p8_replay_verifications (verification_id) VALUES (?)",
+        [verificationId],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO p8_replay_evidence (evidence_id, verification_id) VALUES (?, ?)",
+        [replayEvidenceId, verificationId],
+      );
+      const registry = yield* CommandHandlerRegistry;
+      const tx = yield* TransactionPort;
+      const state = setup({
+        priorEvidenceReceipt: "committed",
+        tx,
+        commandHandlerRegistry: registry,
+      });
+      const handler = state.handlers.find(
+        (candidate) => candidate.action === "RecordVerificationEvidence",
+      );
+      const result = yield* handler?.handle(
+        input(evidenceAction, 1, 1),
+      ) as Effect.Effect<unknown>;
+      return { result, submitted: state.submitted };
+    }).pipe(Effect.provide(registryLayer));
+    const observed = await Effect.runPromise(Effect.provide(program, app));
+    expect(observed.result).toMatchObject({ _tag: "Observation" });
+    expect(observed.submitted).toHaveLength(0);
+  });
+
+  it("resumes step 1 Pending Control through the real SQLite P9 store, registry, authorizer, and receipt validator", async () => {
+    const occurrence = "ptn_verify:1";
+    const invocationArgumentsJson = JSON.stringify({
+      criterionId: "focused-test",
+      sourceCallRef: "tool-call-1",
+    });
+    const replayEvidenceId = parse(EvidenceId)(
+      `evd_${newUuid7("verification-evidence", occurrence)}`,
+    );
+    const replayRecordedAt = "2026-10-02T00:00:00.000Z";
+    const verificationRows = {
+      findById: (id: VerificationId) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{ verification_id: string }>(
+            "SELECT verification_id FROM p8_replay_verifications WHERE verification_id = ?",
+            [id],
+          );
+          return rows.length === 1 ? Option.some(verification) : Option.none();
+        }),
+    };
+    const evidenceRows = {
+      append: () => Effect.void,
+      listByVerification: (id: VerificationId) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{ evidence_id: string }>(
+            "SELECT evidence_id FROM p8_replay_evidence WHERE verification_id = ?",
+            [id],
+          );
+          return rows.map(() => ({
+            evidenceId: replayEvidenceId,
+            verificationId: id,
+            criterionId: "focused-test",
+            kind: "ToolObservation" as const,
+            artifactRef: null,
+            observedEnvironmentRevision: null,
+            recordedByExecutionId: executionId,
+            recordedAt: replayRecordedAt,
+            toolInvocationId,
+            observationRef: "observation:1",
+            callRef: "tool-call-1",
+          }));
+        }),
+    };
+    const registeredHandler = makeRecordVerificationEvidenceHandler({
+      verifications: verificationRows as never,
+      evidence: evidenceRows as never,
+    });
+    const commandRegistryLayer = CommandHandlerRegistryLive([
+      registeredHandler as never,
+    ]);
+    const sqlite = sqliteLayer({ filename: ":memory:" });
+    const txLayer = Layer.provide(TransactionPortLive, sqlite);
+    const clockLayer = Layer.succeed(Clock, {
+      now: () => Effect.succeed("2026-10-02T00:00:00.000Z"),
+    });
+    const stepStoreLayer = Layer.provide(
+      AgentLoopStepStoreLive,
+      Layer.merge(sqlite, clockLayer),
+    );
+    const workspaceLayer = Layer.succeed(WorkspaceRepository, {
+      findById: () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          yield* sql.unsafe("SELECT 1");
+          return Option.some({ workspacePolicy: {} } as never);
+        }),
+    } as never);
+    const authorizerDependencies = Layer.mergeAll(
+      clockLayer,
+      commandRegistryLayer,
+      Layer.succeed(ControlApprovalStore, {} as never),
+      Layer.succeed(CommandStore, {} as never),
+      Layer.succeed(InboxProjectionStore, {} as never),
+      Layer.succeed(PermissionGrantRepository, {} as never),
+      txLayer,
+      workspaceLayer,
+    );
+    const authorizerLayer = Layer.provideMerge(
+      ControlActionAuthorizerLive,
+      authorizerDependencies,
+    );
+    const app = Layer.mergeAll(
+      sqlite,
+      txLayer,
+      clockLayer,
+      stepStoreLayer,
+      commandRegistryLayer,
+      authorizerLayer,
+    );
+    const basis = {
+      projectPolicyRevision: 0,
+      workspacePolicyRevision: 0,
+      responsibilityRevision: 0,
+      resourceBoundaryRevision: 0,
+      authorizationDigest: "authz",
+      environmentRevision: "env0",
+    };
+    const program = Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      const tx = yield* TransactionPort;
+      const loopSteps = yield* AgentLoopStepStore;
+      const authorizer = yield* ControlActionAuthorizer;
+      yield* sql.unsafe(
+        "CREATE TABLE p8_replay_verifications (verification_id TEXT PRIMARY KEY)",
+      );
+      yield* sql.unsafe(
+        "CREATE TABLE p8_replay_evidence (evidence_id TEXT PRIMARY KEY, verification_id TEXT NOT NULL)",
+      );
+      yield* sql.unsafe(
+        "CREATE TABLE executions (execution_id TEXT PRIMARY KEY, settled_at TEXT)",
+      );
+      yield* sql.unsafe(
+        "CREATE TABLE execution_leases (execution_id TEXT PRIMARY KEY, worker_id TEXT, worker_incarnation_id TEXT, generation INTEGER, expires_at TEXT)",
+      );
+      yield* sql.unsafe(
+        "CREATE TABLE agent_loop_steps (execution_id TEXT, logical_step_no INTEGER, repair_attempt INTEGER, provider_turn_id TEXT, predecessor_logical_step_no INTEGER, predecessor_repair_attempt INTEGER, manifest_id TEXT, state TEXT, decoder_version TEXT, provider_failure_json TEXT, repair_disposition_json TEXT, successor_json TEXT, next_step_reason TEXT, decoded_output_hash TEXT, model_output_session_sequence INTEGER, next_action_index INTEGER, settlement_json TEXT, migration_provenance_json TEXT, revision INTEGER, updated_at TEXT, PRIMARY KEY(execution_id, logical_step_no, repair_attempt))",
+      );
+      yield* sql.unsafe(
+        "CREATE TABLE agent_loop_step_actions (execution_id TEXT, logical_step_no INTEGER, repair_attempt INTEGER, action_index INTEGER, logical_action_id TEXT, call_ref TEXT, route_kind TEXT, action_kind TEXT, input_hash TEXT, state TEXT, result_ref TEXT, settlement_ref TEXT, disposition_json TEXT, observation_source_ref TEXT, revision INTEGER, updated_at TEXT, PRIMARY KEY(execution_id, logical_step_no, repair_attempt, action_index))",
+      );
+      yield* sql.unsafe(
+        "CREATE TABLE session_observations (source_ref TEXT PRIMARY KEY, payload_json TEXT NOT NULL)",
+      );
+      yield* sql.unsafe(
+        "INSERT INTO p8_replay_verifications (verification_id) VALUES (?)",
+        [verificationId],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO p8_replay_evidence (evidence_id, verification_id) VALUES (?, ?)",
+        [replayEvidenceId, verificationId],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO executions (execution_id, settled_at) VALUES (?, NULL)",
+        [executionId],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at) VALUES (?, 'worker-gen1', 'inc-gen1', 1, '2026-10-03T00:00:00.000Z')",
+        [executionId],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO agent_loop_steps (execution_id, logical_step_no, repair_attempt, provider_turn_id, predecessor_logical_step_no, predecessor_repair_attempt, manifest_id, state, successor_json, next_action_index, revision, updated_at) VALUES (?, 0, 0, 'ptn_previous', NULL, NULL, NULL, 'NextStepReady', ?, 1, 1, '2026-10-02T00:00:00.000Z')",
+        [
+          executionId,
+          JSON.stringify({
+            executionId,
+            logicalStepNo: 1,
+            repairAttempt: 0,
+            providerTurnId: "ptn_verify",
+          }),
+        ],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO agent_loop_steps (execution_id, logical_step_no, repair_attempt, provider_turn_id, predecessor_logical_step_no, predecessor_repair_attempt, manifest_id, state, next_action_index, revision, updated_at) VALUES (?, 1, 0, 'ptn_verify', 0, 0, NULL, 'ActionsInProgress', 1, 0, '2026-10-02T00:00:00.000Z')",
+        [executionId],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO agent_loop_step_actions (execution_id, logical_step_no, repair_attempt, action_index, logical_action_id, call_ref, route_kind, action_kind, input_hash, state, result_ref, observation_source_ref, revision, updated_at) VALUES (?, 1, 0, 0, 'lac-read-applied', 'read-call', 'Executable', 'shell', ?, 'Applied', 'result-read', 'observation-read', 1, '2026-10-02T00:00:00.000Z')",
+        [executionId, sha256Hex("{}")],
+      );
+      const p8LogicalActionId = `lac_${sha256Hex(
+        JSON.stringify({
+          executionId,
+          providerTurnId: "ptn_verify",
+          callRef: "control-1",
+          routeKind: "Control",
+          actionKind: "record_verification_evidence",
+        }),
+      )}`;
+      yield* sql.unsafe(
+        "INSERT INTO agent_loop_step_actions (execution_id, logical_step_no, repair_attempt, action_index, logical_action_id, call_ref, route_kind, action_kind, input_hash, state, revision, updated_at) VALUES (?, 1, 0, 1, ?, 'control-1', 'Control', 'record_verification_evidence', ?, 'Pending', 0, '2026-10-02T00:00:00.000Z')",
+        [executionId, p8LogicalActionId, sha256Hex(invocationArgumentsJson)],
+      );
+      const steps = yield* tx.transact(loopSteps.listByExecution(executionId));
+      const cursor = selectInitialAgentLoopStepCursor(steps);
+      expect(cursor).toEqual({ logicalStepNo: 1, repairAttempt: 0 });
+      const current = yield* tx.transact(loopSteps.findCurrent(executionId));
+      const handlerState = setup({
+        priorEvidenceReceipt: "committed",
+        tx,
+        commandHandlerRegistry: yield* CommandHandlerRegistry,
+        invocationArgumentsJson,
+        invocationToolName: "record_verification_evidence",
+      });
+      const controlRegistry = makeControlToolRegistry(handlerState.handlers);
+      const p8Definition = controlRegistry
+        .definitions()
+        .find(
+          (definition) => definition.name === "record_verification_evidence",
+        );
+      if (p8Definition === undefined) {
+        throw new Error("P8 control is missing from the actual registry");
+      }
+      const executionForAction = {
+        ...execution,
+        binding: { _tag: "WorkspaceExecution", workspaceId },
+      } as never;
+      const contextForAction = {
+        ...context,
+        fencingGeneration: 1,
+        workerId: "worker-gen1",
+        workerIncarnationId: "inc-gen1",
+      } as never;
+      const outcome = yield* executeAgentLoopActions({
+        input: { execution: executionForAction, context: contextForAction },
+        preparedTurn: {
+          manifest: {
+            providerTurnId: "ptn_verify",
+            executionId,
+            sessionId,
+            contextEpoch: 0,
+            controlBasis: basis,
+          },
+          toolRoutes: [
+            { name: "shell", route: "Executable" },
+            {
+              name: p8Definition.name,
+              route: "Control",
+              stableId: p8Definition.stableId,
+              version: p8Definition.version,
+              hash: p8Definition.hash,
+            },
+          ],
+        } as never,
+        decodedOutput: {
+          text: "",
+          finishReason: "ToolCalls",
+          toolInvocations: [
+            {
+              providerTurnId: "ptn_verify",
+              outputPosition: 0,
+              callRef: "read-call",
+              toolName: "shell",
+              argumentsJson: "{}",
+            },
+            {
+              providerTurnId: "ptn_verify",
+              outputPosition: 1,
+              callRef: "control-1",
+              toolName: "record_verification_evidence",
+              argumentsJson: invocationArgumentsJson,
+            },
+          ],
+        } as never,
+        turn: 1,
+        ...(Option.isSome(current) ? { currentLoopStep: current.value } : {}),
+        loopSteps,
+        loopStepFence: {
+          executionId,
+          workerId: "worker-gen1",
+          workerIncarnationId: "inc-gen1",
+          fencingGeneration: 1,
+        },
+        tx,
+        sessions: {
+          listEntries: () =>
+            Effect.succeed([
+              {
+                sessionId,
+                sequence: 1,
+                entryKind: "Observation",
+                payload: {
+                  _tag: "ToolResult",
+                  callRef: "tool-call-1",
+                  invocationId: toolInvocationId,
+                  observationRef: "observation:1",
+                  status: "Succeeded",
+                },
+                createdAt: replayRecordedAt,
+              },
+            ]),
+          supportsTypedTimeline: () => Effect.succeed(false),
+          appendEntryIdempotent: (
+            _sessionId: string,
+            source: { readonly ref: string },
+            entry: { readonly payload: unknown },
+          ) =>
+            Effect.gen(function* () {
+              const client = yield* SqlClient;
+              yield* client.unsafe(
+                "INSERT OR IGNORE INTO session_observations (source_ref, payload_json) VALUES (?, ?)",
+                [source.ref, JSON.stringify(entry.payload)],
+              );
+            }),
+        } as never,
+        controlRegistry,
+        controlAuthorizer: authorizer,
+        currentControlBasis: () => Effect.succeed(basis as never),
+        admit: () => Effect.succeed("Continue"),
+        failure: (cause: unknown) => cause as never,
+        now: () => Effect.succeed(replayRecordedAt),
+      } as never);
+      const actions = yield* tx.transact(
+        loopSteps.listActions({
+          executionId,
+          logicalStepNo: 1,
+          repairAttempt: 0,
+        }),
+      );
+      const updatedStep = yield* tx.transact(
+        loopSteps.findCurrent(executionId),
+      );
+      const observations = yield* sql.unsafe<{ payload_json: string }>(
+        "SELECT payload_json FROM session_observations",
+      );
+      return { outcome, actions, updatedStep, observations };
+    }).pipe(Effect.provide(commandRegistryLayer));
+    const observed = await Effect.runPromise(Effect.provide(program, app));
+    expect(observed.outcome).toMatchObject({ _tag: "Completed" });
+    expect(observed.actions[1]).toMatchObject({
+      actionKind: "record_verification_evidence",
+      state: "Applied",
+      revision: 1,
+    });
+    expect(observed.updatedStep).toMatchObject({
+      _tag: "Some",
+      value: { state: "ActionsInProgress", nextActionIndex: 2, revision: 1 },
+    });
+    expect(observed.observations).toHaveLength(1);
+    expect(observed.observations[0]?.payload_json).toContain(
+      "VerificationEvidenceRecorded",
+    );
   });
 
   it("skips only a prior FencingRejected receipt and submits a generation-scoped command", async () => {

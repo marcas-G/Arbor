@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join, resolve } from "node:path";
+import { p39WindowsTestEnvironment } from "../../support/p39-windows-deployment-test.js";
 import {
   childExitDiagnostic,
   childHasExited,
@@ -525,6 +526,7 @@ export const startProductionFixture = async (input: {
     const requestedPort = isFirstDaemon ? 0 : httpPort;
     const daemonEnv: NodeJS.ProcessEnv = {
       ...process.env,
+      ...p39WindowsTestEnvironment(),
       ARBOR_DB: databaseFile,
       ARBOR_HTTP_PORT: String(requestedPort),
       ARBOR_HTTP_HOST: "127.0.0.1",
@@ -555,11 +557,30 @@ export const startProductionFixture = async (input: {
         ? NONCE_DAEMON_ENTRY
         : requestedEntry;
     daemonStarts += 1;
+    const startupStdout: string[] = [];
+    const startupEnvironmentDiagnostic =
+      process.platform === "win32"
+        ? `PSModulePath=${JSON.stringify(daemonEnv.PSModulePath ?? null)}; PowerShellModulesPathPresent=${(daemonEnv.PSModulePath ?? "").split(";").some((path) => path.toLowerCase().includes("\\windowspowershell\\v1.0\\modules"))}; ChildEnvironmentHasPSModulePath=${Object.hasOwn(daemonEnv, "PSModulePath")}`
+        : "";
     daemon = spawn(process.execPath, [entry], {
       cwd: directory,
       env: daemonEnv,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
+    });
+    let startupStdoutBuffer = "";
+    daemon.stdout?.on("data", (chunk: Buffer) => {
+      startupStdoutBuffer += chunk.toString("utf8");
+      let newline = startupStdoutBuffer.indexOf("\n");
+      while (newline >= 0) {
+        const line = startupStdoutBuffer.slice(0, newline).trim();
+        startupStdoutBuffer = startupStdoutBuffer.slice(newline + 1);
+        if (line.length > 0) {
+          startupStdout.push(redactDaemonText(line));
+          if (startupStdout.length > 16) startupStdout.shift();
+        }
+        newline = startupStdoutBuffer.indexOf("\n");
+      }
     });
     lastDaemonLaunch = {
       child: daemon,
@@ -577,7 +598,9 @@ export const startProductionFixture = async (input: {
     });
     try {
       httpPort = await waitForNonceBoundPort(daemon, requestedPort, {
-        onStdoutLine: (line) => input.onDaemonStdout?.(line),
+        onStdoutLine: (line) => {
+          input.onDaemonStdout?.(line);
+        },
       });
     } catch (error) {
       await stopDaemonAfterStartupFailure(
@@ -604,7 +627,7 @@ export const startProductionFixture = async (input: {
     } catch (error) {
       await stopDaemonAfterStartupFailure(error, "functional daemon readiness");
       throw new Error(
-        `functional daemon startup failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon?.exitCode)}; signal=${String(daemon?.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}`,
+        `functional daemon startup failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon?.exitCode)}; signal=${String(daemon?.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}; ${startupEnvironmentDiagnostic}; stdout=${startupStdout.join(" | ") || "<empty>"}`,
         { cause: error },
       );
     }
@@ -688,6 +711,7 @@ export const startProductionFixture = async (input: {
       const additionalErrors: string[] = [];
       const daemonEnv: NodeJS.ProcessEnv = {
         ...process.env,
+        ...p39WindowsTestEnvironment(),
         ARBOR_DB: databaseFile,
         ARBOR_HTTP_PORT: String(additionalPort),
         ARBOR_HTTP_HOST: "127.0.0.1",

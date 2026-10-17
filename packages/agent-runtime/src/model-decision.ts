@@ -483,6 +483,7 @@ export const runModelDecision = (
   dependencies: ModelDecisionDependencies,
   turn: number,
   activity: ExecutionActivity,
+  initialRepairAttempt = 0,
 ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> => {
   const {
     input,
@@ -519,7 +520,7 @@ export const runModelDecision = (
       "CompactionNative",
     ) === true;
   return Effect.gen(function* () {
-    let repairAttempt = 0;
+    let repairAttempt = initialRepairAttempt;
     let compactionAttempts = 0;
     let overflowRecoveryAttempt = 0;
     let replayPersistedContextLimit = false;

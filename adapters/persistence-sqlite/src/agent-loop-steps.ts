@@ -308,6 +308,17 @@ export const AgentLoopStepStoreLive: Layer.Layer<
             ? Option.none<AgentLoopStepRecord>()
             : Option.some(toStep(rows[0]));
         }),
+      listByExecution: (executionId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<StepRow>(
+              "SELECT * FROM agent_loop_steps WHERE execution_id = ? ORDER BY logical_step_no, repair_attempt",
+              [executionId],
+            ),
+          );
+          return rows.map(toStep);
+        }),
       createPrepared: (record, fence) =>
         Effect.gen(function* () {
           yield* TransactionScope;

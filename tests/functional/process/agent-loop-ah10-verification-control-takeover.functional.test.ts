@@ -1,7 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { p39WindowsTestEnvironment } from "../../support/p39-windows-deployment-test.js";
 import { expireExecutionLeaseAfterOwnerExitForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
@@ -56,6 +58,17 @@ const readSnapshot = (databaseFile: string) => {
         generation: number;
         expires_at: string;
       }>,
+      executions: db
+        .prepare(
+          "SELECT execution_id, binding_kind, settlement_kind, settlement_json, settled_at FROM executions ORDER BY admitted_at",
+        )
+        .all() as Array<{
+        execution_id: string;
+        binding_kind: string;
+        settlement_kind: string | null;
+        settlement_json: string | null;
+        settled_at: string | null;
+      }>,
       commands: db
         .prepare("SELECT command_id, resolution, result_json FROM commands")
         .all() as Array<{
@@ -92,18 +105,79 @@ const readSnapshot = (databaseFile: string) => {
       }>,
       actions: db
         .prepare(
-          "SELECT logical_action_id, action_kind, state FROM agent_loop_step_actions",
+          "SELECT logical_step_no, action_index, logical_action_id, call_ref, route_kind, action_kind, state, result_ref, observation_source_ref FROM agent_loop_step_actions ORDER BY logical_step_no, action_index",
         )
         .all() as Array<{
+        logical_step_no: number;
+        action_index: number;
         logical_action_id: string;
+        call_ref: string;
+        route_kind: string;
         action_kind: string;
         state: string;
+        result_ref: string | null;
+        observation_source_ref: string | null;
+      }>,
+      steps: db
+        .prepare(
+          "SELECT execution_id, logical_step_no, repair_attempt, provider_turn_id, state, next_action_index, decoded_output_hash, model_output_session_sequence, settlement_json FROM agent_loop_steps ORDER BY execution_id, logical_step_no, repair_attempt",
+        )
+        .all() as Array<{
+        execution_id: string;
+        logical_step_no: number;
+        repair_attempt: number;
+        provider_turn_id: string;
+        state: string;
+        next_action_index: number;
+        decoded_output_hash: string | null;
+        model_output_session_sequence: number | null;
+        settlement_json: string | null;
+      }>,
+      turnManifests: db
+        .prepare(
+          "SELECT provider_turn_id, json_extract(manifest_json, '$.toolRoutes') AS tool_routes FROM model_context_manifests ORDER BY created_at",
+        )
+        .all() as Array<{
+        provider_turn_id: string;
+        tool_routes: string | null;
+      }>,
+      toolInvocations: db
+        .prepare(
+          "SELECT invocation_id, execution_id, tool_name, arguments_json, settlement_kind, settlement_json FROM tool_invocations ORDER BY rowid DESC LIMIT 8",
+        )
+        .all() as Array<{
+        invocation_id: string;
+        execution_id: string;
+        tool_name: string;
+        arguments_json: string;
+        settlement_kind: string | null;
+        settlement_json: string | null;
+      }>,
+      toolResults: db
+        .prepare(
+          "SELECT source_kind, source_ref, payload_json FROM session_entries WHERE payload_json LIKE '%ToolResult%' ORDER BY sequence DESC LIMIT 8",
+        )
+        .all() as Array<{
+        source_kind: string;
+        source_ref: string;
+        payload_json: string;
+      }>,
+      timeline: db
+        .prepare(
+          "SELECT sequence, entry_kind, source_kind, source_ref, payload_json FROM session_entries ORDER BY sequence DESC LIMIT 16",
+        )
+        .all() as Array<{
+        sequence: number;
+        entry_kind: string;
+        source_kind: string;
+        source_ref: string;
+        payload_json: string;
       }>,
       observations: db
         .prepare(
-          "SELECT source_ref FROM session_entries WHERE source_kind = 'AgentLoopAction' AND entry_kind = 'Observation'",
+          "SELECT source_ref, payload_json FROM session_entries WHERE source_kind = 'AgentLoopAction' AND entry_kind = 'Observation'",
         )
-        .all() as Array<{ source_ref: string }>,
+        .all() as Array<{ source_ref: string; payload_json: string }>,
     };
   } finally {
     db.close();
@@ -131,14 +205,44 @@ const releaseGate = (
 };
 
 describe("AH10 P8 verification control takeover", () => {
+  it("passes the P39 PowerShell module path from Vitest through a child Node process", () => {
+    const testEnvironment = p39WindowsTestEnvironment();
+    if (process.platform !== "win32") return;
+    const expected = resolve(
+      process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows",
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "Modules",
+    );
+    expect(process.env.PSModulePath).toBe(expected);
+    const output = execFileSync(
+      process.execPath,
+      [
+        "-e",
+        "const cp=require('node:child_process'); process.stdout.write(JSON.stringify({PSModulePath:process.env.PSModulePath})+'\\n'); process.stdout.write(cp.execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','Import-Module Microsoft.PowerShell.Security; (Get-Acl -LiteralPath C:\\\\Windows).Owner'],{encoding:'utf8'}));",
+      ],
+      { encoding: "utf8", env: testEnvironment, windowsHide: true },
+    );
+    const [modulePathLine] = output.split(/\r?\n/u);
+    expect(JSON.parse(modulePathLine ?? "{}")).toEqual({
+      PSModulePath: expected,
+    });
+    expect(output).toContain("TrustedInstaller");
+  });
+
   it("recovers a committed RecordVerificationEvidence command before Observation after two-daemon restart", async () => {
     const marker = `AH10-VCS-RECORD-${crypto.randomUUID().slice(0, 8)}`;
     const events: Probe[] = [];
+    const daemonOutput: string[] = [];
     let probeArmed = false;
     let seedWaitIssued = false;
+    let evidenceSourceReadIssued = false;
     let targetActionCalls = 0;
     const fixture = await startProductionFixture({
       isolatedPortHandshake: true,
+      admitWorkspaceDirectory: true,
+      daemonEnvironment: { ARBOR_AH19_STARTUP_TRACE: "1" },
       reply: (call) => {
         const context = JSON.stringify(call.messages);
         const available = new Set(
@@ -194,17 +298,13 @@ describe("AH10 P8 verification control takeover", () => {
           const evidenceIds = [...context.matchAll(/evd_[0-9a-f-]{36}/gu)].map(
             (match) => match[0],
           );
-          const terminalResults = call.messages.some(
-            (message) =>
-              message.role === "tool" &&
-              message.content?.includes("ToolResult") === true,
-          );
-          if (!terminalResults) {
+          if (!evidenceSourceReadIssued) {
+            evidenceSourceReadIssued = true;
             return {
               _tag: "ToolCall",
               name: "read",
               arguments: {
-                target: { mount: "workspace", path: "README.md" },
+                target: { mount: "workspace", path: "proof.txt" },
                 limit: 80,
               },
             };
@@ -247,7 +347,10 @@ describe("AH10 P8 verification control takeover", () => {
         }
         return { _tag: "Text", text: `Observed ${marker}` };
       },
-      onDaemonStdout: (line) => pushProbe(events, line),
+      onDaemonStdout: (line) => {
+        daemonOutput.push(line);
+        pushProbe(events, line);
+      },
     });
     fixtures.push(fixture);
     mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
@@ -256,6 +359,7 @@ describe("AH10 P8 verification control takeover", () => {
       client,
       fixture.workspaceDirectory,
       "AH10 P8 evidence receipt takeover",
+      { resourceSelection: "Profile" },
     );
     const work = await admitRootWorkThroughPublicConversation(
       client,
@@ -310,7 +414,11 @@ describe("AH10 P8 verification control takeover", () => {
         ),
       (event) => event !== undefined,
       45_000,
-    );
+    ).catch((error: unknown) => {
+      throw new Error(
+        `RecordVerificationEvidence intent not observed: ${error instanceof Error ? error.message : String(error)}; events=${JSON.stringify(events.slice(-8).map(({ boundary, actionKind, logicalActionId }) => ({ boundary, actionKind, logicalActionId })))}; providerCalls=${JSON.stringify(fixture.providerCalls.slice(-3).map((call) => ({ toolNames: call.tools.map((tool) => tool.function?.name), messages: call.messages.slice(-3).map((message) => ({ role: message.role, content: message.content?.slice(-300) })) })))}; snapshot=${JSON.stringify(readSnapshot(fixture.databaseFile))}; stdout=${daemonOutput.slice(-6).join(" | ")}; stderr=${fixture.daemonErrors.join(" | ")}`,
+      );
+    });
     if (oldAction === undefined)
       throw new Error("old RecordVerificationEvidence intent not observed");
     releaseGate(fixture, "old", "action-intent");
@@ -324,8 +432,13 @@ describe("AH10 P8 verification control takeover", () => {
             event.logicalActionId === oldAction.logicalActionId,
         ),
       (event) => event !== undefined,
-      30_000,
-    );
+      8_000,
+    ).catch((error: unknown) => {
+      const snapshot = readSnapshot(fixture.databaseFile);
+      throw new Error(
+        `RecordVerificationEvidence did not reach control-return boundary: ${error instanceof Error ? error.message : String(error)}; oldAction=${JSON.stringify(oldAction)}; providerCalls=${JSON.stringify(fixture.providerCalls.slice(-2).map((call) => ({ tools: call.tools.map((tool) => tool.function?.name), messages: call.messages.slice(-4).map((message) => ({ role: message.role, content: message.content?.slice(-250) })) })))}; invocations=${JSON.stringify(snapshot.toolInvocations)}; toolResults=${JSON.stringify(snapshot.toolResults)}; actions=${JSON.stringify(snapshot.actions.filter((action) => action.action_kind === "read" || action.action_kind === "shell" || action.action_kind === "record_verification_evidence").slice(-6))}; events=${JSON.stringify(snapshot.events)}; stdout=${daemonOutput.slice(-6).join(" | ")}; stderr=${fixture.daemonErrors.join(" | ")}`,
+      );
+    });
     expect(oldReturn).toBeDefined();
     const committed = readSnapshot(fixture.databaseFile);
     expect(committed.evidence).toHaveLength(1);
@@ -336,7 +449,18 @@ describe("AH10 P8 verification control takeover", () => {
           row.result_json?.includes('"evidenceId"'),
       ),
     ).toHaveLength(1);
-    expect(committed.observations).toHaveLength(0);
+    expect(committed.actions).toContainEqual(
+      expect.objectContaining({
+        logical_action_id: oldAction.logicalActionId,
+        action_kind: "record_verification_evidence",
+        state: "Pending",
+      }),
+    );
+    expect(
+      committed.observations.filter((row) =>
+        row.payload_json.includes("VerificationEvidenceRecorded("),
+      ),
+    ).toHaveLength(0);
     expect(targetActionCalls).toBe(1);
 
     await fixture.crash();
@@ -349,6 +473,8 @@ describe("AH10 P8 verification control takeover", () => {
       entry: ah10Child,
       daemonEnvironment: {
         ARBOR_AH10_ROLE: "new",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_KIND: "record_verification_evidence",
         ARBOR_AH10_GATE_ACTION_KIND: "record_verification_evidence",
       },
       onStdout: (line) => pushProbe(events, line),
@@ -370,18 +496,33 @@ describe("AH10 P8 verification control takeover", () => {
         events.find(
           (event) =>
             event.role === "new" &&
-            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.boundary ===
+              "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
             event.logicalActionId === oldAction.logicalActionId,
         ),
       (event) => event !== undefined,
-      30_000,
-    );
-    expect(recoveredAction?.providerTurnId).toBe(oldAction.providerTurnId);
+      3_000,
+    ).catch((error: unknown) => {
+      const snapshot = readSnapshot(fixture.databaseFile);
+      const priorTurnManifest = snapshot.turnManifests.find(
+        (turn) => turn.provider_turn_id === oldAction.providerTurnId,
+      );
+      const priorTurnRoutes = JSON.parse(
+        priorTurnManifest?.tool_routes ?? "[]",
+      ) as Array<{ name?: unknown; route?: unknown; stableId?: unknown }>;
+      throw new Error(
+        `new daemon did not reopen the same P8 ActionIntent: ${error instanceof Error ? error.message : String(error)}; execution=${JSON.stringify(snapshot.executions.find((row) => row.execution_id === oldAction.executionId))}; leases=${JSON.stringify(snapshot.leases.filter((row) => row.execution_id === oldAction.executionId))}; steps=${JSON.stringify(snapshot.steps.filter((step) => step.execution_id === oldAction.executionId))}; persistedP8Route=${JSON.stringify(priorTurnRoutes.filter((route) => route.name === "record_verification_evidence"))}; action=${JSON.stringify(snapshot.actions.find((action) => action.logical_action_id === oldAction.logicalActionId))}; p4Invocations=${JSON.stringify(snapshot.toolInvocations.filter((row) => row.execution_id === oldAction.executionId))}; providerCalls=${JSON.stringify(fixture.providerCalls.slice(-4).map((call) => call.messages.slice(-3).map((message) => ({ role: message.role, content: message.content?.slice(-180) }))))}; timeline=${JSON.stringify(snapshot.timeline.filter((row) => row.payload_json.includes("VerificationEvidenceRecorded") || row.payload_json.includes("ControlResult") || row.payload_json.includes("record_verification_evidence") || row.payload_json.includes("FUNCTIONAL_VERIFIED")))}; p40Results=${JSON.stringify(snapshot.toolResults.filter((row) => row.payload_json.includes("record_verification_evidence") || row.payload_json.includes("FUNCTIONAL_VERIFIED")))}; newErrors=${newDaemon.daemonErrors.join(" | ")}`,
+      );
+    });
+    expect(recoveredAction?.logicalActionId).toBe(oldAction.logicalActionId);
+    releaseGate(fixture, "new", "control-return");
     releaseGate(fixture, "new", "action-result");
     const converged = await waitForPublic(
       async () => readSnapshot(fixture.databaseFile),
       (snapshot) =>
-        snapshot.observations.length === 1 && snapshot.evidence.length === 1,
+        snapshot.observations.some((row) =>
+          row.payload_json.includes("VerificationEvidenceRecorded("),
+        ) && snapshot.evidence.length === 1,
       30_000,
     );
     expect(converged.evidence).toHaveLength(1);
@@ -392,7 +533,11 @@ describe("AH10 P8 verification control takeover", () => {
           row.result_json?.includes('"evidenceId"'),
       ),
     ).toHaveLength(1);
-    expect(converged.observations).toHaveLength(1);
+    expect(
+      converged.observations.filter((row) =>
+        row.payload_json.includes("VerificationEvidenceRecorded("),
+      ),
+    ).toHaveLength(1);
     expect(targetActionCalls).toBe(1);
     await newDaemon.crash();
   }, 180_000);
