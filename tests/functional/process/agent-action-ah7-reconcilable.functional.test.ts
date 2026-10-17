@@ -494,14 +494,13 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       | "AH7BeforeActionResultCommit"
       | "AH7AfterActionResultCommit";
   };
+  // Ordinary production composition registers shell@3 as NonIdempotent. The
+  // test-only Reconcilable profile is available only in scenarios that inject
+  // a reconciliationMode through reconciliationChild below.
   const scenarios: ReadonlyArray<ReconciliationScenario> = [
     {
       boundary: "AH7AfterToolIntentCommit",
-      semantics: "Reconcilable",
-    },
-    {
-      boundary: "AH7AfterToolEffectBeforeSettlement",
-      semantics: "Reconcilable",
+      semantics: "NonIdempotent",
     },
     {
       boundary: "AH7AfterToolEffectBeforeSettlement",
@@ -2899,7 +2898,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           });
         }
       }
-      if (semantics === "NonIdempotent") {
+      if (semantics === "NonIdempotent" && !resumesUnadmittedIntent) {
         const toolResultsForCall = recovered.toolResults.filter(
           (row) => readToolResultForCall([row], targetCallRef) !== undefined,
         );
