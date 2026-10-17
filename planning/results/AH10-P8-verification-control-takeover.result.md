@@ -72,7 +72,7 @@ changed.
 - `pnpm exec biome check --write` on the three touched TypeScript files — PASS;
   no formatting changes were needed on the final run.
 - `pnpm exec vitest run --config vitest.config.ts apps/single-workspace/test/verification-control-actions.test.ts --reporter=dot`
-  — PASS (1 file, 23 tests).
+  — PASS (1 file, 24 tests).
 - Cursor unit — PASS (18 tests).
 - `pnpm --filter @arbor/agent-runtime build`,
   `pnpm --filter @arbor/persistence-sqlite build`, and
@@ -94,13 +94,17 @@ changed.
 - Production Gateway/two-connection fencing receipt atomicity test — PASS:
   the independent SQLite connection saw no receipt at the in-transaction
   pre-commit probe and exactly one receipt after transaction return.
-- Evidence process cases — C/P PASS (previous qualification run), R− PASS,
-  R+ PASS. ConcludeVerification process cases — C/P PASS (28.8 s), R− PASS
-  (55.3 s), R+ PASS (62.3 s), all through the default functional process
-  configuration with the P39 child environment intact.
-- Thus the six P8 process cases are individually qualified. This does not close
-  AH10's broader control-action/state matrix or the separate AH10 governance
-  gaps.
+- Final-commit serial process regression at
+  `7f3bee921eee038122d735dd7155eddc1c018af2`:
+  `pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-verification-control-takeover.functional.test.ts`
+  — PASS (1 file, 7 tests, 295.40 s), including the P39 child-environment
+  regression and all six takeover cases. Evidence C/P 27.419 s, R− 54.962 s,
+  R+ 56.334 s; ConcludeVerification C/P 25.902 s, R− 54.637 s, R+ 54.654 s.
+  The P39 probe and every scenario passed on the same final implementation
+  commit, with no test retries or production safety bypass.
+- Thus the six P8 process cases are individually qualified on the final commit.
+  This does not close AH10's broader control-action/state matrix or the
+  separate AH10 governance gaps.
 - Root cause of the prior timeout was a test gate bug: the fixture sets
   `ARBOR_AH10_GATE_ACTION_KIND=record_verification_evidence` for both owners,
   but released only the old owner's `action-intent` gate. The gen1 test now
