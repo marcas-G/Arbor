@@ -121,7 +121,8 @@ export const runP39SqliteMaintenanceWithPermit = (
         | "p40-p45-continuation"
         | "version45-closed-readonly-no-op"
         | "version46-closed-readonly-no-op"
-        | "version47-closed-readonly-no-op",
+        | "version47-closed-readonly-no-op"
+        | "version48-closed-readonly-no-op",
     ) => void;
     readonly p39AlreadyCommitted?: boolean;
     readonly reportMustAlreadyExist?: boolean;
@@ -349,7 +350,7 @@ export const runP39SqliteMaintenanceWithPermit = (
                     "PRAGMA user_version",
                   );
                   userVersion = Number(version[0]?.user_version);
-                  if (userVersion < 39 || userVersion > 47) {
+                  if (userVersion < 39 || userVersion > 48) {
                     return yield* Effect.fail(
                       failure("P39_MIGRATION_PREFIX_INVALID"),
                     );
@@ -382,7 +383,7 @@ export const runP39SqliteMaintenanceWithPermit = (
                 }
                 if (
                   p39AlreadyCommitted &&
-                  userVersion === 47 &&
+                  userVersion === 48 &&
                   settings.afterPrimaryClosedNoOp !== undefined
                 ) {
                   return true;
@@ -393,7 +394,7 @@ export const runP39SqliteMaintenanceWithPermit = (
                   "PRAGMA user_version",
                 );
                 if (
-                  Number(completedVersion[0]?.user_version) === 47 &&
+                  Number(completedVersion[0]?.user_version) === 48 &&
                   settings.afterPrimaryClosedNoOp !== undefined
                 ) {
                   return true;
@@ -404,7 +405,7 @@ export const runP39SqliteMaintenanceWithPermit = (
             ),
           );
           if (verifyLatestSchemaAfterClose) {
-            settings.onPhase?.("version47-closed-readonly-no-op");
+            settings.onPhase?.("version48-closed-readonly-no-op");
             if (settings.afterPrimaryClosedNoOp === undefined) {
               return yield* Effect.fail(
                 failure("P39_MIGRATION_PREFIX_INVALID"),

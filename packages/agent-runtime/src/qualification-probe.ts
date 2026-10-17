@@ -27,6 +27,8 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH18AfterOverflowLinksCommit"
     | "AH18BeforeInferenceFailTurnCommit"
     | "AH19NativeCheckpointRecovery"
+    | "AH19BeforeConversationCheckpointOwnerCommit"
+    | "AH19AfterConversationCheckpointOwnerCommit"
     | "AH14BeforeLegacyAdoptionCommit"
     | "AH14AfterLegacyAdoptionCommit"
     | "AH14BeforeLegacyAdoptionAttentionCommit"

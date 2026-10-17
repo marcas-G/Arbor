@@ -1,15 +1,17 @@
 import type { CommandSubmissionContext, Execution } from "@arbor/domain";
+import { executionEpisode } from "@arbor/domain";
 import type { ModelOutput, PreparedModelTurn } from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
   ExecutionDriverError,
+  SessionEpochConflict,
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { sessionFence } from "./agent-loop-policy.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
@@ -29,6 +31,30 @@ export interface ModelOutputJournalDependencies {
   readonly now: () => Effect.Effect<string>;
   readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
+
+/** Conversation checkpoint epochs are RootWorkspace-owned and intentionally
+ * do not advance the primary Work Session epoch. Other episodes retain the
+ * exact Session/provider epoch binding. */
+export const sessionTimelineEpochForAcceptedOutput = (input: {
+  readonly execution: Execution;
+  readonly sessionEpoch: number;
+  readonly providerEpoch: number;
+}): number | SessionEpochConflict => {
+  if (
+    executionEpisode(input.execution)?._tag === "ConversationResponseEpisode"
+  ) {
+    return input.sessionEpoch;
+  }
+  if (input.sessionEpoch !== input.providerEpoch) {
+    return {
+      _tag: "SessionEpochConflict",
+      sessionId: input.execution.sessionId,
+      expectedEpoch: input.providerEpoch,
+      currentEpoch: input.sessionEpoch,
+    };
+  }
+  return input.providerEpoch;
+};
 
 /**
  * Durably accepts one decoded provider result before any action can execute.
@@ -72,6 +98,22 @@ export const recordAcceptedModelOutput = (
           .transact(
             Effect.gen(function* () {
               const typed = yield* sessions.supportsTypedTimeline();
+              const sessionOption = yield* sessions.findById(
+                input.execution.sessionId,
+              );
+              if (Option.isNone(sessionOption)) {
+                return yield* Effect.fail(
+                  failure({ _tag: "SessionContextMissing" }),
+                );
+              }
+              const outputEpoch = sessionTimelineEpochForAcceptedOutput({
+                execution: input.execution,
+                sessionEpoch: Number(sessionOption.value.contextEpoch),
+                providerEpoch: Number(preparedTurn.manifest.contextEpoch),
+              });
+              if (typeof outputEpoch !== "number") {
+                return yield* Effect.fail(failure(outputEpoch));
+              }
               const appended = typed
                 ? yield* sessions.appendItemIdempotent(
                     input.execution.sessionId,
@@ -83,7 +125,7 @@ export const recordAcceptedModelOutput = (
                         text: decodedOutput.text,
                         finishReason: decodedOutput.finishReason,
                       },
-                      contextEpoch: preparedTurn.manifest.contextEpoch,
+                      contextEpoch: outputEpoch as never,
                       source: {
                         kind: "ProviderTurn",
                         ref: `${preparedTurn.manifest.providerTurnId}:assistant`,
@@ -121,7 +163,7 @@ export const recordAcceptedModelOutput = (
                     input.execution.sessionId,
                     {
                       item,
-                      contextEpoch: preparedTurn.manifest.contextEpoch,
+                      contextEpoch: outputEpoch as never,
                       source: {
                         kind: "ProviderTurnCall",
                         ref: `${preparedTurn.manifest.providerTurnId}:${invocation.callRef}`,

@@ -6,6 +6,7 @@ import { P43_BLOCKED_WORKEPISODE_MIGRATION } from "./p43-blocked-workepisode-mig
 import { P45_RETRY_VERIFICATION_ORIGIN_MIGRATION } from "./p45-retry-verification-origin-migration.js";
 import { P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION } from "./p46-verification-evidence-snapshot-migration.js";
 import { P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION } from "./p47-ah14-legacy-adoption-attention-migration.js";
+import { P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION } from "./p48-ah19-conversation-checkpoint-owner-migration.js";
 
 const DDL = `
 CREATE TABLE projects (
@@ -2574,7 +2575,7 @@ export const P43_MIGRATION = {
   sql: P43_BLOCKED_WORKEPISODE_MIGRATION.sql,
 } satisfies MigrationFile & { readonly requiresUserVersion: 42 };
 
-export const CURRENT_SCHEMA_VERSION = 47 as const;
+export const CURRENT_SCHEMA_VERSION = 48 as const;
 export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   ...P38_MIGRATIONS,
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
@@ -2585,5 +2586,6 @@ export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
   P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
   P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,
+  P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION,
 ]);
 export const CURRENT_MIGRATION_BASELINE = CURRENT_SCHEMA_VERSION;

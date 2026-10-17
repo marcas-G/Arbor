@@ -38,7 +38,8 @@ export type SchemaUpgradeMaintenancePhase =
   | "p40-p45-continuation"
   | "version45-closed-readonly-no-op"
   | "version46-closed-readonly-no-op"
-  | "version47-closed-readonly-no-op";
+  | "version47-closed-readonly-no-op"
+  | "version48-closed-readonly-no-op";
 
 export interface SchemaUpgradeFileIdentity {
   readonly device: string;

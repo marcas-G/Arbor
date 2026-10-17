@@ -64,6 +64,7 @@ import {
   ConsumerOffsetStoreLive,
   ControlApprovalStoreLive,
   ConversationAttemptStoreLive,
+  ConversationCheckpointStoreLive,
   ConversationResponseJobStoreLive,
   CURRENT_MIGRATION_BASELINE,
   CURRENT_MIGRATIONS,
@@ -716,6 +717,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(PermissionGrantRepositoryLive, infra),
     Layer.provide(HumanMessageStoreLive, infra),
     Layer.provide(ConversationResponseJobStoreLive, infra),
+    Layer.provide(ConversationCheckpointStoreLive, infra),
     Layer.provide(ControlApprovalStoreLive, infra),
     Layer.provide(AssignWorkTargetBindingRepositoryLive, infra),
     Layer.provide(
