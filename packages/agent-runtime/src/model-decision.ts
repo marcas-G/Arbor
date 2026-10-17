@@ -533,14 +533,65 @@ export const runModelDecision = (
     let repairFragments: ReadonlyArray<InstructionFragment> = [];
     const readExecutionTimeline = () =>
       executionEpisode(input.execution)?._tag === "WorkEpisode"
-        ? sessions.listWorkActiveFrontier(
-            input.execution.sessionId,
-            SESSION_TIMELINE_ENTRY_LIMIT,
-          )
+        ? sessions.listWorkActiveFrontier(input.execution.sessionId)
         : sessions.listRecentEntries(
             input.execution.sessionId,
             SESSION_TIMELINE_ENTRY_LIMIT,
           );
+    const loadWorkCompactionPinning = () =>
+      Effect.gen(function* () {
+        if (executionEpisode(input.execution)?._tag !== "WorkEpisode") {
+          return {};
+        }
+        const boundWork = workEpisode(input.execution);
+        if (boundWork === null) return {};
+        const [workspace, work] = yield* Effect.all(
+          [
+            tx.transact(workspaces.findById(input.execution.workspaceId)),
+            tx.transact(works.findById(boundWork.workId)),
+          ],
+          { concurrency: 1 },
+        ).pipe(Effect.mapError(failure));
+        if (Option.isNone(workspace)) {
+          return yield* Effect.fail(
+            failure({
+              _tag: "WorkspaceContextMissing",
+              workspaceId: input.execution.workspaceId,
+            }),
+          );
+        }
+        if (Option.isNone(work)) {
+          return yield* Effect.fail(
+            failure({
+              _tag: "WorkContextMissing",
+              workId: boundWork.workId,
+            }),
+          );
+        }
+        const workContext = assembleWorkContext(
+          workspace.value,
+          work.value,
+          input.execution,
+        );
+        const controlBasis = yield* currentControlBasis();
+        return {
+          pinnedInstructions: workContext.fragments.map((fragment) => ({
+            slotId: fragment.scope,
+            authorityRole: fragment.authorityRole,
+            text:
+              workContext.contents.get(fragment.contentRef) ??
+              fragment.contentRef,
+          })),
+          pinnedInstructionFragments: workContext.fragments.map((fragment) => ({
+            identity: fragment.identity,
+            revision: fragment.revision,
+            hash: fragment.hash,
+            source: fragment.source,
+            scope: fragment.scope,
+          })),
+          controlBasis,
+        };
+      });
     // A Work checkpoint may have been committed after the process-local loop
     // cursor was last observed. Resolve its durable source before creating a
     // fresh Prepared step so restart cannot accidentally create/replay step 0.
@@ -764,6 +815,7 @@ export const runModelDecision = (
                 inputFrontier: frontier.inputFrontier,
                 contextRefs: frontier.contextRefs,
                 inputItems: frontier.inputItems,
+                ...(yield* loadWorkCompactionPinning()),
                 fence: loopStepFence,
                 nativeSupported: true,
                 nativeRecovery: {
@@ -1598,6 +1650,7 @@ export const runModelDecision = (
                         inputFrontier: nativeFrontier.inputFrontier,
                         contextRefs: nativeFrontier.contextRefs,
                         inputItems: nativeFrontier.inputItems,
+                        ...(yield* loadWorkCompactionPinning()),
                         fence: loopStepFence,
                       },
                       {
@@ -3182,6 +3235,7 @@ export const runModelDecision = (
               inputFrontier: { firstSequence, lastSequence },
               contextRefs: portableContextRefs,
               inputItems: portableItems,
+              ...(yield* loadWorkCompactionPinning()),
               fence: loopStepFence,
             },
             {
@@ -4046,6 +4100,7 @@ export const runModelDecision = (
                 inputFrontier: rebuiltFrontier,
                 contextRefs: portableContextRefs,
                 inputItems: portableItems,
+                ...(yield* loadWorkCompactionPinning()),
                 fence: loopStepFence,
               },
               {
@@ -4130,6 +4185,28 @@ export const runModelDecision = (
         currentWork,
         input.execution,
       );
+      const compactionWorkPinning =
+        executionEpisode(input.execution)?._tag === "WorkEpisode"
+          ? {
+              pinnedInstructions: workContext.fragments.map((fragment) => ({
+                slotId: fragment.scope,
+                authorityRole: fragment.authorityRole,
+                text:
+                  workContext.contents.get(fragment.contentRef) ??
+                  fragment.contentRef,
+              })),
+              pinnedInstructionFragments: workContext.fragments.map(
+                (fragment) => ({
+                  identity: fragment.identity,
+                  revision: fragment.revision,
+                  hash: fragment.hash,
+                  source: fragment.source,
+                  scope: fragment.scope,
+                }),
+              ),
+              controlBasis,
+            }
+          : {};
       const conversationActionAsset =
         GENERIC_INSTRUCTION_ASSETS.rootConversationAction;
       const conversationActionFragments = conversationExecution
@@ -4323,6 +4400,7 @@ export const runModelDecision = (
             inputFrontier: stepContext.inputFrontier,
             contextRefs: messageContextRefs,
             inputItems,
+            ...compactionWorkPinning,
             fence: loopStepFence,
             nativeSupported:
               resumeOverflowNativeCompaction && providerNativeSupported,
@@ -4483,6 +4561,7 @@ export const runModelDecision = (
             inputFrontier: stepContext.inputFrontier,
             contextRefs: messageContextRefs,
             inputItems,
+            ...compactionWorkPinning,
             fence: loopStepFence,
             nativeSupported,
           },
@@ -4883,6 +4962,7 @@ export const runModelDecision = (
               inputFrontier: stepContext.inputFrontier,
               contextRefs: messageContextRefs,
               inputItems,
+              ...compactionWorkPinning,
               fence: overflowFence,
               nativeSupported,
             },

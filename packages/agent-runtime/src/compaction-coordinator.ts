@@ -40,6 +40,28 @@ export interface SummaryCompactionInput {
   /** Exact source refs for the portable Session input items. */
   readonly contextRefs?: ReadonlyArray<string>;
   readonly inputItems: ReadonlyArray<PortableInputItem>;
+  /** Work's canonical hard instructions stay pinned independently of the
+   * Session frontier, including on an explicit compaction Provider request. */
+  readonly pinnedInstructions?: ReadonlyArray<
+    PortableModelRequestV2["instructions"][number]
+  >;
+  readonly pinnedInstructionFragments?: ReadonlyArray<{
+    readonly identity: string;
+    readonly revision: number;
+    readonly hash: string;
+    readonly source: string;
+    readonly scope: string;
+  }>;
+  readonly controlBasis?: {
+    readonly projectPolicyRevision: number;
+    readonly workspacePolicyRevision: number;
+    readonly responsibilityRevision: number;
+    readonly resourceBoundaryRevision: number;
+    readonly workId?: string;
+    readonly workRevision?: number;
+    readonly authorizationDigest: string;
+    readonly environmentRevision: string;
+  };
   /** Exact durable Native request when P9 is retrying its pinned Turn. */
   readonly nativeRecovery?: {
     readonly manifestJson: string;
@@ -123,6 +145,7 @@ export const runSummaryCompaction = (
           authorityRole: "A0",
           text: "Produce a compact continuation summary preserving objective, constraints, decisions, progress, blockers, next actions, and relevant references.",
         },
+        ...(input.pinnedInstructions ?? []),
       ],
       inputItems: input.inputItems,
       toolDefinitions: [],
@@ -150,6 +173,12 @@ export const runSummaryCompaction = (
       ...(input.contextRefs === undefined
         ? {}
         : { contextRefs: input.contextRefs }),
+      ...(input.pinnedInstructionFragments === undefined
+        ? {}
+        : { instructionFragments: input.pinnedInstructionFragments }),
+      ...(input.controlBasis === undefined
+        ? {}
+        : { controlBasis: input.controlBasis }),
     };
     const result = yield* deps.providerRuntime.runTurn({
       providerTurnId,
@@ -208,7 +237,7 @@ export const runNativeCompaction = (
       requestVersion: 2 as const,
       operationKind: "CompactionNative" as const,
       modelRef: input.modelRef,
-      instructions: [],
+      instructions: input.pinnedInstructions ?? [],
       inputItems: input.inputItems,
       toolDefinitions: [],
       outputContractRef: "provider-native-compaction-v1",
@@ -235,6 +264,12 @@ export const runNativeCompaction = (
       ...(input.contextRefs === undefined
         ? {}
         : { contextRefs: input.contextRefs }),
+      ...(input.pinnedInstructionFragments === undefined
+        ? {}
+        : { instructionFragments: input.pinnedInstructionFragments }),
+      ...(input.controlBasis === undefined
+        ? {}
+        : { controlBasis: input.controlBasis }),
     };
     const result = yield* deps.providerRuntime.runTurn({
       providerTurnId,

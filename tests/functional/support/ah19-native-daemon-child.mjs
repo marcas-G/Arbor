@@ -69,6 +69,10 @@ const nestedNativeMode = process.env.ARBOR_AH19_NESTED_NATIVE === "1";
 const terminalConversationMode =
   process.env.ARBOR_AH19_TERMINAL_CONVERSATION === "1";
 const ordinaryWorkMode = process.env.ARBOR_AH19_ORDINARY_WORK === "1";
+const frontierTextOnlyMode = process.env.ARBOR_AH19_FRONTIER_TEXT_ONLY === "1";
+const rootWorkSeedJson = process.env.ARBOR_AH19_ROOT_WORK_SEED_JSON;
+let rootWorkAssignmentEmitted =
+  process.env.ARBOR_AH19_ROOT_WORK_ALREADY_ASSIGNED === "1";
 let ah11AfterEffectsCount = 0;
 const boundaries = new Set([
   "AH17BeforeCheckpointEpochCommit",
@@ -141,6 +145,10 @@ const nativeAdapter = {
                 item.role === "user" &&
                 item.text.includes("AH19 public Work history turn"),
             ),
+            hasWorkToolSurface: request.toolDefinitions.some((tool) =>
+              ["claim_completion", "update_plan"].includes(tool.name),
+            ),
+            toolNames: request.toolDefinitions.map((tool) => tool.name),
             workActionHistoryCount: request.inputItems.filter(
               (item) =>
                 item._tag === "ToolCall" ||
@@ -161,6 +169,63 @@ const nativeAdapter = {
           const beforeStream = Stream.fromEffect(
             Effect.promise(() => report(requestSummary)),
           );
+          const availableTools = new Set(
+            request.toolDefinitions.map((tool) => tool.name),
+          );
+          if (
+            availableTools.has("assign_work") &&
+            !availableTools.has("claim_completion") &&
+            rootWorkSeedJson !== undefined
+          ) {
+            if (rootWorkAssignmentEmitted) {
+              return Stream.flatMap(beforeStream, () =>
+                Stream.fromIterable([
+                  ...started(request, context),
+                  {
+                    _tag: "Canonical",
+                    event: {
+                      _tag: "TextDelta",
+                      text: "The approved Work is available to its owner.",
+                    },
+                  },
+                  {
+                    _tag: "Canonical",
+                    event: {
+                      _tag: "TurnCompleted",
+                      finishReason: "Stop",
+                    },
+                  },
+                ]),
+              );
+            }
+            rootWorkAssignmentEmitted = true;
+            const work = JSON.parse(rootWorkSeedJson);
+            const callRef = `call_ah19_root_${String(context.providerTurnId).replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "ToolCallProposed",
+                    callRef,
+                    toolName: "assign_work",
+                    argumentsJson: JSON.stringify({
+                      ...work,
+                      reason: "AH19 bounded frontier process fixture",
+                    }),
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "ToolCalls",
+                  },
+                },
+              ]),
+            );
+          }
           if (operationKind === "CompactionNative") {
             return Stream.flatMap(beforeStream, () =>
               Stream.fromIterable([
@@ -177,6 +242,41 @@ const nativeAdapter = {
                   event: {
                     _tag: "TurnCompleted",
                     finishReason: "Stop",
+                  },
+                },
+              ]),
+            );
+          }
+          if (
+            frontierTextOnlyMode &&
+            operationKind === "Inference" &&
+            rootWorkSeedJson !== undefined &&
+            rootWorkAssignmentEmitted
+          ) {
+            const callRef = `call_ah19_frontier_${String(context.providerTurnId).replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "ToolCallProposed",
+                    callRef,
+                    toolName: "wait",
+                    argumentsJson: JSON.stringify({
+                      reason: "yield after one bounded-frontier test turn",
+                      waitSpec: {
+                        mode: "Any",
+                        conditions: [{ _tag: "Manual" }],
+                      },
+                    }),
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "ToolCalls",
                   },
                 },
               ]),
