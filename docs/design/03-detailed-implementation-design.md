@@ -25,9 +25,11 @@
   not runtime or checkpoint truth. Coverage is the contiguous FIFO prefix
   where the exact Job is `Answered` and its unique Attempt plus terminal
   ConversationResponseEpisode Execution prove the same `(messageId, attemptNo,
-  executionId)` successful response. The current raw input is pinned once from
-  immutable HumanMessage body only for the exact `Running` Job, active Attempt,
-  Episode Execution and lease; it remains uncovered until the Job is Answered.
+  executionId)` successful response with
+  `Completed(ConversationResponseProduced(messageId))`. The current raw input
+  is pinned once from immutable HumanMessage body only for the exact
+  `Running` Job, active Attempt, Episode Execution and lease; it remains
+  uncovered until the Job is Answered.
   Any earlier non-Answered, malformed or other-episode Running Job blocks
   later coverage. Work Session history/checkpoints are excluded. ProviderNative
   reuse requires exact complete binding fingerprint; otherwise portable
@@ -4914,7 +4916,8 @@ HumanMessage is immutable source identity/order/body; its legacy lifecycle,
 claim and response columns are not answer or scheduler truth. Only a
 contiguous FIFO prefix with exact Answered ResponseJobs and matching
 ConversationAttempts/terminal ConversationResponseEpisode Executions may be
-covered. The current raw message is pinned once only for its exact Running
+covered when they settle with `Completed(ConversationResponseProduced(messageId))`.
+The current raw message is pinned once only for its exact Running
 Job, active Attempt/Execution and current lease; non-Answered, malformed or
 other-episode Running gaps stop coverage. Work Session history/checkpoints are
 excluded. ProviderNative reuse requires an exact complete ResolvedModelBinding
@@ -5309,15 +5312,21 @@ typed input. `TypedInputItemRefs[]` and context refs identify actual emitted
 content. A compaction `retainedFrontier` covers only content included under the
 existing P3 projector. For a ConversationResponseEpisode, manifest source
 identity binds the RootWorkspaceId owner, exact inclusive
-`coveredThroughMessageId`, ordered immutable HumanMessage source identities and
-their paired authoritative Answered ResponseJob/Assistant response, exact
-Attempt/terminal Execution settlement identities, and the exact current
-Running Job/Attempt/Episode Execution/lease binding. HumanMessage legacy
-lifecycle, claim and response columns are not source or scheduler authority.
-A ProviderNative checkpoint also binds the complete ResolvedModelBinding
-fingerprint. Recovery proves these identities from canonical owner/response
-facts rather than Session text or ProviderTurn ID spelling. These are semantic
-bindings, not a choice of physical storage encoding.
+`coveredThroughMessageId`, and each ordered paired turn's exact immutable
+HumanMessage identity (`messageId`, `createdAt`, `bodyRef`, body digest) plus
+Answered Job identity (exact Answered Job revision, `responseExecutionId`,
+`attemptNo`, and bounded Job `responseBody` digest). It binds the unique
+ConversationAttempt identity/Completed settlement and the terminal
+ConversationResponseEpisode Execution, including its exact admission-time Job
+revision and `Completed(ConversationResponseProduced(messageId))` result. The
+current raw input binds the exact Running Job revision, messageId, attemptNo,
+executionId, Episode admission revision and current lease fence. HumanMessage
+legacy lifecycle, claim and response columns are not source or scheduler
+authority. A ProviderNative checkpoint also binds the complete
+ResolvedModelBinding fingerprint. Recovery proves these identities from
+canonical owner/response facts rather than Session text or ProviderTurn ID
+spelling. These are semantic bindings, not a choice of physical storage
+encoding.
 
 Prompt/Context change 是行为代码 change，必须可追踪和可回归。
 

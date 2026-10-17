@@ -65,3 +65,18 @@ they remain uncommitted audit WIP and must be removed before revised production
 implementation resumes. The uncommitted P48 migration/store/projection and
 process-test work is likewise paused and must be reviewed against the refreshed
 plan. No live or preserved database was read or changed by this landing.
+
+## Post-landing review corrections
+
+The first independent post-landing review of `cfe5f4bbcee7df3e6ad43abd298877021f404254`
+identified two blocking documentation omissions: P14 §7 still listed legacy
+HumanMessage claim/sweep qualification, and the DID Context Manifest did not
+enumerate every exact Job/Attempt/Episode binding. The landing was corrected
+within the accepted proposal scope: P14 §7 now qualifies immutable
+HumanMessage fields and P17 Job/Attempt/Execution authority; DID v1.51 now
+spells out the exact Answered Job revision, response execution/attempt/body
+digest, Attempt settlement, Episode admission revision/result, and current
+Running Job/Episode/lease-fence bindings. System Design and DID also make the
+exact `Completed(ConversationResponseProduced(messageId))` settlement part of
+the covered-response proof. These corrections do not authorize production
+implementation. Independent re-review is pending.

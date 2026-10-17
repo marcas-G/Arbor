@@ -245,11 +245,17 @@ every sampling boundary, independent of the history frontier.
 
 ## 7. Verification
 
-单测/注入测试：trigger FIFO；one-active-main 排队（有 active 时零
-admission）；claim CAS；crash@claim / crash@settle 恢复 exact-once；
-Coordination execution 无 workId 绑定；`HumanConversation` inbox 条目
-不产生 steer 事件。
+单测/注入测试：P17 ResponseJob FIFO admission；one-active-main 排队（有
+active main 时零新 admission）；HumanMessage immutable source fields 不被
+claim/settlement 写回；P17 Job/Attempt Answered and response-body CAS；
+Job/Attempt/Execution exact binding；AH19 Job-authoritative contiguous-prefix
+projection 与 Running-other gap 拒绝；legacy HumanMessage lifecycle/claim/
+response 值不改变 frontier；0048 迁移前后 HumanMessage 与旧 Session
+checkpoint 保持不变。Coordination execution 无 workId 绑定；
+`HumanConversation` inbox 条目不产生 steer 事件。
 
 DID v1.20 successor 另要求 P9 `07` AH13 与 DOGFOOD 等价 fixture：
-AgentLoopStep settlement proposal → Execution settlement → HumanMessage sweep 的
-每个 crash 窗口均收敛，且完整成功 ProviderTurn 零重复请求。
+AgentLoopStep settlement proposal → Execution settlement → ResponseJob
+Answered sweep 的每个 crash 窗口均收敛，且完整成功 ProviderTurn 零重复
+请求。HumanMessage immutable fields and legacy lifecycle columns remain
+unchanged through all sweep/restart windows.
