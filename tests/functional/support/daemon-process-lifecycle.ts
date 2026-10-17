@@ -198,13 +198,14 @@ type KillerState = "spawn" | "exit" | "error" | "timeout";
 const waitForKillerState = (
   killer: ChildProcess,
   timeoutMs: number,
+  timers: Pick<StopChildLifecycleTestSeam, "setTimeout" | "clearTimeout"> = {},
 ): Promise<KillerState> =>
   new Promise((resolveState) => {
     let settled = false;
     const finish = (state: KillerState) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      (timers.clearTimeout ?? clearTimeout)(timeout);
       killer.removeListener("spawn", onSpawn);
       killer.removeListener("exit", onExit);
       killer.removeListener("error", onError);
@@ -213,7 +214,10 @@ const waitForKillerState = (
     const onSpawn = () => finish("spawn");
     const onExit = () => finish("exit");
     const onError = () => finish("error");
-    const timeout = setTimeout(() => finish("timeout"), timeoutMs);
+    const timeout = (timers.setTimeout ?? setTimeout)(
+      () => finish("timeout"),
+      timeoutMs,
+    );
     killer.once("spawn", onSpawn);
     killer.once("exit", onExit);
     killer.once("error", onError);
@@ -224,20 +228,24 @@ const waitForKillerState = (
 const waitForKillerTermination = (
   killer: ChildProcess,
   timeoutMs: number,
+  timers: Pick<StopChildLifecycleTestSeam, "setTimeout" | "clearTimeout"> = {},
 ): Promise<"exit" | "error" | "timeout"> =>
   new Promise((resolveState) => {
     let settled = false;
     const finish = (state: "exit" | "error" | "timeout") => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      (timers.clearTimeout ?? clearTimeout)(timeout);
       killer.removeListener("exit", onExit);
       killer.removeListener("error", onError);
       resolveState(state);
     };
     const onExit = () => finish("exit");
     const onError = () => finish("error");
-    const timeout = setTimeout(() => finish("timeout"), timeoutMs);
+    const timeout = (timers.setTimeout ?? setTimeout)(
+      () => finish("timeout"),
+      timeoutMs,
+    );
     killer.once("exit", onExit);
     killer.once("error", onError);
     if (childHasExited(killer)) onExit();
@@ -299,9 +307,10 @@ const reapTaskkillHelper = async (
   killer: ChildProcess,
   timeoutMs: number,
   phase: string,
+  timers: Pick<StopChildLifecycleTestSeam, "setTimeout" | "clearTimeout"> = {},
 ): Promise<void> => {
   if (!childHasExited(killer) && killer.pid === undefined) {
-    const state = await waitForKillerState(killer, timeoutMs);
+    const state = await waitForKillerState(killer, timeoutMs, timers);
     if (state === "error" || state === "exit") {
       if (killer.pid === undefined || childHasExited(killer)) return;
     } else if (state === "timeout") {
@@ -316,7 +325,7 @@ const reapTaskkillHelper = async (
   if (childHasExited(killer)) return;
   killer.kill();
   if (childHasExited(killer)) return;
-  const state = await waitForKillerTermination(killer, timeoutMs);
+  const state = await waitForKillerTermination(killer, timeoutMs, timers);
   if (state === "exit" || (state === "error" && childHasExited(killer))) return;
   throw new Error(
     `taskkill helper could not be reaped within ${timeoutMs}ms; phase=${phase}; ${childExitDiagnostic(killer)}`,
@@ -396,6 +405,7 @@ const runTaskkillAttempt = async (
           killer,
           seam.taskkillCleanupTimeoutMs ?? WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS,
           `taskkill-${attempt}-target-first-helper-cleanup`,
+          seam,
         );
         helperCleanupProven = true;
         cleanupDetail = "helper reaped";
@@ -507,6 +517,7 @@ const killWindowsProcessTree = async (
           result.helper,
           cleanupTimeoutMs,
           `taskkill-${attemptNumber}-helper-cleanup`,
+          seam,
         );
         attempts.push(`taskkill-${attemptNumber}-helper-reaped`);
       } catch (error) {

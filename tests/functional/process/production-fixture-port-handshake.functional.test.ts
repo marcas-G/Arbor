@@ -910,16 +910,16 @@ describe("production fixture port-zero startup handshake", () => {
     const target = fakeLifecycleProcess(41_651);
     const primary = fakeLifecycleProcess(41_652);
     const retry = fakeLifecycleProcess(41_653);
+    const clock = fakeTimerClock();
     const primaryMutable = primary as unknown as {
       killed: boolean;
       kill: () => boolean;
     };
     primaryMutable.kill = () => {
       primaryMutable.killed = true;
+      clock.setTimeout(() => emitProcessExit(primary, 1), 1_250);
       return true;
     };
-    const clock = fakeTimerClock();
-    let descendantAlive = true;
     let spawnAttempts = 0;
     const seam: StopChildLifecycleTestSeam = {
       platform: "win32",
@@ -927,11 +927,9 @@ describe("production fixture port-zero startup handshake", () => {
       spawnTaskkill: (_pid, attempt) => {
         spawnAttempts += 1;
         if (attempt === 1) {
-          setTimeout(() => emitProcessExit(primary, 1), 1_250);
           return primary;
         }
         setImmediate(() => {
-          descendantAlive = false;
           emitProcessExit(retry, 0);
           setImmediate(() => emitProcessExit(target, 0));
         });
@@ -942,7 +940,31 @@ describe("production fixture port-zero startup handshake", () => {
     };
 
     const stopped = stopChildBounded(target, 5_000, seam);
+    let settled = false;
+    let failure: unknown;
+    void stopped.then(
+      () => {
+        settled = true;
+      },
+      (error: unknown) => {
+        settled = true;
+        failure = error;
+      },
+    );
     clock.advanceBy(1_000);
+    await new Promise<void>((resolveImmediate) =>
+      setImmediate(resolveImmediate),
+    );
+    expect(primaryMutable.killed).toBe(true);
+    expect(settled).toBe(false);
+
+    clock.advanceBy(1_000);
+    await new Promise<void>((resolveImmediate) =>
+      setImmediate(resolveImmediate),
+    );
+    expect(settled).toBe(false);
+
+    clock.advanceBy(250);
     await expect(stopped).resolves.toBeUndefined();
 
     expect(primaryMutable.killed).toBe(true);
@@ -950,7 +972,7 @@ describe("production fixture port-zero startup handshake", () => {
     expect(spawnAttempts).toBe(2);
     expect(childHasExited(retry)).toBe(true);
     expect(childHasExited(target)).toBe(true);
-    expect(descendantAlive).toBe(false);
+    expect(failure).toBeUndefined();
     expect(clock.pendingCount()).toBe(0);
     expect(target.listenerCount("exit")).toBe(0);
     expect(primary.listenerCount("exit")).toBe(0);
