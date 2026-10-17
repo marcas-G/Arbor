@@ -43,7 +43,7 @@ export interface StopChildLifecycleTestSeam {
 }
 
 const WINDOWS_TASKKILL_TIMEOUT_MS = 10_000;
-const WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS = 1_000;
+const WINDOWS_TASKKILL_CLEANUP_TIMEOUT_MS = WINDOWS_TASKKILL_TIMEOUT_MS;
 const unprovenWindowsTreeCleanup = new WeakMap<ChildProcess, string>();
 const cleanedUnixProcessGroups = new WeakSet<ChildProcess>();
 
