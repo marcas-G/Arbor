@@ -8,7 +8,7 @@ import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  CURRENT_SCHEMA44_SUFFIX_IDS,
+  CURRENT_SCHEMA45_SUFFIX_IDS,
   HISTORICAL_SCHEMA42_SUFFIX_IDS,
 } from "../../../tests/support/schema-prefix-contract.js";
 import {
@@ -236,9 +236,9 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
     const currentSuffixIds = CURRENT_MIGRATIONS.map(({ id }) => id).filter(
       (id) => id >= 40,
     );
-    expect(currentSuffixIds).toEqual(CURRENT_SCHEMA44_SUFFIX_IDS);
+    expect(currentSuffixIds).toEqual(CURRENT_SCHEMA45_SUFFIX_IDS);
     expect(
-      CURRENT_SCHEMA44_SUFFIX_IDS.slice(
+      CURRENT_SCHEMA45_SUFFIX_IDS.slice(
         0,
         HISTORICAL_SCHEMA42_SUFFIX_IDS.length,
       ),

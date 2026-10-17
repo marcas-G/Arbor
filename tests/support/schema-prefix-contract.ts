@@ -13,4 +13,4 @@ export const HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS = [
 ] as const;
 
 /** Current registered schema suffix after schema-42 activation. */
-export const CURRENT_SCHEMA44_SUFFIX_IDS = [40, 41, 42, 43, 44] as const;
+export const CURRENT_SCHEMA45_SUFFIX_IDS = [40, 41, 42, 43, 44, 45] as const;
