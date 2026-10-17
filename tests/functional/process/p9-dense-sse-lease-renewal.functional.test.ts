@@ -75,7 +75,7 @@ import {
   NoPendingExecutableApprovalStoreLive,
 } from "../../../packages/testkit/src/index.js";
 import {
-  cloneFunctionalSchema45Database,
+  cloneFunctionalSchema46Database,
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
 } from "../support/schema44-bootstrap.js";
@@ -137,7 +137,7 @@ const denseState: DenseState = {
 const databaseDirectory = createFunctionalFixtureDirectory();
 const databaseFile = (() => {
   try {
-    return cloneFunctionalSchema45Database(databaseDirectory).databaseFile;
+    return cloneFunctionalSchema46Database(databaseDirectory).databaseFile;
   } catch (error) {
     removeFunctionalFixtureDirectory(databaseDirectory);
     throw error;

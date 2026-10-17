@@ -5,6 +5,7 @@ import type {
   ExecutionId,
   ProjectId,
   Verification,
+  VerificationCriterionResult,
   VerificationId,
   VerificationMission,
   VerificationVerdict,
@@ -88,6 +89,7 @@ export interface VerificationRepositoryService {
     verdict: VerificationVerdict,
     summaryRef: string,
     conclusionReason: ConclusionReason | undefined,
+    criteriaResults?: ReadonlyArray<VerificationCriterionResult> | null,
   ) => Effect.Effect<
     Option.Option<Verification>,
     VerificationRepositoryError,

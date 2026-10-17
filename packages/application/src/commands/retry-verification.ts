@@ -1,4 +1,5 @@
 import type {
+  DomainEvent,
   ExecutionId,
   VerificationId,
   WorkId,
@@ -7,6 +8,7 @@ import type {
 import type {
   BlobStorePortService,
   ClockService,
+  DomainEventJournalService,
   ExecutionRepositoryService,
   ProjectRepositoryService,
   RetryVerificationOriginRepositoryService,
@@ -53,6 +55,11 @@ export interface RetryVerificationDependencies {
   readonly origins: Pick<
     RetryVerificationOriginRepositoryService,
     "insertOrigin"
+  > &
+    Partial<Pick<RetryVerificationOriginRepositoryService, "findOrigin">>;
+  readonly journal?: Pick<
+    DomainEventJournalService,
+    "lastSequence" | "readAfter"
   >;
   readonly clock: Pick<ClockService, "now">;
   readonly blobs: Pick<BlobStorePortService, "put" | "get">;
@@ -64,6 +71,26 @@ export interface RetryVerificationDependencies {
 const equalBytes = (left: Uint8Array, right: Uint8Array): boolean =>
   left.length === right.length &&
   left.every((byte, index) => byte === right[index]);
+
+const recordOf = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const hasExactKeys = (
+  value: unknown,
+  keys: ReadonlyArray<string>,
+): value is Record<string, unknown> =>
+  recordOf(value) &&
+  Object.keys(value).length === keys.length &&
+  keys.every((key) => Object.hasOwn(value, key));
+
+const replayBindingFailure = () =>
+  Effect.fail({
+    _tag: "PersistenceCorruption" as const,
+    repository: "CommandStore" as const,
+    operation: "retry-verification-replay-binding",
+    reason:
+      "RetryVerification receipt does not match canonical row/event truth",
+  });
 
 /** P8 human retry. Both P8 state transitions are invoked inside the one outer
  * CommandGateway transaction; the persisted successor verification is also
@@ -90,6 +117,186 @@ export const makeRetryVerificationHandler = (
       },
     },
     stopAdmission: { _tag: "NormalExecutionMutation" },
+    validateReceiptReplay: (receipt, payload, envelope, _context) =>
+      Effect.gen(function* () {
+        if (receipt.resolution._tag !== "Committed") return;
+        const result = receipt.resolution.result as RetryVerificationResult;
+        if (
+          receipt.schemaVersion !== "1" ||
+          result.state !== "OrphanedAndRetried" ||
+          result.workId !== payload.workId ||
+          result.orphanedVerificationId !== payload.verificationId ||
+          result.successorVerificationId !== payload.successorVerificationId ||
+          result.verifierExecutionId !== payload.verifierExecutionId ||
+          dependencies.origins.findOrigin === undefined ||
+          dependencies.journal === undefined
+        ) {
+          return yield* replayBindingFailure();
+        }
+        const origin = yield* dependencies.origins.findOrigin(
+          receipt.commandId,
+        );
+        if (
+          Option.isNone(origin) ||
+          origin.value.commandId !== receipt.commandId ||
+          origin.value.projectId !== receipt.projectId ||
+          String(origin.value.actor) !== String(envelope.actor) ||
+          origin.value.sourceVerificationId !== payload.verificationId ||
+          origin.value.sourceWorkId !== payload.workId ||
+          origin.value.successorVerificationId !==
+            payload.successorVerificationId ||
+          origin.value.successorVerifierExecutionId !==
+            payload.verifierExecutionId
+        ) {
+          return yield* replayBindingFailure();
+        }
+        const sourceOption = yield* dependencies.verifications.findById(
+          payload.verificationId,
+        );
+        const successorOption = yield* dependencies.verifications.findById(
+          payload.successorVerificationId,
+        );
+        if (Option.isNone(sourceOption) || Option.isNone(successorOption)) {
+          return yield* replayBindingFailure();
+        }
+        const source = sourceOption.value;
+        const successor = successorOption.value;
+        if (
+          source.workId !== payload.workId ||
+          source.targetWorkRevision !== payload.expectedWorkRevision ||
+          source.state.status !== "Concluded" ||
+          source.state.verdict !== "Unknown" ||
+          source.state.conclusionReason !== "Orphaned" ||
+          successor.workId !== source.workId ||
+          successor.targetWorkRevision !== source.targetWorkRevision ||
+          successor.ownerWorkspaceId !== source.ownerWorkspaceId ||
+          JSON.stringify(successor.missionSnapshot) !==
+            JSON.stringify(source.missionSnapshot) ||
+          successor.state.status !== "Open" ||
+          successor.snapshotStatus !== "Pending" ||
+          successor.criteriaResults !== null ||
+          !successor.verificationExecutionIds.includes(
+            payload.verifierExecutionId,
+          )
+        ) {
+          return yield* replayBindingFailure();
+        }
+
+        const journal = dependencies.journal;
+        const finalSequence = yield* journal.lastSequence(receipt.projectId);
+        const events: DomainEvent<unknown>[] = [];
+        let sequence = 0;
+        while (sequence < finalSequence) {
+          const page = yield* journal.readAfter(
+            receipt.projectId,
+            sequence,
+            1000,
+          );
+          if (page.length === 0) break;
+          events.push(...page);
+          const next = Number(page[page.length - 1]?.sequence ?? sequence);
+          if (next <= sequence) return yield* replayBindingFailure();
+          sequence = next;
+        }
+        const sourcedEvents = events.filter(
+          (event) => event.causedByCommandId === receipt.commandId,
+        );
+        const starts = sourcedEvents.filter(
+          (event) => event.eventType === "VerificationStarted",
+        );
+        const conclusions = sourcedEvents.filter(
+          (event) => event.eventType === "VerificationConcluded",
+        );
+        const start = starts[0];
+        const conclusion = conclusions[0];
+        const startPayload = start?.payload;
+        const conclusionPayload = conclusion?.payload;
+        if (
+          starts.length !== 1 ||
+          conclusions.length !== 1 ||
+          start === undefined ||
+          conclusion === undefined ||
+          start.eventVersion !== 1 ||
+          start.aggregateRef !== payload.successorVerificationId ||
+          start.projectId !== receipt.projectId ||
+          String(start.actor) !== String(origin.value.actor) ||
+          !hasExactKeys(startPayload, [
+            "verificationId",
+            "workId",
+            "targetWorkRevision",
+            "missionDigest",
+          ]) ||
+          startPayload.verificationId !== payload.successorVerificationId ||
+          startPayload.workId !== payload.workId ||
+          startPayload.targetWorkRevision !== payload.expectedWorkRevision ||
+          startPayload.missionDigest !==
+            `${source.missionSnapshot.goal} [criteria=${source.missionSnapshot.criteria.length} required=${source.missionSnapshot.criteria.filter((criterion) => criterion.required).length}]` ||
+          conclusion.aggregateRef !== payload.verificationId ||
+          conclusion.projectId !== receipt.projectId ||
+          String(conclusion.actor) !== String(origin.value.actor) ||
+          conclusionPayload === null ||
+          !recordOf(conclusionPayload)
+        ) {
+          return yield* replayBindingFailure();
+        }
+        if (source.snapshotStatus === "NotApplicableOrphaned") {
+          if (
+            conclusion.eventVersion !== 2 ||
+            !hasExactKeys(conclusionPayload, [
+              "verificationId",
+              "workId",
+              "targetWorkRevision",
+              "verdict",
+              "conclusionReason",
+              "evidenceRefs",
+              "summaryRef",
+              "missionSnapshot",
+              "criteriaResults",
+              "snapshotStatus",
+            ]) ||
+            conclusionPayload.verdict !== "Unknown" ||
+            conclusionPayload.conclusionReason !== "Orphaned" ||
+            !Array.isArray(conclusionPayload.evidenceRefs) ||
+            conclusionPayload.evidenceRefs.length !== 0 ||
+            conclusionPayload.summaryRef !== source.summaryRef ||
+            JSON.stringify(conclusionPayload.missionSnapshot) !==
+              JSON.stringify(source.missionSnapshot) ||
+            JSON.stringify(conclusionPayload.criteriaResults) !== "[]" ||
+            conclusionPayload.snapshotStatus !== "NotApplicableOrphaned"
+          ) {
+            return yield* replayBindingFailure();
+          }
+        } else if (source.snapshotStatus === "UnavailableLegacy") {
+          if (
+            conclusion.eventVersion !== 1 ||
+            !hasExactKeys(conclusionPayload, [
+              "verificationId",
+              "workId",
+              "targetWorkRevision",
+              "verdict",
+              "conclusionReason",
+              "evidenceRefs",
+              "summaryRef",
+            ]) ||
+            conclusionPayload.verdict !== "Unknown" ||
+            conclusionPayload.conclusionReason !== "Orphaned" ||
+            !Array.isArray(conclusionPayload.evidenceRefs) ||
+            conclusionPayload.evidenceRefs.length !== 0 ||
+            conclusionPayload.summaryRef !== source.summaryRef
+          ) {
+            return yield* replayBindingFailure();
+          }
+        } else {
+          return yield* replayBindingFailure();
+        }
+        if (
+          conclusionPayload.verificationId !== payload.verificationId ||
+          conclusionPayload.workId !== payload.workId ||
+          conclusionPayload.targetWorkRevision !== payload.expectedWorkRevision
+        ) {
+          return yield* replayBindingFailure();
+        }
+      }),
     execute: (envelope, context) =>
       Effect.gen(function* () {
         const payload = envelope.payload;

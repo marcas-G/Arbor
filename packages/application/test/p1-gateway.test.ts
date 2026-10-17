@@ -12,6 +12,7 @@ import {
   Principal,
   ProjectId,
   parse,
+  VerificationId,
   WorkspaceId,
 } from "@arbor/domain";
 import {
@@ -42,6 +43,7 @@ import {
   FenceStopCheck,
   FenceStopCheckInertLive,
   type FenceStopOutcome,
+  FINGERPRINT_ALGORITHM_VERSION,
   type GatewayEnvelope,
   makeUpdateResourceBoundaryHandler,
   projectAdmissionOf,
@@ -516,6 +518,82 @@ describe("command gateway", () => {
     expect(first.resolution._tag).toBe("Committed");
     expect(second.resolution._tag).toBe("Committed");
     expect(executions).toBe(1);
+  });
+
+  it("decodes a prior ConcludeVerification v1 receipt and validates it before replay", async () => {
+    let executeCalls = 0;
+    let replayChecks = 0;
+    const payload = {
+      verificationId: parse(VerificationId)(
+        "ver_018f2b3c-4d5e-7abc-8def-0123456789ab",
+      ),
+      verdict: "Pass",
+      criteriaResults: [],
+      summaryRef: "blob:summary",
+    };
+    const oldFingerprint = semanticRequestFingerprint({
+      commandType: "ConcludeVerification",
+      projectId,
+      actor,
+      schemaVersion: "1",
+      payload,
+    });
+    const replayHandler: CommandHandler<unknown, unknown> = {
+      commandType: "ConcludeVerification",
+      schemaVersion: "2",
+      priorReceiptSchemaVersions: ["1"],
+      authority: {
+        tag: "VerifierExecutionAuthority",
+        targetMatches: () => true,
+      },
+      stopAdmission: { _tag: "Unclassified" },
+      validateReceiptReplay: () =>
+        Effect.sync(() => {
+          replayChecks += 1;
+        }),
+      execute: () => {
+        executeCalls += 1;
+        return Effect.die(new Error("stored receipt should avoid execution"));
+      },
+    };
+    const { app, state } = buildApp([replayHandler]);
+    state.rows.set(commandId, {
+      commandId,
+      projectId,
+      semanticRequestFingerprint: oldFingerprint,
+      schemaVersion: "1",
+      fingerprintAlgorithmVersion: FINGERPRINT_ALGORITHM_VERSION,
+      resolution: "Committed",
+      resultJson: JSON.stringify({
+        verificationId: payload.verificationId,
+        state: "Concluded",
+        verdict: "Pass",
+        summaryRef: payload.summaryRef,
+        wakeSignals: [],
+        channel1Release: {
+          workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789ab",
+          targetWorkRevision: 0,
+        },
+      }),
+      terminalErrorJson: null,
+      createdAt: "t",
+      settledAt: "t",
+    });
+    const receipt = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway.execute(
+          envelope(payload, "ConcludeVerification"),
+          externalContext,
+          {} as never,
+        );
+      }),
+      app,
+    );
+    expect(receipt.schemaVersion).toBe("1");
+    expect(receipt.resolution._tag).toBe("Committed");
+    expect(replayChecks).toBe(1);
+    expect(executeCalls).toBe(0);
   });
 
   it("rejects an idempotency conflict without overwriting the row", async () => {

@@ -67,6 +67,8 @@ import {
 import {
   AcceptanceRepository,
   type AcceptanceRepositoryService,
+  AgentLoopStepStore,
+  type AgentLoopStepStoreService,
   type AssignWorkApprovalCommandEvidence,
   type AssignWorkBindingFailureCode,
   type AssignWorkCommandEvidence,
@@ -309,6 +311,10 @@ export interface VerificationActionDependencies {
   >;
   readonly sessions: Pick<SessionRepositoryService, "listEntries">;
   readonly toolInvocations: Pick<ToolInvocationStoreService, "findById">;
+  readonly loopSteps?: Pick<
+    AgentLoopStepStoreService,
+    "findCurrent" | "listActions"
+  >;
 }
 
 const actionError = (
@@ -3564,7 +3570,11 @@ const toolResultMatchesSettlement = (
 };
 
 const recordVerificationEvidenceHandler = (
-  dependencies: VerificationActionDependencies,
+  dependencies: VerificationActionDependencies & {
+    readonly loopSteps: NonNullable<
+      VerificationActionDependencies["loopSteps"]
+    >;
+  },
 ): AgentActionHandler => ({
   action: "RecordVerificationEvidence",
   handle: ({ action, invocation, execution, context }) =>
@@ -3666,6 +3676,41 @@ const recordVerificationEvidenceHandler = (
         );
       }
       const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const currentStep = yield* dependencies.tx.transact(
+        dependencies.loopSteps.findCurrent(execution.executionId),
+      );
+      if (
+        Option.isNone(currentStep) ||
+        currentStep.value.providerTurnId !== invocation.providerTurnId ||
+        currentStep.value.state !== "ActionsInProgress"
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            "persisted AgentLoopStep does not bind this ProviderTurn",
+          ),
+        );
+      }
+      const actionIntents = yield* dependencies.tx.transact(
+        dependencies.loopSteps.listActions(currentStep.value.identity),
+      );
+      const actionIntent = actionIntents.find(
+        (candidate) => candidate.actionIndex === invocation.outputPosition,
+      );
+      if (
+        actionIntent === undefined ||
+        actionIntent.state !== "Pending" ||
+        actionIntent.routeKind !== "Control" ||
+        actionIntent.callRef !== invocation.callRef ||
+        actionIntent.actionKind !== invocation.toolName ||
+        actionIntent.inputHash !== sha256Hex(invocation.argumentsJson) ||
+        !Number.isFinite(Date.parse(actionIntent.updatedAt)) ||
+        new Date(actionIntent.updatedAt).toISOString() !==
+          actionIntent.updatedAt
+      ) {
+        return yield* Effect.fail(
+          actionError("durable P9 ActionIntent timestamp cannot be proven"),
+        );
+      }
       const evidenceId = parse(EvidenceId)(
         `evd_${newUuid7("verification-evidence", occurrence)}`,
       );
@@ -3678,7 +3723,7 @@ const recordVerificationEvidenceHandler = (
           toolInvocationId,
           observationRef: result.observationRef,
           callRef: result.callRef,
-          recordedAt: yield* dependencies.clock.now(),
+          recordedAt: actionIntent.updatedAt,
         },
       };
       const commandId = parse(CommandId)(
@@ -3737,7 +3782,7 @@ const recordVerificationEvidenceHandler = (
 });
 
 const concludeVerificationHandler = (
-  dependencies: VerificationActionDependencies,
+  dependencies: Omit<VerificationActionDependencies, "loopSteps">,
 ): AgentActionHandler => ({
   action: "ConcludeVerification",
   handle: ({ action, invocation, execution, context }) =>
@@ -3803,7 +3848,7 @@ const concludeVerificationHandler = (
             commandType: "ConcludeVerification",
             projectId: execution.projectId,
             actor,
-            schemaVersion: "1",
+            schemaVersion: "2",
             payload,
           }),
           projectId: execution.projectId,
@@ -3909,6 +3954,7 @@ export const makeSingleWorkspaceControlActionHandlers = (
     verifications,
     sessions,
     toolInvocations,
+    loopSteps,
   } = dependencies;
   if (placement !== undefined) {
     handlers.push(
@@ -3983,11 +4029,19 @@ export const makeSingleWorkspaceControlActionHandlers = (
       verifications,
       sessions,
       toolInvocations,
+      ...(loopSteps === undefined ? {} : { loopSteps }),
     };
-    handlers.push(
-      recordVerificationEvidenceHandler(verificationDependencies),
-      concludeVerificationHandler(verificationDependencies),
-    );
+    if (loopSteps !== undefined)
+      handlers.push(
+        recordVerificationEvidenceHandler(
+          verificationDependencies as VerificationActionDependencies & {
+            readonly loopSteps: NonNullable<
+              VerificationActionDependencies["loopSteps"]
+            >;
+          },
+        ),
+      );
+    handlers.push(concludeVerificationHandler(verificationDependencies));
   }
   return handlers;
 };
@@ -4013,6 +4067,7 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
   | FormationProposalStore
   | InboxProjectionStore
   | MessageStore
+  | AgentLoopStepStore
   | TransactionPort
   | WorkRepository
   | LocalPlanStore
@@ -4054,6 +4109,7 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
       const inbox = yield* InboxProjectionStore;
       const verifications = yield* VerificationRepository;
       const toolInvocations = yield* ToolInvocationStore;
+      const loopSteps = yield* AgentLoopStepStore;
       const assignWorkBindings = yield* Effect.serviceOption(
         AssignWorkTargetBindingRepository,
       );
@@ -4093,6 +4149,7 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
           verifications,
           sessions: yield* SessionRepository,
           toolInvocations,
+          loopSteps,
           ...(Option.isSome(assignWorkBindings)
             ? { bindings: assignWorkBindings.value }
             : {}),

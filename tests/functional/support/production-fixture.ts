@@ -12,7 +12,7 @@ import {
   waitForDaemonListening as waitForNonceBoundPort,
 } from "./daemon-process-lifecycle.js";
 import {
-  cloneFunctionalSchema45Database,
+  cloneFunctionalSchema46Database,
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
 } from "./schema44-bootstrap.js";
@@ -436,7 +436,7 @@ export const startProductionFixture = async (input: {
     workspaceDirectory = join(directory, "workspace");
     mkdirSync(workspaceDirectory, { recursive: true });
     writeFileSync(join(workspaceDirectory, "proof.txt"), "FUNCTIONAL_VERIFIED");
-    const clones = cloneFunctionalSchema45Database(directory);
+    const clones = cloneFunctionalSchema46Database(directory);
     databaseFile = clones.databaseFile;
     await input.setupProbe?.({ stage: "after-clone", directory });
     provider = await startProvider(

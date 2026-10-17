@@ -43,6 +43,7 @@ import {
   DeliverableRepository,
   DependencyRepository,
   type DependencyRepositoryService,
+  DomainEventJournal,
   EnvironmentRevisionStore,
   EvidenceRepository,
   ExecutableApprovalStore,
@@ -179,6 +180,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         yield* Effect.serviceOption(ControlApprovalStore);
       const dependencyStore = yield* DependencyRepository;
       const deliverables = yield* DeliverableRepository;
+      const journal = yield* Effect.serviceOption(DomainEventJournal);
       const environmentRevisions = yield* EnvironmentRevisionStore;
       const evidence = yield* EvidenceRepository;
       const sql = yield* SqlClient;
@@ -221,7 +223,12 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         environmentRevisions,
         deliverables: verifierDeliverables,
       };
-      const verifierConclude = { verifications, evidence, works };
+      const verifierConclude = {
+        verifications,
+        evidence,
+        works,
+        ...(Option.isSome(journal) ? { journal: journal.value } : {}),
+      };
       const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
         ...makeP1CommandHandlers({
           ...(Option.isSome(clock) ? { clock: clock.value } : {}),
@@ -384,6 +391,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
           projects,
           workspaces,
           origins: retryOrigins,
+          ...(Option.isSome(journal) ? { journal: journal.value } : {}),
           clock: Option.getOrElse(clock, () => ({
             now: () => Effect.succeed(new Date().toISOString()),
           })),

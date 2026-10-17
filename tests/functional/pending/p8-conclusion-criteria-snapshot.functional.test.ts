@@ -1,13 +1,7 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  P32_MIGRATIONS,
-  runMigrations,
-} from "../../../adapters/persistence-sqlite/src/index.js";
 import { makeSingleWorkspaceControlActionHandlers } from "../../../apps/single-workspace/src/control-actions.js";
 import { buildSingleWorkspaceLayer } from "../../../apps/single-workspace/src/index.js";
 import {
@@ -55,6 +49,7 @@ import {
   p7SeedWork,
   p7TestPrincipal,
 } from "../../support/p7-app.js";
+import { createSchema46TestDatabase } from "../../support/schema44-database.js";
 
 const sourceWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789d2" as never;
 const verifierExecutionId = parse(ExecutionId)(
@@ -89,11 +84,9 @@ const criteriaResults = [
   },
 ];
 
-const directories: string[] = [];
+const cleanups: (() => void)[] = [];
 afterEach(() => {
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
 const concludeDependencies = (clock: { now: () => Effect.Effect<string> }) =>
@@ -126,10 +119,11 @@ const concludeDependencies = (clock: { now: () => Effect.Effect<string> }) =>
 
 describe("pending P8 durable ConcludeVerification criterion snapshot", () => {
   it("persists every criterion result in the concluded Verification snapshot", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "p8-criteria-snapshot-"));
-    directories.push(directory);
+    const database = await createSchema46TestDatabase();
+    cleanups.push(database.cleanup);
+    const directory = database.directory;
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(directory, "arbor.db"),
+      databaseFile: database.databaseFilename,
       blobRoot: join(directory, "blobs"),
     });
     const clock = {
@@ -137,7 +131,6 @@ describe("pending P8 durable ConcludeVerification criterion snapshot", () => {
     };
 
     const program = Effect.gen(function* () {
-      yield* runMigrations(P32_MIGRATIONS);
       yield* p7SeedProject;
       const workReceipt = yield* p7SeedWork(
         sourceWorkId,
@@ -258,8 +251,11 @@ describe("pending P8 durable ConcludeVerification criterion snapshot", () => {
       }>("SELECT resolution, result_json FROM commands WHERE command_id = ?", [
         expectedCommandId,
       ]);
-      const eventRows = yield* sql.unsafe<{ payload_json: string }>(
-        "SELECT payload_json FROM domain_events WHERE event_type = 'VerificationConcluded' AND aggregate_ref = ?",
+      const eventRows = yield* sql.unsafe<{
+        payload_json: string;
+        event_version: number;
+      }>(
+        "SELECT payload_json, event_version FROM domain_events WHERE event_type = 'VerificationConcluded' AND aggregate_ref = ?",
         [verificationId],
       );
       const evidenceRows = yield* tx.transact(
@@ -283,6 +279,7 @@ describe("pending P8 durable ConcludeVerification criterion snapshot", () => {
         commandResolution: commandRows[0]?.resolution,
         commandResult,
         eventPayload,
+        eventVersion: eventRows[0]?.event_version,
         evidenceCriterionIds: evidenceRows.map((row) => row.criterionId),
       };
     });
@@ -299,19 +296,37 @@ describe("pending P8 durable ConcludeVerification criterion snapshot", () => {
     expect(result.verification).toMatchObject({
       summaryRef: expect.any(String),
       state: { status: "Concluded", verdict: "Fail" },
+      missionSnapshot: {
+        goal: "verify two independent criteria",
+        criteria: criteriaResults.map(
+          ({ criterionId, requirement, required }) => ({
+            criterionId,
+            requirement,
+            required,
+          }),
+        ),
+        riskRequirements: [],
+      },
+      criteriaResults,
+      snapshotStatus: "Available",
     });
     expect(result.evidenceCriterionIds).toEqual(["criterion-a", "criterion-b"]);
     expect(result.eventPayload).toMatchObject({
       verdict: "Fail",
       evidenceRefs: evidenceIds,
       summaryRef: result.verification?.summaryRef,
+      missionSnapshot: result.verification?.missionSnapshot,
+      criteriaResults,
+      snapshotStatus: "Available",
     });
+    expect(result.eventVersion).toBe(2);
     expect(result.commandResult).toMatchObject({
       verdict: "Fail",
       summaryRef: result.verification?.summaryRef,
+      missionSnapshot: result.verification?.missionSnapshot,
+      criteriaResults,
+      snapshotStatus: "Available",
     });
-    expect(result.eventPayload).not.toHaveProperty("criteriaResults");
-    expect(result.commandResult).not.toHaveProperty("criteriaResults");
 
     // P8 `04` §2 freezes this criterion-level conclusion snapshot as durable
     // Verification truth. Current row/store has only mission + aggregate verdict.

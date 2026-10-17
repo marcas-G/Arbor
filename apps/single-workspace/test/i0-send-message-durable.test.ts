@@ -24,7 +24,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema45TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema46TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { admitExecution, buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");

@@ -454,6 +454,12 @@ describe("p8-conclude", () => {
             state: "Concluded",
             verdict: "Pass",
             summaryRef: "summary:1",
+            missionSnapshot: mission,
+            criteriaResults: [
+              criterionResult("c1", "Pass", [EV(1)]),
+              criterionResult("c2", "Pass", [EV(2)]),
+            ],
+            snapshotStatus: "Available",
             conclusionReason: undefined,
             wakeSignals: [],
             channel1Release: { workId: WORK_1, targetWorkRevision: 0 },
@@ -462,7 +468,7 @@ describe("p8-conclude", () => {
           // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("VerificationConcluded");
-          expect(event.eventVersion).toBe(1);
+          expect(event.eventVersion).toBe(2);
           expect(event.aggregateRef).toBe(VER(1));
           expect(event.projectId).toBe(p7Project);
           expect(event.causedByCommandId).toBe(CMD("0123456789d1"));
@@ -474,6 +480,12 @@ describe("p8-conclude", () => {
             conclusionReason: "",
             evidenceRefs: [EV(1), EV(2)],
             summaryRef: "summary:1",
+            missionSnapshot: mission,
+            criteriaResults: [
+              criterionResult("c1", "Pass", [EV(1)]),
+              criterionResult("c2", "Pass", [EV(2)]),
+            ],
+            snapshotStatus: "Available",
           });
         }
         const stored = yield* storedVerification(VER(1));
@@ -708,6 +720,9 @@ describe("p8-conclude", () => {
             conclusionReason: "Orphaned",
             evidenceRefs: [],
             summaryRef: "summary:1",
+            missionSnapshot: mission,
+            criteriaResults: [],
+            snapshotStatus: "NotApplicableOrphaned",
           });
         }
         const stored = yield* storedVerification(VER(1));
@@ -852,7 +867,7 @@ describe("p8-conclude", () => {
     };
 
     expect(handler.commandType).toBe("ConcludeVerification");
-    expect(handler.schemaVersion).toBe("1");
+    expect(handler.schemaVersion).toBe("2");
     expect(handler.authority.tag).toBe("VerifierExecutionAuthority");
     expect(handler.stopAdmission).toEqual({ _tag: "NormalExecutionMutation" });
 

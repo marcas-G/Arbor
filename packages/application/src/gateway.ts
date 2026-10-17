@@ -159,17 +159,41 @@ export const makeCommandGatewayLive = (
             const existing = yield* store.findResolution(envelope.commandId);
             if (Option.isSome(existing)) {
               const stored = existing.value;
+              const priorVersionAllowed =
+                stored.schemaVersion !== schemaVersion &&
+                (handler.priorReceiptSchemaVersions ?? []).includes(
+                  stored.schemaVersion,
+                );
+              const storedFingerprint = priorVersionAllowed
+                ? semanticRequestFingerprint({
+                    commandType: envelope.commandType,
+                    projectId: envelope.projectId,
+                    actor: envelope.actor,
+                    schemaVersion: stored.schemaVersion,
+                    payload: envelope.payload,
+                  })
+                : fingerprint;
               if (
-                stored.semanticRequestFingerprint === fingerprint &&
-                stored.schemaVersion === schemaVersion &&
+                stored.semanticRequestFingerprint === storedFingerprint &&
+                (stored.schemaVersion === schemaVersion ||
+                  priorVersionAllowed) &&
                 stored.fingerprintAlgorithmVersion ===
                   FINGERPRINT_ALGORITHM_VERSION
               ) {
-                return yield* decodeRegisteredCommandReceipt<R>(
+                const receipt = yield* decodeRegisteredCommandReceipt<R>(
                   stored,
                   envelope.commandType,
-                  schemaVersion,
+                  stored.schemaVersion,
                 );
+                if (handler.validateReceiptReplay !== undefined) {
+                  yield* handler.validateReceiptReplay(
+                    receipt,
+                    envelope.payload,
+                    envelope,
+                    context,
+                  );
+                }
+                return receipt;
               }
               return {
                 commandId: stored.commandId,

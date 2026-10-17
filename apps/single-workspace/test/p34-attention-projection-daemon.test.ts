@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ProjectId, parse } from "../../../packages/domain/src/index.js";
-import { createSchema45TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema46TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,

@@ -10,6 +10,8 @@ import { cwd } from "node:process";
 import { DatabaseSync } from "node:sqlite";
 import {
   P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
+  P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
+  preflightVerificationEvidenceSnapshot,
   splitStatements,
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import { backfillRetryVerificationOrigins } from "../../../apps/single-workspace/src/retry-verification-origin-backfill.js";
@@ -124,7 +126,7 @@ const readManifest = (): FunctionalSchema44Manifest => {
 };
 
 /** Copy both closed template databases into an ACL-protected case directory. */
-export const cloneFunctionalSchema45Database = (
+export const cloneFunctionalSchema46Database = (
   directory: string,
 ): { readonly databaseFile: string; readonly reportFile: string } => {
   const manifest = readManifest();
@@ -171,8 +173,15 @@ export const cloneFunctionalSchema45Database = (
     }
     backfillRetryVerificationOrigins(database);
     database.exec("PRAGMA user_version = 45");
+    preflightVerificationEvidenceSnapshot(database);
+    for (const statement of splitStatements(
+      P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION.sql,
+    )) {
+      database.exec(statement);
+    }
+    database.exec("PRAGMA user_version = 46");
     if (database.prepare("PRAGMA foreign_key_check").all().length > 0) {
-      throw new Error("Functional 44→45 fixture failed foreign_key_check");
+      throw new Error("Functional 44→46 fixture failed foreign_key_check");
     }
     database.exec("COMMIT");
   } catch (cause) {
@@ -188,8 +197,9 @@ export const cloneFunctionalSchema45Database = (
   return { databaseFile, reportFile };
 };
 
-/** Historical name retained for fixture callers; the clone is schema 45. */
-export const cloneFunctionalSchema44Database = cloneFunctionalSchema45Database;
+/** Historical names retained for callers; current fixtures are schema 46. */
+export const cloneFunctionalSchema45Database = cloneFunctionalSchema46Database;
+export const cloneFunctionalSchema44Database = cloneFunctionalSchema46Database;
 
 export const createFunctionalFixtureDirectory = (): string => {
   const manifest = readManifest();

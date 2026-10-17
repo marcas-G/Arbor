@@ -36,7 +36,8 @@ export type SchemaUpgradeMaintenancePhase =
   | "manifest-validation"
   | "p39-reservation-and-gate"
   | "p40-p45-continuation"
-  | "version45-closed-readonly-no-op";
+  | "version45-closed-readonly-no-op"
+  | "version46-closed-readonly-no-op";
 
 export interface SchemaUpgradeFileIdentity {
   readonly device: string;
@@ -958,8 +959,9 @@ export const descriptorHashesThrough = (
     43: "8a125c31202b6a3fda240095d5b85547c8f16347ea9fd759a943971547119cf5",
     44: "2378c0170aae7beb0592c69bfffef9e611da6d5323caaa0de5b7d5360b7ff33f",
     45: "c7c934d2929fda3ac9928d0ce4da25c9b4b6dc7b532581f5a18c144a6ce1834f",
+    46: "2b484f4d8c534644b4623702a4f383a410566386f6b8a8a401fd6fcd728c7828",
   };
-  for (const id of [37, 38, 39, 40, 41, 42, 43, 44, 45]) {
+  for (const id of [37, 38, 39, 40, 41, 42, 43, 44, 45, 46]) {
     if (id <= version) {
       const expected = pinned[id] ?? refuse(`descriptor ${id} is not pinned`);
       if (

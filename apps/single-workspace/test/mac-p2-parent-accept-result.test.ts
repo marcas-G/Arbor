@@ -27,7 +27,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema45TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema46TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { acceptResultHandler } from "../src/control-actions.js";
 import {
   buildSingleWorkspaceLayer,
@@ -118,7 +118,7 @@ describe("MAC-P2 Parent Agent acceptance", () => {
                 [workId, projectId, childWorkspaceId],
               );
               yield* sql.unsafe(
-                "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, created_at, updated_at, summary_ref) VALUES ('ver_018f2b3c-4d5e-7abc-8def-012345678a12',?,?,0,?,'{}','[]','[]',NULL,NULL,'[]','Concluded','Pass',NULL,'t','t','blob-pass-summary')",
+                "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, created_at, updated_at, summary_ref, criteria_results, snapshot_status) VALUES ('ver_018f2b3c-4d5e-7abc-8def-012345678a12',?,?,0,?,'{\"goal\":\"legacy\",\"criteria\":[{\"criterionId\":\"c1\",\"requirement\":\"r1\",\"required\":true}],\"riskRequirements\":[]}','[]','[]',NULL,NULL,'[]','Concluded','Pass',NULL,'t','t','blob-pass-summary',NULL,'UnavailableLegacy')",
                 [projectId, workId, childWorkspaceId],
               );
             }),

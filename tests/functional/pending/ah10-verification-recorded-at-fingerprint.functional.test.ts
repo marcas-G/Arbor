@@ -1,13 +1,7 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  P32_MIGRATIONS,
-  runMigrations,
-} from "../../../adapters/persistence-sqlite/src/index.js";
 import { makeSingleWorkspaceControlActionHandlers } from "../../../apps/single-workspace/src/control-actions.js";
 import { buildSingleWorkspaceLayer } from "../../../apps/single-workspace/src/index.js";
 import {
@@ -27,6 +21,7 @@ import {
 } from "../../../packages/domain/src/index.js";
 import {
   AcceptanceRepository,
+  AgentLoopStepStore,
   BlobStorePort,
   CommandStore,
   DecisionRequestStore,
@@ -42,7 +37,6 @@ import {
   LocalPlanStore,
   MessageStore,
   SessionRepository,
-  ToolInvocationStore,
   TransactionPort,
   VerificationRepository,
   WorkRepository,
@@ -58,6 +52,7 @@ import {
   p7TestActor,
   p7TestPrincipal,
 } from "../../support/p7-app.js";
+import { createSchema46TestDatabase } from "../../support/schema44-database.js";
 
 const sourceWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789d1" as never;
 const verifierExecutionId = parse(ExecutionId)(
@@ -71,7 +66,7 @@ const toolInvocationId = parse(ToolInvocationId)(
 );
 const evidenceSourceCallRef = "tool-call-recorded-at";
 const providerTurnId = "ptn_018f2b3c-4d5e-7abc-8def-0123456789d1";
-const outputPosition = 3;
+const outputPosition = 0;
 const occurrence = `${providerTurnId}:${outputPosition}`;
 const expectedEvidenceId = parse(EvidenceId)(
   `evd_${newUuid7("verification-evidence", occurrence)}`,
@@ -80,11 +75,9 @@ const expectedCommandId = parse(CommandId)(
   `cmd_${newUuid7("record-verification-evidence", occurrence)}`,
 );
 
-const directories: string[] = [];
+const cleanups: (() => void)[] = [];
 afterEach(() => {
-  for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
 const recordDependencies = (clock: { now: () => Effect.Effect<string> }) =>
@@ -110,18 +103,38 @@ const recordDependencies = (clock: { now: () => Effect.Effect<string> }) =>
       decisions: yield* DecisionRequestStore,
       verifications: yield* VerificationRepository,
       sessions: yield* SessionRepository,
-      toolInvocations: yield* ToolInvocationStore,
+      loopSteps: yield* AgentLoopStepStore,
+      toolInvocations: {
+        findById: () =>
+          Effect.succeed(
+            Option.some({
+              invocationId: toolInvocationId,
+              executionId: verifierExecutionId,
+              workspaceId: p7RootWorkspace,
+              toolName: "read",
+              toolVersion: "1",
+              sideEffectSemantics: "ReadOnly",
+              argumentsJson: "{}",
+              resolvedRegions: [],
+              approvalId: null,
+              intentAt: "2026-10-07T00:00:01.000Z",
+              effectAdmissionState: "MayHaveStarted",
+              settledAt: "2026-10-07T00:00:02.000Z",
+              settlement: { _tag: "Success" },
+              resultRef: null,
+            }),
+          ),
+      } as never,
     };
     return makeSingleWorkspaceControlActionHandlers(dependencies);
   });
 
 describe("pending AH10 RecordVerificationEvidence recordedAt retry fingerprint", () => {
-  it("replays one CommandId for the same action without changing its committed fingerprint", async () => {
-    const directory = mkdtempSync(
-      join(tmpdir(), "ah10-record-evidence-fingerprint-"),
-    );
-    directories.push(directory);
-    const databaseFile = join(directory, "arbor.db");
+  it("keeps the first durable ActionIntent time across owner-generation takeover", async () => {
+    const database = await createSchema46TestDatabase();
+    cleanups.push(database.cleanup);
+    const directory = database.directory;
+    const databaseFile = database.databaseFilename;
     const app = buildSingleWorkspaceLayer({
       databaseFile,
       blobRoot: join(directory, "blobs"),
@@ -138,7 +151,6 @@ describe("pending AH10 RecordVerificationEvidence recordedAt retry fingerprint",
     };
 
     const program = Effect.gen(function* () {
-      yield* runMigrations(P32_MIGRATIONS);
       yield* p7SeedProject;
       const workReceipt = yield* p7SeedWork(
         sourceWorkId,
@@ -171,6 +183,66 @@ describe("pending AH10 RecordVerificationEvidence recordedAt retry fingerprint",
           "incarnation:record-at",
         ),
       );
+      const actionIntentAt = "2026-10-07T00:00:01.500Z";
+      const loopSteps = yield* AgentLoopStepStore;
+      const actionFence = {
+        executionId: verifierExecutionId,
+        workerId: lease.workerId,
+        workerIncarnationId: lease.workerIncarnationId,
+        fencingGeneration: lease.generation,
+      };
+      const actionIdentity = {
+        executionId: verifierExecutionId,
+        logicalStepNo: 0,
+        repairAttempt: 0,
+      };
+      const preparedStep = yield* tx.transact(
+        loopSteps.createPrepared(
+          {
+            identity: actionIdentity,
+            providerTurnId: providerTurnId as never,
+            state: "Prepared",
+            nextActionIndex: 0,
+            revision: 0,
+            updatedAt: actionIntentAt,
+          },
+          actionFence,
+        ),
+      );
+      yield* tx.transact(
+        loopSteps.transition(
+          {
+            identity: actionIdentity,
+            expectedRevision: preparedStep.revision,
+            expectedState: "Prepared",
+            next: {
+              ...preparedStep,
+              state: "ActionsInProgress",
+              revision: preparedStep.revision + 1,
+              updatedAt: "2026-10-07T00:00:01.250Z",
+            },
+          },
+          actionFence,
+        ),
+      );
+      yield* tx.transact(
+        loopSteps.createAction(
+          {
+            identity: actionIdentity,
+            actionIndex: outputPosition,
+            logicalActionId: "lac_record_evidence",
+            callRef: "control-record-evidence",
+            routeKind: "Control",
+            actionKind: "arbor_record_verification_evidence",
+            inputHash:
+              "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            state: "Pending",
+            revision: 0,
+            updatedAt: actionIntentAt,
+          },
+          actionFence,
+        ),
+      );
 
       const verifications = yield* VerificationRepository;
       const verification = startVerification({
@@ -197,45 +269,6 @@ describe("pending AH10 RecordVerificationEvidence recordedAt retry fingerprint",
         verifications.bindExecution(verificationId, verifierExecutionId, "t"),
       );
 
-      const invocationStore = yield* ToolInvocationStore;
-      yield* tx.transact(
-        invocationStore.recordIntent(
-          {
-            invocationId: toolInvocationId,
-            executionId: verifierExecutionId,
-            workspaceId: p7RootWorkspace,
-            toolName: "read",
-            toolVersion: "1",
-            sideEffectSemantics: "ReadOnly",
-            argumentsJson: "{}",
-            resolvedRegions: [],
-            approvalId: null,
-            intentAt: "2026-10-07T00:00:01.000Z",
-          },
-          {
-            executionId: verifierExecutionId,
-            workerId: "worker:verifier",
-            workerIncarnationId: "incarnation:record-at",
-            fencingGeneration: lease.generation,
-          },
-          "2026-10-07T00:00:01.000Z",
-        ),
-      );
-      yield* tx.transact(
-        invocationStore.settle(
-          toolInvocationId,
-          { _tag: "Success" },
-          null,
-          "2026-10-07T00:00:02.000Z",
-          {
-            executionId: verifierExecutionId,
-            workerId: "worker:verifier",
-            workerIncarnationId: "incarnation:record-at",
-            fencingGeneration: lease.generation,
-          },
-          "2026-10-07T00:00:02.000Z",
-        ),
-      );
       const sessions = yield* SessionRepository;
       yield* tx.transact(
         sessions.appendEntry(p7RootSession, {
@@ -278,9 +311,34 @@ describe("pending AH10 RecordVerificationEvidence recordedAt retry fingerprint",
           workerId: lease.workerId,
           workerIncarnationId: lease.workerIncarnationId,
         },
-      } as never;
-      const first = yield* Effect.exit(handler.handle(input));
-      const second = yield* Effect.exit(handler.handle(input));
+      };
+      const first = yield* Effect.exit(handler.handle(input as never));
+      yield* tx.transact(
+        leaseService.release(
+          verifierExecutionId,
+          lease.workerId,
+          lease.workerIncarnationId,
+          lease.generation,
+        ),
+      );
+      const takeoverLease = yield* tx.transact(
+        leaseService.acquire(
+          verifierExecutionId,
+          "worker:verifier-takeover",
+          "incarnation:record-at-takeover",
+        ),
+      );
+      const second = yield* Effect.exit(
+        handler.handle({
+          ...input,
+          context: {
+            ...input.context,
+            fencingGeneration: takeoverLease.generation,
+            workerId: takeoverLease.workerId,
+            workerIncarnationId: takeoverLease.workerIncarnationId,
+          },
+        } as never),
+      );
 
       const sql = yield* SqlClient;
       const rows = yield* sql.unsafe<{
@@ -303,13 +361,10 @@ describe("pending AH10 RecordVerificationEvidence recordedAt retry fingerprint",
           toolInvocationId,
           observationRef: "observation:stable-source",
           callRef: evidenceSourceCallRef,
-          recordedAt: clockValues[0],
+          recordedAt: actionIntentAt,
         },
       };
-      const secondPayload = {
-        ...firstPayload,
-        evidence: { ...firstPayload.evidence, recordedAt: clockValues[2] },
-      };
+      const secondPayload = firstPayload;
       const firstFingerprint = semanticRequestFingerprint({
         commandType: "RecordVerificationEvidence",
         projectId: p7Project,
@@ -343,18 +398,14 @@ describe("pending AH10 RecordVerificationEvidence recordedAt retry fingerprint",
       >,
     );
     expect(Exit.isSuccess(result.first)).toBe(true);
-    expect(result.clockValues[0]).not.toBe(result.clockValues[2]);
-    expect(result.firstFingerprint).not.toBe(result.secondFingerprint);
+    expect(result.clockValues).toHaveLength(2);
+    expect(result.firstFingerprint).toBe(result.secondFingerprint);
     expect(result.receipt).toMatchObject({
       command_id: expectedCommandId,
       resolution: "Committed",
       semantic_request_fingerprint: result.firstFingerprint,
     });
     expect(result.evidence).toHaveLength(1);
-    expect(JSON.stringify(result.second)).toContain("IdempotencyConflict");
-
-    // P1 07: retrying the same immutable CommandId for the same logical action
-    // must preserve its fingerprint and converge the committed receipt.
     expect(Exit.isSuccess(result.second)).toBe(true);
   });
 });

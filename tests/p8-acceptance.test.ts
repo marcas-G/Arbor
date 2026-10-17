@@ -687,7 +687,7 @@ const fingerprintOf = (commandType: string, payload: unknown) =>
     commandType,
     projectId: p7Project,
     actor: p7TestActor,
-    schemaVersion: "1",
+    schemaVersion: commandType === "ConcludeVerification" ? "2" : "1",
     payload,
   });
 
@@ -1078,6 +1078,12 @@ describe("p8-acceptance", () => {
           conclusionReason: "",
           evidenceRefs: [EV_A1, EV_A2],
           summaryRef: "summary:a",
+          missionSnapshot: MISSION_A,
+          criteriaResults: [
+            criterionResult(MISSION_A, "c1", "Pass", [EV_A1]),
+            criterionResult(MISSION_A, "c2", "Pass", [EV_A2]),
+          ],
+          snapshotStatus: "Available",
         });
 
         const accept = yield* submitAccept(cmd("89a0000000a6"), {
@@ -1619,6 +1625,9 @@ describe("p8-acceptance", () => {
           verdict: "Unknown",
           conclusionReason: "Orphaned",
           evidenceRefs: [],
+          missionSnapshot: MISSION_G,
+          criteriaResults: [],
+          snapshotStatus: "NotApplicableOrphaned",
         });
         const orphanedVerification = yield* requireVerification(
           ids.verificationId,
