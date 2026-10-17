@@ -906,6 +906,57 @@ describe("production fixture port-zero startup handshake", () => {
     expect(descendantAlive).toBe(true);
   });
 
+  it("retries tree cleanup after a delayed taskkill helper is reaped", async () => {
+    const target = fakeLifecycleProcess(41_651);
+    const primary = fakeLifecycleProcess(41_652);
+    const retry = fakeLifecycleProcess(41_653);
+    const primaryMutable = primary as unknown as {
+      killed: boolean;
+      kill: () => boolean;
+    };
+    primaryMutable.kill = () => {
+      primaryMutable.killed = true;
+      return true;
+    };
+    const clock = fakeTimerClock();
+    let descendantAlive = true;
+    let spawnAttempts = 0;
+    const seam: StopChildLifecycleTestSeam = {
+      platform: "win32",
+      taskkillTimeoutMs: 1_000,
+      spawnTaskkill: (_pid, attempt) => {
+        spawnAttempts += 1;
+        if (attempt === 1) {
+          setTimeout(() => emitProcessExit(primary, 1), 1_250);
+          return primary;
+        }
+        setImmediate(() => {
+          descendantAlive = false;
+          emitProcessExit(retry, 0);
+          setImmediate(() => emitProcessExit(target, 0));
+        });
+        return retry;
+      },
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    };
+
+    const stopped = stopChildBounded(target, 5_000, seam);
+    clock.advanceBy(1_000);
+    await expect(stopped).resolves.toBeUndefined();
+
+    expect(primaryMutable.killed).toBe(true);
+    expect(childHasExited(primary)).toBe(true);
+    expect(spawnAttempts).toBe(2);
+    expect(childHasExited(retry)).toBe(true);
+    expect(childHasExited(target)).toBe(true);
+    expect(descendantAlive).toBe(false);
+    expect(clock.pendingCount()).toBe(0);
+    expect(target.listenerCount("exit")).toBe(0);
+    expect(primary.listenerCount("exit")).toBe(0);
+    expect(retry.listenerCount("exit")).toBe(0);
+  });
+
   it("keeps an already-exited, never-stopped child as the existing no-op", async () => {
     const target = fakeLifecycleProcess(41_701);
     emitProcessExit(target, 0);
