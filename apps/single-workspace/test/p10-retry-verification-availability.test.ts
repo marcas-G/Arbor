@@ -120,4 +120,96 @@ describe("P10 RetryVerification availability projection", () => {
     );
     expect(result.value.rows[0]?.availableActions).toBeUndefined();
   });
+
+  it("shows UnboundLegacy only to the current direct-Parent human and never via row placement alone", async () => {
+    const projection = {
+      commandId: "cmd_018f2b3c-4d5e-7abc-8def-01234567c101" as never,
+      projectId: "prj_1" as never,
+      sourceWorkId: "wrk_child" as never,
+      sourceVerificationId: "ver_source" as never,
+      disposition: "UnboundLegacy" as const,
+      reasonCode: "OriginEvidenceIncomplete" as const,
+      ownerWorkspaceId: "ws_child" as never,
+      recipientWorkspaceId: "ws_parent" as never,
+      rootWorkspaceId: "ws_root" as never,
+      createdAt: "2026-10-17T00:00:00.000Z",
+      revision: 2,
+      updatedAt: "2026-10-17T00:00:02.000Z",
+    };
+    const row = {
+      entryKey: `retry-verification-unbound:${projection.commandId}`,
+      kind: "Governance" as const,
+      summary:
+        "A historical RetryVerification receipt has incomplete origin evidence.",
+      watermark: 12,
+      target: {
+        kind: "RetryVerificationUnboundLegacy" as const,
+        commandId: projection.commandId,
+        projectId: projection.projectId,
+        sourceWorkId: projection.sourceWorkId,
+        sourceVerificationId: projection.sourceVerificationId,
+        disposition: projection.disposition,
+        reasonCode: projection.reasonCode,
+        createdAt: projection.createdAt,
+        revision: projection.revision,
+        updatedAt: projection.updatedAt,
+      },
+    };
+    const port = {
+      query: () =>
+        Effect.succeed({ value: { unconsumed: [row] }, watermark: 12, lag: 0 }),
+    };
+    const loadInputs = () =>
+      Effect.succeed({
+        canonicalFacts: {
+          projectId: projection.projectId,
+          project: { rootWorkspaceId: projection.rootWorkspaceId },
+          work: {
+            workId: projection.sourceWorkId,
+            projectId: projection.projectId,
+            workspaceId: projection.ownerWorkspaceId,
+          },
+          workspace: {
+            workspaceId: projection.ownerWorkspaceId,
+            projectId: projection.projectId,
+            parentWorkspaceId: projection.recipientWorkspaceId,
+          },
+        },
+        grants: [],
+        governance: {
+          authenticatedHumans: [],
+          directParentOf: [
+            {
+              workspaceId: projection.ownerWorkspaceId,
+              parentPrincipal: "user:parent",
+            },
+          ],
+        },
+        policy: {},
+      } as never);
+    const face = viewQueryFaceWithRetryAvailability(
+      port as never,
+      {} as never,
+      loadInputs as never,
+      () => Effect.succeed([projection]),
+    );
+    const authorized = await Effect.runPromise(
+      face.query(
+        "inbox-view",
+        { workspaceId: projection.recipientWorkspaceId },
+        undefined,
+        "user:parent" as never,
+      ),
+    );
+    expect(authorized.value.unconsumed).toHaveLength(1);
+    const denied = await Effect.runPromise(
+      face.query(
+        "inbox-view",
+        { workspaceId: projection.recipientWorkspaceId },
+        undefined,
+        "user:other" as never,
+      ),
+    );
+    expect(denied.value.unconsumed).toEqual([]);
+  });
 });

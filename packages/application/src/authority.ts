@@ -262,6 +262,18 @@ export type VerifiedCommandAuthority =
       readonly settledVerifierExecutionIds: ReadonlyArray<ExecutionId>;
     }
   | {
+      /** P8 replay is Resolver-only and cannot authorize handler execution. */
+      readonly _tag: "RetryVerificationReplayOnlyAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly currentOwnerId: WorkspaceId;
+      readonly workId: WorkId;
+      readonly verificationId: VerificationId;
+    }
+  | {
       /** P8 `01` §6: deterministic consumer (System origin, causationRef =
        * the WorkOutcomeAccepted event) or explicit submitter. */
       readonly _tag: "CompleteWorkAuthority";

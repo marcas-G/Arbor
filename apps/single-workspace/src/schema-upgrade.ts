@@ -1,4 +1,10 @@
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -14,6 +20,7 @@ import {
   P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
   P43_MIGRATION,
   P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION,
+  P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
   p39WriterLockFilename,
   runMigrations,
   runP39SqliteMaintenance,
@@ -24,6 +31,7 @@ import {
 import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import type { SqlClient } from "effect/unstable/sql/SqlClient";
+import { backfillRetryVerificationOrigins } from "./retry-verification-origin-backfill.js";
 import {
   appendSchemaUpgradeRecord,
   assertDistinctPaths,
@@ -57,7 +65,12 @@ const PINNED_DESCRIPTOR_HASHES: Readonly<Record<number, string>> = {
   42: "a0294a5db440e402a6c32b5a2b596502e059642431157eadcb6be7212224e5aa",
   43: "8a125c31202b6a3fda240095d5b85547c8f16347ea9fd759a943971547119cf5",
   44: "2378c0170aae7beb0592c69bfffef9e611da6d5323caaa0de5b7d5360b7ff33f",
+  45: "0879d97482f8be09644497496de3e946a91008a38b6723cc7faf73b76f052244",
 };
+const PINNED_P45_BACKFILL_SOURCE_SHA256 =
+  "783363d3186437384e79536ae7aab797fd70411db961202cc95dfe7f4a650137";
+const PINNED_SCHEMA44_SIGNATURE =
+  "3cbae01c8835a1b4e40d62660725f15f746b04f06e2b08aca94eedc66c9d6ce7";
 
 /** Offline resume may hold the permit while checking trusted file provenance
  * and applying several schema transactions. A competing resume can wait up to
@@ -205,11 +218,13 @@ export interface SchemaUpgradeTestHooks {
   readonly previewTemplate?: SchemaUpgradePreviewTemplate;
   readonly onPreviewTemplate?: (template: SchemaUpgradePreviewTemplate) => void;
   readonly beforeDatabaseTransaction?: (
-    version: 39 | 40 | 41 | 42 | 43 | 44,
+    version: 39 | 40 | 41 | 42 | 43 | 44 | 45,
   ) => void;
-  readonly afterDatabaseCommit?: (version: 39 | 40 | 41 | 42 | 43 | 44) => void;
-  readonly afterVersion44NoOpVerification?: (evidence: {
-    readonly userVersion: 44;
+  readonly afterDatabaseCommit?: (
+    version: 39 | 40 | 41 | 42 | 43 | 44 | 45,
+  ) => void;
+  readonly afterVersion45NoOpVerification?: (evidence: {
+    readonly userVersion: 45;
     readonly reopenedReadOnly: true;
   }) => void;
   readonly beforeMaintenancePermitAcquire?: () => void;
@@ -291,7 +306,7 @@ export const parseSchemaUpgradeArguments = (
 
 export const schemaUpgradeUsage = (): string =>
   [
-    "Offline P39–P44 schema upgrade (operator-selected disposable target)",
+    "Offline P39–P45 schema upgrade (operator-selected disposable target)",
     "  --mode fresh --database <new-target> --p39-report-db <new-report> --copy-manifest <new-manifest>",
     "  --mode copy --source-database <offline-source> --database <new-copy> --p39-report-db <new-report> --copy-manifest <new-manifest>",
     "  --mode resume-copy --source-database <same-source> --database <same-copy> --p39-report-db <same-report> --copy-manifest <same-manifest>",
@@ -469,9 +484,9 @@ const validatePathSet = (
 };
 
 const assertSourcePrefix = (version: number): void => {
-  if (![36, 37, 38].includes(version))
+  if (![36, 37, 38, 44].includes(version))
     throw new SchemaUpgradeRefusal(
-      `copy source schema ${version} is unsupported; expected 36, 37, or 38`,
+      `copy source schema ${version} is unsupported; expected 36, 37, 38, or 44`,
     );
 };
 
@@ -479,6 +494,16 @@ const verifySourcePrefixSchema = async (
   filename: string,
   version: number,
 ): Promise<void> => {
+  if (version === 44) {
+    if (
+      readUserVersion(filename) !== 44 ||
+      sqliteSchemaSignature(filename) !== PINNED_SCHEMA44_SIGNATURE
+    )
+      throw new SchemaUpgradeRefusal(
+        "schema 44 source does not match the trusted cumulative descriptor prefix",
+      );
+    return;
+  }
   const directory = mkdtempSync(
     join(dirname(filename), ".arbor-schema-prefix-check-"),
   );
@@ -711,7 +736,7 @@ const manifestStepState = (
   if (
     !Number.isInteger(header.initialUserVersion) ||
     header.initialUserVersion < 36 ||
-    header.initialUserVersion > 38 ||
+    ![36, 37, 38, 44].includes(header.initialUserVersion) ||
     (header.mode === "copy" &&
       (header.source === null ||
         header.sourceUserVersion !== header.initialUserVersion ||
@@ -727,20 +752,26 @@ const manifestStepState = (
     throw new SchemaUpgradeRefusal("manifest initial provenance is incomplete");
   const startingVersion = header.initialUserVersion;
   const transitions = [
-    {
-      step: "p39-0037-0039",
-      from: startingVersion,
-      to: 39,
-      hashes: P39_MAINTENANCE_MIGRATIONS.filter(
-        ({ id }) => id > startingVersion && id <= 39,
-      ).map(({ id }) => pinnedDescriptorHash(id)),
-    },
-    ...([40, 41, 42, 43, 44] as const).map((to) => ({
-      step: String(to).padStart(4, "0"),
-      from: to - 1,
-      to,
-      hashes: [pinnedDescriptorHash(to)],
-    })),
+    ...(startingVersion < 39
+      ? [
+          {
+            step: "p39-0037-0039",
+            from: startingVersion,
+            to: 39,
+            hashes: P39_MAINTENANCE_MIGRATIONS.filter(
+              ({ id }) => id > startingVersion && id <= 39,
+            ).map(({ id }) => pinnedDescriptorHash(id)),
+          },
+        ]
+      : []),
+    ...([40, 41, 42, 43, 44, 45] as const)
+      .map((to) => ({
+        step: String(to).padStart(4, "0"),
+        from: to - 1,
+        to,
+        hashes: [pinnedDescriptorHash(to)],
+      }))
+      .filter(({ to }) => to > startingVersion),
   ];
   if (
     transitions.some(
@@ -1016,7 +1047,7 @@ const validateResume = async (
       "copy target version/content differs from its last committed manifest boundary",
     );
   }
-  if (actualVersion < 36 || actualVersion > 44)
+  if (actualVersion < 36 || actualVersion > 45)
     throw new SchemaUpgradeRefusal(
       `resume target version ${actualVersion} is unsupported`,
     );
@@ -1044,6 +1075,8 @@ const migrationDescriptorByVersion = (version: number) => {
       return P43_MIGRATION;
     case 44:
       return P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION;
+    case 45:
+      return P45_RETRY_VERIFICATION_ORIGIN_MIGRATION;
     default:
       return undefined;
   }
@@ -1070,7 +1103,20 @@ const validateDescriptorPin = (version: number): void => {
     throw new SchemaUpgradeRefusal(
       `no standalone descriptor for migration ${version}`,
     );
-  if (sha256Hex(descriptor.sql) !== PINNED_DESCRIPTOR_HASHES[version])
+  let actualHash = sha256Hex(descriptor.sql);
+  if (version === 45) {
+    const sourcePath = resolve(
+      process.cwd(),
+      "apps/single-workspace/src/retry-verification-origin-backfill.ts",
+    );
+    const sourceHash = sha256Hex(readFileSync(sourcePath, "utf8"));
+    if (sourceHash !== PINNED_P45_BACKFILL_SOURCE_SHA256)
+      throw new SchemaUpgradeRefusal(
+        "P45 typed backfill implementation differs from its accepted offline pin",
+      );
+    actualHash = sha256Hex(`${actualHash}\n${sourceHash}`);
+  }
+  if (actualHash !== PINNED_DESCRIPTOR_HASHES[version])
     throw new SchemaUpgradeRefusal(
       `migration ${version} SQL differs from the accepted offline plan pin`,
     );
@@ -1191,7 +1237,7 @@ const previewCommittedPrefixes = async (
         ),
       });
     }
-    for (const version of [40, 41, 42, 43, 44]) {
+    for (const version of [40, 41, 42, 43, 44, 45]) {
       const current = readVersionWithOpenSource(database);
       if (current >= version) continue;
       if (current !== version - 1)
@@ -1211,6 +1257,7 @@ const previewCommittedPrefixes = async (
       try {
         for (const statement of splitStatements(descriptor.sql))
           database.exec(statement);
+        if (version === 45) backfillRetryVerificationOrigins(database);
         database.exec(`PRAGMA user_version = ${version}`);
         database.exec("COMMIT");
       } catch (cause) {
@@ -1336,7 +1383,7 @@ const appendCommitted = (
   });
 };
 
-const runP40ToP44 = (
+const runP40ToP45 = (
   primary: Parameters<
     Parameters<typeof runP39SqliteMaintenanceWithPermit>[1]
   >[0],
@@ -1358,11 +1405,11 @@ const runP40ToP44 = (
         "PRAGMA user_version",
       ))[0]?.user_version,
     );
-    if (startingVersion < 39 || startingVersion > 44)
+    if (startingVersion < 39 || startingVersion > 45)
       throw new SchemaUpgradeRefusal(
-        `P40–P44 suffix expected version 39–44, found ${startingVersion}`,
+        `P40–P45 suffix expected version 39–45, found ${startingVersion}`,
       );
-    for (const version of [40, 41, 42, 43, 44]) {
+    for (const version of [40, 41, 42, 43, 44, 45]) {
       const currentRows = yield* primary.unsafe<{ user_version: number }>(
         "PRAGMA user_version",
       );
@@ -1397,22 +1444,60 @@ const runP40ToP44 = (
         preview.digest,
         preview.signature,
       );
-      hooks.beforeDatabaseTransaction?.(version as 40 | 41 | 42 | 43 | 44);
-      yield* primary.withTransaction(
-        Effect.gen(function* () {
-          const check = yield* primary.unsafe<{ user_version: number }>(
-            "PRAGMA user_version",
-          );
-          if (Number(check[0]?.user_version) !== current)
-            throw new SchemaUpgradeRefusal(
-              `migration ${version} prefix changed before transaction`,
+      hooks.beforeDatabaseTransaction?.(version as 40 | 41 | 42 | 43 | 44 | 45);
+      if (version === 45) {
+        yield* Effect.sync(() => {
+          const database = new DatabaseSync(targetPath);
+          try {
+            database.exec("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE");
+            const check = Number(
+              (
+                database.prepare("PRAGMA user_version").get() as {
+                  user_version: number;
+                }
+              ).user_version,
             );
-          for (const statement of splitStatements(descriptor.sql))
-            yield* primary.unsafe(statement);
-          yield* primary.unsafe(`PRAGMA user_version = ${version}`);
-        }),
-      );
-      hooks.afterDatabaseCommit?.(version as 40 | 41 | 42 | 43 | 44);
+            if (check !== current)
+              throw new SchemaUpgradeRefusal(
+                "migration 45 prefix changed before transaction",
+              );
+            for (const statement of splitStatements(descriptor.sql))
+              database.exec(statement);
+            backfillRetryVerificationOrigins(database);
+            database.exec("PRAGMA user_version = 45");
+            if (database.prepare("PRAGMA foreign_key_check").all().length > 0)
+              throw new SchemaUpgradeRefusal(
+                "migration 45 produced foreign-key violations",
+              );
+            database.exec("COMMIT");
+          } catch (cause) {
+            try {
+              if (database.isTransaction) database.exec("ROLLBACK");
+            } catch {
+              /* connection close rolls back an interrupted transaction */
+            }
+            throw cause;
+          } finally {
+            database.close();
+          }
+        });
+      } else {
+        yield* primary.withTransaction(
+          Effect.gen(function* () {
+            const check = yield* primary.unsafe<{ user_version: number }>(
+              "PRAGMA user_version",
+            );
+            if (Number(check[0]?.user_version) !== current)
+              throw new SchemaUpgradeRefusal(
+                `migration ${version} prefix changed before transaction`,
+              );
+            for (const statement of splitStatements(descriptor.sql))
+              yield* primary.unsafe(statement);
+            yield* primary.unsafe(`PRAGMA user_version = ${version}`);
+          }),
+        );
+      }
+      hooks.afterDatabaseCommit?.(version as 40 | 41 | 42 | 43 | 44 | 45);
       if (
         logicalSqliteDigest(targetPath) !== preview.digest ||
         prefixSignature(
@@ -1442,14 +1527,14 @@ const runP40ToP44 = (
         "PRAGMA user_version",
       ))[0]?.user_version,
     );
-    if (finalVersion !== 44)
+    if (finalVersion !== 45)
       throw new SchemaUpgradeRefusal(
-        `schema upgrade ended at ${finalVersion}, expected 44`,
+        `schema upgrade ended at ${finalVersion}, expected 45`,
       );
     const violations = yield* primary.unsafe("PRAGMA foreign_key_check");
     if (violations.length > 0)
       throw new SchemaUpgradeRefusal(
-        "schema version 44 failed foreign_key_check",
+        "schema version 45 failed foreign_key_check",
       );
     const projectColumns = yield* primary.unsafe<{
       name: string;
@@ -1499,11 +1584,11 @@ const runP40ToP44 = (
       );
     const finalDigest = logicalSqliteDigest(targetPath);
     if (finalDigest.length !== 64)
-      throw new SchemaUpgradeRefusal("version 44 logical digest is invalid");
+      throw new SchemaUpgradeRefusal("version 45 logical digest is invalid");
     if (source !== undefined) assertSourceUnchanged(source);
-    if (finalVersion === 44 && manifestStepState(manifest).version < 44) {
+    if (finalVersion === 45 && manifestStepState(manifest).version < 45) {
       throw new SchemaUpgradeRefusal(
-        "version 44 target lacks its final committed provenance record",
+        "version 45 target lacks its final committed provenance record",
       );
     }
     return manifest;
@@ -1529,7 +1614,7 @@ const runP39AndSuffix = async (
   try {
     previews =
       hooks.previewTemplate ??
-      (previewVersion === 44
+      (previewVersion === 45
         ? {
             prefixes: new Map(),
             p39Blocked: false,
@@ -1574,7 +1659,7 @@ const runP39AndSuffix = async (
     validateDescriptorPin(id);
     return pinnedDescriptorHash(id);
   });
-  if (previewVersion > 44) {
+  if (previewVersion > 45) {
     throw new SchemaUpgradeRefusal(
       `offline schema version ${previewVersion} is unsupported`,
     );
@@ -1635,7 +1720,7 @@ const runP39AndSuffix = async (
               p39Hashes,
             );
           }
-          return runP40ToP44(
+          return runP40ToP45(
             primary,
             prepared,
             targetPath,
@@ -1663,7 +1748,7 @@ const runP39AndSuffix = async (
             Effect.promise(async () => {
               if (prepared === undefined) {
                 throw new SchemaUpgradeRefusal(
-                  "version 44 no-op has no validated provenance manifest",
+                  "version 45 no-op has no validated provenance manifest",
                 );
               }
               const expectedIdentity = prepared.header.target;
@@ -1674,7 +1759,7 @@ const runP39AndSuffix = async (
                 )
               ) {
                 throw new SchemaUpgradeRefusal(
-                  "version 44 target identity changed after its primary connection closed",
+                  "version 45 target identity changed after its primary connection closed",
                 );
               }
               const expectedReportIdentity = prepared.header.report;
@@ -1685,7 +1770,7 @@ const runP39AndSuffix = async (
                 )
               ) {
                 throw new SchemaUpgradeRefusal(
-                  "version 44 report identity differs from the manifest",
+                  "version 45 report identity differs from the manifest",
                 );
               }
               verifyP39ReportEvidence(reportPath, expectedReportIdentity);
@@ -1710,7 +1795,7 @@ const runP39AndSuffix = async (
                   .all();
                 if (violations.length > 0) {
                   throw new SchemaUpgradeRefusal(
-                    "version 44 no-op target failed foreign_key_check",
+                    "version 45 no-op target failed foreign_key_check",
                   );
                 }
                 const projectColumns = readOnly
@@ -1723,7 +1808,7 @@ const runP39AndSuffix = async (
                   )
                 ) {
                   throw new SchemaUpgradeRefusal(
-                    "version 44 no-op target lacks required resource provenance",
+                    "version 45 no-op target lacks required resource provenance",
                   );
                 }
                 const legacyUnknown = Number(
@@ -1744,7 +1829,7 @@ const runP39AndSuffix = async (
                 );
                 if (legacyUnknown !== projects) {
                   throw new SchemaUpgradeRefusal(
-                    "version 44 no-op target lacks complete legacy provenance attribution",
+                    "version 45 no-op target lacks complete legacy provenance attribution",
                   );
                 }
                 const p43Tables = readOnly
@@ -1755,7 +1840,7 @@ const runP39AndSuffix = async (
                   .all();
                 if (p43Tables.length !== 2)
                   throw new SchemaUpgradeRefusal(
-                    "version 44 no-op target lacks the P43 tables",
+                    "version 45 no-op target lacks the P43 tables",
                   );
                 const observationGuards = readOnly
                   .prepare(
@@ -1771,31 +1856,50 @@ const runP39AndSuffix = async (
                   )
                 )
                   throw new SchemaUpgradeRefusal(
-                    "version 44 no-op target lacks P44 ApprovalRejected observation guards",
+                    "version 45 no-op target lacks P44 ApprovalRejected observation guards",
                   );
+                const p45Tables = readOnly
+                  .prepare(
+                    `SELECT name FROM sqlite_master WHERE type='table'
+                       AND name IN ('retry_verification_origins',
+                                    'retry_verification_legacy_dispositions')`,
+                  )
+                  .all();
+                const inboxColumns = readOnly
+                  .prepare("PRAGMA table_info(inbox_entries)")
+                  .all() as Array<{ name: string }>;
+                if (
+                  p45Tables.length !== 2 ||
+                  !inboxColumns.some(({ name }) => name === "revision") ||
+                  !inboxColumns.some(({ name }) => name === "updated_at")
+                ) {
+                  throw new SchemaUpgradeRefusal(
+                    "version 45 no-op target lacks P45 origin/disposition/Inbox schema",
+                  );
+                }
               } finally {
                 readOnly.close();
               }
               const digest = logicalSqliteDigest(targetPath);
               const signature = prefixSignatureForDigest(
-                44,
-                descriptorHashesThrough(44),
+                45,
+                descriptorHashesThrough(45),
                 digest,
               );
               if (
-                version !== 44 ||
-                state.version !== 44 ||
+                version !== 45 ||
+                state.version !== 45 ||
                 state.pending !== undefined ||
                 state.isolated ||
                 digest !== state.lastDigest ||
                 signature !== state.lastPrefixSignature
               ) {
                 throw new SchemaUpgradeRefusal(
-                  "read-only reopened target is not the exact committed version 44 manifest head",
+                  "read-only reopened target is not the exact committed version 45 manifest head",
                 );
               }
-              hooks.afterVersion44NoOpVerification?.({
-                userVersion: 44,
+              hooks.afterVersion45NoOpVerification?.({
+                userVersion: 45,
                 reopenedReadOnly: true,
               });
             }),
@@ -2039,7 +2143,7 @@ const main = async (): Promise<void> => {
   try {
     const args = parseSchemaUpgradeArguments(process.argv.slice(2));
     await runSchemaUpgrade(args);
-    process.stdout.write("Schema upgrade completed at version 44.\n");
+    process.stdout.write("Schema upgrade completed at version 45.\n");
   } catch (cause) {
     const detail = formatSchemaUpgradeCliFailure(cause);
     process.stderr.write(`Schema upgrade refused or failed: ${detail}\n`);

@@ -27,7 +27,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema45TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { acceptResultHandler } from "../src/control-actions.js";
 import {
   buildSingleWorkspaceLayer,

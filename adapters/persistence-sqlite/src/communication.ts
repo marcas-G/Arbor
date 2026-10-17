@@ -8,7 +8,10 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
-import { repositoryFailure } from "./repository-error.js";
+import {
+  persistenceCorruption,
+  repositoryFailure,
+} from "./repository-error.js";
 
 interface MessageRow {
   readonly message_id: string;
@@ -28,6 +31,8 @@ interface InboxRow {
   readonly summary: string;
   readonly correlation_id: string | null;
   readonly admitted_at: string;
+  readonly revision?: number;
+  readonly updated_at?: string;
 }
 
 const toMessageRecord = (row: MessageRow): MessageRecord => ({
@@ -51,6 +56,8 @@ const toInboxEntry = (row: InboxRow): InboxEntry => ({
   summary: row.summary,
   correlationId: row.correlation_id ?? undefined,
   admittedAt: row.admitted_at,
+  revision: row.revision === undefined ? undefined : Number(row.revision),
+  updatedAt: row.updated_at,
 });
 
 /** P6 `02` §3/§4 (D2): durable communication facts + deterministic
@@ -145,13 +152,21 @@ export const InboxProjectionStoreLive: Layer.Layer<
     const failure = repositoryFailure("InboxProjectionStore", "inbox");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
+    const inboxColumns = yield* run(
+      sql.unsafe<{ name: string }>("PRAGMA table_info(inbox_entries)"),
+    ).pipe(Effect.orDie);
+    const hasRouteRevision =
+      inboxColumns.some((column) => column.name === "revision") &&
+      inboxColumns.some((column) => column.name === "updated_at");
     return InboxProjectionStore.of({
       admitUpsert: (entry) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           yield* run(
             sql.unsafe(
-              "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(workspace_id, entry_key) DO NOTHING",
+              hasRouteRevision
+                ? "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at, revision, updated_at) VALUES (?,?,?,?,?,?,NULL,1,?) ON CONFLICT(workspace_id, entry_key) DO NOTHING"
+                : "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(workspace_id, entry_key) DO NOTHING",
               [
                 entry.recipientWorkspaceId,
                 entry.entryKey,
@@ -159,6 +174,7 @@ export const InboxProjectionStoreLive: Layer.Layer<
                 entry.summary,
                 entry.correlationId ?? null,
                 entry.admittedAt,
+                ...(hasRouteRevision ? [entry.admittedAt] : []),
               ],
             ),
           );
@@ -168,7 +184,9 @@ export const InboxProjectionStoreLive: Layer.Layer<
           yield* TransactionScope;
           const inserted = yield* run(
             sql.unsafe<{ entry_key: string }>(
-              "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(workspace_id, entry_key) DO NOTHING RETURNING entry_key",
+              hasRouteRevision
+                ? "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at, revision, updated_at) VALUES (?,?,?,?,?,?,NULL,1,?) ON CONFLICT(workspace_id, entry_key) DO NOTHING RETURNING entry_key"
+                : "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(workspace_id, entry_key) DO NOTHING RETURNING entry_key",
               [
                 entry.recipientWorkspaceId,
                 entry.entryKey,
@@ -176,6 +194,7 @@ export const InboxProjectionStoreLive: Layer.Layer<
                 entry.summary,
                 entry.correlationId ?? null,
                 entry.admittedAt,
+                ...(hasRouteRevision ? [entry.admittedAt] : []),
               ],
             ),
           );
@@ -189,12 +208,123 @@ export const InboxProjectionStoreLive: Layer.Layer<
             );
           }
         }),
+      reconcileRetryVerificationUnboundLegacy: (entry, updatedAt) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          if (!hasRouteRevision) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "InboxProjectionStore",
+                "reconcile-unbound-schema",
+                "RetryVerification UnboundLegacy route reconciliation requires schema 45",
+              ),
+            );
+          }
+          const commandId = entry.entryKey.startsWith(
+            "retry-verification-unbound:",
+          )
+            ? entry.entryKey.slice("retry-verification-unbound:".length)
+            : "";
+          if (
+            entry.kind !== "Governance" ||
+            commandId.length === 0 ||
+            entry.correlationId !== commandId
+          ) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "InboxProjectionStore",
+                "reconcile-unbound-identity",
+                "RetryVerification UnboundLegacy Inbox identity is malformed",
+              ),
+            );
+          }
+          const existing = yield* run(
+            sql.unsafe<{
+              workspace_id: string;
+              kind: string;
+              summary: string;
+              correlation_id: string | null;
+              admitted_at: string;
+              consumed_at: string | null;
+              revision: number;
+            }>(
+              `SELECT workspace_id, kind, summary, correlation_id,
+                      admitted_at, consumed_at, revision
+                 FROM inbox_entries WHERE entry_key = ?`,
+              [entry.entryKey],
+            ),
+          );
+          if (existing.length > 1) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "InboxProjectionStore",
+                "reconcile-unbound-duplicate",
+                "RetryVerification UnboundLegacy key has multiple route rows",
+              ),
+            );
+          }
+          const row = existing[0];
+          if (row === undefined) {
+            yield* run(
+              sql.unsafe(
+                `INSERT INTO inbox_entries (
+                   workspace_id, entry_key, kind, summary, correlation_id,
+                   admitted_at, consumed_at, revision, updated_at
+                 ) VALUES (?,?,?,?,?,?,NULL,1,?)`,
+                [
+                  entry.recipientWorkspaceId,
+                  entry.entryKey,
+                  entry.kind,
+                  entry.summary,
+                  entry.correlationId,
+                  entry.admittedAt,
+                  entry.admittedAt,
+                ],
+              ),
+            );
+            return;
+          }
+          if (
+            row.kind !== "Governance" ||
+            row.summary !== entry.summary ||
+            row.correlation_id !== commandId ||
+            row.admitted_at !== entry.admittedAt ||
+            row.consumed_at !== null ||
+            !Number.isSafeInteger(Number(row.revision)) ||
+            Number(row.revision) < 1
+          ) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "InboxProjectionStore",
+                "reconcile-unbound-conflict",
+                "RetryVerification UnboundLegacy key conflicts with its immutable disposition projection",
+              ),
+            );
+          }
+          if (row.workspace_id === entry.recipientWorkspaceId) return;
+          yield* run(
+            sql.unsafe(
+              `UPDATE inbox_entries
+                  SET workspace_id = ?, revision = revision + 1, updated_at = ?
+                WHERE workspace_id = ? AND entry_key = ? AND revision = ?`,
+              [
+                entry.recipientWorkspaceId,
+                updatedAt,
+                row.workspace_id,
+                entry.entryKey,
+                row.revision,
+              ],
+            ),
+          );
+        }),
       listUnconsumed: (workspaceId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           const rows = yield* run(
             sql.unsafe<InboxRow>(
-              "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at FROM inbox_entries WHERE workspace_id = ? AND consumed_at IS NULL ORDER BY admitted_at",
+              hasRouteRevision
+                ? "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at, revision, updated_at FROM inbox_entries WHERE workspace_id = ? AND consumed_at IS NULL ORDER BY admitted_at"
+                : "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at FROM inbox_entries WHERE workspace_id = ? AND consumed_at IS NULL ORDER BY admitted_at",
               [workspaceId],
             ),
           );
@@ -205,7 +335,9 @@ export const InboxProjectionStoreLive: Layer.Layer<
           yield* TransactionScope;
           const rows = yield* run(
             sql.unsafe<InboxRow>(
-              "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
+              hasRouteRevision
+                ? "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at, revision, updated_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?"
+                : "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
               [workspaceId, entryKey],
             ),
           );

@@ -112,6 +112,7 @@ import {
   RecordEnvironmentChangeLive,
   type RecoveryAttentionFactQualificationProbe,
   ResourceOwnershipRepositoryLive,
+  RetryVerificationOriginRepositoryLive,
   RuntimeClockLive,
   releaseP39WriterPermit,
   runMigrations,
@@ -162,6 +163,7 @@ import {
   type ReconciliationSource,
   type ResolvedModelBinding,
   type ResourceOwnershipRepository,
+  type RetryVerificationOriginRepository,
   type RunnableWorkSource,
   resolvedModelBindingFingerprint,
   resolveModelBinding,
@@ -433,6 +435,7 @@ export type SingleWorkspaceServices =
   | SqlClientService
   | ExecutionRepository
   | PermissionGrantRepository
+  | RetryVerificationOriginRepository
   | ProjectRepository
   | ResourceOwnershipRepository
   | SessionRepository
@@ -707,6 +710,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(DeliverableRepositoryLive, infra),
     Layer.provide(DecisionRequestStoreLive, infra),
     Layer.provide(VerificationRepositoryLive, infra),
+    Layer.provide(RetryVerificationOriginRepositoryLive, infra),
     Layer.provide(EvidenceRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),

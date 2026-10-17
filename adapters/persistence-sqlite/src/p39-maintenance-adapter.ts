@@ -118,12 +118,12 @@ export const runP39SqliteMaintenanceWithPermit = (
         | "writer-lock-acquisition"
         | "manifest-validation"
         | "p39-reservation-and-gate"
-        | "p40-p44-continuation"
-        | "version44-closed-readonly-no-op",
+        | "p40-p45-continuation"
+        | "version45-closed-readonly-no-op",
     ) => void;
     readonly p39AlreadyCommitted?: boolean;
     readonly reportMustAlreadyExist?: boolean;
-    /** After a version-44 primary client has been closed, perform an explicit
+    /** After a version-45 primary client has been closed, perform an explicit
      * read-only no-op verification while MaintenanceExclusive is still held. */
     readonly afterPrimaryClosedNoOp?: (
       permit: P39DatabaseWriterPermit,
@@ -380,18 +380,18 @@ export const runP39SqliteMaintenanceWithPermit = (
                 }
                 if (
                   p39AlreadyCommitted &&
-                  userVersion === 44 &&
+                  userVersion === 45 &&
                   settings.afterPrimaryClosedNoOp !== undefined
                 ) {
                   return true;
                 }
-                settings.onPhase?.("p40-p44-continuation");
+                settings.onPhase?.("p40-p45-continuation");
                 yield* continuation(primary, permit);
                 const completedVersion = yield* primary.unsafe<UserVersionRow>(
                   "PRAGMA user_version",
                 );
                 if (
-                  Number(completedVersion[0]?.user_version) === 44 &&
+                  Number(completedVersion[0]?.user_version) === 45 &&
                   settings.afterPrimaryClosedNoOp !== undefined
                 ) {
                   return true;
@@ -402,7 +402,7 @@ export const runP39SqliteMaintenanceWithPermit = (
             ),
           );
           if (verifyVersion44AfterClose) {
-            settings.onPhase?.("version44-closed-readonly-no-op");
+            settings.onPhase?.("version45-closed-readonly-no-op");
             if (settings.afterPrimaryClosedNoOp === undefined) {
               return yield* Effect.fail(
                 failure("P39_MIGRATION_PREFIX_INVALID"),

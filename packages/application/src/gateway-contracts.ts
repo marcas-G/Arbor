@@ -36,6 +36,7 @@ import type {
   ReadmissionGateStoreError,
   ReadmissionTargetMismatch,
   ResourceOwnershipRepositoryError,
+  RetryVerificationOriginRepositoryError,
   SchedulerTimerStoreError,
   SessionRepositoryError,
   ToolInvocationStoreError,
@@ -124,6 +125,7 @@ export type CommandHandlerError =
   | VerificationRepositoryError
   | AcceptanceRepositoryError
   | EvidenceRepositoryError
+  | RetryVerificationOriginRepositoryError
   | BlobStoreError
   | AssignWorkTargetBindingStoreError
   | AgentLoopStepStoreError

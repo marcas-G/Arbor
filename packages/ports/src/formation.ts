@@ -107,6 +107,12 @@ export interface InboxProjectionStoreService {
   readonly admitUpsertSequenced: (
     entry: InboxEntry,
   ) => Effect.Effect<void, InboxProjectionStoreError, TransactionScope>;
+  /** P6/P1 accepted UnboundLegacy projection: admit once or move the same
+   * stable key in the caller's canonical command transaction. */
+  readonly reconcileRetryVerificationUnboundLegacy: (
+    entry: InboxEntry,
+    updatedAt: string,
+  ) => Effect.Effect<void, InboxProjectionStoreError, TransactionScope>;
   readonly listUnconsumed: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<

@@ -16,7 +16,11 @@ import type {
   WorkspaceId,
   WorkspacePolicy,
 } from "@arbor/domain";
-import type { InvocationApproval, InvocationAuthority } from "@arbor/ports";
+import type {
+  InvocationApproval,
+  InvocationAuthority,
+  RetryVerificationOriginRecord,
+} from "@arbor/ports";
 import { Context, Effect, Layer } from "effect";
 import type { CommandAuthorityFact } from "./authority.js";
 import type { GatewayEnvelope } from "./gateway.js";
@@ -87,6 +91,7 @@ export interface CanonicalAuthorityFacts {
   readonly execution?: CanonicalExecutionSnapshot;
   readonly work?: CanonicalWorkSnapshot;
   readonly retryVerification?: CanonicalRetryVerificationSnapshot;
+  readonly retryVerificationOrigin?: RetryVerificationOriginRecord;
   readonly executableApproval?: {
     readonly approvalId: string;
     readonly projectId: ProjectId;
@@ -596,6 +601,45 @@ const governanceCommandFact = (
       const work = facts.work;
       const retry = facts.retryVerification;
       const ownerWorkspaceId = work?.workspaceId ?? null;
+      const origin = facts.retryVerificationOrigin;
+      if (origin !== undefined) {
+        const source = retry;
+        const exactOriginScope =
+          origin.commandId === commandId &&
+          origin.projectId === projectId &&
+          origin.actor === principal &&
+          origin.sourceWorkId === payloadWorkId &&
+          origin.sourceVerificationId === verificationId &&
+          work !== undefined &&
+          work.projectId === projectId &&
+          work.workId === origin.sourceWorkId &&
+          source !== undefined &&
+          source.verificationId === origin.sourceVerificationId &&
+          source.workId === origin.sourceWorkId &&
+          source.ownerWorkspaceId === ownerWorkspaceId;
+        if (!exactOriginScope || ownerWorkspaceId === null) {
+          return Effect.fail(denyCommand(input, "RetryVerification", "Denied"));
+        }
+        const isRoot = facts.project?.rootWorkspaceId === ownerWorkspaceId;
+        const humanAuthorized = isRoot
+          ? isAuthenticatedHuman(input)
+          : isAuthenticatedHuman(input) &&
+            governanceAuthorizes(input.governance, principal, ownerWorkspaceId);
+        if (!humanAuthorized) {
+          return Effect.fail(denyCommand(input, "RetryVerification", "Denied"));
+        }
+        return Effect.succeed({
+          _tag: "RetryVerificationReplayOnlyAuthority",
+          principal,
+          commandId,
+          semanticRequestFingerprint,
+          projectId,
+          targetWorkspaceId: ownerWorkspaceId,
+          currentOwnerId: ownerWorkspaceId,
+          workId: origin.sourceWorkId,
+          verificationId: origin.sourceVerificationId,
+        });
+      }
       const exact =
         payloadWorkId !== null &&
         verificationId !== null &&

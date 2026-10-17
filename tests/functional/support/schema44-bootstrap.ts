@@ -7,6 +7,12 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { cwd } from "node:process";
+import { DatabaseSync } from "node:sqlite";
+import {
+  P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
+  splitStatements,
+} from "../../../adapters/persistence-sqlite/src/index.js";
+import { backfillRetryVerificationOrigins } from "../../../apps/single-workspace/src/retry-verification-origin-backfill.js";
 import {
   removeP39PrivateTestDirectory,
   setP39PrivateWindowsAcl,
@@ -118,7 +124,7 @@ const readManifest = (): FunctionalSchema44Manifest => {
 };
 
 /** Copy both closed template databases into an ACL-protected case directory. */
-export const cloneFunctionalSchema44Database = (
+export const cloneFunctionalSchema45Database = (
   directory: string,
 ): { readonly databaseFile: string; readonly reportFile: string } => {
   const manifest = readManifest();
@@ -133,8 +139,57 @@ export const cloneFunctionalSchema44Database = (
   setP39PrivateWindowsAcl(databaseFile, "file");
   copyFileSync(manifest.report, reportFile, 0);
   setP39PrivateWindowsAcl(reportFile, "file");
+  const database = new DatabaseSync(databaseFile);
+  try {
+    database.exec("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE");
+    const version = Number(
+      (
+        database.prepare("PRAGMA user_version").get() as {
+          user_version: number;
+        }
+      ).user_version,
+    );
+    if (version !== 44) {
+      throw new Error(
+        `Functional schema upgrade expected 44, found ${version}`,
+      );
+    }
+    const inboxReferences = database
+      .prepare(
+        `SELECT m.name AS table_name, f."table" AS referenced_table
+           FROM sqlite_master AS m, pragma_foreign_key_list(m.name) AS f
+          WHERE m.type = 'table' AND f."table" = 'inbox_entries'`,
+      )
+      .all();
+    if (inboxReferences.length > 0) {
+      throw new Error("Schema44 source has an unexpected FK to inbox_entries");
+    }
+    for (const statement of splitStatements(
+      P45_RETRY_VERIFICATION_ORIGIN_MIGRATION.sql,
+    )) {
+      database.exec(statement);
+    }
+    backfillRetryVerificationOrigins(database);
+    database.exec("PRAGMA user_version = 45");
+    if (database.prepare("PRAGMA foreign_key_check").all().length > 0) {
+      throw new Error("Functional 44→45 fixture failed foreign_key_check");
+    }
+    database.exec("COMMIT");
+  } catch (cause) {
+    try {
+      if (database.isTransaction) database.exec("ROLLBACK");
+    } catch {
+      /* connection close rolls back the disposable fixture transaction */
+    }
+    throw cause;
+  } finally {
+    database.close();
+  }
   return { databaseFile, reportFile };
 };
+
+/** Historical name retained for fixture callers; the clone is schema 45. */
+export const cloneFunctionalSchema44Database = cloneFunctionalSchema45Database;
 
 export const createFunctionalFixtureDirectory = (): string => {
   const manifest = readManifest();

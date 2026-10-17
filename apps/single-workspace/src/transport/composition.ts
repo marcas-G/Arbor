@@ -1,7 +1,9 @@
 import type {
   AttentionRes,
+  InboxViewRes,
   ViewRequestMap,
   ViewResponseMap,
+  WorkspaceDetailRes,
 } from "@arbor/api-contracts";
 import type {
   AuthorityDecisionInput,
@@ -58,6 +60,7 @@ import {
   ProjectEnvironmentPort,
   ProjectRepository,
   ResourceOwnershipRepository,
+  RetryVerificationOriginRepository,
   TransactionPort,
   VerificationRepository,
   WorkBlockerStore,
@@ -119,8 +122,124 @@ export const viewQueryFaceWithRetryAvailability = (
   loadInputs: (
     envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<AuthorityInputs, never>,
+  listUnboundLegacyInbox: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<
+      import("@arbor/ports").RetryVerificationUnboundLegacyInboxProjection
+    >,
+    never
+  > = () => Effect.succeed([]),
 ): ViewQueryFace => {
   const base = viewQueryFaceFromPort(port);
+  const canReadUnboundLegacy = (
+    principal: Principal,
+    projection: import("@arbor/ports").RetryVerificationUnboundLegacyInboxProjection,
+  ): Effect.Effect<boolean, never> => {
+    const envelope = {
+      commandType: "RetryVerification",
+      commandId: projection.commandId,
+      projectId: projection.projectId,
+      actor: principal as unknown as import("@arbor/domain").Actor,
+      issuedAt: "1970-01-01T00:00:00.000Z",
+      payload: {
+        workId: projection.sourceWorkId,
+        verificationId: projection.sourceVerificationId,
+        expectedWorkRevision: 0,
+        summaryContent: "read-only Inbox route check",
+        successorVerificationId: projection.sourceVerificationId,
+        verifierExecutionId: "exe_unbound-inbox-read" as never,
+        workspaceId: projection.ownerWorkspaceId,
+      },
+    } as unknown as DecodedExternalCommandEnvelope;
+    return Effect.map(loadInputs(envelope), (inputs) => {
+      const facts = inputs.canonicalFacts;
+      const work = facts.work;
+      const workspace = facts.workspace;
+      const human =
+        principal.startsWith("user:") ||
+        inputs.governance.authenticatedHumans.includes(principal);
+      if (
+        !human ||
+        facts.projectId !== projection.projectId ||
+        facts.project?.rootWorkspaceId !== projection.rootWorkspaceId ||
+        work === undefined ||
+        work.workId !== projection.sourceWorkId ||
+        work.projectId !== projection.projectId ||
+        work.workspaceId !== projection.ownerWorkspaceId ||
+        workspace === undefined ||
+        workspace.workspaceId !== projection.ownerWorkspaceId ||
+        workspace.projectId !== projection.projectId
+      ) {
+        return false;
+      }
+      if (work.workspaceId === facts.project.rootWorkspaceId) {
+        return (
+          projection.recipientWorkspaceId === facts.project.rootWorkspaceId
+        );
+      }
+      return (
+        workspace.parentWorkspaceId === projection.recipientWorkspaceId &&
+        inputs.governance.directParentOf.some(
+          (edge) =>
+            edge.workspaceId === projection.ownerWorkspaceId &&
+            edge.parentPrincipal === principal,
+        )
+      );
+    });
+  };
+  const filterUnboundLegacy = <
+    R extends {
+      readonly entryKey: string;
+      readonly target?: { readonly kind: string } | undefined;
+    },
+  >(
+    rows: ReadonlyArray<R>,
+    principal: Principal | undefined,
+    projections: ReadonlyArray<
+      import("@arbor/ports").RetryVerificationUnboundLegacyInboxProjection
+    >,
+  ): Effect.Effect<ReadonlyArray<R>, never> =>
+    Effect.map(
+      Effect.forEach(rows, (entry) => {
+        if (entry.target?.kind !== "RetryVerificationUnboundLegacy") {
+          return Effect.succeed(entry);
+        }
+        if (principal === undefined) return Effect.succeed(undefined);
+        const target = entry.target as unknown as {
+          readonly commandId: string;
+          readonly projectId: string;
+          readonly sourceWorkId: string;
+          readonly sourceVerificationId: string;
+          readonly disposition: string;
+          readonly reasonCode: string;
+          readonly createdAt: string;
+          readonly revision: number;
+          readonly updatedAt: string;
+        };
+        const projection = projections.find(
+          (candidate) => candidate.commandId === target.commandId,
+        );
+        if (
+          projection === undefined ||
+          target.projectId !== projection.projectId ||
+          target.sourceWorkId !== projection.sourceWorkId ||
+          target.sourceVerificationId !== projection.sourceVerificationId ||
+          target.disposition !== projection.disposition ||
+          target.reasonCode !== projection.reasonCode ||
+          target.createdAt !== projection.createdAt ||
+          target.revision !== projection.revision ||
+          target.updatedAt !== projection.updatedAt
+        ) {
+          return Effect.succeed(undefined);
+        }
+        return Effect.map(
+          canReadUnboundLegacy(principal, projection),
+          (allowed) => (allowed ? entry : undefined),
+        );
+      }),
+      (filtered) => filtered.filter((entry): entry is R => entry !== undefined),
+    );
   const canRetry = (
     projectId: ProjectId,
     principal: Principal,
@@ -182,7 +301,54 @@ export const viewQueryFaceWithRetryAvailability = (
       barrier?: import("@arbor/domain").FreshnessRequirement,
       principal?: Principal,
     ): Effect.Effect<QueryResult<ViewResponseMap[V]>, ProjectionQueryError> => {
-      const result = base.query(view, request, barrier);
+      const rawResult = base.query(view, request, barrier);
+      const result =
+        view === "workspace-detail"
+          ? Effect.flatMap(rawResult, (queryResult) =>
+              Effect.flatMap(
+                listUnboundLegacyInbox(
+                  (request as ViewRequestMap["workspace-detail"]).workspaceId,
+                ),
+                (projections) =>
+                  Effect.map(
+                    filterUnboundLegacy(
+                      (queryResult.value as WorkspaceDetailRes).inboxUnconsumed,
+                      principal,
+                      projections,
+                    ),
+                    (entries) =>
+                      ({
+                        ...queryResult,
+                        value: {
+                          ...(queryResult.value as WorkspaceDetailRes),
+                          inboxUnconsumed: entries,
+                        },
+                      }) as unknown as QueryResult<ViewResponseMap[V]>,
+                  ),
+              ),
+            )
+          : view === "inbox-view"
+            ? Effect.flatMap(rawResult, (queryResult) =>
+                Effect.flatMap(
+                  listUnboundLegacyInbox(
+                    (request as ViewRequestMap["inbox-view"]).workspaceId,
+                  ),
+                  (projections) =>
+                    Effect.map(
+                      filterUnboundLegacy(
+                        (queryResult.value as InboxViewRes).unconsumed,
+                        principal,
+                        projections,
+                      ),
+                      (entries) =>
+                        ({
+                          ...queryResult,
+                          value: { unconsumed: entries },
+                        }) as unknown as QueryResult<ViewResponseMap[V]>,
+                    ),
+                ),
+              )
+            : rawResult;
       if (view !== "attention" || principal === undefined) return result;
       const projectId = (request as ViewRequestMap["attention"]).projectId;
       return Effect.flatMap(result, (queryResult) => {
@@ -244,6 +410,9 @@ export const makeRepositoryInputsLoader = (
     const executions = yield* ExecutionRepository;
     const works = yield* WorkRepository;
     const verifications = yield* VerificationRepository;
+    const retryOrigins = yield* Effect.serviceOption(
+      RetryVerificationOriginRepository,
+    );
     const grants = yield* PermissionGrantRepository;
     const executableApprovals = yield* Effect.serviceOption(
       ExecutableApprovalStore,
@@ -293,6 +462,13 @@ export const makeRepositoryInputsLoader = (
           envelope.commandType !== "RetryVerification"
             ? Option.none()
             : yield* tx.transact(verifications.findById(verificationId));
+        const retryOrigin =
+          envelope.commandType === "RetryVerification" &&
+          Option.isSome(retryOrigins)
+            ? yield* tx.transact(
+                retryOrigins.value.findOrigin(envelope.commandId),
+              )
+            : Option.none();
         const verifierExecutions =
           Option.isSome(verification) &&
           envelope.commandType === "RetryVerification"
@@ -380,6 +556,9 @@ export const makeRepositoryInputsLoader = (
                   verifierExecutions,
                 },
               }
+            : {}),
+          ...(Option.isSome(retryOrigin)
+            ? { retryVerificationOrigin: retryOrigin.value }
             : {}),
           ...(Option.isSome(executableApproval)
             ? {

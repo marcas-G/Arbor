@@ -63,6 +63,7 @@ const setup = () => {
   };
   let stored: typeof old | undefined = old;
   let storedSummary: Uint8Array | undefined;
+  let storedOrigin: unknown;
   const verifications = {
     findById: (id: string) =>
       Effect.succeed(
@@ -122,6 +123,13 @@ const setup = () => {
       findById: () =>
         Effect.succeed(Option.some({ projectId: PROJECT } as never)),
     } as never,
+    origins: {
+      insertOrigin: (origin: unknown) => {
+        storedOrigin = origin;
+        return Effect.void;
+      },
+    } as never,
+    clock: { now: () => Effect.succeed("2026-10-12T00:00:01.000Z") } as never,
     blobs: {
       put: (bytes: Uint8Array) => {
         storedSummary = bytes.slice();
@@ -174,7 +182,13 @@ const setup = () => {
     },
   };
   const context = { _tag: "External", principal: "user:local" };
-  return { handler, envelope, context, getStored: () => stored };
+  return {
+    handler,
+    envelope,
+    context,
+    getStored: () => stored,
+    getOrigin: () => storedOrigin,
+  };
 };
 
 describe("RetryVerification P8 handoff", () => {
@@ -204,6 +218,16 @@ describe("RetryVerification P8 handoff", () => {
       ownerWorkspaceId: OWNER,
       verificationExecutionIds: [EXE("2")],
       state: { status: "Open" },
+    });
+    expect(test.getOrigin()).toEqual({
+      commandId: "cmd_00000000-0000-7000-8000-000000000001",
+      projectId: PROJECT,
+      actor: "user:local",
+      sourceVerificationId: VER("1"),
+      sourceWorkId: WORK,
+      successorVerificationId: VER("2"),
+      successorVerifierExecutionId: EXE("2"),
+      createdAt: "2026-10-12T00:00:01.000Z",
     });
   });
 

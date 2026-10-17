@@ -20,7 +20,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema45TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
@@ -137,7 +137,7 @@ describe("MAC-P2 formation fulfillment", () => {
                 [proposalId],
               );
               yield* sql.unsafe(
-                "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, admitted_at, consumed_at) VALUES (?,?,'Governance','awaiting','t',NULL)",
+                "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, admitted_at, consumed_at, revision, updated_at) VALUES (?,?,'Governance','awaiting','t',NULL,1,'t')",
                 [rootWorkspaceId, `gov:${proposalId}:1`],
               );
             }),

@@ -23,6 +23,7 @@ const postRetry = (
     readonly successorVerificationId: string;
     readonly successorExecutionId: string;
     readonly summaryContent: string;
+    readonly actor?: string;
   },
 ) =>
   fetch(`${baseUrl}/commands`, {
@@ -35,7 +36,7 @@ const postRetry = (
       commandType: "RetryVerification",
       commandId: input.commandId,
       projectId: input.projectId,
-      actor: "user:local",
+      actor: input.actor ?? "user:local",
       issuedAt: "2026-10-16T00:00:00.000Z",
       payload: {
         workId: input.workId,
@@ -53,7 +54,11 @@ const postRetry = (
 
 const handoffSnapshot = (
   db: DatabaseSync,
-  input: { readonly commandId: string; readonly workId: string },
+  input: {
+    readonly commandId: string;
+    readonly workId: string;
+    readonly successorExecutionId?: string;
+  },
 ) => ({
   receipt: db
     .prepare(
@@ -75,10 +80,33 @@ const handoffSnapshot = (
         ORDER BY verification_id, execution_id`,
     )
     .all(input.workId),
+  successorExecution:
+    input.successorExecutionId === undefined
+      ? undefined
+      : db
+          .prepare(
+            `SELECT execution_id, project_id, workspace_id, binding_kind,
+                    settlement_kind, settled_at
+               FROM executions WHERE execution_id = ?`,
+          )
+          .get(input.successorExecutionId),
   events: db
     .prepare(
       `SELECT event_type, aggregate_ref, actor, caused_by_command_id, payload_json
          FROM domain_events WHERE caused_by_command_id = ? ORDER BY event_id`,
+    )
+    .all(input.commandId),
+  origin: db
+    .prepare(
+      `SELECT command_id, project_id, actor, source_verification_id,
+              source_work_id, successor_verification_id,
+              successor_verifier_execution_id, created_at
+         FROM retry_verification_origins WHERE command_id = ?`,
+    )
+    .get(input.commandId),
+  attempts: db
+    .prepare(
+      "SELECT attempt_no, outcome FROM command_attempts WHERE command_id = ? ORDER BY attempt_no",
     )
     .all(input.commandId),
 });
@@ -89,10 +117,20 @@ afterEach(async () => {
 
 describe("pending F23 P8 RetryVerification permanent exact replay", () => {
   it("returns the original receipt for the same CommandId and exact payload after commit", async () => {
-    const fixture = await startProductionFixture({
-      isolatedPortHandshake: true,
-      reply: () => ({ _tag: "HttpError", status: 500 }),
-    });
+    const startupTrace: string[] = [];
+    let fixture: ProductionFixture;
+    try {
+      fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
+        daemonEnvironment: { ARBOR_AH19_STARTUP_TRACE: "1" },
+        onDaemonStdout: (line) => startupTrace.push(line),
+        reply: () => ({ _tag: "HttpError", status: 500 }),
+      });
+    } catch (cause) {
+      throw new Error(
+        `${String(cause)}; startupTrace=${startupTrace.join(" | ")}`,
+      );
+    }
     fixtures.push(fixture);
     const client = makePublicClient(fixture.baseUrl);
     const project = await createFunctionalProject(
@@ -208,11 +246,81 @@ describe("pending F23 P8 RetryVerification permanent exact replay", () => {
           },
         },
       });
-      const afterCommit = handoffSnapshot(db, { commandId, workId });
+      const snapshotKey = { commandId, workId, successorExecutionId };
+      const afterCommit = handoffSnapshot(db, snapshotKey);
 
       const exactReplay = await postRetry(fixture.baseUrl, input);
       expect(exactReplay.body).toEqual(first.body);
-      expect(handoffSnapshot(db, { commandId, workId })).toEqual(afterCommit);
+      expect(handoffSnapshot(db, snapshotKey)).toEqual(afterCommit);
+      expect(afterCommit.origin).toMatchObject({
+        command_id: commandId,
+        project_id: project.projectId,
+        actor: "user:local",
+        source_verification_id: verificationId,
+        source_work_id: workId,
+        successor_verification_id: successorVerificationId,
+        successor_verifier_execution_id: successorExecutionId,
+      });
+
+      const tupleConflict = await postRetry(fixture.baseUrl, {
+        ...input,
+        summaryContent: "changed non-source tuple field",
+      });
+      expect(tupleConflict.status).toBe(200);
+      expect(tupleConflict.body).toMatchObject({
+        ok: true,
+        body: {
+          commandId,
+          resolution: "TerminalRejected",
+          rejection: "IdempotencyConflict",
+        },
+      });
+      expect(handoffSnapshot(db, snapshotKey)).toEqual(afterCommit);
+
+      const wrongActor = await postRetry(fixture.baseUrl, {
+        ...input,
+        actor: "user:other",
+      });
+      expect(wrongActor.status).toBe(403);
+      expect(handoffSnapshot(db, snapshotKey)).toEqual(afterCommit);
+
+      const arbitraryCommand = await postRetry(fixture.baseUrl, {
+        ...input,
+        commandId: functionalId("cmd"),
+      });
+      expect(arbitraryCommand.status).toBe(403);
+      expect(handoffSnapshot(db, snapshotKey)).toEqual(afterCommit);
+
+      const changedProject = await postRetry(fixture.baseUrl, {
+        ...input,
+        projectId: functionalId("prj"),
+      });
+      expect(changedProject.status).toBe(403);
+      expect(handoffSnapshot(db, snapshotKey)).toEqual(afterCommit);
+
+      const changedSource = await postRetry(fixture.baseUrl, {
+        ...input,
+        workId: functionalId("wrk"),
+      });
+      expect(changedSource.status).toBe(403);
+      expect(handoffSnapshot(db, snapshotKey)).toEqual(afterCommit);
+
+      db.exec("PRAGMA foreign_keys = OFF");
+      db.prepare("DELETE FROM commands WHERE command_id = ?").run(commandId);
+      const beforeCorruptReplay = handoffSnapshot(db, snapshotKey);
+      const missingReceiptReplay = await postRetry(fixture.baseUrl, input);
+      expect(missingReceiptReplay.status).toBe(503);
+      expect(missingReceiptReplay.body).toMatchObject({
+        ok: false,
+        problem: {
+          code: "persistence/corruption",
+          category: "unavailable",
+          retryDisposition: "non-retryable",
+          safeDetails: { repository: "CommandStore" },
+        },
+      });
+      expect(handoffSnapshot(db, snapshotKey)).toEqual(beforeCorruptReplay);
+      expect(fixture.providerCalls.length).toBeLessThanOrEqual(1);
       expect(fixture.daemonErrors).toEqual([]);
     } catch (error) {
       if (db.isTransaction) db.exec("ROLLBACK");

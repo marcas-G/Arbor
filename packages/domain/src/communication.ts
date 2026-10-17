@@ -46,6 +46,8 @@ export interface InboxEntry {
   readonly summary: string;
   readonly correlationId?: string | undefined;
   readonly admittedAt: string;
+  readonly revision?: number | undefined;
+  readonly updatedAt?: string | undefined;
 }
 
 export const messageEntryKey = (messageId: MessageId): string =>

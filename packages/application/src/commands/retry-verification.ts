@@ -6,8 +6,10 @@ import type {
 } from "@arbor/domain";
 import type {
   BlobStorePortService,
+  ClockService,
   ExecutionRepositoryService,
   ProjectRepositoryService,
+  RetryVerificationOriginRepositoryService,
   VerificationRepositoryService,
   WorkRepositoryService,
   WorkspaceRepositoryService,
@@ -48,6 +50,11 @@ export interface RetryVerificationDependencies {
   readonly executions: Pick<ExecutionRepositoryService, "findById">;
   readonly projects: Pick<ProjectRepositoryService, "findById">;
   readonly workspaces: Pick<WorkspaceRepositoryService, "findById">;
+  readonly origins: Pick<
+    RetryVerificationOriginRepositoryService,
+    "insertOrigin"
+  >;
+  readonly clock: Pick<ClockService, "now">;
   readonly blobs: Pick<BlobStorePortService, "put" | "get">;
   readonly governance: ParentUserGovernanceFacts;
   readonly start: Parameters<typeof makeStartVerificationHandler>[0];
@@ -270,6 +277,17 @@ export const makeRetryVerificationHandler = (
             ),
           );
         }
+        const createdAt = yield* dependencies.clock.now();
+        yield* dependencies.origins.insertOrigin({
+          commandId: envelope.commandId,
+          projectId: envelope.projectId,
+          actor: context.principal,
+          sourceVerificationId: payload.verificationId,
+          sourceWorkId: payload.workId,
+          successorVerificationId: payload.successorVerificationId,
+          successorVerifierExecutionId: payload.verifierExecutionId,
+          createdAt,
+        });
         return commandOk({
           result: {
             workId: payload.workId,
