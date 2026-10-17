@@ -1,6 +1,6 @@
 # AH19 Conversation Checkpoint Owner — Implementation Plan Result
 
-Status: **Fixed planning package prepared; implementation and qualification are not authorized or performed.**
+Status: **Implementation token received; implementation is stopped pending manual Design Gap reconciliation and no implementation/qualification claim is made.**
 
 ## Provenance
 
@@ -15,6 +15,36 @@ Status: **Fixed planning package prepared; implementation and qualification are 
   `C642BB4F5F9F61F5A4FEF51107213CE6FD3331C7BF39B7AFE884BF0DBC1BE681`.
 - Requested, not yet granted, implementation token:
   `AUTHORIZE_AH19_CONVERSATION_CHECKPOINT_OWNER_IMPLEMENTATION`.
+
+## 2026-10-17 authorization and Design Gap disposition
+
+The user explicitly authorized
+`AUTHORIZE_AH19_CONVERSATION_CHECKPOINT_OWNER_IMPLEMENTATION` in the current
+task. During the first implementation layer, production evidence exposed a
+semantic conflict between accepted AH19 v1.50's legacy-HumanMessage `Answered`/
+`Claimed` wording and the later frozen P17 ownership contract. The existing
+token applies to the fixed plan raw SHA above and does not authorize silently
+changing that plan to resolve the gap.
+
+The implementation is paused. No implementation commit or migration/runtime
+qualification is claimed. The exact reconciliation request is
+`planning/proposals/AH19-conversation-owner-p17-authority-reconciliation-draft.md`;
+its raw-byte SHA-256 at this checkpoint is
+`92EF668AFFBE3A5D1C651107C33006C7CB987E7021FFFC02037B3603FD276B75`. A new
+manual acceptance is required before its exact owning
+document edits. Independent final review of the proposal passed with no
+remaining B1. A refreshed fixed implementation package/token is required
+before implementation resumes.
+
+P17 source/result evidence is `docs/design/implementation/P14/01-human-message.md`
+§9, `docs/design/implementation/P17-conversation-delivery-runtime/01-domain-storage.md`
+§1–§4, P17 `05-commands-projections.md` §AH19, and `planning/results/P17.result.md`:
+the canonical success example leaves the legacy HumanMessage Pending/null while
+ResponseJob is Answered revision 2 and Attempt 0 is Completed. The current
+attempt also produced a real process observation in which HumanMessage was
+Claimed/null while the ResponseJob was Answered; that Claim came from the
+uncommitted claim-CAS experiment and is specifically recommended for withdrawal,
+not evidence that legacy fields are authoritative.
 
 ## Fixed storage and qualification scope
 
