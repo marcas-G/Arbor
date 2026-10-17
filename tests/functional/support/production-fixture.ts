@@ -13,7 +13,7 @@ import {
   waitForDaemonListening as waitForNonceBoundPort,
 } from "./daemon-process-lifecycle.js";
 import {
-  cloneFunctionalSchema47Database,
+  cloneFunctionalSchema48Database,
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
 } from "./schema44-bootstrap.js";
@@ -58,6 +58,7 @@ export type ScriptedProviderResponse =
         readonly arguments: unknown;
       }>;
     }
+  | { readonly _tag: "ContextLimit" }
   | { readonly _tag: "HttpError"; readonly status: number };
 
 export type ProviderResponseGate = (
@@ -233,6 +234,25 @@ const sendTextResponse = (
   response.end("data: [DONE]\n\n");
 };
 
+const sendContextLimitResponse = (
+  response: import("node:http").ServerResponse,
+) => {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  response.end(
+    `data: ${JSON.stringify({
+      error: {
+        message: "context length exceeded",
+        type: "invalid_request_error",
+        code: "context_length_exceeded",
+      },
+    })}\n\n`,
+  );
+};
+
 const sendToolCallsResponse = (
   response: import("node:http").ServerResponse,
   calls: ReadonlyArray<{ readonly name: string; readonly arguments: unknown }>,
@@ -359,6 +379,10 @@ const startProvider = (
               sendToolCallsResponse(response, scripted.calls);
               onResponseSent?.(call, responseIndex);
               return;
+            case "ContextLimit":
+              sendContextLimitResponse(response);
+              onResponseSent?.(call, responseIndex);
+              return;
             case "HttpError":
               response.writeHead(scripted.status, {
                 "content-type": "application/json",
@@ -437,7 +461,7 @@ export const startProductionFixture = async (input: {
     workspaceDirectory = join(directory, "workspace");
     mkdirSync(workspaceDirectory, { recursive: true });
     writeFileSync(join(workspaceDirectory, "proof.txt"), "FUNCTIONAL_VERIFIED");
-    const clones = cloneFunctionalSchema47Database(directory);
+    const clones = cloneFunctionalSchema48Database(directory);
     databaseFile = clones.databaseFile;
     await input.setupProbe?.({ stage: "after-clone", directory });
     provider = await startProvider(

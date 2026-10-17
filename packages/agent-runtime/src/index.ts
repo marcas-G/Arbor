@@ -2,6 +2,8 @@ export * from "./agent-loop-driver.js";
 export * from "./compaction-coordinator.js";
 export * from "./control.js";
 export * from "./control-authorization.js";
+export * from "./conversation-checkpoint-compaction.js";
+export * from "./conversation-checkpoint-projection.js";
 export * from "./execution-driver-failure.js";
 export * from "./freshness.js";
 export * from "./legacy-directive.js";

@@ -33,10 +33,16 @@ import type {
   AgentLoopStepProviderTurnLink,
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
+  BlobStorePortService,
+  ConversationAttemptStoreService,
+  ConversationCheckpointOwner,
+  ConversationCheckpointStoreService,
+  ConversationResponseJob,
   ConversationResponseJobStoreService,
   DecisionRequestStoreService,
   ExecutionActivity,
   ExecutionDriverError,
+  ExecutionRepositoryService,
   HumanMessageStoreService,
   LocalPlanStoreService,
   ModelCapability,
@@ -84,6 +90,12 @@ import {
   runCompaction,
   runSummaryCompaction,
 } from "./compaction-coordinator.js";
+import { conversationCheckpointBindingUse } from "./conversation-checkpoint-binding.js";
+import { runConversationCheckpointCompaction } from "./conversation-checkpoint-compaction.js";
+import {
+  type ConversationCheckpointProjection,
+  projectConversationCheckpointHistory,
+} from "./conversation-checkpoint-projection.js";
 import {
   GENERIC_INSTRUCTION_ASSETS,
   instructionAssetFragment,
@@ -123,11 +135,15 @@ export interface ModelDecisionDependencies {
   readonly recoveryAttentionFacts?: RecoveryAttentionFactStoreService;
   readonly sessions: SessionRepositoryService;
   readonly humanMessages: HumanMessageStoreService;
+  readonly conversationCheckpoints?: ConversationCheckpointStoreService;
+  readonly blobs?: Pick<BlobStorePortService, "put" | "get">;
   readonly turnProfileResolver: TurnProfileResolverService;
   readonly responseJobs?: Pick<
     ConversationResponseJobStoreService,
     "findByExecution" | "listForWorkspace"
   >;
+  readonly responseAttempts?: Pick<ConversationAttemptStoreService, "list">;
+  readonly executions?: Pick<ExecutionRepositoryService, "findById">;
   readonly works: WorkRepositoryService;
   readonly localPlans?: Pick<LocalPlanStoreService, "findByWork">;
   readonly decisionRequests?: Pick<DecisionRequestStoreService, "findById">;
@@ -480,6 +496,164 @@ const belongsToConversationExecution = (
   );
 };
 
+const validateConversationCheckpointReceipt = (input: {
+  readonly owner: ConversationCheckpointOwner;
+  readonly execution: Execution;
+  readonly providerTurns: ProviderTurnStoreService | undefined;
+  readonly tx: TransactionPortService;
+  readonly failure: (cause: unknown) => ExecutionDriverError;
+}): Effect.Effect<void, ExecutionDriverError> =>
+  Effect.gen(function* () {
+    const { owner, execution, providerTurns, tx, failure } = input;
+    if (
+      owner.checkpointKind === null ||
+      owner.producerProviderTurnId === null ||
+      owner.producerExecutionId === null ||
+      owner.sourceManifestJson === null ||
+      owner.checkpointRef === null ||
+      providerTurns === undefined
+    ) {
+      return yield* Effect.fail(
+        failure({ _tag: "ConversationCheckpointEvidenceMissing" }),
+      );
+    }
+    let sourceManifest: Record<string, unknown>;
+    try {
+      const value = JSON.parse(owner.sourceManifestJson) as unknown;
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new Error("source manifest is not an object");
+      }
+      sourceManifest = value as Record<string, unknown>;
+    } catch {
+      return yield* Effect.fail(
+        failure({ _tag: "ConversationCheckpointEvidenceInvalid" }),
+      );
+    }
+    const [storedManifest, settled] = yield* Effect.all(
+      [
+        tx.transact(
+          providerTurns.findManifestByTurn(owner.producerProviderTurnId),
+        ),
+        tx.transact(
+          providerTurns.findSettledResult(owner.producerProviderTurnId),
+        ),
+      ],
+      { concurrency: 1 },
+    ).pipe(Effect.mapError(failure));
+    if (
+      storedManifest === null ||
+      settled._tag !== "SettledSuccess" ||
+      settled.evidenceVersion !== "provider-success-v1" ||
+      settled.finishReason !== "Stop" ||
+      settled.manifestId !== storedManifest.manifestId ||
+      sourceManifest.producerManifestId !== storedManifest.manifestId ||
+      settled.manifestJson !== storedManifest.manifestJson ||
+      settled.turn.providerTurnId !== owner.producerProviderTurnId ||
+      settled.turn.executionId !== owner.producerExecutionId ||
+      settled.turn.sessionId !== execution.sessionId ||
+      Number(settled.turn.contextEpoch) !== Number(sourceManifest.fromEpoch) ||
+      Number(sourceManifest.toEpoch) !== Number(owner.contextEpoch) ||
+      sourceManifest.producerProviderTurnId !== owner.producerProviderTurnId ||
+      sourceManifest.producerExecutionId !== owner.producerExecutionId
+    ) {
+      return yield* Effect.fail(
+        failure({ _tag: "ConversationCheckpointEvidenceInvalid" }),
+      );
+    }
+    let manifest: Record<string, unknown>;
+    let request: Record<string, unknown>;
+    try {
+      const parsedManifest = JSON.parse(storedManifest.manifestJson) as unknown;
+      const parsedRequest = JSON.parse(
+        storedManifest.portableRequestJson,
+      ) as unknown;
+      if (
+        typeof parsedManifest !== "object" ||
+        parsedManifest === null ||
+        Array.isArray(parsedManifest) ||
+        typeof parsedRequest !== "object" ||
+        parsedRequest === null ||
+        Array.isArray(parsedRequest)
+      ) {
+        throw new Error("provider manifest/request shape invalid");
+      }
+      manifest = parsedManifest as Record<string, unknown>;
+      request = parsedRequest as Record<string, unknown>;
+    } catch {
+      return yield* Effect.fail(
+        failure({ _tag: "ConversationCheckpointEvidenceInvalid" }),
+      );
+    }
+    const expectedOperation =
+      owner.checkpointKind === "Summary"
+        ? "CompactionSummary"
+        : "CompactionNative";
+    const expectedContract =
+      owner.checkpointKind === "Summary"
+        ? "compaction-result-v1"
+        : "provider-native-compaction-v1";
+    if (
+      manifest.providerTurnId !== owner.producerProviderTurnId ||
+      manifest.executionId !== owner.producerExecutionId ||
+      manifest.sessionId !== execution.sessionId ||
+      manifest.modelRef !== settled.turn.modelRef ||
+      Number(manifest.contextEpoch) !== Number(sourceManifest.fromEpoch) ||
+      manifest.operationKind !== expectedOperation ||
+      manifest.outputContractRef !== expectedContract ||
+      request.operationKind !== expectedOperation ||
+      request.outputContractRef !== expectedContract ||
+      typeof manifest.compiledRequestHash !== "string" ||
+      manifest.compiledRequestHash !== sha256Hex(JSON.stringify(request)) ||
+      manifest.resolvedModelBindingFingerprint === undefined ||
+      typeof manifest.resolvedModelBindingFingerprint !== "string" ||
+      manifest.resolvedModelBindingFingerprint.length === 0 ||
+      (owner.checkpointKind === "ProviderNative" &&
+        manifest.resolvedModelBindingFingerprint !== owner.bindingFingerprint)
+    ) {
+      return yield* Effect.fail(
+        failure({ _tag: "ConversationCheckpointEvidenceInvalid" }),
+      );
+    }
+    const nested = manifest.conversationCheckpoint;
+    if (
+      typeof nested !== "object" ||
+      nested === null ||
+      Array.isArray(nested) ||
+      JSON.stringify(nested) !==
+        JSON.stringify({
+          rootWorkspaceId: sourceManifest.rootWorkspaceId,
+          fromEpoch: sourceManifest.fromEpoch,
+          toEpoch: sourceManifest.toEpoch,
+          fromFrontier: sourceManifest.fromFrontier,
+          coveredThrough: sourceManifest.coveredThrough,
+          coveredSources: sourceManifest.coveredSources,
+          currentMessageId: sourceManifest.currentMessageId,
+          currentRunningJobRevision: sourceManifest.currentRunningJobRevision,
+          currentRunningAttemptNo: sourceManifest.currentRunningAttemptNo,
+          currentAdmissionJobRevision:
+            sourceManifest.currentAdmissionJobRevision,
+        })
+    ) {
+      return yield* Effect.fail(
+        failure({ _tag: "ConversationCheckpointEvidenceInvalid" }),
+      );
+    }
+    if (owner.checkpointKind === "ProviderNative") {
+      const continuationStates = settled.canonicalEvents.filter(
+        (event) => event._tag === "ContinuationState",
+      );
+      if (
+        continuationStates.length !== 1 ||
+        continuationStates[0]?._tag !== "ContinuationState" ||
+        continuationStates[0].stateRef !== owner.checkpointRef
+      ) {
+        return yield* Effect.fail(
+          failure({ _tag: "ConversationCheckpointEvidenceInvalid" }),
+        );
+      }
+    }
+  });
+
 export const runModelDecision = (
   dependencies: ModelDecisionDependencies,
   turn: number,
@@ -520,6 +694,8 @@ export const runModelDecision = (
     capability.portableRequestCompatibility?.operationKinds.includes(
       "CompactionNative",
     ) === true;
+  const isConversationResponseExecution =
+    conversationResponseEpisode(input.execution) !== null;
   return Effect.gen(function* () {
     let repairAttempt = initialRepairAttempt;
     let compactionAttempts = 0;
@@ -1225,7 +1401,8 @@ export const runModelDecision = (
         if (
           overflowRecoveryAttempt === 0 &&
           loopStep.state === "Prepared" &&
-          providerTurns !== undefined
+          providerTurns !== undefined &&
+          resumeOverflowCompactionProviderTurnId === undefined
         ) {
           const activeLoopStep = loopStep;
           // Overflow recovery is relevant only when the original inference
@@ -1249,6 +1426,236 @@ export const runModelDecision = (
             const compactionLinks = providerTurnLinks.filter(
               (link) => link.role === "OverflowCompaction",
             );
+            const replacementLinks = providerTurnLinks.filter(
+              (link) => link.role === "OverflowReplacement",
+            );
+            if (isConversationResponseExecution) {
+              if (
+                dependencies.conversationCheckpoints === undefined ||
+                loopStepFence === undefined
+              ) {
+                return yield* Effect.fail(
+                  failure({
+                    _tag: "ConversationCheckpointRuntimeUnavailable",
+                  }),
+                );
+              }
+              const ownerOption = yield* tx
+                .transact(
+                  dependencies.conversationCheckpoints.findOwner(
+                    input.execution.workspaceId,
+                  ),
+                )
+                .pipe(Effect.mapError(failure));
+              const owner = Option.isSome(ownerOption)
+                ? ownerOption.value
+                : undefined;
+              const ownerEpoch = Number(owner?.contextEpoch ?? 0);
+              const inference = originalInference.turn;
+              if (
+                inference.providerTurnId !== loopStep.providerTurnId ||
+                inference.executionId !== input.execution.executionId ||
+                inference.sessionId !== input.execution.sessionId ||
+                inference.modelRef !== capability.modelRef ||
+                ownerEpoch < Number(inference.contextEpoch) ||
+                ownerEpoch > Number(inference.contextEpoch) + 1
+              ) {
+                return yield* Effect.fail(
+                  failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                );
+              }
+              const nativeSupported =
+                capability.portableRequestCompatibility?.operationKinds.includes(
+                  "CompactionNative",
+                ) === true;
+              let linkedCompactionProviderTurnId: string;
+              if (providerTurnLinks.length === 0) {
+                if (ownerEpoch !== Number(inference.contextEpoch)) {
+                  return yield* Effect.fail(
+                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                  );
+                }
+                const compactionProviderTurnId =
+                  `ptn_${input.execution.executionId}_${turn}_${nativeSupported ? "native_" : ""}compact_${inference.contextEpoch}` as never;
+                const [compactionReceipt, replacementReceipt] =
+                  yield* Effect.all(
+                    [
+                      tx.transact(
+                        providerTurns.findSettledResult(
+                          compactionProviderTurnId,
+                        ),
+                      ),
+                      tx.transact(
+                        providerTurns.findSettledResult(
+                          `ptn_${input.execution.executionId}_${turn}_overflow_0` as never,
+                        ),
+                      ),
+                    ],
+                    { concurrency: 1 },
+                  ).pipe(Effect.mapError(failure));
+                if (
+                  compactionReceipt._tag !== "NotFound" ||
+                  replacementReceipt._tag !== "NotFound"
+                ) {
+                  return yield* Effect.fail(
+                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                  );
+                }
+                linkedCompactionProviderTurnId = compactionProviderTurnId;
+                yield* tx
+                  .transact(
+                    Effect.gen(function* () {
+                      const createdAt = yield* now();
+                      yield* loopSteps.ensureProviderTurnLink(
+                        {
+                          identity: loopStepIdentity,
+                          overflowOrdinal: 0,
+                          role: "Inference",
+                          providerTurnId: activeLoopStep.providerTurnId,
+                          contextEpoch: inference.contextEpoch,
+                          state: "SettledFailure",
+                          createdAt,
+                        },
+                        loopStepFence,
+                      );
+                      yield* loopSteps.ensureProviderTurnLink(
+                        {
+                          identity: loopStepIdentity,
+                          overflowOrdinal: 0,
+                          role: "OverflowCompaction",
+                          providerTurnId: compactionProviderTurnId,
+                          predecessorProviderTurnId:
+                            activeLoopStep.providerTurnId,
+                          contextEpoch: inference.contextEpoch,
+                          state: "Prepared",
+                          createdAt,
+                        },
+                        loopStepFence,
+                      );
+                    }),
+                  )
+                  .pipe(Effect.mapError(failure));
+              } else {
+                const inferenceLink = inferenceLinks[0];
+                const compactionLink = compactionLinks[0];
+                if (
+                  (providerTurnLinks.length !== 2 &&
+                    providerTurnLinks.length !== 3) ||
+                  replacementLinks.length > 1 ||
+                  inferenceLinks.length !== 1 ||
+                  compactionLinks.length !== 1 ||
+                  inferenceLink === undefined ||
+                  compactionLink === undefined ||
+                  !isValidOverflowCompactionLinkPair(
+                    providerTurnLinks,
+                    loopStep.providerTurnId,
+                    [
+                      `ptn_${input.execution.executionId}_${turn}_compact_${inference.contextEpoch}`,
+                      `ptn_${input.execution.executionId}_${turn}_native_compact_${inference.contextEpoch}`,
+                    ],
+                  ) ||
+                  Number(compactionLink.contextEpoch) !==
+                    Number(inference.contextEpoch)
+                ) {
+                  return yield* Effect.fail(
+                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                  );
+                }
+                linkedCompactionProviderTurnId = compactionLink.providerTurnId;
+              }
+              if (ownerEpoch === Number(inference.contextEpoch) + 1) {
+                if (
+                  owner?.producerProviderTurnId !==
+                    linkedCompactionProviderTurnId ||
+                  owner.producerExecutionId !== input.execution.executionId
+                ) {
+                  return yield* Effect.fail(
+                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                  );
+                }
+                const replacementProviderTurnId =
+                  `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+                const existingReplacement = replacementLinks[0];
+                if (
+                  existingReplacement !== undefined &&
+                  (existingReplacement.providerTurnId !==
+                    replacementProviderTurnId ||
+                    existingReplacement.predecessorProviderTurnId !==
+                      linkedCompactionProviderTurnId ||
+                    Number(existingReplacement.contextEpoch) !== ownerEpoch)
+                ) {
+                  return yield* Effect.fail(
+                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                  );
+                }
+                yield* tx
+                  .transact(
+                    loopSteps.ensureProviderTurnLink(
+                      {
+                        identity: loopStepIdentity,
+                        overflowOrdinal: 0,
+                        role: "OverflowReplacement",
+                        providerTurnId: replacementProviderTurnId,
+                        predecessorProviderTurnId:
+                          linkedCompactionProviderTurnId as never,
+                        contextEpoch: owner.contextEpoch,
+                        state: "Prepared",
+                        createdAt: yield* now(),
+                      },
+                      loopStepFence,
+                    ),
+                  )
+                  .pipe(Effect.mapError(failure));
+                overflowReplacementProviderTurnId = replacementProviderTurnId;
+                overflowRecoveryAttempt = 1;
+                continue;
+              }
+              if (ownerEpoch !== Number(inference.contextEpoch)) {
+                return yield* Effect.fail(
+                  failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                );
+              }
+              if (replacementLinks.length !== 0) {
+                return yield* Effect.fail(
+                  failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                );
+              }
+              const compactionManifest = yield* tx
+                .transact(
+                  providerTurns.findManifestByTurn(
+                    linkedCompactionProviderTurnId as never,
+                  ),
+                )
+                .pipe(Effect.mapError(failure));
+              const compactionReceipt = yield* tx
+                .transact(
+                  providerTurns.findSettledResult(
+                    linkedCompactionProviderTurnId as never,
+                  ),
+                )
+                .pipe(Effect.mapError(failure));
+              const existingContract =
+                compactionReceipt._tag === "Unsettled" ||
+                compactionReceipt._tag === "SettledSuccess" ||
+                compactionReceipt._tag === "SettledFailure"
+                  ? compactionReceipt.turn.outputContractRef
+                  : undefined;
+              if (
+                compactionManifest !== null &&
+                compactionReceipt._tag === "NotFound"
+              ) {
+                return yield* Effect.fail(
+                  failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                );
+              }
+              resumeOverflowNativeCompaction =
+                existingContract === "provider-native-compaction-v1" ||
+                (existingContract === undefined && nativeSupported);
+              resumeOverflowCompactionProviderTurnId =
+                linkedCompactionProviderTurnId as never;
+              replayPersistedContextLimit = true;
+              continue;
+            }
             if (providerTurnLinks.length === 0) {
               const inference = originalInference.turn;
               const nativeSupported =
@@ -2047,69 +2454,325 @@ export const runModelDecision = (
         readonly text: string;
       }> = [];
       const conversationContextRefs: Array<string> = [];
+      const conversationCheckpointItems: PortableInputItem[] = [];
       const exactConversation = conversationResponseEpisode(input.execution);
-      const history =
-        exactConversation !== null
-          ? yield* tx
-              .transact(
-                humanMessages.listForWorkspace(input.execution.workspaceId),
-              )
-              .pipe(Effect.mapError(failure))
-          : [];
-      let claimed = history.find(
-        (message) =>
-          message.claimedByExecutionId === String(input.execution.executionId),
-      );
-      if (exactConversation !== null) {
-        const message = yield* tx
-          .transact(humanMessages.findById(exactConversation.messageId))
-          .pipe(Effect.mapError(failure));
-        if (Option.isSome(message)) claimed = message.value;
-      }
       const conversationExecution = exactConversation !== null;
+      let conversationOwner: ConversationCheckpointOwner | undefined;
+      let conversationProjection: ConversationCheckpointProjection | undefined;
+      let conversationCurrentJob: ConversationResponseJob | undefined;
+      const history = conversationExecution
+        ? yield* tx
+            .transact(
+              humanMessages.listForWorkspace(input.execution.workspaceId),
+            )
+            .pipe(Effect.mapError(failure))
+        : [];
+      let claimed = undefined as (typeof history)[number] | undefined;
       const placementExecution =
         conversationExecution ||
         executionEpisode(input.execution)?._tag === "InboxEpisode";
       if (conversationExecution) {
-        const responseJobRows =
-          responseJobs === undefined
-            ? []
-            : yield* tx
-                .transact(
-                  responseJobs.listForWorkspace(input.execution.workspaceId),
-                )
-                .pipe(Effect.mapError(failure));
-        const responseJobsByMessage = new Map(
-          responseJobRows.map((job) => [String(job.messageId), job] as const),
+        if (
+          dependencies.conversationCheckpoints === undefined ||
+          responseJobs === undefined ||
+          loopStepFence === undefined
+        ) {
+          return yield* Effect.fail(
+            failure({
+              _tag: "ConversationCheckpointStoreUnavailable",
+              executionId: input.execution.executionId,
+            }),
+          );
+        }
+        const existingOwner = yield* tx
+          .transact(
+            dependencies.conversationCheckpoints.findOwner(
+              input.execution.workspaceId,
+            ),
+          )
+          .pipe(Effect.mapError(failure));
+        conversationOwner = Option.isSome(existingOwner)
+          ? existingOwner.value
+          : yield* tx
+              .transact(
+                dependencies.conversationCheckpoints.initializeIfAbsent({
+                  rootWorkspaceId: input.execution.workspaceId,
+                  initializedAt: yield* now(),
+                  fence: loopStepFence,
+                }),
+              )
+              .pipe(Effect.mapError(failure));
+        const responseJobRows = yield* tx
+          .transact(responseJobs.listForWorkspace(input.execution.workspaceId))
+          .pipe(Effect.mapError(failure));
+        const currentResponseJob = responseJobRows.find(
+          (job) => String(job.messageId) === exactConversation.messageId,
         );
-        for (const message of history) {
-          const responseJob = responseJobsByMessage.get(message.messageId);
-          const responseBody =
-            responseJob?.state._tag === "Answered"
-              ? responseJob.state.responseBody
-              : responseJob === undefined &&
-                  message.state === "Answered" &&
-                  message.responseBody !== null
-                ? message.responseBody
-                : null;
-          if (responseBody !== null) {
-            conversationMessages.push({
-              role: "user",
-              text: message.bodyRef,
-            });
-            conversationMessages.push({
-              role: "assistant",
-              text: responseBody,
-            });
+        if (
+          currentResponseJob === undefined ||
+          currentResponseJob.state._tag !== "Running" ||
+          currentResponseJob.state.executionId !== input.execution.executionId
+        ) {
+          return yield* Effect.fail(
+            failure({
+              _tag: "ConversationResponseJobNotCurrent",
+              messageId: exactConversation.messageId,
+              executionId: input.execution.executionId,
+            }),
+          );
+        }
+        if (
+          dependencies.responseAttempts === undefined ||
+          dependencies.executions === undefined
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "ConversationCheckpointEvidenceStoreUnavailable" }),
+          );
+        }
+        const conversationAttempts: import("@arbor/ports").ConversationAttempt[] =
+          [];
+        const conversationExecutions: Execution[] = [input.execution];
+        const seenExecutionIds = new Set<string>([
+          String(input.execution.executionId),
+        ]);
+        for (const job of responseJobRows) {
+          if (job.state._tag !== "Answered" && job.state._tag !== "Running") {
+            continue;
+          }
+          const attempts = yield* tx
+            .transact(dependencies.responseAttempts.list(job.messageId))
+            .pipe(Effect.mapError(failure));
+          conversationAttempts.push(...attempts);
+          const wantedExecutionId = job.state.executionId;
+          const wantedAttemptNo =
+            job.state._tag === "Answered"
+              ? job.nextAttemptNo - 1
+              : job.state.attemptNo;
+          const exactAttempt = attempts.find(
+            (attempt) =>
+              attempt.attemptNo === wantedAttemptNo &&
+              attempt.executionId === wantedExecutionId,
+          );
+          if (
+            exactAttempt !== undefined &&
+            !seenExecutionIds.has(String(exactAttempt.executionId))
+          ) {
+            const found = yield* tx
+              .transact(
+                dependencies.executions.findById(exactAttempt.executionId),
+              )
+              .pipe(Effect.mapError(failure));
+            if (Option.isSome(found)) {
+              conversationExecutions.push(found.value);
+            }
+            seenExecutionIds.add(String(exactAttempt.executionId));
           }
         }
-        if (claimed !== undefined) {
-          conversationMessages.push({
-            role: "user",
-            text: claimed.bodyRef,
-          });
-          conversationContextRefs.push(`human-input:${claimed.messageId}`);
+        conversationCurrentJob = currentResponseJob;
+        const historyProjection = projectConversationCheckpointHistory({
+          owner: conversationOwner,
+          messages: history,
+          responseJobs: responseJobRows,
+          attempts: conversationAttempts,
+          executions: conversationExecutions,
+          currentMessageId: exactConversation.messageId,
+          currentExecution: input.execution,
+        });
+        if (historyProjection._tag === "Blocked") {
+          return yield* Effect.fail(
+            failure({
+              _tag: "ConversationCheckpointProjectionBlocked",
+              reason: historyProjection.reason,
+              messageId: exactConversation.messageId,
+            }),
+          );
         }
+        conversationProjection = historyProjection.projection;
+        claimed =
+          conversationProjection.currentMessage as (typeof history)[number];
+        const checkpoint = conversationProjection.checkpoint;
+        if (checkpoint.checkpointKind !== null) {
+          yield* validateConversationCheckpointReceipt({
+            owner: conversationOwner,
+            execution: input.execution,
+            providerTurns,
+            tx,
+            failure,
+          });
+        }
+        if (checkpoint.checkpointKind === "Summary") {
+          if (
+            dependencies.blobs === undefined ||
+            checkpoint.checkpointRef === null
+          ) {
+            return yield* Effect.fail(
+              failure({ _tag: "ConversationCheckpointBlobStoreUnavailable" }),
+            );
+          }
+          const bytes = yield* dependencies.blobs
+            .get(checkpoint.checkpointRef)
+            .pipe(Effect.mapError(failure));
+          let summary: string;
+          try {
+            summary = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+          } catch {
+            return yield* Effect.fail(
+              failure({ _tag: "ConversationCheckpointBlobInvalid" }),
+            );
+          }
+          if (summary.trim().length === 0) {
+            return yield* Effect.fail(
+              failure({ _tag: "ConversationCheckpointBlobInvalid" }),
+            );
+          }
+          const summaryReceipt =
+            providerTurns === undefined ||
+            conversationOwner?.producerProviderTurnId === null ||
+            conversationOwner?.producerProviderTurnId === undefined
+              ? undefined
+              : yield* tx
+                  .transact(
+                    providerTurns.findSettledResult(
+                      conversationOwner.producerProviderTurnId,
+                    ),
+                  )
+                  .pipe(Effect.mapError(failure));
+          const providerSummary =
+            summaryReceipt?._tag === "SettledSuccess"
+              ? summaryReceipt.canonicalEvents
+                  .flatMap((event) =>
+                    event._tag === "TextDelta" ? [event.text] : [],
+                  )
+                  .join("")
+                  .trim()
+              : "";
+          if (
+            providerSummary.length === 0 ||
+            providerSummary !== summary.trim()
+          ) {
+            return yield* Effect.fail(
+              failure({ _tag: "ConversationCheckpointBlobMismatch" }),
+            );
+          }
+          conversationCheckpointItems.push({
+            _tag: "ContextUpdate",
+            sourceRef: `conversation-checkpoint:${input.execution.workspaceId}:${checkpoint.contextEpoch}`,
+            revision: Number(checkpoint.contextEpoch),
+            updateKind: "Full",
+            text: summary,
+          });
+          conversationContextRefs.push(
+            `conversation-checkpoint:${input.execution.workspaceId}:${checkpoint.contextEpoch}`,
+          );
+        } else if (checkpoint.checkpointKind === "ProviderNative") {
+          if (
+            checkpoint.checkpointRef === null ||
+            checkpoint.bindingFingerprint === null
+          ) {
+            return yield* Effect.fail(
+              failure({ _tag: "ConversationCheckpointNativeBindingInvalid" }),
+            );
+          }
+          const bindingUse = conversationCheckpointBindingUse({
+            checkpointKind: checkpoint.checkpointKind,
+            checkpointRef: checkpoint.checkpointRef,
+            sourceBindingFingerprint: checkpoint.bindingFingerprint,
+            currentBindingFingerprint,
+            providerNativeSupported,
+          });
+          if (bindingUse._tag === "ProviderNative") {
+            conversationCheckpointItems.push({
+              _tag: "CompactionCheckpoint",
+              implementation: "ProviderNative",
+              fromEpoch: parse(ContextEpochNumber)(
+                Number(checkpoint.contextEpoch) - 1,
+              ),
+              toEpoch: checkpoint.contextEpoch,
+              retainedFrontierRef: `conversation-frontier:${input.execution.workspaceId}:${checkpoint.contextEpoch}`,
+              opaqueItemRef: bindingUse.opaqueItemRef,
+              bindingFingerprint: bindingUse.bindingFingerprint,
+            });
+            conversationContextRefs.push(
+              `conversation-checkpoint:${input.execution.workspaceId}:${checkpoint.contextEpoch}`,
+            );
+          } else {
+            const compacted = yield* runConversationCheckpointCompaction(
+              {
+                execution: input.execution,
+                logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
+                owner: conversationOwner,
+                sources: [
+                  ...conversationProjection.coveredAnswered,
+                  ...conversationProjection.uncoveredAnswered,
+                ],
+                coveredThrough: (() => {
+                  const source = [
+                    ...conversationProjection.coveredAnswered,
+                    ...conversationProjection.uncoveredAnswered,
+                  ].at(-1);
+                  return source === undefined
+                    ? checkpoint.coveredThrough
+                    : {
+                        createdAt: source.message.createdAt,
+                        messageId: source.message.messageId,
+                      };
+                })(),
+                currentMessageId: exactConversation.messageId,
+                currentResponseJob,
+                checkpointKind: "Summary",
+                bindingFingerprint: currentBindingFingerprint,
+                modelRef: capability.modelRef,
+                ...(options.secretRef === undefined
+                  ? {}
+                  : { secretRef: options.secretRef }),
+                fence: loopStepFence,
+                updatedAt: yield* now(),
+                ...(options.qualificationProbe === undefined
+                  ? {}
+                  : { qualificationProbe: options.qualificationProbe }),
+              },
+              {
+                providerRuntime,
+                checkpointStore: dependencies.conversationCheckpoints,
+                providerTurns:
+                  providerTurns ??
+                  (yield* Effect.fail(
+                    failure({ _tag: "ProviderTurnStoreUnavailable" }),
+                  )),
+                blobs:
+                  dependencies.blobs ??
+                  (yield* Effect.fail(
+                    failure({
+                      _tag: "ConversationCheckpointBlobStoreUnavailable",
+                    }),
+                  )),
+                tx,
+              },
+            ).pipe(Effect.mapError(failure));
+            if (
+              compacted.checkpointKind !== "Summary" ||
+              compacted.newEpoch !==
+                parse(ContextEpochNumber)(Number(checkpoint.contextEpoch) + 1)
+            ) {
+              return yield* Effect.fail(
+                failure({ _tag: "ConversationCheckpointRebaseMismatch" }),
+              );
+            }
+            continue;
+          }
+        }
+        for (const answered of conversationProjection.uncoveredAnswered) {
+          conversationMessages.push(
+            { role: "user", text: answered.message.bodyRef },
+            { role: "assistant", text: answered.responseBody },
+          );
+          conversationContextRefs.push(
+            `human-input:${answered.message.messageId}`,
+            `human-response:${answered.message.messageId}`,
+          );
+        }
+        conversationMessages.push({ role: "user", text: claimed.bodyRef });
+        conversationContextRefs.push(`human-input:${claimed.messageId}`);
       }
       // A Human Conversation has its own durable history above. The primary
       // Workspace Session is the execution timeline for non-conversation episodes and
@@ -2122,10 +2785,20 @@ export const runModelDecision = (
       const recentTimeline = yield* tx
         .transact(readExecutionTimeline())
         .pipe(Effect.mapError(failure));
+      const conversationTimeline = (
+        entries: ReadonlyArray<SessionEntryRecord>,
+      ) =>
+        entries.filter(
+          (entry) =>
+            belongsToConversationExecution(
+              entry,
+              input.execution.executionId,
+            ) &&
+            entry.entryKind !== "CheckpointReference" &&
+            entry.source?.kind !== "CompactionTurn",
+        );
       let recentSessionEntries = conversationExecution
-        ? recentTimeline.filter((entry) =>
-            belongsToConversationExecution(entry, input.execution.executionId),
-          )
+        ? conversationTimeline(recentTimeline)
         : recentTimeline;
       let projectionDecision = decideSessionProjection(
         recentSessionEntries,
@@ -2219,6 +2892,9 @@ export const runModelDecision = (
           recentSessionEntries = yield* tx
             .transact(readExecutionTimeline())
             .pipe(Effect.mapError(failure));
+          if (conversationExecution) {
+            recentSessionEntries = conversationTimeline(recentSessionEntries);
+          }
           projectionDecision = decideSessionProjection(
             recentSessionEntries,
             currentBindingFingerprint,
@@ -2295,12 +2971,14 @@ export const runModelDecision = (
         logicalStepNo: turn,
         repairAttempt,
         sessionId: input.execution.sessionId,
-        contextEpoch: sessionRecord.value.contextEpoch,
+        contextEpoch:
+          conversationOwner?.contextEpoch ?? sessionRecord.value.contextEpoch,
         controlBasis,
         bindingFingerprint: currentBindingFingerprint,
         inputFrontier: sessionProjection.frontier,
       });
       const inputItems = [
+        ...conversationCheckpointItems,
         ...conversationMessages.map((message) => ({
           _tag: "Message" as const,
           role: message.role,
@@ -2309,6 +2987,10 @@ export const runModelDecision = (
         ...sessionProjection.inputItems,
       ];
       const historySourceRefs = [
+        ...conversationCheckpointItems.map(
+          (_, index) =>
+            `conversation-checkpoint:${input.execution.workspaceId}:${conversationOwner?.contextEpoch ?? 0}:${index}`,
+        ),
         ...conversationMessages.map(
           (_, index) => `conversation-input:${index}`,
         ),
@@ -2319,11 +3001,11 @@ export const runModelDecision = (
         ),
       ];
       const compressibleHistoryIndexes: number[] = [];
-      const sessionInputOffset = conversationMessages.length;
-      // HumanConversation has no cross-response checkpoint owner yet. Keep its
-      // complete HumanMessage history in fixed-input accounting until that
-      // continuity contract is governed; only Work's bound Session frontier
-      // participates in this C3 history projection.
+      const sessionInputOffset =
+        conversationCheckpointItems.length + conversationMessages.length;
+      // Conversation checkpoint/suffix/current input remains independently
+      // owned by the RootWorkspace P14 owner. Only Work's bound Session
+      // frontier participates in C3 Session-history compression.
       if (!conversationExecution) {
         const latestInputIndex = latestSessionInputIndex(
           sessionProjection.inputItems,
@@ -4422,46 +5104,107 @@ export const runModelDecision = (
             failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
           );
         }
-        const compacted = yield* runCompaction(
-          {
-            execution: input.execution,
-            logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
-            ...(loopStep === undefined
-              ? {}
-              : {
-                  sourceAgentLoopStep: {
-                    executionId: String(loopStep.identity.executionId),
-                    logicalStepNo: loopStep.identity.logicalStepNo,
-                    repairAttempt: loopStep.identity.repairAttempt,
-                    providerTurnId: String(loopStep.providerTurnId),
-                  },
-                }),
-            currentEpoch: stepContext.contextEpoch,
-            modelRef: capability.modelRef,
-            ...(options.secretRef === undefined
-              ? {}
-              : { secretRef: options.secretRef }),
-            bindingFingerprint: stepContext.bindingFingerprint,
-            inputFrontier: stepContext.inputFrontier,
-            contextRefs: messageContextRefs,
-            inputItems,
-            ...compactionWorkPinning,
-            fence: loopStepFence,
-            nativeSupported:
-              resumeOverflowNativeCompaction && providerNativeSupported,
-            ...(resumeOverflowNativeCompactionInput === undefined
-              ? {}
-              : { nativeRecovery: resumeOverflowNativeCompactionInput }),
-          },
-          {
-            providerRuntime,
-            sessions,
-            tx,
-            ...(options.qualificationProbe === undefined
-              ? {}
-              : { qualificationProbe: options.qualificationProbe }),
-          },
-        ).pipe(Effect.mapError(failure));
+        const compacted = conversationExecution
+          ? yield* Effect.gen(function* () {
+              if (
+                conversationOwner === undefined ||
+                conversationProjection === undefined ||
+                conversationCurrentJob === undefined ||
+                dependencies.conversationCheckpoints === undefined ||
+                dependencies.blobs === undefined ||
+                providerTurns === undefined
+              ) {
+                return yield* Effect.fail(
+                  failure({ _tag: "ConversationCheckpointRuntimeUnavailable" }),
+                );
+              }
+              const sources = [
+                ...conversationProjection.coveredAnswered,
+                ...conversationProjection.uncoveredAnswered,
+              ];
+              const latest = sources.at(-1);
+              const coveredThrough =
+                latest === undefined
+                  ? conversationProjection.checkpoint.coveredThrough
+                  : {
+                      createdAt: latest.message.createdAt,
+                      messageId: latest.message.messageId,
+                    };
+              return yield* runConversationCheckpointCompaction(
+                {
+                  execution: input.execution,
+                  logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
+                  providerTurnId:
+                    resumeOverflowCompactionProviderTurnId as never,
+                  owner: conversationOwner,
+                  sources,
+                  coveredThrough,
+                  currentMessageId: exactConversation?.messageId ?? "",
+                  currentResponseJob: conversationCurrentJob,
+                  checkpointKind:
+                    resumeOverflowNativeCompaction && providerNativeSupported
+                      ? "ProviderNative"
+                      : "Summary",
+                  bindingFingerprint: currentBindingFingerprint,
+                  modelRef: capability.modelRef,
+                  ...(options.secretRef === undefined
+                    ? {}
+                    : { secretRef: options.secretRef }),
+                  fence: loopStepFence,
+                  updatedAt: yield* now(),
+                  ...(options.qualificationProbe === undefined
+                    ? {}
+                    : { qualificationProbe: options.qualificationProbe }),
+                },
+                {
+                  providerRuntime,
+                  checkpointStore: dependencies.conversationCheckpoints,
+                  providerTurns,
+                  blobs: dependencies.blobs,
+                  tx,
+                },
+              ).pipe(Effect.mapError(failure));
+            })
+          : yield* runCompaction(
+              {
+                execution: input.execution,
+                logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
+                ...(loopStep === undefined
+                  ? {}
+                  : {
+                      sourceAgentLoopStep: {
+                        executionId: String(loopStep.identity.executionId),
+                        logicalStepNo: loopStep.identity.logicalStepNo,
+                        repairAttempt: loopStep.identity.repairAttempt,
+                        providerTurnId: String(loopStep.providerTurnId),
+                      },
+                    }),
+                currentEpoch: stepContext.contextEpoch,
+                modelRef: capability.modelRef,
+                ...(options.secretRef === undefined
+                  ? {}
+                  : { secretRef: options.secretRef }),
+                bindingFingerprint: stepContext.bindingFingerprint,
+                inputFrontier: stepContext.inputFrontier,
+                contextRefs: messageContextRefs,
+                inputItems,
+                ...compactionWorkPinning,
+                fence: loopStepFence,
+                nativeSupported:
+                  resumeOverflowNativeCompaction && providerNativeSupported,
+                ...(resumeOverflowNativeCompactionInput === undefined
+                  ? {}
+                  : { nativeRecovery: resumeOverflowNativeCompactionInput }),
+              },
+              {
+                providerRuntime,
+                sessions,
+                tx,
+                ...(options.qualificationProbe === undefined
+                  ? {}
+                  : { qualificationProbe: options.qualificationProbe }),
+              },
+            ).pipe(Effect.mapError(failure));
         if (
           compacted.providerTurnId !== resumeOverflowCompactionProviderTurnId ||
           Number(compacted.newEpoch) !== Number(stepContext.contextEpoch) + 1
@@ -5224,42 +5967,103 @@ export const runModelDecision = (
               });
             }
           }
-          const compacted = yield* runCompaction(
-            {
-              execution: input.execution,
-              logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
-              ...(loopStep === undefined
-                ? {}
-                : {
-                    sourceAgentLoopStep: {
-                      executionId: String(loopStep.identity.executionId),
-                      logicalStepNo: loopStep.identity.logicalStepNo,
-                      repairAttempt: loopStep.identity.repairAttempt,
-                      providerTurnId: String(loopStep.providerTurnId),
-                    },
-                  }),
-              currentEpoch: stepContext.contextEpoch,
-              modelRef: capability.modelRef,
-              ...(options.secretRef === undefined
-                ? {}
-                : { secretRef: options.secretRef }),
-              bindingFingerprint: stepContext.bindingFingerprint,
-              inputFrontier: stepContext.inputFrontier,
-              contextRefs: messageContextRefs,
-              inputItems,
-              ...compactionWorkPinning,
-              fence: overflowFence,
-              nativeSupported,
-            },
-            {
-              providerRuntime,
-              sessions,
-              tx,
-              ...(options.qualificationProbe === undefined
-                ? {}
-                : { qualificationProbe: options.qualificationProbe }),
-            },
-          ).pipe(Effect.mapError(failure));
+          const compacted = conversationExecution
+            ? yield* Effect.gen(function* () {
+                if (
+                  conversationOwner === undefined ||
+                  conversationProjection === undefined ||
+                  conversationCurrentJob === undefined ||
+                  dependencies.conversationCheckpoints === undefined ||
+                  dependencies.blobs === undefined ||
+                  providerTurns === undefined
+                ) {
+                  return yield* Effect.fail(
+                    failure({
+                      _tag: "ConversationCheckpointRuntimeUnavailable",
+                    }),
+                  );
+                }
+                const sources = [
+                  ...conversationProjection.coveredAnswered,
+                  ...conversationProjection.uncoveredAnswered,
+                ];
+                const latest = sources.at(-1);
+                const coveredThrough =
+                  latest === undefined
+                    ? conversationProjection.checkpoint.coveredThrough
+                    : {
+                        createdAt: latest.message.createdAt,
+                        messageId: latest.message.messageId,
+                      };
+                return yield* runConversationCheckpointCompaction(
+                  {
+                    execution: input.execution,
+                    logicalStepNo: overflowStep.identity.logicalStepNo,
+                    providerTurnId: `ptn_${compactTurnId}` as never,
+                    owner: conversationOwner,
+                    sources,
+                    coveredThrough,
+                    currentMessageId: exactConversation?.messageId ?? "",
+                    currentResponseJob: conversationCurrentJob,
+                    checkpointKind: nativeSupported
+                      ? "ProviderNative"
+                      : "Summary",
+                    bindingFingerprint: currentBindingFingerprint,
+                    modelRef: capability.modelRef,
+                    ...(options.secretRef === undefined
+                      ? {}
+                      : { secretRef: options.secretRef }),
+                    fence: overflowFence,
+                    updatedAt: yield* now(),
+                    ...(options.qualificationProbe === undefined
+                      ? {}
+                      : { qualificationProbe: options.qualificationProbe }),
+                  },
+                  {
+                    providerRuntime,
+                    checkpointStore: dependencies.conversationCheckpoints,
+                    providerTurns,
+                    blobs: dependencies.blobs,
+                    tx,
+                  },
+                ).pipe(Effect.mapError(failure));
+              })
+            : yield* runCompaction(
+                {
+                  execution: input.execution,
+                  logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
+                  ...(loopStep === undefined
+                    ? {}
+                    : {
+                        sourceAgentLoopStep: {
+                          executionId: String(loopStep.identity.executionId),
+                          logicalStepNo: loopStep.identity.logicalStepNo,
+                          repairAttempt: loopStep.identity.repairAttempt,
+                          providerTurnId: String(loopStep.providerTurnId),
+                        },
+                      }),
+                  currentEpoch: stepContext.contextEpoch,
+                  modelRef: capability.modelRef,
+                  ...(options.secretRef === undefined
+                    ? {}
+                    : { secretRef: options.secretRef }),
+                  bindingFingerprint: stepContext.bindingFingerprint,
+                  inputFrontier: stepContext.inputFrontier,
+                  contextRefs: messageContextRefs,
+                  inputItems,
+                  ...compactionWorkPinning,
+                  fence: overflowFence,
+                  nativeSupported,
+                },
+                {
+                  providerRuntime,
+                  sessions,
+                  tx,
+                  ...(options.qualificationProbe === undefined
+                    ? {}
+                    : { qualificationProbe: options.qualificationProbe }),
+                },
+              ).pipe(Effect.mapError(failure));
           overflowReplacementProviderTurnId =
             `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
           yield* tx

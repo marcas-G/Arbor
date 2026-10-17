@@ -5,6 +5,7 @@ export * from "./attention-projection.js";
 export * from "./command.js";
 export * from "./consumer.js";
 export * from "./control-approval.js";
+export * from "./conversation-checkpoint.js";
 export * from "./conversation-response.js";
 export * from "./decision-request.js";
 export * from "./dependency-store.js";

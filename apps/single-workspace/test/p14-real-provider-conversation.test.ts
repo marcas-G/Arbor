@@ -33,7 +33,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema47TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema48TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
@@ -52,7 +52,7 @@ const assistantAnswer =
 const liveHumanInputSentinelEnabled =
   process.env.ARBOR_WAVE1_LIVE_HUMAN_INPUT === "1";
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createSchema48TestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
@@ -60,7 +60,7 @@ let fixture:
 const scratchDirectories: string[] = [];
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema44TestDatabaseFactory({
+  fixtureFactory = await createSchema48TestDatabaseFactory({
     prefix: ".p14-conversation-schema44-",
   });
 }, 120_000);
@@ -607,7 +607,7 @@ describe("P14 production conversation model context", () => {
                 ],
               );
               yield* sql.unsafe(
-                "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Answered',NULL,?,?,?,0)",
+                "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Declined','exe_legacy_claim',?,NULL,'stale legacy answer',0)",
                 [
                   "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
                   projectId,
@@ -617,8 +617,6 @@ describe("P14 production conversation model context", () => {
                   "cmd_018f2b3c-4d5e-7abc-8def-0123456789ad",
                   "integration-prior-fingerprint",
                   "2026-09-24T00:00:00.000Z",
-                  "2026-09-24T00:01:00.000Z",
-                  priorAssistantAnswer,
                 ],
               );
               yield* sql.unsafe(
@@ -635,7 +633,7 @@ describe("P14 production conversation model context", () => {
                 ],
               );
               yield* sql.unsafe(
-                "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Answered',NULL,1,NULL,NULL,NULL,NULL,'conversation-retry-v1',?,?,NULL,0,?,?), (?,?,?,'Queued',NULL,0,NULL,NULL,NULL,NULL,'conversation-retry-v1',NULL,NULL,NULL,0,?,?)",
+                "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Answered',NULL,1,NULL,NULL,NULL,NULL,'conversation-retry-v1',?,?,NULL,2,?,?), (?,?,?,'Queued',NULL,0,NULL,NULL,NULL,NULL,'conversation-retry-v1',NULL,NULL,NULL,0,?,?)",
                 [
                   "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
                   projectId,
@@ -650,6 +648,30 @@ describe("P14 production conversation model context", () => {
                   "2026-09-25T00:00:00.000Z",
                   "2026-09-25T00:00:00.000Z",
                 ],
+              );
+              const priorMessageId = "msg_018f2b3c-4d5e-7abc-8def-0123456789ad";
+              const priorExecutionId =
+                "exe_018f2b3c-4d5e-7abc-8def-0123456789ad";
+              yield* sql.unsafe(
+                "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, episode_kind, episode_ref, episode_revision, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?, ?, 'workspace', ?, 'ConversationResponseEpisode', ?, 0, NULL, NULL, ?, '2026-09-24T00:00:00.000Z', NULL, 'Completed', ?, '2026-09-24T00:01:00.000Z')",
+                [
+                  priorExecutionId,
+                  projectId,
+                  workspaceId,
+                  priorMessageId,
+                  sessionId,
+                  JSON.stringify({
+                    _tag: "Completed",
+                    result: {
+                      _tag: "ConversationResponseProduced",
+                      messageId: priorMessageId,
+                    },
+                  }),
+                ],
+              );
+              yield* sql.unsafe(
+                "INSERT INTO conversation_attempts (message_id, attempt_no, execution_id, admitted_at, settled_at, settlement_kind, failure_class, failure_fingerprint, retry_decision_json, policy_version) VALUES (?, 0, ?, '2026-09-24T00:00:00.000Z', '2026-09-24T00:01:00.000Z', 'Completed', NULL, NULL, '{\"_tag\":\"Answer\"}', 'conversation-retry-v1')",
+                [priorMessageId, priorExecutionId],
               );
             }),
           );

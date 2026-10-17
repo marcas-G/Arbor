@@ -15,7 +15,10 @@ import {
   type AgentLoopStepFence,
   type AgentLoopStepRecord,
   AgentLoopStepStore,
+  BlobStorePort,
   Clock,
+  ConversationAttemptStore,
+  ConversationCheckpointStore,
   ConversationResponseJobStore,
   DecisionRequestStore,
   EnvironmentRevisionStore,
@@ -23,6 +26,7 @@ import {
   type ExecutionDriveOutcome,
   type ExecutionDriverError,
   ExecutionDriverPort,
+  ExecutionRepository,
   HumanMessageStore,
   InboxProjectionStore,
   LocalPlanStore,
@@ -275,9 +279,18 @@ export const AgentLoopDriverLive = (
       const capabilityPort = yield* ModelCapabilityPort;
       const sessions = yield* SessionRepository;
       const humanMessages = yield* HumanMessageStore;
+      const conversationCheckpointOption = yield* Effect.serviceOption(
+        ConversationCheckpointStore,
+      );
+      const blobStoreOption = yield* Effect.serviceOption(BlobStorePort);
       const responseJobsOption = yield* Effect.serviceOption(
         ConversationResponseJobStore,
       );
+      const responseAttemptsOption = yield* Effect.serviceOption(
+        ConversationAttemptStore,
+      );
+      const executionRepositoryOption =
+        yield* Effect.serviceOption(ExecutionRepository);
       const inboxOption = yield* Effect.serviceOption(InboxProjectionStore);
       const inputPromotionOption = yield* Effect.serviceOption(
         InputPromotionService,
@@ -493,9 +506,24 @@ export const AgentLoopDriverLive = (
                 tx,
                 sessions,
                 humanMessages,
+                ...(Option.isSome(conversationCheckpointOption)
+                  ? {
+                      conversationCheckpoints:
+                        conversationCheckpointOption.value,
+                    }
+                  : {}),
+                ...(Option.isSome(blobStoreOption)
+                  ? { blobs: blobStoreOption.value }
+                  : {}),
                 turnProfileResolver,
                 ...(Option.isSome(responseJobsOption)
                   ? { responseJobs: responseJobsOption.value }
+                  : {}),
+                ...(Option.isSome(responseAttemptsOption)
+                  ? { responseAttempts: responseAttemptsOption.value }
+                  : {}),
+                ...(Option.isSome(executionRepositoryOption)
+                  ? { executions: executionRepositoryOption.value }
                   : {}),
                 works,
                 ...(Option.isSome(localPlansOption)
