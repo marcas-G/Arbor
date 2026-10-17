@@ -19,7 +19,7 @@ import {
   isP39PathQualificationEnabled,
   p39WindowsAclQualificationAvailable,
 } from "../../../tests/support/p39-windows-deployment-test.js";
-import { createSchema46TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema47TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { runDaemonOnce } from "../src/main.js";
 
