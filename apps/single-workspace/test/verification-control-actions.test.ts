@@ -12,6 +12,7 @@ import type {
 import {
   CommandHandlerRegistry,
   CommandHandlerRegistryLive,
+  makeConcludeVerificationHandler,
   makeRecordVerificationEvidenceHandler,
   newUuid7,
   semanticRequestFingerprint,
@@ -59,6 +60,7 @@ import {
   PermissionGrantRepository,
   sha256Hex,
   TransactionPort,
+  TransactionScope,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option, Stream } from "effect";
@@ -544,6 +546,120 @@ describe("verification control actions", () => {
     });
     expect(state.priorConclusionValidatorCalls()).toBe(1);
     expect(state.submitted).toHaveLength(0);
+  });
+
+  it("validates a canonical v2 ConcludeVerification receipt on the prior-generation replay path", async () => {
+    const commandId = parse(CommandId)(
+      "cmd_00000000-0000-7000-8000-000000000002",
+    );
+    const criteriaResults = [
+      {
+        criterionId: "focused-test",
+        requirement: "focused test passes",
+        required: true,
+        verdict: "Pass" as const,
+        evidenceRefs: [evidenceId],
+      },
+    ];
+    const concluded = {
+      ...verification,
+      snapshotStatus: "Available" as const,
+      criteriaResults,
+      evidenceRefs: [evidenceId],
+      summaryRef: "blob:summary",
+      state: { status: "Concluded" as const, verdict: "Pass" as const },
+    };
+    const result = {
+      verificationId,
+      state: "Concluded" as const,
+      verdict: "Pass" as const,
+      summaryRef: "blob:summary",
+      missionSnapshot: verification.missionSnapshot,
+      criteriaResults,
+      snapshotStatus: "Available" as const,
+      conclusionReason: undefined,
+      wakeSignals: [],
+      channel1Release: {
+        workId: verification.workId,
+        targetWorkRevision: verification.targetWorkRevision,
+      },
+    };
+    const payload = {
+      verificationId,
+      verdict: "Pass" as const,
+      criteriaResults,
+      summaryRef: "blob:summary",
+    };
+    const event = {
+      sequence: 1,
+      projectId,
+      eventType: "VerificationConcluded",
+      eventVersion: 2,
+      occurredAt: "2026-10-02T00:00:01.000Z",
+      aggregateRef: verificationId,
+      actor: principal,
+      causedByCommandId: commandId,
+      payload: {
+        verificationId,
+        workId: verification.workId,
+        targetWorkRevision: verification.targetWorkRevision,
+        verdict: "Pass",
+        conclusionReason: "",
+        evidenceRefs: [evidenceId],
+        summaryRef: "blob:summary",
+        missionSnapshot: verification.missionSnapshot,
+        criteriaResults,
+        snapshotStatus: "Available",
+      },
+    };
+    const handler = makeConcludeVerificationHandler({
+      verifications: {
+        findById: () => Effect.succeed(Option.some(concluded as never)),
+        concludeIfOpen: () => Effect.die("replay must not execute"),
+      } as never,
+      evidence: {
+        listByVerification: () =>
+          Effect.succeed([
+            { evidenceId, criterionId: "focused-test" } as never,
+          ]),
+      } as never,
+      works: {} as never,
+      journal: {
+        lastSequence: () => Effect.succeed(1),
+        readAfter: () => Effect.succeed([event] as never),
+      } as never,
+    });
+    const receipt = {
+      commandId,
+      projectId,
+      schemaVersion: "2",
+      resolution: { _tag: "Committed", result },
+    };
+    const envelope = {
+      commandId,
+      projectId,
+      actor: principal,
+      payload,
+      issuedAt: "2026-10-02T00:00:01.000Z",
+    };
+
+    const replay = handler.validateReceiptReplay;
+    expect(replay).toBeDefined();
+    if (replay === undefined) throw new Error("replay validator missing");
+    await expect(
+      Effect.runPromise(
+        Effect.provideService(
+          replay(
+            receipt as never,
+            payload as never,
+            envelope as never,
+            context,
+          ),
+          TransactionScope,
+          { session: { id: "replay-test" } },
+        ),
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it.each([
