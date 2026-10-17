@@ -21,6 +21,8 @@ import {
   decodeRegisteredCommandReceipt,
   deliverMessagePlan,
   deriveFormationIds,
+  FINGERPRINT_ALGORITHM_VERSION,
+  type GatewayEnvelope,
   isChildWorkspaceProposal,
   makeSendMessageHandler,
   newFormationProposalId,
@@ -311,6 +313,8 @@ export interface VerificationActionDependencies {
   >;
   readonly sessions: Pick<SessionRepositoryService, "listEntries">;
   readonly toolInvocations: Pick<ToolInvocationStoreService, "findById">;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
   readonly loopSteps?: Pick<
     AgentLoopStepStoreService,
     "findCurrent" | "listActions"
@@ -499,10 +503,23 @@ const findPriorCommandReceipt = (input: {
           ),
         );
       }
+      const storedSchemaVersion = prior.value.schemaVersion;
+      if (
+        storedSchemaVersion !== handler.value.schemaVersion &&
+        !(handler.value.priorReceiptSchemaVersions ?? []).includes(
+          storedSchemaVersion,
+        )
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure(input.operation)(
+            "prior Command receipt schema is not registered for strict replay",
+          ),
+        );
+      }
       const decodedPrior = yield* decodeRegisteredCommandReceipt<unknown>(
         prior.value,
         input.commandType,
-        handler.value.schemaVersion,
+        storedSchemaVersion,
       ).pipe(
         Effect.catch(
           (
@@ -529,6 +546,94 @@ const findPriorCommandReceipt = (input: {
     }
     return { _tag: "None" as const };
   }).pipe(Effect.mapError(actionOperationalFailure(input.errorOperation)));
+
+const validatePriorCommittedReplay = <Payload>(input: {
+  readonly receipt: PriorCommittedCommandReceipt;
+  readonly commandType: RegisteredCommandType;
+  readonly payload: Payload;
+  readonly context: Extract<
+    CommandSubmissionContext,
+    { readonly _tag: "ExecutionOrigin" }
+  >;
+  readonly actor: import("@arbor/domain").Actor;
+  readonly registry: CommandHandlerRegistryService | undefined;
+  readonly tx: TransactionPortService;
+}): Effect.Effect<void, AgentActionError> =>
+  Effect.gen(function* () {
+    if (input.registry === undefined) {
+      return yield* Effect.fail(
+        actionOperationalFailure(`${input.commandType}.priorReceipt`)(
+          "trusted command handler registry is required to validate committed replay",
+        ),
+      );
+    }
+    const found = input.registry.lookup(input.commandType);
+    if (Option.isNone(found) || found.value.commandType !== input.commandType) {
+      return yield* Effect.fail(
+        actionOperationalFailure(`${input.commandType}.priorReceipt`)(
+          "trusted command handler is not registered for committed replay",
+        ),
+      );
+    }
+    const handler = found.value;
+    if (
+      input.receipt.schemaVersion !== handler.schemaVersion &&
+      !(handler.priorReceiptSchemaVersions ?? []).includes(
+        input.receipt.schemaVersion,
+      )
+    ) {
+      return yield* Effect.fail(
+        actionOperationalFailure(`${input.commandType}.priorReceipt`)(
+          "committed receipt schema is not registered for replay",
+        ),
+      );
+    }
+    const expectedFingerprint = semanticRequestFingerprint({
+      commandType: input.commandType,
+      projectId: input.receipt.projectId,
+      actor: input.actor,
+      schemaVersion: input.receipt.schemaVersion,
+      payload: input.payload,
+    });
+    if (
+      input.receipt.fingerprintAlgorithmVersion !==
+        FINGERPRINT_ALGORITHM_VERSION ||
+      input.receipt.semanticRequestFingerprint !== expectedFingerprint
+    ) {
+      return yield* Effect.fail(
+        actionOperationalFailure(`${input.commandType}.priorReceipt`)(
+          "committed receipt does not bind the exact replay payload and actor",
+        ),
+      );
+    }
+    if (handler.validateReceiptReplay === undefined) {
+      return yield* Effect.fail(
+        actionOperationalFailure(`${input.commandType}.priorReceipt`)(
+          "committed receipt has no canonical replay validator",
+        ),
+      );
+    }
+    const envelope: GatewayEnvelope<Payload> = {
+      commandType: input.commandType,
+      commandId: input.receipt.commandId,
+      projectId: input.receipt.projectId,
+      actor: input.actor,
+      issuedAt: input.receipt.createdAt,
+      payload: input.payload,
+    };
+    yield* input.tx.transact(
+      handler.validateReceiptReplay(
+        input.receipt as never,
+        input.payload,
+        envelope,
+        input.context,
+      ),
+    );
+  }).pipe(
+    Effect.mapError(
+      actionOperationalFailure(`${input.commandType}.priorReceipt`),
+    ),
+  );
 
 const validateAssignWorkReceiptBinding = (input: {
   readonly binding: AssignWorkTargetBinding;
@@ -3726,10 +3831,75 @@ const recordVerificationEvidenceHandler = (
           recordedAt: actionIntent.updatedAt,
         },
       };
-      const commandId = parse(CommandId)(
-        `cmd_${newUuid7("record-verification-evidence", occurrence)}`,
+      if (context._tag !== "ExecutionOrigin") {
+        return yield* Effect.fail(
+          actionError("verification evidence requires an Execution origin"),
+        );
+      }
+      const commandId = generationScopedCommandId(
+        "record-verification-evidence",
+        occurrence,
+        context,
       );
       const actor = context.principal as never;
+      if (context.fencingGeneration > 0) {
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "record-verification-evidence",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          commandType: "RecordVerificationEvidence",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "RecordVerificationEvidence.priorReceipt",
+          errorOperation: "RecordVerificationEvidence",
+          lookupOperation: "RecordVerificationEvidence.receiptLookup",
+        });
+        if (prior._tag === "Committed") {
+          yield* validatePriorCommittedReplay({
+            receipt: prior.receipt,
+            commandType: "RecordVerificationEvidence",
+            payload,
+            context,
+            actor,
+            registry: dependencies.commandHandlerRegistry,
+            tx: dependencies.tx,
+          });
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("verificationId" in result) ||
+            result.verificationId !== payload.verificationId ||
+            !("evidenceId" in result) ||
+            result.evidenceId !== evidenceId ||
+            !("state" in result) ||
+            result.state !== "Recorded"
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure(
+                "RecordVerificationEvidence.priorReceipt",
+              )(
+                "committed evidence receipt result does not match the exact Evidence identity",
+              ),
+            );
+          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `VerificationEvidenceRecorded(${evidenceId}, ${action.criterionId})`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return yield* Effect.fail(
+            actionError(JSON.stringify(prior.receipt.resolution.error)),
+          );
+        }
+      }
       const receipt = yield* dependencies.gateway.execute<
         RecordVerificationEvidencePayload,
         RecordVerificationEvidenceResult
@@ -3823,10 +3993,78 @@ const concludeVerificationHandler = (
         summaryRef,
       };
       const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
-      const commandId = parse(CommandId)(
-        `cmd_${newUuid7("conclude-verification", occurrence)}`,
+      if (context._tag !== "ExecutionOrigin") {
+        return yield* Effect.fail(
+          actionError("verification conclusion requires an Execution origin"),
+        );
+      }
+      const commandId = generationScopedCommandId(
+        "conclude-verification",
+        occurrence,
+        context,
       );
       const actor = context.principal as never;
+      if (context.fencingGeneration > 0) {
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "conclude-verification",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          commandType: "ConcludeVerification",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "ConcludeVerification.priorReceipt",
+          errorOperation: "ConcludeVerification",
+          lookupOperation: "ConcludeVerification.receiptLookup",
+        });
+        if (prior._tag === "Committed") {
+          yield* validatePriorCommittedReplay({
+            receipt: prior.receipt,
+            commandType: "ConcludeVerification",
+            payload,
+            context,
+            actor,
+            registry: dependencies.commandHandlerRegistry,
+            tx: dependencies.tx,
+          });
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("verificationId" in result) ||
+            result.verificationId !== payload.verificationId ||
+            !("state" in result) ||
+            result.state !== "Concluded" ||
+            !("verdict" in result) ||
+            result.verdict !== payload.verdict ||
+            !("summaryRef" in result) ||
+            result.summaryRef !== payload.summaryRef
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("ConcludeVerification.priorReceipt")(
+                "committed conclusion receipt result does not match canonical Verification identity",
+              ),
+            );
+          }
+          return {
+            _tag: "Settle" as const,
+            settlement: {
+              _tag: "Completed" as const,
+              result: {
+                _tag: "VerificationConcluded" as const,
+                verificationId: verification.value.verificationId,
+                verdict: action.verdict,
+              },
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return yield* Effect.fail(
+            actionError(JSON.stringify(prior.receipt.resolution.error)),
+          );
+        }
+      }
       const receipt = yield* dependencies.gateway.execute<
         ConcludeVerificationPayload,
         ConcludeVerificationResult
