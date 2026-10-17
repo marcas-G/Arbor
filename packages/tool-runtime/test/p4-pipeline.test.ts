@@ -1,5 +1,6 @@
 import {
   Actor,
+  ArtifactId,
   canonicalRegionString,
   ExecutionId,
   Principal,
@@ -11,6 +12,7 @@ import {
   WorkspaceId,
 } from "@arbor/domain";
 import {
+  ArtifactService,
   Clock,
   canonicalArgumentsDigestV1,
   canonicalizeRecoveryBindingV1,
@@ -547,6 +549,7 @@ interface PipelineTrace {
     readonly result: ToolReconciliationResult;
     readonly factId: string;
     readonly settlementEvidence: ToolObservationEvidence;
+    readonly failFactWrite?: boolean;
     readonly denyAuthorityOnCall?: number | null;
     readonly priorOverride?: ToolInvocationRecord;
     readonly bindingOverride?: NonNullable<
@@ -1180,8 +1183,17 @@ const app = (
             record: (
               request: ToolReconciliationRequest,
               result: ToolReconciliationResult,
-            ) =>
-              Effect.sync(() => {
+            ) => {
+              if (reconciliationRetry.failFactWrite === true) {
+                if (trace !== undefined) {
+                  trace.reconciliationFactWrites =
+                    (trace.reconciliationFactWrites ?? 0) + 1;
+                }
+                return Effect.fail(
+                  new Error("injected P39 reconciliation fact-store failure"),
+                ) as never;
+              }
+              return Effect.sync(() => {
                 if (trace !== undefined) {
                   trace.reconciliationFactWrites =
                     (trace.reconciliationFactWrites ?? 0) + 1;
@@ -1193,7 +1205,8 @@ const app = (
                   factDisposition: "RecoveryInput" as const,
                   outcome: result._tag,
                 };
-              }),
+              });
+            },
           } as never),
           Layer.succeed(ToolObservationEvidenceStore, {
             assertCurrentFence: () => Effect.void,
@@ -1233,10 +1246,28 @@ const app = (
               }),
           } as never),
         );
-  return Layer.mergeAll(
-    reconciliationDeps,
-    Layer.provide(toolRuntime, reconciliationDeps),
-  );
+  const artifactDeps =
+    reconciliationRetry?.result._tag === "Occurred"
+      ? (() => {
+          const resultRef = reconciliationRetry.result.resultRef;
+          return Layer.succeed(ArtifactService, {
+            store: () => Effect.die(new Error("unexpected artifact store")),
+            load: (artifactId) =>
+              Effect.succeed(
+                String(artifactId) === resultRef
+                  ? Option.some(
+                      new TextEncoder().encode("reconstructable result"),
+                    )
+                  : Option.none(),
+              ),
+          });
+        })()
+      : undefined;
+  const runtimeDeps =
+    artifactDeps === undefined
+      ? reconciliationDeps
+      : Layer.mergeAll(reconciliationDeps, artifactDeps);
+  return Layer.mergeAll(runtimeDeps, Layer.provide(toolRuntime, runtimeDeps));
 };
 
 const run = (
@@ -1322,6 +1353,181 @@ const runFailure = (
   );
 
 describe("P4 tool runtime pipeline", () => {
+  it.each(["NotOccurred", "Occurred", "StillUnknown"] as const)(
+    "stops before admission and P40 settlement when the P39 %s fact write fails, then safely resumes the exact reconciliation",
+    async (outcomeTag) => {
+      const retry = p39NotOccurredRetryCase("ResourceSnapshotChanged");
+      if (retry.result._tag !== "NotOccurred") {
+        throw new Error(
+          "expected the retry fixture to carry a NotOccurred proof",
+        );
+      }
+      const resultArtifactId = parse(ArtifactId)(
+        "art_018f2b3c-4d5e-7abc-8def-0123456789a3",
+      );
+      const effectKey = retry.profile.effectKey({
+        invocationId,
+        argumentsJson: retry.argumentsJson,
+      });
+      if (effectKey === null) throw new Error("test effect key missing");
+      const reconciliationResult: ToolReconciliationResult =
+        outcomeTag === "NotOccurred"
+          ? retry.result
+          : outcomeTag === "Occurred"
+            ? {
+                _tag: "Occurred",
+                proof: retry.result.proof,
+                settlement: "Success",
+                resultRef: String(resultArtifactId),
+              }
+            : {
+                _tag: "StillUnknown",
+                reasonCode: "ExternalSourceUnavailable",
+                evidenceRef: null,
+              };
+      const profile: ToolReconciliationProfile = {
+        ...retry.profile,
+        reconstructOccurred: ({ settlement }) => ({
+          settlement,
+          observation: {
+            text: "reconstructed from exact result artifact",
+            truncated: false,
+          },
+        }),
+      };
+      const factId = reconciliationFactId({
+        request: {
+          invocationId,
+          attemptNo: 0,
+          bindingSha256: retry.verifiedBinding.bindingSha256,
+          profileHash: retry.profile.profileHash,
+          effectKey,
+          visibilityScopeSha256:
+            retry.verifiedBinding.value.targetResourceIdentityDigest,
+        },
+        result: reconciliationResult,
+        factDisposition: "RecoveryInput",
+      });
+      let failedStoreCalls = 0;
+      let recoveryStoreCalls = 0;
+      let firstExecutorCalls = 0;
+      let recoveryExecutorCalls = 0;
+      const makeTrace = (failFactWrite: boolean): PipelineTrace => ({
+        noEffectDenials: [],
+        events: [],
+        approvalConsumer: null,
+        intentWrites: 0,
+        effectAdmissions: 0,
+        approvalConsumes: 0,
+        retryAttemptNumbers: [0],
+        reconciliationRetry: {
+          profile,
+          verifiedBinding: retry.verifiedBinding,
+          attempt: retry.attempt,
+          authority: retry.authority,
+          result: reconciliationResult,
+          factId,
+          settlementEvidence: retry.settlementEvidence,
+          failFactWrite,
+        },
+      });
+      const invoke = async (trace: PipelineTrace, execute: () => void) =>
+        Effect.runPromise(
+          Effect.provide(
+            Effect.match(
+              Effect.gen(function* () {
+                const runtime = yield* ToolRuntimePort;
+                return yield* runtime.invoke(
+                  {
+                    ...intent(retry.argumentsJson),
+                    toolName: "shell",
+                    toolVersion: "2",
+                    invocationId,
+                    approvalId: null,
+                  } as never,
+                  retry.context,
+                );
+              }),
+              {
+                onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
+                onSuccess: (value) => ({ _tag: "Success" as const, value }),
+              },
+            ),
+            app(
+              false,
+              {
+                name: "shell",
+                write: true,
+                requiresApproval: () => false,
+                execute: () => {
+                  execute();
+                  return Effect.succeed({
+                    settlement: { _tag: "Success" as const },
+                    observation: { text: "recovered effect", truncated: false },
+                    resultRef: null,
+                  });
+                },
+              },
+              {},
+              trace,
+              undefined,
+              false,
+              retry.prior,
+              "rev",
+              trace.reconciliationRetry,
+            ),
+          ),
+        );
+
+      const failedTrace = makeTrace(true);
+      const failed = await invoke(failedTrace, () => {
+        firstExecutorCalls += 1;
+      });
+      failedStoreCalls = failedTrace.reconciliationFactWrites ?? 0;
+      expect(failed._tag).toBe("Failure");
+      expect(failedStoreCalls).toBe(1);
+      expect(failedTrace.reconciliationCalls).toBe(1);
+      expect(failedTrace.retryAttemptNumbers).toEqual([0]);
+      expect(failedTrace.effectAdmissions).toBe(0);
+      expect(failedTrace.p40Candidates ?? []).toEqual([]);
+      expect(firstExecutorCalls).toBe(0);
+
+      const recoveredTrace = makeTrace(false);
+      const recovered = await invoke(recoveredTrace, () => {
+        recoveryExecutorCalls += 1;
+      });
+      recoveryStoreCalls = recoveredTrace.reconciliationFactWrites ?? 0;
+      expect(recovered._tag).toBe("Success");
+      expect(recoveredTrace.reconciliationRequests).toEqual(
+        failedTrace.reconciliationRequests,
+      );
+      expect(recoveryStoreCalls).toBe(1);
+      if (outcomeTag === "NotOccurred") {
+        expect(recoveredTrace.retryAttemptNumbers).toEqual([0, 1]);
+        expect(recoveryExecutorCalls).toBe(1);
+      } else if (outcomeTag === "Occurred") {
+        expect(recoveredTrace.retryAttemptNumbers).toEqual([0]);
+        expect(recoveryExecutorCalls).toBe(0);
+        expect(recoveredTrace.p40Candidates).toHaveLength(1);
+        expect(recoveredTrace.p40Candidates?.[0]).toMatchObject({
+          settlement: { _tag: "Success" },
+          reconciliationSelection: { attemptNo: 0, factId },
+        });
+      } else {
+        expect(recovered).toEqual({
+          _tag: "Success",
+          value: {
+            _tag: "OutcomeUnknown",
+            reconciliationRefs: [String(invocationId)],
+          },
+        });
+        expect(recoveredTrace.retryAttemptNumbers).toEqual([0]);
+        expect(recoveryExecutorCalls).toBe(0);
+        expect(recoveredTrace.p40Candidates ?? []).toEqual([]);
+      }
+    },
+  );
+
   it.each(["AuthoritySnapshotChanged", "ResourceSnapshotChanged"] as const)(
     "settles a denied P39 NotOccurred retry after %s without a second effect admission",
     async (denialReasonCode) => {
