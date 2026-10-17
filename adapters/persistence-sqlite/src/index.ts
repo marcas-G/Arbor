@@ -32,6 +32,7 @@ export * from "./p42-project-resource-source-migration.js";
 export * from "./p43-blocked-workepisode-migration.js";
 export * from "./p45-retry-verification-origin-migration.js";
 export * from "./p46-verification-evidence-snapshot-migration.js";
+export * from "./p47-ah14-legacy-adoption-attention-migration.js";
 export * from "./permission-grant-repository.js";
 export * from "./project-directory.js";
 export * from "./project-tool-registry.js";

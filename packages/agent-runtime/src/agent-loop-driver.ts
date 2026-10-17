@@ -30,6 +30,7 @@ import {
   type ProviderExecutionPolicyOverrides,
   ProviderRuntime,
   ProviderTurnStore,
+  RecoveryAttentionFactStore,
   type RuntimeSafetyGateService,
   type RuntimeSafetyObservation,
   type SecretRef,
@@ -134,6 +135,9 @@ export const AgentLoopDriverLive = (
         yield* Effect.serviceOption(AgentLoopStepStore);
       const providerTurnStoreOption =
         yield* Effect.serviceOption(ProviderTurnStore);
+      const recoveryAttentionFactStoreOption = yield* Effect.serviceOption(
+        RecoveryAttentionFactStore,
+      );
       const configuredLoopSteps = Option.isSome(loopStepStoreOption)
         ? loopStepStoreOption.value
         : undefined;
@@ -299,6 +303,12 @@ export const AgentLoopDriverLive = (
                 ...(loopSteps === undefined ? {} : { loopSteps }),
                 ...(loopStepFence === undefined ? {} : { loopStepFence }),
                 ...(providerTurns === undefined ? {} : { providerTurns }),
+                ...(Option.isSome(recoveryAttentionFactStoreOption)
+                  ? {
+                      recoveryAttentionFacts:
+                        recoveryAttentionFactStoreOption.value,
+                    }
+                  : {}),
                 ...(leaseGeneration === undefined ? {} : { leaseGeneration }),
               },
               turn,
@@ -357,6 +367,9 @@ export const AgentLoopDriverLive = (
             }
             if (modelDecision._tag === "SubmittedDecisionBindingMismatch") {
               return modelDecision;
+            }
+            if (modelDecision._tag === "RecoveryBlocked") {
+              return { _tag: "RecoveryBlocked" } as const;
             }
             const preparedTurn = modelDecision.turn;
             const decodedOutput = modelDecision.output;

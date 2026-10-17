@@ -6,10 +6,17 @@ import {
   type AttentionProjectionStoreError,
   type AttentionProjectionStoreService,
   type ConsumerOffsetStoreError,
+  canonicalizeLegacyActionDispositionSummaryV1,
   type DeliverReplayAttentionProjectionRow,
+  deriveLegacyAdoptionResolutionCodeV1,
+  type LegacyAdoptionAttentionFact,
+  type LegacyAdoptionAttentionProjectionRow,
+  type LegacyAdoptionAttentionResolutionFact,
+  legacyAdoptionResolutionFactIdV1,
   type ProjectionStoreService,
   type RecoveryAttentionFactStoreService,
   type SubmittedDecisionBindingAttentionProjectionRow,
+  sha256Hex,
   type ToolObservationReplayAttentionFactStoreService,
   type ToolObservationReplayAttentionProjectionRow,
   TransactionScope,
@@ -76,6 +83,16 @@ interface SubmittedDecisionBindingAttentionDbRow {
   readonly source_fact_id: string;
   readonly source_execution_id: string;
 }
+interface LegacyAdoptionAttentionDbRow {
+  readonly project_id: string;
+  readonly attention_fact_id: string;
+  readonly workspace_id: string;
+  readonly failure_code: "LegacyActionDispositionUnproven";
+  readonly first_detected_at: string;
+  readonly source_event_id: string;
+  readonly source_fact_id: string;
+  readonly source_execution_id: string;
+}
 
 export type AttentionProjectionQualificationEvent =
   | {
@@ -119,6 +136,19 @@ const activationRowFromDb = (
     row.resource_boundary_revision,
   ) as WorkspaceResourceActivationAttentionProjectionRow["resourceBoundaryRevision"],
   occurredAt: row.occurred_at,
+});
+
+const legacyAdoptionRowFromDb = (
+  row: LegacyAdoptionAttentionDbRow,
+): LegacyAdoptionAttentionProjectionRow => ({
+  projectId: row.project_id as ProjectId,
+  attentionFactId: row.attention_fact_id,
+  workspaceId: row.workspace_id as never,
+  failureCode: row.failure_code,
+  firstDetectedAt: row.first_detected_at,
+  sourceEventId: row.source_event_id as never,
+  sourceFactId: row.source_fact_id,
+  sourceExecutionId: row.source_execution_id,
 });
 
 const deliverReplayRowFromDb = (
@@ -217,6 +247,25 @@ export const makeAttentionProjectionStoreLive = (
               retryDisposition: "non-retryable",
               sourceTag: "P41MigrationNotRegistered",
               cause: { _tag: "P41MigrationNotRegistered" },
+            });
+          }
+        });
+      const requireLegacyAdoptionMarker = () =>
+        Effect.gen(function* () {
+          const tables = yield* run(
+            sql.unsafe<{ readonly name: string }>(
+              `SELECT name FROM sqlite_master
+                WHERE type='table' AND name='legacy_adoption_attention_rows'`,
+            ),
+          );
+          if (tables.length === 0) {
+            return yield* Effect.fail<AttentionProjectionStoreError>({
+              _tag: "PersistenceUnavailable",
+              repository: "AttentionProjectionStore",
+              operation: "legacy-adoption-attention",
+              retryDisposition: "non-retryable",
+              sourceTag: "P47MigrationNotRegistered",
+              cause: { _tag: "P47MigrationNotRegistered" },
             });
           }
         });
@@ -490,6 +539,278 @@ export const makeAttentionProjectionStoreLive = (
               ),
             );
             return rows.map(submittedDecisionBindingRowFromDb);
+          }),
+        putLegacyAdoptionFailure: (fact: LegacyAdoptionAttentionFact) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            yield* requireLegacyAdoptionMarker();
+            const sources = yield* run(
+              sql.unsafe<{
+                readonly attention_fact_id: string;
+                readonly event_id: string;
+                readonly project_id: string;
+                readonly execution_id: string;
+                readonly workspace_id: string;
+                readonly provider_turn_id: string;
+                readonly logical_step_no: number;
+                readonly repair_attempt: number;
+                readonly failure_code: string;
+                readonly evidence_sha256: string;
+                readonly first_detected_at: string;
+              }>(
+                `SELECT attention_fact_id, event_id, project_id, execution_id,
+                        workspace_id, provider_turn_id, logical_step_no,
+                        repair_attempt, failure_code, evidence_sha256,
+                        first_detected_at
+                   FROM legacy_adoption_attention_facts
+                  WHERE attention_fact_id = ?`,
+                [fact.attentionFactId],
+              ),
+            );
+            const source = sources[0];
+            if (
+              source === undefined ||
+              source.event_id !== fact.eventId ||
+              source.project_id !== fact.projectId ||
+              source.execution_id !== fact.executionId ||
+              source.workspace_id !== fact.workspaceId ||
+              source.provider_turn_id !== fact.providerTurnId ||
+              Number(source.logical_step_no) !== fact.logicalStepNo ||
+              Number(source.repair_attempt) !== fact.repairAttempt ||
+              source.failure_code !== fact.failureCode ||
+              source.evidence_sha256 !== fact.evidenceSha256 ||
+              source.first_detected_at !== fact.firstDetectedAt
+            ) {
+              return yield* Effect.fail<AttentionProjectionStoreError>({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "legacy-adoption-attention-marker",
+                reason:
+                  "AH14 marker input does not match its immutable P9 failure fact",
+              });
+            }
+            const executions = yield* run(
+              sql.unsafe<{ readonly workspace_id: string }>(
+                `SELECT workspace_id FROM executions
+                  WHERE execution_id = ? AND project_id = ?`,
+                [fact.executionId, fact.projectId],
+              ),
+            );
+            if (executions[0]?.workspace_id !== fact.workspaceId) {
+              return yield* Effect.fail<AttentionProjectionStoreError>({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "legacy-adoption-attention-marker",
+                reason:
+                  "AH14 fact Workspace does not match its authoritative Execution",
+              });
+            }
+            const resolutions = yield* run(
+              sql.unsafe<{ readonly attention_fact_id: string }>(
+                `SELECT attention_fact_id
+                   FROM legacy_adoption_attention_resolution_facts
+                  WHERE attention_fact_id = ?`,
+                [fact.attentionFactId],
+              ),
+            );
+            // A retained failure event replay after a resolution must not
+            // resurrect the marker.
+            if (resolutions.length > 0) return;
+            yield* run(
+              sql.unsafe(
+                `INSERT INTO legacy_adoption_attention_rows (
+                   project_id, attention_fact_id, workspace_id
+                 ) VALUES (?, ?, ?)
+                 ON CONFLICT(project_id, attention_fact_id) DO NOTHING`,
+                [fact.projectId, fact.attentionFactId, fact.workspaceId],
+              ),
+            );
+            const markers = yield* run(
+              sql.unsafe<{ readonly workspace_id: string }>(
+                `SELECT workspace_id FROM legacy_adoption_attention_rows
+                  WHERE project_id = ? AND attention_fact_id = ?`,
+                [fact.projectId, fact.attentionFactId],
+              ),
+            );
+            if (markers[0]?.workspace_id !== fact.workspaceId) {
+              return yield* Effect.fail<AttentionProjectionStoreError>({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "legacy-adoption-attention-marker",
+                reason: "AH14 marker identity is bound to another Workspace",
+              });
+            }
+          }),
+        removeLegacyAdoptionFailure: (
+          failureFact: LegacyAdoptionAttentionFact,
+          resolution: LegacyAdoptionAttentionResolutionFact,
+        ) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            yield* requireLegacyAdoptionMarker();
+            const sourceFacts = yield* run(
+              sql.unsafe<{
+                readonly event_id: string;
+                readonly project_id: string;
+                readonly execution_id: string;
+                readonly workspace_id: string;
+                readonly provider_turn_id: string;
+                readonly evidence_sha256: string;
+                readonly first_detected_at: string;
+              }>(
+                `SELECT event_id, project_id, execution_id, workspace_id,
+                        provider_turn_id, evidence_sha256, first_detected_at
+                   FROM legacy_adoption_attention_facts
+                  WHERE attention_fact_id = ?`,
+                [failureFact.attentionFactId],
+              ),
+            );
+            const source = sourceFacts[0];
+            const resolutionFacts = yield* run(
+              sql.unsafe<{
+                readonly resolution_fact_id: string;
+                readonly event_id: string;
+                readonly project_id: string;
+                readonly execution_id: string;
+                readonly workspace_id: string;
+                readonly provider_turn_id: string;
+                readonly original_evidence_sha256: string;
+                readonly resolution_evidence_sha256: string;
+                readonly action_disposition_summary_json: string;
+                readonly action_disposition_summary_sha256: string;
+                readonly resolution_code: string;
+                readonly resolved_at: string;
+              }>(
+                `SELECT resolution_fact_id, event_id, project_id, execution_id,
+                        workspace_id, provider_turn_id, original_evidence_sha256,
+                        resolution_evidence_sha256, action_disposition_summary_json,
+                        action_disposition_summary_sha256, resolution_code, resolved_at
+                   FROM legacy_adoption_attention_resolution_facts
+                  WHERE attention_fact_id = ?`,
+                [resolution.attentionFactId],
+              ),
+            );
+            const resolved = resolutionFacts[0];
+            const summary = (() => {
+              try {
+                return JSON.parse(
+                  resolution.actionDispositionSummaryJson,
+                ) as unknown;
+              } catch {
+                return undefined;
+              }
+            })();
+            let summaryCanonical: string | undefined;
+            try {
+              if (summary !== undefined) {
+                summaryCanonical = canonicalizeLegacyActionDispositionSummaryV1(
+                  summary as ReadonlyArray<{
+                    readonly actionOrdinal: number;
+                    readonly logicalActionId: string;
+                    readonly callRef: string;
+                    readonly toolName: string;
+                    readonly toolSchemaVersion: string;
+                    readonly inputHash: string;
+                    readonly disposition: "Applied" | "NotAdmitted";
+                  }>,
+                );
+              }
+            } catch {
+              summaryCanonical = undefined;
+            }
+            const summaryRows = Array.isArray(summary)
+              ? (summary as Array<Record<string, unknown>>)
+              : [];
+            const derivedCode = deriveLegacyAdoptionResolutionCodeV1(
+              summaryRows.map((row) => String(row.disposition ?? "")),
+            );
+            const expectedResolutionId = legacyAdoptionResolutionFactIdV1({
+              attentionFactId: resolution.attentionFactId,
+              originalEvidenceSha256: resolution.originalEvidenceSha256,
+              resolutionEvidenceSha256: resolution.resolutionEvidenceSha256,
+              resolutionCode: resolution.resolutionCode,
+            });
+            if (
+              source === undefined ||
+              source.event_id !== failureFact.eventId ||
+              source.project_id !== failureFact.projectId ||
+              source.execution_id !== failureFact.executionId ||
+              source.workspace_id !== failureFact.workspaceId ||
+              source.provider_turn_id !== failureFact.providerTurnId ||
+              source.evidence_sha256 !== failureFact.evidenceSha256 ||
+              source.first_detected_at !== failureFact.firstDetectedAt ||
+              resolved === undefined ||
+              resolved.resolution_fact_id !== resolution.resolutionFactId ||
+              resolved.event_id !== resolution.eventId ||
+              resolved.project_id !== resolution.projectId ||
+              resolved.execution_id !== resolution.executionId ||
+              resolved.workspace_id !== resolution.workspaceId ||
+              resolved.provider_turn_id !== resolution.providerTurnId ||
+              resolved.original_evidence_sha256 !==
+                resolution.originalEvidenceSha256 ||
+              resolved.resolution_evidence_sha256 !==
+                resolution.resolutionEvidenceSha256 ||
+              resolved.action_disposition_summary_json !==
+                resolution.actionDispositionSummaryJson ||
+              resolved.action_disposition_summary_sha256 !==
+                resolution.actionDispositionSummarySha256 ||
+              resolved.resolution_code !== resolution.resolutionCode ||
+              resolved.resolved_at !== resolution.resolvedAt ||
+              resolution.attentionFactId !== failureFact.attentionFactId ||
+              resolution.projectId !== failureFact.projectId ||
+              resolution.executionId !== failureFact.executionId ||
+              resolution.workspaceId !== failureFact.workspaceId ||
+              resolution.providerTurnId !== failureFact.providerTurnId ||
+              resolution.originalEvidenceSha256 !==
+                failureFact.evidenceSha256 ||
+              resolution.resolutionFactId !== expectedResolutionId ||
+              summaryCanonical !== resolution.actionDispositionSummaryJson ||
+              sha256Hex(resolution.actionDispositionSummaryJson) !==
+                resolution.actionDispositionSummarySha256 ||
+              derivedCode !== resolution.resolutionCode
+            ) {
+              return yield* Effect.fail<AttentionProjectionStoreError>({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "legacy-adoption-attention-resolution",
+                reason:
+                  "AH14 resolution marker removal does not match the immutable P9 facts",
+              });
+            }
+            yield* run(
+              sql.unsafe(
+                `DELETE FROM legacy_adoption_attention_rows
+                  WHERE project_id = ? AND attention_fact_id = ? AND workspace_id = ?`,
+                [
+                  failureFact.projectId,
+                  failureFact.attentionFactId,
+                  failureFact.workspaceId,
+                ],
+              ),
+            );
+          }),
+        listLegacyAdoptionFailures: (projectId) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            yield* requireLegacyAdoptionMarker();
+            const rows = yield* run(
+              sql.unsafe<LegacyAdoptionAttentionDbRow>(
+                `SELECT marker.project_id, marker.attention_fact_id,
+                        marker.workspace_id, fact.failure_code,
+                        fact.first_detected_at, fact.event_id AS source_event_id,
+                        fact.attention_fact_id AS source_fact_id,
+                        fact.execution_id AS source_execution_id
+                   FROM legacy_adoption_attention_rows AS marker
+                   JOIN legacy_adoption_attention_facts AS fact
+                     ON fact.attention_fact_id = marker.attention_fact_id
+                    AND fact.project_id = marker.project_id
+                    AND fact.workspace_id = marker.workspace_id
+                  WHERE marker.project_id = ?
+                  ORDER BY fact.first_detected_at, fact.attention_fact_id`,
+                [projectId],
+              ),
+            );
+            return rows.map(legacyAdoptionRowFromDb);
           }),
         listDeliverReplayFailures: (projectId) =>
           Effect.gen(function* () {
@@ -810,6 +1131,21 @@ export const makeAttentionProjectionStoreLive = (
                 ),
               );
             }
+            const legacyMarkers = yield* run(
+              sql.unsafe<{ readonly name: string }>(
+                `SELECT name FROM sqlite_master
+                  WHERE type='table' AND name='legacy_adoption_attention_rows'`,
+              ),
+            );
+            if (legacyMarkers.length > 0) {
+              yield* run(
+                sql.unsafe(
+                  `DELETE FROM legacy_adoption_attention_rows
+                    WHERE project_id = ?`,
+                  [projectId],
+                ),
+              );
+            }
             yield* run(
               sql.unsafe(
                 `DELETE FROM deliver_replay_attention_rows
@@ -913,6 +1249,11 @@ export const makeProjectAttentionProjectionStore = (
     | "isSubmittedDecisionBindingAvailable"
     | "findSubmittedDecisionBindingFailure"
     | "listSubmittedDecisionBindingFailures"
+    | "findLegacyAdoptionFailure"
+    | "findLegacyAdoptionFailureByEventId"
+    | "listLegacyAdoptionFailures"
+    | "findLegacyAdoptionResolution"
+    | "listLegacyAdoptionResolutions"
   >,
   attentionRows: Pick<
     AttentionProjectionStoreService,
@@ -921,6 +1262,9 @@ export const makeProjectAttentionProjectionStore = (
     | "putToolObservationReplayFailure"
     | "isSubmittedDecisionBindingAvailable"
     | "putSubmittedDecisionBindingFailure"
+    | "putLegacyAdoptionFailure"
+    | "removeLegacyAdoptionFailure"
+    | "listLegacyAdoptionFailures"
     | "resetProject"
     | "reconcileWorkspaceResourceActivation"
     | "reconcileStaleWorkRevisionRows"
@@ -1221,6 +1565,184 @@ export const makeProjectAttentionProjectionStore = (
           yield* putSubmitted(fact).pipe(Effect.mapError(projectionFailure));
           continue;
         }
+        if (event.eventType === "LegacyAdoptionEvidenceEscalated") {
+          const payload = payloadRecord(event.payload);
+          const payloadKeys = Object.keys(payload).sort();
+          const expectedPayloadKeys = [
+            "factId",
+            "attentionFactId",
+            "projectId",
+            "executionId",
+            "targetWorkspaceId",
+            "providerTurnId",
+            "logicalStepNo",
+            "repairAttempt",
+            "failureCode",
+            "evidenceSha256",
+            "firstDetectedAt",
+          ].sort();
+          const attentionFactId = payload.attentionFactId;
+          const findLegacy = sourceFacts.findLegacyAdoptionFailure;
+          const putLegacy = attentionRows.putLegacyAdoptionFailure;
+          if (
+            event.projectId !== projectId ||
+            typeof attentionFactId !== "string" ||
+            attentionFactId.length === 0 ||
+            findLegacy === undefined ||
+            putLegacy === undefined
+          ) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "AH14 failure event has no exact immutable P9 fact and P10 marker route",
+            });
+          }
+          const source = yield* findLegacy(attentionFactId).pipe(
+            Effect.mapError(projectionFailure),
+          );
+          if (Option.isNone(source)) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason: "AH14 failure event has no matching immutable P9 fact",
+            });
+          }
+          const fact = source.value;
+          if (
+            event.eventVersion !== 1 ||
+            event.actor !== "system:recovery" ||
+            event.aggregateRef !== fact.executionId ||
+            event.correlationRef !== fact.attentionFactId ||
+            event.causedByCommandId !== undefined ||
+            event.causedByEventId !== undefined ||
+            event.occurredAt !== fact.firstDetectedAt ||
+            fact.eventId !== event.eventId ||
+            fact.projectId !== projectId ||
+            fact.executionId !== payload.executionId ||
+            fact.workspaceId !== payload.targetWorkspaceId ||
+            fact.providerTurnId !== payload.providerTurnId ||
+            fact.logicalStepNo !== payload.logicalStepNo ||
+            fact.repairAttempt !== payload.repairAttempt ||
+            fact.failureCode !== payload.failureCode ||
+            fact.evidenceSha256 !== payload.evidenceSha256 ||
+            fact.firstDetectedAt !== payload.firstDetectedAt ||
+            payload.factId !== fact.attentionFactId ||
+            payload.attentionFactId !== fact.attentionFactId ||
+            payload.projectId !== fact.projectId ||
+            payload.executionId !== fact.executionId ||
+            payload.targetWorkspaceId !== fact.workspaceId ||
+            payloadKeys.length !== expectedPayloadKeys.length ||
+            payloadKeys.some((key, index) => key !== expectedPayloadKeys[index])
+          ) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "AH14 failure event does not exactly match its immutable P9 fact",
+            });
+          }
+          yield* putLegacy(fact).pipe(Effect.mapError(projectionFailure));
+          continue;
+        }
+        if (event.eventType === "LegacyAdoptionEvidenceResolved") {
+          const payload = payloadRecord(event.payload);
+          const payloadKeys = Object.keys(payload).sort();
+          const expectedPayloadKeys = [
+            "factId",
+            "attentionFactId",
+            "projectId",
+            "executionId",
+            "targetWorkspaceId",
+            "providerTurnId",
+            "originalEvidenceSha256",
+            "resolutionEvidenceSha256",
+            "resolutionCode",
+            "resolvedAt",
+          ].sort();
+          const attentionFactId = payload.attentionFactId;
+          const findLegacy = sourceFacts.findLegacyAdoptionFailure;
+          const findResolution = sourceFacts.findLegacyAdoptionResolution;
+          const removeLegacy = attentionRows.removeLegacyAdoptionFailure;
+          if (
+            event.projectId !== projectId ||
+            typeof attentionFactId !== "string" ||
+            attentionFactId.length === 0 ||
+            findLegacy === undefined ||
+            findResolution === undefined ||
+            removeLegacy === undefined
+          ) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "AH14 resolution event has no exact immutable P9 facts and P10 marker route",
+            });
+          }
+          const source = yield* findLegacy(attentionFactId).pipe(
+            Effect.mapError(projectionFailure),
+          );
+          const resolved = yield* findResolution(attentionFactId).pipe(
+            Effect.mapError(projectionFailure),
+          );
+          if (Option.isNone(source) || Option.isNone(resolved)) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "AH14 resolution event has no matching immutable P9 facts",
+            });
+          }
+          const failureFact = source.value;
+          const resolution = resolved.value;
+          if (
+            event.eventVersion !== 1 ||
+            event.actor !== "system:recovery" ||
+            event.aggregateRef !== failureFact.executionId ||
+            event.correlationRef !== failureFact.attentionFactId ||
+            event.causedByCommandId !== undefined ||
+            event.causedByEventId !== failureFact.eventId ||
+            event.occurredAt !== resolution.resolvedAt ||
+            resolution.eventId !== event.eventId ||
+            resolution.attentionFactId !== failureFact.attentionFactId ||
+            resolution.projectId !== projectId ||
+            resolution.executionId !== failureFact.executionId ||
+            resolution.workspaceId !== failureFact.workspaceId ||
+            resolution.providerTurnId !== failureFact.providerTurnId ||
+            resolution.originalEvidenceSha256 !== failureFact.evidenceSha256 ||
+            payload.factId !== resolution.resolutionFactId ||
+            payload.attentionFactId !== failureFact.attentionFactId ||
+            payload.projectId !== resolution.projectId ||
+            payload.executionId !== resolution.executionId ||
+            payload.targetWorkspaceId !== resolution.workspaceId ||
+            payload.providerTurnId !== resolution.providerTurnId ||
+            payload.originalEvidenceSha256 !==
+              resolution.originalEvidenceSha256 ||
+            payload.resolutionEvidenceSha256 !==
+              resolution.resolutionEvidenceSha256 ||
+            payload.resolutionCode !== resolution.resolutionCode ||
+            payload.resolvedAt !== resolution.resolvedAt ||
+            payloadKeys.length !== expectedPayloadKeys.length ||
+            payloadKeys.some((key, index) => key !== expectedPayloadKeys[index])
+          ) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "AH14 resolution event does not exactly match its immutable P9 facts",
+            });
+          }
+          yield* removeLegacy(failureFact, resolution).pipe(
+            Effect.mapError(projectionFailure),
+          );
+          continue;
+        }
         if (event.eventType !== "AssignWorkTargetBindingEscalated") continue;
         if (event.projectId !== projectId) {
           return yield* Effect.fail<ConsumerOffsetStoreError>({
@@ -1301,6 +1823,66 @@ export const makeProjectAttentionProjectionStore = (
       yield* attentionRows
         .resetProject(projectId)
         .pipe(Effect.mapError(projectionFailure));
+      const legacyFailures = sourceFacts.listLegacyAdoptionFailures;
+      const legacyResolutions = sourceFacts.listLegacyAdoptionResolutions;
+      const putLegacy = attentionRows.putLegacyAdoptionFailure;
+      if (
+        legacyFailures !== undefined ||
+        legacyResolutions !== undefined ||
+        putLegacy !== undefined
+      ) {
+        if (
+          legacyFailures === undefined ||
+          legacyResolutions === undefined ||
+          putLegacy === undefined
+        ) {
+          return yield* Effect.fail<ConsumerOffsetStoreError>({
+            _tag: "PersistenceCorruption",
+            repository: "ConsumerOffsetStore",
+            operation: "p10-attention-rebuild",
+            reason:
+              "AH14 fact snapshots and marker writer are not all available",
+          });
+        }
+        const [failureFacts, resolutionFacts] = yield* Effect.all([
+          legacyFailures(projectId),
+          legacyResolutions(projectId),
+        ]).pipe(Effect.mapError(projectionFailure));
+        const failureById = new Map(
+          failureFacts.map((fact) => [fact.attentionFactId, fact]),
+        );
+        const removeLegacy = attentionRows.removeLegacyAdoptionFailure;
+        if (removeLegacy === undefined) {
+          return yield* Effect.fail<ConsumerOffsetStoreError>({
+            _tag: "PersistenceCorruption",
+            repository: "ConsumerOffsetStore",
+            operation: "p10-attention-rebuild",
+            reason:
+              "AH14 resolution snapshot has no P10 marker validation route",
+          });
+        }
+        for (const resolution of resolutionFacts) {
+          const failureFact = failureById.get(resolution.attentionFactId);
+          if (failureFact === undefined) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-rebuild",
+              reason: "AH14 resolution fact has no original failure fact",
+            });
+          }
+          yield* removeLegacy(failureFact, resolution).pipe(
+            Effect.mapError(projectionFailure),
+          );
+        }
+        const resolvedIds = new Set(
+          resolutionFacts.map((fact) => fact.attentionFactId),
+        );
+        for (const fact of failureFacts) {
+          if (resolvedIds.has(fact.attentionFactId)) continue;
+          yield* putLegacy(fact).pipe(Effect.mapError(projectionFailure));
+        }
+      }
       const deliverFacts = yield* sourceFacts
         .listDeliverReplayFailures(projectId)
         .pipe(Effect.mapError(projectionFailure));

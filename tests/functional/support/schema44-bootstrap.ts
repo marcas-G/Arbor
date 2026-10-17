@@ -11,6 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
   P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
+  P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,
   preflightVerificationEvidenceSnapshot,
   splitStatements,
 } from "../../../adapters/persistence-sqlite/src/index.js";
@@ -126,7 +127,7 @@ const readManifest = (): FunctionalSchema44Manifest => {
 };
 
 /** Copy both closed template databases into an ACL-protected case directory. */
-export const cloneFunctionalSchema46Database = (
+export const cloneFunctionalSchema47Database = (
   directory: string,
 ): { readonly databaseFile: string; readonly reportFile: string } => {
   const manifest = readManifest();
@@ -180,8 +181,14 @@ export const cloneFunctionalSchema46Database = (
       database.exec(statement);
     }
     database.exec("PRAGMA user_version = 46");
+    for (const statement of splitStatements(
+      P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION.sql,
+    )) {
+      database.exec(statement);
+    }
+    database.exec("PRAGMA user_version = 47");
     if (database.prepare("PRAGMA foreign_key_check").all().length > 0) {
-      throw new Error("Functional 44→46 fixture failed foreign_key_check");
+      throw new Error("Functional 44→47 fixture failed foreign_key_check");
     }
     database.exec("COMMIT");
   } catch (cause) {
@@ -197,9 +204,10 @@ export const cloneFunctionalSchema46Database = (
   return { databaseFile, reportFile };
 };
 
-/** Historical names retained for callers; current fixtures are schema 46. */
-export const cloneFunctionalSchema45Database = cloneFunctionalSchema46Database;
-export const cloneFunctionalSchema44Database = cloneFunctionalSchema46Database;
+/** Historical names retained for existing test call sites. */
+export const cloneFunctionalSchema46Database = cloneFunctionalSchema47Database;
+export const cloneFunctionalSchema45Database = cloneFunctionalSchema47Database;
+export const cloneFunctionalSchema44Database = cloneFunctionalSchema47Database;
 
 export const createFunctionalFixtureDirectory = (): string => {
   const manifest = readManifest();

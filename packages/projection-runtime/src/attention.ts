@@ -23,6 +23,7 @@ export type AttentionSource =
   | "DeliverReplayFailure"
   | "ToolObservationReplayEvidenceFailure"
   | "SubmittedDecisionBindingFailure"
+  | "LegacyAdoptionEvidenceInsufficient"
   | "WorkspaceResourceActivationPending"
   | "WorkEpisodeBlocked"
   | "VerifierOrphan"
@@ -98,6 +99,14 @@ export interface SubmittedDecisionBindingFailureEventFact {
   readonly firstDetectedAt: string;
 }
 
+export interface LegacyAdoptionEvidenceFailureEventFact {
+  readonly attentionFactId: string;
+  readonly executionId: string;
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly failureCode: "LegacyActionDispositionUnproven";
+  readonly firstDetectedAt: string;
+}
+
 /** Open verification fact (owner workspace = owning workspace of the
  * target Work, P8 `02` §3). */
 export interface OpenVerificationFact {
@@ -143,6 +152,7 @@ export interface AttentionFacts {
   readonly reconciliationEscalatedEvents: ReadonlyArray<EscalationEventFact>;
   readonly assignWorkBindingFailureEvents?: ReadonlyArray<AssignWorkBindingFailureEventFact>;
   readonly submittedDecisionBindingFailureEvents?: ReadonlyArray<SubmittedDecisionBindingFailureEventFact>;
+  readonly legacyAdoptionEvidenceFailureEvents?: ReadonlyArray<LegacyAdoptionEvidenceFailureEventFact>;
   readonly openVerifications: ReadonlyArray<OpenVerificationFact>;
   readonly executionSettlements: ReadonlyArray<ExecutionSettlementFact>;
   readonly vacantProducerCandidates: ReadonlyArray<VacantProducerCandidateFact>;
@@ -326,6 +336,19 @@ export const deriveAttentionRows = (
       summary:
         "A Scheduler decision action could not be safely recovered; review is required.",
       occurredAt: fact.firstDetectedAt,
+    });
+  }
+
+  for (const fact of facts.legacyAdoptionEvidenceFailureEvents ?? []) {
+    rows.push({
+      source: "LegacyAdoptionEvidenceInsufficient",
+      severity: "ActionRequired",
+      targetWorkspaceId: fact.targetWorkspaceId,
+      dedupKey: fact.attentionFactId,
+      summary:
+        "Legacy action outcome cannot be proven; operator review is required.",
+      occurredAt: fact.firstDetectedAt,
+      failureCode: fact.failureCode,
     });
   }
 

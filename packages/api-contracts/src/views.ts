@@ -66,6 +66,7 @@ export type AttentionSource =
   | "DeliverReplayFailure"
   | "WorkspaceResourceActivationPending"
   | "ToolObservationReplayEvidenceFailure"
+  | "LegacyAdoptionEvidenceInsufficient"
   | "VerifierOrphan"
   | "VacantProducer";
 
@@ -77,6 +78,7 @@ export const ATTENTION_SOURCES: ReadonlyArray<AttentionSource> = [
   "AssignWorkTargetBindingFailure",
   "DeliverReplayFailure",
   "ToolObservationReplayEvidenceFailure",
+  "LegacyAdoptionEvidenceInsufficient",
   "VerifierOrphan",
   "VacantProducer",
 ];

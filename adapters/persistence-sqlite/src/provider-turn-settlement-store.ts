@@ -271,6 +271,7 @@ export const makeProviderTurnSettlementStore = (
           canonicalEvents: evidence.events,
           attemptNo: Number(attempt.attempt_no),
           finishReason: row.finish_reason,
+          settledAt: row.settled_at,
           usageJson: row.usage_json ?? "{}",
           evidenceVersion,
         };

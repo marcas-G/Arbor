@@ -14,6 +14,10 @@ import type {
   SubmittedDecisionBindingFailureCode,
 } from "./assign-work-target-binding.js";
 import type { RepositoryFailure } from "./errors.js";
+import type {
+  LegacyAdoptionAttentionFact,
+  LegacyAdoptionAttentionResolutionFact,
+} from "./legacy-adoption-attention.js";
 import type { TransactionScope } from "./session.js";
 import type { ToolObservationReplayFailureCode } from "./tool-observation-evidence.js";
 import type { ToolObservationReplayAttentionFact } from "./tool-observation-replay-attention.js";
@@ -86,6 +90,17 @@ export interface SubmittedDecisionBindingAttentionProjectionRow {
   readonly sourceExecutionId: string;
 }
 
+export interface LegacyAdoptionAttentionProjectionRow {
+  readonly projectId: ProjectId;
+  readonly attentionFactId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly failureCode: "LegacyActionDispositionUnproven";
+  readonly firstDetectedAt: string;
+  readonly sourceEventId: EventId;
+  readonly sourceFactId: string;
+  readonly sourceExecutionId: string;
+}
+
 export type AttentionProjectionStoreError =
   RepositoryFailure<"AttentionProjectionStore">;
 
@@ -130,10 +145,24 @@ export interface AttentionProjectionStoreService {
   readonly putSubmittedDecisionBindingFailure?: (
     fact: SubmittedDecisionBindingAttentionFact,
   ) => Effect.Effect<void, AttentionProjectionStoreError, TransactionScope>;
+  readonly putLegacyAdoptionFailure?: (
+    fact: LegacyAdoptionAttentionFact,
+  ) => Effect.Effect<void, AttentionProjectionStoreError, TransactionScope>;
+  readonly removeLegacyAdoptionFailure?: (
+    failure: LegacyAdoptionAttentionFact,
+    resolution: LegacyAdoptionAttentionResolutionFact,
+  ) => Effect.Effect<void, AttentionProjectionStoreError, TransactionScope>;
   readonly listSubmittedDecisionBindingFailures?: (
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<SubmittedDecisionBindingAttentionProjectionRow>,
+    AttentionProjectionStoreError,
+    TransactionScope
+  >;
+  readonly listLegacyAdoptionFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<LegacyAdoptionAttentionProjectionRow>,
     AttentionProjectionStoreError,
     TransactionScope
   >;

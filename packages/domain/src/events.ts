@@ -180,6 +180,34 @@ export const SubmittedDecisionBindingEscalated = Schema.TaggedStruct(
     ]),
   },
 );
+export const LegacyAdoptionEvidenceEscalated = Schema.Struct({
+  factId: Schema.String,
+  attentionFactId: Schema.String,
+  projectId: Schema.String,
+  executionId: Schema.String,
+  targetWorkspaceId: Schema.String,
+  providerTurnId: Schema.String,
+  logicalStepNo: Schema.Number,
+  repairAttempt: Schema.Number,
+  failureCode: Schema.Literals(["LegacyActionDispositionUnproven"]),
+  evidenceSha256: Schema.String,
+  firstDetectedAt: Schema.String,
+});
+export const LegacyAdoptionEvidenceResolved = Schema.Struct({
+  factId: Schema.String,
+  attentionFactId: Schema.String,
+  projectId: Schema.String,
+  executionId: Schema.String,
+  targetWorkspaceId: Schema.String,
+  providerTurnId: Schema.String,
+  originalEvidenceSha256: Schema.String,
+  resolutionEvidenceSha256: Schema.String,
+  resolutionCode: Schema.Literals([
+    "DispositionProvenNotAdmitted",
+    "DispositionProvenSettled",
+  ]),
+  resolvedAt: Schema.String,
+});
 export const DeadlockAttentionRequested = Schema.TaggedStruct(
   "DeadlockAttentionRequested",
   {
@@ -388,6 +416,8 @@ export const DomainEventPayload = Schema.Union([
   DeliverReplayEscalated,
   ToolObservationReplayEvidenceEscalated,
   SubmittedDecisionBindingEscalated,
+  LegacyAdoptionEvidenceEscalated,
+  LegacyAdoptionEvidenceResolved,
   DependencyWithdrawn,
   DependencyMarkedUnfulfillable,
   DeliverableProduced,
@@ -447,6 +477,8 @@ export const EVENT_CATALOG = {
   DeliverReplayEscalated,
   ToolObservationReplayEvidenceEscalated,
   SubmittedDecisionBindingEscalated,
+  LegacyAdoptionEvidenceEscalated,
+  LegacyAdoptionEvidenceResolved,
   DeliverableProduced,
   MessageSent,
   VerificationStarted,

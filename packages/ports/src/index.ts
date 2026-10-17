@@ -19,6 +19,7 @@ export * from "./formation-fulfillment.js";
 export * from "./health.js";
 export * from "./human-messages.js";
 export * from "./journal.js";
+export * from "./legacy-adoption-attention.js";
 export * from "./permission-grant-repository.js";
 export * from "./project-directory.js";
 export * from "./project-resource-profile.js";

@@ -14,10 +14,19 @@ import type {
   AssignWorkBindingAttentionFact,
   AssignWorkBindingAttentionProjectionRow,
   DeliverReplayAttentionProjectionRow,
+  LegacyAdoptionAttentionFact,
+  LegacyAdoptionAttentionProjectionRow,
+  LegacyAdoptionAttentionResolutionFact,
   SubmittedDecisionBindingAttentionFact,
   SubmittedDecisionBindingAttentionProjectionRow,
   ToolObservationReplayAttentionProjectionRow,
   WorkspaceResourceActivationAttentionProjectionRow,
+} from "@arbor/ports";
+import {
+  canonicalizeLegacyActionDispositionSummaryV1,
+  deriveLegacyAdoptionResolutionCodeV1,
+  legacyAdoptionResolutionFactIdV1,
+  sha256Hex,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
@@ -28,6 +37,7 @@ import {
   deriveAttentionRows,
   type EscalationEventFact,
   type ExecutionSettlementFact,
+  type LegacyAdoptionEvidenceFailureEventFact,
   type OpenVerificationFact,
   type SafetyStopFact,
   type SubmittedDecisionBindingFailureEventFact,
@@ -72,11 +82,13 @@ type AttentionWorkBoundSourceKind =
   | "RuntimeSafetyEnvelope"
   | "ReconciliationEscalated"
   | "AssignWorkTargetBindingFailure"
-  | "DeliverReplayFailure";
+  | "DeliverReplayFailure"
+  | "LegacyAdoptionEvidenceInsufficient";
 
 type AttentionSourceIntegrityKind =
   | AttentionWorkBoundSourceKind
-  | "SubmittedDecisionBindingFailure";
+  | "SubmittedDecisionBindingFailure"
+  | "LegacyAdoptionEvidenceInsufficient";
 
 type AttentionSourceIntegrityReason =
   | "SourceExecutionMissing"
@@ -153,6 +165,18 @@ export interface AttentionReadDeps {
     Option.Option<SubmittedDecisionBindingAttentionFact>,
     ProjectionReadError
   >;
+  readonly findLegacyAdoptionFailure?: (
+    attentionFactId: string,
+  ) => Effect.Effect<
+    Option.Option<LegacyAdoptionAttentionFact>,
+    ProjectionReadError
+  >;
+  readonly findLegacyAdoptionResolution?: (
+    attentionFactId: string,
+  ) => Effect.Effect<
+    Option.Option<LegacyAdoptionAttentionResolutionFact>,
+    ProjectionReadError
+  >;
   /** Production P10 materialization. Other historical Attention sources
    * continue to use their existing read derivation. */
   readonly listProjectedAssignWorkBindingFailures?: (
@@ -171,6 +195,12 @@ export interface AttentionReadDeps {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<SubmittedDecisionBindingAttentionProjectionRow>,
+    ProjectionReadError
+  >;
+  readonly listProjectedLegacyAdoptionFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<LegacyAdoptionAttentionProjectionRow>,
     ProjectionReadError
   >;
   readonly listProjectedWorkspaceResourceActivations?: (
@@ -440,6 +470,9 @@ export const loadAttentionFacts = (
     const sourceReferences: Array<WorkBoundAttentionReference> = [];
     const submittedDecisionBindingFailureEvents: Array<SubmittedDecisionBindingFailureEventFact> =
       [];
+    const legacyAdoptionEvidenceFailureEvents: Array<LegacyAdoptionEvidenceFailureEventFact> =
+      [];
+    const resolvedLegacyAdoptionAttentionIds = new Set<string>();
     for (const event of events) {
       if (event.eventType === "DependencyMarkedUnfulfillable") {
         const payload = asRecord(event.payload);
@@ -721,6 +754,275 @@ export const loadAttentionFacts = (
           workspaceId: fact.workspaceId,
           firstDetectedAt: fact.firstDetectedAt,
         });
+      } else if (event.eventType === "LegacyAdoptionEvidenceEscalated") {
+        const payload = asRecord(event.payload);
+        const attentionFactId = String(payload.attentionFactId ?? "");
+        const executionId = String(payload.executionId ?? "");
+        const targetWorkspaceId = String(
+          payload.targetWorkspaceId ?? "",
+        ) as WorkspaceId;
+        if (
+          attentionFactId.length === 0 ||
+          executionId.length === 0 ||
+          deps.findLegacyAdoptionFailure === undefined
+        ) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: targetWorkspaceId,
+              executionId,
+              sourceKind: "LegacyAdoptionEvidenceInsufficient",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
+        }
+        const source = yield* deps.findLegacyAdoptionFailure(attentionFactId);
+        if (Option.isNone(source)) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: targetWorkspaceId,
+              executionId,
+              sourceKind: "LegacyAdoptionEvidenceInsufficient",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
+        }
+        const fact = source.value;
+        const expectedPayloadKeys = [
+          "factId",
+          "attentionFactId",
+          "projectId",
+          "executionId",
+          "targetWorkspaceId",
+          "providerTurnId",
+          "logicalStepNo",
+          "repairAttempt",
+          "failureCode",
+          "evidenceSha256",
+          "firstDetectedAt",
+        ].sort();
+        const payloadKeys = Object.keys(payload).sort();
+        if (
+          event.eventVersion !== 1 ||
+          event.actor !== "system:recovery" ||
+          event.aggregateRef !== fact.executionId ||
+          event.correlationRef !== fact.attentionFactId ||
+          event.causedByCommandId !== undefined ||
+          event.causedByEventId !== undefined ||
+          event.occurredAt !== fact.firstDetectedAt ||
+          fact.eventId !== event.eventId ||
+          fact.projectId !== projectId ||
+          fact.executionId !== executionId ||
+          fact.workspaceId !== targetWorkspaceId ||
+          executionWorkspaceOf.get(fact.executionId) !== fact.workspaceId ||
+          fact.providerTurnId !== payload.providerTurnId ||
+          fact.logicalStepNo !== payload.logicalStepNo ||
+          fact.repairAttempt !== payload.repairAttempt ||
+          fact.failureCode !== payload.failureCode ||
+          fact.evidenceSha256 !== payload.evidenceSha256 ||
+          fact.attentionFactId !== attentionFactId ||
+          payload.factId !== fact.attentionFactId ||
+          payload.projectId !== fact.projectId ||
+          payload.executionId !== fact.executionId ||
+          payload.targetWorkspaceId !== fact.workspaceId ||
+          payload.firstDetectedAt !== fact.firstDetectedAt ||
+          payloadKeys.length !== expectedPayloadKeys.length ||
+          payloadKeys.some((key, index) => key !== expectedPayloadKeys[index])
+        ) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: fact.workspaceId,
+              executionId: fact.executionId,
+              sourceKind: "LegacyAdoptionEvidenceInsufficient",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
+        }
+        sourceReferences.push({
+          executionId: fact.executionId,
+          workspaceId: fact.workspaceId,
+          targetWorkspaceId: fact.workspaceId,
+          sourceKind: "LegacyAdoptionEvidenceInsufficient",
+        });
+        legacyAdoptionEvidenceFailureEvents.push({
+          attentionFactId: fact.attentionFactId,
+          executionId: fact.executionId,
+          targetWorkspaceId: fact.workspaceId,
+          failureCode: fact.failureCode,
+          firstDetectedAt: fact.firstDetectedAt,
+        });
+      } else if (event.eventType === "LegacyAdoptionEvidenceResolved") {
+        const payload = asRecord(event.payload);
+        const attentionFactId = String(payload.attentionFactId ?? "");
+        const executionId = String(payload.executionId ?? "");
+        const workspaceId = String(
+          payload.targetWorkspaceId ?? "",
+        ) as WorkspaceId;
+        if (
+          attentionFactId.length === 0 ||
+          deps.findLegacyAdoptionFailure === undefined ||
+          deps.findLegacyAdoptionResolution === undefined
+        ) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId,
+              executionId,
+              sourceKind: "LegacyAdoptionEvidenceInsufficient",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
+        }
+        const [failureSource, resolutionSource] = yield* Effect.all([
+          deps.findLegacyAdoptionFailure(attentionFactId),
+          deps.findLegacyAdoptionResolution(attentionFactId),
+        ]);
+        if (Option.isNone(failureSource) || Option.isNone(resolutionSource)) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId,
+              executionId,
+              sourceKind: "LegacyAdoptionEvidenceInsufficient",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
+        }
+        const failureFact = failureSource.value;
+        const resolution = resolutionSource.value;
+        const expectedPayloadKeys = [
+          "factId",
+          "attentionFactId",
+          "projectId",
+          "executionId",
+          "targetWorkspaceId",
+          "providerTurnId",
+          "originalEvidenceSha256",
+          "resolutionEvidenceSha256",
+          "resolutionCode",
+          "resolvedAt",
+        ].sort();
+        const payloadKeys = Object.keys(payload).sort();
+        let summaryIsValid = false;
+        try {
+          const summary = JSON.parse(
+            resolution.actionDispositionSummaryJson,
+          ) as unknown;
+          if (
+            Array.isArray(summary) &&
+            summary.length > 0 &&
+            summary.every((row, index) => {
+              if (
+                typeof row !== "object" ||
+                row === null ||
+                Array.isArray(row)
+              ) {
+                return false;
+              }
+              const record = row as Record<string, unknown>;
+              const keys = Object.keys(record).sort();
+              const expected = [
+                "actionOrdinal",
+                "logicalActionId",
+                "callRef",
+                "toolName",
+                "toolSchemaVersion",
+                "inputHash",
+                "disposition",
+              ].sort();
+              return (
+                keys.length === expected.length &&
+                keys.every((key, keyIndex) => key === expected[keyIndex]) &&
+                record.actionOrdinal === index &&
+                typeof record.logicalActionId === "string" &&
+                typeof record.callRef === "string" &&
+                typeof record.toolName === "string" &&
+                typeof record.toolSchemaVersion === "string" &&
+                typeof record.inputHash === "string" &&
+                /^[0-9a-f]{64}$/u.test(record.inputHash) &&
+                (record.disposition === "Applied" ||
+                  record.disposition === "NotAdmitted")
+              );
+            })
+          ) {
+            const canonical = canonicalizeLegacyActionDispositionSummaryV1(
+              summary as ReadonlyArray<{
+                readonly actionOrdinal: number;
+                readonly logicalActionId: string;
+                readonly callRef: string;
+                readonly toolName: string;
+                readonly toolSchemaVersion: string;
+                readonly inputHash: string;
+                readonly disposition: "Applied" | "NotAdmitted";
+              }>,
+            );
+            summaryIsValid =
+              canonical === resolution.actionDispositionSummaryJson &&
+              sha256Hex(canonical) ===
+                resolution.actionDispositionSummarySha256 &&
+              deriveLegacyAdoptionResolutionCodeV1(
+                summary.map((row) =>
+                  String((row as Record<string, unknown>).disposition),
+                ),
+              ) === resolution.resolutionCode &&
+              legacyAdoptionResolutionFactIdV1({
+                attentionFactId: resolution.attentionFactId,
+                originalEvidenceSha256: resolution.originalEvidenceSha256,
+                resolutionEvidenceSha256: resolution.resolutionEvidenceSha256,
+                resolutionCode: resolution.resolutionCode,
+              }) === resolution.resolutionFactId;
+          }
+        } catch {
+          summaryIsValid = false;
+        }
+        if (
+          event.eventVersion !== 1 ||
+          event.actor !== "system:recovery" ||
+          event.aggregateRef !== failureFact.executionId ||
+          event.correlationRef !== failureFact.attentionFactId ||
+          event.causedByCommandId !== undefined ||
+          event.causedByEventId !== failureFact.eventId ||
+          event.occurredAt !== resolution.resolvedAt ||
+          failureFact.projectId !== projectId ||
+          resolution.eventId !== event.eventId ||
+          resolution.attentionFactId !== failureFact.attentionFactId ||
+          resolution.projectId !== projectId ||
+          resolution.executionId !== failureFact.executionId ||
+          resolution.workspaceId !== failureFact.workspaceId ||
+          resolution.providerTurnId !== failureFact.providerTurnId ||
+          resolution.originalEvidenceSha256 !== failureFact.evidenceSha256 ||
+          resolution.resolvedAt !== event.occurredAt ||
+          payload.factId !== resolution.resolutionFactId ||
+          payload.attentionFactId !== failureFact.attentionFactId ||
+          payload.projectId !== resolution.projectId ||
+          payload.executionId !== resolution.executionId ||
+          payload.targetWorkspaceId !== resolution.workspaceId ||
+          payload.providerTurnId !== resolution.providerTurnId ||
+          payload.originalEvidenceSha256 !==
+            resolution.originalEvidenceSha256 ||
+          payload.resolutionEvidenceSha256 !==
+            resolution.resolutionEvidenceSha256 ||
+          payload.resolutionCode !== resolution.resolutionCode ||
+          payload.resolvedAt !== resolution.resolvedAt ||
+          payloadKeys.length !== expectedPayloadKeys.length ||
+          payloadKeys.some(
+            (key, index) => key !== expectedPayloadKeys[index],
+          ) ||
+          !summaryIsValid
+        ) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: failureFact.workspaceId,
+              executionId: failureFact.executionId,
+              sourceKind: "LegacyAdoptionEvidenceInsufficient",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
+        }
+        resolvedLegacyAdoptionAttentionIds.add(failureFact.attentionFactId);
       }
     }
 
@@ -818,6 +1120,11 @@ export const loadAttentionFacts = (
         (fact) => activeExecutions.has(fact.executionId),
       ),
       submittedDecisionBindingFailureEvents,
+      legacyAdoptionEvidenceFailureEvents:
+        legacyAdoptionEvidenceFailureEvents.filter(
+          (fact) =>
+            !resolvedLegacyAdoptionAttentionIds.has(fact.attentionFactId),
+        ),
       openVerifications: openVerificationFacts,
       executionSettlements,
       vacantProducerCandidates,
@@ -913,6 +1220,37 @@ export const deriveProjectAttention = (
             "A Scheduler decision action could not be safely recovered; review is required.",
           occurredAt: row.firstDetectedAt,
         })),
+      ];
+    }
+    if (deps.listProjectedLegacyAdoptionFailures !== undefined) {
+      const materialized =
+        yield* deps.listProjectedLegacyAdoptionFailures(projectId);
+      const active = yield* activeWorkBoundExecutions(
+        projectId,
+        materialized.map((row) => ({
+          executionId: row.sourceExecutionId,
+          workspaceId: row.workspaceId,
+          targetWorkspaceId: row.workspaceId,
+          sourceKind: "LegacyAdoptionEvidenceInsufficient" as const,
+        })),
+        deps,
+      );
+      rows = [
+        ...rows.filter(
+          (row) => row.source !== "LegacyAdoptionEvidenceInsufficient",
+        ),
+        ...materialized
+          .filter((row) => active.has(row.sourceExecutionId))
+          .map((row) => ({
+            source: "LegacyAdoptionEvidenceInsufficient" as const,
+            severity: "ActionRequired" as const,
+            targetWorkspaceId: row.workspaceId,
+            dedupKey: row.attentionFactId,
+            summary:
+              "Legacy action outcome cannot be proven; operator review is required.",
+            occurredAt: row.firstDetectedAt,
+            failureCode: row.failureCode,
+          })),
       ];
     }
     if (deps.listProjectedWorkspaceResourceActivations !== undefined) {

@@ -27,7 +27,11 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH18BeforeInferenceFailTurnCommit"
     | "AH19NativeCheckpointRecovery"
     | "AH14BeforeLegacyAdoptionCommit"
-    | "AH14AfterLegacyAdoptionCommit";
+    | "AH14AfterLegacyAdoptionCommit"
+    | "AH14BeforeLegacyAdoptionAttentionCommit"
+    | "AH14AfterLegacyAdoptionAttentionCommit"
+    | "AH14BeforeLegacyAdoptionResolutionCommit"
+    | "AH14AfterLegacyAdoptionResolutionCommit";
   readonly providerTurnId: string;
   readonly executionId?: string;
   readonly logicalActionId?: string;
