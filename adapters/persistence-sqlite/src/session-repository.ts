@@ -428,6 +428,39 @@ export const SessionRepositoryLive: Layer.Layer<
           );
           return [...rows].reverse().map(toSessionItemRecord);
         }),
+      listWorkActiveFrontier: (sessionId, preCheckpointLimit) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          if (!(yield* hasTimelineColumns)) return [];
+          const checkpointRows = yield* run(
+            sql.unsafe<{ sequence: number }>(
+              "SELECT sequence FROM session_entries WHERE session_id = ? AND schema_version = 2 AND item_type = 'CompactionCheckpoint' ORDER BY sequence DESC LIMIT 1",
+              [sessionId],
+            ),
+          );
+          const checkpointSequence = checkpointRows[0]?.sequence;
+          if (checkpointSequence === undefined) {
+            if (preCheckpointLimit <= 0) return [];
+            const rows = yield* run(
+              sql.unsafe<SessionEntryRow>(
+                "SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 ORDER BY sequence DESC LIMIT ?",
+                [sessionId, preCheckpointLimit],
+              ),
+            );
+            return [...rows].reverse().map(toSessionEntry);
+          }
+
+          // A typed checkpoint covers its exact sequence. Every typed row
+          // after it remains active and must reach the existing budget planner;
+          // older legacy and checkpoint-covered rows are outside this frontier.
+          const rows = yield* run(
+            sql.unsafe<SessionEntryRow>(
+              "SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 AND sequence >= ? ORDER BY sequence",
+              [sessionId, checkpointSequence],
+            ),
+          );
+          return rows.map(toSessionEntry);
+        }),
       commitCompaction: (sessionId, input, fence) =>
         Effect.gen(function* () {
           yield* TransactionScope;
