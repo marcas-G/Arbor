@@ -1980,7 +1980,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
               }>("attention", { projectId: project.projectId });
               const unresolvedRows = attentionAtBoundary.rows.filter(
                 (row) =>
-                  row.source === "ReconciliationEscalated" &&
+                  row.source === "RecoveryEscalation" &&
                   row.dedupKey ===
                     `reconciliation-escalated:${targetExecutionId}:${recoveryHit.invocationId}`,
               );
@@ -2421,7 +2421,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         }>("attention", { projectId: project.projectId });
         const visibleEscalations = attention.rows.filter(
           (row) =>
-            row.source === "ReconciliationEscalated" &&
+            row.source === "RecoveryEscalation" &&
             row.dedupKey ===
               `reconciliation-escalated:${targetExecutionId}:${hit.invocationId}`,
         );
