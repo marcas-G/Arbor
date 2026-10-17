@@ -131,6 +131,7 @@ import {
   type WorkWaitStoreService,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
+import { commitDurableControlActionEffect } from "./durable-control-action-effect.js";
 import {
   type ResolveWorkBlockerActionDependencies,
   resolveWorkBlockerHandler,
@@ -223,6 +224,8 @@ export interface UpdatePlanDependencies {
   readonly plans: LocalPlanStoreService;
   readonly tx: TransactionPortService;
   readonly clock: ClockService;
+  readonly loopSteps?: AgentLoopStepStoreService;
+  readonly sessions?: Pick<SessionRepositoryService, "appendItemIdempotent">;
 }
 
 export interface SelectCurrentWorkDependencies {
@@ -243,6 +246,8 @@ export interface ProposeChildDependencies {
   readonly clock: ClockService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly tx: TransactionPortService;
+  readonly loopSteps?: AgentLoopStepStoreService;
+  readonly sessions?: Pick<SessionRepositoryService, "appendItemIdempotent">;
 }
 
 export interface DeclareDependencyDependencies {
@@ -2164,8 +2169,9 @@ export const updatePlanHandler = (
   dependencies: UpdatePlanDependencies,
 ): AgentActionHandler => ({
   action: "UpdatePlan",
-  handle: ({ action, execution }) =>
+  handle: (input) =>
     Effect.gen(function* () {
+      const { action, execution } = input;
       if (action._tag !== "UpdatePlan") {
         return yield* Effect.fail(
           actionError("UpdatePlan received a different AgentAction"),
@@ -2180,9 +2186,9 @@ export const updatePlanHandler = (
           ),
         );
       }
-      const updatedAt = yield* dependencies.clock.now();
-      const plan = yield* dependencies.tx.transact(
+      const revise = () =>
         Effect.gen(function* () {
+          const updatedAt = yield* dependencies.clock.now();
           const work = yield* dependencies.works.findById(boundWork.workId);
           if (Option.isNone(work) || work.value.lifecycle !== "Open") {
             return yield* Effect.fail(
@@ -2225,8 +2231,38 @@ export const updatePlanHandler = (
           }
           yield* dependencies.plans.save(revised.value, expectedPlanRevision);
           return revised.value;
-        }),
-      );
+        });
+      if (
+        dependencies.loopSteps !== undefined &&
+        dependencies.sessions !== undefined
+      ) {
+        const committed = yield* commitDurableControlActionEffect({
+          handlerInput: input,
+          expectedToolName: "update_plan",
+          tx: dependencies.tx,
+          loopSteps: dependencies.loopSteps,
+          sessions: dependencies.sessions,
+          clock: dependencies.clock,
+          effect: () =>
+            revise().pipe(
+              Effect.map((plan) => ({
+                value: plan,
+                result: {
+                  observation: {
+                    text: JSON.stringify({
+                      planRevision: plan.revision,
+                      items: plan.items,
+                      authority: "progress-only",
+                    }),
+                    truncated: false as const,
+                  },
+                },
+              })),
+            ),
+        });
+        return committed.outcome;
+      }
+      const plan = yield* dependencies.tx.transact(revise());
       return {
         _tag: "Observation" as const,
         source: "Runtime" as const,
@@ -2467,8 +2503,9 @@ const claimCompletionHandler = (
   dependencies: ClaimCompletionDependencies,
 ): AgentActionHandler => ({
   action: "ClaimCompletion",
-  handle: ({ action, invocation, execution }) =>
+  handle: (input) =>
     Effect.gen(function* () {
+      const { action, invocation, execution } = input;
       if (action._tag !== "ClaimCompletion") {
         return yield* Effect.fail(
           actionOperationalFailure("ClaimCompletion.dispatch")(
@@ -2499,27 +2536,37 @@ const claimCompletionHandler = (
         );
       }
       const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      let durableSettlementEffect:
+        | Effect.Effect<void, unknown, import("@arbor/ports").TransactionScope>
+        | undefined;
       if (dependencies.waits !== undefined) {
         const now = yield* dependencies.clock.now();
-        yield* dependencies.tx.transact(
-          dependencies.waits.upsert({
-            workId,
-            waitSpec: {
-              mode: "Any",
-              conditions: [
-                {
-                  _tag: "VerificationChanged",
-                  workId,
-                  targetWorkRevision: parse(Revision)(
-                    Number(work.value.revision),
-                  ),
-                },
-              ],
-            },
-            registeredAt: now,
-            updatedAt: now,
-          }),
-        );
+        const wait = {
+          workId,
+          waitSpec: {
+            mode: "Any" as const,
+            conditions: [
+              {
+                _tag: "VerificationChanged" as const,
+                workId,
+                targetWorkRevision: parse(Revision)(
+                  Number(work.value.revision),
+                ),
+              },
+            ],
+          },
+          registeredAt: now,
+          updatedAt: now,
+        };
+        if (
+          input.actionContext !== undefined &&
+          input.loopStepFence !== undefined &&
+          input.logicalActionId !== undefined
+        ) {
+          durableSettlementEffect = dependencies.waits.upsert(wait);
+        } else {
+          yield* dependencies.tx.transact(dependencies.waits.upsert(wait));
+        }
       }
       return {
         _tag: "Settle" as const,
@@ -2531,6 +2578,9 @@ const claimCompletionHandler = (
             claimRef: `clm_${newUuid7("completion-claim", occurrence)}`,
           },
         },
+        ...(durableSettlementEffect === undefined
+          ? {}
+          : { durableSettlementEffect }),
       };
     }).pipe(Effect.mapError(actionOperationalFailure("ClaimCompletion"))),
 });
@@ -2544,8 +2594,9 @@ const proposeChildWorkspaceHandler = (
   dependencies: ProposeChildDependencies,
 ): AgentActionHandler => ({
   action: "ProposeChildWorkspace",
-  handle: ({ action, execution }) =>
+  handle: (input) =>
     Effect.gen(function* () {
+      const { action, execution } = input;
       if (action._tag !== "ProposeChildWorkspace") {
         return yield* Effect.fail(
           actionOperationalFailure("ProposeChildWorkspace.dispatch")(
@@ -2553,45 +2604,45 @@ const proposeChildWorkspaceHandler = (
           ),
         );
       }
-      const sender = yield* dependencies.tx.transact(
-        dependencies.workspaces.findById(execution.workspaceId),
-      );
-      if (Option.isNone(sender)) {
-        return yield* Effect.fail(
-          actionError("proposing Workspace is missing"),
-        );
-      }
-      const proposal: ChildWorkspaceProposal = {
-        name: action.proposal.name,
-        rationale: action.proposal.rationale,
-        responsibilityDraft: action.proposal.responsibilityDraft,
-        resourceBoundaryDraft: {
-          basisResponsibilityRevision: sender.value.responsibilityRevision,
-          addresses: action.proposal.resourceBoundaryDraft.addresses,
-        },
-        ...(action.proposal.initialWork === undefined
-          ? {}
-          : { initialWork: action.proposal.initialWork }),
-      };
-      if (!isChildWorkspaceProposal(proposal)) {
-        return yield* Effect.fail(
-          actionOperationalFailure("ProposeChildWorkspace.domainGuard")(
-            "decoded proposal failed the domain proposal guard",
-          ),
-        );
-      }
-      const record = admitFormationProposal({
-        proposalId: newFormationProposalId(),
-        parentWorkspaceId: execution.workspaceId,
-        proposal,
-      });
-      const admittedAt = yield* dependencies.clock.now();
-      const formationIds = deriveFormationIds(
-        record.proposalId,
-        record.revision,
-      );
-      yield* dependencies.tx.transact(
+      const persistProposal = () =>
         Effect.gen(function* () {
+          const sender = yield* dependencies.workspaces.findById(
+            execution.workspaceId,
+          );
+          if (Option.isNone(sender)) {
+            return yield* Effect.fail(
+              actionError("proposing Workspace is missing"),
+            );
+          }
+          const proposal: ChildWorkspaceProposal = {
+            name: action.proposal.name,
+            rationale: action.proposal.rationale,
+            responsibilityDraft: action.proposal.responsibilityDraft,
+            resourceBoundaryDraft: {
+              basisResponsibilityRevision: sender.value.responsibilityRevision,
+              addresses: action.proposal.resourceBoundaryDraft.addresses,
+            },
+            ...(action.proposal.initialWork === undefined
+              ? {}
+              : { initialWork: action.proposal.initialWork }),
+          };
+          if (!isChildWorkspaceProposal(proposal)) {
+            return yield* Effect.fail(
+              actionOperationalFailure("ProposeChildWorkspace.domainGuard")(
+                "decoded proposal failed the domain proposal guard",
+              ),
+            );
+          }
+          const record = admitFormationProposal({
+            proposalId: newFormationProposalId(),
+            parentWorkspaceId: execution.workspaceId,
+            proposal,
+          });
+          const admittedAt = yield* dependencies.clock.now();
+          const formationIds = deriveFormationIds(
+            record.proposalId,
+            record.revision,
+          );
           yield* dependencies.proposals.insert(record);
           if (dependencies.fulfillments !== undefined) {
             yield* dependencies.fulfillments.put({
@@ -2615,8 +2666,36 @@ const proposeChildWorkspaceHandler = (
             summary: `formation proposal "${record.proposal.name}" revision ${record.revision} awaiting human decision`,
             admittedAt,
           });
-        }),
-      );
+          return record;
+        });
+      if (
+        dependencies.loopSteps !== undefined &&
+        dependencies.sessions !== undefined
+      ) {
+        const committed = yield* commitDurableControlActionEffect({
+          handlerInput: input,
+          expectedToolName: "propose_workspace",
+          tx: dependencies.tx,
+          loopSteps: dependencies.loopSteps,
+          sessions: dependencies.sessions,
+          clock: dependencies.clock,
+          effect: () =>
+            persistProposal().pipe(
+              Effect.map((record) => ({
+                value: record,
+                result: {
+                  observation: {
+                    text: `ProposalRecorded(${record.proposalId}); awaiting a human RecordDecision (Approve/Reject/Modify)`,
+                    truncated: false as const,
+                  },
+                  canonicalRefs: [record.proposalId],
+                },
+              })),
+            ),
+        });
+        return committed.outcome;
+      }
+      const record = yield* dependencies.tx.transact(persistProposal());
       return {
         _tag: "Observation" as const,
         source: "Runtime" as const,

@@ -21,6 +21,7 @@ import type {
   RecoveryBindingSourceIdentity,
 } from "@arbor/ports";
 import { Context, type Effect } from "effect";
+import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
 export type AgentAction =
   | { readonly _tag: "SelectCurrentWork"; readonly workId: WorkId }
@@ -228,7 +229,17 @@ export type AgentActionOutcome =
         readonly loopStep: import("@arbor/ports").AgentLoopStepRecord;
       };
     }
-  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement }
+  | {
+      readonly _tag: "Settle";
+      readonly settlement: ExecutionSettlement;
+      /** Internal P9 handoff only: commit a direct Control effect atomically
+       * with the terminal ActionResult and SettlementProposed cursor. */
+      readonly durableSettlementEffect?: Effect.Effect<
+        void,
+        unknown,
+        import("@arbor/ports").TransactionScope
+      >;
+    }
   | { readonly _tag: "BlockedWorkEpisodeRequest"; readonly request: string };
 
 export interface AgentActionHandlerInput {
@@ -246,6 +257,8 @@ export interface AgentActionHandlerInput {
     readonly contextEpoch: import("@arbor/domain").ContextEpochNumber;
   };
   readonly loopStepFence?: import("@arbor/ports").AgentLoopStepFence;
+  /** Process-local fault injection seam; never serialized or persisted. */
+  readonly qualificationProbe?: AgentLoopQualificationProbe;
   /** Exact process-local authorization evidence from the trusted authorizer. */
   readonly assignWorkEvidence?: import("@arbor/ports").AssignWorkControlAuthorizationEvidence;
   readonly assignWorkReplay?: boolean;

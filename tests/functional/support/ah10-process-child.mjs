@@ -445,6 +445,28 @@ const readActionKind = (logicalActionId) => {
 
 const qualificationProbe = async (event) => {
   if (
+    role === "old" &&
+    event.boundary === "AH7StaleDirectControlEffectSuppressed"
+  ) {
+    emit({ ...event, staleEffectSuppressed: true });
+  }
+  if (
+    role === "old" &&
+    event.actionIndex === 0 &&
+    (event.boundary === "AH7AfterActionIntentCommit" ||
+      event.boundary === "AH7BeforeActionResultCommit" ||
+      event.boundary === "AH7AfterActionResultCommit" ||
+      event.boundary === "AH9BeforeTerminalActionCommit" ||
+      event.boundary === "AH9AfterTerminalActionCommit") &&
+    process.env.ARBOR_AH10_CONTROL_EFFECT_BOUNDARY === event.boundary
+  ) {
+    const actionKind = event.actionKind;
+    if (actionKind === process.env.ARBOR_AH10_CONTROL_EFFECT_KIND) {
+      emit({ ...event, actionKind, controlEffectGate: true });
+      await waitForGate("control-effect", event);
+    }
+  }
+  if (
     event.boundary === "AH10AfterAssignWorkAuthorizedBeforeCommandSubmission"
   ) {
     const pauseRequested =
@@ -474,6 +496,17 @@ const qualificationProbe = async (event) => {
     const gateActionKind = process.env.ARBOR_AH10_GATE_ACTION_KIND;
     if (gateActionKind === undefined || actionKind === gateActionKind) {
       await waitForGate("action-intent", event);
+      if (
+        role === "old" &&
+        process.env.ARBOR_AH10_EMIT_STALE_GATE_RELEASE === "1"
+      ) {
+        emit({
+          ...event,
+          boundary: "AH7ActionIntentGateReleased",
+          actionKind,
+          stage: "old-action-intent-gate-released",
+        });
+      }
     }
   }
   const reconciliationCrashBoundary = process.env.ARBOR_AH7_TEST_CRASH_BOUNDARY;
