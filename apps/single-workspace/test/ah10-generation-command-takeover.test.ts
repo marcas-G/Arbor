@@ -2170,6 +2170,10 @@ describe("AH10 prior-consumer corruption boundaries", () => {
               ? "prior Command receipt belongs to another Project"
               : "prior Command receipt has a mismatched identity",
           );
+        } else if (vector === "unknown-stored-version") {
+          expect(operationalFailure.cause).toBe(
+            "prior Command receipt schema is not registered for strict replay",
+          );
         } else {
           expect(operationalFailure.cause).toMatchObject({
             _tag: "PersistenceCorruption",
