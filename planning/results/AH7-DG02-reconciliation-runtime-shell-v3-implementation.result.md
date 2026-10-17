@@ -2,21 +2,22 @@
 
 ## Current qualification status — 2026-10-17
 
-The following scoped real-process qualifications are PASS: authority, approval
-and Stop drift (3/3); G0/G1 delayed source-I/O takeover; P40 settlement boundary
-matrix (4/4); P3 ActionResult boundary matrix (4/4); independent StillUnknown
-recovery; and trusted profile version/hash/effect-key drift (3/3). Evidence is
-recorded in the historical sections below and
-`planning/results/AH7-DG02-profile-drift-recovery.result.md`.
+The following scoped qualifications are PASS: authority/approval/Stop drift
+(3/3); G0/G1 delayed source-I/O takeover and SIGKILL during source lookup;
+P40 settlement boundary matrix (4/4); P3 NotOccurred/Occurred ActionResult
+matrix (4/4); StillUnknown restart plus P9/P10 escalation and P3 before/after
+ActionResult recovery; trusted profile version/hash/effect-key drift (3/3);
+P39 fact-write failure atomicity with safe P3 OutcomeUnknown projection; and
+historical profile-less shell@2 recovery on schema44. Evidence is recorded in
+the historical sections below and the linked focused result records.
 
 AH7 remains **PARTIAL / OPEN**. These cases use a test-only trusted profile;
 production has no registered Reconcilable profile or authoritative source for
 external-effect proof. Remaining qualification includes the broader non-Success
 Observation replay/completion contract beyond the single ExpectedFailure
 process case, the production-approved Executable InvocationApproval handoff,
-and generation/concurrency/crash permutations outside the one G0/G1
-NotOccurred source-I/O case and the listed P40/P3 matrices. No overall AH7
-closure is claimed.
+and generation/concurrency/crash permutations beyond the specifically listed
+cases and matrices. No overall AH7 closure is claimed.
 
 Date: 2026-10-17
 Baseline: `fccd1c146e3ad12824cc20d6247d45bd52b57ba0`
@@ -398,3 +399,29 @@ the separate executable-handler integration verifies the required safe
 `OutcomeUnknown` / `ReconciliationRequired` projection and
 `ReconciliationPending` action state. It writes no successful ToolResult or
 P40 terminal observation; see the dedicated result record above.
+
+## Final qualification status — 2026-10-17 integration snapshot
+
+Scoped evidence now includes all of the following PASS results: authority,
+approval and Stop drift (3/3); G0/G1 delayed source-I/O takeover plus SIGKILL
+during source lookup; P40 settlement boundaries (4/4); P3
+NotOccurred/Occurred ActionResult boundaries (4/4); StillUnknown restart and
+P9/P10 escalation with P3 ActionResult before/after crash recovery; trusted
+profile version/hash/effect-key drift (3/3); P39 fact-write failure atomicity
+for NotOccurred/Occurred/StillUnknown plus the SQLite adapter rollback and
+safe P3 `OutcomeUnknown` / `ReconciliationPending` projection; and profileless
+historical shell@2 recovery, including schema44 SQLite integration.
+
+AH7 remains **PARTIAL / OPEN**. These new cases do not register a production
+Reconcilable profile or provide a production authoritative external-effect
+proof source. The production-approved Executable InvocationApproval
+issuance/binding route also remains absent. Broader non-Success Observation and
+completion-response behavior, plus generation/concurrency/crash permutations
+outside the listed source-kill, P40/P3, StillUnknown and fact-store cases,
+remain unqualified. No AH7 phase closure or overall completion is claimed.
+
+For this integration snapshot, `pnpm typecheck` and Biome on 11 changed
+source/test files pass. The P4 pipeline, profile registry, P39 adapter, P3
+projection/driver, P9 visibility, schema44 shell@2, and P40 schema44 selected
+tests pass **8 files / 124 tests**. `git diff --check` passes. No real daemon
+or full-suite run is included in this integration pass.

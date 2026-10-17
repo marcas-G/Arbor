@@ -609,16 +609,16 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ? killDuringReconciliationIo
               ? "restarts after SIGKILL during reconciliation source lookup"
               : takeoverDuringReconciliationIo
-              ? "fences gen0 after delayed reconciliation I/O while gen1 retries the same invocation"
-              : resourceChangeDuringReconcile
-                ? recoveryCrashBoundary === undefined
-                  ? "revalidates the Workspace resource snapshot after NotOccurred reconciliation I/O"
-                  : `qualifies the P40 ${reconciliationMode} selection across ${recoveryCrashBoundary}`
-                : reconciliationDrift !== undefined
-                  ? `rejects NotOccurred retry after ${reconciliationDrift} drift during reconciliation I/O`
-                  : recoveryCrashBoundary === undefined
-                    ? `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
-                    : `recovers ${reconciliationMode} across ${recoveryCrashBoundary}`
+                ? "fences gen0 after delayed reconciliation I/O while gen1 retries the same invocation"
+                : resourceChangeDuringReconcile
+                  ? recoveryCrashBoundary === undefined
+                    ? "revalidates the Workspace resource snapshot after NotOccurred reconciliation I/O"
+                    : `qualifies the P40 ${reconciliationMode} selection across ${recoveryCrashBoundary}`
+                  : reconciliationDrift !== undefined
+                    ? `rejects NotOccurred retry after ${reconciliationDrift} drift during reconciliation I/O`
+                    : recoveryCrashBoundary === undefined
+                      ? `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
+                      : `recovers ${reconciliationMode} across ${recoveryCrashBoundary}`
             : boundary === "AH7AfterToolIntentCommit"
               ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
               : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
