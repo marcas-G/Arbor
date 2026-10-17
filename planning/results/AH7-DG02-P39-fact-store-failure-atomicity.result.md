@@ -34,3 +34,19 @@ No real daemon/process test was run; serial release is still required. The
 module test models a subsequent invocation with the same persisted inputs; it
 does not claim a process restart. This closes only the scoped P39 fact-store
 failure atomicity case and does not close AH7 or AH7-DG-02 overall.
+
+## P3 / executable-handler projection clarification
+
+“No P3 projection claimed” means the failed P39 transaction cannot be
+represented as a successful/applied tool fact. It does not prohibit the
+required safe unresolved projection. The executable-handler integration test
+injects the same P4 `SettlementJournal` / `OutcomeUncertain` error shape and
+runs it through `executeAgentLoopActions`: the caller receives
+`OutcomeUnknown` + `ReconciliationRequired`, the action is persisted as
+`ReconciliationPending`, and the typed ToolResult is `OutcomeUnknown`. No
+`Succeeded`, `Applied`, or `TerminalRejected` result is written. This does not
+create a P40 terminal observation or a successful ToolResult.
+
+- `pnpm exec vitest run apps/single-workspace/test/ah7-p39-fact-failure-p3-projection.test.ts --retry=0` — PASS, 1/1.
+- `pnpm typecheck` — PASS.
+- Biome on the new integration test and `git diff --check` — PASS.

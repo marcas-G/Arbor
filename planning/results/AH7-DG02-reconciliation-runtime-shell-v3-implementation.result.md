@@ -393,3 +393,8 @@ identity and proof. The SQLite adapter trigger case confirms the fact row rolls
 back and the same immutable fact can be recorded after the injected failure is
 removed. The module/adapter checks, typecheck, and changed-file Biome pass.
 No real-process run was performed pending serial release; AH7 remains PARTIAL.
+The phrase “no P3 projection claimed” means no success/applied projection:
+the separate executable-handler integration verifies the required safe
+`OutcomeUnknown` / `ReconciliationRequired` projection and
+`ReconciliationPending` action state. It writes no successful ToolResult or
+P40 terminal observation; see the dedicated result record above.
