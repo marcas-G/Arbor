@@ -1,6 +1,6 @@
 # Arbor 交付收敛清单
 
-更新时间：2026-10-17
+更新时间：2026-10-18
 
 ## 打勾规则
 
@@ -34,4 +34,4 @@
 
 ## 当前状态
 
-VCS/0046 与 AH14/0047 已完成实现、独立审查和主线合并检查；主候选数据库版本为 47。AH10 已闭合 P8 两项验证动作、全部 SendMessage 类型，以及 ProposeWorkspace/UpdatePlan/ClaimCompletion 的持久效果边界；相应最终回归分别为 7/7、12/12、11/11，并已独立复审合入主线。AH10 当前只保留 direct-child AssignWork C/P 精确目标绑定设计缺口及尚未发现的状态组合，不再把 Deliver 或 Report 列为未完成。AH19 Conversation/0048 已完成迁移、owner store 和投影第一层，但发现 P17 权威来源冲突，当前等待人工接受已复审通过的 reconciliation proposal。后续严格按上面的顺序逐项完成和打勾。
+VCS/0046 与 AH14/0047 已完成实现、独立审查和主线合并检查；主候选数据库版本为 47。AH10 已闭合 P8 两项验证动作、全部 SendMessage 类型、direct-child AssignWork target binding，以及 ProposeWorkspace/UpdatePlan/ClaimCompletion 的持久效果边界；相应最终回归和独立复审均已合入主线。旧记录中的 direct-child C/P 与 Deliver gap 已被后续接受合同和资格结果取代。冻结 EGP 使用同一 Agent Loop，AH10 exit 按 durable handler/action path 与确实独立的 runtime boundary 计算，不要求 Profile×Episode 笛卡尔积；当前只待最终 current-HEAD 全量门禁后打勾。AH19 Conversation/0048 已完成迁移、owner store 和投影第一层，但发现 P17 权威来源冲突，当前等待人工接受已复审通过的 reconciliation proposal。后续严格按上面的顺序逐项完成和打勾。
