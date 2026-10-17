@@ -42,6 +42,12 @@ function childFailure(result) {
   return `exited with status ${result.status ?? 1}`;
 }
 
+function childExitCode(result) {
+  if (result.signal === "SIGINT") return 130;
+  if (result.signal === "SIGTERM") return 143;
+  return result.status && result.status > 0 ? result.status : 1;
+}
+
 export function runCoreTests({
   cwd = root,
   cliPath = vitestCli,
@@ -66,7 +72,7 @@ export function runCoreTests({
   });
   if (listing.error || listing.status !== 0) {
     error(`core test runner: Vitest file listing ${childFailure(listing)}`);
-    return listing.status && listing.status > 0 ? listing.status : 1;
+    return childExitCode(listing);
   }
   const files = listing.stdout
     .split(/\r?\n/)
@@ -102,7 +108,7 @@ export function runCoreTests({
       error(
         `core tests: batch ${index + 1}/${batches.length} failed (${childFailure(result)})`,
       );
-      return result.status && result.status > 0 ? result.status : 1;
+      return childExitCode(result);
     }
   }
   log(`core tests: all ${files.length} files passed`);

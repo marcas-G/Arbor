@@ -79,6 +79,28 @@ test("runner stops on the first failed batch and propagates its status", () => {
   assert.match(errors[0], /batch 1\/2 failed/);
 });
 
+test("runner maps child SIGINT and SIGTERM to conventional exit codes", () => {
+  for (const [signal, expectedStatus] of [
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ]) {
+    let calls = 0;
+    const status = runCoreTests({
+      env: { [BATCH_SIZE_ENV]: "1" },
+      run: () => {
+        calls += 1;
+        return calls === 1
+          ? { status: 0, stdout: "a.test.ts\n" }
+          : { status: null, signal };
+      },
+      log: () => {},
+      error: () => {},
+    });
+    assert.equal(status, expectedStatus, signal);
+    assert.equal(calls, 2, signal);
+  }
+});
+
 test("runner rejects an invalid batch size before starting Vitest", () => {
   let called = false;
   const errors = [];
