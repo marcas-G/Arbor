@@ -50,6 +50,13 @@ changed.
   (including sequential repair attempts), rejects forks/discontinuities/
   orphan rows, and binds even a `Prepared` frontier to its persisted
   ProviderTurn manifest's execution/session/step/repair identity.
+- Closed the legitimate AH4 crash window after exhausted repair writes
+  `OutputRejected` but before `SettlementProposed`: the cursor accepts only an
+  exact `Exhausted` disposition with a valid terminal settlement and no
+  successor. `runModelDecision` revalidates it, transitions the same row to
+  `SettlementProposed`, and returns the persisted settlement before preparing
+  or calling any Provider. Retry `OutputRejected` predecessors instead require
+  the exact next-repair disposition and successor binding.
 - Added a focused `executeAgentLoopActions` integration test using real SQLite
   `TransactionPortLive` and `AgentLoopStepStoreLive`, real Control registry and
   `ControlActionAuthorizerLive`, and the registered P8 handler/receipt
@@ -66,7 +73,7 @@ changed.
   no formatting changes were needed on the final run.
 - `pnpm exec vitest run --config vitest.config.ts apps/single-workspace/test/verification-control-actions.test.ts --reporter=dot`
   — PASS (1 file, 23 tests).
-- Cursor unit — PASS (13 tests).
+- Cursor unit — PASS (18 tests).
 - `pnpm --filter @arbor/agent-runtime build`,
   `pnpm --filter @arbor/persistence-sqlite build`, and
   `pnpm --filter @arbor/single-workspace build` — PASS.
@@ -78,7 +85,12 @@ changed.
   passed (3 files, 32 tests).
 - `pnpm build` — PASS; `pnpm --filter @arbor/web build` — PASS.
 - Cursor-chain, manifest-binding, codec, and P8 control-handler targets — PASS
-  (3 files, 44 tests after cursor hardening).
+  (3 files, 49 tests after exhausted-repair recovery hardening).
+- `provider-failure-ah4.functional.test.ts -t "AH4RepairBeforeSettlementProposal"`
+  — PASS (1 real-process crash/restart case). The crashed state was the exact
+  `OutputRejected/Exhausted/no-successor` frontier; restart persisted
+  `SettlementProposed`, settled Failed once, and made no additional Provider
+  call.
 - Production Gateway/two-connection fencing receipt atomicity test — PASS:
   the independent SQLite connection saw no receipt at the in-transaction
   pre-commit probe and exactly one receipt after transaction return.
