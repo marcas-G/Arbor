@@ -1,7 +1,7 @@
 # AH7-DG-02 P39 fact-store failure atomicity
 
-Date: 2026-10-17  
-Baseline: `280b8be0`  
+Date: 2026-10-17
+Baseline: `280b8be0`
 Scope: test-only P39 fact-store failure injection and safe retry evidence.
 
 ## Result

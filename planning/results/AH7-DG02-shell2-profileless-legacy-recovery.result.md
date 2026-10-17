@@ -1,6 +1,6 @@
 # AH7-DG-02 historical profile-less shell@2 recovery checkpoint
 
-Date: 2026-10-17  
+Date: 2026-10-17
 Baseline: `280b8be07d633c800f6b320b2cb2e0dad3829673`
 
 ## Scope and outcome
