@@ -44,9 +44,12 @@ changed.
   before commit (R−), and stale-generation receipt committed before takeover
   (R+). Each case checks generation/command identity, canonical effect and
   Observation uniqueness, action settlement, and no repeat provider execution.
-- Added generic P9 resume cursor selection from durable `AgentLoopStep` rows,
-  with binding validation against the exact persisted ProviderTurn manifest,
-  plus cursor tests for in-progress resume and malformed/ambiguous histories.
+- Added generic P9 resume cursor selection from durable `AgentLoopStep` rows.
+  Recovery now requires the exact `(logicalStepNo=0, repairAttempt=0)` root,
+  validates every predecessor/successor link across the complete ordered chain
+  (including sequential repair attempts), rejects forks/discontinuities/
+  orphan rows, and binds even a `Prepared` frontier to its persisted
+  ProviderTurn manifest's execution/session/step/repair identity.
 - Added a focused `executeAgentLoopActions` integration test using real SQLite
   `TransactionPortLive` and `AgentLoopStepStoreLive`, real Control registry and
   `ControlActionAuthorizerLive`, and the registered P8 handler/receipt
@@ -63,7 +66,7 @@ changed.
   no formatting changes were needed on the final run.
 - `pnpm exec vitest run --config vitest.config.ts apps/single-workspace/test/verification-control-actions.test.ts --reporter=dot`
   — PASS (1 file, 23 tests).
-- Cursor unit — PASS (7 tests).
+- Cursor unit — PASS (13 tests).
 - `pnpm --filter @arbor/agent-runtime build`,
   `pnpm --filter @arbor/persistence-sqlite build`, and
   `pnpm --filter @arbor/single-workspace build` — PASS.
@@ -74,6 +77,8 @@ changed.
   `apps/single-workspace/test/gateway-fencing-receipt-atomicity.test.ts`
   passed (3 files, 32 tests).
 - `pnpm build` — PASS; `pnpm --filter @arbor/web build` — PASS.
+- Cursor-chain, manifest-binding, codec, and P8 control-handler targets — PASS
+  (3 files, 44 tests after cursor hardening).
 - Production Gateway/two-connection fencing receipt atomicity test — PASS:
   the independent SQLite connection saw no receipt at the in-transaction
   pre-commit probe and exactly one receipt after transaction return.
