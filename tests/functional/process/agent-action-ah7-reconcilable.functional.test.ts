@@ -542,6 +542,14 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       semantics: "Reconcilable",
       reconciliationMode: "StillUnknown",
     },
+    ...(
+      ["AH7BeforeActionResultCommit", "AH7AfterActionResultCommit"] as const
+    ).map((recoveryCrashBoundary) => ({
+      boundary: "AH7AfterEffectAdmissionCommit" as const,
+      semantics: "Reconcilable" as const,
+      reconciliationMode: "StillUnknown" as const,
+      recoveryCrashBoundary,
+    })),
     ...(["version", "hash", "effect-key"] as const).map((profileDrift) => ({
       boundary: "AH7AfterEffectAdmissionCommit" as const,
       semantics: "Reconcilable" as const,
@@ -594,10 +602,13 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
     const testName =
       profileDrift !== undefined
         ? `fails closed on trusted profile ${profileDrift} drift before source reconciliation`
-        : reconciliationMode !== undefined
-          ? killDuringReconciliationIo
-            ? "restarts after SIGKILL during reconciliation source lookup"
-            : takeoverDuringReconciliationIo
+        : reconciliationMode === "StillUnknown" &&
+            recoveryCrashBoundary?.includes("ActionResult")
+          ? `preserves the P9 escalation and resumes StillUnknown P3 projection across ${recoveryCrashBoundary}`
+          : reconciliationMode !== undefined
+            ? killDuringReconciliationIo
+              ? "restarts after SIGKILL during reconciliation source lookup"
+              : takeoverDuringReconciliationIo
               ? "fences gen0 after delayed reconciliation I/O while gen1 retries the same invocation"
               : resourceChangeDuringReconcile
                 ? recoveryCrashBoundary === undefined
@@ -608,9 +619,9 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                   : recoveryCrashBoundary === undefined
                     ? `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
                     : `recovers ${reconciliationMode} across ${recoveryCrashBoundary}`
-          : boundary === "AH7AfterToolIntentCommit"
-            ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
-            : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
+            : boundary === "AH7AfterToolIntentCommit"
+              ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
+              : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
     const noEffectRetryDenied =
       reconciliationMode === "NotOccurred" &&
       (resourceChangeDuringReconcile || reconciliationDrift !== undefined);
@@ -1904,6 +1915,67 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
               (row) =>
                 readToolResultForCall([row], recoveryCallRef) !== undefined,
             );
+            if (reconciliationMode === "StillUnknown") {
+              const boundaryFacts = readReconciliationFacts(
+                fixture.databaseFile,
+                recoveryHit.invocationId,
+              );
+              expect(boundaryFacts).toHaveLength(1);
+              expect(boundaryFacts[0]).toMatchObject({
+                outcome: "StillUnknown",
+                fact_disposition: "RecoveryInput",
+              });
+              expect(boundarySnapshot.executions).toContainEqual(
+                expect.objectContaining({
+                  execution_id: targetExecutionId,
+                  settlement_kind: null,
+                }),
+              );
+              const eventDb = new DatabaseSync(fixture.databaseFile, {
+                readOnly: true,
+              });
+              let escalationAtBoundary: ReadonlyArray<{
+                payload_json: string;
+              }>;
+              try {
+                escalationAtBoundary = eventDb
+                  .prepare(
+                    "SELECT payload_json FROM domain_events WHERE event_type = 'ReconciliationEscalated' AND aggregate_ref = ?",
+                  )
+                  .all(
+                    targetExecutionId,
+                  ) as unknown as typeof escalationAtBoundary;
+              } finally {
+                eventDb.close();
+              }
+              expect(escalationAtBoundary).toHaveLength(1);
+              expect(
+                JSON.parse(String(escalationAtBoundary[0]?.payload_json)),
+              ).toEqual({
+                executionId: targetExecutionId,
+                invocationRefsFingerprint: recoveryHit.invocationId,
+                refs: [recoveryHit.invocationId],
+              });
+              const attentionAtBoundary = await client.view<{
+                rows: ReadonlyArray<{
+                  source?: string;
+                  severity?: string;
+                  targetWorkspaceId?: string;
+                  dedupKey?: string;
+                }>;
+              }>("attention", { projectId: project.projectId });
+              const unresolvedRows = attentionAtBoundary.rows.filter(
+                (row) =>
+                  row.source === "ReconciliationEscalated" &&
+                  row.dedupKey ===
+                    `reconciliation-escalated:${targetExecutionId}:${recoveryHit.invocationId}`,
+              );
+              expect(unresolvedRows).toHaveLength(1);
+              expect(unresolvedRows[0]).toMatchObject({
+                severity: "ActionRequired",
+                targetWorkspaceId: project.rootWorkspaceId,
+              });
+            }
             if (recoveryCrashBoundary === "AH7BeforeActionResultCommit") {
               expect(projectedAction).toHaveLength(1);
               expect(projectedAction[0]?.state).toBe("Pending");
