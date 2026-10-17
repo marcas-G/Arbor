@@ -536,16 +536,16 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           );
         }
         if (expectedSettlement === "ExpectedFailure") {
-          const schema45 = new DatabaseSync(fixture.databaseFile, {
+          const schema46 = new DatabaseSync(fixture.databaseFile, {
             readOnly: true,
           });
           try {
-            const version = schema45.prepare("PRAGMA user_version").get() as
+            const version = schema46.prepare("PRAGMA user_version").get() as
               | { readonly user_version?: number }
               | undefined;
-            expect(Number(version?.user_version)).toBe(45);
+            expect(Number(version?.user_version)).toBe(46);
           } finally {
-            schema45.close();
+            schema46.close();
           }
           const raw = rawTargetInvocations[0];
           if (raw === undefined || raw.observation_json === null) {

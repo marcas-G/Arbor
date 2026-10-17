@@ -66,7 +66,21 @@ const concludedVerification = (
     },
     targetEnvironmentRevision,
   });
-  const result = concludeVerification(started, verdict, "summary:test");
+  const result = concludeVerification(
+    started,
+    verdict,
+    "summary:test",
+    undefined,
+    [
+      {
+        criterionId: "c1",
+        requirement: "must hold",
+        required: true,
+        verdict,
+        evidenceRefs: [],
+      },
+    ],
+  );
   if (!result.ok) {
     throw new Error(`concludeVerification failed: ${result.error._tag}`);
   }

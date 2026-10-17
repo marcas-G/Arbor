@@ -552,7 +552,7 @@ describe("offline P39–P46 schema-upgrade CLI", () => {
           await expect(runPreparedUpgrade(altered, hooks)).rejects.toThrow(
             message,
           );
-          expect(readUserVersion(args.database)).toBe(45);
+          expect(readUserVersion(args.database)).toBe(46);
           expect(logicalSqliteDigest(args.database)).toBe(targetDigest);
           expect(
             readSchemaUpgradeManifest(args.copyManifest).records,
@@ -636,11 +636,11 @@ describe("offline P39–P46 schema-upgrade CLI", () => {
         );
         const restoredVersion = new DatabaseSync(args.database);
         try {
-          restoredVersion.exec("PRAGMA user_version = 45");
+          restoredVersion.exec("PRAGMA user_version = 46");
         } finally {
           restoredVersion.close();
         }
-        expect(readUserVersion(args.database)).toBe(45);
+        expect(readUserVersion(args.database)).toBe(46);
 
         const targetBeforeTamper = logicalSqliteDigest(args.database);
         const tamperTarget = new DatabaseSync(args.database);
@@ -698,7 +698,7 @@ describe("offline P39–P46 schema-upgrade CLI", () => {
   );
 
   it(
-    "serializes two competing CLI resume processes on the maintenance permit",
+    "serializes two competing CLI resume processes through final schema 46",
     async () => {
       const directory = makeP39PrivateTestDirectory(
         process.cwd(),
@@ -722,10 +722,10 @@ describe("offline P39–P46 schema-upgrade CLI", () => {
         }
         const complete = readSchemaUpgradeManifest(args.copyManifest);
         const preparedIndex = complete.records.findIndex(
-          ({ record }) => record.kind === "Prepared" && record.step === "0045",
+          ({ record }) => record.kind === "Prepared" && record.step === "0046",
         );
         if (preparedIndex < 0)
-          throw new Error("P45 Prepared boundary was not recorded");
+          throw new Error("P46 Prepared boundary was not recorded");
         const lines = readFileSync(args.copyManifest, "utf8")
           .trimEnd()
           .split("\n");
@@ -736,7 +736,7 @@ describe("offline P39–P46 schema-upgrade CLI", () => {
         expect(
           readSchemaUpgradeManifest(args.copyManifest).records.filter(
             ({ record }) =>
-              record.kind === "Committed" && record.step === "0045",
+              record.kind === "Committed" && record.step === "0046",
           ),
         ).toHaveLength(1);
 
@@ -750,12 +750,12 @@ describe("offline P39–P46 schema-upgrade CLI", () => {
           concurrent.map(({ code }) => code),
           JSON.stringify(concurrent.map(({ output }) => output)),
         ).toEqual([0, 0]);
-        expect(readUserVersion(args.database)).toBe(45);
+        expect(readUserVersion(args.database)).toBe(46);
         const completed = readSchemaUpgradeManifest(args.copyManifest);
         expect(
           completed.records.filter(
             ({ record }) =>
-              record.kind === "Committed" && record.step === "0045",
+              record.kind === "Committed" && record.step === "0046",
           ),
         ).toHaveLength(1);
         expect(completed.records.length).toBe(before + 1);
