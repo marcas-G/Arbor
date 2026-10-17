@@ -1,7 +1,7 @@
 # AH7-DG-02 Final Independent Audit — B0
 
-Date: 2026-10-17  
-Audited candidate: `28db7ffd6184bb8dc2ce4dcc7f67183103a9a711`  
+Date: 2026-10-17
+Audited candidate: `28db7ffd6184bb8dc2ce4dcc7f67183103a9a711`
 Audit reference: **B0 — independent final audit**
 
 ## Disposition
