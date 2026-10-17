@@ -32,6 +32,7 @@ const gateDirectory = join(dirname(databaseFile), "ah10-gates");
 const recoveryProbeEvents = new Set();
 const reconciliationMode = process.env.ARBOR_AH7_TEST_RECONCILIATION_MODE;
 const reconciliationProfileDrift = process.env.ARBOR_AH7_TEST_PROFILE_DRIFT;
+const reconciliationProofMismatch = process.env.ARBOR_AH7_TEST_PROOF_MISMATCH;
 const reconciliationProfileHash = createHash("sha256")
   .update(
     reconciliationProfileDrift === "hash"
@@ -49,6 +50,15 @@ if (reconciliationMode !== undefined) {
   ) {
     throw new Error(
       `unsupported AH7 test reconciliation mode: ${reconciliationMode}`,
+    );
+  }
+  if (
+    reconciliationProofMismatch !== undefined &&
+    reconciliationProofMismatch !== "attemptNo" &&
+    reconciliationProofMismatch !== "visibilityScopeSha256"
+  ) {
+    throw new Error(
+      `unsupported AH7 test reconciliation proof mismatch: ${reconciliationProofMismatch}`,
     );
   }
   // The isolated test child replaces the production shell definition with a
@@ -92,6 +102,36 @@ if (reconciliationMode !== undefined) {
     }),
   };
   const effectKey = (invocationId) => `ah7-test:${invocationId}`;
+  const proofForRequest = (request, evidenceArtifact) => {
+    const proof = {
+      invocationId: request.invocationId,
+      attemptNo: request.attemptNo,
+      bindingSha256: request.bindingSha256,
+      profileHash: request.profileHash,
+      effectKey: request.effectKey,
+      sourceRevision: "test-ledger-v1",
+      sourceWatermark: "test-ledger-final-watermark",
+      observedAt: new Date().toISOString(),
+      visibilityScopeSha256: request.visibilityScopeSha256,
+      evidenceRef: evidenceArtifact.artifact_id,
+      evidenceSha256: evidenceArtifact.content_hash,
+      finality: {
+        _tag: "ExternallyFenced",
+        confirmationRef: "test-ledger-no-effect-fence",
+        confirmedAt: new Date().toISOString(),
+      },
+    };
+    if (reconciliationProofMismatch === "attemptNo") {
+      return { ...proof, attemptNo: request.attemptNo === 0 ? 1 : 0 };
+    }
+    if (reconciliationProofMismatch === "visibilityScopeSha256") {
+      return {
+        ...proof,
+        visibilityScopeSha256: `${request.visibilityScopeSha256.slice(0, -1)}${request.visibilityScopeSha256.endsWith("0") ? "1" : "0"}`,
+      };
+    }
+    return proof;
+  };
   const testReconciliationPort = {
     reconcile: (request) =>
       Effect.tryPromise({
@@ -311,24 +351,7 @@ if (reconciliationMode !== undefined) {
             ) {
               return {
                 _tag: "NotOccurred",
-                proof: {
-                  invocationId: request.invocationId,
-                  attemptNo: request.attemptNo,
-                  bindingSha256: request.bindingSha256,
-                  profileHash: request.profileHash,
-                  effectKey: request.effectKey,
-                  sourceRevision: "test-ledger-v1",
-                  sourceWatermark: "test-ledger-final-watermark",
-                  observedAt: new Date().toISOString(),
-                  visibilityScopeSha256: request.visibilityScopeSha256,
-                  evidenceRef: evidenceArtifact.artifact_id,
-                  evidenceSha256: evidenceArtifact.content_hash,
-                  finality: {
-                    _tag: "ExternallyFenced",
-                    confirmationRef: "test-ledger-no-effect-fence",
-                    confirmedAt: new Date().toISOString(),
-                  },
-                },
+                proof: proofForRequest(request, evidenceArtifact),
               };
             }
             return {
@@ -566,6 +589,11 @@ const toolQualificationProbe = async (event) => {
   if (event.boundary === "AH7AfterToolEffectBeforeSettlement") {
     emit(event);
     process.stdout.write(`${JSON.stringify({ tag: "AH_PROBE", ...event })}\n`);
+  }
+  if (event.boundary === "AH7ReconciliationResultFenceRejected") {
+    emit(event);
+    process.stdout.write(`${JSON.stringify({ tag: "AH_PROBE", ...event })}\n`);
+    return;
   }
   if (
     event.boundary !== "AH7BeforeReconciliationFactCommit" &&

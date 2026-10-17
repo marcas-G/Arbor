@@ -66,6 +66,7 @@ import {
   ToolDefinitionStoreLive,
   type ToolExecutor,
   ToolRuntimeLive,
+  type ToolRuntimeQualificationEvent,
 } from "../src/index.js";
 import { createShellExecutor } from "../src/tools/shell.js";
 
@@ -559,6 +560,8 @@ interface PipelineTrace {
   reconciliationFactWrites?: number;
   reconciliationCalls?: number;
   reconciliationRequests?: Array<ToolReconciliationRequest>;
+  rejectFenceAfterReconciliation?: boolean;
+  qualificationEvents?: Array<ToolRuntimeQualificationEvent>;
   p39SelectedEvidence?: SelectedP39RecoveryEvidence;
   p39SelectedFenceReject?: boolean;
   p40ReadInvocations?: Array<ToolInvocationIntent>;
@@ -1061,10 +1064,12 @@ const app = (
         );
   const toolRuntime = ToolRuntimeLive(
     [executor],
-    trace?.afterAuthorityResolved === undefined
+    trace === undefined
       ? {}
       : {
           qualificationProbe: async (event) => {
+            trace.qualificationEvents ??= [];
+            trace.qualificationEvents.push(event);
             if (
               event.boundary ===
               "AH7AfterEffectAuthorityResolvedBeforeAdmission"
@@ -1215,7 +1220,19 @@ const app = (
             },
           } as never),
           Layer.succeed(ToolObservationEvidenceStore, {
-            assertCurrentFence: () => Effect.void,
+            assertCurrentFence: () => {
+              if (
+                trace?.rejectFenceAfterReconciliation === true &&
+                (trace.reconciliationCalls ?? 0) > 0
+              ) {
+                return Effect.fail({
+                  _tag: "LeaseFencingRejected" as const,
+                  executionId,
+                  generation: 0 as never,
+                });
+              }
+              return Effect.void;
+            },
             read: (
               invocation: ToolInvocationIntent,
               _fence: NonNullable<
@@ -1776,6 +1793,94 @@ describe("P4 tool runtime pipeline", () => {
         factId: retry.factId,
       },
     });
+  });
+
+  it("emits the delayed reconciliation fence-rejection probe and preserves the P39 failure", async () => {
+    const retry = p39NotOccurredRetryCase("ResourceSnapshotChanged");
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      retryAttemptNumbers: [0],
+      rejectFenceAfterReconciliation: true,
+      reconciliationRetry: {
+        profile: retry.profile,
+        verifiedBinding: retry.verifiedBinding,
+        attempt: retry.attempt,
+        authority: retry.authority,
+        result: retry.result,
+        factId: retry.factId,
+        settlementEvidence: retry.settlementEvidence,
+      },
+    };
+    const outcome = await Effect.runPromise(
+      Effect.provide(
+        Effect.match(
+          Effect.gen(function* () {
+            const runtime = yield* ToolRuntimePort;
+            return yield* runtime.invoke(
+              {
+                ...intent(retry.argumentsJson),
+                toolName: "shell",
+                toolVersion: "2",
+                invocationId,
+                approvalId: null,
+              } as never,
+              retry.context,
+            );
+          }),
+          {
+            onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
+            onSuccess: (value) => ({ _tag: "Success" as const, value }),
+          },
+        ),
+        app(
+          false,
+          {
+            name: "shell",
+            write: true,
+            requiresApproval: () => false,
+            execute: () =>
+              Effect.die(
+                new Error("a stale reconciliation result must not execute"),
+              ),
+          },
+          {},
+          trace,
+          undefined,
+          false,
+          retry.prior,
+          "rev",
+          trace.reconciliationRetry,
+        ),
+      ),
+    );
+
+    expect(outcome).toMatchObject({
+      _tag: "Failure",
+      cause: {
+        _tag: "ToolRuntimeOperationalFailure",
+        stage: "RecoveryBinding",
+        cause: { _tag: "LeaseFencingRejected" },
+      },
+    });
+    expect(trace.qualificationEvents).toContainEqual(
+      expect.objectContaining({
+        boundary: "AH7ReconciliationResultFenceRejected",
+        executionId,
+        invocationId,
+        attemptNo: 0,
+        outcomeTag: "NotOccurred",
+        factId: retry.factId,
+      }),
+    );
+    expect(trace.reconciliationCalls).toBe(1);
+    expect(trace.reconciliationFactWrites ?? 0).toBe(0);
+    expect(trace.retryAttemptNumbers).toEqual([0]);
+    expect(trace.effectAdmissions).toBe(0);
   });
 
   it.each(["recorded-regions", "binding"] as const)(
