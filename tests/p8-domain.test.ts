@@ -153,7 +153,10 @@ describe("P8-001 rejection enums + event payloads", () => {
       [
         "_tag",
         "conclusionReason",
+        "criteriaResults",
         "evidenceRefs",
+        "missionSnapshot",
+        "snapshotStatus",
         "summaryRef",
         "targetWorkRevision",
         "verificationId",

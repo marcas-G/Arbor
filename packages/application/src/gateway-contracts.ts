@@ -138,8 +138,17 @@ export type CommandHandlerError =
 export interface CommandHandler<C, R> {
   readonly commandType: string;
   readonly schemaVersion: string;
+  /** Historical receipt versions a handler can validate read-only on replay. */
+  readonly priorReceiptSchemaVersions?: ReadonlyArray<string>;
   readonly authority: CommandAuthorityRule<C>;
   readonly stopAdmission: StopAdmission;
+  /** Read-only canonical binding check before a stored receipt is replayed. */
+  readonly validateReceiptReplay?: (
+    receipt: CommandReceipt<R, CommandRejection>,
+    payload: C,
+    envelope: GatewayEnvelope<C>,
+    context: CommandSubmissionContext,
+  ) => Effect.Effect<void, CommandHandlerError, TransactionScope>;
   readonly execute: (
     envelope: GatewayEnvelope<C>,
     context: CommandSubmissionContext,

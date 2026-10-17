@@ -1,5 +1,6 @@
 import type { CommandReceipt } from "@arbor/domain";
 import {
+  aggregateVerdict,
   ID_SCHEMAS,
   type IdTypeName,
   NO_EFFECT_DENIAL_CODES,
@@ -295,6 +296,81 @@ const concludeVerificationResult: Validator = (value) =>
     );
   })();
 
+const concludeVerificationResultV2: Validator = (value) => {
+  if (
+    !concludeVerificationResult(value) ||
+    !objectWith(value, {
+      verificationId: id("VerificationId"),
+      state: literal("Concluded"),
+      verdict: verificationVerdict,
+      summaryRef: (ref) => typeof ref === "string" && ref.length > 0,
+      missionSnapshot: (snapshot) =>
+        objectWith(snapshot, {
+          goal: stringValue,
+          criteria: arrayOf((criterion) =>
+            objectWith(criterion, {
+              criterionId: stringValue,
+              requirement: stringValue,
+              required: booleanValue,
+            }),
+          ),
+          riskRequirements: arrayOf(stringValue),
+        }),
+      criteriaResults: arrayOf((result) =>
+        objectWith(result, {
+          criterionId: stringValue,
+          requirement: stringValue,
+          required: booleanValue,
+          verdict: verificationVerdict,
+          evidenceRefs: arrayOf(id("EvidenceId")),
+        }),
+      ),
+      snapshotStatus: oneOf("Available", "NotApplicableOrphaned"),
+    })
+  ) {
+    return false;
+  }
+  const record = recordOf(value);
+  if (record === undefined) return false;
+  const mission = recordOf(record.missionSnapshot);
+  const criteria = mission?.criteria;
+  const results = record?.criteriaResults;
+  if (!Array.isArray(criteria) || !Array.isArray(results)) return false;
+  if (record.snapshotStatus === "NotApplicableOrphaned") {
+    return (
+      record.verdict === "Unknown" &&
+      record.conclusionReason === "Orphaned" &&
+      results.length === 0
+    );
+  }
+  if (
+    record.conclusionReason === "Orphaned" ||
+    results.length !== criteria.length
+  )
+    return false;
+  for (const [index, criterionValue] of criteria.entries()) {
+    const criterion = recordOf(criterionValue);
+    const result = recordOf(results[index]);
+    if (
+      criterion === undefined ||
+      result === undefined ||
+      result.criterionId !== criterion.criterionId ||
+      result.requirement !== criterion.requirement ||
+      result.required !== criterion.required
+    ) {
+      return false;
+    }
+  }
+  return (
+    aggregateVerdict(
+      results as ReadonlyArray<{
+        readonly required: boolean;
+        readonly verdict: import("@arbor/domain").VerificationVerdict;
+      }>,
+    ) === record.verdict
+  );
+};
+
 type ReceiptCommandType = RegisteredCommandType | "UpdateResourceBoundary";
 type ReceiptSchemaVersion = "1" | "2";
 type ResultDecoderRegistry = Readonly<
@@ -510,7 +586,10 @@ const resultDecoders: ResultDecoderRegistry = {
         state: literal("Recorded"),
       }),
   },
-  ConcludeVerification: { "1": concludeVerificationResult },
+  ConcludeVerification: {
+    "1": concludeVerificationResult,
+    "2": concludeVerificationResultV2,
+  },
   RetryVerification: {
     "1": (value) =>
       objectWith(value, {

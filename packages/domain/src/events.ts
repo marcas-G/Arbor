@@ -205,6 +205,33 @@ export const VerificationConcluded = Schema.TaggedStruct(
     conclusionReason: Schema.String,
     evidenceRefs: Schema.Array(Schema.String),
     summaryRef: Schema.String,
+    missionSnapshot: Schema.optional(
+      Schema.Struct({
+        goal: Schema.String,
+        criteria: Schema.Array(
+          Schema.Struct({
+            criterionId: Schema.String,
+            requirement: Schema.String,
+            required: Schema.Boolean,
+          }),
+        ),
+        riskRequirements: Schema.Array(Schema.String),
+      }),
+    ),
+    criteriaResults: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          criterionId: Schema.String,
+          requirement: Schema.String,
+          required: Schema.Boolean,
+          verdict: Schema.Literals(["Pass", "Fail", "Unknown"]),
+          evidenceRefs: Schema.Array(Schema.String),
+        }),
+      ),
+    ),
+    snapshotStatus: Schema.optional(
+      Schema.Literals(["Available", "NotApplicableOrphaned"]),
+    ),
   },
 );
 export const WorkOutcomeAccepted = Schema.TaggedStruct("WorkOutcomeAccepted", {

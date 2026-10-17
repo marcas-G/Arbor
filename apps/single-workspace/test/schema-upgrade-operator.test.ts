@@ -24,7 +24,10 @@ import {
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
 } from "../../../tests/support/p39-windows-deployment-test.js";
-import { createSchema44TestDatabase } from "../../../tests/support/schema44-database.js";
+import {
+  createSchema44TestDatabase,
+  createSchema45TestDatabase,
+} from "../../../tests/support/schema44-database.js";
 import {
   formatSchemaUpgradeCliFailure,
   parseSchemaUpgradeArguments,
@@ -137,7 +140,7 @@ const resumeInChildProcess = (
     });
   });
 
-describe("offline P39–P45 schema-upgrade CLI", () => {
+describe("offline P39–P46 schema-upgrade CLI", () => {
   it("loops through short manifest writes and never flushes a stalled append", () => {
     const bytes = Buffer.from("append-only-record\n", "utf8");
     let output = Buffer.alloc(0);
@@ -530,13 +533,13 @@ describe("offline P39–P45 schema-upgrade CLI", () => {
         ).toMatchObject({ kind: "Prepared", step: "0045" });
 
         const beforeNoOpDigest = logicalSqliteDigest(args.database);
-        let version45ReopenedNoOp = false;
+        let version46ReopenedNoOp = false;
         await runPreparedUpgrade(resumeArgs, {
-          afterVersion45NoOpVerification: () => {
-            version45ReopenedNoOp = true;
+          afterVersion46NoOpVerification: () => {
+            version46ReopenedNoOp = true;
           },
         });
-        expect(version45ReopenedNoOp).toBe(true);
+        expect(version46ReopenedNoOp).toBe(true);
         expect(logicalSqliteDigest(args.database)).toBe(beforeNoOpDigest);
         const completeHeadLength = readSchemaUpgradeManifest(args.copyManifest)
           .records.length;
@@ -775,7 +778,7 @@ describe("offline P39–P45 schema-upgrade CLI", () => {
     CLI_PROCESS_TIMEOUT_MS,
   );
 
-  it("creates a P45 fresh target without accepting a source", async () => {
+  it("creates a P46 fresh target without accepting a source", async () => {
     const directory = makeP39PrivateTestDirectory(
       process.cwd(),
       ".schema-upgrade-fresh-",
@@ -788,33 +791,38 @@ describe("offline P39–P45 schema-upgrade CLI", () => {
     };
     try {
       let reopenedEvidence:
-        | { readonly userVersion: 45; readonly reopenedReadOnly: true }
+        | { readonly userVersion: 46; readonly reopenedReadOnly: true }
         | undefined;
       await runSchemaUpgrade(args, {
-        afterVersion45NoOpVerification: (evidence) => {
+        afterVersion46NoOpVerification: (evidence) => {
           reopenedEvidence = evidence;
         },
       });
       expect(reopenedEvidence).toEqual({
-        userVersion: 45,
+        userVersion: 46,
         reopenedReadOnly: true,
       });
-      expect(readUserVersion(args.database)).toBe(45);
+      expect(readUserVersion(args.database)).toBe(46);
       expect(readSchemaUpgradeManifest(args.copyManifest).header.mode).toBe(
         "fresh",
       );
       expect(
         readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
-      ).toMatchObject({ kind: "Committed", step: "0045", toVersion: 45 });
+      ).toMatchObject({
+        kind: "Committed",
+        step: "0046",
+        fromVersion: 45,
+        toVersion: 46,
+      });
     } finally {
       removeP39PrivateTestDirectory(directory);
     }
   }, 600_000);
 
-  it("upgrades an exact disposable schema44 copy through offline migration 0045", async () => {
+  it("upgrades an exact disposable schema44 copy through offline migrations 0045 and 0046", async () => {
     const directory = makeP39PrivateTestDirectory(
       process.cwd(),
-      ".schema-upgrade-44-to-45-",
+      ".schema-upgrade-44-to-46-",
     );
     const sourceFixture = await createSchema44TestDatabase({
       parentDirectory: directory,
@@ -823,9 +831,9 @@ describe("offline P39–P45 schema-upgrade CLI", () => {
     const args: SchemaUpgradeArguments = {
       mode: "copy",
       sourceDatabase: sourceFixture.databaseFilename,
-      database: join(directory, "schema45-copy.sqlite"),
-      p39ReportDatabase: join(directory, "schema45-p39-report.sqlite"),
-      copyManifest: join(directory, "schema45-copy-manifest.jsonl"),
+      database: join(directory, "schema46-copy.sqlite"),
+      p39ReportDatabase: join(directory, "schema46-p39-report.sqlite"),
+      copyManifest: join(directory, "schema46-copy-manifest.jsonl"),
     };
     try {
       const sourceDigest = logicalSqliteDigest(sourceFixture.databaseFilename);
@@ -843,7 +851,7 @@ describe("offline P39–P45 schema-upgrade CLI", () => {
         "3cbae01c8835a1b4e40d62660725f15f746b04f06e2b08aca94eedc66c9d6ce7",
       );
       await runSchemaUpgrade(args);
-      expect(readUserVersion(args.database)).toBe(45);
+      expect(readUserVersion(args.database)).toBe(46);
       expect(readUserVersion(sourceFixture.databaseFilename)).toBe(44);
       expect(logicalSqliteDigest(sourceFixture.databaseFilename)).toBe(
         sourceBefore.digest,
@@ -864,13 +872,85 @@ describe("offline P39–P45 schema-upgrade CLI", () => {
       )?.record;
       expect(committed).toMatchObject({
         kind: "Committed",
-        step: "0045",
-        fromVersion: 44,
-        toVersion: 45,
+        step: "0046",
+        fromVersion: 45,
+        toVersion: 46,
       });
       console.info(
         `P45 disposable source fingerprint: user_version=${sourceBefore.userVersion} digest=${sourceBefore.digest} prefix=${sourceBefore.prefix}`,
       );
+    } finally {
+      sourceFixture.cleanup();
+      removeP39PrivateTestDirectory(directory);
+    }
+  }, 600_000);
+
+  it("upgrades an exact disposable schema45 copy through offline migration 0046", async () => {
+    const directory = makeP39PrivateTestDirectory(
+      process.cwd(),
+      ".schema-upgrade-45-to-46-",
+    );
+    const sourceFixture = await createSchema45TestDatabase({
+      parentDirectory: directory,
+      prefix: "schema45-source-",
+    });
+    const args: SchemaUpgradeArguments = {
+      mode: "copy",
+      sourceDatabase: sourceFixture.databaseFilename,
+      database: join(directory, "schema46-copy.sqlite"),
+      p39ReportDatabase: join(directory, "schema46-p39-report.sqlite"),
+      copyManifest: join(directory, "schema46-copy-manifest.jsonl"),
+    };
+    try {
+      const sourceDigest = logicalSqliteDigest(sourceFixture.databaseFilename);
+      expect(sqliteSchemaSignature(sourceFixture.databaseFilename)).toBe(
+        "38c6e9348dab9dbbea21b92b2b6a0bd7b92d9a66cbda404753ac64b526a2e938",
+      );
+      const sourcePrefix = prefixSignature(
+        sourceFixture.databaseFilename,
+        45,
+        descriptorHashesThrough(45),
+      );
+      await runSchemaUpgrade(args);
+      expect(readUserVersion(args.database)).toBe(46);
+      expect(readUserVersion(sourceFixture.databaseFilename)).toBe(45);
+      expect(logicalSqliteDigest(sourceFixture.databaseFilename)).toBe(
+        sourceDigest,
+      );
+      expect(
+        prefixSignature(
+          sourceFixture.databaseFilename,
+          45,
+          descriptorHashesThrough(45),
+        ),
+      ).toBe(sourcePrefix);
+      const target = new DatabaseSync(args.database, { readOnly: true });
+      try {
+        expect(target.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+        const columns = target
+          .prepare("PRAGMA table_info(verifications)")
+          .all() as Array<{ name: string }>;
+        expect(columns.map(({ name }) => name)).toContain("criteria_results");
+        expect(columns.map(({ name }) => name)).toContain("snapshot_status");
+        const guards = target
+          .prepare(
+            `SELECT name FROM sqlite_master WHERE type='trigger'
+               AND name IN ('verifications_snapshot_shape_insert',
+                            'verifications_snapshot_shape_update')`,
+          )
+          .all();
+        expect(guards).toHaveLength(2);
+      } finally {
+        target.close();
+      }
+      expect(
+        readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
+      ).toMatchObject({
+        kind: "Committed",
+        step: "0046",
+        fromVersion: 45,
+        toVersion: 46,
+      });
     } finally {
       sourceFixture.cleanup();
       removeP39PrivateTestDirectory(directory);
@@ -886,21 +966,21 @@ describe("offline P39–P45 schema-upgrade CLI", () => {
     try {
       await seedVersion38(args.sourceDatabase as string);
       let reopenedEvidence:
-        | { readonly userVersion: 45; readonly reopenedReadOnly: true }
+        | { readonly userVersion: 46; readonly reopenedReadOnly: true }
         | undefined;
       await runSchemaUpgrade(args, {
         ...(p38PreviewTemplate === undefined
           ? {}
           : { previewTemplate: p38PreviewTemplate }),
-        afterVersion45NoOpVerification: (evidence) => {
+        afterVersion46NoOpVerification: (evidence) => {
           reopenedEvidence = evidence;
         },
       });
       expect(reopenedEvidence).toEqual({
-        userVersion: 45,
+        userVersion: 46,
         reopenedReadOnly: true,
       });
-      expect(readUserVersion(args.database)).toBe(45);
+      expect(readUserVersion(args.database)).toBe(46);
       expect(readUserVersion(args.sourceDatabase as string)).toBe(38);
       expect(
         readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,

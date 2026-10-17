@@ -11,7 +11,7 @@ import {
   expect,
   it,
 } from "vitest";
-import { createSchema45TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema46TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789f1");
@@ -66,13 +66,20 @@ const seedWork = (
       );
     yield* sql
       .unsafe(
-        "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, created_at, updated_at, summary_ref) VALUES (?,?,?,?,?,'{}','[]',?,NULL,NULL,'[]','Concluded',?,NULL,'t','t',?)",
+        "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, created_at, updated_at, summary_ref, criteria_results, snapshot_status) VALUES (?,?,?,?,?,?,'[]',?,NULL,NULL,'[]','Concluded',?,NULL,'t','t',?,NULL,'UnavailableLegacy')",
         [
           verificationId,
           projectId,
           workId,
           0,
           workspaceId,
+          JSON.stringify({
+            goal: "legacy completed outcome",
+            criteria: [
+              { criterionId: "c1", requirement: "completed", required: true },
+            ],
+            riskRequirements: [],
+          }),
           "[]",
           verdict,
           `blob-summary-${verificationId}`,

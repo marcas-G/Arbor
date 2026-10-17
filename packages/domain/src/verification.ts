@@ -42,6 +42,20 @@ export type VerificationVerdict = Schema.Schema.Type<
 
 export type ConclusionReason = "Orphaned";
 
+export type VerificationSnapshotStatus =
+  | "Pending"
+  | "Available"
+  | "NotApplicableOrphaned"
+  | "UnavailableLegacy";
+
+export interface VerificationCriterionResult {
+  readonly criterionId: string;
+  readonly requirement: string;
+  readonly required: boolean;
+  readonly verdict: VerificationVerdict;
+  readonly evidenceRefs: ReadonlyArray<EvidenceId>;
+}
+
 /** v1.11 G1: required-qualified deterministic aggregation (SD §9.6). */
 export const aggregateVerdict = (
   results: ReadonlyArray<{
@@ -76,6 +90,8 @@ export interface Verification {
   readonly ownerWorkspaceId?: WorkspaceId;
   readonly targetWorkRevision: WorkRevision;
   readonly missionSnapshot: VerificationMission;
+  readonly criteriaResults: ReadonlyArray<VerificationCriterionResult> | null;
+  readonly snapshotStatus: VerificationSnapshotStatus;
   readonly targetDeliverables: ReadonlyArray<DeliverableId>;
   readonly targetArtifactVersions: ReadonlyArray<ArtifactId>;
   readonly targetEnvironmentRevision: string | null;
@@ -113,6 +129,8 @@ export const startVerification = (
   evidenceRefs: [],
   verificationExecutionIds: input.verificationExecutionIds ?? [],
   summaryRef: null,
+  criteriaResults: null,
+  snapshotStatus: "Pending",
   state: { status: "Open" },
 });
 
@@ -140,6 +158,7 @@ export const concludeVerification = (
   verdict: VerificationVerdict,
   summaryRef: string,
   conclusionReason?: ConclusionReason,
+  criteriaResults: ReadonlyArray<VerificationCriterionResult> | null = null,
 ): DomainResult<Verification> => {
   if (verification.state.status !== "Open") {
     return err(concludedError());
@@ -160,6 +179,9 @@ export const concludeVerification = (
   return ok({
     ...verification,
     summaryRef,
+    criteriaResults,
+    snapshotStatus:
+      conclusionReason === "Orphaned" ? "NotApplicableOrphaned" : "Available",
     state:
       conclusionReason === undefined
         ? { status: "Concluded", verdict }
