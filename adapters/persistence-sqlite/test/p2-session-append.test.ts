@@ -350,6 +350,133 @@ describe("P2 Session appendEntry + AgentExecutionState", () => {
     ).toBe(false);
   });
 
+  it("selects exactly the latest 64 typed Work rows without causal backfill", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P21_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      const insert = (
+        sequence: number,
+        entryKind: string,
+        itemType: string,
+        payload: unknown,
+      ) =>
+        sql.unsafe(
+          "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,2,0,?,'t','test',?,?)",
+          [
+            sessionId,
+            sequence,
+            entryKind,
+            itemType,
+            JSON.stringify(payload),
+            `ref-${sequence}`,
+            `hash-${sequence}`,
+          ],
+        );
+      yield* insert(0, "ModelOutput", "ToolCall", {
+        _tag: "ToolCall",
+        callRef: "outside-window",
+        toolRef: "read",
+        argumentsJson: "{}",
+      });
+      yield* insert(1, "Input", "UserMessage", {
+        _tag: "UserMessage",
+        source: { _tag: "InboxEntry", kind: "Message" },
+        text: "old",
+      });
+      for (let sequence = 2; sequence < 65; sequence += 1) {
+        yield* insert(sequence, "Input", "UserMessage", {
+          _tag: "UserMessage",
+          source:
+            sequence === 2
+              ? { _tag: "InboxEntry", kind: "HumanConversation" }
+              : { _tag: "InboxEntry", kind: "Message" },
+          text: `message-${sequence}`,
+        });
+      }
+      yield* insert(65, "Observation", "ToolResult", {
+        _tag: "ToolResult",
+        callRef: "outside-window",
+        toolName: "read",
+        status: "Succeeded",
+        outputText: "result",
+      });
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      return yield* tx.transact(sessions.listWorkActiveFrontier(sessionId, 64));
+    });
+
+    const entries = await Effect.runPromise(Effect.provide(program, app));
+    expect(entries).toHaveLength(64);
+    expect(entries.map((entry) => entry.sequence)).toEqual(
+      Array.from({ length: 64 }, (_, index) => index + 2),
+    );
+    expect(entries.some((entry) => entry.sequence < 2)).toBe(false);
+    expect(entries[0]?.payload).toMatchObject({ text: "message-2" });
+    expect(entries.at(-1)?.payload).toMatchObject({
+      callRef: "outside-window",
+    });
+  });
+
+  it("selects the exact checkpoint plus every later typed Work row without a cap", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P21_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      const insert = (
+        sequence: number,
+        entryKind: string,
+        itemType: string,
+        payload: unknown,
+      ) =>
+        sql.unsafe(
+          "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,2,0,?,'t','test',?,?)",
+          [
+            sessionId,
+            sequence,
+            entryKind,
+            itemType,
+            JSON.stringify(payload),
+            `ref-${sequence}`,
+            `hash-${sequence}`,
+          ],
+        );
+      for (let sequence = 0; sequence < 4; sequence += 1) {
+        yield* insert(sequence, "Input", "UserMessage", {
+          _tag: "UserMessage",
+          text: `before-${sequence}`,
+        });
+      }
+      yield* insert(4, "CheckpointReference", "CompactionCheckpoint", {
+        _tag: "CompactionCheckpoint",
+        implementation: "Summary",
+        fromEpoch: 0,
+        toEpoch: 1,
+        summaryText: "checkpoint",
+      });
+      for (let sequence = 5; sequence <= 75; sequence += 1) {
+        yield* insert(sequence, "Input", "UserMessage", {
+          _tag: "UserMessage",
+          text: `after-${sequence}`,
+        });
+      }
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      return yield* tx.transact(sessions.listWorkActiveFrontier(sessionId, 64));
+    });
+
+    const entries = await Effect.runPromise(Effect.provide(program, app));
+    expect(entries.map((entry) => entry.sequence)).toEqual(
+      Array.from({ length: 72 }, (_, index) => index + 4),
+    );
+    expect(entries[0]?.payload).toMatchObject({
+      _tag: "CompactionCheckpoint",
+      summaryText: "checkpoint",
+    });
+  });
+
   it("rejects a fenced append with a stale generation without writing", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {

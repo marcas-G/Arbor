@@ -102,6 +102,44 @@ describe("SCRC ContextProjector", () => {
     expect(result.projection.instructionFragments).toEqual([]);
   });
 
+  it("records a filtered HumanConversation row without projecting or referencing it", () => {
+    const decision = decideSessionProjection([
+      record(
+        7,
+        "Input",
+        {
+          _tag: "UserMessage",
+          source: { _tag: "InboxEntry", kind: "HumanConversation" },
+          text: "filtered conversation row",
+        },
+        "filtered",
+      ),
+      record(
+        8,
+        "Input",
+        {
+          _tag: "UserMessage",
+          source: { _tag: "InboxEntry", kind: "Message" },
+          text: "eligible row",
+        },
+        "eligible",
+      ),
+    ]);
+
+    expect(decision._tag).toBe("Ready");
+    if (decision._tag !== "Ready") {
+      throw new Error("expected ready projection");
+    }
+    expect(decision.projection.frontier).toEqual({
+      firstSequence: 7,
+      lastSequence: 8,
+    });
+    expect(decision.projection.inputItems).toEqual([
+      { _tag: "Message", role: "user", text: "eligible row" },
+    ]);
+    expect(decision.projection.contextRefs).toEqual(["session:test:eligible"]);
+  });
+
   it("blocks a dangling call at the maximal causally closed frontier", () => {
     const result = decideSessionProjection([
       record(
@@ -159,6 +197,45 @@ describe("SCRC ContextProjector", () => {
       reason: "ContradictoryTimeline",
       callRefs: ["call-1"],
       closedFrontier: { firstSequence: null, lastSequence: null },
+    });
+  });
+
+  it("blocks an orphaned result at the exact selected-window causal boundary", () => {
+    const entries = Array.from({ length: 64 }, (_, index) => {
+      const sequence = index + 2;
+      return sequence === 65
+        ? record(
+            sequence,
+            "Observation",
+            {
+              _tag: "ToolResult",
+              callRef: "call-outside-window",
+              toolName: "read",
+              status: "Succeeded",
+              outputText: "result",
+              observationRef: "obs",
+              artifactRefs: [],
+              truncated: false,
+            },
+            "result",
+          )
+        : record(
+            sequence,
+            "Input",
+            {
+              _tag: "UserMessage",
+              source: { _tag: "InboxEntry", kind: "Message" },
+              text: `message-${sequence}`,
+            },
+            `message-${sequence}`,
+          );
+    });
+
+    expect(decideSessionProjection(entries)).toEqual({
+      _tag: "Blocked",
+      reason: "ContradictoryTimeline",
+      callRefs: ["call-outside-window"],
+      closedFrontier: { firstSequence: 2, lastSequence: 64 },
     });
   });
 

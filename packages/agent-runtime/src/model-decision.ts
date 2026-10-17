@@ -531,6 +531,16 @@ export const runModelDecision = (
       | import("@arbor/domain").ProviderTurnId
       | undefined;
     let repairFragments: ReadonlyArray<InstructionFragment> = [];
+    const readExecutionTimeline = () =>
+      executionEpisode(input.execution)?._tag === "WorkEpisode"
+        ? sessions.listWorkActiveFrontier(
+            input.execution.sessionId,
+            SESSION_TIMELINE_ENTRY_LIMIT,
+          )
+        : sessions.listRecentEntries(
+            input.execution.sessionId,
+            SESSION_TIMELINE_ENTRY_LIMIT,
+          );
     // A Work checkpoint may have been committed after the process-local loop
     // cursor was last observed. Resolve its durable source before creating a
     // fresh Prepared step so restart cannot accidentally create/replay step 0.
@@ -540,12 +550,7 @@ export const runModelDecision = (
       loopSteps !== undefined
     ) {
       const startupTimeline = yield* tx
-        .transact(
-          sessions.listRecentEntries(
-            input.execution.sessionId,
-            SESSION_TIMELINE_ENTRY_LIMIT,
-          ),
-        )
+        .transact(readExecutionTimeline())
         .pipe(Effect.mapError(failure));
       const startupProjection = projectSessionTimeline(
         startupTimeline,
@@ -1489,12 +1494,7 @@ export const runModelDecision = (
                     );
                   }
                   const recentEntries = yield* tx
-                    .transact(
-                      sessions.listRecentEntries(
-                        input.execution.sessionId,
-                        SESSION_TIMELINE_ENTRY_LIMIT,
-                      ),
-                    )
+                    .transact(readExecutionTimeline())
                     .pipe(Effect.mapError(failure));
                   const nativeCheckpointEntries = recentEntries.filter(
                     (entry) =>
@@ -2022,12 +2022,7 @@ export const runModelDecision = (
       // projection; answered HumanMessages + the claimed message are the sole
       // conversation continuity source.
       const recentTimeline = yield* tx
-        .transact(
-          sessions.listRecentEntries(
-            input.execution.sessionId,
-            SESSION_TIMELINE_ENTRY_LIMIT,
-          ),
-        )
+        .transact(readExecutionTimeline())
         .pipe(Effect.mapError(failure));
       let recentSessionEntries = conversationExecution
         ? recentTimeline.filter((entry) =>
@@ -2124,12 +2119,7 @@ export const runModelDecision = (
               .pipe(Effect.mapError(failure));
           }
           recentSessionEntries = yield* tx
-            .transact(
-              sessions.listRecentEntries(
-                input.execution.sessionId,
-                SESSION_TIMELINE_ENTRY_LIMIT,
-              ),
-            )
+            .transact(readExecutionTimeline())
             .pipe(Effect.mapError(failure));
           projectionDecision = decideSessionProjection(
             recentSessionEntries,

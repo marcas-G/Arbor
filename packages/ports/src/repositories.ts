@@ -303,6 +303,18 @@ export interface SessionRepositoryService {
     SessionRepositoryError,
     TransactionScope
   >;
+  /** Work-only provider-context frontier. Before the first typed checkpoint,
+   * selects the latest persisted SessionItems by sequence up to preCheckpointLimit
+   * without causal backfill. After a typed checkpoint, returns that checkpoint
+   * and every later typed SessionItem without applying the limit. */
+  readonly listWorkActiveFrontier: (
+    sessionId: SessionId,
+    preCheckpointLimit: number,
+  ) => Effect.Effect<
+    ReadonlyArray<SessionEntryRecord>,
+    SessionRepositoryError,
+    TransactionScope
+  >;
   /** P10-007 deps 申报: every session visible for a workspace — the
    * WorkspacePrimary binding plus ExecutionScoped sessions of the
    * workspace's executions. Read-only Transcript scoping face. */

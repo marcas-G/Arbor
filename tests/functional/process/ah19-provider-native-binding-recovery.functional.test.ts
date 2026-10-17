@@ -2850,7 +2850,25 @@ describe("AH19 ProviderNative binding recovery", () => {
         repairAttempt?: number;
         providerTurnId?: string;
       };
+      inputFrontier?: {
+        firstSequence?: number | null;
+        lastSequence?: number | null;
+      };
     };
+    const checkpointSequence = Math.min(
+      ...snapshot.checkpoints.map((checkpoint) => checkpoint.sequence),
+    );
+    const preCheckpointTypedRows = snapshot.sessionEntries.filter(
+      (entry) =>
+        entry.item_type !== null &&
+        !entry.item_type.startsWith("Legacy") &&
+        entry.sequence < checkpointSequence,
+    );
+    const selectedPreCheckpointRows = preCheckpointTypedRows.slice(-64);
+    expect(nativeManifest.inputFrontier).toEqual({
+      firstSequence: selectedPreCheckpointRows[0]?.sequence,
+      lastSequence: selectedPreCheckpointRows.at(-1)?.sequence,
+    });
     const sourceStep = snapshot.steps.find(
       (step) => step.logical_step_no === 1 && step.repair_attempt === 0,
     );
