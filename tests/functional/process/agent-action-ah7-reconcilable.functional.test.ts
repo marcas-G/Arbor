@@ -486,6 +486,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
     readonly resourceChangeDuringReconcile?: boolean;
     readonly reconciliationDrift?: "authority" | "approval" | "stop";
     readonly takeoverDuringReconciliationIo?: boolean;
+    readonly proofMismatch?: "attemptNo" | "visibilityScopeSha256";
     readonly killDuringReconciliationIo?: boolean;
     readonly recoveryCrashBoundary?:
       | "AH7BeforeToolSettlementCommit"
@@ -512,6 +513,15 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       reconciliationMode: "NotOccurred",
       takeoverDuringReconciliationIo: true,
     },
+    ...(["attemptNo", "visibilityScopeSha256"] as const).map(
+      (proofMismatch) => ({
+        boundary: "AH7AfterEffectAdmissionCommit" as const,
+        semantics: "Reconcilable" as const,
+        reconciliationMode: "NotOccurred" as const,
+        takeoverDuringReconciliationIo: true,
+        proofMismatch,
+      }),
+    ),
     {
       boundary: "AH7AfterEffectAdmissionCommit",
       semantics: "Reconcilable",
@@ -596,32 +606,36 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       resourceChangeDuringReconcile,
       reconciliationDrift,
       takeoverDuringReconciliationIo,
+      proofMismatch,
       killDuringReconciliationIo,
       recoveryCrashBoundary,
     } = scenario;
+    const mismatchedProofIsUnknown = proofMismatch !== undefined;
     const testName =
       profileDrift !== undefined
         ? `fails closed on trusted profile ${profileDrift} drift before source reconciliation`
         : reconciliationMode === "StillUnknown" &&
             recoveryCrashBoundary?.includes("ActionResult")
           ? `preserves the P9 escalation and resumes StillUnknown P3 projection across ${recoveryCrashBoundary}`
-          : reconciliationMode !== undefined
-            ? killDuringReconciliationIo
-              ? "restarts after SIGKILL during reconciliation source lookup"
-              : takeoverDuringReconciliationIo
-                ? "fences gen0 after delayed reconciliation I/O while gen1 retries the same invocation"
-                : resourceChangeDuringReconcile
-                  ? recoveryCrashBoundary === undefined
-                    ? "revalidates the Workspace resource snapshot after NotOccurred reconciliation I/O"
-                    : `qualifies the P40 ${reconciliationMode} selection across ${recoveryCrashBoundary}`
-                  : reconciliationDrift !== undefined
-                    ? `rejects NotOccurred retry after ${reconciliationDrift} drift during reconciliation I/O`
-                    : recoveryCrashBoundary === undefined
-                      ? `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
-                      : `recovers ${reconciliationMode} across ${recoveryCrashBoundary}`
-            : boundary === "AH7AfterToolIntentCommit"
-              ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
-              : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
+          : mismatchedProofIsUnknown
+            ? `rejects G1 ${proofMismatch} proof after G0/G1 source-I/O takeover`
+            : reconciliationMode !== undefined
+              ? killDuringReconciliationIo
+                ? "restarts after SIGKILL during reconciliation source lookup"
+                : takeoverDuringReconciliationIo
+                  ? "fences gen0 after delayed reconciliation I/O while gen1 retries the same invocation"
+                  : resourceChangeDuringReconcile
+                    ? recoveryCrashBoundary === undefined
+                      ? "revalidates the Workspace resource snapshot after NotOccurred reconciliation I/O"
+                      : `qualifies the P40 ${reconciliationMode} selection across ${recoveryCrashBoundary}`
+                    : reconciliationDrift !== undefined
+                      ? `rejects NotOccurred retry after ${reconciliationDrift} drift during reconciliation I/O`
+                      : recoveryCrashBoundary === undefined
+                        ? `recovers ${reconciliationMode} from a test-only trusted profile after a daemon restart`
+                        : `recovers ${reconciliationMode} across ${recoveryCrashBoundary}`
+              : boundary === "AH7AfterToolIntentCommit"
+                ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
+                : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
     const noEffectRetryDenied =
       reconciliationMode === "NotOccurred" &&
       (resourceChangeDuringReconcile || reconciliationDrift !== undefined);
@@ -1423,6 +1437,9 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ARBOR_AH10_ROLE: "new",
             ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
             ARBOR_AH7_TEST_RECONCILIATION_MODE: reconciliationMode,
+            ...(proofMismatch === undefined
+              ? {}
+              : { ARBOR_AH7_TEST_PROOF_MISMATCH: proofMismatch }),
             ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
             ARBOR_AH7_TEST_TRACE_RECONCILIATION_IO: "1",
           },
@@ -1648,6 +1665,9 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ARBOR_AH10_ROLE: "new",
             ARBOR_AH10_GATE_ACTION_KIND: "__disabled__",
             ARBOR_AH7_TEST_RECONCILIATION_MODE: reconciliationMode,
+            ...(proofMismatch === undefined
+              ? {}
+              : { ARBOR_AH7_TEST_PROOF_MISMATCH: proofMismatch }),
             ARBOR_AH7_TEST_CRASH_BOUNDARY: "disabled",
             ARBOR_AH7_TEST_TRACE_RECONCILIATION_IO: "1",
           },
@@ -1711,136 +1731,419 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           attemptNo: 0,
           observedEffect: 0,
         });
-        const recoveredByGen1 = await waitForPublic(
-          async () => durableSnapshot(fixture.databaseFile),
-          (value) =>
-            value.toolInvocations.some(
-              (invocation) =>
-                invocation.invocation_id === hit?.invocationId &&
-                invocation.settlement_kind === "Success",
-            ) &&
-            value.actions.some(
-              (action) =>
-                action.execution_id === targetExecutionId &&
-                action.call_ref === hit?.callRef &&
-                action.state === "Applied",
-            ),
-          45_000,
-        );
-        expect(gen1Daemon.daemonProcessSnapshot().alive).toBe(true);
-        expect(recoveredByGen1.toolInvocations).toEqual(
-          expect.arrayContaining([
+        if (mismatchedProofIsUnknown) {
+          const p3CommittedByGen1 = await waitForPublic(
+            async () => durableSnapshot(fixture.databaseFile),
+            (value) =>
+              value.actions.some(
+                (action) =>
+                  action.execution_id === targetExecutionId &&
+                  action.call_ref === hit?.callRef &&
+                  action.state === "ReconciliationPending",
+              ),
+            45_000,
+          );
+          const bindingBeforeStaleReturn = readP4InvocationApprovalBinding(
+            fixture.databaseFile,
+            targetExecutionId,
+            targetInvocationId,
+          );
+          const factsBeforeStaleReturn = readReconciliationFacts(
+            fixture.databaseFile,
+            targetInvocationId,
+          );
+          const attemptsBeforeStaleReturn = readEffectAttempts(
+            fixture.databaseFile,
+            targetInvocationId,
+          );
+          expect(factsBeforeStaleReturn).toHaveLength(1);
+          expect(factsBeforeStaleReturn[0]).toMatchObject({
+            attempt_no: 0,
+            outcome: "StillUnknown",
+            reason_code: "EvidenceBindingMismatch",
+            fact_disposition: "RecoveryInput",
+            result_ref: null,
+          });
+          expect(attemptsBeforeStaleReturn).toEqual([
             expect.objectContaining({
-              invocation_id: hit?.invocationId,
-              settlement_kind: "Success",
+              attempt_no: 0,
+              admission_state: "MayHaveStarted",
             }),
-          ]),
-        );
-        const factsBeforeGen0Return = readReconciliationFacts(
-          fixture.databaseFile,
-          targetInvocationId,
-        );
-        expect(factsBeforeGen0Return).toHaveLength(1);
-        expect(factsBeforeGen0Return[0]).toMatchObject({
-          attempt_no: 0,
-          outcome: "NotOccurred",
-          fact_disposition: "RecoveryInput",
-        });
-        const attemptsBeforeGen0Return = (() => {
-          const db = new DatabaseSync(fixture.databaseFile, {
+          ]);
+          expect(bindingBeforeStaleReturn).toMatchObject({
+            effect_admission_state: "MayHaveStarted",
+            settlement_kind: null,
+            settled_at: null,
+            selected_attempt_no: null,
+            selected_fact_id: null,
+            result_ref: null,
+            observation_json: null,
+          });
+          const toolResultsAtP3Commit = p3CommittedByGen1.toolResults.filter(
+            (row) => readToolResultForCall([row], hit?.callRef ?? ""),
+          );
+          expect(toolResultsAtP3Commit).toHaveLength(1);
+          const targetToolResult = readToolResultForCall(
+            p3CommittedByGen1.toolResults,
+            hit?.callRef ?? "",
+          );
+          expect(targetToolResult?.payload).toMatchObject({
+            status: "OutcomeUnknown",
+            artifactRefs: [],
+          });
+          expect(targetToolResult?.payload).not.toHaveProperty("resultRef");
+          expect(targetToolResult?.payload).not.toHaveProperty("canonicalRefs");
+          const escalationRows = new DatabaseSync(fixture.databaseFile, {
             readOnly: true,
           });
           try {
-            return db
-              .prepare(
-                `SELECT attempt_no, admission_state
-                   FROM tool_invocation_effect_attempts
-                  WHERE invocation_id = ? ORDER BY attempt_no`,
-              )
-              .all(targetInvocationId);
+            expect(
+              escalationRows
+                .prepare(
+                  `SELECT COUNT(*) AS count FROM domain_events
+                    WHERE event_type = 'ReconciliationEscalated' AND aggregate_ref = ?`,
+                )
+                .get(targetExecutionId),
+            ).toMatchObject({ count: 1 });
           } finally {
-            db.close();
+            escalationRows.close();
           }
-        })();
-        expect(attemptsBeforeGen0Return).toHaveLength(2);
-        writeFileSync(
-          join(
-            fixture.directory,
-            "ah10-gates",
-            "old-reconciliation-io.release",
-          ),
-          "release stale gen0 source result",
-        );
-        await waitForPublic(
-          async () => {
-            const sourceDb = new DatabaseSync(fixture.databaseFile, {
-              readOnly: true,
+          const attention = await client.view<{
+            rows: ReadonlyArray<{
+              source?: string;
+              severity?: string;
+              dedupKey?: string;
+            }>;
+          }>("attention", { projectId: project.projectId });
+          expect(
+            attention.rows.filter(
+              (row) =>
+                row.source === "RecoveryEscalation" &&
+                row.severity === "ActionRequired" &&
+                row.dedupKey ===
+                  `reconciliation-escalated:${targetExecutionId}:${targetInvocationId}`,
+            ),
+          ).toHaveLength(1);
+          expect(
+            p3CommittedByGen1.artifacts.filter(
+              (artifact) => artifact.invocation_id === targetInvocationId,
+            ),
+          ).toEqual([]);
+          expect(readTestExternalEffects(fixture.databaseFile)).toEqual([]);
+          expect(existsSync(join(fixture.workspaceDirectory, effectFile))).toBe(
+            false,
+          );
+          const leaseBeforeStaleReturn = new DatabaseSync(
+            fixture.databaseFile,
+            { readOnly: true },
+          );
+          try {
+            expect(
+              leaseBeforeStaleReturn
+                .prepare(
+                  `SELECT generation, worker_incarnation_id FROM execution_leases
+                    WHERE execution_id = ?`,
+                )
+                .get(targetExecutionId),
+            ).toMatchObject({
+              generation: gen0Generation + 1,
             });
-            try {
-              return sourceDb
+          } finally {
+            leaseBeforeStaleReturn.close();
+          }
+          const g1ActionResultCommit = await waitForPublic(
+            async () =>
+              processEvents.find(
+                (event) =>
+                  event.boundary === "AH7AfterActionResultCommit" &&
+                  event.role === "new" &&
+                  event.executionId === targetExecutionId &&
+                  event.callRef === hit?.callRef,
+              ),
+            (event) => event !== undefined,
+            20_000,
+          );
+          expect(g1ActionResultCommit).toMatchObject({
+            boundary: "AH7AfterActionResultCommit",
+            role: "new",
+            executionId: targetExecutionId,
+            callRef: hit?.callRef,
+          });
+          writeFileSync(
+            join(fixture.directory, "ah10-gates", "new-action-result.release"),
+            "allow G1 to return the settled P3 result",
+          );
+          const unresolvedByGen1 = await waitForPublic(
+            async () => durableSnapshot(fixture.databaseFile),
+            (value) =>
+              value.actions.some(
+                (action) =>
+                  action.execution_id === targetExecutionId &&
+                  action.call_ref === hit?.callRef &&
+                  action.state === "ReconciliationPending",
+              ) &&
+              value.executions.some(
+                (execution) =>
+                  execution.execution_id === targetExecutionId &&
+                  execution.settlement_kind === "OutcomeUnknown",
+              ),
+            45_000,
+          );
+          const executionBeforeStaleReturn = unresolvedByGen1.executions.find(
+            (execution) => execution.execution_id === targetExecutionId,
+          );
+          expect(executionBeforeStaleReturn?.settlement_kind).toBe(
+            "OutcomeUnknown",
+          );
+          const toolResultsBeforeStaleReturn =
+            unresolvedByGen1.toolResults.filter((row) =>
+              readToolResultForCall([row], hit?.callRef ?? ""),
+            );
+          expect(toolResultsBeforeStaleReturn).toHaveLength(1);
+          expect(toolResultsBeforeStaleReturn).toEqual(toolResultsAtP3Commit);
+          writeFileSync(
+            join(
+              fixture.directory,
+              "ah10-gates",
+              "old-reconciliation-io.release",
+            ),
+            "release stale gen0 source result",
+          );
+          const staleResultFence = await waitForPublic(
+            async () =>
+              processEvents.find(
+                (event) =>
+                  event.boundary === "AH7ReconciliationResultFenceRejected" &&
+                  event.role === "old" &&
+                  event.invocationId === targetInvocationId,
+              ),
+            (event) => event !== undefined,
+            20_000,
+          );
+          expect(staleResultFence).toMatchObject({
+            boundary: "AH7ReconciliationResultFenceRejected",
+            role: "old",
+            invocationId: targetInvocationId,
+            attemptNo: 0,
+            outcomeTag: "NotOccurred",
+          });
+          const staleCallDb = new DatabaseSync(fixture.databaseFile, {
+            readOnly: true,
+          });
+          try {
+            expect(
+              staleCallDb
                 .prepare(
                   `SELECT returned_at FROM ah7_test_reconciliation_calls
                     WHERE invocation_id = ? AND role = 'old'`,
                 )
-                .get(targetInvocationId) as
-                | { returned_at: string | null }
-                | undefined;
-            } finally {
-              sourceDb.close();
-            }
-          },
-          (row) => row?.returned_at !== null && row !== undefined,
-          20_000,
-        );
-        const takeoverDb = new DatabaseSync(fixture.databaseFile, {
-          readOnly: true,
-        });
-        try {
-          const calls = takeoverDb
-            .prepare(
-              `SELECT attempt_no, role, observed_effect, returned_at
-                 FROM ah7_test_reconciliation_calls WHERE invocation_id = ?
-                 ORDER BY call_no`,
-            )
-            .all(hit?.invocationId) as Array<Record<string, unknown>>;
-          expect(calls).toEqual([
+                .get(targetInvocationId),
+            ).toMatchObject({ returned_at: expect.any(String) });
+          } finally {
+            staleCallDb.close();
+          }
+          expect(
+            readReconciliationFacts(fixture.databaseFile, targetInvocationId),
+          ).toEqual(factsBeforeStaleReturn);
+          expect(
+            readEffectAttempts(fixture.databaseFile, targetInvocationId),
+          ).toEqual(attemptsBeforeStaleReturn);
+          expect(
+            readP4InvocationApprovalBinding(
+              fixture.databaseFile,
+              targetExecutionId,
+              targetInvocationId,
+            ),
+          ).toEqual(bindingBeforeStaleReturn);
+          expect(readTestExternalEffects(fixture.databaseFile)).toEqual([]);
+          const snapshotAfterStaleReturn = durableSnapshot(
+            fixture.databaseFile,
+          );
+          expect(
+            snapshotAfterStaleReturn.actions.filter(
+              (action) => action.call_ref === hit?.callRef,
+            ),
+          ).toEqual([
             expect.objectContaining({
-              attempt_no: 0,
-              role: "old",
-              observed_effect: 0,
-            }),
-            expect.objectContaining({
-              attempt_no: 0,
-              role: "new",
-              observed_effect: 0,
-              returned_at: expect.any(String),
+              state: "ReconciliationPending",
             }),
           ]);
           expect(
-            readReconciliationFacts(fixture.databaseFile, hit.invocationId),
-          ).toEqual(factsBeforeGen0Return);
-          const externalEffects = takeoverDb
-            .prepare(
-              "SELECT effect_key FROM ah7_test_external_effects WHERE effect_key = ?",
-            )
-            .all(`ah7-test:${hit.invocationId}`);
-          expect(externalEffects).toHaveLength(1);
-          const attempts = takeoverDb
-            .prepare(
-              `SELECT attempt_no, admission_state
+            snapshotAfterStaleReturn.executions.find(
+              (execution) => execution.execution_id === targetExecutionId,
+            ),
+          ).toEqual(executionBeforeStaleReturn);
+          expect(
+            snapshotAfterStaleReturn.toolResults.filter((row) =>
+              readToolResultForCall([row], hit?.callRef ?? ""),
+            ),
+          ).toEqual(toolResultsBeforeStaleReturn);
+          const eventCountDb = new DatabaseSync(fixture.databaseFile, {
+            readOnly: true,
+          });
+          try {
+            expect(
+              eventCountDb
+                .prepare(
+                  `SELECT COUNT(*) AS count FROM domain_events
+                    WHERE event_type = 'ReconciliationEscalated' AND aggregate_ref = ?`,
+                )
+                .get(targetExecutionId),
+            ).toMatchObject({ count: 1 });
+          } finally {
+            eventCountDb.close();
+          }
+          const attentionAfterStaleReturn = await client.view<{
+            rows: ReadonlyArray<{
+              source?: string;
+              severity?: string;
+              dedupKey?: string;
+            }>;
+          }>("attention", { projectId: project.projectId });
+          expect(
+            attentionAfterStaleReturn.rows.filter(
+              (row) =>
+                row.source === "RecoveryEscalation" &&
+                row.severity === "ActionRequired" &&
+                row.dedupKey ===
+                  `reconciliation-escalated:${targetExecutionId}:${targetInvocationId}`,
+            ),
+          ).toHaveLength(1);
+          expect(gen1Daemon.daemonProcessSnapshot().alive).toBe(true);
+        } else {
+          const recoveredByGen1 = await waitForPublic(
+            async () => durableSnapshot(fixture.databaseFile),
+            (value) =>
+              value.toolInvocations.some(
+                (invocation) =>
+                  invocation.invocation_id === hit?.invocationId &&
+                  invocation.settlement_kind === "Success",
+              ) &&
+              value.actions.some(
+                (action) =>
+                  action.execution_id === targetExecutionId &&
+                  action.call_ref === hit?.callRef &&
+                  action.state === "Applied",
+              ),
+            45_000,
+          );
+          expect(gen1Daemon.daemonProcessSnapshot().alive).toBe(true);
+          expect(recoveredByGen1.toolInvocations).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                invocation_id: hit?.invocationId,
+                settlement_kind: "Success",
+              }),
+            ]),
+          );
+          const factsBeforeGen0Return = readReconciliationFacts(
+            fixture.databaseFile,
+            targetInvocationId,
+          );
+          expect(factsBeforeGen0Return).toHaveLength(1);
+          expect(factsBeforeGen0Return[0]).toMatchObject({
+            attempt_no: 0,
+            outcome: "NotOccurred",
+            fact_disposition: "RecoveryInput",
+          });
+          const attemptsBeforeGen0Return = (() => {
+            const db = new DatabaseSync(fixture.databaseFile, {
+              readOnly: true,
+            });
+            try {
+              return db
+                .prepare(
+                  `SELECT attempt_no, admission_state
+                   FROM tool_invocation_effect_attempts
+                  WHERE invocation_id = ? ORDER BY attempt_no`,
+                )
+                .all(targetInvocationId);
+            } finally {
+              db.close();
+            }
+          })();
+          expect(attemptsBeforeGen0Return).toHaveLength(2);
+          writeFileSync(
+            join(
+              fixture.directory,
+              "ah10-gates",
+              "old-reconciliation-io.release",
+            ),
+            "release stale gen0 source result",
+          );
+          await waitForPublic(
+            async () => {
+              const sourceDb = new DatabaseSync(fixture.databaseFile, {
+                readOnly: true,
+              });
+              try {
+                return sourceDb
+                  .prepare(
+                    `SELECT returned_at FROM ah7_test_reconciliation_calls
+                    WHERE invocation_id = ? AND role = 'old'`,
+                  )
+                  .get(targetInvocationId) as
+                  | { returned_at: string | null }
+                  | undefined;
+              } finally {
+                sourceDb.close();
+              }
+            },
+            (row) => row?.returned_at !== null && row !== undefined,
+            20_000,
+          );
+          const takeoverDb = new DatabaseSync(fixture.databaseFile, {
+            readOnly: true,
+          });
+          try {
+            const calls = takeoverDb
+              .prepare(
+                `SELECT attempt_no, role, observed_effect, returned_at
+                 FROM ah7_test_reconciliation_calls WHERE invocation_id = ?
+                 ORDER BY call_no`,
+              )
+              .all(hit?.invocationId) as Array<Record<string, unknown>>;
+            expect(calls).toEqual([
+              expect.objectContaining({
+                attempt_no: 0,
+                role: "old",
+                observed_effect: 0,
+              }),
+              expect.objectContaining({
+                attempt_no: 0,
+                role: "new",
+                observed_effect: 0,
+                returned_at: expect.any(String),
+              }),
+            ]);
+            expect(
+              readReconciliationFacts(fixture.databaseFile, hit.invocationId),
+            ).toEqual(factsBeforeGen0Return);
+            const externalEffects = takeoverDb
+              .prepare(
+                "SELECT effect_key FROM ah7_test_external_effects WHERE effect_key = ?",
+              )
+              .all(`ah7-test:${hit.invocationId}`);
+            expect(externalEffects).toHaveLength(1);
+            const attempts = takeoverDb
+              .prepare(
+                `SELECT attempt_no, admission_state
                  FROM tool_invocation_effect_attempts
                 WHERE invocation_id = ? ORDER BY attempt_no`,
-            )
-            .all(hit.invocationId) as Array<Record<string, unknown>>;
-          expect(attempts).toHaveLength(2);
-          expect(attempts).toEqual(attemptsBeforeGen0Return);
-          expect(attempts.map((attempt) => attempt.attempt_no)).toEqual([0, 1]);
-          expect(attempts.map((attempt) => attempt.admission_state)).toEqual([
-            "MayHaveStarted",
-            "MayHaveStarted",
-          ]);
-        } finally {
-          takeoverDb.close();
+              )
+              .all(hit.invocationId) as Array<Record<string, unknown>>;
+            expect(attempts).toHaveLength(2);
+            expect(attempts).toEqual(attemptsBeforeGen0Return);
+            expect(attempts.map((attempt) => attempt.attempt_no)).toEqual([
+              0, 1,
+            ]);
+            expect(attempts.map((attempt) => attempt.admission_state)).toEqual([
+              "MayHaveStarted",
+              "MayHaveStarted",
+            ]);
+          } finally {
+            takeoverDb.close();
+          }
         }
         await gen1Daemon.crash();
       } else if (reconciliationMode !== undefined) {
@@ -2146,6 +2449,14 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                   )
                 );
               }
+              if (mismatchedProofIsUnknown) {
+                return value.actions.some(
+                  (action) =>
+                    action.execution_id === targetExecutionId &&
+                    action.call_ref === hit?.callRef &&
+                    action.state === "ReconciliationPending",
+                );
+              }
               if (
                 reconciliationMode === "NotOccurred" ||
                 reconciliationMode === "Occurred"
@@ -2267,6 +2578,30 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           settled_at: null,
           selected_attempt_no: null,
           selected_fact_id: null,
+        });
+      } else if (mismatchedProofIsUnknown) {
+        expect(reconciliationFacts).toHaveLength(1);
+        expect(reconciliationFacts[0]).toMatchObject({
+          attempt_no: 0,
+          outcome: "StillUnknown",
+          reason_code: "EvidenceBindingMismatch",
+          fact_disposition: "RecoveryInput",
+          result_ref: null,
+        });
+        expect(effectAttempts).toEqual([
+          expect.objectContaining({
+            attempt_no: 0,
+            admission_state: "MayHaveStarted",
+          }),
+        ]);
+        expect(externalEffects).toEqual([]);
+        expect(recoveredInvocationBinding).toMatchObject({
+          settlement_kind: null,
+          settled_at: null,
+          selected_attempt_no: null,
+          selected_fact_id: null,
+          result_ref: null,
+          observation_json: null,
         });
       } else if (reconciliationMode === "NotOccurred") {
         expect(reconciliationFacts).toHaveLength(1);
@@ -2469,6 +2804,9 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       } else if (noEffectRetryDenied) {
         expect(settledInvocation?.settled_at).not.toBeNull();
         expect(settledInvocation?.settlement_kind).toBe("ReconciledNoEffect");
+      } else if (mismatchedProofIsUnknown) {
+        expect(settledInvocation?.settled_at).toBeNull();
+        expect(settledInvocation?.settlement_kind).toBeNull();
       } else if (
         reconciliationMode === "NotOccurred" ||
         reconciliationMode === "Occurred"
@@ -2510,7 +2848,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             logical_action_id: crashedAction.logical_action_id,
             call_ref: crashedAction.call_ref,
             state:
-              profileDrift !== undefined
+              profileDrift !== undefined || mismatchedProofIsUnknown
                 ? "ReconciliationPending"
                 : resumesUnadmittedIntent ||
                     reconciliationMode === "NotOccurred" ||
@@ -2528,20 +2866,38 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         : null;
       if (
         profileDrift !== undefined ||
+        mismatchedProofIsUnknown ||
         (!resumesUnadmittedIntent && reconciliationMode === "StillUnknown")
       ) {
-        expect(recoveredExecution).toMatchObject({
-          settlement_kind: "OutcomeUnknown",
-        });
-        expect(JSON.parse(String(recoveredExecution?.settlement_json))).toEqual(
-          {
+        if (mismatchedProofIsUnknown) {
+          expect([null, "OutcomeUnknown"]).toContain(
+            recoveredExecution?.settlement_kind,
+          );
+          if (recoveredExecution?.settlement_kind === "OutcomeUnknown") {
+            expect(
+              JSON.parse(String(recoveredExecution.settlement_json)),
+            ).toEqual({
+              _tag: "OutcomeUnknown",
+              reconciliation: {
+                _tag: "ReconciliationRequired",
+                invocationRefs: [hit?.invocationId],
+              },
+            });
+          }
+        } else {
+          expect(recoveredExecution).toMatchObject({
+            settlement_kind: "OutcomeUnknown",
+          });
+          expect(
+            JSON.parse(String(recoveredExecution?.settlement_json)),
+          ).toEqual({
             _tag: "OutcomeUnknown",
             reconciliation: {
               _tag: "ReconciliationRequired",
               invocationRefs: [hit?.invocationId],
             },
-          },
-        );
+          });
+        }
       }
       if (semantics === "NonIdempotent") {
         const toolResultsForCall = recovered.toolResults.filter(
@@ -2672,6 +3028,12 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             .filter((line) => line === marker),
         ).toHaveLength(1);
       } else if (profileDrift !== undefined) {
+        expect(recoveredTarget.providerTurns).toEqual(
+          crashedTarget.providerTurns,
+        );
+        expect(targetProviderCalls).toBe(1);
+        expect(contentAfter).toBeNull();
+      } else if (mismatchedProofIsUnknown) {
         expect(recoveredTarget.providerTurns).toEqual(
           crashedTarget.providerTurns,
         );

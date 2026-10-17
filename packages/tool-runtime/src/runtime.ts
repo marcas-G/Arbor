@@ -101,6 +101,7 @@ export interface ToolRuntimeQualificationEvent {
     | "AH7AfterToolSettlementCommit"
     | "AH7BeforeReconciliationFactCommit"
     | "AH7AfterReconciliationFactCommit"
+    | "AH7ReconciliationResultFenceRejected"
     | "AH7ToolSettlementFenceRejected"
     | "AH7AfterEffectAuthorityResolvedBeforeAdmission"
     | "P38StopInvocationLookup"
@@ -1044,7 +1045,8 @@ export const ToolRuntimeLive = (
           const probeReconciliation = (
             boundary:
               | "AH7BeforeReconciliationFactCommit"
-              | "AH7AfterReconciliationFactCommit",
+              | "AH7AfterReconciliationFactCommit"
+              | "AH7ReconciliationResultFenceRejected",
             input: {
               readonly attemptNo: 0 | 1;
               readonly outcomeTag: "NotOccurred" | "Occurred" | "StillUnknown";
@@ -2816,6 +2818,18 @@ export const ToolRuntimeLive = (
                       }),
                     )
                     .pipe(
+                      Effect.tapError((cause) =>
+                        isLeaseFencingRejected(cause)
+                          ? probeReconciliation(
+                              "AH7ReconciliationResultFenceRejected",
+                              {
+                                attemptNo: request.attemptNo,
+                                outcomeTag: portResult._tag,
+                                factId,
+                              },
+                            ).pipe(Effect.catchCause(() => Effect.void))
+                          : Effect.void,
+                      ),
                       Effect.mapError(
                         operationalFailure(
                           "RecoveryBinding",

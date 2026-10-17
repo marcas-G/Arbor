@@ -425,3 +425,34 @@ source/test files pass. The P4 pipeline, profile registry, P39 adapter, P3
 projection/driver, P9 visibility, schema44 shell@2, and P40 schema44 selected
 tests pass **8 files / 124 tests**. `git diff --check` passes. No real daemon
 or full-suite run is included in this integration pass.
+
+## 2026-10-17 G0/G1 mismatched-proof qualification
+
+The §2.6 two-daemon negative-proof cases now pass serially against real daemon
+processes: wrong `attemptNo` **1/1** and wrong `visibilityScopeSha256` **1/1**.
+For each, G0 paused in source I/O, G1 acquired the next fencing generation,
+and its otherwise valid `NotOccurred` proof was classified as
+`StillUnknown/EvidenceBindingMismatch`. P39 retained one safe unknown fact;
+attempt 0 remained `MayHaveStarted`; P4 remained unsettled with no selection or
+result; the unique P3 result was `OutcomeUnknown` and its action remained
+`ReconciliationPending`; P9 emitted one escalation and P10 exposed one
+`ActionRequired`. There was no Executor call, effect marker, external-effect
+row, or result Artifact. After G1's test-only ActionResult gate was released,
+Execution settled `OutcomeUnknown`. Releasing stale G0 then reached the new
+Runtime `AH7ReconciliationResultFenceRejected` probe; full P4/P39/P3,
+Execution, P9 and P10 state remained identical.
+
+The Runtime probe is observational: it is emitted only when a late
+`NotOccurred` result reaches the P39 retry/fact transaction and the current
+fence rejects it. Probe defects are ignored, while the original typed fencing
+failure continues unchanged. The focused P4 pipeline probe/error-passthrough
+test passes **1/1**. `pnpm typecheck`, Biome on changed files and
+`git diff --check` pass. No full functional suite was run; AH7 remains
+**PARTIAL / OPEN**.
+
+Run history: direct Vitest initially omitted the functional config, then the
+functional fixture returned 503 until the Web dist was built. The first
+assertion attempt also exposed that the test child pauses G1 after P3
+ActionResult commit; the case now explicitly releases that test gate before
+waiting for Execution settlement. Those attempts did not qualify either
+proof-mismatch case. Only the two subsequent serial PASS runs above count.
