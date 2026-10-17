@@ -67,6 +67,7 @@ export function runCoreTests({
   const listing = run(process.execPath, [cliPath, "list", "--filesOnly"], {
     cwd,
     encoding: "utf8",
+    shell: false,
     stdio: ["ignore", "pipe", "inherit"],
     windowsHide: true,
   });
@@ -102,7 +103,7 @@ export function runCoreTests({
         "--no-file-parallelism",
         "--retry=0",
       ],
-      { cwd, stdio: "inherit", windowsHide: true },
+      { cwd, shell: false, stdio: "inherit", windowsHide: true },
     );
     if (result.error || result.status !== 0) {
       error(

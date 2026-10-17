@@ -11,8 +11,28 @@ describe("functional-test trust boundary", () => {
     const packageJson = JSON.parse(source("package.json")) as {
       scripts: Record<string, string>;
     };
-    expect(packageJson.scripts.test).toBe("vitest run");
+    expect(packageJson.scripts.test).toBe(
+      "node scripts/testing/run-core-tests.mjs",
+    );
     expect(rootVitestConfig.test?.maxWorkers).toBe(1);
+
+    const runner = source("scripts/testing/run-core-tests.mjs");
+    expect(runner).toMatch(/\[\s*cliPath,\s*"list",\s*"--filesOnly"\s*\]/);
+    expect(runner).toMatch(
+      /sortAndBatchFiles\(files,\s*batchSize\)[\s\S]*?for\s*\([^)]*batches\.length[^)]*\)\s*\{[\s\S]*?const result = run\(/,
+    );
+    expect(runner).toMatch(
+      /\[\s*cliPath,\s*"run",\s*\.\.\.batch,[\s\S]*?"--maxWorkers=1",\s*"--no-file-parallelism",\s*"--retry=0",?\s*\]/,
+    );
+    expect(runner.match(/shell:\s*false/g)).toHaveLength(2);
+    expect(runner).toMatch(/stdio:\s*"inherit"/);
+    expect(runner).toMatch(
+      /if\s*\(result\.error\s*\|\|\s*result\.status\s*!==\s*0\)\s*\{[\s\S]*?return childExitCode\(result\)/,
+    );
+    expect(runner).toMatch(/run\s*=\s*spawnSync/);
+    expect(runner).not.toMatch(/\bspawn\s*\(/);
+    expect(runner).not.toMatch(/Promise\.(?:all|allSettled)\s*\(/);
+    expect(runner).not.toMatch(/\b(?:skip|exclude|selectedFiles)\b/i);
   });
 
   it("keeps architecture and public-process suites out of core Vitest", () => {
