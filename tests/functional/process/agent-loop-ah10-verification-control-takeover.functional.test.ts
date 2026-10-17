@@ -459,6 +459,12 @@ describe("AH10 P8 verification control takeover", () => {
     });
     expect(oldReturn).toBeDefined();
     const committed = readSnapshot(fixture.databaseFile);
+    const oldActionTuple = committed.actions.find(
+      (action) => action.logical_action_id === oldAction.logicalActionId,
+    );
+    if (oldActionTuple === undefined) {
+      throw new Error("committed P8 ActionIntent tuple is missing");
+    }
     expect(committed.evidence).toHaveLength(1);
     expect(
       committed.commands.filter(
@@ -509,6 +515,45 @@ describe("AH10 P8 verification control takeover", () => {
       45_000,
     );
     expect(newLease?.fencingGeneration).toBe(1);
+    const newActionIntent = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.executionId === oldAction.executionId &&
+            event.logicalActionId === oldAction.logicalActionId,
+        ),
+      (event) => event !== undefined,
+      45_000,
+    );
+    expect(newActionIntent).toMatchObject({
+      role: "new",
+      executionId: oldAction.executionId,
+      providerTurnId: oldAction.providerTurnId,
+      logicalActionId: oldAction.logicalActionId,
+      callRef: oldAction.callRef,
+      actionIndex: oldAction.actionIndex,
+      actionKind: "record_verification_evidence",
+    });
+    const reopenedSnapshot = readSnapshot(fixture.databaseFile);
+    expect(
+      reopenedSnapshot.actions.find(
+        (action) => action.logical_action_id === oldAction.logicalActionId,
+      ),
+    ).toMatchObject({
+      execution_id: oldAction.executionId,
+      provider_turn_id: oldAction.providerTurnId,
+      logical_step_no: oldActionTuple.logical_step_no,
+      repair_attempt: oldActionTuple.repair_attempt,
+      action_index: oldAction.actionIndex,
+      call_ref: oldAction.callRef,
+      route_kind: "Control",
+      action_kind: "record_verification_evidence",
+      state: "Pending",
+      result_ref: null,
+    });
+    releaseGate(fixture, "new", "action-intent");
     const recoveredAction = await waitForPublic(
       async () =>
         events.find(
@@ -519,7 +564,7 @@ describe("AH10 P8 verification control takeover", () => {
             event.logicalActionId === oldAction.logicalActionId,
         ),
       (event) => event !== undefined,
-      3_000,
+      30_000,
     ).catch((error: unknown) => {
       const snapshot = readSnapshot(fixture.databaseFile);
       const priorTurnManifest = snapshot.turnManifests.find(
