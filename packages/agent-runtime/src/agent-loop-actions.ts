@@ -746,6 +746,8 @@ export const executeAgentLoopActions = (
                 providerTurnId: preparedTurn.manifest.providerTurnId,
                 executionId: input.execution.executionId,
                 logicalActionId: pendingAction.logicalActionId,
+                actionKind: invocation.toolName,
+                routeKind: route._tag,
                 callRef: invocation.callRef,
                 actionIndex,
               }) ?? Promise.resolve(),
@@ -862,6 +864,11 @@ export const executeAgentLoopActions = (
 
       const persistTerminalAction = (terminal: {
         readonly settlement: ExecutionSettlement;
+        readonly durableSettlementEffect?: Effect.Effect<
+          void,
+          unknown,
+          import("@arbor/ports").TransactionScope
+        >;
         readonly actionState:
           | "Applied"
           | "TerminalRejected"
@@ -898,6 +905,8 @@ export const executeAgentLoopActions = (
                   providerTurnId: preparedTurn.manifest.providerTurnId,
                   executionId: input.execution.executionId,
                   logicalActionId: pendingAction.logicalActionId,
+                  actionKind: invocation.toolName,
+                  routeKind: route._tag,
                   callRef: invocation.callRef,
                   actionIndex,
                 }) ?? Promise.resolve(),
@@ -923,6 +932,48 @@ export const executeAgentLoopActions = (
           currentLoopStep = yield* tx
             .transact(
               Effect.gen(function* () {
+                if (terminal.durableSettlementEffect !== undefined) {
+                  const persistedActions = yield* loopSteps.listActions(
+                    pendingAction.identity,
+                  );
+                  const persistedAction = persistedActions.find(
+                    (candidate) =>
+                      candidate.actionIndex === pendingAction.actionIndex &&
+                      candidate.logicalActionId ===
+                        pendingAction.logicalActionId &&
+                      candidate.callRef === pendingAction.callRef,
+                  );
+                  if (
+                    persistedAction === undefined ||
+                    persistedAction.state !== "Pending"
+                  ) {
+                    if (dependencies.qualificationProbe !== undefined) {
+                      yield* Effect.promise(
+                        () =>
+                          dependencies.qualificationProbe?.({
+                            boundary: "AH7StaleDirectControlEffectSuppressed",
+                            providerTurnId:
+                              preparedTurn.manifest.providerTurnId,
+                            executionId: input.execution.executionId,
+                            logicalActionId: pendingAction.logicalActionId,
+                            actionKind: invocation.toolName,
+                            routeKind: "Control",
+                            callRef: invocation.callRef,
+                            actionIndex,
+                            stage:
+                              persistedAction === undefined
+                                ? "P9ActionMissing"
+                                : `P9Action${persistedAction.state}`,
+                          }) ?? Promise.resolve(),
+                      );
+                    }
+                    return yield* Effect.fail<LeaseFencingRejected>({
+                      _tag: "LeaseFencingRejected",
+                      executionId: loopStepFence.executionId,
+                      generation: loopStepFence.fencingGeneration,
+                    });
+                  }
+                }
                 const terminalResult = yield* appendTerminalResult(
                   invocation,
                   route,
@@ -948,6 +999,24 @@ export const executeAgentLoopActions = (
                   },
                   loopStepFence,
                 );
+                if (terminal.durableSettlementEffect !== undefined) {
+                  yield* terminal.durableSettlementEffect;
+                  if (dependencies.qualificationProbe !== undefined) {
+                    yield* Effect.promise(
+                      () =>
+                        dependencies.qualificationProbe?.({
+                          boundary: "AH7BeforeActionResultCommit",
+                          providerTurnId: preparedTurn.manifest.providerTurnId,
+                          executionId: input.execution.executionId,
+                          logicalActionId: pendingAction.logicalActionId,
+                          actionKind: invocation.toolName,
+                          routeKind: "Control",
+                          callRef: invocation.callRef,
+                          actionIndex,
+                        }) ?? Promise.resolve(),
+                    );
+                  }
+                }
                 yield* loopSteps.transitionAction(
                   {
                     identity: pendingAction.identity,
@@ -1090,6 +1159,8 @@ export const executeAgentLoopActions = (
                   providerTurnId: preparedTurn.manifest.providerTurnId,
                   executionId: input.execution.executionId,
                   logicalActionId: pendingAction.logicalActionId,
+                  actionKind: invocation.toolName,
+                  routeKind: route._tag,
                   callRef: invocation.callRef,
                   actionIndex,
                 }) ?? Promise.resolve(),
@@ -1099,6 +1170,11 @@ export const executeAgentLoopActions = (
 
       const persistActionSettlement = (
         settlement: ExecutionSettlement,
+        durableSettlementEffect?: Effect.Effect<
+          void,
+          unknown,
+          import("@arbor/ports").TransactionScope
+        >,
       ): Effect.Effect<void, ExecutionDriverError> =>
         Effect.gen(function* () {
           if (
@@ -1131,6 +1207,9 @@ export const executeAgentLoopActions = (
                     : "Succeeded",
             disposition: `ExecutionSettlement:${settlement._tag}`,
             outputText: `Control action settled the execution (${settlement._tag})`,
+            ...(durableSettlementEffect === undefined
+              ? {}
+              : { durableSettlementEffect }),
           });
         });
 
@@ -1844,6 +1923,9 @@ export const executeAgentLoopActions = (
                   contextEpoch: preparedTurn.manifest.contextEpoch,
                 },
                 ...(loopStepFence === undefined ? {} : { loopStepFence }),
+                ...(dependencies.qualificationProbe === undefined
+                  ? {}
+                  : { qualificationProbe: dependencies.qualificationProbe }),
               }),
           ...(authorization.assignWorkEvidence === undefined
             ? {}
@@ -1937,7 +2019,10 @@ export const executeAgentLoopActions = (
         }
       }
       if (handled.outcome._tag === "Settle") {
-        yield* persistActionSettlement(handled.outcome.settlement);
+        yield* persistActionSettlement(
+          handled.outcome.settlement,
+          handled.outcome.durableSettlementEffect,
+        );
         return {
           _tag: "Settle",
           settlement: handled.outcome.settlement,

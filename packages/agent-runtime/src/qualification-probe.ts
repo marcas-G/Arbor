@@ -14,6 +14,7 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH7AfterActionIntentCommit"
     | "AH7BeforeActionResultCommit"
     | "AH7AfterActionResultCommit"
+    | "AH7StaleDirectControlEffectSuppressed"
     | "AH10AfterControlHandlerReturnBeforeObservationCommit"
     | "AH10AfterAssignWorkAuthorizedBeforeCommandSubmission"
     | "AH9BeforeTerminalActionCommit"
@@ -35,6 +36,9 @@ export interface AgentLoopQualificationProbeEvent {
   readonly providerTurnId: string;
   readonly executionId?: string;
   readonly logicalActionId?: string;
+  /** Exact process-local action name for transaction-internal test probes. */
+  readonly actionKind?: string;
+  readonly routeKind?: "Control" | "Executable";
   readonly callRef?: string;
   readonly actionIndex?: number;
   readonly stage?: string;
