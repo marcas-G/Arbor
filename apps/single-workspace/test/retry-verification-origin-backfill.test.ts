@@ -158,6 +158,8 @@ const addExactEvents = (
     readonly sourceVerificationId: string;
     readonly successorVerificationId: string;
     readonly settledAt: string;
+    readonly concludedTargetWorkRevision?: number;
+    readonly startedTargetWorkRevision?: number;
   },
 ) => {
   const insert = db.prepare(
@@ -179,7 +181,7 @@ const addExactEvents = (
     JSON.stringify({
       verificationId: input.sourceVerificationId,
       workId: input.workId,
-      targetWorkRevision: 0,
+      targetWorkRevision: input.concludedTargetWorkRevision ?? 0,
       verdict: "Unknown",
       conclusionReason: "Orphaned",
       evidenceRefs: [],
@@ -198,10 +200,58 @@ const addExactEvents = (
     JSON.stringify({
       verificationId: input.successorVerificationId,
       workId: input.workId,
-      targetWorkRevision: 0,
+      targetWorkRevision: input.startedTargetWorkRevision ?? 0,
       missionDigest: "p45-mission",
     }),
   );
+};
+
+const applyP45AndBackfill = (db: DatabaseSync) => {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const statement of splitStatements(
+      P45_RETRY_VERIFICATION_ORIGIN_MIGRATION.sql,
+    )) {
+      db.exec(statement);
+    }
+    const backfill = backfillRetryVerificationOrigins(db);
+    db.exec("PRAGMA user_version = 45; COMMIT");
+    return backfill;
+  } catch (cause) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw cause;
+  }
+};
+
+const insertForeignProject = (db: DatabaseSync) => {
+  const projectId = "prj_018f2b3c-4d5e-7abc-8def-01234567a470";
+  const workspaceId = "ws_018f2b3c-4d5e-7abc-8def-01234567a471";
+  const sessionId = "ses_018f2b3c-4d5e-7abc-8def-01234567a472";
+  db.exec("BEGIN IMMEDIATE");
+  db.prepare(
+    `INSERT INTO projects (
+       project_id,name,root_workspace_id,project_policy,project_policy_revision,
+       default_configuration,environment_ref,resource_source_json,lifecycle,
+       revision,created_at,updated_at
+     ) VALUES (?, 'foreign P45 backfill', ?, '{}', 0, '{}', 'local', '{}',
+       'Open',0,'t0','t0')`,
+  ).run(projectId, workspaceId);
+  db.prepare(
+    `INSERT INTO sessions (
+       session_id,binding_kind,workspace_id,execution_id,context_epoch,created_at
+     ) VALUES (?, 'WorkspacePrimary', ?, NULL, 0, 't0')`,
+  ).run(sessionId, workspaceId);
+  db.prepare(
+    `INSERT INTO workspaces (
+       workspace_id,project_id,parent_workspace_id,name,responsibility_definition,
+       responsibility_revision,resource_boundary,resource_boundary_revision,
+       agent_binding,primary_session_id,current_work_id,workspace_policy,
+       workspace_policy_revision,revision,lifecycle,created_at,updated_at
+     ) VALUES (?, ?, NULL, 'foreign root', '{}', 0, '{}', 0, '{}', ?, NULL,
+       '{}', 0, 0, 'Active', 't0', 't0')`,
+  ).run(workspaceId, projectId, sessionId);
+  db.exec("COMMIT");
+  return projectId;
 };
 
 describe("P45 RetryVerification legacy backfill", () => {
@@ -383,4 +433,123 @@ describe("P45 RetryVerification legacy backfill", () => {
       db.close();
     }
   }, 180_000);
+
+  it("does not create an origin when the exact event revisions disagree with each other or the canonical source", async () => {
+    const fixture = await createSchema44TestDatabase({
+      prefix: ".p45-revision-mismatch-",
+    });
+    fixtures.push(fixture);
+    const db = new DatabaseSync(fixture.databaseFilename);
+    try {
+      const { projectId } = seedProjectAndSourceRows(db);
+      db.prepare("UPDATE works SET revision = 1 WHERE work_id = ?").run(
+        "wrk_018f2b3c-4d5e-7abc-8def-01234567b461",
+      );
+      db.prepare(
+        "UPDATE verifications SET target_work_revision = 1 WHERE verification_id = ?",
+      ).run("ver_018f2b3c-4d5e-7abc-8def-01234567b462");
+      const mismatch = {
+        commandId: "cmd_018f2b3c-4d5e-7abc-8def-01234567b473",
+        projectId,
+        workId: "wrk_018f2b3c-4d5e-7abc-8def-01234567b461",
+        sourceVerificationId: "ver_018f2b3c-4d5e-7abc-8def-01234567b462",
+        successorVerificationId: "ver_018f2b3c-4d5e-7abc-8def-01234567b464",
+        verifierExecutionId: "exe_018f2b3c-4d5e-7abc-8def-01234567b465",
+        settledAt: "2026-10-17T00:00:03.000Z",
+      };
+      addReceipt(db, mismatch);
+      addExactEvents(db, {
+        ...mismatch,
+        actor: "user:legacy",
+        concludedTargetWorkRevision: 0,
+        startedTargetWorkRevision: 0,
+      });
+
+      expect(applyP45AndBackfill(db)).toEqual({
+        origins: 0,
+        unboundLegacy: 1,
+      });
+      expect(
+        db
+          .prepare("SELECT COUNT(*) AS count FROM retry_verification_origins")
+          .get(),
+      ).toMatchObject({ count: 0 });
+      expect(
+        db
+          .prepare(
+            "SELECT source_work_id,source_verification_id FROM retry_verification_legacy_dispositions WHERE command_id = ?",
+          )
+          .get(mismatch.commandId),
+      ).toEqual({
+        source_work_id: mismatch.workId,
+        source_verification_id: mismatch.sourceVerificationId,
+      });
+    } finally {
+      db.close();
+    }
+  }, 180_000);
+
+  it.each([
+    {
+      name: "source Verification belongs to a different Work",
+      commandProject: "prj_p45_backfill",
+      resultWorkId: "wrk_018f2b3c-4d5e-7abc-8def-01234567b451",
+      sourceVerificationId: "ver_018f2b3c-4d5e-7abc-8def-01234567b462",
+    },
+    {
+      name: "source Verification belongs to a different Project",
+      commandProject: "foreign-project",
+      resultWorkId: "wrk_018f2b3c-4d5e-7abc-8def-01234567b451",
+      sourceVerificationId: "ver_018f2b3c-4d5e-7abc-8def-01234567b452",
+    },
+  ])(
+    "fails closed when $name",
+    async (scenario) => {
+      const fixture = await createSchema44TestDatabase({
+        prefix: ".p45-canonical-source-mismatch-",
+      });
+      fixtures.push(fixture);
+      const db = new DatabaseSync(fixture.databaseFilename);
+      try {
+        const { projectId } = seedProjectAndSourceRows(db);
+        const project =
+          scenario.commandProject === "foreign-project"
+            ? insertForeignProject(db)
+            : projectId;
+        const mismatch = {
+          commandId: "cmd_018f2b3c-4d5e-7abc-8def-01234567a474",
+          projectId: project,
+          workId: scenario.resultWorkId,
+          sourceVerificationId: scenario.sourceVerificationId,
+          successorVerificationId: "ver_018f2b3c-4d5e-7abc-8def-01234567b464",
+          verifierExecutionId: "exe_018f2b3c-4d5e-7abc-8def-01234567b465",
+          settledAt: "2026-10-17T00:00:04.000Z",
+        };
+        addReceipt(db, mismatch);
+
+        expect(() => applyP45AndBackfill(db)).toThrow(
+          "no exact canonical source Work/Verification/Project binding",
+        );
+        expect(
+          (db.prepare("PRAGMA user_version").get() as { user_version: number })
+            .user_version,
+        ).toBe(44);
+        expect(
+          db
+            .prepare(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'retry_verification_%'",
+            )
+            .all(),
+        ).toEqual([]);
+        expect(
+          db.prepare("SELECT COUNT(*) AS count FROM commands").get(),
+        ).toMatchObject({
+          count: 1,
+        });
+      } finally {
+        db.close();
+      }
+    },
+    180_000,
+  );
 });

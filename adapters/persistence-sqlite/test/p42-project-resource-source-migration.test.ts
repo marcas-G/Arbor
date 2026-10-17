@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  CURRENT_SCHEMA44_SUFFIX_IDS,
+  CURRENT_SCHEMA45_SUFFIX_IDS,
   HISTORICAL_SCHEMA42_SUFFIX_IDS,
 } from "../../../tests/support/schema-prefix-contract.js";
 import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
@@ -84,9 +84,9 @@ describe("FT-DG-01 ProjectResourceSource migration descriptor", () => {
     const currentSuffixIds = CURRENT_MIGRATIONS.map(({ id }) => id).filter(
       (id) => id >= 40,
     );
-    expect(currentSuffixIds).toEqual(CURRENT_SCHEMA44_SUFFIX_IDS);
+    expect(currentSuffixIds).toEqual(CURRENT_SCHEMA45_SUFFIX_IDS);
     expect(
-      CURRENT_SCHEMA44_SUFFIX_IDS.slice(
+      CURRENT_SCHEMA45_SUFFIX_IDS.slice(
         0,
         HISTORICAL_SCHEMA42_SUFFIX_IDS.length,
       ),

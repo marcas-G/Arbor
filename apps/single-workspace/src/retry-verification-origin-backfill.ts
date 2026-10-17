@@ -44,6 +44,17 @@ interface SuccessorRow {
   readonly verification_execution_ids: string;
 }
 
+interface CanonicalSourceRow {
+  readonly verification_project_id: string;
+  readonly verification_work_id: string;
+  readonly verification_target_work_revision: number;
+  readonly verification_state: string;
+  readonly verification_verdict: string | null;
+  readonly verification_conclusion_reason: string | null;
+  readonly work_project_id: string | null;
+  readonly work_revision: number | null;
+}
+
 interface ExecutionBindingRow {
   readonly project_id: string;
   readonly workspace_id: string;
@@ -94,6 +105,7 @@ const hasExactHandoffProof = (
   db: DatabaseSync,
   command: CommandRow,
   result: RetryVerificationResult,
+  source: CanonicalSourceRow,
 ): { readonly actor: string; readonly createdAt: string } | null => {
   const rows = db
     .prepare(
@@ -126,7 +138,13 @@ const hasExactHandoffProof = (
     concludedPayload.verdict !== "Unknown" ||
     concludedPayload.conclusionReason !== "Orphaned" ||
     startedPayload.verificationId !== result.successorVerificationId ||
-    startedPayload.workId !== result.workId
+    startedPayload.workId !== result.workId ||
+    concludedPayload.targetWorkRevision !== startedPayload.targetWorkRevision ||
+    concludedPayload.targetWorkRevision !==
+      source.verification_target_work_revision ||
+    source.verification_state !== "Concluded" ||
+    source.verification_verdict !== "Unknown" ||
+    source.verification_conclusion_reason !== "Orphaned"
   ) {
     return null;
   }
@@ -186,6 +204,41 @@ const hasExactHandoffProof = (
     return null;
   }
   return { actor: concluded.actor, createdAt: command.settledAt };
+};
+
+const requireCanonicalReceiptSource = (
+  db: DatabaseSync,
+  command: CommandRow,
+  result: RetryVerificationResult,
+): CanonicalSourceRow => {
+  const source = db
+    .prepare(
+      `SELECT verification.project_id AS verification_project_id,
+              verification.work_id AS verification_work_id,
+              verification.target_work_revision AS verification_target_work_revision,
+              verification.state AS verification_state,
+              verification.verdict AS verification_verdict,
+              verification.conclusion_reason AS verification_conclusion_reason,
+              work.project_id AS work_project_id,
+              work.revision AS work_revision
+         FROM verifications AS verification
+         LEFT JOIN works AS work ON work.work_id = verification.work_id
+        WHERE verification.verification_id = ?`,
+    )
+    .get(result.orphanedVerificationId) as CanonicalSourceRow | undefined;
+  if (
+    source === undefined ||
+    source.verification_project_id !== command.projectId ||
+    source.verification_work_id !== result.workId ||
+    source.work_project_id !== command.projectId ||
+    source.work_revision === null ||
+    source.verification_target_work_revision > source.work_revision
+  ) {
+    throw new Error(
+      "P45 recognized RetryVerification receipt has no exact canonical source Work/Verification/Project binding",
+    );
+  }
+  return source;
 };
 
 const currentInboxRecipient = (
@@ -272,7 +325,8 @@ export const backfillRetryVerificationOrigins = (
     };
     const result = decodeRetryResult(command);
     if (result === null) continue;
-    const proof = hasExactHandoffProof(db, command, result);
+    const source = requireCanonicalReceiptSource(db, command, result);
+    const proof = hasExactHandoffProof(db, command, result, source);
     if (proof !== null) {
       db.prepare(
         `INSERT INTO retry_verification_origins (

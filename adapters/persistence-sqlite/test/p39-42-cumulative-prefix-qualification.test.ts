@@ -10,7 +10,7 @@ import {
   removeP39PrivateTestDirectory,
 } from "../../../tests/support/p39-windows-deployment-test.js";
 import {
-  CURRENT_SCHEMA44_SUFFIX_IDS,
+  CURRENT_SCHEMA45_SUFFIX_IDS,
   HISTORICAL_SCHEMA42_SUFFIX_IDS,
   HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS,
 } from "../../../tests/support/schema-prefix-contract.js";
@@ -94,12 +94,12 @@ const descriptorPins: Readonly<
 
 const assertDescriptorPrefixAndFingerprint = () => {
   const currentIds = CURRENT_MIGRATIONS.map(({ id }) => id);
-  expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(44);
+  expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(45);
   expect(currentIds.slice(0, P38_MIGRATIONS.length)).toEqual(
     P38_MIGRATIONS.map(({ id }) => id),
   );
   expect(currentIds.filter((id) => id >= 40)).toEqual(
-    CURRENT_SCHEMA44_SUFFIX_IDS,
+    CURRENT_SCHEMA45_SUFFIX_IDS,
   );
   expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
   expect(P39_MAINTENANCE_MIGRATIONS.map(({ id }) => id)).toEqual([37, 38, 39]);
