@@ -153,6 +153,28 @@ describe("P39 ToolReconciliationFactStore", () => {
             };
             const store = yield* ToolReconciliationFactStore;
             const tx = yield* TransactionPort;
+            yield* sql.unsafe(`
+              CREATE TRIGGER fail_p39_reconciliation_fact_insert
+              BEFORE INSERT ON tool_reconciliation_facts
+              WHEN NEW.outcome = 'NotOccurred'
+              BEGIN
+                SELECT RAISE(ABORT, 'injected P39 fact-store failure');
+              END
+            `);
+            const failedWrite = yield* Effect.match(
+              tx.transact(store.record(request, reconciliation, "t2")),
+              {
+                onFailure: () => "failed" as const,
+                onSuccess: () => "stored" as const,
+              },
+            );
+            const factsAfterFailure = yield* sql.unsafe<{ fact_id: string }>(
+              "SELECT fact_id FROM tool_reconciliation_facts WHERE invocation_id = ?",
+              [invocationId],
+            );
+            yield* sql.unsafe(
+              "DROP TRIGGER fail_p39_reconciliation_fact_insert",
+            );
             const first = yield* tx.transact(
               store.record(request, reconciliation, "t2"),
             );
@@ -169,10 +191,12 @@ describe("P39 ToolReconciliationFactStore", () => {
              FROM tool_reconciliation_facts WHERE invocation_id = ?`,
               [invocationId],
             );
-            return { first, duplicate, facts };
+            return { failedWrite, factsAfterFailure, first, duplicate, facts };
           }),
         );
 
+        expect(result.failedWrite).toBe("failed");
+        expect(result.factsAfterFailure).toEqual([]);
         expect(result.first.factId).toBe(result.duplicate.factId);
         expect(result.facts).toEqual([
           {

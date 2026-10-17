@@ -382,3 +382,14 @@ are approved and implemented. No AH7 phase-closure claim is made.
 Integration verification for this snapshot: `pnpm typecheck`, changed-file
 Biome, and `git diff --check` pass; the P4 pipeline and reconciliation-profile
 registry tests pass **62/62**. No daemon or full-suite test was run.
+
+## 2026-10-17 P39 fact-store failure atomicity
+
+The dedicated failure-injection qualification is recorded in
+`planning/results/AH7-DG02-P39-fact-store-failure-atomicity.result.md`.
+NotOccurred, Occurred, and StillUnknown module paths all stop before downstream
+commit when fact storage fails, then safely resume using the same invocation
+identity and proof. The SQLite adapter trigger case confirms the fact row rolls
+back and the same immutable fact can be recorded after the injected failure is
+removed. The module/adapter checks, typecheck, and changed-file Biome pass.
+No real-process run was performed pending serial release; AH7 remains PARTIAL.
