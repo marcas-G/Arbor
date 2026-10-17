@@ -41,7 +41,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
-  createSchema46TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createSchema47TestDatabaseFactory as createSchema44TestDatabaseFactory,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import {
@@ -662,6 +662,8 @@ describe("I0 executable/control vertical slice", () => {
 
     // P8 verification tables remain available in the current schema fixture.
     expect([...result.verificationTables].sort()).toEqual([
+      "retry_verification_legacy_dispositions",
+      "retry_verification_origins",
       "verification_evidence",
       "verification_executions",
       "verifications",
