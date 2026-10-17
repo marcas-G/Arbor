@@ -9,6 +9,7 @@ export interface MigrationFile {
   readonly sql: string;
   readonly foreignKeysOff?: boolean;
   readonly requiresUserVersion?: number;
+  readonly offlineOnly?: boolean;
 }
 
 export const splitStatements = (sql: string): ReadonlyArray<string> => {
@@ -73,6 +74,7 @@ export const splitStatements = (sql: string): ReadonlyArray<string> => {
  */
 export const runMigrations = (
   migrations: ReadonlyArray<MigrationFile>,
+  options: { readonly allowOfflineOnly?: boolean } = {},
 ): Effect.Effect<number, SqlError | SqliteAdapterError, SqlClient> =>
   Effect.gen(function* () {
     // Migration 0039 is only executable through the trusted P39 maintenance
@@ -90,6 +92,25 @@ export const runMigrations = (
       "PRAGMA user_version",
     );
     const current = Number(versionRows[0]?.user_version ?? 0);
+    if (
+      options.allowOfflineOnly !== true &&
+      current > 0 &&
+      migrations.some(
+        (migration) => migration.offlineOnly === true && migration.id > current,
+      )
+    ) {
+      const offlineStep = migrations.find(
+        (migration) => migration.offlineOnly === true,
+      )?.id;
+      return yield* Effect.fail(
+        sqliteAdapterError(
+          "database user_version " +
+            String(current) +
+            " requires an offline upgrade before migration " +
+            String(offlineStep ?? "unknown"),
+        ),
+      );
+    }
     const latest = migrations.reduce(
       (max, migration) => Math.max(max, migration.id),
       0,

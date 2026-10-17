@@ -14,7 +14,10 @@ import type {
   Workspace,
   WorkspaceId,
 } from "@arbor/domain";
-import type { EvidenceRecordRow } from "@arbor/ports";
+import type {
+  EvidenceRecordRow,
+  RetryVerificationUnboundLegacyInboxProjection,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ProjectionReadError } from "../errors.js";
 import { projectionReadError } from "../errors.js";
@@ -81,6 +84,12 @@ export interface WorkspaceDetailDeps {
   readonly listUnconsumedInbox: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<ReadonlyArray<InboxEntry>, ProjectionReadError>;
+  readonly listUnboundLegacyInbox?: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<RetryVerificationUnboundLegacyInboxProjection>,
+    ProjectionReadError
+  >;
   readonly listVerificationsByWork: (
     workId: WorkId,
   ) => Effect.Effect<ReadonlyArray<Verification>, ProjectionReadError>;
@@ -222,6 +231,8 @@ export const deriveWorkspaceDetail = (
 
     const dependencies = yield* deps.listDependenciesByWorkspace(workspaceId);
     const inbox = yield* deps.listUnconsumedInbox(workspaceId);
+    const unboundLegacy = yield* deps.listUnboundLegacyInbox?.(workspaceId) ??
+      Effect.succeed([]);
     const watermark = yield* deps.journalLastSequence(workspace.projectId);
 
     // ⑤ verification: the Open verification of the current work first,
@@ -313,12 +324,38 @@ export const deriveWorkspaceDetail = (
         state: dependency.state,
         satisfiedBy: dependency.satisfiedByDeliverableId ?? undefined,
       })),
-      inboxUnconsumed: inbox.map((entry) => ({
-        entryKey: entry.entryKey,
-        kind: entry.kind,
-        summary: entry.summary,
-        watermark,
-      })),
+      inboxUnconsumed: [
+        ...inbox
+          .filter(
+            (entry) =>
+              !entry.entryKey.startsWith("retry-verification-unbound:"),
+          )
+          .map((entry) => ({
+            entryKey: entry.entryKey,
+            kind: entry.kind,
+            summary: entry.summary,
+            watermark,
+          })),
+        ...unboundLegacy.map((projection) => ({
+          entryKey: `retry-verification-unbound:${projection.commandId}`,
+          kind: "Governance" as const,
+          summary:
+            "A historical RetryVerification receipt has incomplete origin evidence.",
+          watermark,
+          target: {
+            kind: "RetryVerificationUnboundLegacy" as const,
+            commandId: projection.commandId,
+            projectId: projection.projectId,
+            sourceWorkId: projection.sourceWorkId,
+            sourceVerificationId: projection.sourceVerificationId,
+            disposition: projection.disposition,
+            reasonCode: projection.reasonCode,
+            createdAt: projection.createdAt,
+            revision: projection.revision,
+            updatedAt: projection.updatedAt,
+          },
+        })),
+      ],
       verification: verificationView,
       auditTimeline,
     };

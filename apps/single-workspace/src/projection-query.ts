@@ -26,6 +26,7 @@ import {
   ProjectionQueryPort,
   ProviderTurnStore,
   RecoveryAttentionFactStore,
+  RetryVerificationOriginRepository,
   RunnableWorkSource,
   sha256Hex,
   ToolCatalogPort,
@@ -225,6 +226,9 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
     const verifications = yield* VerificationRepository;
     const evidence = yield* EvidenceRepository;
     const acceptances = yield* AcceptanceRepository;
+    const retryVerificationOrigins = yield* Effect.serviceOption(
+      RetryVerificationOriginRepository,
+    );
     const journal = yield* DomainEventJournal;
     const bindingAttention = yield* RecoveryAttentionFactStore;
     const attentionProjection = yield* AttentionProjectionStore;
@@ -635,8 +639,10 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
               summary: string;
               correlation_id: string | null;
               admitted_at: string;
+              revision: number;
+              updated_at: string;
             }>(
-              "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at FROM inbox_entries WHERE workspace_id = ? AND consumed_at IS NULL ORDER BY admitted_at",
+              "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at, revision, updated_at FROM inbox_entries WHERE workspace_id = ? AND consumed_at IS NULL ORDER BY admitted_at",
               [workspaceId],
             );
             return rows.map((row) => ({
@@ -646,9 +652,19 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
               summary: row.summary,
               correlationId: row.correlation_id ?? undefined,
               admittedAt: row.admitted_at,
+              revision: Number(row.revision),
+              updatedAt: row.updated_at,
             }));
           }),
         ),
+      listUnboundLegacyInbox: (workspaceId) =>
+        Option.isSome(retryVerificationOrigins)
+          ? inTx(
+              retryVerificationOrigins.value.listCurrentUnboundLegacyInbox(
+                workspaceId,
+              ),
+            )
+          : Effect.succeed([]),
       listVerificationsByWork: (workId) =>
         inTx(verifications.listByWork(workId)),
       listEvidenceByVerification: (verificationId) =>
@@ -948,6 +964,8 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
 
     const inboxView: InboxViewDeps = {
       listUnconsumedInbox: workspaceDetail.listUnconsumedInbox,
+      listUnboundLegacyInbox:
+        workspaceDetail.listUnboundLegacyInbox ?? (() => Effect.succeed([])),
       journalLastSequence,
       projectIdOfWorkspace,
       findExecutableApproval: (approvalId) =>
@@ -1066,8 +1084,10 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
             correlation_id: string | null;
             admitted_at: string;
             consumed_at: string | null;
+            revision: number;
+            updated_at: string;
           }>(
-            "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at FROM inbox_entries WHERE workspace_id = ? ORDER BY admitted_at, entry_key",
+            "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at, revision, updated_at FROM inbox_entries WHERE workspace_id = ? ORDER BY admitted_at, entry_key",
             [workspaceId],
           );
           return rows.map(

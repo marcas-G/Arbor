@@ -62,6 +62,7 @@ import {
   ProjectRepository,
   ProjectResourceProfilePort,
   ResourceOwnershipRepository,
+  RetryVerificationOriginRepository,
   SessionRepository,
   VerificationRepository,
   type VerificationRepositoryService,
@@ -160,6 +161,13 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
       const inbox = yield* InboxProjectionStore;
       const messages = yield* MessageStore;
       const verifications = yield* VerificationRepository;
+      const retryOriginsOption = yield* Effect.serviceOption(
+        RetryVerificationOriginRepository,
+      );
+      const retryOrigins = Option.getOrElse(retryOriginsOption, () => ({
+        insertOrigin: () =>
+          Effect.die(new Error("RetryVerificationOriginRepositoryUnavailable")),
+      }));
       const acceptances = yield* AcceptanceRepository;
       const grants = yield* PermissionGrantRepository;
       const assignWorkBindings = yield* Effect.serviceOption(
@@ -375,6 +383,10 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
           executions,
           projects,
           workspaces,
+          origins: retryOrigins,
+          clock: Option.getOrElse(clock, () => ({
+            now: () => Effect.succeed(new Date().toISOString()),
+          })),
           blobs,
           governance,
           start: verifierStart,

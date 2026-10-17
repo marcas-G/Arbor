@@ -87,6 +87,7 @@ import {
   RecordEnvironmentChange,
   RecoveryAttentionFactStore,
   type ResourceOwnershipRepository,
+  RetryVerificationOriginRepository,
   type RuntimeSafetyGate,
   type SchedulerTimerStore,
   ToolObservationReplayAttentionFactStore,
@@ -206,6 +207,10 @@ export const TransportBoundaryLive = (
     Effect.gen(function* () {
       const queryPort = yield* ProjectionQueryPort;
       const resolver = yield* AuthorityResolverPort;
+      const transaction = yield* TransactionPort;
+      const retryVerificationOrigins = yield* Effect.serviceOption(
+        RetryVerificationOriginRepository,
+      );
       const loadInputs = yield* makeRepositoryInputsLoader(governance);
       const submission = yield* makeExternalSubmissionFromServices(
         governance,
@@ -216,6 +221,16 @@ export const TransportBoundaryLive = (
           queryPort,
           resolver,
           loadInputs,
+          (workspaceId) =>
+            Option.isSome(retryVerificationOrigins)
+              ? transaction
+                  .transact(
+                    retryVerificationOrigins.value.listCurrentUnboundLegacyInbox(
+                      workspaceId,
+                    ),
+                  )
+                  .pipe(Effect.orDie)
+              : Effect.succeed([]),
         ),
         authenticator,
         submission,

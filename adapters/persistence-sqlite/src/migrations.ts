@@ -3,6 +3,7 @@ import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "./p38-executable-approval-mig
 import { P39_RECONCILIATION_DDL } from "./p39-reconciliation-ddl.js";
 import { P42_PROJECT_RESOURCE_SOURCE_MIGRATION } from "./p42-project-resource-source-migration.js";
 import { P43_BLOCKED_WORKEPISODE_MIGRATION } from "./p43-blocked-workepisode-migration.js";
+import { P45_RETRY_VERIFICATION_ORIGIN_MIGRATION } from "./p45-retry-verification-origin-migration.js";
 
 const DDL = `
 CREATE TABLE projects (
@@ -2571,7 +2572,7 @@ export const P43_MIGRATION = {
   sql: P43_BLOCKED_WORKEPISODE_MIGRATION.sql,
 } satisfies MigrationFile & { readonly requiresUserVersion: 42 };
 
-export const CURRENT_SCHEMA_VERSION = 44 as const;
+export const CURRENT_SCHEMA_VERSION = 45 as const;
 export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   ...P38_MIGRATIONS,
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
@@ -2579,5 +2580,6 @@ export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
   P43_MIGRATION,
   P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION,
+  P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
 ]);
 export const CURRENT_MIGRATION_BASELINE = CURRENT_SCHEMA_VERSION;

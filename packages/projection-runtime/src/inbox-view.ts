@@ -2,6 +2,7 @@ import type { InboxEntry, ProjectId, WorkspaceId } from "@arbor/domain";
 import type {
   ExecutableApprovalRecord,
   ModelFacingToolDefinition,
+  RetryVerificationUnboundLegacyInboxProjection,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ProjectionReadError } from "./errors.js";
@@ -29,6 +30,12 @@ export interface InboxViewDeps {
   readonly listUnconsumedInbox: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<ReadonlyArray<InboxEntry>, ProjectionReadError>;
+  readonly listUnboundLegacyInbox?: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<RetryVerificationUnboundLegacyInboxProjection>,
+    ProjectionReadError
+  >;
   readonly journalLastSequence: (
     projectId: ProjectId,
   ) => Effect.Effect<number, ProjectionReadError>;
@@ -286,8 +293,11 @@ export const deriveInboxView = (
     const projectId = yield* deps.projectIdOfWorkspace(workspaceId);
     const watermark = yield* deps.journalLastSequence(projectId);
     const inbox = yield* deps.listUnconsumedInbox(workspaceId);
+    const unboundLegacy = yield* deps.listUnboundLegacyInbox?.(workspaceId) ??
+      Effect.succeed([]);
     const unconsumed: Array<InboxUnconsumedEntryView> = [];
     for (const entry of inbox) {
+      if (entry.entryKey.startsWith("retry-verification-unbound:")) continue;
       const isExecutableApproval = entry.entryKey.startsWith("eap:");
       const base = {
         entryKey: entry.entryKey,
@@ -310,6 +320,28 @@ export const deriveInboxView = (
       } else {
         unconsumed.push(base);
       }
+    }
+    for (const projection of unboundLegacy) {
+      const entryKey = `retry-verification-unbound:${projection.commandId}`;
+      unconsumed.push({
+        entryKey,
+        kind: "Governance",
+        summary:
+          "A historical RetryVerification receipt has incomplete origin evidence.",
+        watermark,
+        target: {
+          kind: "RetryVerificationUnboundLegacy",
+          commandId: projection.commandId,
+          projectId: projection.projectId,
+          sourceWorkId: projection.sourceWorkId,
+          sourceVerificationId: projection.sourceVerificationId,
+          disposition: projection.disposition,
+          reasonCode: projection.reasonCode,
+          createdAt: projection.createdAt,
+          revision: projection.revision,
+          updatedAt: projection.updatedAt,
+        },
+      });
     }
     return { unconsumed };
   });

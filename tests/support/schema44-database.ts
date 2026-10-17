@@ -8,6 +8,7 @@ import {
   P38_MIGRATIONS,
   P43_MIGRATION,
   P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION,
+  P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
   runMigrations,
   runP39SqliteMaintenance,
   layer as sqliteLayer,
@@ -50,7 +51,7 @@ export interface Schema42TestDatabaseOptions {
   /** Optional private parent used by invocation-wide functional templates. */
   readonly parentDirectory?: string;
   /** Internal target selector for a current schema-44 runtime fixture. */
-  readonly targetSchemaVersion?: 42 | 44;
+  readonly targetSchemaVersion?: 42 | 44 | 45;
 }
 
 export interface Schema42TestDatabaseFactory {
@@ -63,6 +64,9 @@ export interface Schema42TestDatabaseFactory {
 export type Schema44TestDatabase = Schema42TestDatabase;
 export type Schema44TestDatabaseOptions = Schema42TestDatabaseOptions;
 export type Schema44TestDatabaseFactory = Schema42TestDatabaseFactory;
+export type Schema45TestDatabase = Schema42TestDatabase;
+export type Schema45TestDatabaseOptions = Schema42TestDatabaseOptions;
+export type Schema45TestDatabaseFactory = Schema42TestDatabaseFactory;
 
 const upgradeSchema44Suffix = async (
   databaseFilename: string,
@@ -93,6 +97,28 @@ export const upgradeSchema44TestDatabase = async (input: {
 }): Promise<void> => {
   await upgradeSchema42TestDatabase(input);
   await upgradeSchema44Suffix(input.databaseFilename);
+};
+
+const upgradeSchema45Suffix = async (
+  databaseFilename: string,
+): Promise<void> => {
+  await runPrimary(
+    databaseFilename,
+    Effect.gen(function* () {
+      yield* runMigrations([P45_RETRY_VERIFICATION_ORIGIN_MIGRATION], {
+        allowOfflineOnly: true,
+      });
+    }),
+  );
+  const version = await readUserVersion(databaseFilename);
+  if (version !== 45) {
+    throw new Schema42TestDatabaseSetupError(
+      "SCHEMA42_SETUP_FAILED",
+      `Schema-45 disposable fixture upgrade ended at user_version ${version}, expected 45.`,
+      version,
+    );
+  }
+  await checkpointSqlite(databaseFilename);
 };
 
 /** Creates a directory whose path remains owned while P39 ACL setup runs. */
@@ -499,10 +525,11 @@ export const createSchema42TestDatabase = async (
 ): Promise<Schema42TestDatabase> => {
   const directory = createSchema42PrivateTestDirectory(
     options.parentDirectory ?? process.cwd(),
-    options.prefix ??
-      (options.targetSchemaVersion === 44
+    (options.prefix ?? options.targetSchemaVersion === 45)
+      ? "arbor-schema45-test-"
+      : options.targetSchemaVersion === 44
         ? "arbor-schema44-test-"
-        : "arbor-schema42-test-"),
+        : "arbor-schema42-test-",
   );
   const databaseFilename = join(directory, "primary.sqlite");
   const p39ReportFilename = join(directory, "p39-report.sqlite");
@@ -520,7 +547,13 @@ export const createSchema42TestDatabase = async (
       await options.seedP38(databaseFilename);
     }
 
-    if (options.targetSchemaVersion === 44)
+    if (options.targetSchemaVersion === 45) {
+      await upgradeSchema44TestDatabase({
+        databaseFilename,
+        p39ReportFilename,
+      });
+      await upgradeSchema45Suffix(databaseFilename);
+    } else if (options.targetSchemaVersion === 44)
       await upgradeSchema44TestDatabase({
         databaseFilename,
         p39ReportFilename,
@@ -563,6 +596,11 @@ export const createSchema44TestDatabase = (
 ): Promise<Schema44TestDatabase> =>
   createSchema42TestDatabase({ ...options, targetSchemaVersion: 44 });
 
+export const createSchema45TestDatabase = (
+  options: Schema45TestDatabaseOptions = {},
+): Promise<Schema45TestDatabase> =>
+  createSchema42TestDatabase({ ...options, targetSchemaVersion: 45 });
+
 /**
  * Builds the trusted schema-42/P39 template once for a test suite. Each case
  * gets a separate real SQLite file and P39 report sidecar copied only after
@@ -576,9 +614,11 @@ export const createSchema42TestDatabaseFactory = async (
     ...options,
     prefix:
       options.prefix ??
-      (options.targetSchemaVersion === 44
-        ? "arbor-schema44-template-"
-        : "arbor-schema42-template-"),
+      (options.targetSchemaVersion === 45
+        ? "arbor-schema45-template-"
+        : options.targetSchemaVersion === 44
+          ? "arbor-schema44-template-"
+          : "arbor-schema42-template-"),
   });
   let cleanedUp = false;
   const cloneDirectories = new Set<string>();
@@ -592,9 +632,11 @@ export const createSchema42TestDatabaseFactory = async (
       }
       const directory = createSchema42PrivateTestDirectory(
         process.cwd(),
-        options.targetSchemaVersion === 44
-          ? "arbor-schema44-clone-"
-          : "arbor-schema42-clone-",
+        options.targetSchemaVersion === 45
+          ? "arbor-schema45-clone-"
+          : options.targetSchemaVersion === 44
+            ? "arbor-schema44-clone-"
+            : "arbor-schema42-clone-",
       );
       const databaseFilename = join(directory, "primary.sqlite");
       const p39ReportFilename = join(directory, "p39-report.sqlite");
@@ -637,6 +679,11 @@ export const createSchema44TestDatabaseFactory = (
   options: Schema44TestDatabaseOptions = {},
 ): Promise<Schema44TestDatabaseFactory> =>
   createSchema42TestDatabaseFactory({ ...options, targetSchemaVersion: 44 });
+
+export const createSchema45TestDatabaseFactory = (
+  options: Schema45TestDatabaseOptions = {},
+): Promise<Schema45TestDatabaseFactory> =>
+  createSchema42TestDatabaseFactory({ ...options, targetSchemaVersion: 45 });
 
 /** Runs one test case with its own cloned database and always removes it. */
 export const withSchema44TestDatabase = async <A>(

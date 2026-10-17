@@ -1,6 +1,7 @@
 import type {
   AcceptanceId,
   Actor,
+  CommandId,
   DeliverableId,
   DependencyId,
   DependencyLifecycle,
@@ -90,7 +91,23 @@ export interface InboxUnconsumedEntry {
   readonly kind: InboxEntryKind;
   readonly summary: string;
   readonly watermark: number;
-  readonly target?: ExecutableApprovalInboxTarget | undefined;
+  readonly target?:
+    | ExecutableApprovalInboxTarget
+    | RetryVerificationUnboundLegacyInboxTarget
+    | undefined;
+}
+
+export interface RetryVerificationUnboundLegacyInboxTarget {
+  readonly kind: "RetryVerificationUnboundLegacy";
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly sourceWorkId: WorkId;
+  readonly sourceVerificationId: VerificationId;
+  readonly disposition: "UnboundLegacy";
+  readonly reasonCode: "OriginEvidenceIncomplete";
+  readonly createdAt: string;
+  readonly revision: number;
+  readonly updatedAt: string;
 }
 
 export interface PendingWorkRef {

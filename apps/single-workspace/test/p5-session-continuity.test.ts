@@ -21,7 +21,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
-  createSchema44TestDatabaseFactory,
+  createSchema45TestDatabaseFactory as createSchema44TestDatabaseFactory,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";

@@ -189,6 +189,16 @@ export const makeCommandGatewayLive = (
               } satisfies CommandReceipt<R, CommandRejection>;
             }
 
+            if (authority._tag === "RetryVerificationReplayOnlyAuthority") {
+              return yield* Effect.fail({
+                _tag: "PersistenceCorruption" as const,
+                repository: "CommandStore" as const,
+                operation: "retry-verification-origin-without-receipt",
+                reason:
+                  "RetryVerification origin exists without its permanent Command receipt",
+              });
+            }
+
             if (context._tag === "ExecutionOrigin") {
               const outcome = yield* fence.check(
                 context,

@@ -19,7 +19,7 @@ import {
   isP39PathQualificationEnabled,
   p39WindowsAclQualificationAvailable,
 } from "../../../tests/support/p39-windows-deployment-test.js";
-import { createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema45TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { runDaemonOnce } from "../src/main.js";
 
@@ -98,7 +98,7 @@ const seedDurableBlockedState = Effect.gen(function* () {
       // Parent Inbox admitted, child InboxAdvanced wait cleared, and source
       // signal offset advanced together before the process stops.
       yield* sql.unsafe(
-        "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at) VALUES (?, 'blocked:child-work', 'WorkBlocked', 'Child Work is blocked', 'blocker-fingerprint', 't', NULL)",
+        "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at, revision, updated_at) VALUES (?, 'blocked:child-work', 'WorkBlocked', 'Child Work is blocked', 'blocker-fingerprint', 't', NULL, 1, 't')",
         [p7RootWorkspace],
       );
       yield* sql.unsafe(

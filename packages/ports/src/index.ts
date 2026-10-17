@@ -31,6 +31,7 @@ export * from "./readmission-gate.js";
 export * from "./recovery-binding.js";
 export * from "./repositories.js";
 export * from "./resources.js";
+export * from "./retry-verification-origin.js";
 export * from "./runtime.js";
 export * from "./sandbox-env.js";
 export * from "./session.js";
