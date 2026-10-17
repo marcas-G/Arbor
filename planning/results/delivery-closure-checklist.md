@@ -34,4 +34,4 @@
 
 ## 当前状态
 
-VCS/0046 与 AH14/0047 已完成实现、独立审查和主线合并检查；主候选数据库版本为 47。AH10 的 RecordVerificationEvidence/ConcludeVerification 已完成 generation receipt-first、持久游标恢复、Exhausted repair 恢复和六个双 daemon 接管场景，已独立复审并合入主线；AH10 整体仍因 Deliver、SendMessage Report 等剩余矩阵保持未完成。AH19 Conversation/0048 已完成迁移、owner store 和投影第一层，但发现 P17 权威来源冲突，当前等待人工接受已复审通过的 reconciliation proposal。后续严格按上面的顺序逐项完成和打勾。
+VCS/0046 与 AH14/0047 已完成实现、独立审查和主线合并检查；主候选数据库版本为 47。AH10 已闭合 P8 两项验证动作、全部 SendMessage 类型，以及 ProposeWorkspace/UpdatePlan/ClaimCompletion 的持久效果边界；相应最终回归分别为 7/7、12/12、11/11，并已独立复审合入主线。AH10 当前只保留 direct-child AssignWork C/P 精确目标绑定设计缺口及尚未发现的状态组合，不再把 Deliver 或 Report 列为未完成。AH19 Conversation/0048 已完成迁移、owner store 和投影第一层，但发现 P17 权威来源冲突，当前等待人工接受已复审通过的 reconciliation proposal。后续严格按上面的顺序逐项完成和打勾。
