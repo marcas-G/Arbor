@@ -404,7 +404,7 @@ describe("P2 Session appendEntry + AgentExecutionState", () => {
       });
       const tx = yield* TransactionPort;
       const sessions = yield* SessionRepository;
-      return yield* tx.transact(sessions.listWorkActiveFrontier(sessionId, 64));
+      return yield* tx.transact(sessions.listWorkActiveFrontier(sessionId));
     });
 
     const entries = await Effect.runPromise(Effect.provide(program, app));
@@ -464,7 +464,7 @@ describe("P2 Session appendEntry + AgentExecutionState", () => {
       }
       const tx = yield* TransactionPort;
       const sessions = yield* SessionRepository;
-      return yield* tx.transact(sessions.listWorkActiveFrontier(sessionId, 64));
+      return yield* tx.transact(sessions.listWorkActiveFrontier(sessionId));
     });
 
     const entries = await Effect.runPromise(Effect.provide(program, app));

@@ -250,6 +250,44 @@ describe("P3 prepareTurn", () => {
     ]);
   });
 
+  it("keeps a post-checkpoint tail over 64 rows for explicit budget compaction", async () => {
+    const inputItems = [
+      {
+        _tag: "CompactionCheckpoint" as const,
+        implementation: "Summary" as const,
+        summaryText: "continuation checkpoint",
+        fromEpoch: parse(ContextEpochNumber)(0),
+        toEpoch: parse(ContextEpochNumber)(1),
+        retainedFrontierRef: "frontier:test:epoch-0",
+      },
+      ...Array.from({ length: 71 }, (_, index) => ({
+        _tag: "Message" as const,
+        role: "user" as const,
+        text: `post-checkpoint item ${index} ${"durable detail ".repeat(20)}`,
+      })),
+    ];
+    const projectedHistory = projectCompressibleHistory({
+      inputItems,
+      sourceRefs: inputItems.map((_, index) => `session:typed:${index}`),
+      compressibleIndexes: Array.from({ length: 71 }, (_, index) => index + 1),
+    });
+
+    expect(projectedHistory.compressibleInputItemIndexes).toEqual(
+      Array.from({ length: 71 }, (_, index) => index + 1),
+    );
+    const result = (await prepare(
+      input({
+        inputItems,
+        ...projectedHistory,
+      }),
+    )) as { _tag: string; reason?: string };
+
+    expect(result).toEqual({
+      _tag: "NeedsCompaction",
+      reason: "BudgetPressure",
+    });
+  });
+
   it("charges fitting history to either fixed input or its fragment, not both", async () => {
     const item = {
       _tag: "Message" as const,

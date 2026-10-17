@@ -89,6 +89,8 @@ const toSessionItemRecord = (row: TypedSessionItemRow): SessionItemRecord => ({
   contentHash: row.content_hash as string,
 });
 
+const WORK_PRECHECKPOINT_ENTRY_LIMIT = 64;
+
 const toSession = (row: SessionRow): Session => ({
   sessionId: row.session_id as SessionId,
   binding:
@@ -428,7 +430,7 @@ export const SessionRepositoryLive: Layer.Layer<
           );
           return [...rows].reverse().map(toSessionItemRecord);
         }),
-      listWorkActiveFrontier: (sessionId, preCheckpointLimit) =>
+      listWorkActiveFrontier: (sessionId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           if (!(yield* hasTimelineColumns)) return [];
@@ -440,11 +442,10 @@ export const SessionRepositoryLive: Layer.Layer<
           );
           const checkpointSequence = checkpointRows[0]?.sequence;
           if (checkpointSequence === undefined) {
-            if (preCheckpointLimit <= 0) return [];
             const rows = yield* run(
               sql.unsafe<SessionEntryRow>(
                 "SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 ORDER BY sequence DESC LIMIT ?",
-                [sessionId, preCheckpointLimit],
+                [sessionId, WORK_PRECHECKPOINT_ENTRY_LIMIT],
               ),
             );
             return [...rows].reverse().map(toSessionEntry);

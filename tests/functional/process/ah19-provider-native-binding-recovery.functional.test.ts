@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
@@ -34,6 +34,8 @@ interface Ah19ProviderRequest {
   readonly providerTurnId: string;
   readonly bindingVariant: string;
   readonly hasPublicWorkInput?: boolean;
+  readonly hasWorkToolSurface?: boolean;
+  readonly toolNames?: ReadonlyArray<string>;
   readonly workActionHistoryCount?: number;
   readonly items: ReadonlyArray<{
     readonly _tag: string;
@@ -661,12 +663,14 @@ const ah19Failure = (phase: string, error: unknown) => {
   );
 };
 
-const startReportServer = async () => {
+const startReportServer = async (
+  beforeAcknowledge?: (request: Ah19ProviderRequest) => Promise<void>,
+) => {
   const server = createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
-      try {
+      void (async () => {
         const call = JSON.parse(
           Buffer.concat(chunks).toString("utf8"),
         ) as Ah19ProviderRequest;
@@ -676,12 +680,13 @@ const startReportServer = async () => {
             providerTurnId: call.providerTurnId,
             bindingVariant: call.bindingVariant,
           });
+        await beforeAcknowledge?.(call);
         response.writeHead(204);
         response.end();
-      } catch (error) {
+      })().catch((error: unknown) => {
         response.writeHead(400);
         response.end(String(error));
-      }
+      });
     });
   });
   await new Promise<void>((resolveListen, rejectListen) => {
@@ -694,6 +699,30 @@ const startReportServer = async () => {
   }
   reportServers.push(server);
   return `http://127.0.0.1:${address.port}/requests`;
+};
+
+const holdAh19ProviderReport = (
+  predicate: (request: Ah19ProviderRequest) => boolean,
+) => {
+  let resolveEntered!: (request: Ah19ProviderRequest) => void;
+  const entered = new Promise<Ah19ProviderRequest>((resolveRequest) => {
+    resolveEntered = resolveRequest;
+  });
+  let releaseResolve!: () => void;
+  const released = new Promise<void>((resolveRelease) => {
+    releaseResolve = resolveRelease;
+  });
+  let held = false;
+  return {
+    beforeAcknowledge: async (request: Ah19ProviderRequest) => {
+      if (held || !predicate(request)) return;
+      held = true;
+      resolveEntered(request);
+      await released;
+    },
+    waitUntilEntered: () => entered,
+    release: () => releaseResolve(),
+  };
 };
 
 interface ApprovedWorkSeed {
@@ -1353,6 +1382,28 @@ const readSnapshot = (
           input.executionId,
         ) as Ah19Snapshot["responseJobs"],
     };
+  } finally {
+    db.close();
+  }
+};
+
+const readTypedSessionRows = (databaseFile: string, sessionId: string) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    db.exec("BEGIN DEFERRED");
+    return db
+      .prepare(
+        `SELECT sequence, item_type, source_ref, payload_json
+           FROM session_entries
+          WHERE session_id = ? AND schema_version = 2
+          ORDER BY sequence`,
+      )
+      .all(sessionId) as Array<{
+      sequence: number;
+      item_type: string;
+      source_ref: string | null;
+      payload_json: string;
+    }>;
   } finally {
     db.close();
   }
@@ -2925,6 +2976,917 @@ describe("AH19 ProviderNative binding recovery", () => {
     ).toHaveLength(1);
     expect(fixture.daemonErrors).toEqual([]);
   }, 120_000);
+
+  it("reconstructs the public latest-64 Work frontier after pre-checkpoint restart", async () => {
+    probes.length = 0;
+    providerRequests.length = 0;
+    const reportUrl = await startReportServer();
+    const marker = `AH19-WORK-PRECHECKPOINT-${crypto.randomUUID()}`;
+    const workSeed = ah19WorkSeed(
+      "Build a public Work Session frontier across repeated Steer turns.",
+      marker,
+      "qualify the fixed pre-checkpoint row bound across restart",
+    );
+    const heldWorkRequest = holdFirstWorkProviderRequest(workSeed);
+    const fixture = await startProductionFixture({
+      reply: approvedRootWorkReply(marker, workSeed),
+      beforeResponse: heldWorkRequest.beforeResponse,
+      daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
+    });
+    fixtures.push(fixture);
+    const client = makePublicClient(fixture.baseUrl);
+    const project = await createFunctionalProject(
+      client,
+      fixture.workspaceDirectory,
+      "AH19 pre-checkpoint public Work frontier",
+    );
+    const daemonEnvironment = {
+      ARBOR_AH19_BOUNDARY: "none",
+      ARBOR_AH19_ORDINARY_WORK: "1",
+      ARBOR_AH19_CONTEXT_WINDOW: "1000000",
+      ARBOR_AH19_REPORT_URL: reportUrl,
+    };
+    const workId = await seedRootWorkViaPublicApproval(
+      fixture,
+      client,
+      project,
+      marker,
+      workSeed,
+      daemonEnvironment,
+      heldWorkRequest,
+    );
+
+    const currentWork = async () =>
+      client.view<{
+        workId?: string;
+        revision: number;
+        status: string;
+        activeExecution?: { executionId: string };
+      } | null>("current-work", { workspaceId: project.rootWorkspaceId });
+    const awaitIdleWork = () =>
+      waitForPublic(
+        currentWork,
+        (work) =>
+          work?.workId === workId &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+        60_000,
+      );
+    const typedRowsNow = () =>
+      readTypedSessionRows(fixture.databaseFile, project.rootSessionId);
+
+    const idle = await awaitIdleWork();
+    if (idle?.workId !== workId) {
+      throw new Error("pre-checkpoint Work stopped being current");
+    }
+    const batchSize = 32;
+    for (let index = 0; index < batchSize; index += 1) {
+      await client.command(project.projectId, "SteerWork", {
+        workId,
+        workspaceId: project.rootWorkspaceId,
+        expectedWorkRevision: idle.revision + index,
+        steer: {
+          severity: "Normal",
+          guidance: `AH19 pre-checkpoint public Steer ${index} ${marker}`,
+        },
+        provenance: { source: "HumanInput" },
+      });
+    }
+    const batchedRevision = idle.revision + batchSize;
+    const reachedBoundedHistory = await waitForPublic(
+      async () => ({
+        work: await currentWork(),
+        rows: typedRowsNow(),
+      }),
+      (state) =>
+        state.work?.revision === batchedRevision &&
+        state.work.activeExecution === undefined &&
+        state.rows.length > 64,
+      120_000,
+    );
+    expect(reachedBoundedHistory.work?.revision).toBe(batchedRevision);
+
+    const beforeRestartRows = typedRowsNow();
+    expect(beforeRestartRows.length).toBeGreaterThan(64);
+    expect(
+      beforeRestartRows.some((row) => row.item_type === "CompactionCheckpoint"),
+    ).toBe(false);
+    const priorRequests = providerRequests.length;
+
+    await fixture.crash();
+    await fixture.restart({ entry: childEntry, daemonEnvironment });
+    const idleAfterRestart = await awaitIdleWork();
+    if (idleAfterRestart?.workId !== workId) {
+      throw new Error("Work was not restored after the pre-checkpoint crash");
+    }
+    const currentGuidance = `AH19 pre-checkpoint after restart ${marker}`;
+    await client.command(project.projectId, "SteerWork", {
+      workId,
+      workspaceId: project.rootWorkspaceId,
+      expectedWorkRevision: idleAfterRestart.revision,
+      steer: { severity: "Normal", guidance: currentGuidance },
+      provenance: { source: "HumanInput" },
+    });
+    const resumedRequest = await waitForPublic(
+      async () =>
+        providerRequests
+          .slice(priorRequests)
+          .find((request) => request.operationKind === "Inference"),
+      (request) => request !== undefined,
+      60_000,
+    );
+    if (resumedRequest === undefined) {
+      throw new Error("post-restart Work provider request was not observed");
+    }
+
+    const executionId = readExecutionIdForProviderTurn(
+      fixture.databaseFile,
+      resumedRequest.providerTurnId,
+    );
+    const snapshot = readSnapshot(fixture.databaseFile, {
+      sessionId: project.rootSessionId,
+      executionId,
+      workId,
+    });
+    expect(snapshot.checkpoints).toEqual([]);
+    const resumedTurn = snapshot.providerTurns.find(
+      (turn) => turn.provider_turn_id === resumedRequest.providerTurnId,
+    );
+    expect(resumedTurn?.manifest_json).toBeTruthy();
+    const manifest = JSON.parse(resumedTurn?.manifest_json ?? "{}") as {
+      inputFrontier?: {
+        firstSequence: number | null;
+        lastSequence: number | null;
+      };
+      controlBasis?: {
+        projectPolicyRevision: number;
+        workspacePolicyRevision: number;
+        responsibilityRevision: number;
+        resourceBoundaryRevision: number;
+        authorizationDigest: string;
+        workId?: string;
+        workRevision?: number;
+      };
+      instructionFragments?: ReadonlyArray<{
+        identity: string;
+        revision: number;
+        source: string;
+      }>;
+    };
+    const allRowsAfterRequest = typedRowsNow();
+    const consideredRows = allRowsAfterRequest.filter(
+      (row) =>
+        manifest.inputFrontier?.lastSequence !== null &&
+        manifest.inputFrontier?.lastSequence !== undefined &&
+        row.sequence <= manifest.inputFrontier.lastSequence,
+    );
+    const latest64 = consideredRows.slice(-64);
+    expect(latest64).toHaveLength(64);
+    expect(manifest.inputFrontier).toEqual({
+      firstSequence: latest64[0]?.sequence,
+      lastSequence: latest64.at(-1)?.sequence,
+    });
+    for (const prior of beforeRestartRows) {
+      expect(allRowsAfterRequest).toContainEqual(prior);
+    }
+    expect(
+      allRowsAfterRequest.some(
+        (row) => row.item_type === "CompactionCheckpoint",
+      ),
+    ).toBe(false);
+
+    const portableRequest = JSON.parse(
+      resumedTurn?.portable_request_json ?? "{}",
+    ) as {
+      inputItems?: ReadonlyArray<{
+        _tag?: string;
+        role?: string;
+        text?: string;
+      }>;
+    };
+    expect(
+      portableRequest.inputItems?.filter(
+        (item) =>
+          item._tag === "Message" &&
+          item.role === "user" &&
+          item.text?.includes(currentGuidance),
+      ),
+    ).toHaveLength(1);
+
+    const controlBasis = manifest.controlBasis;
+    expect(controlBasis).toMatchObject({
+      workId,
+      workRevision: expect.any(Number),
+      authorizationDigest: expect.stringMatching(/.+/u),
+      projectPolicyRevision: expect.any(Number),
+      workspacePolicyRevision: expect.any(Number),
+      responsibilityRevision: expect.any(Number),
+      resourceBoundaryRevision: expect.any(Number),
+    });
+    for (const turn of snapshot.providerTurns) {
+      const turnManifest = JSON.parse(turn.manifest_json ?? "{}") as {
+        controlBasis?: typeof controlBasis;
+        instructionFragments?: typeof manifest.instructionFragments;
+      };
+      expect(turnManifest.controlBasis).toMatchObject({
+        workId,
+        workRevision: expect.any(Number),
+        authorizationDigest: expect.stringMatching(/.+/u),
+        projectPolicyRevision: expect.any(Number),
+        workspacePolicyRevision: expect.any(Number),
+        responsibilityRevision: expect.any(Number),
+        resourceBoundaryRevision: expect.any(Number),
+        environmentRevision: expect.any(String),
+      });
+      const turnBasis = turnManifest.controlBasis;
+      const expectedPins = [
+        [`work-objective:${workId}`, turnBasis?.workRevision],
+        [`work-constraints:${workId}`, turnBasis?.workRevision],
+        [`completion-expectation:${workId}`, turnBasis?.workRevision],
+        [`verification-mission:${workId}`, turnBasis?.workRevision],
+        [
+          `responsibility:${project.rootWorkspaceId}`,
+          turnBasis?.responsibilityRevision,
+        ],
+        [
+          `resource-boundary:${project.rootWorkspaceId}`,
+          turnBasis?.resourceBoundaryRevision,
+        ],
+      ];
+      for (const [identity, revision] of expectedPins) {
+        expect(turnManifest.instructionFragments).toContainEqual({
+          identity,
+          revision,
+          hash: expect.any(String),
+          source: "Canonical",
+          scope: expect.any(String),
+        });
+      }
+    }
+    expect(fixture.daemonErrors).toEqual([]);
+  }, 240_000);
+
+  it.each([
+    "AH17BeforeCheckpointEpochCommit",
+    "AH17AfterCheckpointEpochCommit",
+  ] as const)(
+    "keeps a filtered HumanConversation row uncovered across compaction %s and restart",
+    async (boundary) => {
+      probes.length = 0;
+      providerRequests.length = 0;
+      const marker = `AH19-FILTERED-FRONTIER-${crypto.randomUUID()}`;
+      const workSeed = ah19WorkSeed(
+        "Keep the Work request pinned while filtering one timeline row.",
+        marker,
+        "qualify filtered-row checkpoint and restart coverage",
+      );
+      const nativeGate = holdAh19ProviderReport(
+        (request) => request.operationKind === "CompactionNative",
+      );
+      const reportUrl = await startReportServer(nativeGate.beforeAcknowledge);
+      const childOutput: string[] = [];
+      const daemonEnvironment = {
+        ARBOR_AH19_BOUNDARY: boundary,
+        ARBOR_AH19_FRONTIER_TEXT_ONLY: "1",
+        ARBOR_AH19_CONTEXT_WINDOW: "1000000",
+        ARBOR_AH19_REPORT_URL: reportUrl,
+        ARBOR_AH19_ROOT_WORK_SEED_JSON: JSON.stringify(workSeed),
+      };
+      const fixture = await startProductionFixture({
+        reply: () => ({ _tag: "HttpError", status: 500 }),
+        firstDaemonEntry: childEntry,
+        daemonEnvironment,
+        onDaemonStdout: (line) => {
+          childOutput.push(line);
+          try {
+            const probe = JSON.parse(line) as Ah19Probe;
+            if (probe.tag === "AH19_PROBE") probes.push(probe);
+          } catch {
+            // Keep non-probe process output in fixture diagnostics.
+          }
+        },
+      });
+      fixtures.push(fixture);
+      const client = makePublicClient(fixture.baseUrl);
+      const project = await createFunctionalProject(
+        client,
+        fixture.workspaceDirectory,
+        "AH19 filtered Work frontier compaction",
+      );
+      await submitHumanMessage(client, project, `请创建并开始目标 ${marker}。`);
+      const approval = await waitForApproval(client, project, marker);
+      await client.command(project.projectId, "ResolveControlApproval", {
+        approvalId: approval.approvalId,
+        expectedRevision: approval.revision,
+        decision: "Approve",
+        reason: "AH19 filtered frontier Work seed",
+      });
+      const admittedWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            objective: string;
+            revision: number;
+            status: string;
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (work) =>
+          work?.objective === workSeed.objective && work.workId !== undefined,
+        60_000,
+      );
+      const workId = admittedWork?.workId;
+      if (workId === undefined) {
+        throw new Error("filtered frontier Work was not admitted");
+      }
+
+      const filterEntryKey = `inb_${randomUUID().replaceAll("-", "")}`;
+      const filterText = `${marker}-filtered-session-content`;
+      const filteredItem = {
+        _tag: "UserMessage",
+        source: {
+          _tag: "InboxEntry",
+          workspaceId: project.rootWorkspaceId,
+          entryKey: filterEntryKey,
+          kind: "HumanConversation",
+        },
+        contentRef: `inbox:${filterEntryKey}`,
+        text: filterText,
+        trust: "DataOnly",
+        delivery: "Steer",
+      };
+      const currentWork = async () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId });
+      const typedRowsNow = () =>
+        readTypedSessionRows(fixture.databaseFile, project.rootSessionId);
+      const idleWork = await waitForPublic(
+        currentWork,
+        (work) =>
+          work?.workId === workId &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+        60_000,
+      );
+      if (idleWork?.workId !== workId) {
+        throw new Error("filtered-row Work was not idle before short inputs");
+      }
+      const compactionDaemonEnvironment = {
+        ...daemonEnvironment,
+        ARBOR_AH19_CONTEXT_WINDOW: "10240",
+        ARBOR_AH19_ROOT_WORK_ALREADY_ASSIGNED: "1",
+      };
+      await fixture.crash();
+      const db = new DatabaseSync(fixture.databaseFile);
+      let filterSequence: number;
+      try {
+        const session = db
+          .prepare("SELECT context_epoch FROM sessions WHERE session_id = ?")
+          .get(project.rootSessionId) as { context_epoch: number };
+        const next = db
+          .prepare(
+            "SELECT COALESCE(MAX(sequence) + 1, 0) AS sequence FROM session_entries WHERE session_id = ?",
+          )
+          .get(project.rootSessionId) as { sequence: number };
+        filterSequence = next.sequence;
+        const payloadJson = JSON.stringify(filteredItem);
+        const contentHash = createHash("sha256")
+          .update(payloadJson)
+          .digest("hex");
+        db.prepare(
+          `INSERT INTO session_entries (
+             session_id, sequence, entry_kind, item_type, schema_version,
+             context_epoch, payload_json, created_at, source_kind, source_ref,
+             content_hash
+           ) VALUES (?, ?, 'Input', 'UserMessage', 2, ?, ?, ?, 'InboxEntry', ?, ?)`,
+        ).run(
+          project.rootSessionId,
+          filterSequence,
+          session.context_epoch,
+          payloadJson,
+          new Date().toISOString(),
+          filterEntryKey,
+          contentHash,
+        );
+      } finally {
+        db.close();
+      }
+      await fixture.restart({
+        entry: childEntry,
+        daemonEnvironment: compactionDaemonEnvironment,
+      });
+      const restartedIdleWork = await waitForPublic(
+        currentWork,
+        (work) =>
+          work?.workId === workId &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+        60_000,
+      );
+      if (restartedIdleWork?.workId !== workId) {
+        throw new Error("filtered-row Work was not idle after bound change");
+      }
+      let nativeRequest: Ah19ProviderRequest | undefined;
+      let compactionGuidance: string | undefined;
+      for (let index = 0; index < 15; index += 1) {
+        const before: Awaited<ReturnType<typeof currentWork>> =
+          await waitForPublic(
+            currentWork,
+            (work) =>
+              work?.workId === workId &&
+              work.status === "Open" &&
+              work.activeExecution === undefined,
+            60_000,
+          );
+        if (before === null || before.workId !== workId) {
+          throw new Error("Work stopped being current during text turns");
+        }
+        const rowsBeforeSteer = typedRowsNow().length;
+        const requestsBeforeSteer = providerRequests.length;
+        const guidance = `${marker} small typed Work input ${index} ${"x".repeat(300)}`;
+        await client.command(project.projectId, "SteerWork", {
+          workId,
+          workspaceId: project.rootWorkspaceId,
+          expectedWorkRevision: before.revision,
+          steer: {
+            severity: "Normal",
+            guidance,
+          },
+          provenance: { source: "HumanInput" },
+        });
+        const afterSteer = await waitForPublic(
+          async () => ({
+            work: await currentWork(),
+            rowCount: typedRowsNow().length,
+            requestCount: providerRequests.length,
+            nativeRequest: providerRequests.find(
+              (request) => request.operationKind === "CompactionNative",
+            ),
+          }),
+          (state) =>
+            state.nativeRequest !== undefined ||
+            (state.work?.revision === before.revision + 1 &&
+              state.work?.activeExecution === undefined &&
+              state.rowCount > rowsBeforeSteer &&
+              state.requestCount > requestsBeforeSteer),
+          60_000,
+        ).catch((error: unknown) => {
+          const diagnosticDb = new DatabaseSync(fixture.databaseFile, {
+            readOnly: true,
+          });
+          let recentExecutions: unknown;
+          try {
+            recentExecutions = diagnosticDb
+              .prepare(
+                "SELECT execution_id, episode_kind, episode_revision, settlement_kind, settlement_json FROM executions ORDER BY admitted_at DESC LIMIT 4",
+              )
+              .all();
+          } finally {
+            diagnosticDb.close();
+          }
+          throw new Error(
+            `AH19 bounded-frontier public Steer ${index} stalled: ${error instanceof Error ? error.message : String(error)}; providers=${JSON.stringify(providerRequests.map(({ operationKind, providerTurnId, toolNames, workActionHistoryCount }) => ({ operationKind, providerTurnId, toolNames, workActionHistoryCount })))}; recentExecutions=${JSON.stringify(recentExecutions)}; child=${childOutput.slice(-30).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
+          );
+        });
+        if (afterSteer.nativeRequest !== undefined) {
+          nativeRequest = afterSteer.nativeRequest;
+          compactionGuidance = guidance;
+          break;
+        }
+      }
+
+      const finalGuidance =
+        compactionGuidance ??
+        `${marker} final public Work input completes the 64-row window ${"y".repeat(1000)}`;
+      if (nativeRequest === undefined) {
+        await fixture.crash();
+        const lowWindowEnvironment = {
+          ...compactionDaemonEnvironment,
+          ARBOR_AH19_CONTEXT_WINDOW: "8192",
+        };
+        await fixture.restart({
+          entry: childEntry,
+          daemonEnvironment: lowWindowEnvironment,
+        });
+        const finalIdleWork = await waitForPublic(
+          currentWork,
+          (work) =>
+            work?.workId === workId &&
+            work.status === "Open" &&
+            work.activeExecution === undefined,
+          60_000,
+        );
+        if (finalIdleWork?.workId !== workId) {
+          throw new Error(
+            "Work stopped being current before the frontier request",
+          );
+        }
+        await client.command(project.projectId, "SteerWork", {
+          workId,
+          workspaceId: project.rootWorkspaceId,
+          expectedWorkRevision: finalIdleWork.revision,
+          steer: {
+            severity: "Normal",
+            guidance: finalGuidance,
+          },
+          provenance: { source: "HumanInput" },
+        });
+        nativeRequest = await waitForPublic(
+          async () =>
+            providerRequests.find(
+              (request) => request.operationKind === "CompactionNative",
+            ),
+          (request) => request !== undefined,
+          120_000,
+        ).catch((error: unknown) => {
+          throw new Error(
+            `AH19 filtered frontier did not reach Native compaction: ${error instanceof Error ? error.message : String(error)}; requests=${JSON.stringify(providerRequests.map(({ operationKind, providerTurnId, workActionHistoryCount }) => ({ operationKind, providerTurnId, workActionHistoryCount })))}; daemon=${fixture.daemonErrors.join(" | ")}`,
+          );
+        });
+      }
+      if (nativeRequest === undefined) {
+        throw new Error("filtered-row Native compaction request is missing");
+      }
+      const heldNativeRequest = await nativeGate.waitUntilEntered();
+      expect(heldNativeRequest.providerTurnId).toBe(
+        nativeRequest.providerTurnId,
+      );
+      const nativeExecutionId = readExecutionIdForProviderTurn(
+        fixture.databaseFile,
+        nativeRequest.providerTurnId,
+      );
+      const preCheckpoint = readSnapshot(fixture.databaseFile, {
+        sessionId: project.rootSessionId,
+        executionId: nativeExecutionId,
+        workId,
+      });
+      expect(preCheckpoint.checkpoints).toEqual([]);
+      const nativeTurn = preCheckpoint.providerTurns.find(
+        (turn) => turn.provider_turn_id === nativeRequest.providerTurnId,
+      );
+      const nativeManifest = JSON.parse(nativeTurn?.manifest_json ?? "{}") as {
+        inputFrontier?: {
+          firstSequence: number | null;
+          lastSequence: number | null;
+        };
+        contextRefs?: ReadonlyArray<string>;
+        instructionFragments?: ReadonlyArray<{
+          identity: string;
+          revision: number;
+          source: string;
+        }>;
+        controlBasis?: { authorizationDigest?: string };
+        resolvedModelBindingFingerprint?: string;
+      };
+      expect(nativeManifest.inputFrontier?.firstSequence).toEqual(
+        expect.any(Number),
+      );
+      expect(nativeManifest.contextRefs).not.toContain(
+        `session:InboxEntry:${filterEntryKey}`,
+      );
+      expect(nativeManifest.instructionFragments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ identity: `work-objective:${workId}` }),
+          expect.objectContaining({ identity: `work-constraints:${workId}` }),
+          expect.objectContaining({
+            identity: `completion-expectation:${workId}`,
+          }),
+          expect.objectContaining({
+            identity: `verification-mission:${workId}`,
+          }),
+          expect.objectContaining({
+            identity: `responsibility:${project.rootWorkspaceId}`,
+          }),
+          expect.objectContaining({
+            identity: `resource-boundary:${project.rootWorkspaceId}`,
+          }),
+        ]),
+      );
+      expect(nativeManifest.controlBasis?.authorizationDigest).toMatch(/.+/u);
+      const nativeRequestJson = JSON.parse(
+        nativeTurn?.portable_request_json ?? "{}",
+      ) as {
+        inputItems?: ReadonlyArray<{
+          _tag?: string;
+          role?: string;
+          text?: string;
+        }>;
+      };
+      expect(JSON.stringify(nativeRequestJson.inputItems)).not.toContain(
+        filterText,
+      );
+      expect(JSON.stringify(nativeRequestJson.inputItems)).not.toContain(
+        filterEntryKey,
+      );
+      expect(
+        nativeRequestJson.inputItems?.filter(
+          (item) =>
+            item._tag === "Message" &&
+            item.role === "user" &&
+            item.text?.includes(finalGuidance),
+        ),
+      ).toHaveLength(1);
+      const rowsAtNativeRequest = readTypedSessionRows(
+        fixture.databaseFile,
+        project.rootSessionId,
+      );
+      expect(
+        rowsAtNativeRequest.find((row) => row.sequence === filterSequence),
+      ).toMatchObject({
+        item_type: "UserMessage",
+        source_ref: filterEntryKey,
+      });
+      expect(
+        rowsAtNativeRequest.find((row) => row.sequence === filterSequence)
+          ?.payload_json,
+      ).toContain(filterText);
+      const consideredRows = rowsAtNativeRequest.filter(
+        (row) =>
+          nativeManifest.inputFrontier?.firstSequence !== null &&
+          nativeManifest.inputFrontier?.firstSequence !== undefined &&
+          nativeManifest.inputFrontier?.lastSequence !== null &&
+          nativeManifest.inputFrontier?.lastSequence !== undefined &&
+          row.sequence >= nativeManifest.inputFrontier.firstSequence &&
+          row.sequence <= nativeManifest.inputFrontier.lastSequence,
+      );
+      expect(consideredRows).toHaveLength(64);
+      const filteredRowOffset = consideredRows.findIndex(
+        (row) => row.sequence === filterSequence,
+      );
+      expect(
+        filteredRowOffset,
+        JSON.stringify({
+          filterSequence,
+          firstSequence: nativeManifest.inputFrontier?.firstSequence,
+          lastSequence: nativeManifest.inputFrontier?.lastSequence,
+          totalRows: rowsAtNativeRequest.length,
+          rowsAfterFilter: rowsAtNativeRequest.filter(
+            (row) => row.sequence > filterSequence,
+          ).length,
+        }),
+      ).toBeGreaterThanOrEqual(0);
+      expect(filteredRowOffset).toBeLessThanOrEqual(4);
+
+      nativeGate.release();
+      const boundaryProbe = await waitForPublic(
+        async () => probes.find((probe) => probe.boundary === boundary),
+        (probe) => probe !== undefined,
+        60_000,
+      );
+      expect(boundaryProbe?.providerTurnId).toBe(nativeRequest.providerTurnId);
+      const atBoundary = readSnapshot(fixture.databaseFile, {
+        sessionId: project.rootSessionId,
+        executionId: nativeExecutionId,
+        workId,
+      });
+      const providerTurnIdsAtBoundary = atBoundary.providerTurns.map(
+        (turn) => turn.provider_turn_id,
+      );
+      const settledActionsAtBoundary = atBoundary.actions
+        .filter((action) => action.state === "Applied")
+        .map((action) => ({
+          logical_step_no: action.logical_step_no,
+          repair_attempt: action.repair_attempt,
+          action_index: action.action_index,
+          logical_action_id: action.logical_action_id,
+          call_ref: action.call_ref,
+          action_kind: action.action_kind,
+          state: action.state,
+          revision: action.revision,
+          observation_source_ref: action.observation_source_ref,
+        }));
+      expect(atBoundary.session?.context_epoch).toBe(
+        boundary === "AH17BeforeCheckpointEpochCommit" ? 0 : 1,
+      );
+      expect(atBoundary.checkpoints).toHaveLength(
+        boundary === "AH17BeforeCheckpointEpochCommit" ? 0 : 1,
+      );
+      if (boundary === "AH17AfterCheckpointEpochCommit") {
+        const checkpoint = JSON.parse(
+          atBoundary.checkpoints[0]?.payload_json ?? "{}",
+        ) as Record<string, unknown>;
+        expect(checkpoint).toMatchObject({
+          _tag: "CompactionCheckpoint",
+          implementation: "ProviderNative",
+          fromEpoch: 0,
+          toEpoch: 1,
+        });
+        expect(JSON.stringify(checkpoint)).not.toContain(filterText);
+        expect(JSON.stringify(checkpoint)).not.toContain(filterEntryKey);
+      }
+      expect(
+        readTypedSessionRows(fixture.databaseFile, project.rootSessionId),
+      ).toContainEqual(
+        expect.objectContaining({
+          sequence: filterSequence,
+          item_type: "UserMessage",
+          source_ref: filterEntryKey,
+        }),
+      );
+
+      const nativeRequestCount = providerRequests.filter(
+        (request) => request.providerTurnId === nativeRequest.providerTurnId,
+      ).length;
+      await fixture.crash();
+      await expireLeaseAfterOldDaemonExit(
+        fixture,
+        project.rootSessionId,
+        nativeExecutionId,
+        workId,
+      );
+      await fixture.restart({
+        entry: childEntry,
+        daemonEnvironment: {
+          ...compactionDaemonEnvironment,
+          ARBOR_AH19_BOUNDARY: "none",
+        },
+      });
+      const recovered = await waitForPublic(
+        async () =>
+          readSnapshot(fixture.databaseFile, {
+            sessionId: project.rootSessionId,
+            executionId: nativeExecutionId,
+            workId,
+          }),
+        (snapshot) =>
+          snapshot.session !== undefined &&
+          snapshot.session.context_epoch >= 1 &&
+          snapshot.checkpoints.length >= 1 &&
+          snapshot.workWait !== undefined,
+        75_000,
+      );
+      expect(
+        recovered.providerTurns.filter(
+          (turn) => turn.provider_turn_id === nativeRequest.providerTurnId,
+        ),
+      ).toHaveLength(1);
+      for (const providerTurnId of providerTurnIdsAtBoundary) {
+        expect(
+          recovered.providerTurns.filter(
+            (turn) => turn.provider_turn_id === providerTurnId,
+          ),
+        ).toHaveLength(1);
+      }
+      for (const settledAction of settledActionsAtBoundary) {
+        expect(
+          recovered.actions.filter(
+            (action) =>
+              action.logical_action_id === settledAction.logical_action_id,
+          ),
+        ).toEqual([settledAction]);
+      }
+      const providerTurnsAddedAfterBoundary = recovered.providerTurns.filter(
+        (turn) => !providerTurnIdsAtBoundary.includes(turn.provider_turn_id),
+      );
+      const addedSummaryTurns = providerTurnsAddedAfterBoundary.filter(
+        (turn) => {
+          const manifest = JSON.parse(turn.manifest_json ?? "{}") as {
+            operationKind?: string;
+          };
+          return manifest.operationKind === "CompactionSummary";
+        },
+      );
+      expect(providerTurnsAddedAfterBoundary.length).toBeLessThanOrEqual(2);
+      expect(addedSummaryTurns.length).toBeLessThanOrEqual(1);
+      const boundaryEpoch = atBoundary.session?.context_epoch;
+      expect(boundaryEpoch).toBeDefined();
+      for (const addedTurn of providerTurnsAddedAfterBoundary) {
+        const manifest = JSON.parse(addedTurn.manifest_json ?? "{}") as {
+          operationKind?: string;
+        };
+        expect(["CompactionSummary", "Inference"]).toContain(
+          manifest.operationKind,
+        );
+      }
+      for (const summaryTurn of addedSummaryTurns) {
+        expect(summaryTurn.context_epoch).toBe(boundaryEpoch);
+        const summaryManifest = JSON.parse(
+          summaryTurn.manifest_json ?? "{}",
+        ) as {
+          operationKind?: string;
+          inputFrontier?: typeof nativeManifest.inputFrontier;
+          contextRefs?: ReadonlyArray<string>;
+          resolvedModelBindingFingerprint?: string;
+          sourceAgentLoopStep?: { providerTurnId?: string };
+        };
+        expect(summaryManifest.operationKind).toBe("CompactionSummary");
+        expect(summaryManifest.inputFrontier).toEqual(
+          nativeManifest.inputFrontier,
+        );
+        expect(summaryManifest.resolvedModelBindingFingerprint).not.toBe(
+          nativeManifest.resolvedModelBindingFingerprint,
+        );
+        expect(
+          summaryManifest.sourceAgentLoopStep?.providerTurnId,
+        ).toBeTruthy();
+        expect(atBoundary.steps.map((step) => step.provider_turn_id)).toContain(
+          summaryManifest.sourceAgentLoopStep?.providerTurnId,
+        );
+        const summaryCheckpoint = recovered.checkpoints.find(
+          (checkpoint) =>
+            checkpoint.source_ref === summaryTurn.provider_turn_id,
+        );
+        expect(summaryCheckpoint).toBeDefined();
+        expect(
+          JSON.parse(summaryCheckpoint?.payload_json ?? "{}"),
+        ).toMatchObject({
+          _tag: "CompactionCheckpoint",
+          implementation: "Summary",
+          fromEpoch: boundaryEpoch,
+          toEpoch: Number(boundaryEpoch) + 1,
+        });
+        expect(summaryManifest.contextRefs).not.toContain(
+          `session:InboxEntry:${filterEntryKey}`,
+        );
+        expect(summaryTurn.portable_request_json).not.toContain(filterText);
+        expect(summaryTurn.portable_request_json).not.toContain(filterEntryKey);
+        const summaryRequest = JSON.parse(
+          summaryTurn.portable_request_json ?? "{}",
+        ) as { inputItems?: ReadonlyArray<{ _tag?: string }> };
+        expect(summaryRequest.inputItems?.length).toBeGreaterThan(1);
+        expect(
+          providerRequests.filter(
+            (request) =>
+              request.providerTurnId === summaryTurn.provider_turn_id,
+          ),
+        ).toHaveLength(1);
+      }
+      const addedInferenceTurns = providerTurnsAddedAfterBoundary.filter(
+        (turn) => {
+          const manifest = JSON.parse(turn.manifest_json ?? "{}") as {
+            operationKind?: string;
+          };
+          return manifest.operationKind === "Inference";
+        },
+      );
+      const actionIdsAtBoundary = new Set(
+        atBoundary.actions.map((action) => action.logical_action_id),
+      );
+      for (const action of recovered.actions) {
+        if (actionIdsAtBoundary.has(action.logical_action_id)) continue;
+        const owner = recovered.steps.find(
+          (step) =>
+            step.logical_step_no === action.logical_step_no &&
+            step.repair_attempt === action.repair_attempt,
+        );
+        expect(owner).toBeDefined();
+        expect(providerTurnIdsAtBoundary).not.toContain(
+          owner?.provider_turn_id,
+        );
+        expect(
+          addedInferenceTurns.map((turn) => turn.provider_turn_id),
+        ).toContain(owner?.provider_turn_id);
+      }
+      const recoveredNativeTurn = recovered.providerTurns.find(
+        (turn) => turn.provider_turn_id === nativeRequest.providerTurnId,
+      );
+      const recoveredNativeManifest = JSON.parse(
+        recoveredNativeTurn?.manifest_json ?? "{}",
+      ) as {
+        inputFrontier?: {
+          firstSequence: number | null;
+          lastSequence: number | null;
+        };
+        contextRefs?: ReadonlyArray<string>;
+      };
+      expect(recoveredNativeManifest.inputFrontier).toEqual(
+        nativeManifest.inputFrontier,
+      );
+      expect(recoveredNativeManifest.contextRefs).not.toContain(
+        `session:InboxEntry:${filterEntryKey}`,
+      );
+      expect(recoveredNativeTurn?.portable_request_json).not.toContain(
+        filterText,
+      );
+      expect(recoveredNativeTurn?.portable_request_json).not.toContain(
+        filterEntryKey,
+      );
+      for (const checkpoint of recovered.checkpoints) {
+        expect(checkpoint.payload_json).not.toContain(filterText);
+        expect(checkpoint.payload_json).not.toContain(filterEntryKey);
+      }
+      expect(
+        providerRequests.filter(
+          (request) => request.providerTurnId === nativeRequest.providerTurnId,
+        ),
+      ).toHaveLength(nativeRequestCount);
+      expect(
+        readTypedSessionRows(fixture.databaseFile, project.rootSessionId),
+      ).toContainEqual(
+        expect.objectContaining({
+          sequence: filterSequence,
+          item_type: "UserMessage",
+          source_ref: filterEntryKey,
+        }),
+      );
+      expect(fixture.daemonErrors).toEqual([]);
+    },
+    360_000,
+  );
 
   it.each([
     "AH17BeforeCheckpointEpochCommit",

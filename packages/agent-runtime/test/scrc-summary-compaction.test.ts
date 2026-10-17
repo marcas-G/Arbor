@@ -42,6 +42,33 @@ const execution = {
   state: { status: "Active" as const, settlement: null },
 };
 
+const pinnedWorkInstructions = [
+  {
+    slotId: "work-objective",
+    authorityRole: "A3" as const,
+    text: "objective: a bound work outcome",
+  },
+];
+const pinnedWorkFragments = [
+  {
+    identity: "work-objective:wrk_018f2b3c-4d5e-7abc-8def-0123456789f2",
+    revision: 7,
+    hash: "objective-hash",
+    source: "Canonical",
+    scope: "work-objective",
+  },
+];
+const workControlBasis = {
+  projectPolicyRevision: 1,
+  workspacePolicyRevision: 2,
+  responsibilityRevision: 3,
+  resourceBoundaryRevision: 4,
+  workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789f2",
+  workRevision: 7,
+  authorizationDigest: "authority-digest",
+  environmentRevision: "environment-revision",
+};
+
 const tx = {
   transact: (body: Effect.Effect<unknown, unknown, TransactionScope>) =>
     Effect.provideService(body, TransactionScope, { session: { id: "test" } }),
@@ -83,6 +110,9 @@ describe("SCRC Summary Compaction Coordinator", () => {
           bindingFingerprint: "binding-a",
           secretRef: sourceSecretRef,
           inputItems: [{ _tag: "Message", role: "user", text: "long work" }],
+          pinnedInstructions: pinnedWorkInstructions,
+          pinnedInstructionFragments: pinnedWorkFragments,
+          controlBasis: workControlBasis,
           fence: {
             executionId,
             workerId: "worker",
@@ -96,6 +126,11 @@ describe("SCRC Summary Compaction Coordinator", () => {
     expect(observed?.request).toMatchObject({
       requestVersion: 2,
       operationKind: "CompactionSummary",
+      instructions: expect.arrayContaining(pinnedWorkInstructions),
+    });
+    expect(JSON.parse(observed?.manifestJson ?? "{}")).toMatchObject({
+      instructionFragments: pinnedWorkFragments,
+      controlBasis: workControlBasis,
     });
     expect(observed?.secretRef).toBe(sourceSecretRef);
     expect(committed).toMatchObject({
@@ -171,6 +206,9 @@ describe("SCRC Summary Compaction Coordinator", () => {
           modelRef: "model-a",
           bindingFingerprint: "binding-a",
           inputItems: [],
+          pinnedInstructions: pinnedWorkInstructions,
+          pinnedInstructionFragments: pinnedWorkFragments,
+          controlBasis: workControlBasis,
           secretRef: sourceSecretRef,
           fence: {
             executionId,
@@ -208,6 +246,11 @@ describe("SCRC Summary Compaction Coordinator", () => {
       ),
     );
     expect(result.opaqueItemRef).toBe("opaque:1");
+    expect(observed?.request.instructions).toEqual(pinnedWorkInstructions);
+    expect(JSON.parse(observed?.manifestJson ?? "{}")).toMatchObject({
+      instructionFragments: pinnedWorkFragments,
+      controlBasis: workControlBasis,
+    });
     expect(observed?.secretRef).toBe(sourceSecretRef);
     expect(committed).toMatchObject({
       checkpoint: {

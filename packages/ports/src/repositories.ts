@@ -304,12 +304,11 @@ export interface SessionRepositoryService {
     TransactionScope
   >;
   /** Work-only provider-context frontier. Before the first typed checkpoint,
-   * selects the latest persisted SessionItems by sequence up to preCheckpointLimit
-   * without causal backfill. After a typed checkpoint, returns that checkpoint
-   * and every later typed SessionItem without applying the limit. */
+   * selects the fixed latest 64 persisted SessionItems by sequence without
+   * causal backfill. After a typed checkpoint, returns that checkpoint and
+   * every later typed SessionItem without applying the pre-checkpoint bound. */
   readonly listWorkActiveFrontier: (
     sessionId: SessionId,
-    preCheckpointLimit: number,
   ) => Effect.Effect<
     ReadonlyArray<SessionEntryRecord>,
     SessionRepositoryError,
