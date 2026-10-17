@@ -1,12 +1,12 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.50\
+**Version:** 1.51\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.49\
-**Date:** 2026-10-17\
-**Depends on:** `Arbor System Design Specification v1.18`
+**Supersedes:** v1.50\
+**Date:** 2026-10-18\
+**Depends on:** `Arbor System Design Specification v1.19`
 
-**Governance changes (v1.49 → v1.50): AH19 Work bounded frontier and Conversation checkpoint owner**
+**Governance changes (v1.50 → v1.51): AH19 Conversation owner × P17 Job authority reconciliation**
 
 - **Work pre-checkpoint frontier:** before the first typed
   `CompactionCheckpoint`, select the latest 64 persisted Session Timeline
@@ -19,15 +19,22 @@
   the pre-checkpoint cap. Coverage can claim only content actually represented
   by the existing projector.
 - **Conversation checkpoint owner:** exact `RootWorkspaceId` owns one v1
-  conversation stream across HumanMessages, ResponseJobs, Attempts, Executions
-  and response episodes. It advances only through the contiguous FIFO prefix
-  of authoritative `Answered` HumanMessages. The exact current `Claimed`
-  message is pinned once for its episode and stays uncovered until Answered;
-  no non-Answered gap may be crossed. Work Session history/checkpoints are
-  excluded. ProviderNative reuse requires exact complete binding fingerprint;
-  otherwise portable Summary is rebuilt from retained HumanMessage sources.
-  Messages and live checkpoint evidence remain durable; restart resumes the
-  same response episode and does not replay settled work.
+  conversation stream across immutable HumanMessages, ResponseJobs, Attempts,
+  Executions and response episodes. HumanMessage contributes only exact
+  identity/owner/order/body; legacy lifecycle, claim and response columns are
+  not runtime or checkpoint truth. Coverage is the contiguous FIFO prefix
+  where the exact Job is `Answered` and its unique Attempt plus terminal
+  ConversationResponseEpisode Execution prove the same `(messageId, attemptNo,
+  executionId)` successful response. The current raw input is pinned once from
+  immutable HumanMessage body only for the exact `Running` Job, active Attempt,
+  Episode Execution and lease; it remains uncovered until the Job is Answered.
+  Any earlier non-Answered, malformed or other-episode Running Job blocks
+  later coverage. Work Session history/checkpoints are excluded. ProviderNative
+  reuse requires exact complete binding fingerprint; otherwise portable
+  Summary is rebuilt from retained HumanMessage sources paired with their
+  authoritative Answered Job response bodies. Messages and live checkpoint
+  evidence remain durable; restart resumes the same response episode and does
+  not replay settled work.
 - **Physical boundary:** the Conversation owner state/table/port, message
   ordering-key implementation, migration ID and initialization are TBD for
   separately authorized implementation. No old Workspace Session checkpoint
@@ -39,8 +46,13 @@
   Conversation package token `ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1`,
   proposal raw SHA-256
   `9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`.
-  Both accepted 2026-10-17. Separate decision and post-landing review records
-  are listed under `planning/results/AH19-*`.
+  Both accepted 2026-10-17. Their P17 authority reconciliation is accepted
+  under `RECONCILE_AH19_CONVERSATION_OWNER_WITH_P17_JOB_AUTHORITY`, proposal
+  raw SHA-256
+  `92EF668AFFBE3A5D1C651107C33006C7CB987E7021FFFC02037B3603FD276B75`, on
+  2026-10-18. Acceptance/landing record:
+  `planning/results/AH19-conversation-owner-p17-authority-reconciliation-acceptance-and-landing.record.md`;
+  independent post-landing review remains pending.
 
 **Governance changes (v1.48 → v1.49): AH14 legacy adoption evidence Attention**
 
@@ -4898,14 +4910,19 @@ frontier; budget pressure triggers explicit compaction rather than truncation
 by the pre-checkpoint cap.
 
 Conversation continuity uses the exact RootWorkspaceId as a separate owner.
-Only a contiguous FIFO prefix of authoritatively Answered HumanMessages may
-be covered. A current Claimed message remains pinned once for that response
-episode; non-Answered gaps stop coverage. Work Session history/checkpoints are
-excluded. ProviderNative reuse requires an exact complete
-ResolvedModelBinding fingerprint; otherwise portable Summary is rebuilt from
-retained HumanMessages. Restart retains the same response episode and does not
-replay settled Provider/action work. Owner storage and migration details remain
-separately gated.
+HumanMessage is immutable source identity/order/body; its legacy lifecycle,
+claim and response columns are not answer or scheduler truth. Only a
+contiguous FIFO prefix with exact Answered ResponseJobs and matching
+ConversationAttempts/terminal ConversationResponseEpisode Executions may be
+covered. The current raw message is pinned once only for its exact Running
+Job, active Attempt/Execution and current lease; non-Answered, malformed or
+other-episode Running gaps stop coverage. Work Session history/checkpoints are
+excluded. ProviderNative reuse requires an exact complete ResolvedModelBinding
+fingerprint; otherwise portable Summary is rebuilt from retained HumanMessage
+sources paired with their authoritative Answered Job response bodies.
+Restart retains the same response episode and does not replay settled
+Provider/action work. Owner storage and migration details remain separately
+gated.
 
 规范控制流：
 
@@ -5292,13 +5309,15 @@ typed input. `TypedInputItemRefs[]` and context refs identify actual emitted
 content. A compaction `retainedFrontier` covers only content included under the
 existing P3 projector. For a ConversationResponseEpisode, manifest source
 identity binds the RootWorkspaceId owner, exact inclusive
-`coveredThroughMessageId`, ordered post-frontier source messages and exact
-current claimed message, ResponseJob revision/Attempt and ProviderTurn
-Manifest/checkpoint evidence; a ProviderNative checkpoint also binds the
-complete ResolvedModelBinding fingerprint. Recovery proves these identities
-from canonical owner/response facts rather than Session text or ProviderTurn ID
-spelling. These are semantic bindings, not a choice of physical storage
-encoding.
+`coveredThroughMessageId`, ordered immutable HumanMessage source identities and
+their paired authoritative Answered ResponseJob/Assistant response, exact
+Attempt/terminal Execution settlement identities, and the exact current
+Running Job/Attempt/Episode Execution/lease binding. HumanMessage legacy
+lifecycle, claim and response columns are not source or scheduler authority.
+A ProviderNative checkpoint also binds the complete ResolvedModelBinding
+fingerprint. Recovery proves these identities from canonical owner/response
+facts rather than Session text or ProviderTurn ID spelling. These are semantic
+bindings, not a choice of physical storage encoding.
 
 Prompt/Context change 是行为代码 change，必须可追踪和可回归。
 
@@ -6799,11 +6818,15 @@ UI：`/p/:projectId` Root Workbench（Tree + Root Conversation）+ root deep-lin
 ```
 
 AH19 v1 adds a separate RootWorkspaceId-owned Conversation checkpoint
-frontier, distinct from the Workspace Work Session. It covers a contiguous
-Answered HumanMessage prefix; the current Claimed message is pinned once and
-remains uncovered until Answered. The exact ordering, binding, restart,
-retention and Work-isolation semantics are in SD v1.18 and P14 `02`. The
-owner-state physical design and migration remain separately authorized.
+frontier, distinct from the Workspace Work Session. Immutable HumanMessage
+identity/order/body is paired with exact Answered ResponseJob, Attempt and
+terminal ConversationResponseEpisode Execution evidence for a contiguous FIFO
+prefix. The current raw HumanMessage is pinned once only for its exact Running
+Job, active Attempt/Execution and lease; other-episode Running and all earlier
+non-Answered or malformed Job/Attempt evidence block the frontier. The exact
+ordering, binding, restart, retention and Work-isolation semantics are in SD
+v1.19 and P14 `02`. The owner-state physical design and migration remain
+separately authorized.
 
 ---
 
