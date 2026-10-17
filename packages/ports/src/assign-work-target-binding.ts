@@ -8,7 +8,17 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
-import type { DomainEventJournalError, RepositoryFailure } from "./errors.js";
+import type {
+  DomainEventJournalError,
+  LeaseFencingRejected,
+  RepositoryFailure,
+} from "./errors.js";
+import type {
+  LegacyAdoptionAttentionFact,
+  LegacyAdoptionAttentionResolutionFact,
+  RecordLegacyAdoptionAttentionFailureInput,
+  ResolveLegacyAdoptionAttentionInput,
+} from "./legacy-adoption-attention.js";
 import type { TransactionScope } from "./session.js";
 
 export type AssignWorkControlAuthorizationEvidence =
@@ -230,6 +240,55 @@ export type RecoveryAttentionFactStoreError =
     };
 
 export interface RecoveryAttentionFactStoreService {
+  readonly recordLegacyAdoptionFailure?: (
+    input: RecordLegacyAdoptionAttentionFailureInput,
+  ) => Effect.Effect<
+    LegacyAdoptionAttentionFact,
+    RecoveryAttentionFactStoreError | LeaseFencingRejected,
+    TransactionScope
+  >;
+  readonly resolveLegacyAdoptionFailure?: (
+    input: ResolveLegacyAdoptionAttentionInput,
+  ) => Effect.Effect<
+    Option.Option<LegacyAdoptionAttentionResolutionFact>,
+    RecoveryAttentionFactStoreError | LeaseFencingRejected,
+    TransactionScope
+  >;
+  readonly findLegacyAdoptionFailure?: (
+    attentionFactId: string,
+  ) => Effect.Effect<
+    Option.Option<LegacyAdoptionAttentionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly findLegacyAdoptionFailureByEventId?: (
+    eventId: string,
+  ) => Effect.Effect<
+    Option.Option<LegacyAdoptionAttentionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly listLegacyAdoptionFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<LegacyAdoptionAttentionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly findLegacyAdoptionResolution?: (
+    attentionFactId: string,
+  ) => Effect.Effect<
+    Option.Option<LegacyAdoptionAttentionResolutionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly listLegacyAdoptionResolutions?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<LegacyAdoptionAttentionResolutionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
   readonly isSubmittedDecisionBindingAvailable?: () => Effect.Effect<
     boolean,
     RecoveryAttentionFactStoreError,

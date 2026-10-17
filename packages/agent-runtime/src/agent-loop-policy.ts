@@ -34,6 +34,7 @@ export type ModelDecisionOutcome =
       readonly conversation?: boolean;
     }
   | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement }
+  | { readonly _tag: "RecoveryBlocked" }
   | {
       readonly _tag: "SubmittedDecisionBindingMismatch";
       readonly failureCode:

@@ -47,6 +47,7 @@ import type {
   ProviderRuntimeProgress,
   ProviderRuntimeService,
   ProviderTurnStoreService,
+  RecoveryAttentionFactStoreService,
   RuntimeSafetyObservation,
   SecretRef,
   SessionEntryRecord,
@@ -57,7 +58,11 @@ import type {
   WorkspacePlacementPortService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import {
+  canonicalizeLegacyAdoptionEvidenceV1,
+  LEGACY_ADOPTION_MISSING,
+  sha256Hex,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
   isProviderExecutionTimeout,
@@ -114,6 +119,7 @@ export interface ModelDecisionDependencies {
   readonly loopSteps?: AgentLoopStepStoreService;
   readonly loopStepFence?: AgentLoopStepFence;
   readonly providerTurns?: ProviderTurnStoreService;
+  readonly recoveryAttentionFacts?: RecoveryAttentionFactStoreService;
   readonly sessions: SessionRepositoryService;
   readonly humanMessages: HumanMessageStoreService;
   readonly turnProfileResolver: TurnProfileResolverService;
@@ -4656,18 +4662,258 @@ export const runModelDecision = (
             );
           }
           const decoded = decodeTurn(settled.canonicalEvents);
-          if (
-            settled.evidenceVersion === "legacy-success-v1" &&
-            (!decoded.ok || decoded.output.toolInvocations.length > 0)
-          ) {
+          if (settled.evidenceVersion === "legacy-success-v1" && !decoded.ok) {
             return yield* Effect.fail(
               failure({
                 _tag: "LegacyProviderResultRequiresAttention",
-                reason: decoded.ok
-                  ? "legacy output contains actions"
-                  : decoded.reason,
+                reason: decoded.reason,
               }),
             );
+          }
+          if (
+            settled.evidenceVersion === "legacy-success-v1" &&
+            decoded.ok &&
+            decoded.output.toolInvocations.length > 0 &&
+            loopStep.state === "Prepared"
+          ) {
+            const episode = executionEpisode(input.execution);
+            const recoveryStore = dependencies.recoveryAttentionFacts;
+            const recordLegacyAdoptionFailure =
+              recoveryStore?.recordLegacyAdoptionFailure;
+            const resolveLegacyAdoptionFailure =
+              recoveryStore?.resolveLegacyAdoptionFailure;
+            if (
+              loopStepFence === undefined ||
+              recordLegacyAdoptionFailure === undefined ||
+              resolveLegacyAdoptionFailure === undefined ||
+              episode === undefined ||
+              settled.settledAt === undefined ||
+              settled.settledAt.length === 0
+            ) {
+              return yield* Effect.fail(
+                failure({
+                  _tag: "LegacyProviderResultRequiresAttention",
+                  reason:
+                    "legacy action disposition cannot be safely inspected",
+                }),
+              );
+            }
+            const actionEvidence = [];
+            for (const [
+              actionIndex,
+              invocation,
+            ] of decoded.output.toolInvocations.entries()) {
+              const matches = persistedManifest.toolRoutes.filter(
+                (route) => route.name === invocation.toolName,
+              );
+              const route = matches[0];
+              if (
+                matches.length !== 1 ||
+                route === undefined ||
+                typeof route.version !== "string" ||
+                route.version.length === 0
+              ) {
+                return yield* Effect.fail(
+                  failure({
+                    _tag: "LegacyProviderResultRequiresAttention",
+                    reason:
+                      "legacy action route identity is not uniquely bound",
+                  }),
+                );
+              }
+              const logicalActionId = `lac_${sha256Hex(
+                JSON.stringify({
+                  executionId: input.execution.executionId,
+                  providerTurnId: settled.turn.providerTurnId,
+                  callRef: invocation.callRef,
+                  routeKind: route.route,
+                  actionKind: invocation.toolName,
+                }),
+              )}`;
+              actionEvidence.push({
+                actionIndex,
+                logicalActionId,
+                callRef: invocation.callRef,
+                toolName: invocation.toolName,
+                toolSchemaVersion: route.version,
+                inputHash: sha256Hex(invocation.argumentsJson),
+                stableActionId:
+                  typeof route.stableId === "string"
+                    ? route.stableId
+                    : LEGACY_ADOPTION_MISSING,
+                actionVersion: route.version,
+                argumentsSha256: sha256Hex(invocation.argumentsJson),
+                // A P9 action row alone is not P4 disposition evidence. The
+                // explicit marker lets a later exact P4 proof resolve this
+                // original fingerprint without guessing at restart.
+                disposition: LEGACY_ADOPTION_MISSING,
+              });
+            }
+            const episodeEvidence = (() => {
+              switch (episode._tag) {
+                case "WorkEpisode":
+                  return {
+                    kind: episode._tag,
+                    ref: episode.workId,
+                    revision: episode.targetWorkRevision,
+                  };
+                case "ConversationResponseEpisode":
+                  return {
+                    kind: episode._tag,
+                    ref: episode.messageId,
+                    revision: episode.responseJobRevision,
+                  };
+                case "InboxEpisode":
+                  return {
+                    kind: episode._tag,
+                    ref: episode.entryKey,
+                    revision: 0,
+                  };
+                case "DecisionEpisode":
+                  return {
+                    kind: episode._tag,
+                    ref: episode.decisionId,
+                    revision: episode.requestRevision,
+                  };
+              }
+            })();
+            let canonicalEventsSha256: string;
+            try {
+              canonicalEventsSha256 = sha256Hex(
+                canonicalizeLegacyAdoptionEvidenceV1(settled.canonicalEvents),
+              );
+            } catch {
+              return yield* Effect.fail(
+                failure({
+                  _tag: "LegacyProviderResultRequiresAttention",
+                  reason:
+                    "legacy canonical Provider evidence cannot be fingerprinted",
+                }),
+              );
+            }
+            const evidence = {
+              version: 1 as const,
+              executionId: input.execution.executionId,
+              projectId: input.execution.projectId,
+              workspaceId: input.execution.workspaceId,
+              episode: episodeEvidence,
+              step: {
+                logicalStepNo: loopStep.identity.logicalStepNo,
+                repairAttempt: loopStep.identity.repairAttempt,
+                providerTurnId: settled.turn.providerTurnId,
+                manifestId: settled.manifestId,
+                decoderVersion: "decode-turn-v1",
+              },
+              providerSuccess: {
+                attemptNo: settled.attemptNo,
+                evidenceVersion: settled.evidenceVersion,
+                finishReason: settled.finishReason,
+                settledAt: settled.settledAt,
+                canonicalEventsSha256,
+              },
+              actions: actionEvidence,
+              failureCode: "LegacyActionDispositionUnproven" as const,
+            };
+            const preparedLegacyStep = loopStep;
+            const resolution = yield* tx
+              .transact(
+                Effect.gen(function* () {
+                  const firstDetectedAt = yield* now();
+                  const resolved = yield* resolveLegacyAdoptionFailure({
+                    evidence,
+                    fence: loopStepFence,
+                    resolvedAt: firstDetectedAt,
+                  });
+                  if (Option.isSome(resolved)) {
+                    if (options.qualificationProbe !== undefined) {
+                      yield* Effect.promise(
+                        () =>
+                          options.qualificationProbe?.({
+                            boundary:
+                              "AH14BeforeLegacyAdoptionResolutionCommit",
+                            providerTurnId: settled.turn.providerTurnId,
+                            executionId: input.execution.executionId,
+                            logicalActionId: resolved.value.resolutionFactId,
+                          }) ?? Promise.resolve(),
+                      );
+                    }
+                    yield* providerTurns.adoptSettledSuccessEvidence(
+                      settled.turn.providerTurnId,
+                      settled.attemptNo,
+                      "legacy-success-v1",
+                      "provider-success-v1",
+                    );
+                    const adoptedStep = yield* durableLoopSteps.transition(
+                      {
+                        identity: preparedLegacyStep.identity,
+                        expectedRevision: preparedLegacyStep.revision,
+                        expectedState: "Prepared",
+                        next: {
+                          ...preparedLegacyStep,
+                          manifestId: settled.manifestId,
+                          state: "ProviderResultAvailable",
+                          decoderVersion: "decode-turn-v1",
+                          migrationProvenance: {
+                            _tag: "LegacySettledProviderSuccess",
+                            evidenceVersion: settled.evidenceVersion,
+                          },
+                          revision: preparedLegacyStep.revision + 1,
+                          updatedAt: yield* now(),
+                        },
+                      },
+                      durableFence,
+                    );
+                    return {
+                      _tag: "Resolved" as const,
+                      fact: resolved.value,
+                      step: adoptedStep,
+                    };
+                  }
+                  const fact = yield* recordLegacyAdoptionFailure({
+                    evidence,
+                    fence: loopStepFence,
+                    firstDetectedAt,
+                  });
+                  if (options.qualificationProbe !== undefined) {
+                    yield* Effect.promise(
+                      () =>
+                        options.qualificationProbe?.({
+                          boundary: "AH14BeforeLegacyAdoptionAttentionCommit",
+                          providerTurnId: settled.turn.providerTurnId,
+                          executionId: input.execution.executionId,
+                        }) ?? Promise.resolve(),
+                    );
+                  }
+                  return { _tag: "Blocked" as const, fact };
+                }),
+              )
+              .pipe(Effect.mapError(failure));
+            if (resolution._tag === "Blocked") {
+              if (options.qualificationProbe !== undefined) {
+                yield* Effect.promise(
+                  () =>
+                    options.qualificationProbe?.({
+                      boundary: "AH14AfterLegacyAdoptionAttentionCommit",
+                      providerTurnId: settled.turn.providerTurnId,
+                      executionId: input.execution.executionId,
+                      logicalActionId: resolution.fact.attentionFactId,
+                    }) ?? Promise.resolve(),
+                );
+              }
+              return { _tag: "RecoveryBlocked" };
+            }
+            loopStep = resolution.step;
+            if (options.qualificationProbe !== undefined) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH14AfterLegacyAdoptionResolutionCommit",
+                    providerTurnId: settled.turn.providerTurnId,
+                    executionId: input.execution.executionId,
+                    logicalActionId: resolution.fact.resolutionFactId,
+                  }) ?? Promise.resolve(),
+              );
+            }
           }
           if (loopStep.state === "Prepared") {
             const preparedStep = loopStep;

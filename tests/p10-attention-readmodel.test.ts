@@ -126,6 +126,43 @@ const rowsOf = (
   rows: ReadonlyArray<AttentionRow>,
 ): ReadonlyArray<AttentionRow> => rows.filter((row) => row.source === source);
 
+describe("AH14 LegacyAdoptionEvidenceInsufficient P10 source", () => {
+  it("uses only the exact Execution Workspace, fact dedup, fixed code and safe summary", () => {
+    const rows = deriveAttentionRows({
+      unfulfillableEvents: [],
+      deadlockEvents: [],
+      safetyStopSettlements: [],
+      reconciliationEscalatedEvents: [],
+      legacyAdoptionEvidenceFailureEvents: [
+        {
+          attentionFactId: "att_ah14",
+          executionId: "exe_ah14",
+          targetWorkspaceId: WS_X,
+          failureCode: "LegacyActionDispositionUnproven",
+          firstDetectedAt: "2026-10-17T00:00:01.000Z",
+        },
+      ],
+      openVerifications: [],
+      executionSettlements: [],
+      vacantProducerCandidates: [],
+      workspaceVacancies: [],
+      workOwners: [],
+    });
+    expect(rowsOf("LegacyAdoptionEvidenceInsufficient", rows)).toEqual([
+      {
+        source: "LegacyAdoptionEvidenceInsufficient",
+        severity: "ActionRequired",
+        targetWorkspaceId: WS_X,
+        dedupKey: "att_ah14",
+        summary:
+          "Legacy action outcome cannot be proven; operator review is required.",
+        occurredAt: "2026-10-17T00:00:01.000Z",
+        failureCode: "LegacyActionDispositionUnproven",
+      },
+    ]);
+  });
+});
+
 describe("P10-004 Attention read-model — six sources / severity / target / dedupKey (02 §1)", () => {
   it("Normal is the absence of facts — no rows, no Normal rows", () => {
     expect(

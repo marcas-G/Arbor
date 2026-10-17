@@ -22,6 +22,7 @@ import {
   P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION,
   P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
   P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
+  P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,
   p39WriterLockFilename,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
@@ -69,6 +70,7 @@ const PINNED_DESCRIPTOR_HASHES: Readonly<Record<number, string>> = {
   44: "2378c0170aae7beb0592c69bfffef9e611da6d5323caaa0de5b7d5360b7ff33f",
   45: "c7c934d2929fda3ac9928d0ce4da25c9b4b6dc7b532581f5a18c144a6ce1834f",
   46: "2b484f4d8c534644b4623702a4f383a410566386f6b8a8a401fd6fcd728c7828",
+  47: "7cc51d23acee151a45f9949c11c0179543b8344ac97ac3894878e9d52b92e4c1",
 };
 const PINNED_P45_BACKFILL_SOURCE_SHA256 =
   "3445512013678ab71f413fb9eea29a55338662b0d656c1bd427eb21cb8774f70";
@@ -78,6 +80,8 @@ const PINNED_SCHEMA44_SIGNATURE =
   "3cbae01c8835a1b4e40d62660725f15f746b04f06e2b08aca94eedc66c9d6ce7";
 const PINNED_SCHEMA45_SIGNATURE =
   "38c6e9348dab9dbbea21b92b2b6a0bd7b92d9a66cbda404753ac64b526a2e938";
+const PINNED_SCHEMA46_SIGNATURE =
+  "b25426eeeead9607bfcb929931736caad7dfb7f2b73590dd6d7a7da0163650bb";
 
 /** Offline resume may hold the permit while checking trusted file provenance
  * and applying several schema transactions. A competing resume can wait up to
@@ -225,13 +229,13 @@ export interface SchemaUpgradeTestHooks {
   readonly previewTemplate?: SchemaUpgradePreviewTemplate;
   readonly onPreviewTemplate?: (template: SchemaUpgradePreviewTemplate) => void;
   readonly beforeDatabaseTransaction?: (
-    version: 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46,
+    version: 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47,
   ) => void;
   readonly afterDatabaseCommit?: (
-    version: 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46,
+    version: 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47,
   ) => void;
-  readonly afterVersion46NoOpVerification?: (evidence: {
-    readonly userVersion: 46;
+  readonly afterVersion47NoOpVerification?: (evidence: {
+    readonly userVersion: 47;
     readonly reopenedReadOnly: true;
   }) => void;
   readonly beforeMaintenancePermitAcquire?: () => void;
@@ -313,7 +317,7 @@ export const parseSchemaUpgradeArguments = (
 
 export const schemaUpgradeUsage = (): string =>
   [
-    "Offline P39–P46 schema upgrade (operator-selected disposable target)",
+    "Offline P39–P47 schema upgrade (operator-selected disposable target)",
     "  --mode fresh --database <new-target> --p39-report-db <new-report> --copy-manifest <new-manifest>",
     "  --mode copy --source-database <offline-source> --database <new-copy> --p39-report-db <new-report> --copy-manifest <new-manifest>",
     "  --mode resume-copy --source-database <same-source> --database <same-copy> --p39-report-db <same-report> --copy-manifest <same-manifest>",
@@ -491,9 +495,9 @@ const validatePathSet = (
 };
 
 const assertSourcePrefix = (version: number): void => {
-  if (![36, 37, 38, 44, 45].includes(version))
+  if (![36, 37, 38, 44, 45, 46].includes(version))
     throw new SchemaUpgradeRefusal(
-      `copy source schema ${version} is unsupported; expected 36, 37, 38, 44, or 45`,
+      `copy source schema ${version} is unsupported; expected 36, 37, 38, 44, 45, or 46`,
     );
 };
 
@@ -518,6 +522,16 @@ const verifySourcePrefixSchema = async (
     )
       throw new SchemaUpgradeRefusal(
         "schema 45 source does not match the trusted cumulative descriptor prefix",
+      );
+    return;
+  }
+  if (version === 46) {
+    if (
+      readUserVersion(filename) !== 46 ||
+      sqliteSchemaSignature(filename) !== PINNED_SCHEMA46_SIGNATURE
+    )
+      throw new SchemaUpgradeRefusal(
+        "schema 46 source does not match the trusted cumulative descriptor prefix",
       );
     return;
   }
@@ -753,7 +767,7 @@ const manifestStepState = (
   if (
     !Number.isInteger(header.initialUserVersion) ||
     header.initialUserVersion < 36 ||
-    ![36, 37, 38, 44, 45].includes(header.initialUserVersion) ||
+    ![36, 37, 38, 44, 45, 46].includes(header.initialUserVersion) ||
     (header.mode === "copy" &&
       (header.source === null ||
         header.sourceUserVersion !== header.initialUserVersion ||
@@ -781,7 +795,7 @@ const manifestStepState = (
           },
         ]
       : []),
-    ...([40, 41, 42, 43, 44, 45, 46] as const)
+    ...([40, 41, 42, 43, 44, 45, 46, 47] as const)
       .map((to) => ({
         step: String(to).padStart(4, "0"),
         from: to - 1,
@@ -1064,7 +1078,7 @@ const validateResume = async (
       "copy target version/content differs from its last committed manifest boundary",
     );
   }
-  if (actualVersion < 36 || actualVersion > 46)
+  if (actualVersion < 36 || actualVersion > 47)
     throw new SchemaUpgradeRefusal(
       `resume target version ${actualVersion} is unsupported`,
     );
@@ -1096,6 +1110,11 @@ const migrationDescriptorByVersion = (version: number) => {
       return P45_RETRY_VERIFICATION_ORIGIN_MIGRATION;
     case 46:
       return P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION;
+    case 47:
+      return {
+        ...P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,
+        requiresUserVersion: 46,
+      };
     default:
       return undefined;
   }
@@ -1268,7 +1287,7 @@ const previewCommittedPrefixes = async (
         ),
       });
     }
-    for (const version of [40, 41, 42, 43, 44, 45, 46]) {
+    for (const version of [40, 41, 42, 43, 44, 45, 46, 47]) {
       const current = readVersionWithOpenSource(database);
       if (current >= version) continue;
       if (current !== version - 1)
@@ -1415,7 +1434,7 @@ const appendCommitted = (
   });
 };
 
-const runP40ToP46 = (
+const runP40ToP47 = (
   primary: Parameters<
     Parameters<typeof runP39SqliteMaintenanceWithPermit>[1]
   >[0],
@@ -1437,11 +1456,11 @@ const runP40ToP46 = (
         "PRAGMA user_version",
       ))[0]?.user_version,
     );
-    if (startingVersion < 39 || startingVersion > 46)
+    if (startingVersion < 39 || startingVersion > 47)
       throw new SchemaUpgradeRefusal(
-        `P40–P46 suffix expected version 39–46, found ${startingVersion}`,
+        `P40–P47 suffix expected version 39–47, found ${startingVersion}`,
       );
-    for (const version of [40, 41, 42, 43, 44, 45, 46]) {
+    for (const version of [40, 41, 42, 43, 44, 45, 46, 47]) {
       const currentRows = yield* primary.unsafe<{ user_version: number }>(
         "PRAGMA user_version",
       );
@@ -1477,7 +1496,7 @@ const runP40ToP46 = (
         preview.signature,
       );
       hooks.beforeDatabaseTransaction?.(
-        version as 40 | 41 | 42 | 43 | 44 | 45 | 46,
+        version as 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47,
       );
       if (version === 45 || version === 46) {
         yield* Effect.sync(() => {
@@ -1532,7 +1551,9 @@ const runP40ToP46 = (
           }),
         );
       }
-      hooks.afterDatabaseCommit?.(version as 40 | 41 | 42 | 43 | 44 | 45 | 46);
+      hooks.afterDatabaseCommit?.(
+        version as 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47,
+      );
       if (
         logicalSqliteDigest(targetPath) !== preview.digest ||
         prefixSignature(
@@ -1562,14 +1583,14 @@ const runP40ToP46 = (
         "PRAGMA user_version",
       ))[0]?.user_version,
     );
-    if (finalVersion !== 46)
+    if (finalVersion !== 47)
       throw new SchemaUpgradeRefusal(
-        `schema upgrade ended at ${finalVersion}, expected 46`,
+        `schema upgrade ended at ${finalVersion}, expected 47`,
       );
     const violations = yield* primary.unsafe("PRAGMA foreign_key_check");
     if (violations.length > 0)
       throw new SchemaUpgradeRefusal(
-        "schema version 46 failed foreign_key_check",
+        "schema version 47 failed foreign_key_check",
       );
     const projectColumns = yield* primary.unsafe<{
       name: string;
@@ -1619,11 +1640,11 @@ const runP40ToP46 = (
       );
     const finalDigest = logicalSqliteDigest(targetPath);
     if (finalDigest.length !== 64)
-      throw new SchemaUpgradeRefusal("version 46 logical digest is invalid");
+      throw new SchemaUpgradeRefusal("version 47 logical digest is invalid");
     if (source !== undefined) assertSourceUnchanged(source);
-    if (finalVersion === 46 && manifestStepState(manifest).version < 46) {
+    if (finalVersion === 47 && manifestStepState(manifest).version < 47) {
       throw new SchemaUpgradeRefusal(
-        "version 46 target lacks its final committed provenance record",
+        "version 47 target lacks its final committed provenance record",
       );
     }
     return manifest;
@@ -1649,7 +1670,7 @@ const runP39AndSuffix = async (
   try {
     previews =
       hooks.previewTemplate ??
-      (previewVersion === 46
+      (previewVersion === 47
         ? {
             prefixes: new Map(),
             p39Blocked: false,
@@ -1694,7 +1715,7 @@ const runP39AndSuffix = async (
     validateDescriptorPin(id);
     return pinnedDescriptorHash(id);
   });
-  if (previewVersion > 46) {
+  if (previewVersion > 47) {
     throw new SchemaUpgradeRefusal(
       `offline schema version ${previewVersion} is unsupported`,
     );
@@ -1755,7 +1776,7 @@ const runP39AndSuffix = async (
               p39Hashes,
             );
           }
-          return runP40ToP46(
+          return runP40ToP47(
             primary,
             prepared,
             targetPath,
@@ -1783,7 +1804,7 @@ const runP39AndSuffix = async (
             Effect.promise(async () => {
               if (prepared === undefined) {
                 throw new SchemaUpgradeRefusal(
-                  "version 46 no-op has no validated provenance manifest",
+                  "version 47 no-op has no validated provenance manifest",
                 );
               }
               const expectedIdentity = prepared.header.target;
@@ -1794,7 +1815,7 @@ const runP39AndSuffix = async (
                 )
               ) {
                 throw new SchemaUpgradeRefusal(
-                  "version 46 target identity changed after its primary connection closed",
+                  "version 47 target identity changed after its primary connection closed",
                 );
               }
               const expectedReportIdentity = prepared.header.report;
@@ -1805,7 +1826,7 @@ const runP39AndSuffix = async (
                 )
               ) {
                 throw new SchemaUpgradeRefusal(
-                  "version 46 report identity differs from the manifest",
+                  "version 47 report identity differs from the manifest",
                 );
               }
               verifyP39ReportEvidence(reportPath, expectedReportIdentity);
@@ -1830,7 +1851,7 @@ const runP39AndSuffix = async (
                   .all();
                 if (violations.length > 0) {
                   throw new SchemaUpgradeRefusal(
-                    "version 46 no-op target failed foreign_key_check",
+                    "version 47 no-op target failed foreign_key_check",
                   );
                 }
                 const projectColumns = readOnly
@@ -1843,7 +1864,7 @@ const runP39AndSuffix = async (
                   )
                 ) {
                   throw new SchemaUpgradeRefusal(
-                    "version 46 no-op target lacks required resource provenance",
+                    "version 47 no-op target lacks required resource provenance",
                   );
                 }
                 const legacyUnknown = Number(
@@ -1864,7 +1885,7 @@ const runP39AndSuffix = async (
                 );
                 if (legacyUnknown !== projects) {
                   throw new SchemaUpgradeRefusal(
-                    "version 46 no-op target lacks complete legacy provenance attribution",
+                    "version 47 no-op target lacks complete legacy provenance attribution",
                   );
                 }
                 const p43Tables = readOnly
@@ -1875,7 +1896,7 @@ const runP39AndSuffix = async (
                   .all();
                 if (p43Tables.length !== 2)
                   throw new SchemaUpgradeRefusal(
-                    "version 46 no-op target lacks the P43 tables",
+                    "version 47 no-op target lacks the P43 tables",
                   );
                 const observationGuards = readOnly
                   .prepare(
@@ -1891,7 +1912,7 @@ const runP39AndSuffix = async (
                   )
                 )
                   throw new SchemaUpgradeRefusal(
-                    "version 46 no-op target lacks P44 ApprovalRejected observation guards",
+                    "version 47 no-op target lacks P44 ApprovalRejected observation guards",
                   );
                 const p45Tables = readOnly
                   .prepare(
@@ -1909,7 +1930,7 @@ const runP39AndSuffix = async (
                   !inboxColumns.some(({ name }) => name === "updated_at")
                 ) {
                   throw new SchemaUpgradeRefusal(
-                    "version 46 no-op target lacks P45 origin/disposition/Inbox schema",
+                    "version 47 no-op target lacks P45 origin/disposition/Inbox schema",
                   );
                 }
                 const verificationColumns = readOnly
@@ -1932,7 +1953,54 @@ const runP39AndSuffix = async (
                   snapshotGuards.length !== 2
                 ) {
                   throw new SchemaUpgradeRefusal(
-                    "version 46 no-op target lacks verification snapshot schema and guards",
+                    "version 47 no-op target lacks verification snapshot schema and guards",
+                  );
+                }
+                const ah14Tables = readOnly
+                  .prepare(
+                    `SELECT name FROM sqlite_master WHERE type='table' AND name IN (
+                       'legacy_adoption_attention_facts',
+                       'legacy_adoption_attention_resolution_facts',
+                       'legacy_adoption_attention_rows')`,
+                  )
+                  .all();
+                const ah14FactColumns = readOnly
+                  .prepare("PRAGMA table_info(legacy_adoption_attention_facts)")
+                  .all() as Array<{ name: string }>;
+                const ah14ResolutionColumns = readOnly
+                  .prepare(
+                    "PRAGMA table_info(legacy_adoption_attention_resolution_facts)",
+                  )
+                  .all() as Array<{ name: string }>;
+                const ah14MarkerColumns = readOnly
+                  .prepare("PRAGMA table_info(legacy_adoption_attention_rows)")
+                  .all() as Array<{ name: string }>;
+                const ah14Triggers = readOnly
+                  .prepare(
+                    `SELECT name FROM sqlite_master WHERE type='trigger' AND name IN (
+                       'legacy_adoption_attention_facts_immutable_update',
+                       'legacy_adoption_attention_facts_immutable_delete',
+                       'legacy_adoption_attention_resolution_facts_immutable_update',
+                       'legacy_adoption_attention_resolution_facts_immutable_delete')`,
+                  )
+                  .all();
+                const names = (values: Array<{ name: string }>) =>
+                  values.map(({ name }) => name).sort();
+                if (
+                  ah14Tables.length !== 3 ||
+                  ah14Triggers.length !== 4 ||
+                  names(ah14FactColumns).join(",") !==
+                    "attention_fact_id,event_id,evidence_sha256,execution_id,failure_code,first_detected_at,logical_step_no,project_id,provider_turn_id,repair_attempt,workspace_id" ||
+                  names(ah14ResolutionColumns).join(",") !==
+                    "action_disposition_summary_json,action_disposition_summary_sha256,attention_fact_id,event_id,execution_id,original_evidence_sha256,project_id,resolution_code,resolution_evidence_sha256,resolution_fact_id,resolved_at,provider_turn_id,workspace_id"
+                      .split(",")
+                      .sort()
+                      .join(",") ||
+                  names(ah14MarkerColumns).join(",") !==
+                    "attention_fact_id,project_id,workspace_id"
+                ) {
+                  throw new SchemaUpgradeRefusal(
+                    "version 47 no-op target lacks exact P47 relations, constraints, or immutability guards",
                   );
                 }
               } finally {
@@ -1940,24 +2008,24 @@ const runP39AndSuffix = async (
               }
               const digest = logicalSqliteDigest(targetPath);
               const signature = prefixSignatureForDigest(
-                46,
-                descriptorHashesThrough(46),
+                47,
+                descriptorHashesThrough(47),
                 digest,
               );
               if (
-                version !== 46 ||
-                state.version !== 46 ||
+                version !== 47 ||
+                state.version !== 47 ||
                 state.pending !== undefined ||
                 state.isolated ||
                 digest !== state.lastDigest ||
                 signature !== state.lastPrefixSignature
               ) {
                 throw new SchemaUpgradeRefusal(
-                  "read-only reopened target is not the exact committed version 46 manifest head",
+                  "read-only reopened target is not the exact committed version 47 manifest head",
                 );
               }
-              hooks.afterVersion46NoOpVerification?.({
-                userVersion: 46,
+              hooks.afterVersion47NoOpVerification?.({
+                userVersion: 47,
                 reopenedReadOnly: true,
               });
             }),
@@ -2201,7 +2269,7 @@ const main = async (): Promise<void> => {
   try {
     const args = parseSchemaUpgradeArguments(process.argv.slice(2));
     await runSchemaUpgrade(args);
-    process.stdout.write("Schema upgrade completed at version 46.\n");
+    process.stdout.write("Schema upgrade completed at version 47.\n");
   } catch (cause) {
     const detail = formatSchemaUpgradeCliFailure(cause);
     process.stderr.write(`Schema upgrade refused or failed: ${detail}\n`);

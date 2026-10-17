@@ -653,6 +653,9 @@ export type SettledProviderTurnResult =
       readonly canonicalEvents: ReadonlyArray<CanonicalProviderEvent>;
       readonly attemptNo: number;
       readonly finishReason: string;
+      /** P9 evidence timestamp. Optional for source-compatible test adapters;
+       * production SQLite returns the exact settled ProviderAttempt time. */
+      readonly settledAt?: string;
       readonly usageJson: string;
       readonly evidenceVersion: string;
     }

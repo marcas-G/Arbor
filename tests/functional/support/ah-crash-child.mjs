@@ -43,6 +43,10 @@ if (
   targetBoundary !== "AH13AfterResponseSweepCommit" &&
   targetBoundary !== "AH14BeforeLegacyAdoptionCommit" &&
   targetBoundary !== "AH14AfterLegacyAdoptionCommit" &&
+  targetBoundary !== "AH14BeforeLegacyAdoptionAttentionCommit" &&
+  targetBoundary !== "AH14AfterLegacyAdoptionAttentionCommit" &&
+  targetBoundary !== "AH14BeforeLegacyAdoptionResolutionCommit" &&
+  targetBoundary !== "AH14AfterLegacyAdoptionResolutionCommit" &&
   targetBoundary !== "AH15BeforeInboxPromotionCommit" &&
   targetBoundary !== "AH15AfterInboxPromotionCommit"
 ) {

@@ -502,6 +502,25 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
                 attentionFactId,
               ),
             ),
+      ...(bindingAttention.findLegacyAdoptionFailure === undefined
+        ? {}
+        : {
+            findLegacyAdoptionFailure: (attentionFactId: string) =>
+              inTx(
+                bindingAttention.findLegacyAdoptionFailure?.(attentionFactId) ??
+                  Effect.succeed(Option.none()),
+              ),
+          }),
+      ...(bindingAttention.findLegacyAdoptionResolution === undefined
+        ? {}
+        : {
+            findLegacyAdoptionResolution: (attentionFactId: string) =>
+              inTx(
+                bindingAttention.findLegacyAdoptionResolution?.(
+                  attentionFactId,
+                ) ?? Effect.succeed(Option.none()),
+              ),
+          }),
       listProjectedAssignWorkBindingFailures: (projectId) =>
         inTx(attentionProjection.listAssignWorkBindingFailures(projectId)),
       listProjectedDeliverReplayFailures: (projectId) =>
@@ -546,6 +565,15 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
                   if (listSubmitted === undefined) return [];
                   return yield* listSubmitted(projectId);
                 }),
+              ),
+          }),
+      ...(attentionProjection.listLegacyAdoptionFailures === undefined
+        ? {}
+        : {
+            listProjectedLegacyAdoptionFailures: (projectId: ProjectId) =>
+              inTx(
+                attentionProjection.listLegacyAdoptionFailures?.(projectId) ??
+                  Effect.succeed([]),
               ),
           }),
       listProjectedWorkspaceResourceActivations: (projectId) =>
