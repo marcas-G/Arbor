@@ -1116,6 +1116,12 @@ describe("P3-013 agent driver", () => {
   });
 
   it("keeps an OutcomeUnknown action pending reconciliation instead of marking it applied", async () => {
+    const recoverySequence: string[] = [];
+    const actionResultBoundaries: Array<{
+      readonly boundary: string;
+      readonly executionId?: string;
+      readonly callRef?: string;
+    }> = [];
     const escalationCalls: Array<{
       readonly executionId: string;
       readonly fenceExecutionId: string;
@@ -1147,12 +1153,22 @@ describe("P3-013 agent driver", () => {
           }),
       },
       recordReconciliationEscalation: (input) => {
+        recoverySequence.push("P9EscalationCommitted");
         escalationCalls.push({
           executionId: input.execution.executionId,
           fenceExecutionId: input.fence.executionId,
           invocationRefs: input.invocationRefs,
         });
         return Effect.void;
+      },
+      qualificationProbe: async (event) => {
+        if (
+          event.boundary === "AH7BeforeActionResultCommit" ||
+          event.boundary === "AH7AfterActionResultCommit"
+        ) {
+          recoverySequence.push(event.boundary);
+          actionResultBoundaries.push(event);
+        }
       },
     });
     const program = Effect.gen(function* () {
@@ -1182,6 +1198,23 @@ describe("P3-013 agent driver", () => {
         fenceExecutionId: executionId,
         invocationRefs: ["tin_unknown"],
       },
+    ]);
+    expect(recoverySequence).toEqual([
+      "P9EscalationCommitted",
+      "AH7BeforeActionResultCommit",
+      "AH7AfterActionResultCommit",
+    ]);
+    expect(actionResultBoundaries).toEqual([
+      expect.objectContaining({
+        boundary: "AH7BeforeActionResultCommit",
+        executionId,
+        callRef: "c1",
+      }),
+      expect.objectContaining({
+        boundary: "AH7AfterActionResultCommit",
+        executionId,
+        callRef: "c1",
+      }),
     ]);
     expect(result.actions).toEqual([{ state: "ReconciliationPending" }]);
     expect(result.step).toEqual(

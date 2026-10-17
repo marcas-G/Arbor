@@ -903,6 +903,23 @@ export const executeAgentLoopActions = (
                 }) ?? Promise.resolve(),
             );
           }
+          if (
+            terminal.actionState === "ReconciliationPending" &&
+            terminal.status === "OutcomeUnknown" &&
+            dependencies.qualificationProbe !== undefined
+          ) {
+            yield* Effect.promise(
+              () =>
+                dependencies.qualificationProbe?.({
+                  boundary: "AH7BeforeActionResultCommit",
+                  providerTurnId: preparedTurn.manifest.providerTurnId,
+                  executionId: input.execution.executionId,
+                  logicalActionId: pendingAction.logicalActionId,
+                  callRef: invocation.callRef,
+                  actionIndex,
+                }) ?? Promise.resolve(),
+            );
+          }
           currentLoopStep = yield* tx
             .transact(
               Effect.gen(function* () {
@@ -1048,6 +1065,23 @@ export const executeAgentLoopActions = (
               }),
             )
             .pipe(Effect.mapError(failure));
+          if (
+            terminal.actionState === "ReconciliationPending" &&
+            terminal.status === "OutcomeUnknown" &&
+            dependencies.qualificationProbe !== undefined
+          ) {
+            yield* Effect.promise(
+              () =>
+                dependencies.qualificationProbe?.({
+                  boundary: "AH7AfterActionResultCommit",
+                  providerTurnId: preparedTurn.manifest.providerTurnId,
+                  executionId: input.execution.executionId,
+                  logicalActionId: pendingAction.logicalActionId,
+                  callRef: invocation.callRef,
+                  actionIndex,
+                }) ?? Promise.resolve(),
+            );
+          }
           if (dependencies.qualificationProbe !== undefined) {
             yield* Effect.promise(
               () =>
