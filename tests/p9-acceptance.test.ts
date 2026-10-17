@@ -4147,7 +4147,18 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
       rmSync(tempCheckoutParent, { recursive: true, force: false });
     }
 
-    expect(scripts.test ?? "").toContain("vitest run");
+    expect(scripts.test).toBe("node scripts/testing/run-core-tests.mjs");
+    const coreRunnerSource = readFileSync(
+      join(REPO_ROOT, "scripts", "testing", "run-core-tests.mjs"),
+      "utf8",
+    );
+    expect(coreRunnerSource).toMatch(/require\.resolve\("vitest"\)/);
+    expect(coreRunnerSource).toMatch(
+      /const listing = run\(process\.execPath,\s*\[cliPath,\s*"list",\s*"--filesOnly"\]/,
+    );
+    expect(coreRunnerSource).toMatch(
+      /\[\s*cliPath,\s*"run",\s*\.\.\.batch,[\s\S]*?"--maxWorkers=1",\s*"--no-file-parallelism",\s*"--retry=0",?\s*\]/,
+    );
   });
 
   it.fails("cleans run-owned SQLite roots after the test body throws", () => {
