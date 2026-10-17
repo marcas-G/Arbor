@@ -12,10 +12,14 @@ direct-child exit alone does not establish that descendants were removed. The
 existing 500ms cleanup-seam case continues to assert that an unreaped helper
 leaves tree cleanup unproven.
 
-Added a lifecycle regression case where the first helper exits after 1.25
-seconds, with no cleanup-budget override. The helper is reaped, the second
-taskkill attempt runs, and the test observes both target exit and descendant
-removal.
+Added a fake-clock lifecycle budget regression. After taskkill reaches its
+1-second operation timeout and the helper is asked to exit, the test advances
+through the old 1-second cleanup deadline and asserts that cleanup is still
+pending. It then advances to the helper's 1.25-second exit and proves the
+helper is reaped and a second taskkill attempt succeeds. Returning the default
+cleanup budget to 1 second deterministically fails at the old deadline. The
+test uses no simulated descendant as tree-kill evidence; the pre-existing real
+process-tree lifecycle test remains the separate process-tree qualification.
 
 ## Verification
 
@@ -26,6 +30,9 @@ removal.
 - `pnpm --filter @arbor/web build` — PASS.
 - Focused lifecycle tests (delayed helper, existing 500ms unproven case, and
   independent taskkill timeout) — PASS, 3/3.
+- Mutation check with the default reset to 1 second — expected FAIL at the old
+  helper-cleanup deadline, confirming the regression test detects the original
+  budget.
 - `recovers Occurred across AH7BeforeActionResultCommit` — PASS, 1/1, 133.783s.
 
 An initial unfiltered lifecycle-file attempt was stopped after unrelated real
