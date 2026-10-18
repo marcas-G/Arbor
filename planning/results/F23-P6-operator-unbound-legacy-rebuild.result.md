@@ -92,9 +92,13 @@ subprocess cases. The test deadline was raised to 1200 seconds and
 cleanup deadline spanning taskkill, direct-child close and PID polling.
 Taskkill spawn errors/nonzero exits retry only within that deadline; failure
 returns PID, elapsed/cleanup time, last taskkill result, direct-exit/PID state,
-stdout and stderr. A fake-dependency unit test verifies repeated taskkill
-failures terminate by the total deadline. The subsequent complete P6 run passed
-without reducing assertions.
+stdout and stderr. Each taskkill child handle is retained; if taskkill exceeds
+its command subdeadline, the helper is explicitly terminated and its `close`
+is awaited within the same total cleanup deadline. If helper termination is
+unconfirmed, cleanup records that state and does not spawn another overlapping
+taskkill. Three fake-dependency tests cover bounded retries, timeout-triggered
+termination/close, and no retry while a helper may remain active. The
+subsequent complete P6 run passed without reducing assertions.
 
 Two disposable fixture directories and one interrupted schema-upgrade
 temporary directory remain on disk because cleanup was blocked by the command
