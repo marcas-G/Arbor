@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { SecretStorePort, secretRef } from "@arbor/ports";
 import { Effect, type Layer } from "effect";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createSchema47TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   type ArborProviderConfigFile,

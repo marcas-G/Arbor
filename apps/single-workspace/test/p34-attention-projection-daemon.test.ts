@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ProjectId, parse } from "../../../packages/domain/src/index.js";
-import { createSchema47TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
@@ -59,7 +59,7 @@ describe("P34 daemon migration wiring", () => {
         ),
       );
       expect(result).toEqual({
-        version: 47,
+        version: 48,
         tables: [
           "assign_work_binding_attention_facts",
           "assign_work_target_bindings",

@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createSchema47TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
@@ -20,7 +20,7 @@ beforeAll(async () => {
 afterAll(() => schema44Factory?.cleanup());
 
 describe("P5 composition root", () => {
-  it("builds the full slice layer over a prestarted schema-47 DB", async () => {
+  it("builds the full slice layer over a prestarted schema-48 DB", async () => {
     const fixture = schema44Factory?.create();
     if (fixture === undefined) {
       throw new Error("Schema-44 test database factory was not prepared.");
@@ -58,7 +58,7 @@ describe("P5 composition root", () => {
         >,
       );
       expect(result).toEqual({
-        version: 47,
+        version: 48,
         attentionTable: "attention_projection_rows",
       });
     } finally {

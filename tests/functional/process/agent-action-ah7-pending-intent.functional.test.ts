@@ -543,7 +543,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
             const version = schema46.prepare("PRAGMA user_version").get() as
               | { readonly user_version?: number }
               | undefined;
-            expect(Number(version?.user_version)).toBe(47);
+            expect(Number(version?.user_version)).toBe(48);
           } finally {
             schema46.close();
           }
