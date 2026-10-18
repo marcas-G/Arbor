@@ -4,11 +4,14 @@ import { describe, expect, it } from "vitest";
 import {
   AgentLoopStepStoreLive,
   ClockLive,
+  ConversationAttemptStoreLive,
+  ConversationCheckpointStoreLive,
+  ConversationResponseJobStoreLive,
   EnvironmentRevisionStoreLive,
+  ExecutionRepositoryLive,
   HumanMessageStoreLive,
   IdGeneratorLive,
   layer,
-  P16_MIGRATIONS,
   P17_MIGRATIONS,
   P19_MIGRATIONS,
   P20_MIGRATIONS,
@@ -33,6 +36,7 @@ import {
 } from "../packages/agent-runtime/src/index.js";
 import {
   type AgentExecutionState,
+  CommandId,
   type CommandSubmissionContext,
   type Execution,
   ExecutionId,
@@ -50,8 +54,11 @@ import {
 import {
   AgentLoopStepStore,
   type CanonicalProviderEvent,
+  ConversationAttemptStore,
+  ConversationResponseJobStore,
   EnvironmentRevisionStore,
   ExecutionDriverPort,
+  HumanMessageStore,
   type ModelCapability,
   ModelCapabilityPort,
   type ModelFacingToolDefinition,
@@ -64,10 +71,12 @@ import {
   type RuntimeSafetyGateService,
   SessionRepository,
   SkillRegistry,
+  TransactionPort,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
+import { createSchema48TestDatabase } from "./support/schema44-database.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -146,9 +155,10 @@ const makeApp = (
     readonly controlAuthorizer?: ControlActionAuthorizerService;
     readonly qualificationProbe?: AgentLoopQualificationProbe;
     readonly recordReconciliationEscalation?: AgentLoopDriverOptions["recordReconciliationEscalation"];
+    readonly databaseFilename?: string;
   } = {},
 ) => {
-  const base = layer({ filename: ":memory:" });
+  const base = layer({ filename: options.databaseFilename ?? ":memory:" });
   const infra = Layer.mergeAll(
     base,
     ClockLive,
@@ -242,6 +252,8 @@ const makeApp = (
                   rejectOnce(delegate.appendEntry(...args)),
                 appendEntryIdempotent: (...args) =>
                   rejectOnce(delegate.appendEntryIdempotent(...args)),
+                appendItemIdempotent: (...args) =>
+                  rejectOnce(delegate.appendItemIdempotent(...args)),
               });
             }),
           ),
@@ -331,6 +343,10 @@ const makeApp = (
       Layer.provide(WorkRepositoryLive, infra),
       Layer.provide(TransactionPortLive, infra),
       Layer.provide(HumanMessageStoreLive, infra),
+      Layer.provide(ExecutionRepositoryLive, infra),
+      Layer.provide(ConversationResponseJobStoreLive, infra),
+      Layer.provide(ConversationAttemptStoreLive, infra),
+      Layer.provide(ConversationCheckpointStoreLive, infra),
       environmentRevisions,
     ),
   );
@@ -340,6 +356,12 @@ const makeApp = (
     providerRuntime,
     modelContext,
     capabilityLayer,
+    Layer.provide(TransactionPortLive, infra),
+    Layer.provide(HumanMessageStoreLive, infra),
+    Layer.provide(ExecutionRepositoryLive, infra),
+    Layer.provide(ConversationResponseJobStoreLive, infra),
+    Layer.provide(ConversationAttemptStoreLive, infra),
+    Layer.provide(ConversationCheckpointStoreLive, infra),
   );
 };
 
@@ -464,6 +486,148 @@ const conversationExecution = (messageId: string): Execution => ({
     },
   },
 });
+
+const currentConversationContext: CommandSubmissionContext = {
+  ...context,
+  workerIncarnationId: "incarnation:p3-current-conversation",
+};
+
+const seedCurrentConversation = (input: {
+  readonly messageId: string;
+  readonly body: string;
+  readonly commandId: CommandId;
+  readonly fingerprint: string;
+}) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const tx = yield* TransactionPort;
+    const humanMessages = yield* HumanMessageStore;
+    const jobs = yield* ConversationResponseJobStore;
+    const attempts = yield* ConversationAttemptStore;
+    const primarySessionId =
+      "ses_018f2b3c-4d5e-7abc-8def-0123456789ab" as never;
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql.unsafe(
+          `INSERT INTO projects (
+             project_id, name, root_workspace_id, project_policy,
+             project_policy_revision, default_configuration, environment_ref,
+             lifecycle, revision, created_at, updated_at
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          [
+            projectId,
+            "P3 current Conversation",
+            workspaceId,
+            "{}",
+            0,
+            "{}",
+            "local",
+            "Open",
+            0,
+            "t",
+            "t",
+          ],
+        );
+        yield* ensureLegacyProjectResourceSourceFixture();
+        yield* sql.unsafe(
+          `INSERT INTO sessions (
+             session_id, binding_kind, workspace_id, execution_id,
+             context_epoch, created_at
+           ) VALUES (?, 'WorkspacePrimary', ?, NULL, 0, 't'),
+                    (?, 'ExecutionScoped', NULL, ?, 0, 't')`,
+          [primarySessionId, workspaceId, sessionId, executionId],
+        );
+        yield* sql.unsafe(
+          `INSERT INTO workspaces (
+             workspace_id, project_id, parent_workspace_id, name,
+             responsibility_definition, responsibility_revision,
+             resource_boundary, resource_boundary_revision, agent_binding,
+             primary_session_id, current_work_id, workspace_policy,
+             workspace_policy_revision, revision, lifecycle, created_at, updated_at
+           ) VALUES (?, ?, NULL, ?, '{}', 0, '{}', 0, '{}', ?, NULL,
+                     '{}', 0, 0, 'Active', 't', 't')`,
+          [workspaceId, projectId, "P3 current Conversation", primarySessionId],
+        );
+        yield* sql.unsafe(
+          `INSERT INTO executions (
+             execution_id, project_id, binding_kind, workspace_id,
+             episode_kind, episode_ref, episode_revision, parent_execution_id,
+             mission, session_id, admitted_at, stop_requested_at,
+             settlement_kind, settlement_json, settled_at
+           ) VALUES (?, ?, 'workspace', ?, 'ConversationResponseEpisode', ?, 0,
+                     NULL, NULL, ?, 't', NULL, NULL, NULL, NULL)`,
+          [executionId, projectId, workspaceId, input.messageId, sessionId],
+        );
+        yield* sql.unsafe(
+          `INSERT INTO execution_leases (
+             execution_id, worker_id, worker_incarnation_id, generation,
+             expires_at, updated_at
+           ) VALUES (?, ?, ?, 0, '9999-12-31T00:00:00.000Z', 't')`,
+          [
+            executionId,
+            currentConversationContext.workerId,
+            currentConversationContext.workerIncarnationId,
+          ],
+        );
+      }),
+    );
+    yield* tx.transact(
+      Effect.gen(function* () {
+        yield* humanMessages.insertPending({
+          messageId: input.messageId,
+          projectId,
+          rootWorkspaceId: workspaceId,
+          humanPrincipal: principal,
+          bodyRef: input.body,
+          commandId: input.commandId,
+          fingerprint: input.fingerprint,
+          state: "Pending",
+          claimedByExecutionId: null,
+          createdAt: "t",
+          settledAt: null,
+          responseBody: null,
+          providerReasoning: null,
+          attemptNo: 0,
+        });
+        yield* jobs.insert({
+          messageId: input.messageId as never,
+          projectId,
+          rootWorkspaceId: workspaceId,
+          state: { _tag: "Running", attemptNo: 0, executionId },
+          nextAttemptNo: 1,
+          policyVersion: "conversation-retry-v1",
+          providerReasoning: null,
+          lastFailureClass: null,
+          revision: 1,
+          createdAt: "t",
+          updatedAt: "t",
+        });
+        yield* attempts.insert({
+          messageId: input.messageId as never,
+          attemptNo: 0,
+          executionId,
+          admittedAt: "t",
+          settledAt: null,
+          settlementKind: null,
+          failureClass: null,
+          failureFingerprint: null,
+          retryDecision: null,
+          policyVersion: "conversation-retry-v1",
+        });
+      }),
+    );
+  });
+
+const withCurrentSchema48 = async <A>(
+  body: (databaseFilename: string) => Promise<A>,
+): Promise<A> => {
+  const fixture = await createSchema48TestDatabase();
+  try {
+    return await body(fixture.databaseFilename);
+  } finally {
+    fixture.cleanup();
+  }
+};
 
 /** B-9: the drive plus the durable ProviderTurn count, so tests can prove that
  * bounded repair really re-prepared (a new ProviderTurn) and that a stale
@@ -834,58 +998,51 @@ describe("P3-013 agent driver", () => {
           observation: { text: observationMarker, truncated: false },
         }),
     };
-    const app = makeApp([], {
-      controlHandlers: [proposalHandler],
-      providerRuntime: Layer.succeed(ProviderRuntime, {
-        runTurn: (input) => {
-          requests.push(input.request);
-          const events = call === 0 ? proposeWorkspaceTurn : textTurn;
-          call += 1;
-          return Effect.succeed({
-            events: [
-              {
-                _tag: "TurnStarted",
-                providerTurnId: input.providerTurnId,
-                attemptNo: 0,
-                modelRef: input.request.modelRef,
-              },
-              ...events,
-            ],
-            attemptNo: 0,
-            retryDecisions: [],
-          });
-        },
-      }),
-    });
     const messageId = "msg_018f2b3c-4d5e-7abc-8def-0123456789a4";
-    const settlement = await run(
-      Effect.gen(function* () {
-        yield* runMigrations(P17_MIGRATIONS);
-        yield* seed;
-        const sql = yield* SqlClient;
-        yield* sql.unsafe(
-          "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no, provider_reasoning_json) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,0,NULL)",
-          [
+    const settlement = await withCurrentSchema48((databaseFilename) => {
+      const app = makeApp([], {
+        controlHandlers: [proposalHandler],
+        databaseFilename,
+        providerRuntime: Layer.succeed(ProviderRuntime, {
+          runTurn: (input) => {
+            requests.push(input.request);
+            const events = call === 0 ? proposeWorkspaceTurn : textTurn;
+            call += 1;
+            return Effect.succeed({
+              events: [
+                {
+                  _tag: "TurnStarted",
+                  providerTurnId: input.providerTurnId,
+                  attemptNo: 0,
+                  modelRef: input.request.modelRef,
+                },
+                ...events,
+              ],
+              attemptNo: 0,
+              retryDecisions: [],
+            });
+          },
+        }),
+      });
+      return run(
+        Effect.gen(function* () {
+          yield* seedCurrentConversation({
             messageId,
-            projectId,
-            workspaceId,
-            "user:local",
-            "创建子工作区",
-            "cmd_018f2b3c-4d5e-7abc-8def-0123456789a4",
-            "fp-conversation-action",
-            "Claimed",
-            executionId,
-            "t",
-          ],
-        );
-        return yield* drive(
-          allowGate,
-          context,
-          conversationExecution(messageId),
-        );
-      }),
-      app,
-    );
+            body: "创建子工作区",
+            commandId: parse(CommandId)(
+              "cmd_018f2b3c-4d5e-7abc-8def-0123456789a4",
+            ),
+            fingerprint: "fp-conversation-action",
+          });
+          return yield* drive(
+            allowGate,
+            currentConversationContext,
+            conversationExecution(messageId),
+          );
+        }),
+        app,
+      );
+    });
 
     expect(settlement).toMatchObject({
       _tag: "Completed",
@@ -897,9 +1054,8 @@ describe("P3-013 agent driver", () => {
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          _tag: "Message",
-          role: "tool",
-          text: observationMarker,
+          _tag: "ControlResult",
+          outputText: observationMarker,
         }),
       ]),
     );
@@ -1226,53 +1382,52 @@ describe("P3-013 agent driver", () => {
   });
 
   it("replays a settled Provider result after the first sourced Session handoff is fenced", async () => {
-    const app = makeApp([textTurn], { failFirstSourcedAppend: true });
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P17_MIGRATIONS);
-      yield* seed;
-      const sql = yield* SqlClient;
-      yield* sql.unsafe(
-        "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no, provider_reasoning_json) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,0,NULL)",
-        [
+    const result = await withCurrentSchema48((databaseFilename) => {
+      const app = makeApp([textTurn], {
+        databaseFilename,
+        failFirstSourcedAppend: true,
+      });
+      const program = Effect.gen(function* () {
+        yield* seedCurrentConversation({
+          messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          body: "hello",
+          commandId: parse(CommandId)(
+            "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          ),
+          fingerprint: "fp",
+        });
+        const sql = yield* SqlClient;
+        const exactExecution = conversationExecution(
           "msg_018f2b3c-4d5e-7abc-8def-0123456789a1",
-          projectId,
-          workspaceId,
-          "user:local",
-          "hello",
-          "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
-          "fp",
-          "Claimed",
-          executionId,
-          "t",
-        ],
-      );
-      const exactExecution = conversationExecution(
-        "msg_018f2b3c-4d5e-7abc-8def-0123456789a1",
-      );
-      const first = yield* Effect.exit(
-        drive(allowGate, context, exactExecution),
-      );
-      const second = yield* drive(allowGate, context, exactExecution);
-      const attempts = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM provider_attempts",
-      );
-      const outputs = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn' AND entry_kind = 'ModelOutput'",
-      );
-      const steps = yield* sql.unsafe<{ state: string }>(
-        "SELECT state FROM agent_loop_steps WHERE execution_id = ?",
-        [executionId],
-      );
-      return {
-        first,
-        second,
-        attemptCount: Number(attempts[0]?.count ?? 0),
-        outputCount: Number(outputs[0]?.count ?? 0),
-        stepState: steps[0]?.state,
-      };
+        );
+        const first = yield* Effect.exit(
+          drive(allowGate, currentConversationContext, exactExecution),
+        );
+        const second = yield* drive(
+          allowGate,
+          currentConversationContext,
+          exactExecution,
+        );
+        const attempts = yield* sql.unsafe<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM provider_attempts",
+        );
+        const outputs = yield* sql.unsafe<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn' AND entry_kind = 'ModelOutput'",
+        );
+        const steps = yield* sql.unsafe<{ state: string }>(
+          "SELECT state FROM agent_loop_steps WHERE execution_id = ?",
+          [executionId],
+        );
+        return {
+          first,
+          second,
+          attemptCount: Number(attempts[0]?.count ?? 0),
+          outputCount: Number(outputs[0]?.count ?? 0),
+          stepState: steps[0]?.state,
+        };
+      });
+      return run(program, app);
     });
-
-    const result = await run(program, app);
     expect(result.first._tag).toBe("Failure");
     expect(result.second).toMatchObject({
       _tag: "Completed",
@@ -1284,54 +1439,51 @@ describe("P3-013 agent driver", () => {
   });
 
   it("rolls back the sourced answer when the OutputAccepted step transition is interrupted", async () => {
-    const app = makeApp([textTurn], {
-      failFirstOutputAcceptedTransition: true,
-    });
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P17_MIGRATIONS);
-      yield* seed;
-      const sql = yield* SqlClient;
-      yield* sql.unsafe(
-        "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no, provider_reasoning_json) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,0,NULL)",
-        [
+    const result = await withCurrentSchema48((databaseFilename) => {
+      const app = makeApp([textTurn], {
+        databaseFilename,
+        failFirstOutputAcceptedTransition: true,
+      });
+      const program = Effect.gen(function* () {
+        yield* seedCurrentConversation({
+          messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789a3",
+          body: "atomic handoff",
+          commandId: parse(CommandId)(
+            "cmd_018f2b3c-4d5e-7abc-8def-0123456789a3",
+          ),
+          fingerprint: "fp-atomic",
+        });
+        const sql = yield* SqlClient;
+        const exactExecution = conversationExecution(
           "msg_018f2b3c-4d5e-7abc-8def-0123456789a3",
-          projectId,
-          workspaceId,
-          "user:local",
-          "atomic handoff",
-          "cmd_018f2b3c-4d5e-7abc-8def-0123456789a3",
-          "fp-atomic",
-          "Claimed",
-          executionId,
-          "t",
-        ],
-      );
-      const exactExecution = conversationExecution(
-        "msg_018f2b3c-4d5e-7abc-8def-0123456789a3",
-      );
-      const first = yield* Effect.exit(
-        drive(allowGate, context, exactExecution),
-      );
-      const afterFirst = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn'",
-      );
-      const second = yield* drive(allowGate, context, exactExecution);
-      const afterSecond = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn'",
-      );
-      const attempts = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM provider_attempts",
-      );
-      return {
-        first,
-        afterFirst: Number(afterFirst[0]?.count ?? 0),
-        second,
-        afterSecond: Number(afterSecond[0]?.count ?? 0),
-        attempts: Number(attempts[0]?.count ?? 0),
-      };
+        );
+        const first = yield* Effect.exit(
+          drive(allowGate, currentConversationContext, exactExecution),
+        );
+        const afterFirst = yield* sql.unsafe<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn'",
+        );
+        const second = yield* drive(
+          allowGate,
+          currentConversationContext,
+          exactExecution,
+        );
+        const afterSecond = yield* sql.unsafe<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn'",
+        );
+        const attempts = yield* sql.unsafe<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM provider_attempts",
+        );
+        return {
+          first,
+          afterFirst: Number(afterFirst[0]?.count ?? 0),
+          second,
+          afterSecond: Number(afterSecond[0]?.count ?? 0),
+          attempts: Number(attempts[0]?.count ?? 0),
+        };
+      });
+      return run(program, app);
     });
-
-    const result = await run(program, app);
     expect(result.first._tag).toBe("Failure");
     expect(result.afterFirst).toBe(0);
     expect(result.second._tag).toBe("Completed");
@@ -1339,71 +1491,75 @@ describe("P3-013 agent driver", () => {
     expect(result.attempts).toBe(1);
   });
 
-  it("adopts a settled no-action result after migration without another Provider request", async () => {
-    const app = makeApp([textTurn], { failFirstSourcedAppend: true });
-    const legacyContext: CommandSubmissionContext = {
-      _tag: "ExecutionOrigin",
-      principal,
-      executionId,
-      fencingGeneration: 0 as never,
-    };
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P16_MIGRATIONS);
-      yield* seed;
-      const sql = yield* SqlClient;
-      yield* sql.unsafe(
-        "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no, provider_reasoning_json) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,0,NULL)",
-        [
-          "msg_018f2b3c-4d5e-7abc-8def-0123456789a2",
-          projectId,
-          workspaceId,
-          "user:local",
-          "legacy hello",
-          "cmd_018f2b3c-4d5e-7abc-8def-0123456789a2",
-          "fp-legacy",
-          "Claimed",
-          executionId,
-          "t",
-        ],
-      );
-      const exactExecution = conversationExecution(
-        "msg_018f2b3c-4d5e-7abc-8def-0123456789a2",
-      );
-      const first = yield* Effect.exit(
-        drive(allowGate, legacyContext, exactExecution),
-      );
-      yield* runMigrations(P17_MIGRATIONS);
-      const second = yield* drive(allowGate, context, exactExecution);
-      const attempts = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM provider_attempts",
-      );
-      const outputs = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn' AND entry_kind = 'ModelOutput'",
-      );
-      const steps = yield* sql.unsafe<{
-        state: string;
-        migration_provenance_json: string | null;
-      }>(
-        "SELECT state, migration_provenance_json FROM agent_loop_steps WHERE execution_id = ?",
-        [executionId],
-      );
-      const evidence = yield* sql.unsafe<{
-        success_evidence_version: string | null;
-      }>(
-        "SELECT success_evidence_version FROM provider_attempts WHERE provider_turn_id = ?",
-        [`ptn_${executionId}_0`],
-      );
-      return {
-        first,
-        second,
-        attemptCount: Number(attempts[0]?.count ?? 0),
-        outputCount: Number(outputs[0]?.count ?? 0),
-        step: steps[0],
-        evidenceVersion: evidence[0]?.success_evidence_version,
-      };
+  it("adopts equivalent schema-48 legacy settled no-action evidence without another Provider request", async () => {
+    const messageId = "msg_018f2b3c-4d5e-7abc-8def-0123456789a2";
+    const providerTurnId = `ptn_${executionId}_0`;
+    const result = await withCurrentSchema48((databaseFilename) => {
+      const app = makeApp([textTurn], {
+        databaseFilename,
+        failFirstSourcedAppend: true,
+      });
+      const program = Effect.gen(function* () {
+        yield* seedCurrentConversation({
+          messageId,
+          body: "legacy hello",
+          commandId: parse(CommandId)(
+            "cmd_018f2b3c-4d5e-7abc-8def-0123456789a2",
+          ),
+          fingerprint: "fp-legacy",
+        });
+        const sql = yield* SqlClient;
+        const exactExecution = conversationExecution(messageId);
+        const first = yield* Effect.exit(
+          drive(allowGate, currentConversationContext, exactExecution),
+        );
+        // Recreate the durable pre-AH1 success-evidence state on the current
+        // schema, without starting runtime against an older database prefix.
+        yield* sql.unsafe(
+          "UPDATE provider_attempts SET success_evidence_version = NULL WHERE provider_turn_id = ? AND attempt_no = 0",
+          [providerTurnId],
+        );
+        yield* sql.unsafe(
+          `UPDATE agent_loop_steps SET state = 'Prepared',
+             migration_provenance_json = NULL
+           WHERE execution_id = ? AND logical_step_no = 0 AND repair_attempt = 0`,
+          [executionId],
+        );
+        const second = yield* drive(
+          allowGate,
+          currentConversationContext,
+          exactExecution,
+        );
+        const attempts = yield* sql.unsafe<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM provider_attempts",
+        );
+        const outputs = yield* sql.unsafe<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn' AND entry_kind = 'ModelOutput'",
+        );
+        const steps = yield* sql.unsafe<{
+          state: string;
+          migration_provenance_json: string | null;
+        }>(
+          "SELECT state, migration_provenance_json FROM agent_loop_steps WHERE execution_id = ?",
+          [executionId],
+        );
+        const evidence = yield* sql.unsafe<{
+          success_evidence_version: string | null;
+        }>(
+          "SELECT success_evidence_version FROM provider_attempts WHERE provider_turn_id = ?",
+          [providerTurnId],
+        );
+        return {
+          first,
+          second,
+          attemptCount: Number(attempts[0]?.count ?? 0),
+          outputCount: Number(outputs[0]?.count ?? 0),
+          step: steps[0],
+          evidenceVersion: evidence[0]?.success_evidence_version,
+        };
+      });
+      return run(program, app);
     });
-
-    const result = await run(program, app);
     expect(result.first._tag).toBe("Failure");
     expect(result.second).toMatchObject({
       _tag: "Completed",
