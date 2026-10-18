@@ -1,13 +1,6 @@
 import {
-  type SpawnSyncOptionsWithStringEncoding,
-  type SpawnSyncReturns,
-  spawnSync,
-} from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import {
-  SANDBOX_ENV_ALLOWLIST,
+  projectSandboxEnvironment,
+  type SandboxProcessRunner,
   type ToolExecutionContext,
   type ToolIntent,
 } from "@arbor/ports";
@@ -15,38 +8,7 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { createShellExecutor, shellPolicy } from "../src/tools/shell.js";
 
-let spawnErrorDiagnostic: {
-  readonly code: string;
-  readonly message: string;
-} | null = null;
-const diagnosticSpawnSync = (
-  executable: string,
-  args: readonly string[],
-  options: SpawnSyncOptionsWithStringEncoding,
-): SpawnSyncReturns<string> => {
-  const result = spawnSync(executable, args, options);
-  const errorCode =
-    result.error && "code" in result.error ? result.error.code : undefined;
-  const code = typeof errorCode === "string" ? errorCode : undefined;
-  const sanitizedMessage = result.error?.message.replace(
-    /^spawnSync .+ (?=[A-Z0-9_]+$)/u,
-    "spawnSync <executable> ",
-  );
-  spawnErrorDiagnostic = result.error
-    ? {
-        code: code ?? "unknown",
-        message:
-          sanitizedMessage !== undefined &&
-          /^spawnSync <executable> [A-Z0-9_]+$/u.test(sanitizedMessage)
-            ? sanitizedMessage
-            : `${result.error.name}: child process launch failed`,
-      }
-    : null;
-  return result;
-};
-const diagnosticShellExecutor = createShellExecutor(diagnosticSpawnSync);
-
-const root = mkdtempSync(join(tmpdir(), "p4-shell-"));
+const diagnosticShellExecutor = createShellExecutor();
 const intent = (command: string): ToolIntent => ({
   callRef: "c",
   toolName: "shell",
@@ -59,19 +21,16 @@ const intent = (command: string): ToolIntent => ({
   approvalId: null,
 });
 const context = {} as ToolExecutionContext;
-const sandbox = {
-  handleId: "s",
-  rootPath: root,
-  mounts: [
-    {
-      ref: "workspace",
-      rootPath: root,
-      region: { resourceSpaceId: "filesystem", normalizedRegion: {} },
-      access: "ReadWrite" as const,
-    },
-  ],
-  writableRegions: [],
-};
+const sandbox = {} as never;
+const testProcess: SandboxProcessRunner = ({ args: processArgs }) =>
+  Effect.succeed({
+    _tag: "Completed" as const,
+    exitCode: processArgs.at(-1) === "exit 7" ? 7 : 0,
+    stdout: processArgs.at(-1) === "echo hi" ? "hi\n" : "",
+    stderr: "",
+    timedOut: false,
+    truncated: false,
+  });
 
 describe("P4 shell tool + policy", () => {
   it("classifies commands deterministically", () => {
@@ -150,6 +109,7 @@ describe("P4 shell tool + policy", () => {
         context,
         sandbox,
         regions: [],
+        runProcess: testProcess,
       }),
     );
     expect(denied.settlement._tag).toBe("ExpectedFailure");
@@ -160,19 +120,10 @@ describe("P4 shell tool + policy", () => {
         context,
         sandbox,
         regions: [],
+        runProcess: testProcess,
       }),
     );
-    const safeObservation = ran.observation.text
-      .replaceAll(root, "<workspace>")
-      .slice(0, 512);
-    expect(
-      ran.settlement._tag,
-      JSON.stringify({
-        actualOutcome: ran.settlement._tag,
-        observation: safeObservation,
-        spawnError: spawnErrorDiagnostic,
-      }),
-    ).toBe("Success");
+    expect(ran.settlement._tag).toBe("Success");
     expect(JSON.parse(ran.observation.text)).toMatchObject({
       exitCode: 0,
       stdout: expect.stringContaining("hi"),
@@ -184,13 +135,14 @@ describe("P4 shell tool + policy", () => {
         context,
         sandbox,
         regions: [],
+        runProcess: testProcess,
       }),
     );
     expect(failed.settlement._tag).toBe("ExpectedFailure");
     expect(JSON.parse(failed.observation.text).exitCode).toBe(7);
   });
 
-  it("passes only the shared sandbox environment projection to the shell process", async () => {
+  it("projects the policy allow-list at the sandbox provider boundary", async () => {
     const previous = {
       LANG: process.env.LANG,
       SECRET: process.env.SECRET,
@@ -199,23 +151,19 @@ describe("P4 shell tool + policy", () => {
     process.env.LANG = "p4-shell-test-locale";
     process.env.SECRET = "must-not-leak";
     process.env.API_KEY = "must-not-leak-either";
-    let captured:
-      | {
-          readonly executable: string;
-          readonly options: SpawnSyncOptionsWithStringEncoding;
-        }
-      | undefined;
-    const executor = createShellExecutor((executable, _args, options) => {
-      captured = { executable, options };
-      return {
-        pid: 1,
-        output: [null, "ok", ""],
+    let captured: NodeJS.ProcessEnv | undefined;
+    const runProcess: SandboxProcessRunner = ({ ambientEnvironment }) => {
+      captured = projectSandboxEnvironment(ambientEnvironment, ["LANG"]);
+      return Effect.succeed({
+        _tag: "Completed" as const,
+        exitCode: 0,
         stdout: "ok",
         stderr: "",
-        status: 0,
-        signal: null,
-      };
-    });
+        timedOut: false,
+        truncated: false,
+      });
+    };
+    const executor = createShellExecutor();
 
     try {
       const result = await Effect.runPromise(
@@ -232,25 +180,19 @@ describe("P4 shell tool + policy", () => {
           context,
           sandbox,
           regions: [],
+          runProcess,
         }),
       );
 
       expect(result.settlement._tag).toBe("Success");
       expect(captured).toBeDefined();
-      if (captured === undefined) throw new Error("spawn was not called");
-      const env = captured.options.env ?? {};
+      if (captured === undefined)
+        throw new Error("process port was not called");
+      const env = captured;
       expect(env.LANG).toBe("p4-shell-test-locale");
       expect(env.SECRET).toBeUndefined();
       expect(env.API_KEY).toBeUndefined();
-      expect(
-        Object.keys(env).every((key) => SANDBOX_ENV_ALLOWLIST.includes(key)),
-      ).toBe(true);
-      expect(captured.options).toMatchObject({
-        cwd: root,
-        timeout: 3210,
-        encoding: "utf8",
-      });
-      expect(["pwsh", "bash"]).toContain(captured.executable);
+      expect(Object.keys(env)).toEqual(["LANG"]);
     } finally {
       for (const [key, value] of Object.entries(previous)) {
         if (value === undefined) delete process.env[key];
