@@ -58,3 +58,26 @@ was a separate governance patch).
 
 **v1.20 successor:** `07` is an additive cross-phase design contract. It does
 not reopen P1 completion and does not authorize AgentLoopStep implementation.
+
+## Native OS Sandbox governance addendum
+
+`ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1` and
+`ACCEPT_NATIVE_OS_SANDBOX_COMMAND_AUTHORITY_AMENDMENT_V3` add the exact
+`DecideSandboxPolicy`/`GrantPermission` authority and persistence contracts
+to `01`–`06`. P1 owns the command receipts, immutable policy decision,
+issuer-provenance row, migration contract, two versioned events and recovery
+atomicity. See the landing record for accepted hashes and the file manifest.
+The current-main acceptance and schema-48 rebase are recorded in
+`planning/results/native-os-sandbox-schema48-design-landing-acceptance.record.md`
+and its companion manifest.
+
+## Accepted Native OS Sandbox schema-48 storage amendment
+
+P1 `04` owns migrations `0049_sandbox_policy_and_grant_provenance`
+(requires schema 48; exact durable decision/provenance storage) and
+`0050_sandbox_provider_unavailable_fact` (requires schema 49; V5 fact,
+queue and marker storage). P1 `05` owns the
+`SandboxProviderUnavailable(v1)` wake event. P9 owns the immutable source
+fact and P10 the retained admission queue/Attention marker. These migrations
+are design-only: neither is registered nor activated, and no database is
+upgraded.

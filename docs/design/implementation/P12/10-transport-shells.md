@@ -1,7 +1,7 @@
 # P12 — 10 Transport Shells (v1.13 G6)
 
 **Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.36 §4.1C, v1.39 EA-DG-01, v1.13 G6; SD v1.14 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
-**Status:** DRAFT.
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox transport addendum accepted under `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`.
 
 **敏感读取边界修订（2026-10-10，P12-SRA-01）：** accepted governance
 candidate SHA-256
@@ -232,6 +232,23 @@ and WS view/invalidation subscription) authenticate before reading or fanout;
 non-loopback/no-auth fails closed; loopback/no-auth preserves local single-user behavior
 Configured-auth reads admit only `user:local`; multi-principal visibility remains open
 ```
+
+## Accepted Native OS Sandbox transport addendum
+
+The existing authenticated `/commands` route transports human-originated
+`DecideSandboxPolicy` unchanged through Application and CommandGateway and
+returns its ordinary receipt/result. The existing `/views` route renders
+P10's `WorkspaceDetail.executionSummary.sandboxPolicy` projection and
+`SandboxProviderUnavailable` Attention row using the existing DTOs. The
+existing Problem DTO maps provider-unavailable to HTTP 503 and stable code
+`sandbox/provider-unavailable` with safe bounded detail. HTTP, WS, CLI and Web
+bind the same P10-owned profile/config/status/unavailable contracts.
+
+This addendum adds no authentication mode, Principal/Actor binding, Resolver
+or authorization endpoint, server-side Grant writer, request-derived
+authority, or direct store/event write. Model inputs cannot select or submit a
+trusted human policy. P12/10 preserves all existing resolver-before-receipt
+and Gateway command semantics; it only forwards and presents.
 
 ## 9. Host Project Resource Profile catalog (FT-DG-01 functional scope)
 

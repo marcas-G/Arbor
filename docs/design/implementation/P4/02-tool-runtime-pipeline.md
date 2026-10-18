@@ -236,3 +236,16 @@ P39-only `user_version=39` is not Runtime-startable/releasable. The cumulative
 P36→P37→P38→P39→P40 chain must commit 40 before service start; P39 sidecar and
 preflight remain unchanged. The runtime decoder must include the accepted RNO
 branch before opening version 40.
+
+## Accepted Native OS Sandbox pipeline
+
+For executable calls, CommandGateway exact approval and sandbox policy remain
+independent checks. Before spawn, P4 binds the current `SandboxHandle`, exact
+Execution/Episode policy, effective profile/provider digest, admitted mount
+read/write roots, work mount, environment allowlist, network policy and
+walltime/output/process/memory/CPU controls to one `SandboxProcessPort` call.
+Provider capability is probed before execution. Missing or unverifiable
+required enforcement returns typed unavailable/Attention and performs no
+spawn; it never falls back to `TrustedLocal`. The invocation owns the whole
+descendant process tree and close/stop cleans that tree without deleting the
+P11-owned Worktree.

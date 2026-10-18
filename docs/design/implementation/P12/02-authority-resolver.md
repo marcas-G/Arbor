@@ -18,7 +18,7 @@
 > approval rows, decide, consume or wake them.
 
 **Authority:** DID v1.14 G2, v1.13 G4, v1.8 G2 and v1.39 EA-DG-01; §4.1 (CommandSubmissionContext), §4.1A, §4.2, §4.3, §6.2 (L2), §12.3, §12.10; SD v1.14 §8.1–§8.5; P1 `01` §2A/§4/§9, P2 `01` §2 + `00` R1, P4 `03` §2/§4, P5 `01` §3.1; P1-DG-11.
-**Status:** DRAFT.
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox authority addendum accepted under `ACCEPT_NATIVE_OS_SANDBOX_COMMAND_AUTHORITY_AMENDMENT_V3`.
 
 ## 1. Boundary (frozen)
 
@@ -474,3 +474,31 @@ unauthorized / missing grant → no fact produced → DomainError.AuthorityDenie
 PermissionGrant store: activeGrants loads only state = 'Active' into grants; a revoked
   grant is absent → no matching grant → NoApplicableGrant (no fact), never default-allow
 ```
+
+## Accepted Native OS Sandbox authority amendment V3
+
+Add only `SandboxPolicyDecisionAuthority` for authenticated human
+`DecideSandboxPolicy`. The exact CAPA v2 `PermissionGrant` must bind the same
+HumanPrincipal decision subject, capability exactly `DecideSandboxPolicy`,
+and one canonical `ExecutionId`; Project/Workspace/Episode come from and are
+checked against the canonical Execution relation. Lifetime is finite,
+Execution-bound and checked using trusted `AuthorityNow`; Resolver never
+uses `envelope.issuedAt`.
+
+The issuer must be an authenticated HumanPrincipal in P5's current
+OS-protected operator snapshot and must differ from the decision subject.
+That allowlist authorizes only this exact GrantPermission capability and
+target, never a generalized admin/RBAC permission. `GrantPermissionAuthority`
+for this scope binds the snapshot revision/digest. The immutable
+`SandboxPolicyGrantIssuerProvenanceV1` records exact GrantId, originating
+Committed GrantPermission CommandId, issuer, config revision and digest.
+
+Composition loads the exact Grant via the existing transactional
+`PermissionGrantRepository.findById(permissionGrantId)` and exact provenance
+lookup, together with the canonical Execution facts and trusted clock. P12/02
+remains a pure `R = never` resolver: it reads no repository, receipt or
+decision store. It produces authority only if Grant, provenance, committed
+originating command and current operator snapshot match exactly. Removed or
+re-added operators cannot revive old Grants; a new Grant is required. P1
+Gateway performs its independent same-transaction exact recheck. No other
+P12 command scope or P12/10 authorization path is added.

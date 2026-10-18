@@ -48,3 +48,15 @@ Git worktree separation is resource isolation, not process isolation.
 permission, ownership, environment and shell-policy checks. Untrusted automatic
 execution requires a hardened provider that prevents the process from reaching
 host files, control storage, secrets and unauthorized networks.
+
+## Accepted Native OS Sandbox resource/security boundary
+
+A Git worktree and resource boundary isolate admitted code/resources for
+integration; they are not an OS process security boundary. `SandboxPort`
+retains mount identity and lifecycle. Provider setup binds the exact admitted
+mounts to `SandboxHandle` and the current Execution-scoped
+`SandboxProcessPolicy`; process spawn and descendants are owned by P4
+`SandboxProcessPort`. Provider close/stop cleans its process tree and
+provider-owned scratch without deleting or retiring the P11 Worktree. P11
+recovery preserves the exact resource/worktree ownership and never promotes a
+worktree into an isolation guarantee.

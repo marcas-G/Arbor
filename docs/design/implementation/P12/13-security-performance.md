@@ -1,12 +1,13 @@
 # P12 — 13 Security Hardening / Performance (DID §11 P12)
 
 **Authority:** DID v1.14 §11 P12, §8.4A (Information Trust Metadata), §8.16A (D5/D6), §9.1, §13 (empirical); SD v1.3 §8A (Information Trust Plane), §7.7 (resource control/usage), §10.7 (durability envelope), §14 No.45/No.54; P3 `02` §10, P3 `05` §4; P4 `04`; P11 `12`; P12 `02` (authority), `03` (secrets), `05` (storage assessment), `06` (worker identity), `08` (safety envelope).
-**Status:** DRAFT.
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox security/performance addendum accepted under `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`.
 
 ## 1. Boundary (frozen)
 
 ```text
-P12 enforces already-frozen invariants; it invents no new semantics.
+P12 enforces already-frozen invariants; the accepted Native OS Sandbox
+addendum is the sole new sandbox-security semantics in this document.
 Security hardening = Information Trust Plane at the context boundary + sandbox trajectory.
 Performance       = declared operating envelope + measurement method + ceilings.
 Mechanism is contract; numeric values are empirical (DID §13).
@@ -64,18 +65,18 @@ Assertion: no other construction path omits `provenance`. The required field mak
   - `06` — worker-originated observations remain `DataOnly`; worker identity never confers
     instruction authority.
 
-## 3. Sandbox trajectory (P4 → P11 → P12; no new isolation semantics)
+## 3. Sandbox trajectory (P4 → P11 → P12; accepted Native OS Sandbox amendment)
 
 ```text
-P4  `04` : SandboxPort + minimal local executor (root-confined, region-confined,
-           control-DB and secrets unreachable, close releases resources)
-P11 `12` : worktree-backed adapter; advanced isolation = new adapters; SandboxPort unchanged
-P12      : production sandbox composition; guarantees inherited verbatim
+P4  `04` : SandboxPort mount lifecycle + SandboxProcessPort OS execution policy
+P11 `12` : worktree-backed resource adapter; Worktree is not process isolation
+P12      : production composition wires a probed provider and durable policy
 ```
 
-- `SandboxPort` / `SandboxHandle` semantics are **unchanged** (P4 `04`, P11 `12`).
-- P12 hardens deployment/composition (adapter selection, root confinement, secret
-  unreachability), not the isolation model.
+- `SandboxPort` / `SandboxHandle` retain mount identity and lifecycle; the new
+  `SandboxProcessPort` adds the provider-enforced process boundary.
+- P12 wires provider selection, capability probe and policy; an unsupported
+  required capability fails closed rather than selecting a local executor.
 - The sandbox is not an authority substitute: authorization/resource admission precede it.
 - **Secret-unreachability via env allow-list (NEW-14).** `secret-env` is the default secret
   adapter (`03` §3): it resolves credentials from the process environment. Every sandbox
@@ -128,7 +129,7 @@ DataOnly fragments never raise authority (canRaiseAuthority enforced in code)
 every ContextFragment carries provenance; trust metadata survives planning/eviction
 ContextFragment construction centralized at the single context-boundary factory; no path omits provenance
 SecretMaterial never appears in any fragment / durable / observable surface (CI-2)
-sandbox guarantees inherited from P4/P11 unchanged; no new isolation semantics
+sandbox guarantees include accepted OS-enforced process isolation; Worktree remains a resource boundary
 every sandbox adapter projects an env allow-list; ambient secrets (incl. secret-env) unreachable
 operating envelope declared + measured with a stated method; verdict justified
 safety counters never auto-Cancel Work (CI-4, P12 `08` §4)
@@ -137,7 +138,8 @@ safety counters never auto-Cancel Work (CI-4, P12 `08` §4)
 ## 7. Must Not Decide
 
 - No new trust model beyond DID §8.4A / SD §8A; no authority ladder change.
-- No new isolation semantics or `SandboxPort` change.
+- No isolation semantics beyond the accepted Native OS Sandbox amendment; no
+  change to `SandboxPort` mount identity/open/close lifecycle.
 - No concrete performance/rate/concurrency numbers as contract (empirical, DID §13).
 - No usage-based automatic mutation; no safety-envelope auto-Cancel.
 - No telemetry value treated as authoritative (`04`).
@@ -156,3 +158,32 @@ sandbox env projection: spawned process env ⊆ SANDBOX_ENV_ALLOWLIST; sentinel 
 StorageScaleAssessment carries envelope + method + verdict; numbers documented empirical
 rate/runaway (D6) and concurrency ceilings (D5) drive Interrupted(RuntimeSafetyStop), Work Open
 ```
+
+## Accepted Native OS Sandbox security/performance addendum
+
+This accepted contract supersedes only P12's sandbox-specific deferral and
+SandboxPort-unchanged assumptions. It does not reopen the Information Trust
+Plane, secret ownership, worker identity, usage or unrelated D5/D6 duties.
+
+Providers must prove the requested effective policy: macOS Seatbelt;
+Linux/WSL bubblewrap with user/mount/PID/network namespaces and optional
+seccomp/cgroup hardening; Windows MXC is Experimental pending exact OS/SDK
+prerequisites, with separate elevated and explicitly weaker unelevated
+providers; container/remote providers enforce the same contract. MicroVM is
+not required for v1. The provider reports capability evidence; OS name or
+successful process start alone is not proof.
+
+Capability probing is fail-closed. All required filesystem roots, network
+authority and anti-bypass, DNS/IP pinning, redirect checks, environment,
+process-tree cleanup, walltime/output/process/memory/CPU limits must be
+enforced and tested. Restricted/Enabled require exact human authority and
+provider enforcement of their destination rules. An unsupported control makes
+that profile/provider unavailable. No automatic TrustedLocal fallback.
+
+T0 contract landing/review → T1 TrustedLocal rename, environment projection,
+child-tree cleanup and durable policy command → T2 per-platform provider
+bring-up (Experimental only) → T3 full network/resource conformance → T4
+release matrix. Only after T3 may an individual provider be called Supported.
+Numeric budgets and OS versions remain empirical P12 measurements and are not
+invented by this addendum. This design landing does not authorize runtime
+implementation or release.

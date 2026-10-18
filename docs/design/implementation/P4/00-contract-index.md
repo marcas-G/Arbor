@@ -188,3 +188,11 @@ invocationRefs))` truth and the no-blind-replay rule. When its owning Execution
 is bound to an EGP Work Episode, that settled source holds the exact
 `(WorkId, WorkRevision)` through P2's canonical readmission gate. It does not
 change ToolInvocation settlement, reconciliation, or retry semantics.
+
+## Native OS Sandbox accepted owner amendment
+
+The accepted parent package adds `SandboxProcessPort` as the P4-owned
+provider-neutral execution boundary while retaining `SandboxPort` mount,
+target and open/close ownership. Related changes are in `01`, `02`, `04` and
+`08`; P4 does not own host provider implementation, durable sandbox decisions
+or operator authorization.

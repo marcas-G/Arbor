@@ -167,3 +167,18 @@ Review round 1 (independent): 3 Blocking (High) + 8 material findings — all fi
 **Blocking = 0.**
 
 **Status:** FROZEN — P10 phase-scoped contracts; review Blocking = 0 (P10 FORMALLY CLOSED).
+
+## Accepted Native OS Sandbox read-model amendment
+
+P10 `02`/`05`/`07` project the P9 durable `SandboxProviderUnavailableFactV1`
+into the existing Attention and Workspace Detail surfaces. No new endpoint,
+ViewId, query parameter or Attention DTO field is introduced. Rebuild reads
+the durable P9 fact directly; the event is only a wakeup.
+
+## Accepted V5 queue/rebuild owner amendment
+
+P10 `02` owns the durable `sandbox_provider_unavailable_attention_queue`
+claim/consume state machine and P9-fact-keyed Attention marker;
+`04-rebuild-atscale.md` owns the atomic source-snapshot, queue re-arm, marker
+reset and offset rewind; `07` owns V5 qualification. The queue survives
+Consumed and event pruning; the P9 fact remains the source of truth.

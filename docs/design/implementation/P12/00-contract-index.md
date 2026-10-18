@@ -209,3 +209,12 @@ by DID v1.21 ALS-I1.
 DID v1.22 SCRC adds compaction-loop safety and provider qualification surfaces
 in `08`/`12`. These are additive successor contracts; migration 0019 and SCRC
 implementation remain unauthorized and do not reopen historical P12 closure.
+
+## Accepted Native OS Sandbox addenda
+
+P12 `02` owns the exact CAPA sandbox command/provenance resolution; `10` only
+transports the human command and P10-owned status/unavailable contracts;
+`13` owns provider capability/security/performance requirements and `14`
+owns the conformance matrix. These addenda change no unrelated P12 auth,
+authority submission order, or worker identity contract. Runtime/provider
+implementation remains separately authorized.

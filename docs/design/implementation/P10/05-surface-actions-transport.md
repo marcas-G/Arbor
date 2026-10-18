@@ -203,6 +203,36 @@ P12 owns : HTTP/WebSocket/CLI/web shell/auth/deployment transports —
 
 - apps/web (DID §10.1) remains unbuilt in P10; P10 delivers the `api-contracts` package as the transport-neutral contract surface P12 binds to.
 
+## Accepted Native OS Sandbox public projection
+
+P10 adds no ViewId, endpoint, request field or new Problem category. The
+existing `WorkspaceDetail.executionSummary` may include exactly this
+path-free optional projection, sourced only from the current durable P1
+`SandboxPolicyDecision` and matching P9 fact:
+
+```ts
+sandboxPolicy?: {
+  policyRevision: number
+  profile: "ReadOnly" | "WorkspaceWrite" | "FullAccess"
+  providerId: string
+  networkMode: "Disabled" | "Restricted" | "Enabled"
+  status: "Configured" | "Unavailable"
+  expiresAt: Instant
+}
+```
+
+Return `Configured` only while the exact decision is current and unexpired
+with no matching unavailable fact; return `Unavailable` only when the exact
+P9 `(executionId, episodeBinding, policyRevision)` fact exists. With no exact
+decision, omit the projection; never infer a profile from defaults. Do not
+return network destinations, host paths, environment values, provider output
+or config secrets. A matching P9 fact also produces the source-specific
+Attention defined by `02`; its public summary is fixed and path-free. Provider
+failure returned before a durable view exists uses the existing typed 503
+`projection/unavailable` Problem vocabulary, with stable code
+`sandbox/provider-unavailable` and no raw diagnostics. P12 only transports
+these P10-owned contracts.
+
 ## 4. Must Not Decide
 
 - No transport protocol/auth choices; no P2 runtime-semantics change; no resolver implementation; no P14 program redefinition (P8 owns; consume only — v1.11 G6).

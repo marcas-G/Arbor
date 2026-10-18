@@ -379,3 +379,15 @@ CommandStore.recordRetryableAttempt                -> separate scope (after roll
 
 - Execution/lease ports (P2), including `SessionRepository.appendEntry`.
 - Provider/Tool/Blob/Projection ports (P3+).
+
+## Native OS Sandbox accepted ports
+
+Extend the existing `PermissionGrantRepository` only for this exact contract:
+`findById(permissionGrantId)` returns the complete CAPA v2 projection and
+`findSandboxPolicyGrantIssuerProvenanceByGrantId(permissionGrantId)` returns
+the immutable issuer provenance in a TransactionScope. A provenance insert
+operation is callable only from the authenticated `GrantPermission` handler
+inside CommandGateway. Resolver composition may read the exact Grant and
+provenance facts; the pure P12 Resolver itself remains `R = never`. P1 also
+owns transactional `SandboxPolicyDecisionStore` exact-key read/write. No
+generic authorization port is added.

@@ -1,7 +1,7 @@
 # P5 — 01 Composition Root
 
 **Authority:** DID v1.9 §10.1/§10.4.1, §11 P5, G1/G6.
-**Status:** DRAFT (first draft for contract review).
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox addendum accepted under `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`.
 
 ## 1. Deliverable (G1)
 
@@ -15,6 +15,26 @@ apps/single-workspace/        # minimal runnable composition root
   production daemon/CLI (DID v1.9 G1): no auth/UI/ops surface.
 - `apps/*` is the Composition Root permitted by DID §10.4.1; it may depend on any
   package/adapter, and production packages never depend on it.
+
+## Accepted Native OS Sandbox composition amendment
+
+P5 composition injects an Execution-scoped policy-bound `SandboxProcessPort`
+and the selected provider alongside the existing `SandboxPort`; executors do
+not construct providers or choose a weaker fallback. Startup probes required
+provider capabilities before an executable spawn. Production defaults to
+`WorkspaceWrite` OS enforcement. `TrustedLocal` remains an explicit test/dev
+or human-selected compatibility mode and is never chosen after provider
+failure.
+
+P5 loads `SandboxPolicyGrantIssuerConfigV1` only from the OS-protected trusted
+host/organization deployment source, not Workspace/model input or inherited
+process environment. Validate the exact schema and canonical digest at
+startup; retain one immutable snapshot per daemon. The source enforces a
+durable monotone revision/high-water mark with no rollback/reuse. Missing,
+invalid or empty operator configuration disables the policy-authority path.
+Configuration change requires a quiesced daemon and restart; P5 records
+sanitized source/revision/digest/load audit without secrets. This accepted
+addendum is limited to the accepted sandbox/provider and issuer configuration.
 
 ## 2. Layer graph
 
@@ -78,8 +98,9 @@ if decision is Admit(focus):
 - P5 never chooses the Work itself and never mutates a repository directly.
 - `SelectCurrentWork`'s canonical mutation is an **Application** command handler
   (same shape as the P1 commands); P5 provides its first implementation and
-  integration. P1's frozen command set is unchanged (no new
-  `setCurrentWorkId` command).
+  integration. No `setCurrentWorkId` command is introduced. The accepted
+  Native OS Sandbox amendment separately adds only `DecideSandboxPolicy` and
+  does not alter SelectCurrentWork semantics.
 - The mutation runs only after the evaluator returns an exact
   `SelectCurrentWork(workId)`; the loop forwards that `workId` verbatim.
 - P6/P7 own the broader governance around current-Work selection and reuse the

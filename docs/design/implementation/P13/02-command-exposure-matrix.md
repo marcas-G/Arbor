@@ -28,9 +28,10 @@ Future composition registration 需先更新并接受 codec/origin scope，不�
 
 ### 2.1 当前 production 外部 codec 注册（DID §4.1B）
 
-下表与当前 `apps/single-workspace/src/registry.ts` 实际组合的 28 个 required
-commandType 一一对应；`ControlApprovalStore` 存在时另包含 1 个 optional
-`ResolveControlApproval` descriptor（29 total）。Codec owner 列指向 semantic payload 的唯一权威
+下表在接受的 sandbox addendum 后与 `apps/single-workspace/src/registry.ts`
+目标组合的 29 个 required commandType 一一对应；`ControlApprovalStore`
+存在时另包含 1 个 optional `ResolveControlApproval` descriptor（30 total）。
+Codec owner 列指向 semantic payload 的唯一权威
 契约；codec 只做严格结构验证。External policy 重述 owning phase 的起源
 政策，不新增授权。无 External 入口的类型仍须有 typed 内部 semantic
 validator。
@@ -62,6 +63,7 @@ validator。
 | `ConcludeVerification` | P8 `01` §3 | reject external; Verification consumer/runtime |
 | `RetryVerification` | P8 `01`/`02` | authenticated human governance only: exact Root-local human or Parent Workspace human; exact OrphanConclusionAuthority; no Agent origin |
 | `GrantPermission` | P12 `02` §5 | external only when P12 authority resolves the principal |
+| `DecideSandboxPolicy` | P1 `01` / P12 `02` accepted Native OS Sandbox amendment | authenticated human only; exact CAPA Grant, issuer provenance and Execution binding; reject Agent/system origins |
 | `RevokePermission` | P12 `02` §5 | external only when P12 authority resolves the principal |
 | `SubmitHumanMessage` | P14 `01` §1 | external authenticated human path |
 | `ResumeConversationResponse` | P17 `05` §1 | reject external unless P17 explicitly establishes that route |
@@ -86,7 +88,7 @@ but remain outside this production registry and codec set.
 
 来源：`packages/application/src/commands/**` 注册表 + P2 runtime 路径。
 
-### Human-actionable（current 15）
+### Human-actionable（accepted sandbox addendum: current 16）
 
 | commandType | 冻结依据 | UI 形态 |
 |---|---|---|
@@ -96,6 +98,7 @@ but remain outside this production registry and codec set.
 | `RecordDecision` | P6 D1 第一层 formation human gate：`RequestGovernance(FormationApproval)` + `RecordDecision` 绑定 exact proposal revision | 决策表单：对 pending FormationProposal / governance proposal 记录 Approve/Reject/Adjust，必须绑定 proposal revision |
 | `ResolveControlApproval` | P4 `03` / P12 CAPA exact control approval | ControlApprovalStore available 时队列中的精确控制审批项：Approve/Reject，绑定 ApprovalId 与 revision |
 | `ResolveExecutableApproval` | P4 `03` / P12 CAPA exact executable approval | 队列中的精确可执行审批项：Approve/Reject，绑定 ApprovalId 与 revision |
+| `DecideSandboxPolicy` | P1 `01` / P12 `02` accepted Native OS Sandbox authority | 精确当前 Execution 的 profile/provider/network 选择；`FullAccess` 单独警示并确认；仅经 `/commands` |
 | `SteerWork` | P6 `04` human steer（普通/Critical；quiescence 集成） | 纠偏表单（work 目标 + steer 文本；Critical 需显式确认） |
 | `AcceptWorkOutcome` | S1 Parent 接收；human-as-root-parent 路径 | 验收表单：对 root 直接子 workspace 的 delivered outcome 记录接受/拒绝 |
 | `RetryVerification` | P8 `01`/`02` exact orphan governance command | Verification Detail / VerifierOrphan：显式将 exact open Verification conclude 为 `Unknown(Orphaned)` 并创建一个 successor；Root Work 由 authenticated local human、child Work 由 exact Parent Workspace human 操作 |
@@ -216,5 +219,16 @@ decision 属 scheduler evaluator；`SelectCurrentWork` handler 只应用 evaluat
 
 ## 8. Verification
 
-`06` EC-6（UI command catalog 机械测试：暴露集合 == §2 Human-actionable 十五项）、
+`06` EC-6（UI command catalog 机械测试：暴露集合 == §2 Human-actionable 十六项，含已接受的 `DecideSandboxPolicy`）、
 EC-7（无 SelectCurrentWork 人工选择控件）、EC-8（无 SendMessage chat 控件）。
+
+## Accepted Native OS Sandbox command exposure
+
+`DecideSandboxPolicy` is Human-actionable only. It is absent from
+model/Agent ActionCall, control-tool and automated-origin catalogs. The UI
+choice is bound to the selected authenticated human and exact current
+Execution, expected revisions, explicit profile/provider/network policy and
+expiry; it submits only through the existing `/commands` Gateway path. A
+`FullAccess` selection requires explicit warning/confirmation. The matrix
+does not create service-side authority; P12/P1 enforce the exact Grant and
+durable decision.

@@ -324,4 +324,17 @@ Adapter/SDK errors are translated at the adapter boundary (DID §0A.6).
 - No ownership mutation (G4; `05`).
 - No Model Context / prompt semantics (P3).
 - No verification verdict (P8).
-- No environment/git-specific behavior (P11).
+- No environment/git-specific behavior (P11), except the accepted sandbox
+  process-policy boundary below; Worktree lifecycle remains P11-owned.
+
+## Accepted Native OS Sandbox execution boundary
+
+All shell, script, build, test, package-manager and other model/Workspace-
+influenced executable work enters through `SandboxProcessPort`; all child and
+descendant processes inherit one Execution-scoped policy and are tracked for
+stop/cleanup. Executors cannot call native process APIs directly. In-process
+Read/List/Patch continue to use `SandboxPort` mount/target resolution and do
+not claim OS process isolation. Exact-intent approval is evaluated separately
+and never changes the sandbox profile, mounts, network or resource limits.
+P39 fixed trusted host probes remain the only narrowly registered host-side
+spawn exception and are not an executor capability.

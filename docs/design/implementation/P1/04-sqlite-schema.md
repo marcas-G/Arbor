@@ -838,3 +838,248 @@ Retention horizon is deployment configuration; the rules above are frozen.
 - executions / execution_leases / verifications / dependencies /
   deliverables / permissions / messages DDL (owning phases).
 - Query optimization / index tuning beyond the indexes above.
+
+## Native OS Sandbox accepted schema amendment
+
+The accepted schema-48 rebase contract is migration
+`0049_sandbox_policy_and_grant_provenance`; it follows the complete ordered
+001–0048 prefix and requires `user_version = 48` plus the
+0029 subject-bound `permission_grants` schema. Any prefix/schema mismatch,
+existing provenance object, or disallowed NULL revision aborts before writes.
+This contract does not register/run the migration or upgrade any database.
+
+`permission_grants.revision` already exists as nullable/nonnegative. Preserve
+revision 0 as valid. Only rows already `Revoked` and P29-unbound
+(`subject_kind`, `subject_ref` or `capability` NULL) may backfill NULL to 0;
+all other NULL rows fail closed. Keep the existing column/check; do not add a
+column or rebuild `permission_grants`. New grants begin at revision 0;
+Active→Revoked increments exactly once; Revoked is terminal.
+
+0049 creates the immutable issuer-provenance table and triggers:
+
+```sql
+CREATE TABLE sandbox_policy_grant_issuer_provenance (
+  permission_grant_id TEXT PRIMARY KEY NOT NULL
+    REFERENCES permission_grants(permission_grant_id) ON DELETE RESTRICT,
+  grant_permission_command_id TEXT NOT NULL UNIQUE
+    REFERENCES commands(command_id) ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED,
+  issuer_principal TEXT NOT NULL,
+  operator_config_revision INTEGER NOT NULL CHECK (operator_config_revision >= 1),
+  operator_config_digest TEXT NOT NULL
+    CHECK (length(operator_config_digest) = 64
+       AND operator_config_digest NOT GLOB '*[^0-9a-f]*')
+);
+CREATE TRIGGER sandbox_policy_grant_issuer_provenance_no_update
+BEFORE UPDATE ON sandbox_policy_grant_issuer_provenance
+BEGIN SELECT RAISE(ABORT, 'immutable sandbox policy grant provenance'); END;
+CREATE TRIGGER sandbox_policy_grant_issuer_provenance_no_delete
+BEFORE DELETE ON sandbox_policy_grant_issuer_provenance
+BEGIN SELECT RAISE(ABORT, 'immutable sandbox policy grant provenance'); END;
+```
+
+No historical Grant receives provenance by backfill. Only a Committed exact
+`GrantPermission` can create it, atomically with Grant, receipt and event in
+P1 `03` order. The same migration creates the immutable decision table below.
+Duplicate, missing, corrupt or mismatched bindings are unavailable/fail-closed.
+
+`SandboxPolicyDecision` is committed-only and keyed by exact
+Project/Workspace/Execution/Episode plus monotone policy revision. Its exact
+physical mapping is fixed by accepted schema-48 plan SHA
+`3EAD84A15267DD00AF754C2FC2B5DCE98FDBDBC7C5CB305A99055646571A8F62`:
+
+```sql
+CREATE TABLE sandbox_policy_decisions (
+  project_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  episode_binding_json TEXT NOT NULL CHECK (json_valid(episode_binding_json)),
+  policy_revision INTEGER NOT NULL CHECK (policy_revision >= 1),
+  expected_execution_revision INTEGER NOT NULL CHECK (expected_execution_revision >= 0),
+  expected_policy_revision INTEGER NOT NULL CHECK (expected_policy_revision >= 0),
+  profile_id TEXT NOT NULL CHECK (profile_id IN ('ReadOnly','WorkspaceWrite','FullAccess')),
+  provider_id TEXT NOT NULL CHECK (provider_id = trim(provider_id) AND length(provider_id) > 0),
+  network_policy_json TEXT NOT NULL CHECK (json_valid(network_policy_json)),
+  policy_digest TEXT NOT NULL CHECK (length(policy_digest) = 64 AND policy_digest NOT GLOB '*[^0-9a-f]*'),
+  permission_grant_id TEXT NOT NULL,
+  grant_permission_command_id TEXT NOT NULL,
+  grant_issuer_principal TEXT NOT NULL,
+  operator_config_revision INTEGER NOT NULL CHECK (operator_config_revision >= 1),
+  operator_config_digest TEXT NOT NULL CHECK (length(operator_config_digest) = 64 AND operator_config_digest NOT GLOB '*[^0-9a-f]*'),
+  actor_principal TEXT NOT NULL,
+  decision_command_id TEXT NOT NULL UNIQUE,
+  issued_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, workspace_id, execution_id, episode_binding_json, policy_revision),
+  UNIQUE (execution_id, policy_revision),
+  CHECK (policy_revision = expected_policy_revision + 1),
+  FOREIGN KEY (execution_id, project_id, workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id) ON DELETE RESTRICT,
+  FOREIGN KEY (permission_grant_id, grant_permission_command_id, grant_issuer_principal,
+               operator_config_revision, operator_config_digest)
+    REFERENCES sandbox_policy_grant_issuer_provenance
+      (permission_grant_id, grant_permission_command_id, issuer_principal,
+       operator_config_revision, operator_config_digest) ON DELETE RESTRICT,
+  FOREIGN KEY (decision_command_id)
+    REFERENCES commands(command_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+);
+CREATE UNIQUE INDEX sandbox_policy_grant_provenance_exact_binding
+  ON sandbox_policy_grant_issuer_provenance
+    (permission_grant_id, grant_permission_command_id, issuer_principal,
+     operator_config_revision, operator_config_digest);
+CREATE TRIGGER sandbox_policy_decisions_no_update BEFORE UPDATE ON sandbox_policy_decisions
+BEGIN SELECT RAISE(ABORT, 'sandbox policy decisions are immutable'); END;
+CREATE TRIGGER sandbox_policy_decisions_no_delete BEFORE DELETE ON sandbox_policy_decisions
+BEGIN SELECT RAISE(ABORT, 'sandbox policy decisions are retained'); END;
+```
+
+`issued_at` is GatewayNow. Network policy uses canonical versioned JSON v1;
+`policy_digest` is the complete effective provider-policy digest. Canonical
+PrincipalId codecs and exact Grant/provenance equality are enforced by P1;
+no SQL PrincipalId regex or root-Workspace-only condition is added. The
+deferred command FK permits the same-transaction committed decision/receipt/
+event order. No decision/provenance history is backfilled.
+
+## Accepted V5 provider-unavailable fact storage — migration 0050
+
+Add only the forward-only
+`0050_sandbox_provider_unavailable_fact` contract after the complete accepted
+001–0049 prefix. Preflight accepts only `PRAGMA user_version = 49`, the exact
+0049 objects/signature, and accepted `executions` composite key
+`(execution_id, project_id, workspace_id)`. Reject gaps, unknown later
+versions, signature/schema mismatches and the dormant P43 Blocked WorkEpisode
+draft schema before DDL. Apply the DDL, foreign-key checks and
+`PRAGMA user_version=50` atomically. No backfill, table rebuild, prior
+migration edit, registration, execution or database upgrade is part of this
+landing.
+
+Exact 0050 physical schema:
+
+```sql
+CREATE TABLE sandbox_provider_unavailable_facts (
+  attention_fact_id TEXT NOT NULL PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE,
+  project_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  episode_binding_json TEXT NOT NULL CHECK (json_valid(episode_binding_json)),
+  policy_revision INTEGER NOT NULL CHECK (policy_revision >= 1),
+  policy_digest TEXT NOT NULL,
+  profile_id TEXT NOT NULL,
+  provider_id TEXT NOT NULL,
+  provider_version TEXT NOT NULL,
+  probe_evidence_ref TEXT,
+  failure_code TEXT NOT NULL CHECK (
+    failure_code = trim(failure_code)
+    AND length(trim(failure_code)) > 0
+    AND length(CAST(failure_code AS BLOB)) BETWEEN 1 AND 128
+  ),
+  first_detected_at TEXT NOT NULL,
+  UNIQUE (execution_id, policy_revision),
+  UNIQUE (attention_fact_id, project_id, workspace_id),
+  FOREIGN KEY (execution_id, project_id, workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id),
+  FOREIGN KEY (project_id, workspace_id, execution_id,
+               episode_binding_json, policy_revision)
+    REFERENCES sandbox_policy_decisions
+      (project_id, workspace_id, execution_id, episode_binding_json,
+       policy_revision) ON DELETE RESTRICT
+);
+
+CREATE INDEX sandbox_provider_unavailable_fact_project_time
+  ON sandbox_provider_unavailable_facts
+    (project_id, first_detected_at, attention_fact_id);
+
+CREATE TRIGGER sandbox_provider_unavailable_fact_no_update
+BEFORE UPDATE ON sandbox_provider_unavailable_facts
+BEGIN
+  SELECT RAISE(ABORT, 'sandbox provider unavailable facts are immutable');
+END;
+
+CREATE TRIGGER sandbox_provider_unavailable_fact_no_delete
+BEFORE DELETE ON sandbox_provider_unavailable_facts
+BEGIN
+  SELECT RAISE(ABORT, 'sandbox provider unavailable facts are retained');
+END;
+
+CREATE TABLE sandbox_provider_unavailable_attention_rows (
+  project_id TEXT NOT NULL,
+  attention_fact_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  PRIMARY KEY (project_id, attention_fact_id),
+  FOREIGN KEY (attention_fact_id, project_id, workspace_id)
+    REFERENCES sandbox_provider_unavailable_facts
+      (attention_fact_id, project_id, workspace_id)
+);
+
+CREATE TABLE sandbox_provider_unavailable_attention_queue (
+  project_id TEXT NOT NULL,
+  attention_fact_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('Pending','Claimed','Consumed')),
+  claim_id TEXT UNIQUE,
+  claim_expires_at TEXT,
+  attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+  enqueued_at TEXT NOT NULL,
+  consumed_at TEXT,
+  PRIMARY KEY (project_id, attention_fact_id),
+  CHECK (
+    (state = 'Pending' AND claim_id IS NULL AND claim_expires_at IS NULL
+      AND consumed_at IS NULL)
+    OR
+    (state = 'Claimed' AND claim_id IS NOT NULL
+      AND claim_expires_at IS NOT NULL AND consumed_at IS NULL)
+    OR
+    (state = 'Consumed' AND claim_id IS NULL
+      AND claim_expires_at IS NULL AND consumed_at IS NOT NULL)
+  ),
+  FOREIGN KEY (attention_fact_id, project_id, workspace_id)
+    REFERENCES sandbox_provider_unavailable_facts
+      (attention_fact_id, project_id, workspace_id)
+);
+
+CREATE INDEX sandbox_provider_unavailable_queue_due
+  ON sandbox_provider_unavailable_attention_queue
+    (state, claim_expires_at, enqueued_at, project_id, attention_fact_id);
+
+CREATE TRIGGER sandbox_provider_unavailable_queue_no_identity_update
+BEFORE UPDATE OF project_id, attention_fact_id, workspace_id, enqueued_at
+ON sandbox_provider_unavailable_attention_queue
+BEGIN
+  SELECT RAISE(ABORT, 'sandbox provider unavailable queue identity is immutable');
+END;
+
+CREATE TRIGGER sandbox_provider_unavailable_queue_no_delete
+BEFORE DELETE ON sandbox_provider_unavailable_attention_queue
+BEGIN
+  SELECT RAISE(ABORT, 'sandbox provider unavailable queue markers are retained');
+END;
+```
+
+The event id on a source fact is not FK-bound to prunable `domain_events`.
+Composite Execution/fact FKs bind tenant and Workspace. No cascades, source
+fact backfill or promotion of a projection/queue row to canonical state is
+allowed. The queue survives `Consumed`; P10 may rebuild only its disposable
+Attention marker and re-arm the same queue identity.
+
+0050 requires the exact accepted 0049 schema and descriptor signature, which
+must be computed from the final combined 0049 DDL during implementation
+qualification; the obsolete side-branch 0043 signature is not authoritative
+for schema 48:
+
+| Signature | SHA-256 |
+|---|---|
+| 0049 normalized SQL body | computed from exact accepted schema-48 DDL before implementation |
+| Descriptor fingerprint | computed from 0049/requires48 and exact normalized SQL before implementation |
+
+Fingerprint input remains the exact LF UTF-8 lines containing predecessor
+version, migration name and lowercase SQL SHA-256, separated by one LF with no
+trailing LF. Any mismatch at `user_version=49` fails closed; no schema
+guessing/adoption is permitted.
+
+The accepted P2 WorkBlocker owner/DDL is unchanged. Before any later
+implementation or registration, rebase the unregistered
+`P43_BLOCKED_WORKEPISODE_MIGRATION` descriptor and callsites remain on the
+separately accepted schema-48 path and must be placed after the new 0050
+prefix before any implementation/registration. This landing does not modify
+or register that descriptor or alter the accepted P2 owner/DDL.

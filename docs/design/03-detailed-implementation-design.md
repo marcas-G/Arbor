@@ -1,10 +1,10 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.52\
+**Version:** 1.53\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.51\
+**Supersedes:** v1.52\
 **Date:** 2026-10-18\
-**Depends on:** `Arbor System Design Specification v1.19`
+**Depends on:** `Arbor System Design Specification v1.20`
 
 **Governance changes (v1.51 → v1.52): F23 P6 operator rebuild and v1 route-command qualification**
 
@@ -45,6 +45,8 @@
   `AUTHORIZE_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_IMPLEMENTATION` has **not**
   been granted; no production implementation, migration, or preserved/online
   database operation is authorized by this landing.
+
+**Governance changes (v1.52 → v1.53): accepted Native OS Sandbox V1/V3/V5 and schema-48 fixed landing**
 
 **Governance changes (v1.50 → v1.51): AH19 Conversation owner × P17 Job authority reconciliation**
 
@@ -7768,3 +7770,56 @@ P12 completion                            COMPLETE — FORMALLY CLOSED
 2. 失败证据是什么；
 3. 为什么不能通过现有对象/接口的局部细化解决；
 4. 对 Domain、Persistence、Model Context、Runtime、Package DAG 和 Recovery 的影响。
+
+## Accepted Native OS Sandbox convergence (DID v1.53)
+
+Accepted governance chain:
+
+- `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`, proposal raw SHA-256
+  `ACAE6656234C50856FEC7B4B8AEF829E9A10C2EBDC1142862E35EAE3CF5C9341`;
+- `ACCEPT_NATIVE_OS_SANDBOX_COMMAND_AUTHORITY_AMENDMENT_V3`, raw SHA-256
+  `CCF6874FACF846FB9A9A32C861A29D17CC82F641139C6E8A18ACD69F8D04418D`;
+- `ACCEPT_NATIVE_OS_SANDBOX_PROVIDER_UNAVAILABLE_FACT_STORAGE_V5`, raw SHA-256
+  `B62294818B14347DB0B40278C115B5BD8397C3C05F2FBE1B00D7949481BE07BD`;
+- fixed schema-48 rebase plan accepted as
+  `ACCEPT_NATIVE_OS_SANDBOX_SCHEMA48_REBASE_FIXED_IMPLEMENTATION_PLAN`,
+  raw SHA-256
+  `3EAD84A15267DD00AF754C2FC2B5DCE98FDBDBC7C5CB305A99055646571A8F62`.
+
+The Native OS sandbox is distinct from the logical Workspace mount and Git
+Worktree. Executable Work is bound to a strict, execution-scoped
+`SandboxProcessPolicy`; the provider enforces profile, exact admitted mount
+access, process-tree, network, environment and resource limits. The profiles
+are `ReadOnly`, `WorkspaceWrite` and explicit `FullAccess`; FullAccess is
+never fallback. A weaker TrustedLocal path is available only as an explicit,
+accurately disclosed choice. Missing required enforcement means no process
+starts; the same Execution remains unavailable/blocked and Attention-visible.
+Action approval does not widen policy; policy choice does not grant approval.
+
+Only the authenticated human command `DecideSandboxPolicy`, through existing
+auth→Application→P1 Gateway, may commit the exact Execution/Episode policy.
+P12 resolves exact CAPA-v2 Grant authority, issuer provenance, target and
+finite lifetime before receipt access. P1 persists committed policy decision,
+event and receipt atomically; rejected commands persist none. P5 loads the
+strict operator-config snapshot. P9 consumes only the exact durable
+Execution/Episode decision and records unavailable capability as immutable
+`SandboxProviderUnavailableFactV1`; P10 derives safe ActionRequired Attention
+from that fact and retained queue, never from the wake event alone. Restart
+does not infer policy from model text, current defaults, events or Worktree
+state.
+
+On schema-48 baseline, P1 specifies forward-only migrations
+`0049_sandbox_policy_and_grant_provenance` (`requiresUserVersion=48`) and
+`0050_sandbox_provider_unavailable_fact` (`requiresUserVersion=49`). 0049
+adds immutable exact Grant issuer provenance and committed-only
+`SandboxPolicyDecision` storage; 0050 adds the V5 immutable unavailable fact,
+retained P10 admission queue/marker, and exact FK to the decision identity.
+These are owner contracts only: no migration is registered or activated and
+no database is upgraded. No historic authority, decision or fact is inferred
+or backfilled.
+
+The independent post-landing consistency review is a separate gate. The
+distinct implementation authorization
+`AUTHORIZE_NATIVE_OS_SANDBOX_CONVERGENCE_IMPLEMENTATION` remains NOT
+GRANTED; this design landing authorizes no code, tests, migration execution,
+database upgrade, deployment or release.

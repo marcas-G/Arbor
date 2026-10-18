@@ -1,7 +1,7 @@
 # P12 — 14 Acceptance / Exit Criteria
 
 **Authority:** DID v1.14 §11 P12, G1–G8, phase state; P12 completion blockers; P12 contract set `01`–`10`, `12`, `13`; P11 `00` (acceptance/closure pattern), P11 `06`/`13`; `planning/results/P8.result.md` (consumer-loop daemon wiring).
-**Status:** DRAFT.
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox conformance addendum accepted under `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`.
 
 ## 1. Acceptance story (deterministic)
 
@@ -158,3 +158,16 @@ pnpm test p12
 pnpm architecture
 pnpm check
 ```
+
+## Accepted Native OS Sandbox conformance gate
+
+T2 provider bring-up is Experimental only. For each declared Supported
+provider, P12/14 qualification must prove capability probe, exact admitted
+read/write roots, network Disabled/Restricted/Enabled behavior including
+DNS/IP pinning, redirect and bypass rejection, environment allowlist, whole
+process-tree cleanup, and configured walltime/output/process/memory/CPU
+controls. Include macOS Seatbelt, Linux/WSL namespaces/bwrap, Windows MXC and
+each elevated/unelevated provider separately, plus container/remote contract
+tests where claimed. Missing required evidence is Unavailable, not Supported.
+This acceptance gate specifies evidence only; it neither performs provider
+implementation nor authorizes release.
