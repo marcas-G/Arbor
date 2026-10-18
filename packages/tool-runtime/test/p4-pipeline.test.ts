@@ -1580,6 +1580,93 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
   });
 
+  it.each(["handle", "mount"] as const)(
+    "rejects a %s-mismatched policy before provider execution",
+    async (mismatch) => {
+      const trace: PipelineTrace = {
+        noEffectDenials: [],
+        events: [],
+        approvalConsumer: null,
+        intentWrites: 0,
+        effectAdmissions: 0,
+        approvalConsumes: 0,
+        sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
+      };
+      const policy = processPolicy(processEpisode);
+      const mismatchedPolicy: SandboxProcessPolicy =
+        mismatch === "handle"
+          ? { ...policy, sandboxHandleId: "different-handle" }
+          : {
+              ...policy,
+              admittedMounts: [
+                {
+                  ref: "workspace",
+                  rootPath: "/tmp/other",
+                  access: "ReadOnly",
+                },
+              ],
+            };
+      const result = await run(
+        app(false, processExecutor, {}, trace),
+        '{"target":{"mount":"workspace","path":"."}}',
+        null,
+        processContext(mismatchedPolicy),
+      );
+      expect(result._tag).toBe("RuntimeFailure");
+      expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+    },
+  );
+
+  it("rejects an invalid requested process timeout before provider execution", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
+    };
+    const invalidTimeoutExecutor: ToolExecutor = {
+      ...processExecutor,
+      execute: ({ runProcess }) =>
+        Effect.gen(function* () {
+          const result =
+            runProcess === undefined
+              ? {
+                  _tag: "Rejected" as const,
+                  failureCode: "ProcessCapabilityNotBound" as const,
+                }
+              : yield* runProcess({
+                  executable: "bash",
+                  args: ["-lc", "true"],
+                  cwd: { mount: "workspace", path: "." },
+                  requestedTimeoutMs: 0,
+                  ambientEnvironment: {},
+                });
+          return {
+            settlement: {
+              _tag: "RuntimeFailure" as const,
+              cause:
+                result._tag === "Rejected"
+                  ? result.failureCode
+                  : "unexpected provider call",
+            },
+            observation: { text: "invalid timeout rejected", truncated: false },
+            resultRef: null,
+          };
+        }),
+    };
+    const result = await run(
+      app(false, invalidTimeoutExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(processPolicy(processEpisode)),
+    );
+    expect(result._tag).toBe("RuntimeFailure");
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+  });
+
   it("does not inject process capability or trust an unavailable result from an unregistered executor", async () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],
