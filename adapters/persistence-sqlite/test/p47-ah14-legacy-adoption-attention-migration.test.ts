@@ -43,7 +43,7 @@ describe("P47 AH14 legacy-adoption evidence Attention migration", () => {
       offlineOnly: true,
     });
     expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-4)).toEqual([
-      45, 46, 47, 48,
+      47, 48, 49, 50,
     ]);
 
     const from46 = await createSchema46TestDatabase();
