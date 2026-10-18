@@ -2,11 +2,13 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
+  linkSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,7 +40,11 @@ import {
   parseP6InboxRebuildArguments,
   validateP6InboxManifestText,
 } from "../src/p6-inbox-rebuild.js";
-import { logicalSqliteDigest } from "../src/schema-upgrade-manifest.js";
+import { rejectSqliteArtifactAliases } from "../src/schema-upgrade.js";
+import {
+  descriptorHashesThrough,
+  logicalSqliteDigest,
+} from "../src/schema-upgrade-manifest.js";
 import { viewQueryFaceWithRetryAvailability } from "../src/transport/composition.js";
 
 describe("P6 Inbox operator rebuild CLI contract", () => {
@@ -95,6 +101,7 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
       operation: "rebuild-unbound-legacy-inbox-projections",
       schemaVersion: 48,
       schemaSignature: "b".repeat(64),
+      descriptors: descriptorHashesThrough(48),
       initialDatabaseDigest: "c".repeat(64),
     });
     const prepared = p6InboxManifestEnvelope(1, created.hash, {
@@ -117,6 +124,15 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
     expect(() => validateP6InboxManifestText(text.slice(0, -1))).toThrow(
       /torn/u,
     );
+  });
+
+  it("rejects operator evidence paths aliasing every SQLite protected-file suffix", () => {
+    const primary = "C:\\Arbor\\primary.sqlite";
+    for (const suffix of ["-wal", "-shm", "-journal"] as const) {
+      expect(() =>
+        rejectSqliteArtifactAliases([primary], [`${primary}${suffix}`]),
+      ).toThrow(/sidecar/u);
+    }
   });
 
   it("runs and resumes through the real P39 CLI in a clean child-process fixture", async () => {
@@ -287,6 +303,9 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
         "Prepared",
         "Committed",
       ]);
+      expect(records[0]?.record.descriptors).toEqual(
+        descriptorHashesThrough(48),
+      );
       expect(records[1]?.record.canonicalInputDigest).toBe(
         records[2]?.record.canonicalInputDigest,
       );
@@ -295,6 +314,110 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
         moved: 0,
         noOp: 0,
       });
+
+      const createdOnlyManifest = join(
+        fixture.directory,
+        "p6-created-only-drift.jsonl",
+      );
+      const createdOnlyStopped = await stopOperatorCliAtBoundary(
+        cli,
+        fixture.databaseFilename,
+        fixture.p39ReportFilename,
+        createdOnlyManifest,
+        "created",
+      );
+      expect(createdOnlyStopped.code).not.toBe(0);
+      const createdOnlyRecords = validateP6InboxManifestText(
+        readFileSync(createdOnlyManifest, "utf8"),
+      );
+      expect(createdOnlyRecords.map(({ record }) => record.kind)).toEqual([
+        "Created",
+      ]);
+      const createdOnlyDriftDb = new DatabaseSync(fixture.databaseFilename);
+      try {
+        createdOnlyDriftDb
+          .prepare(
+            "UPDATE works SET revision = 1, updated_at = '2026-10-18T00:01:00.000Z' WHERE work_id = 'wrk_p6_operator_fixture'",
+          )
+          .run();
+      } finally {
+        createdOnlyDriftDb.close();
+      }
+      const driftDigest = logicalSqliteDigest(fixture.databaseFilename);
+      const createdOnlyDrift = await runOperatorCli(
+        cli,
+        fixture.databaseFilename,
+        fixture.p39ReportFilename,
+        createdOnlyManifest,
+        true,
+      );
+      expect(createdOnlyDrift.code, createdOnlyDrift.output).not.toBe(0);
+      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(driftDigest);
+      expect(
+        validateP6InboxManifestText(
+          readFileSync(createdOnlyManifest, "utf8"),
+        ).map(({ record }) => record.kind),
+      ).toEqual(["Created"]);
+      const restoreCreatedDrift = new DatabaseSync(fixture.databaseFilename);
+      try {
+        restoreCreatedDrift
+          .prepare(
+            "UPDATE works SET revision = 0, updated_at = 't0' WHERE work_id = 'wrk_p6_operator_fixture'",
+          )
+          .run();
+      } finally {
+        restoreCreatedDrift.close();
+      }
+      const createdOnlyResume = await runOperatorCli(
+        cli,
+        fixture.databaseFilename,
+        fixture.p39ReportFilename,
+        createdOnlyManifest,
+        true,
+      );
+      expect(createdOnlyResume.code, createdOnlyResume.output).toBe(0);
+
+      const descriptorDriftManifest = join(
+        fixture.directory,
+        "p6-created-only-descriptor-drift.jsonl",
+      );
+      const descriptorDriftStopped = await stopOperatorCliAtBoundary(
+        cli,
+        fixture.databaseFilename,
+        fixture.p39ReportFilename,
+        descriptorDriftManifest,
+        "created",
+      );
+      expect(descriptorDriftStopped.code).not.toBe(0);
+      const validCreatedRecord = validateP6InboxManifestText(
+        readFileSync(descriptorDriftManifest, "utf8"),
+      )[0];
+      expect(validCreatedRecord?.record.kind).toBe("Created");
+      const descriptorDriftHeader = p6InboxManifestEnvelope(0, null, {
+        ...validCreatedRecord?.record,
+        descriptors: descriptorHashesThrough(48).slice(0, -1),
+      });
+      writeFileSync(
+        descriptorDriftManifest,
+        `${canonicalP6InboxJson(descriptorDriftHeader)}\n`,
+        { flag: "w", mode: 0o600 },
+      );
+      const descriptorDriftBefore = logicalSqliteDigest(
+        fixture.databaseFilename,
+      );
+      const descriptorDriftResume = await runOperatorCli(
+        cli,
+        fixture.databaseFilename,
+        fixture.p39ReportFilename,
+        descriptorDriftManifest,
+        true,
+      );
+      expect(descriptorDriftResume.code, descriptorDriftResume.output).not.toBe(
+        0,
+      );
+      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
+        descriptorDriftBefore,
+      );
 
       const preparedCrashManifest = join(
         fixture.directory,
@@ -500,6 +623,112 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
       const expectedLockFilename = `.arbor-p39-writer-${sha256Hex(`${primaryStat.dev}:${primaryStat.ino}`)}.sqlite`;
       expect(lockFiles).toContain(expectedLockFilename);
       const lockFilename = join(fixture.directory, expectedLockFilename);
+      const protectedAppDbFilename = join(
+        fixture.directory,
+        "protected-empty-application.sqlite",
+      );
+      const protectedAppDb = new DatabaseSync(protectedAppDbFilename);
+      protectedAppDb.close();
+      const protectedAppManifest = join(
+        fixture.directory,
+        "p6-protected-application-alias.jsonl",
+      );
+      const protectedAppDigest = logicalSqliteDigest(protectedAppDbFilename);
+      const protectedAppAlias = await runOperatorCli(
+        cli,
+        fixture.databaseFilename,
+        protectedAppDbFilename,
+        protectedAppManifest,
+        false,
+        { ARBOR_DB: protectedAppDbFilename },
+      );
+      expect(protectedAppAlias.code, protectedAppAlias.output).not.toBe(0);
+      expect(existsSync(protectedAppManifest)).toBe(false);
+      expect(logicalSqliteDigest(protectedAppDbFilename)).toBe(
+        protectedAppDigest,
+      );
+
+      const protectedWalDbFilename = join(
+        fixture.directory,
+        "protected-wal-application.sqlite",
+      );
+      const protectedWalDb = new DatabaseSync(protectedWalDbFilename);
+      protectedWalDb.exec(
+        "PRAGMA journal_mode = WAL; CREATE TABLE protected_data(value TEXT);",
+      );
+      protectedWalDb
+        .prepare("INSERT INTO protected_data VALUES ('protected')")
+        .run();
+      const protectedWalDigest = logicalSqliteDigest(protectedWalDbFilename);
+      expect(
+        existsSync(`${protectedWalDbFilename}-wal`),
+        "protected app DB WAL must remain present and untouched",
+      ).toBe(true);
+      const protectedWalManifest = join(
+        fixture.directory,
+        "p6-protected-application-wal-alias.jsonl",
+      );
+      const protectedWalBefore = logicalSqliteDigest(fixture.databaseFilename);
+      const protectedWalAlias = await runOperatorCli(
+        cli,
+        fixture.databaseFilename,
+        `${protectedWalDbFilename}-wal`,
+        protectedWalManifest,
+        false,
+        { ARBOR_DB: protectedWalDbFilename },
+      );
+      expect(protectedWalAlias.code, protectedWalAlias.output).not.toBe(0);
+      expect(existsSync(protectedWalManifest)).toBe(false);
+      expect(logicalSqliteDigest(protectedWalDbFilename)).toBe(
+        protectedWalDigest,
+      );
+      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
+        protectedWalBefore,
+      );
+      const protectedWalIdentityAlias = join(
+        fixture.directory,
+        "p6-protected-wal-hardlink.sqlite",
+      );
+      linkSync(`${protectedWalDbFilename}-wal`, protectedWalIdentityAlias);
+      const hardlinkManifest = join(
+        fixture.directory,
+        "p6-protected-wal-hardlink.jsonl",
+      );
+      const hardlinkAlias = await runOperatorCli(
+        cli,
+        fixture.databaseFilename,
+        protectedWalIdentityAlias,
+        hardlinkManifest,
+        false,
+        { ARBOR_DB: protectedWalDbFilename },
+      );
+      expect(hardlinkAlias.code, hardlinkAlias.output).not.toBe(0);
+      expect(existsSync(hardlinkManifest)).toBe(false);
+      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
+        protectedWalBefore,
+      );
+      unlinkSync(protectedWalIdentityAlias);
+      protectedWalDb.close();
+      for (const [label, sidecarPath] of [
+        ["writer-lock", lockFilename],
+      ] as const) {
+        const aliasManifest = join(
+          fixture.directory,
+          `p6-${label}-alias.jsonl`,
+        );
+        const aliasBefore = logicalSqliteDigest(fixture.databaseFilename);
+        const aliasRun = await runOperatorCli(
+          cli,
+          fixture.databaseFilename,
+          sidecarPath,
+          aliasManifest,
+          false,
+          {},
+        );
+        expect(aliasRun.code, `${label}: ${aliasRun.output}`).not.toBe(0);
+        expect(existsSync(aliasManifest)).toBe(false);
+        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(aliasBefore);
+      }
       const holder = spawn(
         process.execPath,
         [
@@ -572,7 +801,7 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
         removeP39PrivateTestDirectory(fixtureDirectory);
       rmSync(handoffDirectory, { recursive: true, force: true });
     }
-  }, 360_000);
+  }, 1_200_000);
 });
 
 const runOperatorCli = async (
@@ -581,8 +810,10 @@ const runOperatorCli = async (
   p39Sidecar: string,
   manifest: string,
   resume: boolean,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ readonly code: number | null; readonly output: string }> =>
   new Promise((resolveRun, reject) => {
+    const startedAt = Date.now();
     const args = [
       cli,
       "--database",
@@ -606,20 +837,55 @@ const runOperatorCli = async (
       "v1.0",
       "Modules",
     );
+    Object.assign(env, extraEnv);
     const processChild = spawn(process.execPath, args, {
       cwd: process.cwd(),
       windowsHide: true,
       env,
     });
-    let output = "";
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
     processChild.stdout.setEncoding("utf8").on("data", (chunk: string) => {
-      output += chunk;
+      stdout += chunk;
     });
     processChild.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-      output += chunk;
+      stderr += chunk;
     });
-    processChild.once("error", reject);
-    processChild.once("close", (code) => resolveRun({ code, output }));
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const pid = processChild.pid;
+      if (pid !== undefined && process.platform === "win32") {
+        const treeKill = spawn(
+          "taskkill.exe",
+          ["/PID", String(pid), "/T", "/F"],
+          { windowsHide: true, stdio: "ignore" },
+        );
+        treeKill.unref();
+      } else {
+        processChild.kill("SIGTERM");
+      }
+      reject(
+        new Error(
+          `P6 CLI timeout pid=${pid ?? "unknown"} elapsedMs=${Date.now() - startedAt} ` +
+            `stdout=${stdout.slice(-4000)} stderr=${stderr.slice(-4000)}`,
+        ),
+      );
+    }, 180_000);
+    timeout.unref();
+    processChild.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    processChild.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolveRun({ code, output: `stdout=${stdout} stderr=${stderr}` });
+    });
   });
 
 const stopOperatorCliAtBoundary = async (
@@ -627,7 +893,7 @@ const stopOperatorCliAtBoundary = async (
   database: string,
   p39Sidecar: string,
   manifest: string,
-  boundary: "prepared" | "database-committed",
+  boundary: "created" | "prepared" | "database-committed",
 ): Promise<{ readonly code: number | null; readonly output: string }> => {
   const args = [
     cli,
@@ -870,6 +1136,7 @@ const qualifySidecarCrashRestart = async (
     ["report-initial-file-identity", "empty"],
     ["report-profile-init-transaction-open", "pristine"],
     ["report-profile-init-before-commit", "pristine"],
+    ["report-profile-init-commit-complete", "initialized"],
     ["report-final-path-and-identity", "initialized"],
   ] as const;
   for (const [phase, state] of cases) {

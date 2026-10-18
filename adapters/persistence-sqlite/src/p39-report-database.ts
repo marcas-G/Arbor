@@ -58,6 +58,7 @@ export type P39ReportSidecarValidationPhase =
   | "report-profile-open-init-readback"
   | "report-profile-init-transaction-open"
   | "report-profile-init-before-commit"
+  | "report-profile-init-commit-complete"
   | "report-final-path-and-identity";
 
 type ReportValidationPhaseObserver = (
@@ -502,6 +503,7 @@ const validateP39ReportSidecarDatabaseInternal = (
         SqliteClient.layer({ filename: path, disableWAL: true }),
       ),
     );
+    onPhase?.("report-profile-init-commit-complete");
     onPhase?.("report-final-path-and-identity");
     const finalPath = yield* validateP39ReportSidecarPath(
       primaryFilename,

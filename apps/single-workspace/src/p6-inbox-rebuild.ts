@@ -18,6 +18,7 @@ import {
   P39_MAINTENANCE_MIGRATIONS,
   type P39MaintenanceFailure,
   type P39MaintenanceSqlClient,
+  p39WriterLockFilename,
   RetryVerificationOriginRepositoryLive,
   runMigrations,
   runP39SqliteMaintenanceWithPermit,
@@ -32,6 +33,11 @@ import {
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
+  protectedApplicationDatabases,
+  rejectSqliteArtifactAliases,
+} from "./schema-upgrade.js";
+import {
+  assertDistinctPaths,
   canonicalExistingPath,
   canonicalNewPath,
   descriptorHashesThrough,
@@ -85,7 +91,7 @@ const findSafeFailureCode = (cause: unknown, depth = 0): string => {
 };
 
 const waitAtTestBoundary = (
-  boundary: "before-p39" | "prepared" | "database-committed",
+  boundary: "before-p39" | "created" | "prepared" | "database-committed",
 ) => {
   if (
     process.env.NODE_ENV !== "test" ||
@@ -237,6 +243,13 @@ export const validateP6InboxManifestText = (text: string): Envelope[] => {
     !/^[0-9a-f]{64}$/u.test(String(records[0]?.record.initialDatabaseDigest))
   )
     refuse("manifest schema is unsupported");
+  const expectedDescriptors = descriptorHashesThrough(48);
+  if (
+    !Array.isArray(records[0]?.record.descriptors) ||
+    canonicalP6InboxJson(records[0]?.record.descriptors) !==
+      canonicalP6InboxJson(expectedDescriptors)
+  )
+    refuse("manifest schema descriptor prefix is invalid");
   if (records.length >= 2) {
     const prepared = records[1]?.record;
     if (
@@ -596,6 +609,40 @@ export const runP6InboxRebuild = async (
   const manifestPath = manifestExistedAtStart
     ? canonicalExistingPath(args.manifest)
     : canonicalNewPath(args.manifest);
+  const protectedApplications = protectedApplicationDatabases();
+  const lockFilename = p39WriterLockFilename(args.database);
+  const lockPath =
+    typeof lockFilename === "string"
+      ? lockFilename
+      : refuse("P39 primary writer-lock path is invalid");
+  const protectedDatabases = [
+    args.database,
+    ...protectedApplications,
+    lockPath,
+  ];
+  const evidencePaths = [args.p39Sidecar, manifestPath];
+  rejectSqliteArtifactAliases(protectedDatabases, evidencePaths);
+  const protectedArtifactPaths = protectedDatabases.flatMap((path) => [
+    path,
+    ...["-wal", "-shm", "-journal"]
+      .map((suffix) => `${path}${suffix}`)
+      .filter((sidecar) => existsSync(sidecar)),
+  ]);
+  const protectedIdentities = protectedArtifactPaths.map((path) =>
+    existingPathIdentity(path),
+  );
+  const evidenceIdentities = evidencePaths.map((path) =>
+    existsSync(path) ? existingPathIdentity(path) : null,
+  );
+  assertDistinctPaths([
+    ...protectedIdentities.map(
+      (identity, index) =>
+        [`protected database artifact ${index}`, identity] as const,
+    ),
+    ...evidenceIdentities.map(
+      (identity, index) => [`evidence path ${index}`, identity] as const,
+    ),
+  ]);
   let activeRecords = manifestRecords(manifestPath);
   if ((activeRecords.length > 0 || manifestExistedAtStart) && !args.resume)
     refuse("existing manifest requires --resume");
@@ -617,10 +664,9 @@ export const runP6InboxRebuild = async (
         {
           primaryFilename: args.database,
           sidecarFilename: args.p39Sidecar,
-          // P39's protectedStoreFilenames are existing SQLite stores; the
-          // not-yet-created JSONL manifest is path-protected by canonicalNewPath
-          // and checked against the primary/sidecar above.
-          protectedStoreFilenames: [],
+          protectedStoreFilenames: [...protectedApplications, lockPath].filter(
+            (path) => path !== args.database,
+          ),
         },
         (primary) =>
           Effect.gen(function* () {
@@ -873,6 +919,7 @@ export const runP6InboxRebuild = async (
                   createdAt: startedAt,
                 });
                 activeRecords = [header];
+                yield* Effect.promise(() => waitAtTestBoundary("created"));
               } else {
                 const expectedBinding = activeRecords[0]?.record.binding as
                   | Record<string, unknown>
@@ -892,6 +939,15 @@ export const runP6InboxRebuild = async (
                     code: "P39_MIGRATION_PREFIX_INVALID",
                   } as P39MaintenanceFailure);
               }
+              if (
+                activeRecords.length === 1 &&
+                activeRecords[0]?.record.initialDatabaseDigest !==
+                  currentDatabaseDigest
+              )
+                return yield* Effect.fail({
+                  _tag: "P39MaintenanceFailure",
+                  code: "P39_MIGRATION_PREFIX_INVALID",
+                } as P39MaintenanceFailure);
               if (activeRecords.at(-1)?.record.kind === "Committed")
                 return true;
               if (activeRecords.at(-1)?.record.kind !== "Prepared") {
