@@ -88,10 +88,13 @@ run in this worktree; the three filtered schema-upgrade regressions above are
 the only schema-upgrade operator tests claimed. An earlier combined P6 attempt reached Vitest's original 360-second test
 timeout; progress inspection showed the test was still advancing through
 subprocess cases. The test deadline was raised to 1200 seconds and
-`runOperatorCli` now has a per-child deadline with PID, elapsed time, stdout/
-stderr diagnostics, and repeats Windows `taskkill /T /F` until taskkill
-succeeds, the direct child exits, and the PID is confirmed absent before
-rejecting. The subsequent complete run passed without reducing assertions.
+`runOperatorCli` has a per-child deadline plus a separate 30-second total
+cleanup deadline spanning taskkill, direct-child close and PID polling.
+Taskkill spawn errors/nonzero exits retry only within that deadline; failure
+returns PID, elapsed/cleanup time, last taskkill result, direct-exit/PID state,
+stdout and stderr. A fake-dependency unit test verifies repeated taskkill
+failures terminate by the total deadline. The subsequent complete P6 run passed
+without reducing assertions.
 
 Two disposable fixture directories and one interrupted schema-upgrade
 temporary directory remain on disk because cleanup was blocked by the command
