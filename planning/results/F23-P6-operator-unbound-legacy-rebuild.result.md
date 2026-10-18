@@ -29,6 +29,21 @@ after the SQLite commit but before the Committed record.
 - Targeted Biome check over every changed source/test/result file: PASS (10
   files; no fixes needed after formatting).
 - `git diff --check`: PASS.
+- Full P6 operator matrix after the review fixes:
+  `pnpm exec vitest run apps/single-workspace/test/p6-inbox-rebuild.test.ts
+  --maxWorkers=1 --no-file-parallelism --retry=0`: PASS, 1 file / 6 tests,
+  683.71 seconds on the final code. Includes protected empty application DB,
+  application WAL and WAL hard-link identity collision, primary/writer-lock
+  collision checks; Created-only target-digest and descriptor-prefix drift
+  refusal; and the post-sidecar-init-COMMIT/pre-final-identity crash/retry
+  seam. Existing rollback, schema 47/49/pseudo-48, manifest tamper, permit
+  competition, and replay cases also pass.
+- Schema-upgrade operator regressions:
+  `pnpm exec vitest run apps/single-workspace/test/schema-upgrade-operator.test.ts
+  --maxWorkers=1 --no-file-parallelism --retry=0 -t
+  "upgrades an exact disposable schema(44|47) copy|rejects hard-link identities"`:
+  PASS, 3 tests; 11 unrelated tests skipped. This exercises full-prefix v48
+  descriptor recording through both migration paths and path-identity checks.
 - Sidecar crash/retry qualification:
   `ARBOR_P6_SIDECAR_CRASH_ONLY=1 pnpm exec vitest run
   apps/single-workspace/test/p6-inbox-rebuild.test.ts --maxWorkers=1
@@ -39,12 +54,10 @@ after the SQLite commit but before the Committed record.
   empty/pristine/initialized sidecar state, then retries the same paths and
   requires Created/Prepared/Committed. The previously observed retry failure
   did not reproduce under this serialized run.
-- P6 operator module tests, including path/options, exact schema signature,
-  manifest-chain parsing, ordinary run/resume, failure rollback, canonical
-  digest immutability, invalid schema 47/49/pseudo-48, manifest/input drift,
-  and public current-human versus foreign-human/Agent read behavior: a prior
-  targeted matrix passed 5/5 before the final sidecar crash additions; it has
-  not been rerun as one combined matrix.
+- Read-surface scope: the P6 integration test calls the production
+  `viewQueryFaceWithRetryAvailability` module and repository directly, proving
+  module-level current-Parent authorization, foreign-human/Agent denial, and
+  read-not-consume state. This is not an HTTP/public-route/daemon qualification.
 - P39 security timeout and P45 migration targeted tests: PASS, 11/11 after the
   Windows ACL probe adjustment. Existing ACL checks remain enabled; no
   production ACL is bypassed.
@@ -57,13 +70,16 @@ after the SQLite commit but before the Committed record.
 
 ## Remaining qualification boundary
 
-The combined P6 module/process matrix above has not been rerun as one batch
-after the final sidecar crash additions; its earlier 5/5 run is recorded as
-prior evidence only. P39 security/P45 migration tests remain PASS 11/11, and
-P10 retry availability remains PASS 3/3, as recorded above. The full suite and
-schema-upgrade operator suite were not run in this worktree. Host resource
-pressure produced an earlier child-process OOM; the serialized sidecar test
-subsequently passed without reducing assertions.
+P39 security/P45 migration targeted tests remain PASS 11/11, and P10 retry
+availability module tests remain PASS 3/3. The full suite and the entire
+schema-upgrade operator file were not run in this worktree; the three filtered
+schema-upgrade regressions above are the only schema-upgrade tests claimed.
+An earlier combined P6 attempt reached Vitest's original 360-second test
+timeout; progress inspection showed the test was still advancing through
+subprocess cases. The test deadline was raised to 1200 seconds and
+`runOperatorCli` now has a per-child deadline with PID, elapsed time, stdout/
+stderr diagnostics, and Windows child-tree cleanup. The subsequent complete
+run passed without reducing assertions.
 
 Two disposable fixture directories and one interrupted schema-upgrade
 temporary directory remain on disk because cleanup was blocked by the command
@@ -71,5 +87,5 @@ policy; they are untracked and excluded from the commit. Process inspection
 found no related live test process. No temporary database is an online or
 preserved database.
 
-No phase closure is claimed until the remaining combined qualification gates
-pass and the implementation is independently reviewed.
+No HTTP/public-route/daemon read-surface qualification or phase closure is
+claimed. The implementation remains subject to independent review.
