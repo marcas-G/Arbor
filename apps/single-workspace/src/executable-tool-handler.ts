@@ -144,6 +144,11 @@ export const toExecutableOutcome = (
         observation: bounded(`tool runtime failure: ${result.cause}`),
         status: "Failed",
       };
+    case "SandboxProviderUnavailable":
+      return {
+        _tag: "SandboxProviderUnavailable",
+        outcome: result,
+      };
     case "ReconciledNoEffect": {
       const status =
         result.reasonCode === "StopRequested"

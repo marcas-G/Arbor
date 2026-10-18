@@ -678,6 +678,9 @@ export const AgentLoopDriverLive = (
             if (actionProgression._tag === "Settle") {
               return actionProgression.settlement;
             }
+            if (actionProgression._tag === "SandboxProviderUnavailable") {
+              return actionProgression;
+            }
             if (actionProgression._tag === "DecisionStale") {
               continue;
             }

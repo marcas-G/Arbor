@@ -123,9 +123,11 @@ const destructive = (intent: { readonly argumentsJson: string }): boolean => {
 export const createShellExecutor = (): ToolExecutor => ({
   name: "shell",
   write: true,
+  processCapability: "SandboxProcess",
   requiresApproval: destructive,
-  execute: ({ intent, runProcess }) =>
-    Effect.gen(function* () {
+  execute: (input) => {
+    const { intent, runProcess } = input;
+    return Effect.gen(function* () {
       const args = JSON.parse(intent.argumentsJson) as {
         command: string;
         cwd: { mount: string; path: string };
@@ -147,22 +149,35 @@ export const createShellExecutor = (): ToolExecutor => ({
       const result =
         runProcess === undefined
           ? {
-              _tag: "Unavailable" as const,
-              failureCode: "sandbox_process_port_unconfigured",
+              _tag: "Rejected" as const,
+              failureCode: "ProcessCapabilityNotBound",
             }
           : yield* runProcess({
               executable,
               args: shellArgs,
               cwd: args.cwd,
+              ...(args.timeoutMs === undefined
+                ? {}
+                : { requestedTimeoutMs: args.timeoutMs }),
               ambientEnvironment: process.env,
             });
-      if (result._tag === "Unavailable") {
+      if (result._tag === "SandboxProviderUnavailable") {
+        return {
+          settlement: {
+            _tag: "ExpectedFailure",
+          },
+          observation: bounded("sandbox provider unavailable"),
+          resultRef: null,
+          sandboxProviderUnavailable: result,
+        };
+      }
+      if (result._tag === "Rejected") {
         return {
           settlement: {
             _tag: "RuntimeFailure",
-            cause: "sandbox process provider unavailable",
+            cause: "sandbox process request rejected",
           },
-          observation: bounded("sandbox process provider unavailable"),
+          observation: bounded("sandbox process request rejected"),
           resultRef: null,
         };
       }
@@ -184,7 +199,8 @@ export const createShellExecutor = (): ToolExecutor => ({
         observation: bounded(payload),
         resultRef: null,
       };
-    }),
+    });
+  },
 });
 
 export const shellExecutor = createShellExecutor();

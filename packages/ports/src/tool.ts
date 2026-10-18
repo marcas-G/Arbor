@@ -25,7 +25,10 @@ import type {
   ToolRuntimeError,
 } from "./errors.js";
 import type { InvocationRef } from "./execution.js";
-import type { SandboxProcessPolicy } from "./sandbox-process.js";
+import type {
+  SandboxProcessPolicy,
+  SandboxProviderUnavailableOutcome,
+} from "./sandbox-process.js";
 import type { TransactionScope } from "./session.js";
 
 export type SideEffectSemantics =
@@ -118,7 +121,7 @@ export interface RecoveryBindingPolicyRevisions {
 
 export interface ToolExecutionContext {
   readonly executionId: ExecutionId;
-  readonly executionEpisodeBinding?: ExecutionEpisodeBinding | null;
+  readonly executionEpisodeBinding?: ExecutionEpisodeBinding;
   /** Set only by P9 from the exact durable decision; absence fails closed. */
   readonly sandboxProcessPolicy?: SandboxProcessPolicy;
   readonly workspaceId: WorkspaceId;
@@ -233,6 +236,7 @@ export type CanonicalToolObservation =
       readonly reconciliationRefs: ReadonlyArray<InvocationRef>;
     }
   | { readonly _tag: "RuntimeFailure"; readonly cause: string }
+  | SandboxProviderUnavailableOutcome
   | {
       readonly _tag: "ReconciledNoEffect";
       readonly reasonCode:

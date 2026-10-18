@@ -66,6 +66,7 @@ import {
   ExecutionDriverPort,
   ExecutionRepository,
   ProviderRuntime,
+  type SandboxProviderUnavailableOutcome,
   TransactionPort,
 } from "../../../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../../../packages/provider-runtime/src/index.js";
@@ -151,6 +152,10 @@ let running:
           readonly _tag: "ApprovalRequired";
           readonly approvalId: string;
           readonly revision: number;
+        }
+      | {
+          readonly _tag: "SandboxProviderUnavailable";
+          readonly outcome: SandboxProviderUnavailableOutcome;
         }
       | { readonly _tag: "RecoveryBlocked" }
     >

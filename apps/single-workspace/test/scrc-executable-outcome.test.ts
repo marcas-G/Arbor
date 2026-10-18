@@ -63,6 +63,31 @@ describe("SCRC executable outcome taxonomy", () => {
     });
   });
 
+  it("preserves typed sandbox unavailability for P9 instead of mapping it to a generic failure", () => {
+    const outcome = {
+      _tag: "SandboxProviderUnavailable" as const,
+      projectId: "prj_test" as never,
+      workspaceId: "ws_test" as never,
+      executionId: "exe_test" as never,
+      episodeBinding: {
+        _tag: "InboxEpisode" as const,
+        entryKey: "entry_test",
+        inputKind: "HumanMessage",
+      },
+      policyRevision: 3,
+      policyDigest: "a".repeat(64),
+      profileId: "WorkspaceWrite" as const,
+      providerId: "bwrap",
+      providerVersion: "0.8.0",
+      probeEvidenceRef: null,
+      failureCode: "ProviderNotSupported",
+    };
+    expect(toExecutableOutcome(outcome)).toEqual({
+      _tag: "SandboxProviderUnavailable",
+      outcome,
+    });
+  });
+
   it("keeps a final P39 NotOccurred result as a failed sourced observation with its distinct P4 Artifact", () => {
     expect(
       toExecutableOutcome({

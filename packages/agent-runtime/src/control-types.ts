@@ -19,6 +19,7 @@ import type {
   ModelFacingControlToolDefinition,
   RecoveryBindingPolicyRevisions,
   RecoveryBindingSourceIdentity,
+  SandboxProviderUnavailableOutcome,
 } from "@arbor/ports";
 import { Context, type Effect } from "effect";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
@@ -333,7 +334,11 @@ export type ExecutableInvocationOutcome =
       readonly terminalDenial?: TerminalActionDenial;
       readonly reconciliationFactRef?: string;
     }
-  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
+  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement }
+  | {
+      readonly _tag: "SandboxProviderUnavailable";
+      readonly outcome: SandboxProviderUnavailableOutcome;
+    };
 
 export interface ExecutableInvocationInput {
   readonly invocation: ToolInvocation;

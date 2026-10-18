@@ -34,6 +34,7 @@ import type {
   RecoveryBindingPolicyRevisions,
   RecoveryBindingSourceIdentity,
   RuntimeSafetyObservation,
+  SandboxProviderUnavailableOutcome,
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
@@ -412,7 +413,11 @@ export type AgentLoopActionOutcome =
       readonly approvalId: string;
       readonly revision: number;
     }
-  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
+  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement }
+  | {
+      readonly _tag: "SandboxProviderUnavailable";
+      readonly outcome: SandboxProviderUnavailableOutcome;
+    };
 
 /**
  * Owns one decoded turn's action phase. This boundary deliberately includes
@@ -1558,6 +1563,12 @@ export const executeAgentLoopActions = (
           return {
             _tag: "Settle",
             settlement,
+          };
+        }
+        if (executed.outcome._tag === "SandboxProviderUnavailable") {
+          return {
+            _tag: "SandboxProviderUnavailable",
+            outcome: executed.outcome.outcome,
           };
         }
         if (executed.outcome._tag === "Settle") {

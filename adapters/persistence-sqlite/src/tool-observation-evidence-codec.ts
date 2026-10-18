@@ -74,6 +74,10 @@ const canonicalJson = (
       // shape validator rejects this tag before canonicalization; keep an
       // empty sentinel here so a future call site fails the nonempty check.
       return "";
+    case "SandboxProviderUnavailable":
+      // Nonterminal process-policy results never create tool-observation
+      // evidence; P9 consumes the typed outcome directly.
+      return "";
     case "Interrupted":
       return JSON.stringify({ _tag: observation._tag });
     case "OutcomeUnknown":
