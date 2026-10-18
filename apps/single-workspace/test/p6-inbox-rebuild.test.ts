@@ -48,6 +48,126 @@ import {
 } from "../src/schema-upgrade-manifest.js";
 import { viewQueryFaceWithRetryAvailability } from "../src/transport/composition.js";
 
+interface CleanupTreeResult {
+  readonly confirmed: boolean;
+  readonly attempts: number;
+  readonly elapsedMs: number;
+  readonly lastTaskkillExit: number | null;
+  readonly lastTaskkillError: string | null;
+  readonly directExited: boolean;
+  readonly rootAlive: boolean;
+}
+
+const cleanupProcessTreeUntilDeadline = async (options: {
+  readonly totalDeadlineMs: number;
+  readonly retryDelayMs: number;
+  readonly now: () => number;
+  readonly killTree: (
+    remainingMs: number,
+  ) => Promise<{ readonly exitCode: number | null; readonly error?: string }>;
+  readonly waitForDirectExit: (remainingMs: number) => Promise<boolean>;
+  readonly isRootAlive: () => boolean;
+  readonly sleep: (durationMs: number) => Promise<void>;
+}): Promise<CleanupTreeResult> => {
+  const startedAt = options.now();
+  const deadline = startedAt + options.totalDeadlineMs;
+  let attempts = 0;
+  let lastTaskkillExit: number | null = null;
+  let lastTaskkillError: string | null = null;
+  let directExited = false;
+  let rootAlive = true;
+  while (options.now() < deadline) {
+    attempts += 1;
+    const remainingForKill = Math.max(0, deadline - options.now());
+    const kill = await options.killTree(remainingForKill);
+    lastTaskkillExit = kill.exitCode;
+    lastTaskkillError = kill.error ?? null;
+    const remainingForClose = Math.max(0, deadline - options.now());
+    if (remainingForClose > 0)
+      directExited = await options.waitForDirectExit(remainingForClose);
+    rootAlive = options.isRootAlive();
+    if (lastTaskkillExit === 0 && directExited && !rootAlive)
+      return {
+        confirmed: true,
+        attempts,
+        elapsedMs: options.now() - startedAt,
+        lastTaskkillExit,
+        lastTaskkillError,
+        directExited,
+        rootAlive,
+      };
+    const remainingForRetry = Math.max(0, deadline - options.now());
+    if (remainingForRetry > 0)
+      await options.sleep(Math.min(options.retryDelayMs, remainingForRetry));
+  }
+  return {
+    confirmed: false,
+    attempts,
+    elapsedMs: Math.min(options.now() - startedAt, options.totalDeadlineMs),
+    lastTaskkillExit,
+    lastTaskkillError,
+    directExited,
+    rootAlive,
+  };
+};
+
+const withTimeout = async <A>(
+  promise: Promise<A>,
+  timeoutMs: number,
+): Promise<
+  { readonly timedOut: true } | { readonly timedOut: false; readonly value: A }
+> =>
+  new Promise((resolveWithTimeout) => {
+    const timeout = setTimeout(
+      () => resolveWithTimeout({ timedOut: true }),
+      timeoutMs,
+    );
+    void promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolveWithTimeout({ timedOut: false, value });
+      },
+      () => {
+        clearTimeout(timeout);
+        resolveWithTimeout({ timedOut: true });
+      },
+    );
+  });
+
+describe("P6 operator subprocess timeout cleanup", () => {
+  it("bounds repeated taskkill failures by one total deadline", async () => {
+    let fakeNow = 0;
+    let attempts = 0;
+    const result = await cleanupProcessTreeUntilDeadline({
+      totalDeadlineMs: 100,
+      retryDelayMs: 10,
+      now: () => fakeNow,
+      killTree: async (remainingMs) => {
+        attempts += 1;
+        fakeNow += Math.min(20, remainingMs);
+        return { exitCode: 1, error: "fake taskkill failure" };
+      },
+      waitForDirectExit: async (remainingMs) => {
+        fakeNow += Math.min(20, remainingMs);
+        return false;
+      },
+      isRootAlive: () => true,
+      sleep: async (durationMs) => {
+        fakeNow += durationMs;
+      },
+    });
+    expect(result.confirmed).toBe(false);
+    expect(result.lastTaskkillExit).toBe(1);
+    expect(result.lastTaskkillError).toBe("fake taskkill failure");
+    expect(result.directExited).toBe(false);
+    expect(result.rootAlive).toBe(true);
+    expect(result.elapsedMs).toBeLessThanOrEqual(100);
+    expect(attempts).toBe(result.attempts);
+    expect(attempts).toBeGreaterThan(0);
+    expect(attempts).toBeLessThan(10);
+  });
+});
+
 describe("P6 Inbox operator rebuild CLI contract", () => {
   it("requires explicit absolute database, P39 sidecar and JSONL manifest paths", () => {
     expect(() => parseP6InboxRebuildArguments([])).toThrow(/required/u);
@@ -1055,71 +1175,79 @@ const runOperatorCli = async (
       timedOut = true;
       const pid = processChild.pid;
       void (async () => {
-        let attempt = 0;
-        while (true) {
-          attempt += 1;
-          let treeKillExit: number | null = null;
-          if (pid !== undefined && process.platform === "win32") {
+        const cleanupStartedAt = performance.now();
+        const cleanup = await cleanupProcessTreeUntilDeadline({
+          totalDeadlineMs: 30_000,
+          retryDelayMs: 250,
+          now: () => performance.now(),
+          killTree: async (remainingMs) => {
+            if (pid === undefined)
+              return { exitCode: null, error: "child PID unavailable" };
+            if (process.platform !== "win32") {
+              const killed = processChild.kill("SIGTERM");
+              return killed
+                ? { exitCode: 0 }
+                : { exitCode: null, error: "SIGTERM request failed" };
+            }
             const treeKill = spawn(
               "taskkill.exe",
               ["/PID", String(pid), "/T", "/F"],
               { windowsHide: true, stdio: "ignore" },
             );
-            await new Promise<void>((resolveTreeKill) => {
-              let finished = false;
-              treeKill.once("close", (code) => {
-                if (finished) return;
-                finished = true;
-                treeKillExit = code;
-                resolveTreeKill();
-              });
-              treeKill.once("error", (cause) => {
-                if (finished) return;
-                finished = true;
-                void cause;
-                resolveTreeKill();
-              });
-            });
-          } else {
-            processChild.kill("SIGTERM");
-            treeKillExit = 0;
-          }
-          const directExited = await new Promise<boolean>((resolveExit) => {
-            const closeTimeout = setTimeout(() => resolveExit(false), 15_000);
-            void childClosed.then(() => {
-              clearTimeout(closeTimeout);
-              resolveExit(true);
-            });
-          });
-          let rootAlive = pid === undefined;
-          if (pid !== undefined) {
+            const result = await withTimeout(
+              new Promise<{
+                readonly exitCode: number | null;
+                readonly error?: string;
+              }>((resolveKill) => {
+                treeKill.once("close", (code) =>
+                  resolveKill({ exitCode: code }),
+                );
+                treeKill.once("error", (cause) =>
+                  resolveKill({
+                    exitCode: null,
+                    error: `taskkill spawn failed: ${String(cause)}`,
+                  }),
+                );
+              }),
+              remainingMs,
+            );
+            return result.timedOut
+              ? { exitCode: null, error: "taskkill exceeded cleanup deadline" }
+              : result.value;
+          },
+          waitForDirectExit: async (remainingMs) => {
+            const result = await withTimeout(childClosed, remainingMs);
+            return !result.timedOut;
+          },
+          isRootAlive: () => {
+            if (pid === undefined) return true;
             try {
               process.kill(pid, 0);
-              rootAlive = true;
+              return true;
             } catch (cause) {
               const code =
                 typeof cause === "object" && cause !== null && "code" in cause
                   ? String((cause as { code?: unknown }).code)
                   : "unknown";
-              rootAlive = code !== "ESRCH" && code !== "EINVAL";
+              return code !== "ESRCH" && code !== "EINVAL";
             }
-          }
-          if (treeKillExit === 0 && directExited && !rootAlive) {
-            settled = true;
-            clearTimeout(timeout);
-            reject(
-              new Error(
-                `P6 CLI timeout pid=${pid ?? "unknown"} elapsedMs=${Date.now() - startedAt} ` +
-                  `cleanupConfirmed=true taskkillAttempt=${attempt} ` +
-                  `stdout=${stdout.slice(-4000)} stderr=${stderr.slice(-4000)}`,
-              ),
-            );
-            return;
-          }
-          await new Promise<void>((resolveRetry) =>
-            setTimeout(resolveRetry, 250),
-          );
-        }
+          },
+          sleep: (durationMs) =>
+            new Promise((resolveSleep) => setTimeout(resolveSleep, durationMs)),
+        });
+        settled = true;
+        clearTimeout(timeout);
+        reject(
+          new Error(
+            `P6 CLI timeout pid=${pid ?? "unknown"} elapsedMs=${Date.now() - startedAt} ` +
+              `cleanupMs=${Math.round(performance.now() - cleanupStartedAt)} ` +
+              `cleanupConfirmed=${cleanup.confirmed} attempts=${cleanup.attempts} ` +
+              `lastTaskkillExit=${cleanup.lastTaskkillExit ?? "null"} ` +
+              `lastTaskkillError=${cleanup.lastTaskkillError ?? "none"} ` +
+              `directExited=${cleanup.directExited} rootAlive=${cleanup.rootAlive} ` +
+              `stdout=${stdout.slice(-4000)} stderr=${stderr.slice(-4000)}`,
+          ),
+        );
       })();
     }, 180_000);
     timeout.unref();
