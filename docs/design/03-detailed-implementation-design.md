@@ -1,10 +1,50 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.51\
+**Version:** 1.52\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.50\
+**Supersedes:** v1.51\
 **Date:** 2026-10-18\
 **Depends on:** `Arbor System Design Specification v1.19`
+
+**Governance changes (v1.51 → v1.52): F23 P6 operator rebuild and v1 route-command qualification**
+
+- The accepted P6 UnboundLegacy package has no v1 canonical Work-owner or
+  Workspace-Parent mutation command. Only the command-level owner/Parent route
+  move, old/new recipient command journey, and its command/process crash
+  qualification are N/A for v1. This does **not** make the same-key
+  same-transaction route helper, current-route human visibility, or future
+  command rejection constraints N/A. Any separately governed future command
+  that changes recipient must update canonical route and Inbox key in one P1
+  transaction, retain old/new current-route authorization, and use the ordinary
+  P1 `TerminalRejected(AuthorityDenied)`/zero-canonical-mutation path if that
+  atomic move cannot commit. P8's frozen old Verification owner snapshot and
+  successor-current-owner behavior are unchanged.
+- Production P6 Inbox rebuild is required, not N/A. The operator-only offline
+  `p6:inbox-rebuild` CLI targets only the exact current schema-48 database while
+  the daemon is stopped and under the existing P39 `MaintenanceExclusive`
+  permit. It invokes the existing `rebuildUnboundLegacyInboxProjections`
+  helper through one `TransactionPort` transaction on the same P39 primary
+  SqlClient connection; no second connection, online service, Agent/Web/model
+  tool or P10 Attention source is added. Its `--p39-sidecar` is the P39
+  blocker-report SQLite and is distinct from its protected JSONL `--manifest`.
+  The bounded P39 `openSync(..., "wx", 0o600)` sidecar-file creation and SQLite
+  schema initialization precede permit acquisition; the `wx` winner/loser
+  operation is not the P39 maintenance lock. If RuntimeShared blocks the
+  permit, P39 infrastructure artifacts may remain, but the primary, JSONL
+  manifest and P6 rows are untouched. Same-connection transaction, idempotent
+  current-route rebuild, manifest audit, and crash/restart reconciliation are
+  required qualifications.
+- Accepted token
+  `ACCEPT_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_AND_V1_ROUTE_MOVE_NA`,
+  proposal raw SHA-256
+  `B6A542973768D1C0D7C8ACB644988D1C957B7020F73206C335D73FF7FE0C833E`,
+  accepted 2026-10-18. Acceptance/landing record:
+  `planning/results/F23-P6-operator-rebuild-and-route-move-na-acceptance-and-landing.record.md`;
+  independent post-landing review is pending. The distinct implementation
+  authorization token
+  `AUTHORIZE_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_IMPLEMENTATION` has **not**
+  been granted; no production implementation, migration, or preserved/online
+  database operation is authorized by this landing.
 
 **Governance changes (v1.50 → v1.51): AH19 Conversation owner × P17 Job authority reconciliation**
 

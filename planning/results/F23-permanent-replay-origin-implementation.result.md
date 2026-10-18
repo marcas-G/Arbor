@@ -1,7 +1,7 @@
 # F23 P8 Permanent Replay Origin / P6 UnboundLegacy Implementation
 
-Status: **PARTIAL — implementation stopped at the route/rebuild design gap**
-recorded in `planning/results/F23-P6-owner-route-and-rebuild-design-gap.md`.
+Status: **PARTIAL — P8/origin implementation evidence retained; P6 design gap resolved, operator rebuild still not implemented or authorized.** See
+`planning/results/F23-P6-operator-rebuild-and-route-move-na-acceptance-and-landing.record.md`.
 
 ## Authorization and boundary
 
@@ -31,10 +31,12 @@ they never create an origin or an FK-inconsistent disposition.
 The offline upgrade CLI now accepts an exact schema-44 copy source and commits only migration 0045 after validating the pinned schema signature. Manifest state records the direct 44→45 transition. A fresh target still builds through 45. Ordinary runtime migration refuses to apply P45 to a populated schema-44 database.
 
 The repository has no current P1 command that mutates `works.workspace_id` or
-`workspaces.parent_workspace_id`, and no production `rebuildProjection` call
-site. The route helper is transaction-tested but there is no command/production
-rebuild boundary to qualify; implementation stopped rather than invent either
-surface.
+`workspaces.parent_workspace_id`; under the accepted DID v1.52 package, only
+command-level route-move/crash qualification is N/A for v1. The route helper
+and current-route contract remain in force. The production `rebuildProjection`
+call site is still absent; accepted governance now requires a dedicated
+operator-only schema-48 P6 rebuild rather than marking rebuild N/A. That
+operator command has not been implemented or authorized.
 
 ## Qualification
 
@@ -51,9 +53,10 @@ surface.
 | `pnpm typecheck` | PASS |
 | `pnpm build` | PASS |
 | P39 cumulative-prefix suffix expectation | PASS, 2/2 after updating historical source-prefix expectation to schema 45 |
-| Full `pnpm check` | Not completed: prior attempts exposed stale schema-44 expectations; the next attempt was stopped for the independent review-requested B1 and route/rebuild gap audit. |
+| Full `pnpm check` | Not completed on the implementation checkpoint; prior attempts exposed stale schema-44 expectations, and the next attempt was stopped for independent review. The design landing does not replace code gates. |
 | Full `pnpm test:functional` | Not run; focused public-process tests above are not a substitute for the full suite |
 
 These results qualify the safe P8/origin/backfill implementation portions only.
-They do not close the P6 owner-route/production-rebuild gap, do not claim
-release readiness, and do not close unrelated F23/AH7/AH10 work.
+The accepted design closes the route/rebuild governance question but does not
+qualify or implement the operator rebuild. No release-readiness claim or
+unrelated F23/AH7/AH10 closure is made.
