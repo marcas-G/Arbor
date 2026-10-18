@@ -214,6 +214,10 @@ export type ExecutionDriveOutcome =
   | ExecutionSettlement
   | { readonly _tag: "RecoveryBlocked" }
   | {
+      readonly _tag: "SandboxProviderUnavailable";
+      readonly outcome: import("./sandbox-process.js").SandboxProviderUnavailableOutcome;
+    }
+  | {
       readonly _tag: "SubmittedDecisionBindingMismatch";
       readonly failureCode:
         | "DecisionRequestWorkspaceMismatch"

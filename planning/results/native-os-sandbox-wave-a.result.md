@@ -1,23 +1,27 @@
 # Native OS Sandbox Wave A — Provider-Neutral Runtime Boundary
 
 **Baseline:** `af0aa80519116edd1fe092cb226103f17e07361d`
+**Initial implementation:** `c947587df33a2caec7f5a898d2e7460c303a7c37`
+**Review remediation:** recorded in the follow-up commit for this result.
 **Result:** Wave A contracts and the shell spawn boundary are implemented. This does not qualify or claim any OS-enforced provider.
 
 ## Changes
 
-- Added domain-owned sandbox profile, network mode, boundary, provider status/capability and exact provider selection types. `decodeSandboxProviderId` canonicalizes the historical `LocalTrusted` spelling to `TrustedLocal` without selecting it; capability resolution matches only the immutable requested provider and rejects unsupported OS enforcement without fallback.
-- Added `SandboxProcessPolicy` and `SandboxProcessPort` contracts. The policy binds execution/episode, current handle, exact mounts, provider/profile/network/digest, environment allow-list, resource limits and audit references. Process results distinguish completion from typed unavailability.
-- Routed shell execution through a Runtime-owned callback and `SandboxProcessPort`. Runtime requires an exact policy/Execution/Episode/handle/mount binding, then checks provider capability before calling `run`; missing policy, unavailable service, mismatch, or an Experimental OS provider cannot spawn.
-- Removed `node:child_process` from the shell executor. The architecture test rejects production child-process imports except the fixed P39 host-probe module. Added an environment projection helper that accepts the policy-owned allow-list for provider adapters.
-- Updated direct shell tests to use a provider-port stub; shell policy tests no longer create OS processes.
+- Added provider-neutral profile, trust boundary, capability and exact provider-version/revision selection contracts. `LocalTrusted` decodes only to canonical `TrustedLocal`; provider resolution never falls back.
+- Added closed-field, canonical `NetworkPolicyV1` codecs for `Disabled`, `Restricted`, and `Enabled`, including exact hostname/IP-literal destination, protocol and port fields. Added a strict non-empty ExecutionEpisodeBinding codec and runtime revalidation.
+- Expanded `SandboxProcessPolicy` to bind the exact Execution/Episode, handle/mounts, policy revision/digest, provider version/capability revision, network destinations, environment allow-list, resource limits and audit refs. Runtime validates these bindings and clamps requested timeout to the policy walltime.
+- Added an explicit executor `processCapability` registration. Only registered process executors receive the Runtime-owned `SandboxProcessRunner`; Runtime rechecks exact provider version/capability before calling `SandboxProcessPort`.
+- Removed direct process creation from the shell executor. A typed `SandboxProviderUnavailableOutcome` now crosses ToolRuntime, executable Application handling, AgentLoopAction, and `ExecutionDriveOutcome`, retaining the policy, episode, provider/version, evidence and failure binding for P9. P4 commits a no-effect `ExpectedFailure` settlement for the invocation before returning the typed result; Wave A does not persist the P9 fact.
+- Replaced the text import scan with a TypeScript 7 compiler-scanner audit over the production `.ts/.tsx/.js/.jsx/.mjs/.cjs` inventory. It rejects static/dynamic/require/createRequire/subpath/native binding bypasses; the P39 allowance checks its exact `execFileSync` import, PowerShell argument template, timeout and registered call sites. Red fixtures cover static/dynamic imports, computed imports, require, createRequire, templates and native bindings.
+- The environment projector accepts the exact policy allow-list; shell tests use a provider stub and do not create OS processes.
 
 ## Verification
 
 - `pnpm build` — PASS.
 - `pnpm exec tsc -p tsconfig.test.json --noEmit` — PASS.
-- Focused Vitest: domain sandbox policy, P4 shell and P4 pipeline — 3 files / 97 tests PASS.
-- Architecture boundary test — 1 file / 1 test PASS.
-- Biome on the 12 changed TypeScript files — PASS.
+- Focused Vitest: domain sandbox policy, P4 shell/pipeline and Application executable outcome — 4 files / 122 tests PASS.
+- Architecture boundary test — 1 file / 11 tests PASS.
+- Biome on the 17 changed TypeScript files and the result record — PASS.
 - `git diff --check` — PASS.
 
-No OS provider was implemented or qualified in this wave. Production shell invocation without an exact runtime policy/provider returns Unavailable and starts no process. T1 Waves B–D remain outstanding.
+No OS provider was implemented or qualified in this wave. Missing/mismatched policy or episode, unregistered process capability, unsupported provider, provider/version mismatch, or invalid timeout starts no process and cannot fall back to TrustedLocal. P9 fact/queue/event persistence remains in Wave D after storage integration. T1 Waves B–D remain outstanding.

@@ -3,7 +3,16 @@ import type {
   ResourceAddress,
   Workspace,
 } from "@arbor/domain";
-import { ArtifactId, parse, resolveSandboxProvider } from "@arbor/domain";
+import {
+  ArtifactId,
+  decodeExecutionEpisodeBinding,
+  decodeNetworkPolicyV1,
+  decodeSandboxProviderId,
+  encodeExecutionEpisodeBinding,
+  encodeNetworkPolicyV1,
+  parse,
+  resolveSandboxProvider,
+} from "@arbor/domain";
 import {
   ArtifactService,
   approvalTargetDigestV1,
@@ -29,6 +38,7 @@ import {
   SandboxPort,
   SandboxProcessPort,
   type SandboxProcessRunner,
+  type SandboxProviderUnavailableOutcome,
   type SelectedP39RecoveryEvidence,
   ToolAuthorityResolver,
   type ToolDefinition,
@@ -61,27 +71,17 @@ import { actionDigestOf, matchApproval } from "./approval.js";
 import { checkInvocationAuthority } from "./authority.js";
 import { validateToolInput } from "./validation.js";
 
-export type ToolExecutionResult =
-  | {
-      readonly settlement: Extract<
-        ToolInvocationSettlement,
-        { readonly _tag: "ReconciledNoEffect" }
-      >;
-      readonly observation: BoundedObservation;
-      readonly resultRef: string | null;
-    }
-  | {
-      readonly settlement: Exclude<
-        ToolInvocationSettlement,
-        { readonly _tag: "ReconciledNoEffect" }
-      >;
-      readonly observation: BoundedObservation;
-      readonly resultRef: string | null;
-    };
+export interface ToolExecutionResult {
+  readonly settlement: ToolInvocationSettlement;
+  readonly observation: BoundedObservation;
+  readonly resultRef: string | null;
+  readonly sandboxProviderUnavailable?: SandboxProviderUnavailableOutcome;
+}
 
 export interface ToolExecutor {
   readonly name: string;
   readonly write: boolean;
+  readonly processCapability?: "SandboxProcess";
   readonly requiresApproval: (intent: ToolIntent) => boolean;
   readonly execute: (input: {
     readonly intent: ToolIntent;
@@ -661,18 +661,87 @@ export const ToolRuntimeLive = (
         (invocation) =>
           Effect.gen(function* () {
             const policy = context.sandboxProcessPolicy;
+            if (policy === undefined) {
+              return {
+                _tag: "Rejected" as const,
+                failureCode: "PolicyMissing",
+              };
+            }
+            const unavailable = (
+              failureCode: string,
+              probeEvidenceRef: string | null = null,
+              providerVersion = policy.providerVersion,
+            ): SandboxProviderUnavailableOutcome => ({
+              _tag: "SandboxProviderUnavailable",
+              projectId: context.projectId,
+              workspaceId: context.workspaceId,
+              executionId: context.executionId,
+              episodeBinding: policy.episodeBinding,
+              policyRevision: policy.policyRevision,
+              policyDigest: policy.policyDigest,
+              profileId: policy.profile,
+              providerId: policy.providerId,
+              providerVersion,
+              probeEvidenceRef,
+              failureCode,
+            });
             if (
-              !Option.isSome(sandboxProcess) ||
-              policy === undefined ||
               policy.executionId !== context.executionId ||
-              policy.sandboxHandleId !== handle.handleId ||
-              context.executionEpisodeBinding === undefined ||
-              JSON.stringify(policy.episodeBinding) !==
-                JSON.stringify(context.executionEpisodeBinding)
+              context.executionEpisodeBinding === undefined
             ) {
               return {
-                _tag: "Unavailable" as const,
-                failureCode: "sandbox_policy_unavailable",
+                _tag: "Rejected" as const,
+                failureCode: "ExecutionBindingMismatch",
+              };
+            }
+            const policyEpisode = decodeExecutionEpisodeBinding(
+              policy.episodeBinding,
+            );
+            const currentEpisode = decodeExecutionEpisodeBinding(
+              context.executionEpisodeBinding,
+            );
+            if (
+              policyEpisode === undefined ||
+              currentEpisode === undefined ||
+              encodeExecutionEpisodeBinding(policyEpisode) !==
+                encodeExecutionEpisodeBinding(currentEpisode)
+            ) {
+              return {
+                _tag: "Rejected" as const,
+                failureCode: "EpisodeBindingMismatch",
+              };
+            }
+            if (policy.sandboxHandleId !== handle.handleId) {
+              return {
+                _tag: "Rejected" as const,
+                failureCode: "HandleBindingMismatch",
+              };
+            }
+
+            const networkPolicy = decodeNetworkPolicyV1(policy.networkPolicy);
+            if (
+              !Number.isSafeInteger(policy.policyRevision) ||
+              policy.policyRevision < 1 ||
+              !/^[0-9a-f]{64}$/u.test(policy.policyDigest) ||
+              decodeSandboxProviderId(policy.providerId) !==
+                policy.providerId ||
+              policy.providerVersion.trim().length === 0 ||
+              policy.capabilityRevision.trim().length === 0 ||
+              networkPolicy === undefined ||
+              encodeNetworkPolicyV1(networkPolicy) !==
+                encodeNetworkPolicyV1(policy.networkPolicy) ||
+              !Object.values(policy.limits).every(
+                (value) => Number.isSafeInteger(value) && value > 0,
+              ) ||
+              policy.environmentAllowlist.some(
+                (name) => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name),
+              ) ||
+              new Set(policy.environmentAllowlist).size !==
+                policy.environmentAllowlist.length
+            ) {
+              return {
+                _tag: "Rejected" as const,
+                failureCode: "PolicyMissing",
               };
             }
 
@@ -693,33 +762,77 @@ export const ToolRuntimeLive = (
               canonicalMounts(actualMounts) !== canonicalMounts(policyMounts)
             ) {
               return {
-                _tag: "Unavailable" as const,
-                failureCode: "sandbox_mount_binding_mismatch",
+                _tag: "Rejected" as const,
+                failureCode: "MountBindingMismatch",
               };
+            }
+
+            const requestedTimeoutMs = invocation.requestedTimeoutMs;
+            if (
+              requestedTimeoutMs !== undefined &&
+              (!Number.isSafeInteger(requestedTimeoutMs) ||
+                requestedTimeoutMs < 1)
+            ) {
+              return {
+                _tag: "Rejected" as const,
+                failureCode: "InvalidTimeout",
+              };
+            }
+            const timeoutMs = Math.min(
+              requestedTimeoutMs ?? policy.limits.wallTimeMs,
+              policy.limits.wallTimeMs,
+            );
+
+            if (!Option.isSome(sandboxProcess)) {
+              return unavailable("SandboxProcessPortUnavailable");
             }
 
             const capabilities = yield* sandboxProcess.value.capabilities();
             const resolved = resolveSandboxProvider(
               {
                 providerId: policy.providerId,
+                expectedProviderVersion: policy.providerVersion,
+                expectedCapabilityRevision: policy.capabilityRevision,
                 profile: policy.profile,
-                networkMode: policy.networkMode,
+                networkPolicy,
                 boundary: policy.boundary,
               },
               capabilities,
             );
             if (resolved._tag !== "Available") {
-              return {
-                _tag: "Unavailable" as const,
-                failureCode: `sandbox_${resolved.reason.toLowerCase()}`,
-              };
+              return unavailable(
+                resolved.reason,
+                resolved.capability?.probeEvidenceRef ?? null,
+                resolved.capability?.providerVersion ?? policy.providerVersion,
+              );
             }
 
-            return yield* sandboxProcess.value.run({
+            const result = yield* sandboxProcess.value.run({
               ...invocation,
+              timeoutMs,
               policy,
               handle,
             });
+            if (result._tag === "Unavailable") {
+              if (
+                result.providerId !== policy.providerId ||
+                result.providerVersion !== policy.providerVersion ||
+                result.failureCode.trim() !== result.failureCode ||
+                result.failureCode.length === 0 ||
+                new TextEncoder().encode(result.failureCode).byteLength > 128
+              ) {
+                return {
+                  _tag: "Rejected" as const,
+                  failureCode: "ProviderOutcomeMismatch",
+                };
+              }
+              return unavailable(
+                result.failureCode,
+                result.probeEvidenceRef,
+                result.providerVersion,
+              );
+            }
+            return result;
           });
 
       const replayFailureCode = (
@@ -3853,7 +3966,9 @@ export const ToolRuntimeLive = (
                       context,
                       sandbox: handle,
                       regions,
-                      runProcess: runProcessFor(context, handle),
+                      ...(executor.processCapability === "SandboxProcess"
+                        ? { runProcess: runProcessFor(context, handle) }
+                        : {}),
                     }),
                     {
                       onFailure: (cause) => ({ ok: false as const, cause }),
@@ -3899,7 +4014,8 @@ export const ToolRuntimeLive = (
           const outcome = executed.value;
           if (
             options.qualificationProbe !== undefined &&
-            recoveredToolOutcome === undefined
+            recoveredToolOutcome === undefined &&
+            outcome.sandboxProviderUnavailable === undefined
           ) {
             yield* Effect.promise(
               () =>
@@ -4330,6 +4446,13 @@ export const ToolRuntimeLive = (
                   callRef: intent.callRef,
                 }) ?? Promise.resolve(),
             );
+          }
+
+          if (
+            executor.processCapability === "SandboxProcess" &&
+            outcome.sandboxProviderUnavailable !== undefined
+          ) {
+            return outcome.sandboxProviderUnavailable;
           }
 
           const observation: CanonicalToolObservation = (() => {

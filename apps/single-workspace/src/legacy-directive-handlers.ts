@@ -97,6 +97,8 @@ const toOutcome = (
       return observation("Runtime", "tool outcome unknown");
     case "RuntimeFailure":
       return observation("Runtime", `tool runtime failure: ${result.cause}`);
+    case "SandboxProviderUnavailable":
+      return observation("Runtime", "sandbox process provider unavailable");
     case "ReconciledNoEffect":
       return {
         _tag: "Observation",

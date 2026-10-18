@@ -2,11 +2,13 @@ import {
   Actor,
   ArtifactId,
   canonicalRegionString,
+  type ExecutionEpisodeBinding,
   ExecutionId,
   Principal,
   ProjectId,
   ProviderTurnId,
   parse,
+  type SandboxProviderCapability,
   SessionId,
   ToolInvocationId,
   WorkspaceId,
@@ -30,6 +32,9 @@ import {
   reconciliationFactId,
   recoveryBindingV1Digest,
   SandboxPort,
+  type SandboxProcessPolicy,
+  SandboxProcessPort,
+  type SandboxProcessPortService,
   type SelectedP39EffectAttempt,
   type SelectedP39ReconciliationFact,
   type SelectedP39RecoveryEvidence,
@@ -529,6 +534,7 @@ interface PipelineTrace {
   readonly events: Array<string>;
   approvalConsumer: string | null;
   intentWrites: number;
+  settlementWrites?: number;
   effectAdmissions: number;
   approvalConsumes: number;
   effectAdmissionDenial?: NoEffectDenialCode;
@@ -577,6 +583,9 @@ interface PipelineTrace {
   legacyInterruptedInvocation?: ToolInvocationRecord;
   legacyNoEffectInterruptionWrites?: number;
   readonly p40WinnerEvidence?: ToolObservationEvidence;
+  readonly sandboxCapabilities?: ReadonlyArray<SandboxProviderCapability>;
+  sandboxProcessPortRuns?: number;
+  sandboxProcessTimeouts?: Array<number>;
   readonly stopAtEffectAdmission?: boolean;
   readonly resolvedEnvironmentRevisionSequence?: ReadonlyArray<string>;
   readonly currentEnvironmentRevisionValues?: ReadonlyArray<string | null>;
@@ -673,6 +682,17 @@ const app = (
           : Effect.succeed({
               handleId: "s",
               rootPath: "/tmp/s",
+              mounts: [
+                {
+                  ref: "workspace",
+                  rootPath: "/tmp/s",
+                  region: {
+                    resourceSpaceId: "filesystem",
+                    normalizedRegion: {},
+                  },
+                  access: "ReadOnly" as const,
+                },
+              ],
               writableRegions: [],
             }),
       close: () =>
@@ -683,6 +703,26 @@ const app = (
             })
           : Effect.succeed(true),
     }),
+    Layer.succeed(SandboxProcessPort, {
+      capabilities: () => Effect.succeed(trace?.sandboxCapabilities ?? []),
+      run: (request) =>
+        Effect.sync(() => {
+          if (trace !== undefined) {
+            trace.sandboxProcessPortRuns =
+              (trace.sandboxProcessPortRuns ?? 0) + 1;
+            trace.sandboxProcessTimeouts ??= [];
+            trace.sandboxProcessTimeouts.push(request.timeoutMs);
+          }
+          return {
+            _tag: "Completed" as const,
+            exitCode: 0,
+            stdout: "process succeeded",
+            stderr: "",
+            timedOut: false,
+            truncated: false,
+          };
+        }),
+    } satisfies SandboxProcessPortService),
     Layer.succeed(ResourceAdmission, {
       admit: (input: {
         readonly regions: ReadonlyArray<
@@ -738,8 +778,12 @@ const app = (
             })
           : Effect.succeed("Recorded" as const);
       },
-      settle: () =>
-        faults.settlementJournal === true
+      settle: () => {
+        if (trace !== undefined) {
+          trace.settlementWrites = (trace.settlementWrites ?? 0) + 1;
+          trace.events.push("settlement");
+        }
+        return faults.settlementJournal === true
           ? Effect.fail({
               _tag: "PersistenceUnavailable" as const,
               repository: "ToolInvocationStore" as const,
@@ -748,7 +792,8 @@ const app = (
               sourceTag: "InjectedFailure",
               cause: "settlement-journal-failure",
             })
-          : Effect.succeed(faults.settlementUnapplied !== true),
+          : Effect.succeed(faults.settlementUnapplied !== true);
+      },
       consumeApproval: () => {
         if (trace !== undefined) {
           trace.approvalConsumes += 1;
@@ -1375,7 +1420,298 @@ const runFailure = (
     ) as Effect.Effect<ToolRuntimeError, never, never>,
   );
 
+const processEpisode: ExecutionEpisodeBinding = {
+  _tag: "InboxEpisode",
+  entryKey: "p4-sandbox-process-entry",
+  inputKind: "HumanMessage",
+};
+
+const processPolicy = (
+  episodeBinding: ExecutionEpisodeBinding,
+  providerId = "bwrap",
+  providerVersion = "0.8.0",
+): SandboxProcessPolicy => ({
+  executionId,
+  episodeBinding,
+  sandboxHandleId: "s",
+  policyRevision: 2,
+  profile: "ReadOnly",
+  providerId,
+  providerVersion,
+  capabilityRevision: "capability-v1",
+  boundary: providerId === "TrustedLocal" ? "TrustedLocal" : "OsEnforced",
+  networkPolicy: { version: 1, mode: "Disabled", destinations: [] },
+  policyDigest: "a".repeat(64),
+  admittedMounts: [
+    { ref: "workspace", rootPath: "/tmp/s", access: "ReadOnly" },
+  ],
+  environmentAllowlist: ["PATH"],
+  limits: {
+    wallTimeMs: 1_000,
+    stdoutBytes: 1_024,
+    stderrBytes: 1_024,
+    processCount: 4,
+    memoryBytes: 64 * 1024 * 1024,
+    cpuTimeMs: 1_000,
+  },
+  auditRefs: [],
+});
+
+const processContext = (
+  policy: SandboxProcessPolicy,
+  currentEpisode = policy.episodeBinding,
+): import("@arbor/ports").ToolExecutionContext => ({
+  ...context,
+  executionEpisodeBinding: currentEpisode,
+  sandboxProcessPolicy: policy,
+});
+
+const processExecutor: ToolExecutor = {
+  ...okExecutor,
+  processCapability: "SandboxProcess",
+  execute: ({ runProcess }) =>
+    Effect.gen(function* () {
+      if (runProcess === undefined) {
+        return {
+          settlement: {
+            _tag: "RuntimeFailure" as const,
+            cause: "process runner missing",
+          },
+          observation: { text: "process runner missing", truncated: false },
+          resultRef: null,
+        };
+      }
+      const result = yield* runProcess({
+        executable: "bash",
+        args: ["-lc", "true"],
+        cwd: { mount: "workspace", path: "." },
+        requestedTimeoutMs: 5_000,
+        ambientEnvironment: {},
+      });
+      if (result._tag === "SandboxProviderUnavailable") {
+        return {
+          settlement: {
+            _tag: "ExpectedFailure" as const,
+          },
+          observation: {
+            text: "sandbox provider unavailable",
+            truncated: false,
+          },
+          resultRef: null,
+          sandboxProviderUnavailable: result,
+        };
+      }
+      if (result._tag === "Rejected") {
+        return {
+          settlement: {
+            _tag: "RuntimeFailure" as const,
+            cause: "sandbox request rejected",
+          },
+          observation: { text: "sandbox request rejected", truncated: false },
+          resultRef: null,
+        };
+      }
+      return {
+        settlement: { _tag: "Success" as const },
+        observation: { text: result.stdout, truncated: result.truncated },
+        resultRef: null,
+      };
+    }),
+};
+
+const sandboxCapability = (
+  providerId: string,
+  status: "Supported" | "Experimental",
+  providerVersion: string,
+  capabilityRevision = "capability-v1",
+): SandboxProviderCapability => ({
+  providerId,
+  providerVersion,
+  capabilityRevision,
+  probeEvidenceRef: `evidence:${providerId}:${providerVersion}`,
+  status,
+  boundary: providerId === "TrustedLocal" ? "TrustedLocal" : "OsEnforced",
+  profiles: ["ReadOnly"],
+  networkModes: ["Disabled"],
+});
+
 describe("P4 tool runtime pipeline", () => {
+  it("rejects a process-capable executor without a durable policy before provider execution", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
+    };
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      context,
+    );
+    expect(result._tag).toBe("RuntimeFailure");
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+  });
+
+  it("rejects an episode-mismatched policy before provider execution", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
+    };
+    const policy = processPolicy(processEpisode);
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(policy, {
+        ...processEpisode,
+        entryKey: "different-entry",
+      }),
+    );
+    expect(result._tag).toBe("RuntimeFailure");
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+  });
+
+  it("does not inject process capability or trust an unavailable result from an unregistered executor", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
+    };
+    let processRunnerInjected = false;
+    const unregisteredExecutor: ToolExecutor = {
+      name: "read",
+      write: false,
+      requiresApproval: () => false,
+      execute: ({ runProcess }) => {
+        processRunnerInjected = runProcess !== undefined;
+        return Effect.succeed({
+          settlement: {
+            _tag: "RuntimeFailure" as const,
+            cause: "unregistered process request",
+          },
+          observation: {
+            text: "unregistered process request",
+            truncated: false,
+          },
+          resultRef: null,
+          sandboxProviderUnavailable: {
+            _tag: "SandboxProviderUnavailable" as const,
+            projectId,
+            workspaceId,
+            executionId,
+            episodeBinding: processEpisode,
+            policyRevision: 2,
+            policyDigest: "a".repeat(64),
+            profileId: "ReadOnly" as const,
+            providerId: "bwrap",
+            providerVersion: "0.8.0",
+            probeEvidenceRef: null,
+            failureCode: "ForgedUnavailability",
+          },
+        });
+      },
+    };
+    const result = await run(
+      app(false, unregisteredExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(processPolicy(processEpisode)),
+    );
+    expect(processRunnerInjected).toBe(false);
+    expect(result._tag).toBe("RuntimeFailure");
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+  });
+
+  it("returns typed provider unavailability without TrustedLocal fallback", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [
+        sandboxCapability("bwrap", "Experimental", "0.8.0"),
+        sandboxCapability("TrustedLocal", "Supported", "builtin-v1"),
+      ],
+    };
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(processPolicy(processEpisode)),
+    );
+    expect(result).toMatchObject({
+      _tag: "SandboxProviderUnavailable",
+      providerId: "bwrap",
+      providerVersion: "0.8.0",
+      policyRevision: 2,
+      failureCode: "ProviderNotSupported",
+    });
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+    expect(trace.settlementWrites).toBe(1);
+  });
+
+  it("returns typed unavailability when the probed provider version differs from the durable policy", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.9.0")],
+    };
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(processPolicy(processEpisode, "bwrap", "0.8.0")),
+    );
+    expect(result).toMatchObject({
+      _tag: "SandboxProviderUnavailable",
+      providerId: "bwrap",
+      providerVersion: "0.9.0",
+      failureCode: "ProviderVersionMismatch",
+    });
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+    expect(trace.settlementWrites).toBe(1);
+  });
+
+  it("pins provider version and clamps a requested timeout to policy", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
+    };
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(processPolicy(processEpisode)),
+    );
+    expect(result._tag).toBe("Success");
+    expect(trace.sandboxProcessPortRuns).toBe(1);
+    expect(trace.sandboxProcessTimeouts).toEqual([1_000]);
+  });
+
   it.each(["NotOccurred", "Occurred", "StillUnknown"] as const)(
     "stops before admission and P40 settlement when the P39 %s fact write fails, then safely resumes the exact reconciliation",
     async (outcomeTag) => {
