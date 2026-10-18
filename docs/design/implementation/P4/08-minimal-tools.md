@@ -85,3 +85,12 @@ Agent Runtime policy; they are not executable filesystem tools.
 - No Worktree lifecycle or git integration decision.
 - No concrete shell allow/deny list or numeric resource limit.
 - No authority derived from model-provided mount/path text.
+
+## Accepted Native OS Sandbox file/process distinction
+
+Read/List/Patch implementations that remain in the host Runtime process are
+still constrained by `SandboxPort` mount/target resolution and access mode;
+they do not acquire OS process isolation by that fact. If any such tool or
+executor launches a shell, script, build/test helper or other untrusted child
+process, that process and its descendants must use `SandboxProcessPort`.
+There is no direct executor `child_process`/native-spawn bypass.

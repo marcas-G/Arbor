@@ -1,8 +1,8 @@
 # Arbor 核心场景定义（S1–S4）
 
-**Version:** 1.4
-**Status:** FROZEN — minimal architecture convergence scenario clarification
-**Date:** 2026-10-12
+**Version:** 1.5
+**Status:** FROZEN — Minimal Architecture Convergence and Native OS Sandbox governance addendum
+**Date:** 2026-10-18
 **Depends on:** `Arbor Problem Definition & Goals v1.3`
 **Owns:** S1–S4 的参与者、端到端行为、分支、异常与恢复的用户可感知语义  
 **Does not own:** Domain Entity、Runtime/module、数据库、Command/Event、状态机、接口、技术实现
@@ -1080,3 +1080,16 @@ Agent 不再消耗模型调用。
 > 这个设计支撑 S1–S4 中的哪一步或哪一个分支？
 
 如果无法找到对应场景，应优先怀疑该设计是否属于过度设计。
+
+## Governance addendum — Native OS Sandbox (v1.5)
+
+Under `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`, the executable-work journey
+now has a user-visible OS-sandbox policy boundary: `ReadOnly` and
+`WorkspaceWrite` are provider-enforced profiles; `FullAccess` is an explicit
+human choice and is never a fallback. If the required provider/capability is
+unavailable, the action does not spawn and the same Execution remains visibly
+blocked with typed Attention/unavailable status. A user may explicitly choose
+the clearly labeled weaker configured path where policy allows it. Approval
+still authorizes only the exact action and never widens the sandbox; the
+sandbox never supplies approval. These are cross-scenario observable
+behaviors and do not alter S1–S4 goal or domain meaning.

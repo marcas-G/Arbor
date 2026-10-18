@@ -1,14 +1,14 @@
 # Arbor System Design Specification
 
-**Version:** 1.19
+**Version:** 1.20
 
-**Status:** FROZEN — Minimal Architecture Convergence
+**Status:** FROZEN — Minimal Architecture Convergence and Native OS Sandbox governance addendum
 
-**Supersedes:** v1.18
+**Supersedes:** v1.19
 
 **Date:** 2026-10-18
 
-**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.4`
+**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.5`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
 
 **Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型
@@ -2339,3 +2339,37 @@ Implementation
 10. 实施阶段与自举验证计划。
 
 **System Design v1.1 到此冻结。**
+
+## Governance addendum — Native OS Sandbox (v1.20)
+
+The accepted Native OS Sandbox contract separates logical Workspace mounting
+from operating-system process isolation. A Git Worktree or SandboxHandle is
+not itself a security boundary. Untrusted shell/script/build/test/package-
+manager code and its full descendant process tree require the neutral
+execution-scoped `SandboxProcessPort`; executors may not spawn directly.
+In-process Read/List/Patch remain bounded by logical mount/target rules and
+are not claimed as OS isolation. Only the fixed, registered P39 host-probe
+allowlist is outside the ordinary executor spawn path.
+
+The provider enforces the selected profile, exact admitted filesystem mounts,
+process-tree lifecycle, network, environment and resource limits. The
+profiles are `ReadOnly`, `WorkspaceWrite` and explicit `FullAccess`;
+`FullAccess` is never an automatic fallback. Network modes are
+`Disabled`, `Restricted`, and `Enabled`; Restricted/Enabled require exact
+human authority and enforce DNS/IP/redirect/bypass boundaries. If a required
+capability is unavailable or unverifiable, no process starts and the same
+Execution remains blocked and human-visible. A weaker TrustedLocal path is
+only an explicit, accurately disclosed choice.
+
+The threat model treats model output, Workspace content, dependencies and
+executable inputs as hostile; it protects host files, Arbor control data,
+credentials, disallowed network and host resources. Kernel/provider compromise,
+privileged administrator bypass, hardware side channels and deliberate
+out-of-band host disclosure are excluded and must be documented. Approval
+authorizes only the exact action and never widens sandbox policy; a sandbox
+decision never supplies approval. Durable policy decisions bind the exact
+Execution/Episode, monotone policy revision and CAPA-v2 human authority. A
+distinct configured human operator issues only the exact Grant; immutable
+provenance binds Grant, issuer and operator-config revision/digest. Recovery
+never reconstructs authority or policy from model text, current defaults,
+events or Worktree state. P1/P4/P5/P9/P10/P12/P13 own executable contracts.

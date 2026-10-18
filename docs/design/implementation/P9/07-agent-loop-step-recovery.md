@@ -685,6 +685,63 @@ with no Provider or action request. `resolve_work_blocker` replay is likewise
 bound to the exact source WorkEpisode and later successful ToolResult refs;
 receipt/result mismatch fails closed and cannot clear or recreate a blocker.
 
+## Accepted Native OS Sandbox decision recovery amendment
+
+At spawn and restart, P9 consumes only the P1 durable `SandboxPolicyDecision`
+for the exact Project/Workspace/Execution/Episode/policyRevision and the
+matching immutable Grant issuer provenance. It revalidates the persisted
+operator-config revision/digest against the validated P5 snapshot and the
+provider/policy digest against the original decision. Missing, duplicate,
+corrupt, expired, superseded or mismatched records fail closed with the
+existing typed Attention/unavailable path; no policy is reconstructed from
+current defaults, Worktree state, model text or an old event payload.
+
+## V5-authorized provider-unavailable fact storage contract
+
+P9 is the sole owner of `SandboxProviderUnavailableFactV1`; migration 0050
+physically stores the exact immutable fact. Its persisted fields are
+`attentionFactId`, `eventId`, `projectId`, `executionId`, `workspaceId`,
+canonical `episodeBinding`, `policyRevision`, `policyDigest`, `profileId`,
+`providerId`, `providerVersion`, optional opaque `probeEvidenceRef`, bounded
+opaque `failureCode`, and trusted `firstDetectedAt`. It is created only for
+the existing typed provider-unavailable outcome bound to the exact current
+Execution and durable policy decision. It stores no host path, environment
+value, raw probe output/error, credentials, command arguments or policy
+source material. Profile/provider/version and evidence ref must match their
+existing canonical sources; P9 does not synthesize a missing ref.
+
+The immutable fact identity is `(executionId, policyRevision)`.
+`attentionFactId` is `att_` plus lowercase SHA-256 of the exact canonical
+UTF-8 JSON `{"version":1,"executionId":...,"policyRevision":...}` with
+keys in that order and no whitespace/trailing newline. Same identity and
+same complete binding/reason returns the original fact/event. Any conflict
+in tenant, Workspace, Episode, policy/digest, profile, provider/version,
+evidence ref or reason is a typed integrity conflict and writes nothing.
+`failureCode` is an opaque equality value, not a public reason vocabulary:
+preserve exact bytes, reject NULL/empty/edge-U+0020 values and values above
+128 UTF-8 bytes; do not normalize or enumerate meanings.
+
+P9 allocates the event id before writing the initial fact. In one
+lease-fenced `TransactionScope`, write fact → durable P10 queue row → wake
+event `SandboxProviderUnavailable(v1)`; all three commit or roll back
+together. Event payload is exactly
+`{attentionFactId, executionId, workspaceId, policyRevision}`; its envelope
+binds project/workspace, uses the system recovery actor and has no Command
+cause. The event id on the fact is audit identity only, with no FK to prunable
+`domain_events`. Retry does not emit a second event or reset a Consumed queue
+row. Stale generation, changed binding or non-identical unique collision
+fails closed.
+
+`listSandboxProviderUnavailableFacts(projectId)` returns one consistent
+snapshot ordered by `(firstDetectedAt, attentionFactId)`. P9 validates every
+row and all Execution/Episode/policy/provider/evidence bindings; malformed,
+duplicate or cross-tenant facts are typed fail-closed errors, never silently
+omitted or guessed. P10 reads this fact and durable queue source, not event
+payloads. Higher policyRevision supersedes the old fact only in the live
+projection; the immutable source is never rewritten/deleted. This storage
+contract changes no Work, approval, sandbox policy or provider failure
+classification.
+
 ## Accepted P8 verification action time and receipt-first recovery (DID v1.48)
 
 Accepted token `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`,

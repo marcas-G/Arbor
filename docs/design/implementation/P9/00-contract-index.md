@@ -104,3 +104,21 @@ The DID v1.22 SCRC successor adds recovery contracts for Inbox promotion,
 callRef-paired ToolResult, checkpoint/epoch atomicity, bounded overflow recovery
 and native-binding fallback in `04`/`07`. It is design-frozen but implementation
 is not authorized and does not reopen historical P9 completion.
+
+## Accepted Native OS Sandbox recovery owner amendment
+
+P9 `07` owns rehydration of the exact P1 `SandboxPolicyDecision` and its
+provider binding on restart, plus the durable pre-spawn
+`SandboxProviderUnavailable` fact/event that P10 projects. Recovery never
+reconstructs a decision from current config, Worktree or model text. The
+accepted sandbox fact does not reopen P9/AH completion or authorize runtime
+implementation.
+
+## Accepted V5 fact-storage/rebuild amendment
+
+P9 `07` owns the immutable fact relation, bounded opaque reason decoder,
+canonical identity, lease-fenced fact→P10 queue→wake-event transaction,
+exact retry/conflict semantics, and `listSandboxProviderUnavailableFacts`
+snapshot. Event is only wake/audit; P9 fact is source of truth and is
+independent of `domain_events` retention. No runtime implementation is
+authorized by this storage design.

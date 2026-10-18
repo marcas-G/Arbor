@@ -47,4 +47,12 @@ P13 planning COMPLETE (planning review Blocking=0)
 P13 implementation COMPLETE; P13 FORMALLY CLOSED
 (planning/results/P13.result.md — EC-1..EC-14 PASS)
 P13 visual successor adopted by D-1 (TR-WPU-A); visual implementation remains separately unauthorized
+
+## Accepted Native OS Sandbox additive UI contract
+
+The accepted Native OS Sandbox amendment adds only the human-only
+`DecideSandboxPolicy` UI exposure and rendering in `01`/`02`/`03`/`06`.
+P13 remains a renderer/client boundary: authority is server-side, profile
+status comes from P10 DTOs, and submission uses the existing P12 authenticated
+`/commands` route. No browser-local state grants policy authority.
 ```

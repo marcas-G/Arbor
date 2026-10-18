@@ -1,7 +1,7 @@
 # P10 — 02 Attention Read-Model (GQ3)
 
 **Authority:** DID v1.13 G3/G8; SD v1.3 §12.3 (three severities, bubbling), §14 No.42/55; DID §6.2 L6 rows; P7 `05` (DeadlockAttentionRequested), P9 `01`/`04` (ReconciliationEscalated); `planning/gaps/P7-GAP-01.md`.
-**Status:** DRAFT.
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox addenda accepted under parent token `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1` and V5 token `ACCEPT_NATIVE_OS_SANDBOX_PROVIDER_UNAVAILABLE_FACT_STORAGE_V5`.
 
 **Accepted AH10 DeliverReplayFailure amendment (DID v1.37):** the specific P9
 fact source, ActionRequired target, `attentionFactId` deduplication and
@@ -402,6 +402,47 @@ validates the event against its exact fact and authoritative Execution
 Workspace, then inserts the idempotent marker and advances the existing
 per-project Attention offset in one transaction. Conflicting bindings are
 projection corruption. Its full-rebuild transaction is specified in `04`.
+
+## Accepted Native OS Sandbox unavailable Attention
+
+Add one P9-fact-backed source to the existing Attention mapping:
+
+| Source | Fact carrier | Severity | Target |
+|---|---|---|---|
+| Sandbox provider unavailable | immutable P9 `SandboxProviderUnavailableFactV1`; `SandboxProviderUnavailable(v1)` is a wakeup | ActionRequired | exact Execution Workspace (`executions.workspace_id`) |
+
+The closed public `AttentionSource` literal is `SandboxProviderUnavailable`.
+The existing Attention DTO is unchanged: source `SandboxProviderUnavailable`,
+severity `ActionRequired`, target from the canonical Execution relation,
+dedup key `attentionFactId`, and fixed safe summary “Required sandbox
+capabilities are unavailable; execution did not start.” No provider output,
+failure detail, host path, environment value or destination is exposed.
+
+The durable P9 fact is the only source of truth; P10 adds a retained admission
+queue and disposable source-specific Attention marker via migration 0050.
+Duplicate wake delivery does not duplicate queue/Attention state, and event
+pruning cannot erase source facts or admission work. Startup/periodic queue
+scan recovers missed wakeups. Only facts current under the accepted exact
+Execution/Episode/policyRevision freshness predicate contribute an Attention
+row; a higher policy revision supersedes the old live projection without
+deleting its immutable P9 fact. No dismissal action, repair command, new
+ViewId or canonical mutation is added. The row participates once in the
+existing subtree Attention counts.
+
+The retained queue transitions `Pending`→`Claimed`→`Consumed` and has exact
+project/fact/workspace identity. Claim uses one `BEGIN IMMEDIATE` to select a
+bounded batch of due Pending or expired Claimed rows ordered by
+`(enqueuedAt, projectId, attentionFactId)`, assign fresh `claimId` and trusted
+canonical-UTC `claimExpiresAt`, and increment `attemptCount`. Consume uses a
+new `BEGIN IMMEDIATE`, validates the
+current claim/expiry and exact P9 fact, durable decision, Execution/Episode,
+profile/provider/version/reason/evidence binding and accepted Attention
+freshness. If eligible, insert/verify one marker keyed by
+`(projectId, attentionFactId)`; then mark the queue row Consumed and clear
+claim fields atomically. A stale fact may be Consumed without an active
+marker. Stale/expired claims, changed bindings or marker conflicts cannot
+consume. The queue row is not deleted. A wake for Pending/Claimed only wakes
+the dispatcher; Consumed is a no-op. Full rebuild/re-arm is P10 `04`.
 
 ## Accepted AH14 LegacyAdoptionEvidenceInsufficient source (DID v1.49)
 

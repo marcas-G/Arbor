@@ -1,7 +1,7 @@
 # P10 — 07 Acceptance Stories
 
 **Authority:** `01`–`06`; S2.4.1–S2.4.3/§12.5, S1 (tree overview), S4 (wait observability); P5–P9 acceptance style.
-**Status:** DRAFT.
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox addenda accepted under parent token `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1` and V5 token `ACCEPT_NATIVE_OS_SANDBOX_PROVIDER_UNAVAILABLE_FACT_STORAGE_V5`.
 
 **Accepted AH10 DeliverReplayFailure qualification story (DID v1.37):** Story M
 is the design acceptance contract for the P9 failure source's consumer
@@ -123,6 +123,65 @@ success or authorized Work revision advance resolves it once; terminal Work
 supersedes it. Same-key repeated failure updates/reopens by state; event
 pruning plus P10 rebuild does not revive resolved rows. Views and Attention
 never mutate Work, call Provider, or retry an action.
+
+## Accepted Native OS Sandbox acceptance story
+
+**Story — durable sandbox policy and unavailable projection.** A human submits
+the exact policy through the existing authenticated command route; the
+Workspace Detail projection shows only the current P1 decision's profile,
+provider, network mode, revision, expiry and Configured/Unavailable state.
+When a required provider capability is unavailable before spawn, P9 persists
+one exact `SandboxProviderUnavailableFactV1`; P10
+shows one `SandboxProviderUnavailable` ActionRequired row at the canonical
+Execution Workspace, with fixed safe summary and `attentionFactId` dedup. No
+process starts and no host path, secret, provider diagnostic or destination
+is exposed. Duplicate wakeups do not duplicate Attention; event pruning and
+full rebuild preserve the projection from the P9 durable fact. A higher
+policy revision supersedes the old current-status projection without deleting
+the immutable fact. Rejection writes no decision/event; a Committed decision
+and event/receipt are atomic. No P10 row mutates policy or retries execution.
+
+**V5 qualification cases (design acceptance only; no tests are claimed):**
+
+- 0050 applies only after exact `user_version=49`, complete 001–0049 prefix
+  and the final accepted 0049 signature; it rejects the dormant P43 Blocked
+  schema and commits all fact/queue/marker tables, indexes/triggers and
+  `user_version=50` atomically. Migration 0049's schema-48 preflight and
+  decision/provenance rows are also qualified before any implementation.
+- Schema assertions cover every fact/queue/projection field, key, FK, index
+  and trigger, no event FK, no cascade, and no backfill. P9 facts and P10
+  queue identities are immutable; queue rows cannot be deleted.
+- SQL CHECK and P9 decoder reject NULL, empty/all-space, leading/trailing
+  U+0020 and values over 128 UTF-8 bytes; accepted opaque reason strings
+  round-trip byte-for-byte.
+- Same exact identity/payload retry returns one fact, one queue row and the
+  same event. Conflicts in tenant/workspace/episode, policy, profile,
+  provider/version, probe evidence, reason, queue binding or event identity
+  fail closed without partial writes; fact UPDATE/DELETE and queue identity
+  UPDATE/DELETE are rejected by SQLite triggers.
+- Two-sided real-process crash qualification proves pre-commit leaves no
+  fact/queue/event and post-commit retains all three; restart does not mint a
+  second event/provider attempt; stale P9 lease/generation writes nothing.
+- Queue claim/consume crash before commit leaves/reclaims an expired Claimed
+  row; crash after commit leaves one projection row plus Consumed queue state.
+  Old claim id, duplicate wake or duplicate consume cannot write a second row;
+  changed bindings/conflicting marker fail closed.
+- Event pruning followed by P10 queue scan/full rebuild restores one active
+  Attention row per eligible fact under accepted source/freshness rules.
+  Provider/profile/version/evidence bindings are checked at snapshot/consume;
+  stale facts are not revived.
+- Independent SQLite processes race P9 fact→queue→event commit against P10
+  reset/snapshot/queue re-arm/offset rewind in both serialization orders,
+  including pruning a post-snapshot wake before P10 catches up. The durable
+  queue yields one marker; crashes before/after rebuild commit converge.
+- Reset racing queue claim/consume either re-arms the consumed row or
+  invalidates the stale claim and allows a fresh claim; stale claimant cannot
+  consume after rebuild.
+- A `user_version=49` target with any 0049 signature/schema mismatch, or the
+  dormant P43 draft, is rejected. 0049/0050 are not registered/run by this
+  design landing. The accepted P2 Blocked WorkEpisode owner remains intact;
+  its unregistered draft descriptor must be sequenced after schema 50 before
+  any future implementation/registration.
 
 **Accepted AH14 legacy adoption evidence Attention design gate (DID v1.49):**
 for the single `LegacyActionDispositionUnproven` scope, prove the ambiguous

@@ -105,3 +105,20 @@ visible to P9 recovery and side-effect reconciliation.
 - No authority/permission decision (precedes `open`).
 - No provider-specific container/MicroVM mechanism.
 - No host-path reconstruction in Model Context or prompts.
+
+## Accepted Native OS Sandbox convergence contract
+
+`SandboxPort` retains logical mount identity, target confinement, and
+Execution-scoped `open`/`close`; closing a sandbox handle does not delete or
+retire the P11 Worktree. The accepted parent adds a distinct
+`SandboxProcessPort` for untrusted process execution. It consumes a bound
+`SandboxHandle` and `SandboxProcessPolicy`, preserving exact admitted mount
+access while enforcing OS-level process, filesystem, network, environment and
+resource controls. A Git worktree is not an OS security boundary.
+
+The profiles are `ReadOnly`, `WorkspaceWrite` and explicit `FullAccess`;
+network modes are `Disabled`, `Restricted` and `Enabled`. Restricted/Enabled
+require the exact durable human policy authority; ordinary approval does not
+grant network. If any required control cannot be probed/enforced, the provider
+is `Unavailable` and no process starts. Platform adapters report effective
+capability; unsupported controls cannot be reported as success.

@@ -61,6 +61,27 @@ DomainEventJournal.append(drafts)
 
 `domain_events` is the durable outbox (DID §9.9); no separate delivery flag.
 
+## Native OS Sandbox accepted events
+
+`SandboxPolicyDecisionRecorded` is EventVersion 1 and is appended only for a
+Committed `DecideSandboxPolicy`, atomically with the decision and receipt.
+Payload is the minimal wake/audit tuple
+`{workspaceId, executionId, episodeBinding, policyRevision,
+permissionGrantId, operatorConfigRevision, operatorConfigDigest}`. The
+decision row is written before the Committed receipt/commands row, which is
+written before this event; all are one transaction. The consumer rereads the
+exact P1 decision row; event payload alone grants no authority.
+
+`SandboxPolicyGrantIssued` is EventVersion 1, emitted only for an exact
+Committed `GrantPermission` whose capability is `DecideSandboxPolicy`. Its
+closed payload is `{permissionGrantId, grantPermissionCommandId, executionId,
+operatorConfigRevision, operatorConfigDigest}`; event envelope Project and
+actor bind tenant and issuer. Frozen P1 §3.1 ordering is Grant → provenance →
+Committed receipt/commands row → existing `PermissionChanged` event →
+this additive event. Both follow the committed receipt; existing
+`PermissionChanged` payload/meaning is unchanged. A `TerminalRejected`
+command emits neither event.
+
 ### FT-DG-01 OPEN-3 activation status event (EventVersion 1)
 
 `WorkspaceResourceActivationChanged` is a new event type whose first and
@@ -168,3 +189,14 @@ Projection rebuild:
 - Projection query models (P10).
 - Scheduler/coordination consumers (later phases).
 - External projection stores.
+
+## Accepted V5 provider-unavailable wake event
+
+P9 appends `SandboxProviderUnavailable` EventVersion 1 atomically with its
+immutable P9 source fact and P10 queue row. The exact event payload is
+`{attentionFactId, executionId, workspaceId, policyRevision}`; envelope binds
+canonical project/workspace, uses the system recovery actor and has no
+Command cause. It is only a wake/audit channel, not the fact source. P10
+validates it against the P9 fact/queue identity before wake processing. The
+fact's `event_id` is not FK-bound to prunable `domain_events`, and journal
+pruning cannot delete the P9 fact or durable queue work.

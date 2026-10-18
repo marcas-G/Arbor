@@ -94,3 +94,17 @@ control and requires exact later successful-action evidence.
 
 `06` EC-3（10×3 fixtures render coverage）、EC-4（六 category Problem
 render tests + TerminalRejected 内联态）。
+
+## Accepted Native OS Sandbox rendering
+
+Render P10's optional `WorkspaceDetail.executionSummary.sandboxPolicy`
+fields as the exact current profile, provider, network mode, policy revision,
+expiry and Configured/Unavailable state. Render the
+`SandboxProviderUnavailable` Attention row with its fixed safe summary and
+Execution Workspace target. Do not display host paths, provider diagnostics,
+network destinations, environment values or operator-config secrets. Render
+`FullAccess` as an explicit high-risk choice requiring separate confirmation;
+never infer or select it from provider failure. Render the existing
+`sandbox/provider-unavailable` 503 Problem as the standard unavailable state
+and keep the Work visibly blocked; no browser retry may bypass the human
+command route.

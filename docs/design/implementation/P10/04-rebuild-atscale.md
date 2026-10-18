@@ -1,7 +1,7 @@
 # P10 — 04 Business-Projection Rebuild at Scale (GQ2 handover from P9)
 
 **Authority:** P9 `05` §3.2 (the four-item handover), §closure-reconciliation; P1 `05` §4/§6 (apply-then-advance; floor/reset/replay); DID v1.13 G1/G2; GQ ruling: projection-side retention only, journal horizon stays P1 `04`.
-**Status:** DRAFT.
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox rebuild addendum accepted under V5 token `ACCEPT_NATIVE_OS_SANDBOX_PROVIDER_UNAVAILABLE_FACT_STORAGE_V5`.
 
 ## 1. The four handover items (frozen)
 
@@ -247,6 +247,43 @@ covers P9 fact creation on either side of the rebuild. Event pruning does not
 remove the fact source; P1 continues to own retained-floor refusal and journal
 retention. P10 rebuild does not mutate P9 facts, canonical Execution/Step/
 Action, Work, selection, Command, receipt or journal event.
+
+## Accepted V5 sandbox-provider Attention rebuild
+
+The immutable P9 `SandboxProviderUnavailableFactV1` is the only source fact.
+The P10 queue row is a durable admission/rebuild marker and the
+`sandbox_provider_unavailable_attention_rows` row is a disposable projection.
+The wake event is not a rebuild source. A pruned event cannot remove the P9
+fact or its durable queue row.
+
+For one project, the authorized full rebuild holds one `BEGIN IMMEDIATE` /
+`TransactionScope` on the same SQLite connection as the P9 project fact
+snapshot, and atomically:
+
+1. resets that project's Attention projection markers;
+2. reads the P1 retained floor and rewinds the existing Attention event
+   offset to `floor - 1` using the existing P9-hardened contract;
+3. reads one consistent ordered `listSandboxProviderUnavailableFacts(projectId)`
+   snapshot from P9 and validates exact Execution/Episode, durable decision,
+   profile, provider/version, bounded opaque reason and evidence-ref binding,
+   applying only the accepted P10 eligibility/freshness predicate;
+4. inserts the queue row for each exact fact if absent, or idempotently
+   re-arms the same queue identity to Pending, clearing prior claim and
+   consumed timestamp; and
+5. commits reset, snapshot-derived queue re-arm and offset rewind together.
+
+Queue re-arm never changes `(projectId, attentionFactId, workspaceId,
+enqueuedAt)`. A conflicting fact/queue binding aborts and rolls back. Re-arm
+of a Consumed row is required after its projection marker is reset. P9 fact
+creation, queue admission and event append serialize with rebuild: if P9
+commits first the snapshot includes the fact; if rebuild commits first the
+later atomic P9 fact→queue→event write creates Pending work. Both orders
+produce one queue row and one marker after consume, including when the wake
+event is pruned. Claim/rebuild races also serialize: rebuild re-arms rows
+consumed before reset or invalidates stale claim IDs when it commits first.
+Crashes before commit preserve prior state; crashes after commit resume from
+the re-armed queue. This does not change generic below-floor refusal, P1
+retention policy or any canonical sandbox/Execution state.
 
 ## Accepted AH14 legacy adoption Attention rebuild and retention (DID v1.49)
 

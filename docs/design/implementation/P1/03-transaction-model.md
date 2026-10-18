@@ -325,6 +325,38 @@ work.assignWork branch        -> RetirePreconditionFailed superseded by Terminal
 - Exact SQL text for fence/CAS (04).
 - Offset/projection transaction boundary (05).
 
+## Native OS Sandbox accepted transaction amendment
+
+For exact-scope `GrantPermission`, within one Gateway transaction validate
+P12 authority, configured issuer/non-subject, exact Execution target/tenant,
+finite expiry and current operator-config revision/digest. Write order is
+frozen P1 §3.1:
+
+```text
+PermissionGrant
+→ SandboxPolicyGrantIssuerProvenanceV1
+→ Committed receipt / commands row
+→ existing PermissionChanged event (unchanged)
+→ SandboxPolicyGrantIssued event (additive)
+→ atomic commit
+```
+
+The provenance→`commands(command_id)` foreign key is deferred until commit.
+Every item is one transaction. A `TerminalRejected` GrantPermission writes
+no Grant, provenance or event. Exact command retry returns the receipt and
+does not duplicate provenance/event.
+
+For `DecideSandboxPolicy`, after resolver preflight and receipt-first replay,
+the Gateway transaction re-reads the current Grant with
+`PermissionGrantRepository.findById` plus exact issuer provenance, compares
+all bound fields and current P5 config digest, validates canonical
+Execution→Project/Workspace/Episode and trusted transaction time, then writes
+the next immutable policy revision, the Committed receipt/commands row, and
+then `SandboxPolicyDecisionRecorded`, followed by atomic commit. A
+`TerminalRejected` decision writes no decision or event. A Grant revoke
+racing either command is serialized by the existing Gateway transaction
+boundary.
+
 ## Accepted AH14 P9 fact and resolution transaction boundary (DID v1.49)
 
 Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,

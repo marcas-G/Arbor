@@ -635,3 +635,33 @@ AuthorityRepository; an Authority Resolver.
 A later phase owns `Canonical facts + PermissionGrant + Parent/User governance
 + authenticated Principal → Authority Resolver → VerifiedCommandAuthority`.
 When it arrives, P1 handlers need no change — that is the value of this seam.
+
+## Native OS Sandbox accepted command amendment
+
+`DecideSandboxPolicy` is an External human-only command with exact
+Project/Workspace/Execution/Episode and expected Execution/policy revisions,
+profile, provider, network mode/targets, provider-policy digest and decision
+expiry. P12 `02` must produce the Application-owned
+`SandboxPolicyDecisionAuthority` before any receipt read. Resolver-before-
+receipt remains mandatory; only after successful preflight does normal
+receipt-first replay apply.
+
+The authority binds the authenticated HumanPrincipal, exact CAPA v2
+PermissionGrant projection (including raw scope/lifetime and revision/state/
+issuer), exact `ExecutionId` target and immutable
+`SandboxPolicyGrantIssuerProvenanceV1`. P1's only §2A sandbox exception is a
+same-transaction exact re-read/compare of that Grant and provenance row; P1
+does not parse CAPA scope, resolve operators, infer roles or widen authority.
+The operator is the authenticated configured host operator, differs from the
+Grant/decision subject, and may issue only this exact Grant capability.
+P1 `GrantPermission` writes provenance only after P12 authority and exact
+Gateway validation; TerminalRejected writes no provenance/event.
+
+Trusted Resolver and Gateway clocks independently validate
+`validFrom <= now < Grant.expiresAt` and `now < decisionExpiresAt <=
+Grant.expiresAt`. Neither uses `CommandEnvelope.issuedAt`. Grant target must
+be one exact ExecutionId; canonical Execution relations establish
+Project/Workspace/Episode and foreign targets fail closed without disclosure.
+`TerminalRejected` writes no decision or event; Committed decision/event/
+receipt is atomic. Grant issuance order and event identity are fixed in P1
+`03`/`05` below.

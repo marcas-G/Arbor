@@ -95,6 +95,15 @@ Resolve/canonicalize happens outside the write transaction (DID §9.5).
 - Provider disconnect, tool `OutcomeUnknown` reconciliation (P3/P4).
 - Projection rebuild at scale (P9/P10).
 
+## Native OS Sandbox accepted recovery rows
+
+| Boundary | Before commit | After commit / restart |
+|---|---|---|
+| Exact Grant issuance | Crash rolls back Grant/provenance/receipt/event together; no orphan provenance may be visible. | One Committed GrantPermission, immutable issuer provenance and `SandboxPolicyGrantIssued`; retry/restart does not duplicate. Deferred command FK must be satisfied at commit. |
+| TerminalRejected GrantPermission | No Grant, provenance or audit event is written. | Exact rejection receipt only; replay remains idempotent. |
+| Policy decision | Crash rolls back decision, `SandboxPolicyDecisionRecorded` and receipt together. | Restart rereads the exact durable Execution/Episode/policy revision and Grant provenance; it never reconstructs from event/model/current defaults. |
+| Config removal/change/re-add | No stale snapshot is accepted after quiesced restart. | Exact operator-config revision/digest mismatch, missing/corrupt provenance, changed Grant or expired decision yields fail-closed Attention; re-adding an operator cannot revive old Grants and requires a new Grant/decision. |
+
 AgentLoopStep action/settlement takeover reuses this matrix per generated
 CommandId. Cross-generation logical eligibility and receipt-first convergence
 are owned by `07`; AgentLoopStep state recovery is P9 `07`.
