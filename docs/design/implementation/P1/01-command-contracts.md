@@ -278,11 +278,14 @@ does not record an attempt or invoke a handler. The P8 origin, source
 conclusion, successor, spawn intent and successful receipt are one transaction
 under P1 `03` §3.1; an origin is not a substitute for a receipt.
 
-### 3C. P6 UnboundLegacy current-route fallback (DID v1.47)
+### 3C. P6 UnboundLegacy current-route fallback (DID v1.47/v1.52)
 
-When an existing owner/Parent-governance command cannot move the same-key P6
-UnboundLegacy Governance Inbox row in the same P1 command transaction as its
-canonical owner/Parent change, the command returns the existing typed
+No v1 P1 owner/Parent-governance command mutates the canonical Work owner or
+Workspace Parent. Therefore only command-level route-move/failure qualification
+is N/A for v1; this does not make the same-key helper or its future-command
+constraint N/A. If a future separately governed command changes that route and
+cannot move the same-key P6 UnboundLegacy Governance Inbox row in the same P1
+command transaction, it returns the existing typed
 `TerminalRejected(AuthorityDenied)` (or the narrowest existing typed
 rejection) through CommandGateway. This is an ordinary terminal command
 outcome, not a pre-Gateway transport/Resolver error. The normal receipt and

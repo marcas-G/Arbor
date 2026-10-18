@@ -1,6 +1,6 @@
 # P1 — 03 Transaction Model
 
-**Authority:** DID v1.6 §7.4, §12.6, §6.3, §6A.15, §9.1, §9.7
+**Authority:** DID v1.6 §7.4, §12.6, §6.3, §6A.15, §9.1, §9.7; accepted DID v1.52 F23 P6 operator rebuild / v1 route-command qualification.
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Implements:** concrete transaction mechanism; supports P1-DG-02 / P1-DG-04.
 
@@ -156,20 +156,34 @@ COMMIT
 No Domain Event. `terminal_error_json` carries a `CommandRejection`
 (DID §6A.15).
 
-For the accepted P6 UnboundLegacy Governance Inbox route, if an owner/Parent
-change cannot move the stable Inbox key in the same command transaction, that
-command uses this ordinary terminal-rejection path with the existing
-`AuthorityDenied` (or narrowest existing typed rejection). The transaction
-commits the normal `TerminalRejected` receipt and resolving attempt, while
-committing no canonical Work/Workspace/owner mutation, Domain Event, Inbox
-route mutation or UnboundLegacy disposition mutation. The same CommandId and
-tuple replays this receipt; a different CommandId independently reaches the
-rejection. A crash before COMMIT leaves neither the rejection receipt/attempt
-nor canonical changes; a crash after COMMIT preserves the receipt/attempt and
-still leaves canonical/Inbox/disposition state unchanged. This path enters
-through Gateway and performs no pre-Gateway receipt read/rejection. If the
-Inbox move can be done, it shares this P1 command transaction with the
-canonical owner/Parent change.
+No v1 P1 command changes canonical Work owner or Workspace Parent, so the
+command-level UnboundLegacy route-move/terminal-rejection branch and its
+receipt-commit crash qualification are N/A for v1 only. This does not make the
+same-key route helper or future-command invariant N/A. If a future separately
+governed P1 command changes the recipient and cannot move the stable Inbox key
+in the same command transaction, it uses this ordinary terminal-rejection
+path with the existing `AuthorityDenied` (or narrowest existing typed
+rejection). The transaction commits the normal `TerminalRejected` receipt and
+resolving attempt, while committing no canonical Work/Workspace/owner mutation,
+Domain Event, Inbox route mutation or UnboundLegacy disposition mutation. The
+same CommandId and tuple replays this receipt; a different CommandId
+independently reaches the rejection. A crash before COMMIT leaves neither the
+rejection receipt/attempt nor canonical changes; a crash after COMMIT preserves
+the receipt/attempt and still leaves canonical/Inbox/disposition state
+unchanged. This path enters through Gateway and performs no pre-Gateway receipt
+read/rejection. If a future Inbox move can be done, it shares the P1 command
+transaction with the canonical owner/Parent change.
+
+The accepted P6 operator rebuild is not an Application Command or online
+Gateway transaction. The local operator CLI runs only against the stopped
+current schema-48 primary under P39 `MaintenanceExclusive`; it invokes the
+existing P6 Inbox repository helper in a single `TransactionPort` transaction
+on the same P39 primary SqlClient connection. P39's report sidecar and writer
+lock are separate infrastructure files; the JSONL manifest is separate audit.
+The operation changes only stable-key Inbox projection rows and never writes a
+Command receipt/attempt, Domain Event or canonical owner/disposition row. The
+P39 sidecar's pre-permit `wx` creation/validation may persist on lock refusal,
+but the primary, P6 rows and JSONL manifest remain untouched.
 
 ### 3.3 Retryable operational failure (no authoritative resolution)
 

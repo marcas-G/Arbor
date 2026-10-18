@@ -1,6 +1,6 @@
 # P1 — 04 SQLite Schema
 
-**Authority:** DID v1.6 §9.1–§9.9, §9.13, §12.11, §3.1–§3.3; accepted P41/0041 storage and FT-DG-01 OPEN-1/OPEN-2 owner amendments
+**Authority:** DID v1.6 §9.1–§9.9, §9.13, §12.11, §3.1–§3.3; accepted P41/0041 storage, FT-DG-01 OPEN-1/OPEN-2 owner amendments, and DID v1.52 F23 P6 operator rebuild / v1 route-command qualification.
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Closes:** P1-DG-07 (cyclic FKs, mapping, root uniqueness), P1-DG-08
 (`resource_ownership` lifecycle), P1-DG-09 (retention/delete + migration),
@@ -686,24 +686,52 @@ The paired P6 Inbox item uses the existing `Governance` kind and stable
 `workspace_id` is the route recipient; the typed P6 payload is derived from
 the disposition and canonical Work/Workspace facts rather than receipt JSON.
 The existing `admitted_at` timestamp is the logical Inbox `created_at` and is
-preserved for the stable key. A real recipient move updates `workspace_id`,
-increments the Inbox row `revision`, and sets `updated_at` in the same P1
-`BEGIN IMMEDIATE` transaction as the canonical owner/Parent change. An
-identical route reconciliation is a no-op; mismatched disposition/source
-identity is integrity corruption, not overwrite. The route move changes no
-disposition or P8 origin row.
+preserved for the stable key. Schema 45 introduced the materialized `revision`
+and `updated_at` fields; current supported schema 48 carries them. A real
+recipient move updates `workspace_id`, increments the Inbox row `revision`,
+and sets `updated_at` in the same P1 `BEGIN IMMEDIATE` transaction as the
+canonical owner/Parent change. An identical route reconciliation is a no-op;
+mismatched disposition/source identity is integrity corruption, not overwrite.
+The route move changes no disposition or P8 origin row. The v1.52 acceptance
+does not reserve a new migration or change the schema-48 high-water mark.
 
-The current Inbox row DDL does not yet contain `revision` or `updated_at`.
-Their physical DDL, migration ID/name, and initial revision value remain
-**implementation-package TBD**; no schema/migration is activated by this
-design landing. Until that physical package is separately authorized and
-implemented, owner/Parent commands must not create an asynchronous route
-window: an unavailable same-transaction Inbox move is the ordinary P1 Gateway
-`TerminalRejected(AuthorityDenied)` path in `03`, committing only its normal
-receipt/attempt and no canonical Work/Workspace/Event/Inbox/disposition
-mutation. If the current authorized human route cannot be established, the
-ordered P8 migration fails closed and rolls back rather than routing to a
-broader principal.
+No v1 P1 command mutates canonical Work owner or Workspace Parent, so the
+command-level owner/Parent route-move and its command/process crash
+qualification are N/A for v1 only. The route-move invariant remains mandatory
+for any future separately governed route-mutating command: it may not create an
+asynchronous route window, and an unavailable same-transaction Inbox move uses
+the ordinary P1 Gateway `TerminalRejected(AuthorityDenied)` path in `03`,
+committing only its normal receipt/attempt and no canonical
+Work/Workspace/Event/Inbox/disposition mutation. If the current authorized
+human route cannot be established, maintenance/rebuild fails closed rather
+than routing to a broader principal. The route helper and current-route
+authorization are not N/A.
+
+### P6 operator UnboundLegacy projection rebuild (DID v1.52)
+
+The required production rebuild is a local operator-only offline operation on
+the exact current schema-48 database, with the daemon stopped. It reuses the
+existing `rebuildUnboundLegacyInboxProjections` repository helper and P39
+`MaintenanceExclusive` writer permit; it is not an Application Command and
+does not add a P10 Attention source. The CLI separates the P39 blocker-report
+SQLite `--p39-sidecar` from its hash-chained JSONL operation `--manifest`. The
+P39 report sidecar is exclusively created with `openSync(..., "wx", 0o600)` if
+absent, then initialized/validated by SQLite before the writer permit; that
+creation exclusion is not a persistent maintenance permit. A P39 lock refusal
+may leave P39 infrastructure files, but not a primary/P6 row or JSONL manifest
+mutation.
+
+Once `MaintenanceExclusive` is acquired, the operator validates the exact
+schema-48 prefix and manifest, then calls the existing helper in one
+`TransactionPort` transaction on the same primary SqlClient connection supplied
+by P39. Only exact stable-key Governance projection rows are inserted or moved;
+canonical Projects, Workspaces, Works, Verifications, Commands, Events, P8
+origins and dispositions are read-only. The operation is idempotent, route
+reconciliation uses current canonical facts, and P12 human authorization is
+rechecked at read time; the row grants no authority. Hash-chained preparation,
+commit, crash/restart recovery, and the P39 sidecar pre-lock boundary are owned
+by P6 `02` and its acceptance in `06`. No new schema migration or online,
+preserved-database, or deployment operation is authorized by this contract.
 
 Backfill an origin only if one strict Committed RetryVerification result and
 exactly one retained `VerificationConcluded(Unknown, Orphaned)` plus one

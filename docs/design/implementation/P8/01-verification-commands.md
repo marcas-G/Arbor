@@ -208,7 +208,7 @@ preserves the old receipt, records `UnboundLegacy`, and admits the human-only
 P6 Governance Inbox item described in P6 `02`; an UnboundLegacy external replay
 is a generic Resolver denial.
 
-#### Accepted P6 current-route mechanics (DID v1.47)
+#### Accepted P6 current-route mechanics (DID v1.47/v1.52)
 
 The accepted P6 item uses the existing `Governance` kind and stable
 `retry-verification-unbound:<commandId>` key, with typed
@@ -221,6 +221,12 @@ human-only, queryable only under that current route, and read-only/no-consume;
 it is not promoted to Agent Session or P10 Attention. Route moves and failure
 to move atomically follow P6 `02` / P1 `03`; these mechanics do not relax this
 P8 section's current-authorization-before-Gateway rule.
+No v1 P1 command changes canonical Work owner or Workspace Parent, so only the
+command-level route-move/command-crash qualification is N/A for v1. The
+same-key route helper, current-route authorization, and same-transaction plus
+Gateway-rejection constraints remain mandatory for a future separately
+governed route-mutating command. P8's old Verification owner snapshot and
+successor-current-owner rules are unchanged.
 This migration disposition is not a P10 Attention source and does not add a
 new command or automatic retry loop.
 

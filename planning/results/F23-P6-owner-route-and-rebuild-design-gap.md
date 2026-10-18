@@ -1,6 +1,6 @@
 # F23 P6 Owner/Parent Route Move and Production Rebuild — Design Gap
 
-Status: **IMPLEMENTATION STOPPED AT PLAN STOP CONDITION**
+Status: **DESIGN GAP RESOLVED NARROWLY; OPERATOR REBUILD STILL REQUIRES IMPLEMENTATION AUTHORIZATION**
 
 ## Authorization and evidence boundary
 
@@ -61,9 +61,25 @@ behavior.
   their adapter-level transaction/read tests pass, but they do not close this
   gap. Do not claim P6 route-move or production-rebuild qualification complete.
 
-Manual governance must decide whether these requirements are explicitly N/A
-until an owner/Parent mutation and rebuild surface is separately authorized, or
-whether to authorize a design amendment identifying those owning production
-entry points and command semantics. Implementation is stopped pending that
-decision. No new command, migration, async reconciliation path, or P10 Attention
-source is invented here.
+At discovery time, manual governance decision was pending. The later accepted
+disposition is recorded below; the source inventory and initial gap evidence
+remain unchanged. No new command, migration, async reconciliation path, or P10
+Attention source is invented here.
+
+## Governance disposition (2026-10-18)
+
+The manual governor accepted proposal
+`planning/proposals/F23-P6-operator-inbox-rebuild-and-route-move-na-draft.md`
+under `ACCEPT_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_AND_V1_ROUTE_MOVE_NA`,
+raw SHA-256
+`B6A542973768D1C0D7C8ACB644988D1C957B7020F73206C335D73FF7FE0C833E`.
+Owning semantics are landed in DID v1.52 and P6/P8/P1 documents; see
+`planning/results/F23-P6-operator-rebuild-and-route-move-na-acceptance-and-landing.record.md`.
+The decision resolves the gap narrowly: v1 command-level owner/Parent route
+move and its command/process crash qualification are N/A because that mutation
+command does not exist. The helper, current-route visibility, future-command
+same-transaction/rejection constraints remain normative. Production operator
+rebuild is explicitly **required**, not N/A; it still needs the separate
+`AUTHORIZE_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_IMPLEMENTATION` token and the
+accepted TDD/crash/competition evidence. Independent post-landing review is
+pending; this does not close implementation or authorize code/database work.

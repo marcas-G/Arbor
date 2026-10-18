@@ -1,6 +1,6 @@
 # F23 P6 Operator Rebuild Proposal Preparation
 
-Status: **PREPARATION COMPLETE — PROPOSAL NOT ACCEPTED; NO IMPLEMENTATION AUTHORITY**
+Status: **ACCEPTED DESIGN LANDED — IMPLEMENTATION NOT AUTHORIZED; INDEPENDENT REVIEW PENDING**
 
 ## Baseline and artifacts
 
@@ -11,11 +11,12 @@ Status: **PREPARATION COMPLETE — PROPOSAL NOT ACCEPTED; NO IMPLEMENTATION AUTH
 - New proposal: `planning/proposals/F23-P6-operator-inbox-rebuild-and-route-move-na-draft.md`, raw SHA-256 `B6A542973768D1C0D7C8ACB644988D1C957B7020F73206C335D73FF7FE0C833E`.
 - New recommendation: v1 owner/Parent route-move command is N/A only because no canonical mutation command exists; production P6 rebuild remains required as an operator-only offline surface using schema 48, P39 `MaintenanceExclusive`, manifest/audit, a single transaction and the existing repository helper.
 - Recommended manual acceptance token: `ACCEPT_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_AND_V1_ROUTE_MOVE_NA`.
-- Separate implementation authorization required after manual acceptance and owning-document landing: `AUTHORIZE_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_IMPLEMENTATION`.
+- Accepted: `ACCEPT_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_AND_V1_ROUTE_MOVE_NA` on 2026-10-18. Owning-document landing: `planning/results/F23-P6-operator-rebuild-and-route-move-na-acceptance-and-landing.record.md`.
+- Independent post-landing review: pending. Implementation authorization required after that review: `AUTHORIZE_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_IMPLEMENTATION`.
 
 ## Scope and verification
 
-The independent review was incorporated. The proposal now distinguishes the
+The independent proposal review was incorporated. The accepted proposal now distinguishes the
 P39 blocker-report SQLite `--p39-sidecar` from the JSONL operation `--manifest`,
 states P39's pre-permit `openSync(..., "wx", 0o600)` creation race (creation-only,
 not a maintenance permit), SQLite initialization effects for both report
@@ -33,9 +34,10 @@ only command-level route-move/crash qualification N/A for v1 while retaining
 same-key transaction helper, old/new visibility and future-command rejection
 requirements. P10 Attention is not repurposed.
 
-This preparation changed only the two new planning files listed above. It did
-not change code, migration registries, `docs/design/**`, or any database; it
-performed no deployment/release action. No proposal acceptance or code
-authorization is implied. The next step is manual review/acceptance, followed by
-the owning-document landing and independent consistency review; only then may
-the separate implementation token be considered.
+Proposal preparation initially changed only the two planning files listed
+above. The accepted manual landing changed only the owning `docs/design/**`
+files and governance/planning records; it did not change code, tests, migration
+registries, or any database, and performed no deployment/release action. No
+production implementation authority is implied. The next step is independent
+post-landing review; only after it passes may the separate implementation token
+be considered.
