@@ -21,7 +21,7 @@ import {
   stopChildBounded,
   waitForDaemonListening,
 } from "../../functional/support/daemon-process-lifecycle.js";
-import { createSchema44TestDatabaseFactory } from "../../support/schema44-database.js";
+import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../support/schema44-database.js";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
 const DAEMON_HANDSHAKE_ENTRY = resolve(
