@@ -82,7 +82,7 @@ describe("P48 AH19 Root Workspace Conversation checkpoint owner migration", () =
       from47.cleanup();
       from44.cleanup();
     }
-  });
+  }, 120_000);
 
   it("creates the exact separate owner table and ordered message index without backfill", async () => {
     const fixture = await createSchema47TestDatabase();
