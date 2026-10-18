@@ -945,10 +945,14 @@ event order. No decision/provenance history is backfilled.
 Add only the forward-only
 `0050_sandbox_provider_unavailable_fact` contract after the complete accepted
 001–0049 prefix. Preflight accepts only `PRAGMA user_version = 49`, the exact
-0049 objects/signature, and accepted `executions` composite key
-`(execution_id, project_id, workspace_id)`. Reject gaps, unknown later
-versions, signature/schema mismatches and the dormant P43 Blocked WorkEpisode
-draft schema before DDL. Apply the DDL, foreign-key checks and
+0049 objects/signature, the accepted `executions` composite key
+`(execution_id, project_id, workspace_id)`, and the exact inherited P43/P44
+schema from the complete registered 001–0048 prefix. In particular,
+`work_blockers` and `inbox_workspace_sequences` are expected from registered
+0043, and the P44 approval-rejected no-effect trigger state is expected from
+registered 0044. Verify these inherited objects against the exact prefix;
+their presence is not a reason to reject. Reject gaps, unknown later versions
+and any signature/schema mismatch before DDL. Apply the DDL, foreign-key checks and
 `PRAGMA user_version=50` atomically. No backfill, table rebuild, prior
 migration edit, registration, execution or database upgrade is part of this
 landing.
@@ -1077,9 +1081,10 @@ version, migration name and lowercase SQL SHA-256, separated by one LF with no
 trailing LF. Any mismatch at `user_version=49` fails closed; no schema
 guessing/adoption is permitted.
 
-The accepted P2 WorkBlocker owner/DDL is unchanged. Before any later
-implementation or registration, rebase the unregistered
-`P43_BLOCKED_WORKEPISODE_MIGRATION` descriptor and callsites remain on the
-separately accepted schema-48 path and must be placed after the new 0050
-prefix before any implementation/registration. This landing does not modify
-or register that descriptor or alter the accepted P2 owner/DDL.
+The accepted P2 WorkBlocker owner/DDL is unchanged. In the current schema-48
+candidate, P43 and P44 are registered migrations in the ordered
+`CURRENT_MIGRATIONS` prefix (0043/requires42 and 0044/requires43). Their
+`work_blockers`/`inbox_workspace_sequences` tables and P44 trigger state
+are part of the exact 001–0048 baseline and remain unchanged through 0049 and
+0050. Neither migration is duplicated, moved, renumbered, or treated as a
+dormant draft. No separate non-current P43 draft is a preflight condition.

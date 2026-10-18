@@ -37,3 +37,19 @@ The reviewer ran no tests and identified no remaining finding. This review
 does not authorize implementation, migration registration/execution, database
 upgrade, deployment or release. The implementation authorization token
 `AUTHORIZE_NATIVE_OS_SANDBOX_CONVERGENCE_IMPLEMENTATION` remains ungranted.
+
+## Erratum — accepted P43/P44 prefix-preflight correction
+
+The original PASS above records review of the initial schema-48 owner landing.
+A subsequent consistency audit found that its P1/04 and P10/07 text called
+registered P43/P44 “dormant/unregistered” and said to reject their schema,
+contrary to the current schema-48 `CURRENT_MIGRATIONS` prefix. The user
+accepted the exact correction as
+`ACCEPT_NATIVE_OS_SANDBOX_SCHEMA48_P43_PREFIX_PREFLIGHT_AMENDMENT`, proposal
+raw SHA-256
+`FA24A578C5DB37F3F864C7C7B20EC2AD36EEFB7545E699F25ABDC0671F5B1A8F`.
+The owner correction now recognizes exact registered 0043/requires42 and
+0044/requires43 objects as required inherited schema, while retaining 0049/48
+and 0050/49 and exact fail-closed prefix validation. It does not change the
+original review conclusion about the prior package; independent review of
+this corrective amendment is pending and will be recorded separately.

@@ -93,3 +93,29 @@ Scenario/SD/DID version references, and complete accepted owner hash coverage.
 The review must also verify no code, tests, migrations, database, deployment
 or release files are modified. Landing-review findings and review commit are
 recorded separately; implementation remains unauthorized.
+
+## Accepted P43/P44 prefix-preflight corrigendum
+
+Accepted by the user as
+`ACCEPT_NATIVE_OS_SANDBOX_SCHEMA48_P43_PREFIX_PREFLIGHT_AMENDMENT`, proposal
+raw SHA-256
+`FA24A578C5DB37F3F864C7C7B20EC2AD36EEFB7545E699F25ABDC0671F5B1A8F`.
+Baseline is
+`1e634f00e10ba64698d159072637d8220092ec40`. The original schema-48 landing
+used stale “dormant/unregistered P43” wording despite the current accepted
+registry containing P43 0043/requires42 and P44 0044/requires43. Corrected
+P1/04 and P10/07 now require exact validation of those inherited objects in
+the complete 001–0048 and 001–0049 prefixes; their expected presence is not a
+rejection condition. No 0049/0050 DDL, identifiers, requiresUserVersion,
+prior migration body, or fail-closed preflight is changed.
+
+| Corrected owner | Baseline Git blob at 1e634f00 | Corrected postimage SHA-256 |
+|---|---|---|
+| `docs/design/implementation/P1/04-sqlite-schema.md` | `00dc1afbf8873ba8dc12a4bc3695c1e0746e28a2` | `570B664D791A20A73E5BA0816C18150ECA8BF64FBF8D5846C089CFA629E2E1E8` |
+| `docs/design/implementation/P10/07-acceptance.md` | `7aa0181884ace08d970dfbb25a5f1cb7f06e5e18` | `6A6F7CD0C63633E81B03258991B6BD8BED183D1F5F328A8A73A0567472BC19EA` |
+
+The accepted P43/P44 activation and qualification remain unchanged. This is a
+documentation/preflight-contract correction only; no code, tests, migration
+registry, database, deployment or release was changed. The separate
+implementation authorization remains ungranted. A new independent review
+record is pending.
