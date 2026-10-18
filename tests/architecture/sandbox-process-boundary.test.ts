@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative, sep } from "node:path";
 import { LanguageVariant, SyntaxKind } from "typescript/unstable/ast";
@@ -35,7 +36,8 @@ const p39QueryCallers = new Set([
 const p39ValidationCallers = new Set([
   "adapters/persistence-sqlite/src/p39-writer-lock.ts",
 ]);
-const childProcessSpecifier = /^(?:node:)?child_process(?:\/.*)?$/iu;
+const forbiddenNativeModuleFragment =
+  /\b(?:child_process|worker_threads|vm)\b/iu;
 const nativeSpawnIdentifiers = new Set([
   "execFile",
   "execFileSync",
@@ -174,10 +176,19 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     : -1;
 
   tokens.forEach((token, index) => {
+    const globalThisComputedAccess =
+      tokens[index - 2]?.value === "globalThis" ||
+      ([".", "?."].includes(tokens[index - 2]?.text ?? "") &&
+        tokens[index - 3]?.value === "globalThis");
     if (
-      (token.kind === SyntaxKind.StringLiteral ||
-        token.kind === SyntaxKind.NoSubstitutionTemplateLiteral) &&
-      childProcessSpecifier.test(token.value) &&
+      [
+        SyntaxKind.StringLiteral,
+        SyntaxKind.NoSubstitutionTemplateLiteral,
+        SyntaxKind.TemplateHead,
+        SyntaxKind.TemplateMiddle,
+        SyntaxKind.LastTemplateToken,
+      ].includes(token.kind) &&
+      forbiddenNativeModuleFragment.test(token.value) &&
       !(isP39 && index === p39SpecifierIndex)
     ) {
       findings.push(
@@ -197,18 +208,43 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
 
     if (
       token.kind === SyntaxKind.Identifier &&
-      (token.value === "eval" || token.value === "Function") &&
-      (tokens[index + 1]?.text === "(" ||
-        (token.value === "Function" && tokens[index - 1]?.value === "new"))
+      (token.value === "eval" || token.value === "Function")
     ) {
       findings.push(`${path}: dynamic-code escape point ${token.value}`);
     }
 
     if (
       token.kind === SyntaxKind.Identifier &&
+      token.value === "Worker" &&
+      (tokens[index + 1]?.text === "(" ||
+        tokens[index - 1]?.value === "new" ||
+        (tokens[index - 1]?.text === "." &&
+          tokens[index - 2]?.value === "globalThis"))
+    ) {
+      findings.push(`${path}: Worker escape point`);
+    }
+    if (
+      token.kind === SyntaxKind.StringLiteral &&
+      token.value === "Worker" &&
+      tokens[index - 1]?.text === "[" &&
+      globalThisComputedAccess
+    ) {
+      findings.push(`${path}: computed global Worker escape point`);
+    }
+    if (
+      token.kind === SyntaxKind.StringLiteral &&
+      ["eval", "Function"].includes(token.value) &&
+      tokens[index - 1]?.text === "[" &&
+      globalThisComputedAccess
+    ) {
+      findings.push(`${path}: computed global dynamic-code escape point`);
+    }
+
+    if (
+      token.kind === SyntaxKind.Identifier &&
       token.value === "process" &&
       [".", "?."].includes(tokens[index + 1]?.text ?? "") &&
-      ["binding", "_linkedBinding", "dlopen"].includes(
+      ["binding", "_linkedBinding", "dlopen", "getBuiltinModule"].includes(
         tokens[index + 2]?.value ?? "",
       )
     ) {
@@ -217,14 +253,18 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     if (
       token.kind === SyntaxKind.Identifier &&
       tokens[index - 1]?.text === "." &&
-      ["binding", "_linkedBinding", "dlopen"].includes(token.value) &&
+      ["binding", "_linkedBinding", "dlopen", "getBuiltinModule"].includes(
+        token.value,
+      ) &&
       tokens[index + 1]?.text === "("
     ) {
       findings.push(`${path}: aliased native loader/binding escape point`);
     }
     if (
       token.kind === SyntaxKind.StringLiteral &&
-      ["binding", "_linkedBinding", "dlopen"].includes(token.value) &&
+      ["binding", "_linkedBinding", "dlopen", "getBuiltinModule"].includes(
+        token.value,
+      ) &&
       tokens[index + 1]?.text === "]" &&
       tokens[index + 2]?.text === "("
     ) {
@@ -326,11 +366,32 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
       ":",
       "P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS",
     ]);
+    const fixedProcessExecutor = hasSequence(values, [
+      "execFileSync",
+      "(",
+      "command",
+      ",",
+      "[",
+      "...",
+      "args",
+      "]",
+      ",",
+      "{",
+      "...",
+      "options",
+      ",",
+      "env",
+      ":",
+      "environment",
+      "}",
+      ")",
+    ]);
     if (
       execFileSyncCalls !== 1 ||
       !fixedImport ||
       !fixedQuery ||
-      !fixedTimeout
+      !fixedTimeout ||
+      !fixedProcessExecutor
     ) {
       findings.push(
         `${path}: P39 process probe is outside its fixed audited template`,
@@ -368,8 +429,23 @@ describe("SandboxProcessPort architecture boundary", () => {
     'await import("node:" + "child_process");',
     'process.binding("spawn_sync");',
     'process["binding"]("spawn_sync");',
+    'process.getBuiltinModule("node:" + name);',
+    'process["getBuiltinModule"]("node:" + name);',
     "const make = createRequire; make(import.meta.url);",
     "const hidden = `node:child_process`;",
+    [
+      "const hidden = `prefix/node:vm/",
+      String.fromCharCode(36),
+      "{suffix}`;",
+    ].join(""),
+    'import { Worker } from "node:worker_threads"; new Worker("x", { eval: true });',
+    'await import("node:vm");',
+    'const moduleName = "prefix/node:child_process/promises";',
+    'const evaluate = new Function("return process");',
+    'const evaluate = eval; evaluate("process");',
+    'const evaluate = globalThis["eval"]; evaluate("process");',
+    'const FunctionCtor = globalThis["Function"]; new FunctionCtor("return process");',
+    "const WorkerCtor = globalThis.Worker; new WorkerCtor('x', { eval: true });",
   ])("rejects spawn escape fixture %s", (source) => {
     expect(
       scanSource(source, "packages/test-fixture.ts").length,
@@ -418,6 +494,35 @@ describe("SandboxProcessPort architecture boundary", () => {
       ),
     ).toBe(1);
     const source = readFileSync(join(repoRoot, p39SpawnModule), "utf8");
+    const normalizedSource = source.replace(/\r\n?/gu, "\n");
+    expect(
+      createHash("sha256").update(normalizedSource, "utf8").digest("hex"),
+    ).toBe("b15f80d7d462c5693beab86fbb121596480384264c263bf29a9ba736e5f0ee49");
+    expect(
+      hasSequence(
+        tokenize(source).map(({ value }) => value),
+        [
+          "execFileSync",
+          "(",
+          "command",
+          ",",
+          "[",
+          "...",
+          "args",
+          "]",
+          ",",
+          "{",
+          "...",
+          "options",
+          ",",
+          "env",
+          ":",
+          "environment",
+          "}",
+          ")",
+        ],
+      ),
+    ).toBe(true);
     expect(scanSource(source, p39SpawnModule)).toEqual([]);
   });
 });
