@@ -30,8 +30,8 @@ import {
 } from "../packages/ports/src/index.js";
 import { deriveProjectAttention } from "../packages/projection-runtime/src/attention-loader.js";
 import {
-  createSchema44TestDatabaseFactory,
-  type Schema44TestDatabase,
+  createSchema48TestDatabaseFactory,
+  type Schema48TestDatabase,
 } from "./support/schema44-database.js";
 
 const projectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789b1";
@@ -47,14 +47,14 @@ const incarnationId = "incarnation:p40-p9-p10";
 const consumerId = "p10:attention:p40-test";
 const now = "2026-10-12T00:00:01.000Z";
 const failureCode = "Missing" as const;
-const databases: Schema44TestDatabase[] = [];
-let schema44Factory:
-  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
+const databases: Schema48TestDatabase[] = [];
+let schema48Factory:
+  | Awaited<ReturnType<typeof createSchema48TestDatabaseFactory>>
   | undefined;
 
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
-    prefix: ".p40-p9-p10-production-recovery-schema44-",
+  schema48Factory = await createSchema48TestDatabaseFactory({
+    prefix: ".p40-p9-p10-production-recovery-schema48-",
   });
 }, 300_000);
 
@@ -102,7 +102,7 @@ afterEach(() => {
   }
 }, 120_000);
 
-afterAll(() => schema44Factory?.cleanup(), 120_000);
+afterAll(() => schema48Factory?.cleanup(), 120_000);
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -159,10 +159,12 @@ const sourceFactsWithoutOtherP10Sources = {
   findDeliverReplayFailure: () => Effect.succeed(Option.none()),
   listDeliverReplayFailures: () => Effect.succeed([]),
   listPendingDeliverReplayAttention: () => Effect.succeed([]),
-  // Schema 42 exposes the P41 marker store; this no-facts test source reports
-  // the matching capability so P10 reset/rebuild can qualify its empty set.
+  // The schema-48 fixture exposes both P41 and AH14 marker stores; this test
+  // reports their authoritative empty fact sets so P10 reset/rebuild can clear.
   isSubmittedDecisionBindingAvailable: () => Effect.succeed(true),
   listSubmittedDecisionBindingFailures: () => Effect.succeed([]),
+  listLegacyAdoptionFailures: () => Effect.succeed([]),
+  listLegacyAdoptionResolutions: () => Effect.succeed([]),
   acknowledgePendingDeliverReplayAttention: () => Effect.void,
 } as never;
 
@@ -203,9 +205,9 @@ const withTxFault = (
 
 describe("P40 P9/P10 durable replay-failure recovery", () => {
   it("keeps P9 fact/event atomic and projects exactly one P10 row through restart and rebuild", async () => {
-    if (schema44Factory === undefined)
-      throw new Error("Schema 42 factory is missing");
-    const database = schema44Factory.create();
+    if (schema48Factory === undefined)
+      throw new Error("Schema 48 factory is missing");
+    const database = schema48Factory.create();
     databases.push(database);
     const { app } = makeFixture(database.databaseFilename);
     await Effect.runPromise(

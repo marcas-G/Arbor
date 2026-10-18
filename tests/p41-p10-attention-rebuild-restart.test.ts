@@ -1,15 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Exit, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
+  CURRENT_SCHEMA_VERSION,
   makeProjectAttentionProjectionStore,
-  P38_MIGRATIONS,
-  P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL,
-  runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import type { ProjectId, WorkspaceId } from "../packages/domain/dist/index.js";
 import { recordSubmittedDecisionBindingFailure } from "../packages/execution-runtime/src/submitted-decision-binding-failure.js";
@@ -32,11 +27,12 @@ import {
   runP10,
   seedCanonical,
 } from "./support/p10-fixture.js";
+import { createSchema48TestDatabase } from "./support/schema44-database.js";
 
 describe("P41 P10 Attention rebuild after SQLite reopen", () => {
   it("rebuilds one row from the retained event and production P9 fact store", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "arbor-p41-p10-rebuild-"));
-    const filename = join(directory, "attention.sqlite");
+    const fixture = await createSchema48TestDatabase();
+    const filename = fixture.databaseFilename;
     const projectId = "prj_01900000-0000-7000-8000-000000000010" as ProjectId;
     const workspaceId =
       "ws_01900000-0000-7000-8000-000000000010" as WorkspaceId;
@@ -56,7 +52,6 @@ describe("P41 P10 Attention rebuild after SQLite reopen", () => {
     try {
       await runP10(
         Effect.gen(function* () {
-          yield* runMigrations(P38_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* seedCanonical(
             Effect.gen(function* () {
@@ -94,31 +89,32 @@ describe("P41 P10 Attention rebuild after SQLite reopen", () => {
         makeP10App(filename),
       );
 
-      const database = new DatabaseSync(filename);
+      const database = new DatabaseSync(filename, { readOnly: true });
       try {
-        const userVersionBefore = Number(
+        const userVersion = Number(
           (
             database.prepare("PRAGMA user_version").get() as {
               user_version: number;
             }
           ).user_version,
         );
-        database.exec(P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL);
-        const userVersionAfter = Number(
-          (
-            database.prepare("PRAGMA user_version").get() as {
-              user_version: number;
-            }
-          ).user_version,
-        );
-        expect(userVersionAfter).toBe(userVersionBefore);
+        const tables = database
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('submitted_decision_binding_attention_facts', 'legacy_adoption_attention_facts', 'legacy_adoption_attention_rows') ORDER BY name",
+          )
+          .all() as Array<{ readonly name: string }>;
+        expect(userVersion).toBe(CURRENT_SCHEMA_VERSION);
+        expect(tables.map((table) => table.name)).toEqual([
+          "legacy_adoption_attention_facts",
+          "legacy_adoption_attention_rows",
+          "submitted_decision_binding_attention_facts",
+        ]);
       } finally {
         database.close();
       }
 
       const first = await runP10(
         Effect.gen(function* () {
-          yield* runMigrations(P38_MIGRATIONS);
           const tx = yield* TransactionPort;
           const facts = yield* RecoveryAttentionFactStore;
           const attentionRows = yield* AttentionProjectionStore;
@@ -213,7 +209,6 @@ describe("P41 P10 Attention rebuild after SQLite reopen", () => {
 
       const integrityFailure = await runP10(
         Effect.gen(function* () {
-          yield* runMigrations(P38_MIGRATIONS);
           const tx = yield* TransactionPort;
           const facts = yield* RecoveryAttentionFactStore;
           const deps = yield* makeP10Deps();
@@ -260,7 +255,6 @@ describe("P41 P10 Attention rebuild after SQLite reopen", () => {
       }
       const missingFactFailure = await runP10(
         Effect.gen(function* () {
-          yield* runMigrations(P38_MIGRATIONS);
           const tx = yield* TransactionPort;
           const facts = yield* RecoveryAttentionFactStore;
           const deps = yield* makeP10Deps();
@@ -296,7 +290,6 @@ describe("P41 P10 Attention rebuild after SQLite reopen", () => {
 
       const rebuiltRows = await runP10(
         Effect.gen(function* () {
-          yield* runMigrations(P38_MIGRATIONS);
           const tx = yield* TransactionPort;
           const facts = yield* RecoveryAttentionFactStore;
           const attentionRows = yield* AttentionProjectionStore;
@@ -349,7 +342,7 @@ describe("P41 P10 Attention rebuild after SQLite reopen", () => {
         occurredAt: factInput.firstDetectedAt,
       });
     } finally {
-      rmSync(directory, { recursive: true, force: true });
+      fixture.cleanup();
     }
   });
 });
