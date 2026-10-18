@@ -178,9 +178,11 @@ unchanged. See the accepted landing record for the audit/crash/restart contract.
 
 The matching immutable `retry_verification_legacy_dispositions` row and
 Governance Inbox admission are paired atomically by the ordered P8 migration.
-That migration remains implementation/registration-gated by P1 `04` and the
-current P6 entry contract. No physical migration identifier is fixed here;
-the P1 transaction boundary and row-transition semantics are fixed below.
+P1 `04` records this as migration `0045` (`requiresUserVersion: 44`), already
+present in the current schema-48 history and applied only through the offline
+schema-upgrade path. The accepted v1.52 operator rebuild adds no migration or
+high-water change. The P1 transaction boundary and row-transition semantics
+remain fixed below.
 
 ### Typed WorkBlocked Parent input (accepted WorkEpisode amendment)
 

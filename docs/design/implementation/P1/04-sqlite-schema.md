@@ -605,14 +605,17 @@ required prefix is integrated and qualified, 0042 is appended to
 
 ### P8 permanent RetryVerification origin and legacy disposition (DID v1.46)
 
-The ordered forward-only migration is accepted at design level, but its
-migration ID/name is **TBD** and it is not registered, implemented, or
-authorized for execution. At activation it must follow the then-current
-integrated migration prefix under the existing strict `user_version` gate and
-commit DDL, backfill, `UnboundLegacy` facts, and matching P6 Governance Inbox
-admissions atomically. Reapplying a committed migration is a no-op; a failed
-or interrupted application leaves neither partial schema nor partial
-backfill. No downgrade or online/preserved-DB upgrade is authorized here.
+The v1.46 acceptance originally left the ordered forward-only migration ID/name
+TBD. Under separate implementation authorization
+`AUTHORIZE_F23_P8_PERMANENT_REPLAY_ORIGIN_IMPLEMENTATION`, it was implemented
+as migration `0045`, requiring schema 44, and is part of the current schema-48
+history. Its ordered offline application commits DDL, backfill, `UnboundLegacy`
+facts, and matching P6 Governance Inbox admissions atomically; it is not an
+ordinary online runtime migration. Reapplying a committed migration is a
+no-op; a failed or interrupted application leaves neither partial schema nor
+partial backfill. No downgrade or online/preserved-DB upgrade is authorized.
+The v1.52 operator-rebuild acceptance does not alter P45's DDL/backfill or add
+another migration.
 
 The permanent origin relation has exactly the following P8 facts and no
 payload/tuple material:
