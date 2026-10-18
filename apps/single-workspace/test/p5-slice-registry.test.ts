@@ -1,7 +1,7 @@
 import { CommandHandlerRegistry } from "@arbor/application";
 import { Effect, Option } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSchema47TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 let schema44Factory: Awaited<

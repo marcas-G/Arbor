@@ -24,7 +24,7 @@ import {
   expect,
   it,
 } from "vitest";
-import { createSchema47TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { assignWorkHandler } from "../src/control-actions.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 

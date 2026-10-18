@@ -84,7 +84,12 @@ describe("FT-DG-01 ProjectResourceSource migration descriptor", () => {
     const currentSuffixIds = CURRENT_MIGRATIONS.map(({ id }) => id).filter(
       (id) => id >= 40,
     );
-    expect(currentSuffixIds).toEqual([...CURRENT_SCHEMA45_SUFFIX_IDS, 46, 47]);
+    expect(currentSuffixIds).toEqual([
+      ...CURRENT_SCHEMA45_SUFFIX_IDS,
+      46,
+      47,
+      48,
+    ]);
     expect(
       CURRENT_SCHEMA45_SUFFIX_IDS.slice(
         0,
