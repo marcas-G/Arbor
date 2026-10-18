@@ -105,8 +105,11 @@
    never create a primary, P6 projection, or JSONL committed mutation when the
    RuntimeShared holder blocks maintenance.
 7. Ordered P8 migration 的 commit 前 crash 不留下 disposition 或对应 Inbox row；
-   commit 后二者均存在。Migration ID/physical DDL 仍按 P1 `04` 后续
-   implementation package 冻结，不在本验收中发明。
+   commit 后二者均存在。现有 migration `0045` 已固定并纳入当前 schema
+   48 历史（schema 44→45）；其 DDL 和 backfill 不由本次 v1.52 proposal
+   重开。本次接受只增加 schema-48 operator rebuild/route-command
+   qualification disposition，不新增 migration、注册 migration 或推进
+   schema high-water。
 
 ## 8. 机械断言清单（汇总）
 

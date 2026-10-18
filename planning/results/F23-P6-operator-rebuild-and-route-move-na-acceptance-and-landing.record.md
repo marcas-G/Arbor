@@ -45,6 +45,8 @@ Status: **Accepted design package landed; operator rebuild implementation remain
    Verification, Project, Workspace, Command, receipt and Event facts remain
    read-only. No Application Command, Agent/Web/model tool, online service,
    P10 Attention source, new schema migration or high-water change is added.
+   The existing P45 migration is `0045` (schema 44→45) and is already part
+   of the current schema-48 history; v1.52 does not reopen its DDL/backfill.
 3. The P39 blocker-report SQLite sidecar and operator JSONL audit manifest are
    distinct artifacts and authorities. P39 may atomically win creation of an
    absent report sidecar with `openSync(..., "wx", 0o600)`, then initialize or
