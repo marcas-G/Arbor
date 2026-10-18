@@ -179,10 +179,12 @@
   independently. No pre-Gateway rejection or asynchronous route-reconcile
   fact/window is introduced.
 - P1 `04` adds source Work/Verification to the disposition contract and owns
-  the physical Inbox row representation. The P1 database route columns,
-  initial revision seed, and migration ID/name remain an implementation
-  package TBD; no DDL, migration registration/execution, online database
-  upgrade, or production implementation is authorized by this design landing.
+  the physical Inbox row representation. At this v1.47 design landing, the P1
+  database route columns, initial revision seed, and migration ID/name were an
+  implementation package TBD; no DDL, migration registration/execution,
+  online database upgrade, or production implementation was authorized by
+  that landing. Their later separately authorized P45/schema-48 status is
+  recorded in the v1.52 amendment above.
 - Accepted token `ACCEPT_F23_P6_UNBOUND_LEGACY_GOVERNANCE_INBOX_MECHANICS`,
   proposal raw SHA-256
   `798C2CB2782E4D8FF1064CE1065E12B09A318565997EF1160460B478CFA48FDF`,
@@ -219,11 +221,14 @@
   The item-specific P6 key/recipient/query/consumption/rebuild mechanism is
   separately gated by P6 owner acceptance. This is not a P10 Attention source,
   not an Agent instruction, and not an automatic retry.
-- P1 `04` reserves an ordered origin/disposition migration, ID/name **TBD**;
-  no migration is registered or executable under this design landing. Its
-  atomicity, immutable FK/uniqueness, repeat-upgrade, retention and evidence-
-  gated backfill rules are owned by the accepted P1/P8 sections. Production
-  code, DDL activation and test implementation remain separately authorized.
+- At the v1.46 landing, P1 `04` reserved an ordered origin/disposition
+  migration with ID/name **TBD** and no registered or executable migration.
+  Its atomicity, immutable FK/uniqueness, repeat-upgrade, retention and
+  evidence-gated backfill rules are owned by the accepted P1/P8 sections. The
+  later separately authorized implementation assigned migration `0045`
+  (`requiresUserVersion: 44`), now in the schema-48 history; see the F23 P8/P6
+  implementation result. The v1.52 operator-rebuild acceptance adds no new
+  migration and does not reopen P45 DDL/backfill.
 - Acceptance basis: token
   `ACCEPT_F23_P8_PERMANENT_REPLAY_ORIGIN_AND_LEGACY_DISPOSITION`, fixed
   proposal SHA-256

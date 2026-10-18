@@ -177,10 +177,12 @@ fabricated.
 `retry_verification_origins` is the permanent canonical non-receipt fact that
 binds the originating CommandId to its project, original actor, source
 Verification/Work, successor Verification/verifier Execution, and creation
-time. The physical fields, uniqueness/FK/immutability rules, retention and
-migration placeholder are owned by P1 `04`; the row lives at least as long as
-its permanent Command receipt and is independent of Domain Event pruning. It
-does not store summary content, expected revision, payload, fingerprint,
+time. The physical fields, uniqueness/FK/immutability rules and retention are
+owned by P1 `04`, which records the ordered implementation as migration `0045`
+(`requiresUserVersion: 44`) in the current schema-48 history; the v1.52
+operator-rebuild acceptance adds no migration. The row lives at least as long
+as its permanent Command receipt and is independent of Domain Event pruning.
+It does not store summary content, expected revision, payload, fingerprint,
 Handler schema version, fingerprint algorithm version, or receipt JSON.
 
 For a historical Concluded source, P12 resolves the candidate CommandId only
