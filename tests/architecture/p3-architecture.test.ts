@@ -66,7 +66,7 @@ describe("P3 package DAG", () => {
     expect(decisionTurn).not.toContain("listUnconsumed");
     expect(decisionTurn).not.toContain("assembleInboxContext");
     expect(decisionTurn).not.toContain("PortableLegacyMessage");
-    expect(decisionTurn).not.toContain("messages:");
+    expect(decisionTurn).toContain("projectConversationCheckpointHistory");
     expect(decisionTurn).toContain("inputItems");
     expect(projector).toContain('case "ToolCall"');
     expect(projector).toContain('case "ToolResult"');
