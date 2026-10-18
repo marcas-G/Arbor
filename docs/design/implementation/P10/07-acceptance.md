@@ -144,8 +144,11 @@ and event/receipt are atomic. No P10 row mutates policy or retries execution.
 **V5 qualification cases (design acceptance only; no tests are claimed):**
 
 - 0050 applies only after exact `user_version=49`, complete 001–0049 prefix
-  and the final accepted 0049 signature; it rejects the dormant P43 Blocked
-  schema and commits all fact/queue/marker tables, indexes/triggers and
+  and the final accepted 0049 signature. The exact prefix includes registered
+  0043/requires42 and 0044/requires43 unchanged: `work_blockers`,
+  `inbox_workspace_sequences`, and the P44 observation-trigger state are
+  expected and must be signature-checked, not rejected as a dormant P43
+  schema. It commits all fact/queue/marker tables, indexes/triggers and
   `user_version=50` atomically. Migration 0049's schema-48 preflight and
   decision/provenance rows are also qualified before any implementation.
 - Schema assertions cover every fact/queue/projection field, key, FK, index
@@ -177,11 +180,12 @@ and event/receipt are atomic. No P10 row mutates policy or retries execution.
 - Reset racing queue claim/consume either re-arms the consumed row or
   invalidates the stale claim and allows a fresh claim; stale claimant cannot
   consume after rebuild.
-- A `user_version=49` target with any 0049 signature/schema mismatch, or the
-  dormant P43 draft, is rejected. 0049/0050 are not registered/run by this
-  design landing. The accepted P2 Blocked WorkEpisode owner remains intact;
-  its unregistered draft descriptor must be sequenced after schema 50 before
-  any future implementation/registration.
+- A `user_version=49` target with any 0049 signature/schema mismatch,
+  missing/altered 0043 tables, altered P44 trigger state, unknown later
+  version or FK/integrity mismatch is rejected before writes. Registered
+  0043/0044 and their accepted Blocked WorkEpisode owner remain intact as part
+  of schema 48; no duplicate P43 descriptor or table is added or sequenced
+  after 0050. 0049/0050 are not registered/run by this design landing.
 
 **Accepted AH14 legacy adoption evidence Attention design gate (DID v1.49):**
 for the single `LegacyActionDispositionUnproven` scope, prove the ambiguous

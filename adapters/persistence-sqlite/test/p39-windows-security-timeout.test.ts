@@ -64,7 +64,7 @@ describe("P39 Windows security query timeout", () => {
     }
     expect(script).toContain("[IO.DriveInfo]::new($r)");
     expect(script).toContain("Get-Item -LiteralPath $p -Force");
-    expect(script).toContain("Get-Acl -LiteralPath $p");
+    expect(script).toContain("$i.GetAccessControl()");
     expect(script).toContain(
       "$a.GetOwner([Security.Principal.SecurityIdentifier])",
     );

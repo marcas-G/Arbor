@@ -124,7 +124,7 @@ export const p39WindowsAclQualificationAvailable = (): boolean => {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "$ErrorActionPreference='Stop'; Import-Module Microsoft.PowerShell.Security; Get-Command Get-Acl | Out-Null",
+        "$ErrorActionPreference='Stop'; $item=Get-Item -LiteralPath $env:TEMP -Force; $acl=$item.GetAccessControl(); $acl.GetOwner([Security.Principal.SecurityIdentifier]) | Out-Null",
       ],
       {
         encoding: "utf8",
@@ -156,7 +156,7 @@ export const setP39PrivateWindowsAcl = (
   }
   if (!p39WindowsAclQualificationAvailable()) {
     throw new Error(
-      "P39 Windows deployment qualification requires Windows PowerShell Microsoft.PowerShell.Security (Get-Acl).",
+      "P39 Windows deployment qualification requires Windows PowerShell filesystem ACL APIs.",
     );
   }
 
@@ -169,6 +169,10 @@ export const setP39PrivateWindowsAcl = (
     kind === "directory"
       ? "$inherit=[Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit"
       : "$inherit=[Security.AccessControl.InheritanceFlags]::None";
+  const setter =
+    kind === "directory"
+      ? "[IO.Directory]::SetAccessControl($p,$acl)"
+      : "[IO.File]::SetAccessControl($p,$acl)";
   const script = [
     "$ErrorActionPreference='Stop'",
     `$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
@@ -182,7 +186,7 @@ export const setP39PrivateWindowsAcl = (
     "$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($current,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,[Security.AccessControl.PropagationFlags]::None,$allow))",
     "$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($system,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,[Security.AccessControl.PropagationFlags]::None,$allow))",
     "$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($admins,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,[Security.AccessControl.PropagationFlags]::None,$allow))",
-    "Set-Acl -LiteralPath $p -AclObject $acl",
+    setter,
   ].join(";");
   execFileSync(
     "powershell.exe",
