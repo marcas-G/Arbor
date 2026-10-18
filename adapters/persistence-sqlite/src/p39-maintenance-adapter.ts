@@ -115,6 +115,7 @@ export const runP39SqliteMaintenanceWithPermit = (
         | "report-path-validation"
         | "report-database-validation"
         | "writer-lock-initialization"
+        | "writer-lock-initialized-before-permit"
         | "writer-lock-acquisition"
         | "manifest-validation"
         | "p39-reservation-and-gate"
@@ -251,6 +252,8 @@ export const runP39SqliteMaintenanceWithPermit = (
     settings.onPhase?.("writer-lock-initialization");
     const maintenance = Effect.gen(function* () {
       const writerLock = yield* P39WriterLockClient;
+      if (process.env.NODE_ENV === "test")
+        settings.onPhase?.("writer-lock-initialized-before-permit");
       settings.onPhase?.("writer-lock-acquisition");
       const permit = yield* writerLock
         .acquire("MaintenanceExclusive")

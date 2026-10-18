@@ -32,6 +32,7 @@ export type SchemaUpgradeMaintenancePhase =
   | "report-path-validation"
   | "report-database-validation"
   | "writer-lock-initialization"
+  | "writer-lock-initialized-before-permit"
   | "writer-lock-acquisition"
   | "manifest-validation"
   | "p39-reservation-and-gate"

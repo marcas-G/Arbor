@@ -372,6 +372,8 @@ const p39ReportSetup = (
           onPhase?.("report-profile-init-before-commit");
         }),
       );
+      if (process.env.NODE_ENV === "test")
+        onPhase?.("report-profile-init-commit-complete");
     } else if (
       appId !== P39_REPORT_APPLICATION_ID ||
       userVersion !== P39_REPORT_USER_VERSION ||
@@ -503,7 +505,6 @@ const validateP39ReportSidecarDatabaseInternal = (
         SqliteClient.layer({ filename: path, disableWAL: true }),
       ),
     );
-    onPhase?.("report-profile-init-commit-complete");
     onPhase?.("report-final-path-and-identity");
     const finalPath = yield* validateP39ReportSidecarPath(
       primaryFilename,

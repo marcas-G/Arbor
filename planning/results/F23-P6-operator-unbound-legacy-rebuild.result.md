@@ -32,19 +32,30 @@ after the SQLite commit but before the Committed record.
 - Full P6 operator matrix after the review fixes:
   `pnpm exec vitest run apps/single-workspace/test/p6-inbox-rebuild.test.ts
   --maxWorkers=1 --no-file-parallelism --retry=0`: PASS, 1 file / 6 tests,
-  683.71 seconds on the final code. Includes protected empty application DB,
-  application WAL and WAL hard-link identity collision, primary/writer-lock
-  collision checks; Created-only target-digest and descriptor-prefix drift
-  refusal; and the post-sidecar-init-COMMIT/pre-final-identity crash/retry
-  seam. Existing rollback, schema 47/49/pseudo-48, manifest tamper, permit
-  competition, and replay cases also pass.
+  1032.68 seconds on the final code. Covers P39 report-sidecar `-journal`
+  manifest alias refusal, protected empty application DB/WAL/hard-link
+  identity refusal, target-equals-protected-application positive case, and
+  primary/writer-lock artifact collisions. Created-only target-digest and
+  full descriptor-prefix drift refuse without writes. Process crashes after
+  P39 report initialization COMMIT but before its first identity readback, and
+  after writer-lock DB initialization but before MaintenanceExclusive acquire,
+  both leave the primary/manifest untouched and retry successfully. Prepared
+  remains durably appended before the rebuild transaction as specified by the
+  accepted proposal. A real two-manifest route-move interleaving proves the
+  second operation moves once; the first operation's resume runs the helper
+  against current state, records `noOp=1`/`moved=0`, and preserves revision and
+  `updated_at` instead of attributing the other manifest's move. Schema
+  47/49/pseudo-48, rollback, input/manifest tamper and permit competition also
+  pass.
 - Schema-upgrade operator regressions:
   `pnpm exec vitest run apps/single-workspace/test/schema-upgrade-operator.test.ts
   --maxWorkers=1 --no-file-parallelism --retry=0 -t
   "upgrades an exact disposable schema(44|47) copy|rejects hard-link identities"`:
   PASS, 3 tests; 11 unrelated tests skipped. This exercises full-prefix v48
   descriptor recording through both migration paths and path-identity checks.
-- Sidecar crash/retry qualification:
+- Historical dedicated sidecar crash/retry subset (before the latest
+  writer-lock seam; the final integrated P6 matrix above includes both crash
+  seams):
   `ARBOR_P6_SIDECAR_CRASH_ONLY=1 pnpm exec vitest run
   apps/single-workspace/test/p6-inbox-rebuild.test.ts --maxWorkers=1
   --no-file-parallelism --retry=0`: PASS, 1 file / 5 tests, 120.89 seconds.
@@ -58,9 +69,9 @@ after the SQLite commit but before the Committed record.
   `viewQueryFaceWithRetryAvailability` module and repository directly, proving
   module-level current-Parent authorization, foreign-human/Agent denial, and
   read-not-consume state. This is not an HTTP/public-route/daemon qualification.
-- P39 security timeout and P45 migration targeted tests: PASS, 11/11 after the
-  Windows ACL probe adjustment. Existing ACL checks remain enabled; no
-  production ACL is bypassed.
+- P39 Windows security/timeout test after these changes: PASS, 7/7. The P45
+  migration/security targeted group had previously passed 11/11. Existing ACL
+  checks remain enabled; no production ACL is bypassed.
 - P10 retry availability targeted tests: PASS, 3/3, including current direct
   Parent visibility, foreign human and Agent denial, repeated read without
   consumption, and stable persisted state.
@@ -70,16 +81,17 @@ after the SQLite commit but before the Committed record.
 
 ## Remaining qualification boundary
 
-P39 security/P45 migration targeted tests remain PASS 11/11, and P10 retry
-availability module tests remain PASS 3/3. The full suite and the entire
-schema-upgrade operator file were not run in this worktree; the three filtered
-schema-upgrade regressions above are the only schema-upgrade tests claimed.
-An earlier combined P6 attempt reached Vitest's original 360-second test
+P39 Windows security/timeout remains PASS 7/7, the earlier P45 migration
+targeted group was PASS 11/11, and P10 retry availability module tests remain
+PASS 3/3. The full suite and the entire schema-upgrade operator file were not
+run in this worktree; the three filtered schema-upgrade regressions above are
+the only schema-upgrade operator tests claimed. An earlier combined P6 attempt reached Vitest's original 360-second test
 timeout; progress inspection showed the test was still advancing through
 subprocess cases. The test deadline was raised to 1200 seconds and
 `runOperatorCli` now has a per-child deadline with PID, elapsed time, stdout/
-stderr diagnostics, and Windows child-tree cleanup. The subsequent complete
-run passed without reducing assertions.
+stderr diagnostics, and repeats Windows `taskkill /T /F` until taskkill
+succeeds, the direct child exits, and the PID is confirmed absent before
+rejecting. The subsequent complete run passed without reducing assertions.
 
 Two disposable fixture directories and one interrupted schema-upgrade
 temporary directory remain on disk because cleanup was blocked by the command

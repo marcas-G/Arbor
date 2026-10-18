@@ -17,6 +17,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   P39_REPORT_APPLICATION_ID,
   P39_REPORT_USER_VERSION,
+  p39WriterLockFilename,
   RetryVerificationOriginRepositoryLive,
   layer as sqliteLayer,
   TransactionPortLive,
@@ -111,7 +112,8 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
       schemaSignature: "b".repeat(64),
       preWriteDatabaseDigest: "c".repeat(64),
       canonicalInputDigest: "d".repeat(64),
-      projectionBeforeDigest: "e".repeat(64),
+      projectionBefore: [],
+      projectionBeforeDigest: sha256Hex("[]"),
       operationId: "f".repeat(64),
     });
     const text = `${canonicalP6InboxJson(created)}\n${canonicalP6InboxJson(prepared)}\n`;
@@ -128,9 +130,16 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
 
   it("rejects operator evidence paths aliasing every SQLite protected-file suffix", () => {
     const primary = "C:\\Arbor\\primary.sqlite";
+    const reportSidecar = "C:\\Arbor\\p39-report.sqlite";
     for (const suffix of ["-wal", "-shm", "-journal"] as const) {
       expect(() =>
         rejectSqliteArtifactAliases([primary], [`${primary}${suffix}`]),
+      ).toThrow(/sidecar/u);
+      expect(() =>
+        rejectSqliteArtifactAliases(
+          [reportSidecar],
+          [`${reportSidecar}${suffix}`],
+        ),
       ).toThrow(/sidecar/u);
     }
   });
@@ -310,9 +319,189 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
         records[2]?.record.canonicalInputDigest,
       );
       expect(records[2]?.record).toMatchObject({
-        inserted: 1,
+        inserted: 0,
         moved: 0,
-        noOp: 0,
+        noOp: 1,
+      });
+
+      const p39ManifestAlias = `${fixture.p39ReportFilename}-journal`;
+      expect(existsSync(p39ManifestAlias)).toBe(false);
+      const primaryBeforeReportAlias = logicalSqliteDigest(
+        fixture.databaseFilename,
+      );
+      const reportBeforeAlias = logicalSqliteDigest(fixture.p39ReportFilename);
+      const reportManifestAliasRun = await runOperatorCli(
+        cli,
+        fixture.databaseFilename,
+        fixture.p39ReportFilename,
+        p39ManifestAlias,
+        false,
+      );
+      expect(
+        reportManifestAliasRun.code,
+        reportManifestAliasRun.output,
+      ).not.toBe(0);
+      expect(existsSync(p39ManifestAlias)).toBe(false);
+      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
+        primaryBeforeReportAlias,
+      );
+      expect(logicalSqliteDigest(fixture.p39ReportFilename)).toBe(
+        reportBeforeAlias,
+      );
+
+      const sameTargetManifest = join(
+        fixture.directory,
+        "p6-same-target-application.jsonl",
+      );
+      const sameTargetRun = await runOperatorCli(
+        cli,
+        fixture.databaseFilename,
+        join(fixture.directory, "p6-same-target-report.sqlite"),
+        sameTargetManifest,
+        false,
+        { ARBOR_DB: fixture.databaseFilename },
+      );
+      expect(sameTargetRun.code, sameTargetRun.output).toBe(0);
+
+      const movedProjection = new DatabaseSync(fixture.databaseFilename);
+      try {
+        movedProjection
+          .prepare(
+            `UPDATE inbox_entries
+                SET workspace_id = 'ws_018f2b3c-4d5e-7abc-8def-01234567a458',
+                    revision = 2, updated_at = 'projection-preimage'
+              WHERE entry_key = ?`,
+          )
+          .run(
+            "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
+          );
+      } finally {
+        movedProjection.close();
+      }
+      const firstMoveManifest = join(
+        fixture.directory,
+        "p6-first-route-move.jsonl",
+      );
+      const interruptedFirstMove = await stopOperatorCliAtBoundary(
+        cli,
+        fixture.databaseFilename,
+        fixture.p39ReportFilename,
+        firstMoveManifest,
+        "prepared",
+      );
+      expect(interruptedFirstMove.code).not.toBe(0);
+      expect(
+        validateP6InboxManifestText(
+          readFileSync(firstMoveManifest, "utf8"),
+        ).map(({ record }) => record.kind),
+      ).toEqual(["Created", "Prepared"]);
+      const firstMovePreimage = new DatabaseSync(fixture.databaseFilename, {
+        readOnly: true,
+      });
+      try {
+        expect(
+          firstMovePreimage
+            .prepare(
+              `SELECT workspace_id, revision, updated_at FROM inbox_entries
+                WHERE entry_key = ?`,
+            )
+            .get(
+              "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
+            ),
+        ).toMatchObject({
+          workspace_id: "ws_018f2b3c-4d5e-7abc-8def-01234567a458",
+          revision: 2,
+          updated_at: "projection-preimage",
+        });
+      } finally {
+        firstMovePreimage.close();
+      }
+      const secondMoveManifest = join(
+        fixture.directory,
+        "p6-second-route-move.jsonl",
+      );
+      const secondMove = await runOperatorCli(
+        cli,
+        fixture.databaseFilename,
+        fixture.p39ReportFilename,
+        secondMoveManifest,
+        false,
+      );
+      expect(secondMove.code, secondMove.output).toBe(0);
+      expect(
+        validateP6InboxManifestText(readFileSync(secondMoveManifest, "utf8"))[2]
+          ?.record,
+      ).toMatchObject({ inserted: 0, moved: 1, noOp: 0 });
+      const secondMovePostimage = new DatabaseSync(fixture.databaseFilename, {
+        readOnly: true,
+      });
+      let secondMoveUpdatedAt = "";
+      try {
+        const row = secondMovePostimage
+          .prepare(
+            `SELECT workspace_id, revision, updated_at FROM inbox_entries
+              WHERE entry_key = ?`,
+          )
+          .get(
+            "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
+          ) as {
+          workspace_id: string;
+          revision: number;
+          updated_at: string;
+        };
+        expect(row).toMatchObject({
+          workspace_id: "ws_018f2b3c-4d5e-7abc-8def-01234567a457",
+          revision: 3,
+        });
+        secondMoveUpdatedAt = row.updated_at;
+      } finally {
+        secondMovePostimage.close();
+      }
+      const beforeFirstMoveResume = logicalSqliteDigest(
+        fixture.databaseFilename,
+      );
+      const replayedFirstMove = await runOperatorCli(
+        cli,
+        fixture.databaseFilename,
+        fixture.p39ReportFilename,
+        firstMoveManifest,
+        true,
+      );
+      expect(replayedFirstMove.code, replayedFirstMove.output).toBe(0);
+      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
+        beforeFirstMoveResume,
+      );
+      const replayedMoveReadback = new DatabaseSync(fixture.databaseFilename, {
+        readOnly: true,
+      });
+      try {
+        expect(
+          replayedMoveReadback
+            .prepare(
+              `SELECT workspace_id, revision, updated_at FROM inbox_entries
+                WHERE entry_key = ?`,
+            )
+            .get(
+              "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
+            ),
+        ).toEqual({
+          workspace_id: "ws_018f2b3c-4d5e-7abc-8def-01234567a457",
+          revision: 3,
+          updated_at: secondMoveUpdatedAt,
+        });
+      } finally {
+        replayedMoveReadback.close();
+      }
+      const replayedFirstMoveRecords = validateP6InboxManifestText(
+        readFileSync(firstMoveManifest, "utf8"),
+      );
+      expect(replayedFirstMoveRecords.map(({ record }) => record.kind)).toEqual(
+        ["Created", "Prepared", "Committed"],
+      );
+      expect(replayedFirstMoveRecords[2]?.record).toMatchObject({
+        inserted: 0,
+        moved: 0,
+        noOp: 1,
       });
 
       const createdOnlyManifest = join(
@@ -846,32 +1035,92 @@ const runOperatorCli = async (
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
     processChild.stdout.setEncoding("utf8").on("data", (chunk: string) => {
       stdout += chunk;
     });
     processChild.stderr.setEncoding("utf8").on("data", (chunk: string) => {
       stderr += chunk;
     });
+    const childClosed = new Promise<{
+      readonly code: number | null;
+      readonly signal: NodeJS.Signals | null;
+    }>((resolveClosed) =>
+      processChild.once("close", (code, signal) =>
+        resolveClosed({ code, signal }),
+      ),
+    );
     const timeout = setTimeout(() => {
       if (settled) return;
-      settled = true;
+      timedOut = true;
       const pid = processChild.pid;
-      if (pid !== undefined && process.platform === "win32") {
-        const treeKill = spawn(
-          "taskkill.exe",
-          ["/PID", String(pid), "/T", "/F"],
-          { windowsHide: true, stdio: "ignore" },
-        );
-        treeKill.unref();
-      } else {
-        processChild.kill("SIGTERM");
-      }
-      reject(
-        new Error(
-          `P6 CLI timeout pid=${pid ?? "unknown"} elapsedMs=${Date.now() - startedAt} ` +
-            `stdout=${stdout.slice(-4000)} stderr=${stderr.slice(-4000)}`,
-        ),
-      );
+      void (async () => {
+        let attempt = 0;
+        while (true) {
+          attempt += 1;
+          let treeKillExit: number | null = null;
+          if (pid !== undefined && process.platform === "win32") {
+            const treeKill = spawn(
+              "taskkill.exe",
+              ["/PID", String(pid), "/T", "/F"],
+              { windowsHide: true, stdio: "ignore" },
+            );
+            await new Promise<void>((resolveTreeKill) => {
+              let finished = false;
+              treeKill.once("close", (code) => {
+                if (finished) return;
+                finished = true;
+                treeKillExit = code;
+                resolveTreeKill();
+              });
+              treeKill.once("error", (cause) => {
+                if (finished) return;
+                finished = true;
+                void cause;
+                resolveTreeKill();
+              });
+            });
+          } else {
+            processChild.kill("SIGTERM");
+            treeKillExit = 0;
+          }
+          const directExited = await new Promise<boolean>((resolveExit) => {
+            const closeTimeout = setTimeout(() => resolveExit(false), 15_000);
+            void childClosed.then(() => {
+              clearTimeout(closeTimeout);
+              resolveExit(true);
+            });
+          });
+          let rootAlive = pid === undefined;
+          if (pid !== undefined) {
+            try {
+              process.kill(pid, 0);
+              rootAlive = true;
+            } catch (cause) {
+              const code =
+                typeof cause === "object" && cause !== null && "code" in cause
+                  ? String((cause as { code?: unknown }).code)
+                  : "unknown";
+              rootAlive = code !== "ESRCH" && code !== "EINVAL";
+            }
+          }
+          if (treeKillExit === 0 && directExited && !rootAlive) {
+            settled = true;
+            clearTimeout(timeout);
+            reject(
+              new Error(
+                `P6 CLI timeout pid=${pid ?? "unknown"} elapsedMs=${Date.now() - startedAt} ` +
+                  `cleanupConfirmed=true taskkillAttempt=${attempt} ` +
+                  `stdout=${stdout.slice(-4000)} stderr=${stderr.slice(-4000)}`,
+              ),
+            );
+            return;
+          }
+          await new Promise<void>((resolveRetry) =>
+            setTimeout(resolveRetry, 250),
+          );
+        }
+      })();
     }, 180_000);
     timeout.unref();
     processChild.once("error", (error) => {
@@ -880,11 +1129,14 @@ const runOperatorCli = async (
       clearTimeout(timeout);
       reject(error);
     });
-    processChild.once("close", (code) => {
-      if (settled) return;
+    void childClosed.then(({ code, signal }) => {
+      if (settled || timedOut) return;
       settled = true;
       clearTimeout(timeout);
-      resolveRun({ code, output: `stdout=${stdout} stderr=${stderr}` });
+      resolveRun({
+        code,
+        output: `signal=${signal ?? "null"} stdout=${stdout} stderr=${stderr}`,
+      });
     });
   });
 
@@ -1133,6 +1385,7 @@ const qualifySidecarCrashRestart = async (
   directory: string,
 ): Promise<void> => {
   const cases = [
+    ["writer-lock-initialized-before-permit", "initialized"],
     ["report-initial-file-identity", "empty"],
     ["report-profile-init-transaction-open", "pristine"],
     ["report-profile-init-before-commit", "pristine"],
@@ -1199,6 +1452,22 @@ const qualifySidecarCrashRestart = async (
         }
       } finally {
         sidecarDb.close();
+      }
+    }
+    if (phase === "writer-lock-initialized-before-permit") {
+      const lockPath = p39WriterLockFilename(database);
+      expect(typeof lockPath).toBe("string");
+      if (typeof lockPath !== "string")
+        throw new Error("P39 writer-lock path was unavailable after crash");
+      const lockDb = new DatabaseSync(lockPath, { readOnly: true });
+      try {
+        expect(
+          lockDb
+            .prepare("SELECT lock_id FROM p39_writer_lock WHERE lock_id = 1")
+            .all(),
+        ).toEqual([{ lock_id: 1 }]);
+      } finally {
+        lockDb.close();
       }
     }
     const retry = await runOperatorCli(cli, database, sidecar, manifest, false);

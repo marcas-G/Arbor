@@ -42,6 +42,7 @@ import {
   canonicalNewPath,
   descriptorHashesThrough,
   existingPathIdentity,
+  sameIdentity,
 } from "./schema-upgrade-manifest.js";
 
 export interface P6InboxRebuildArguments {
@@ -260,6 +261,7 @@ export const validateP6InboxManifestText = (text: string): Envelope[] => {
       !/^[0-9a-f]{64}$/u.test(prepared.canonicalInputDigest) ||
       typeof prepared.projectionBeforeDigest !== "string" ||
       !/^[0-9a-f]{64}$/u.test(prepared.projectionBeforeDigest) ||
+      !Array.isArray(prepared.projectionBefore) ||
       typeof prepared.operationId !== "string" ||
       !/^[0-9a-f]{64}$/u.test(prepared.operationId) ||
       prepared.schemaSignature !== records[0]?.record.schemaSignature
@@ -272,6 +274,7 @@ export const validateP6InboxManifestText = (text: string): Envelope[] => {
     if (
       committed?.schemaVersion !== 48 ||
       committed.canonicalInputDigest !== prepared?.canonicalInputDigest ||
+      committed.preWriteDatabaseDigest !== prepared?.preWriteDatabaseDigest ||
       typeof committed.finalDatabaseDigest !== "string" ||
       !/^[0-9a-f]{64}$/u.test(committed.finalDatabaseDigest) ||
       typeof committed.projectionDigest !== "string" ||
@@ -510,6 +513,7 @@ interface InboxProjectionRow {
   readonly admitted_at: string;
   readonly consumed_at: string | null;
   readonly revision: number;
+  readonly updated_at: string;
 }
 
 interface InboxProjectionSnapshotEntry {
@@ -527,6 +531,7 @@ const decodeProjectionBefore = (
       typeof item?.entryKey !== "string" ||
       typeof item.row?.workspace_id !== "string" ||
       typeof item.row?.admitted_at !== "string" ||
+      typeof item.row?.updated_at !== "string" ||
       !Number.isInteger(item.row?.revision) ||
       snapshot.has(item.entryKey)
     )
@@ -547,7 +552,7 @@ const inboxProjectionSnapshot = (
     for (const { command_id } of dispositions) {
       const key = `retry-verification-unbound:${command_id}`;
       const found = yield* primary.unsafe<InboxProjectionRow>(
-        "SELECT workspace_id, kind, summary, correlation_id, admitted_at, consumed_at, revision FROM inbox_entries WHERE entry_key = ?",
+        "SELECT workspace_id, kind, summary, correlation_id, admitted_at, consumed_at, revision, updated_at FROM inbox_entries WHERE entry_key = ?",
         [key],
       );
       if (found.length > 1 || (requireComplete && found.length !== 1))
@@ -559,6 +564,116 @@ const inboxProjectionSnapshot = (
       if (found[0] !== undefined) rows.set(key, found[0]);
     }
     return rows;
+  });
+
+const projectionSnapshotEntries = (
+  snapshot: ReadonlyMap<string, InboxProjectionRow>,
+): InboxProjectionSnapshotEntry[] =>
+  [...snapshot]
+    .map(([entryKey, row]) => ({ entryKey, row }))
+    .sort((left, right) =>
+      left.entryKey < right.entryKey
+        ? -1
+        : left.entryKey > right.entryKey
+          ? 1
+          : 0,
+    );
+
+interface InboxProjectionOutcome {
+  readonly inserted: number;
+  readonly moved: number;
+  readonly noOp: number;
+  readonly finalDatabaseDigest: string;
+  readonly projectionDigest: string;
+}
+
+const verifyRebuiltProjection = (
+  primary: P39MaintenanceSqlClient,
+  projectionBefore: ReadonlyMap<string, InboxProjectionRow>,
+  canonicalInputDigest: string,
+): Effect.Effect<InboxProjectionOutcome, unknown> =>
+  Effect.gen(function* () {
+    const postFk = yield* primary.unsafe("PRAGMA foreign_key_check");
+    if (postFk.length > 0)
+      return yield* Effect.fail(
+        new P6InboxRebuildRefusal("post-rebuild foreign_key_check failed"),
+      );
+    const inboxAfter = yield* inboxProjectionSnapshot(primary, true);
+    let inserted = 0;
+    let moved = 0;
+    let noOp = 0;
+    for (const [key, after] of inboxAfter) {
+      const commandId = key.slice("retry-verification-unbound:".length);
+      const dispositionRows = yield* primary.unsafe<{ created_at: string }>(
+        "SELECT created_at FROM retry_verification_legacy_dispositions WHERE command_id = ?",
+        [commandId],
+      );
+      if (
+        after.kind !== "Governance" ||
+        after.summary !== RETRY_VERIFICATION_UNBOUND_LEGACY_SUMMARY ||
+        after.correlation_id !== commandId ||
+        after.consumed_at !== null ||
+        after.admitted_at !== dispositionRows[0]?.created_at
+      )
+        return yield* Effect.fail(
+          new P6InboxRebuildRefusal(
+            "Inbox projection does not match its immutable disposition",
+          ),
+        );
+      const before = projectionBefore.get(key);
+      if (before === undefined) {
+        inserted += 1;
+        if (Number(after.revision) !== 1)
+          return yield* Effect.fail(
+            new P6InboxRebuildRefusal(
+              "inserted Inbox projection has an invalid initial revision",
+            ),
+          );
+      } else if (before.workspace_id !== after.workspace_id) {
+        moved += 1;
+        if (
+          before.admitted_at !== after.admitted_at ||
+          Number(after.revision) !== Number(before.revision) + 1
+        )
+          return yield* Effect.fail(
+            new P6InboxRebuildRefusal(
+              "moved Inbox projection did not preserve admission and increment once",
+            ),
+          );
+      } else {
+        noOp += 1;
+        if (
+          before.admitted_at !== after.admitted_at ||
+          Number(after.revision) !== Number(before.revision)
+        )
+          return yield* Effect.fail(
+            new P6InboxRebuildRefusal("exact Inbox projection was not a no-op"),
+          );
+      }
+    }
+    if (inboxAfter.size !== projectionBefore.size + inserted)
+      return yield* Effect.fail(
+        new P6InboxRebuildRefusal(
+          "projection key cardinality changed unexpectedly",
+        ),
+      );
+    const canonicalAfter = yield* logicalDigest(
+      primary,
+      CANONICAL_INPUT_TABLES,
+    );
+    if (canonicalAfter !== canonicalInputDigest)
+      return yield* Effect.fail(
+        new P6InboxRebuildRefusal(
+          "canonical F23 facts changed during projection rebuild",
+        ),
+      );
+    return {
+      inserted,
+      moved,
+      noOp,
+      finalDatabaseDigest: yield* logicalDigest(primary),
+      projectionDigest: yield* logicalDigest(primary, ["inbox_entries"]),
+    };
   });
 
 let trustedSchema48Signature: Promise<string> | undefined;
@@ -609,7 +724,10 @@ export const runP6InboxRebuild = async (
   const manifestPath = manifestExistedAtStart
     ? canonicalExistingPath(args.manifest)
     : canonicalNewPath(args.manifest);
-  const protectedApplications = protectedApplicationDatabases();
+  const targetIdentity = existingPathIdentity(args.database);
+  const protectedApplications = protectedApplicationDatabases().filter(
+    (path) => !sameIdentity(targetIdentity, existingPathIdentity(path)),
+  );
   const lockFilename = p39WriterLockFilename(args.database);
   const lockPath =
     typeof lockFilename === "string"
@@ -621,27 +739,35 @@ export const runP6InboxRebuild = async (
     lockPath,
   ];
   const evidencePaths = [args.p39Sidecar, manifestPath];
+  const protectedArtifactDatabases = [...protectedDatabases, args.p39Sidecar];
   rejectSqliteArtifactAliases(protectedDatabases, evidencePaths);
-  const protectedArtifactPaths = protectedDatabases.flatMap((path) => [
-    path,
-    ...["-wal", "-shm", "-journal"]
-      .map((suffix) => `${path}${suffix}`)
-      .filter((sidecar) => existsSync(sidecar)),
-  ]);
+  rejectSqliteArtifactAliases(protectedArtifactDatabases, [manifestPath]);
+  const protectedArtifactPaths = protectedArtifactDatabases.flatMap((path) =>
+    existsSync(path)
+      ? [
+          path,
+          ...["-wal", "-shm", "-journal"]
+            .map((suffix) => `${path}${suffix}`)
+            .filter((sidecar) => existsSync(sidecar)),
+        ]
+      : [
+          ...["-wal", "-shm", "-journal"]
+            .map((suffix) => `${path}${suffix}`)
+            .filter((sidecar) => existsSync(sidecar)),
+        ],
+  );
   const protectedIdentities = protectedArtifactPaths.map((path) =>
     existingPathIdentity(path),
   );
-  const evidenceIdentities = evidencePaths.map((path) =>
-    existsSync(path) ? existingPathIdentity(path) : null,
-  );
+  const manifestIdentity = existsSync(manifestPath)
+    ? existingPathIdentity(manifestPath)
+    : null;
   assertDistinctPaths([
     ...protectedIdentities.map(
       (identity, index) =>
         [`protected database artifact ${index}`, identity] as const,
     ),
-    ...evidenceIdentities.map(
-      (identity, index) => [`evidence path ${index}`, identity] as const,
-    ),
+    ["manifest", manifestIdentity],
   ]);
   let activeRecords = manifestRecords(manifestPath);
   if ((activeRecords.length > 0 || manifestExistedAtStart) && !args.resume)
@@ -698,7 +824,6 @@ export const runP6InboxRebuild = async (
                   "Prepared manifest was not durably created under permit",
                 ),
               );
-            const inboxBefore = preparedProjectionBefore;
             const primaryLayer = sqlLayerFor(primary);
             const services = Layer.mergeAll(
               Layer.provide(makeTransactionPortLive(), primaryLayer),
@@ -707,102 +832,40 @@ export const runP6InboxRebuild = async (
                 primaryLayer,
               ),
             );
-            yield* Effect.scoped(
+            const outcome = yield* Effect.scoped(
               Effect.provide(
                 Effect.gen(function* () {
                   const tx = yield* TransactionPort;
                   const repository = yield* RetryVerificationOriginRepository;
                   return yield* tx.transact(
-                    repository.rebuildUnboundLegacyInboxProjections(startedAt),
+                    Effect.gen(function* () {
+                      yield* repository.rebuildUnboundLegacyInboxProjections(
+                        startedAt,
+                      );
+                      return yield* verifyRebuiltProjection(
+                        primary,
+                        preparedProjectionBefore,
+                        canonicalInputDigest,
+                      );
+                    }),
                   );
                 }),
                 services,
               ),
             );
-            const postFk = yield* primary.unsafe("PRAGMA foreign_key_check");
-            if (postFk.length > 0)
-              return yield* Effect.fail(
-                new P6InboxRebuildRefusal(
-                  "post-rebuild foreign_key_check failed",
-                ),
-              );
-            const inboxAfter = yield* inboxProjectionSnapshot(primary, true);
-            let inserted = 0;
-            let moved = 0;
-            let noOp = 0;
-            for (const [key, after] of inboxAfter) {
-              const commandId = key.slice("retry-verification-unbound:".length);
-              const dispositionRows = yield* primary.unsafe<{
-                created_at: string;
-              }>(
-                "SELECT created_at FROM retry_verification_legacy_dispositions WHERE command_id = ?",
-                [commandId],
-              );
-              if (
-                after.kind !== "Governance" ||
-                after.summary !== RETRY_VERIFICATION_UNBOUND_LEGACY_SUMMARY ||
-                after.correlation_id !== commandId ||
-                after.consumed_at !== null ||
-                after.admitted_at !== dispositionRows[0]?.created_at
-              )
-                return yield* Effect.fail(
-                  new P6InboxRebuildRefusal(
-                    "Inbox projection does not match its immutable disposition",
-                  ),
-                );
-              const before = inboxBefore.get(key);
-              if (before === undefined) {
-                inserted += 1;
-                if (Number(after.revision) !== 1)
-                  return yield* Effect.fail(
-                    new P6InboxRebuildRefusal(
-                      "inserted Inbox projection has an invalid initial revision",
-                    ),
-                  );
-              } else if (before.workspace_id !== after.workspace_id) {
-                moved += 1;
-                if (
-                  before.admitted_at !== after.admitted_at ||
-                  Number(after.revision) !== Number(before.revision) + 1
-                )
-                  return yield* Effect.fail(
-                    new P6InboxRebuildRefusal(
-                      "moved Inbox projection did not preserve admission and increment once",
-                    ),
-                  );
-              } else {
-                noOp += 1;
-                if (
-                  before.admitted_at !== after.admitted_at ||
-                  Number(after.revision) !== Number(before.revision)
-                )
-                  return yield* Effect.fail(
-                    new P6InboxRebuildRefusal(
-                      "exact Inbox projection was not a no-op",
-                    ),
-                  );
-              }
-            }
-            if (inboxAfter.size !== inboxBefore.size + inserted)
-              return yield* Effect.fail(
-                new P6InboxRebuildRefusal(
-                  "projection key cardinality changed unexpectedly",
-                ),
-              );
-            const canonicalAfter = yield* logicalDigest(
-              primary,
-              CANONICAL_INPUT_TABLES,
-            );
-            if (canonicalAfter !== canonicalInputDigest)
-              return yield* Effect.fail(
-                new P6InboxRebuildRefusal(
-                  "canonical F23 facts changed during projection rebuild",
-                ),
-              );
-            const finalDatabaseDigest = yield* logicalDigest(primary);
-            const projectionDigest = yield* logicalDigest(primary, [
+            const committedDigest = yield* logicalDigest(primary);
+            const committedProjectionDigest = yield* logicalDigest(primary, [
               "inbox_entries",
             ]);
+            if (
+              committedDigest !== outcome.finalDatabaseDigest ||
+              committedProjectionDigest !== outcome.projectionDigest
+            )
+              return yield* Effect.fail(
+                new P6InboxRebuildRefusal(
+                  "SQLite COMMIT did not preserve the observed projection state",
+                ),
+              );
             process.stdout.write("P6_REBUILD_DATABASE_COMMITTED\n");
             yield* Effect.promise(() =>
               waitAtTestBoundary("database-committed"),
@@ -813,12 +876,12 @@ export const runP6InboxRebuild = async (
               binding: activeRecords[0]?.record.binding,
               schemaVersion: 48,
               preWriteDatabaseDigest: preparedDatabaseDigest,
-              finalDatabaseDigest,
+              finalDatabaseDigest: outcome.finalDatabaseDigest,
               canonicalInputDigest,
-              projectionDigest,
-              inserted,
-              moved,
-              noOp,
+              projectionDigest: outcome.projectionDigest,
+              inserted: outcome.inserted,
+              moved: outcome.moved,
+              noOp: outcome.noOp,
               committedAt: new Date().toISOString(),
             });
           }).pipe(
@@ -952,15 +1015,8 @@ export const runP6InboxRebuild = async (
                 return true;
               if (activeRecords.at(-1)?.record.kind !== "Prepared") {
                 const snapshotRows = yield* inboxProjectionSnapshot(primary);
-                const projectionBefore = [...snapshotRows]
-                  .map(([entryKey, row]) => ({ entryKey, row }))
-                  .sort((left, right) =>
-                    left.entryKey < right.entryKey
-                      ? -1
-                      : left.entryKey > right.entryKey
-                        ? 1
-                        : 0,
-                  );
+                const projectionBefore =
+                  projectionSnapshotEntries(snapshotRows);
                 const prepared = appendRecord(manifestPath, activeRecords, {
                   kind: "Prepared",
                   nonce: activeRecords[0]?.record.nonce,
@@ -978,13 +1034,15 @@ export const runP6InboxRebuild = async (
                 });
                 activeRecords = [...activeRecords, prepared];
                 preparedDatabaseDigest = currentDatabaseDigest;
-                preparedProjectionBefore =
-                  decodeProjectionBefore(projectionBefore);
+                preparedProjectionBefore = snapshotRows;
                 process.stdout.write("P6_REBUILD_PREPARED\n");
                 yield* Effect.promise(() => waitAtTestBoundary("prepared"));
               } else {
                 const prepared = activeRecords.at(-1)?.record;
-                if (prepared?.canonicalInputDigest !== canonicalInputDigest)
+                if (
+                  prepared?.canonicalInputDigest !== canonicalInputDigest ||
+                  prepared?.schemaSignature !== actualSignature
+                )
                   return yield* Effect.fail({
                     _tag: "P39MaintenanceFailure",
                     code: "P39_MIGRATION_PREFIX_INVALID",
@@ -992,17 +1050,23 @@ export const runP6InboxRebuild = async (
                 preparedDatabaseDigest = String(
                   prepared.preWriteDatabaseDigest,
                 );
-                const projectionBefore = prepared.projectionBefore;
+                const projectionBefore = decodeProjectionBefore(
+                  prepared.projectionBefore,
+                );
                 if (
                   prepared.projectionBeforeDigest !==
-                  sha256(canonicalP6InboxJson(projectionBefore))
+                  sha256(
+                    canonicalP6InboxJson(
+                      projectionSnapshotEntries(projectionBefore),
+                    ),
+                  )
                 )
                   return yield* Effect.fail({
                     _tag: "P39MaintenanceFailure",
                     code: "P39_MIGRATION_PREFIX_INVALID",
                   } as P39MaintenanceFailure);
                 preparedProjectionBefore =
-                  decodeProjectionBefore(projectionBefore);
+                  yield* inboxProjectionSnapshot(primary);
               }
               return true;
             }).pipe(
