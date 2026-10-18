@@ -18,7 +18,7 @@ import {
 } from "../../../packages/domain/src/index.js";
 import type { ModelCatalog } from "../../../packages/model-context/src/index.js";
 import {
-  createSchema44TestDatabaseFactory,
+  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
   withSchema44TestDatabase,
 } from "../../support/schema44-database.js";
 import { defineCapabilityTest, metadataFor } from "../harness.js";

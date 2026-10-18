@@ -28,7 +28,7 @@ import {
   type SecretRef,
 } from "../../../packages/ports/dist/provider.js";
 import {
-  createSchema44TestDatabaseFactory,
+  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
   type Schema44TestDatabase,
   type Schema44TestDatabaseFactory,
 } from "../../support/schema44-database.js";

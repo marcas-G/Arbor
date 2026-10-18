@@ -53,7 +53,7 @@ import {
   secretRef,
   TransactionPort,
 } from "../packages/ports/dist/index.js";
-import { createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
+import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
 
 let schema44Factory: Awaited<
   ReturnType<typeof createSchema44TestDatabaseFactory>

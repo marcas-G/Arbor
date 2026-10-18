@@ -40,7 +40,7 @@ import {
   WorkspaceRepository,
 } from "../packages/ports/src/index.js";
 import {
-  createSchema44TestDatabaseFactory,
+  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
   withSchema44TestDatabase,
 } from "./support/schema44-database.js";
 

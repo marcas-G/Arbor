@@ -34,7 +34,7 @@ import {
   p7SeedWork,
   runP7,
 } from "./support/p7-app.js";
-import { createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
+import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
 
 const WORK_CONSUMER = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789b1");
 const CMD_CONSUMER = parse(CommandId)(
@@ -308,7 +308,7 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
     );
   });
 
-  it("composition smoke: builds against a real schema-44 database", async () => {
+  it("composition smoke: builds against a real schema-48 database", async () => {
     const database = schema44Factory.create();
     try {
       const app = buildSingleWorkspaceLayer({
@@ -337,7 +337,7 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
           never
         >,
       );
-      expect(result).toEqual({ version: 44, hasWorkWaits: true });
+      expect(result).toEqual({ version: 48, hasWorkWaits: true });
     } finally {
       database.cleanup();
     }
