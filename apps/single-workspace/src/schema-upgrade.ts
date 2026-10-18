@@ -351,7 +351,7 @@ const readVersionWithOpenSource = (database: DatabaseSync): number =>
       .user_version,
   );
 
-const protectedApplicationDatabases = (): ReadonlyArray<string> => {
+export const protectedApplicationDatabases = (): ReadonlyArray<string> => {
   const configured = process.env.ARBOR_DB;
   const candidate =
     configured === undefined
@@ -374,7 +374,7 @@ const ensureNoDatabaseSidecars = (filename: string): void => {
   }
 };
 
-const rejectSqliteArtifactAliases = (
+export const rejectSqliteArtifactAliases = (
   databasePaths: ReadonlyArray<string>,
   evidencePaths: ReadonlyArray<string>,
 ): void => {
