@@ -56,6 +56,8 @@ export type P39ReportSidecarValidationPhase =
   | "report-existing-new-sidecar-policy"
   | "report-initial-file-identity"
   | "report-profile-open-init-readback"
+  | "report-profile-init-transaction-open"
+  | "report-profile-init-before-commit"
   | "report-final-path-and-identity";
 
 type ReportValidationPhaseObserver = (
@@ -326,7 +328,10 @@ const hasExactSchema = (objects: ReadonlyArray<SidecarObject>): boolean => {
   );
 };
 
-const p39ReportSetup = (allowInitialize: boolean) =>
+const p39ReportSetup = (
+  allowInitialize: boolean,
+  onPhase?: ReportValidationPhaseObserver,
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const identity = yield* sql.unsafe<SidecarIdentity>(
@@ -355,6 +360,7 @@ const p39ReportSetup = (allowInitialize: boolean) =>
       yield* sql.unsafe("PRAGMA busy_timeout = 5000");
       yield* sql.withTransaction(
         Effect.gen(function* () {
+          onPhase?.("report-profile-init-transaction-open");
           for (const statement of splitStatements(P39_REPORT_DATABASE_DDL)) {
             yield* sql.unsafe(statement);
           }
@@ -362,6 +368,7 @@ const p39ReportSetup = (allowInitialize: boolean) =>
             `PRAGMA application_id = ${P39_REPORT_APPLICATION_ID}`,
           );
           yield* sql.unsafe(`PRAGMA user_version = ${P39_REPORT_USER_VERSION}`);
+          onPhase?.("report-profile-init-before-commit");
         }),
       );
     } else if (
@@ -482,7 +489,7 @@ const validateP39ReportSidecarDatabaseInternal = (
     onPhase?.("report-profile-open-init-readback");
     yield* Effect.scoped(
       Effect.provide(
-        p39ReportSetup(allowInitialize).pipe(
+        p39ReportSetup(allowInitialize, onPhase).pipe(
           Effect.mapError((cause: SqlError | P39MaintenanceFailure) =>
             typeof cause === "object" &&
             cause !== null &&

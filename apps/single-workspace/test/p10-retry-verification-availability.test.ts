@@ -202,6 +202,15 @@ describe("P10 RetryVerification availability projection", () => {
       ),
     );
     expect(authorized.value.unconsumed).toHaveLength(1);
+    const repeated = await Effect.runPromise(
+      face.query(
+        "inbox-view",
+        { workspaceId: projection.recipientWorkspaceId },
+        undefined,
+        "user:parent" as never,
+      ),
+    );
+    expect(repeated.value.unconsumed).toHaveLength(1);
     const denied = await Effect.runPromise(
       face.query(
         "inbox-view",
@@ -211,5 +220,14 @@ describe("P10 RetryVerification availability projection", () => {
       ),
     );
     expect(denied.value.unconsumed).toEqual([]);
+    const agentDenied = await Effect.runPromise(
+      face.query(
+        "inbox-view",
+        { workspaceId: projection.recipientWorkspaceId },
+        undefined,
+        "agent:workspace-parent" as never,
+      ),
+    );
+    expect(agentDenied.value.unconsumed).toEqual([]);
   });
 });

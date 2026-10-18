@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 
 export const P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS = 30_000;
 
@@ -23,7 +24,23 @@ const executeProcess: P39WindowsSecurityQueryExecutor = (
   command,
   args,
   options,
-) => execFileSync(command, [...args], options);
+) => {
+  const environment = { ...process.env };
+  if (process.platform === "win32") {
+    const systemRoot =
+      environment.WINDIR ?? environment.SystemRoot ?? "C:\\Windows";
+    // Keep command resolution on inbox Windows PowerShell, not a shadow copy
+    // supplied by PowerShell Core or a test runner.
+    environment.PSModulePath = join(
+      systemRoot,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "Modules",
+    );
+  }
+  return execFileSync(command, [...args], { ...options, env: environment });
+};
 
 /** Run a bounded Windows P39 owner/ACL/filesystem probe. Errors (including
  * timeout) intentionally propagate so callers can fail closed. The injectable
@@ -68,7 +85,7 @@ export const p39WindowsProtectedPathsScript = (
     "if(($d.DriveType -ne 'Fixed' -and $d.DriveType -ne 'Removable') -or @('NTFS','ReFS','exFAT','FAT','FAT32') -notcontains $d.DriveFormat){exit 10}",
     "$i=Get-Item -LiteralPath $p -Force",
     "if(($x.Kind -eq 'directory' -and !$i.PSIsContainer) -or ($x.Kind -eq 'file' -and $i.PSIsContainer) -or (($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)){exit 11}",
-    "$a=Get-Acl -LiteralPath $p",
+    "$a=$i.GetAccessControl()",
     "$g=$false",
     "foreach($q in $a.Access){$sid=$q.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($q.AccessControlType -eq 'Allow' -and (([int]$q.FileSystemRights -band $m) -ne 0)){if(!($t -contains $sid)){exit 12};if($sid -eq $u){$g=$true}}}",
     "$o=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value",
