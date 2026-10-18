@@ -534,6 +534,8 @@ describe("offline P39–P48 schema-upgrade CLI", () => {
           readSchemaUpgradeManifest(args.copyManifest).records.at(-1)?.record,
         ).toMatchObject({ kind: "Prepared", step: "0045" });
 
+        await runPreparedUpgrade(resumeArgs);
+        expect(readUserVersion(args.database)).toBe(48);
         const beforeNoOpDigest = logicalSqliteDigest(args.database);
         let version48ReopenedNoOp = false;
         await runPreparedUpgrade(resumeArgs, {
