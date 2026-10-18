@@ -35,6 +35,8 @@ export * from "./p45-retry-verification-origin-migration.js";
 export * from "./p46-verification-evidence-snapshot-migration.js";
 export * from "./p47-ah14-legacy-adoption-attention-migration.js";
 export * from "./p48-ah19-conversation-checkpoint-owner-migration.js";
+export * from "./p49-sandbox-policy-and-grant-provenance-migration.js";
+export * from "./p50-sandbox-provider-unavailable-fact-migration.js";
 export * from "./permission-grant-repository.js";
 export * from "./project-directory.js";
 export * from "./project-tool-registry.js";

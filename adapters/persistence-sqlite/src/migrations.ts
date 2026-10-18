@@ -7,6 +7,8 @@ import { P45_RETRY_VERIFICATION_ORIGIN_MIGRATION } from "./p45-retry-verificatio
 import { P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION } from "./p46-verification-evidence-snapshot-migration.js";
 import { P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION } from "./p47-ah14-legacy-adoption-attention-migration.js";
 import { P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION } from "./p48-ah19-conversation-checkpoint-owner-migration.js";
+import { P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION } from "./p49-sandbox-policy-and-grant-provenance-migration.js";
+import { P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION } from "./p50-sandbox-provider-unavailable-fact-migration.js";
 
 const DDL = `
 CREATE TABLE projects (
@@ -2575,7 +2577,7 @@ export const P43_MIGRATION = {
   sql: P43_BLOCKED_WORKEPISODE_MIGRATION.sql,
 } satisfies MigrationFile & { readonly requiresUserVersion: 42 };
 
-export const CURRENT_SCHEMA_VERSION = 48 as const;
+export const CURRENT_SCHEMA_VERSION = 50 as const;
 export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   ...P38_MIGRATIONS,
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
@@ -2587,5 +2589,7 @@ export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
   P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,
   P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION,
+  P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
+  P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
 ]);
 export const CURRENT_MIGRATION_BASELINE = CURRENT_SCHEMA_VERSION;

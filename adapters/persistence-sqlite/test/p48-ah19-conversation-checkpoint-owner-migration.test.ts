@@ -44,7 +44,7 @@ describe("P48 AH19 Root Workspace Conversation checkpoint owner migration", () =
       offlineOnly: true,
     });
     expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-4)).toEqual([
-      45, 46, 47, 48,
+      47, 48, 49, 50,
     ]);
 
     const from47 = await createSchema47TestDatabase();
