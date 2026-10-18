@@ -98,12 +98,17 @@ pnpm --filter @arbor/single-workspace p6:inbox-rebuild --
 different owners and formats. `--p39-sidecar` is the P39 blocker-report SQLite
 passed as `P39SqliteMaintenanceCommandOptions.sidecarFilename`; it uses the
 existing P39 report database schema/application id and is not the operation
-audit. P39 currently opens/creates it through `SqliteClient.layer` and
-initializes an empty database transactionally; this is not an exclusive
-filesystem `wx` reservation, so the accepted operator contract must explicitly
-allow that bounded pre-lock P39 side effect. `--manifest` is the protected
-append-only P6 JSONL operation ledger. The CLI rejects aliases among primary
-DB, P39 sidecar, JSONL manifest, P39 writer lock, SQLite sidecars and protected
+audit. When the file is absent, current P39 code first creates the candidate
+sidecar with `openSync(path, "wx", 0o600)`, closes that descriptor, records its
+file identity, and only then opens SQLite to initialize/validate the P39 report
+schema and read it back; it checks the same file identity after SQLite closes.
+The `wx` operation atomically wins/loses file creation only. It is not a
+durable maintenance permit or an exclusive lock held across SQLite
+initialization/use; `MaintenanceExclusive` is the later writer gate. The
+accepted operator contract must explicitly allow the bounded pre-lock P39
+report-sidecar create/init effects. `--manifest` is the protected append-only
+P6 JSONL operation ledger. The CLI rejects aliases among primary DB, P39
+sidecar, JSONL manifest, P39 writer lock, SQLite sidecars and protected
 application DBs. Resume binds both sidecar and JSONL manifest identities to the
 original operation.
 
@@ -134,8 +139,14 @@ durable P6 UnboundLegacy dispositions in that database.
    primary, JSONL manifest, P39 sidecar and P39 lock (validate a new manifest's
    parent/absence without creating the file); then the existing P39 adapter
    validates and opens `--p39-sidecar` **before** writer
-   lock acquisition. If the sidecar is a new empty file, P39 may initialize its
+   lock acquisition. If the sidecar path is absent, `openSync(..., "wx", 0o600)`
+   elects one file-creation winner; an `EEXIST` loser does not overwrite or
+   unlink the winner's file and proceeds only if the later P39 exact-schema
+   readback succeeds. If the file is pristine/empty, P39 may initialize its
    blocker-report SQLite schema transactionally before attempting the lock. If
+   concurrent SQLite initialization yields busy/schema-conflict, close and fail
+   before the writer permit; a retry may validate the winner's completed
+   schema. If
    any RuntimeShared holder keeps `MaintenanceExclusive` unavailable, fail
    after the established bounded wait. P39 may also initialize its separate
    rollback-journal writer-lock database before trying `BEGIN EXCLUSIVE`; it
@@ -145,10 +156,12 @@ durable P6 UnboundLegacy dispositions in that database.
    created or appended, and no P6 Inbox/canonical row may change. A valid initialized
    sidecar may remain for retry; never auto-delete it. If report-sidecar
    validation/initialization fails, close its connection, fail before lock/JSONL
-   manifest/primary, preserve any created artifact for review, and retry only
-   when the P39 validator accepts the exact report schema. If a failed/crashed
-   initialization left a sidecar the validator rejects, preserve it; after
-   operator inspection, a new attempt may name a different new sidecar path.
+   manifest/primary, preserve any created artifact for review. Retry the same
+   path only if the P39 validator recognizes either the exact P39 report schema
+   or the exact pristine initialization-eligible state. If a failed/crashed
+   initialization left a nonempty partial/foreign sidecar the validator
+   rejects, preserve it; after operator inspection, a new attempt may name a
+   different new sidecar path.
    Do not rename/delete/repair it automatically or claim the JSONL audit
    manifest covers this pre-permit side effect. Likewise, a valid
    `p39_writer_lock` file/schema may remain after permit-acquisition failure;
@@ -322,7 +335,7 @@ online databases; no deployment/release qualification is implied.
 | Projection facts | Empty/missing stable row inserts once; exact row no-op; stale route moves same key once preserving `admitted_at`; Root and active direct-Parent route derive from current canonical rows; no receipt/event dependency; no human authorization copied into row. |
 | Integrity | Source Work/Verification/Project mismatch, inactive/missing Parent, malformed/unknown disposition, duplicate key, wrong kind/summary/correlation/admitted time, consumed row, or preexisting route conflict aborts whole transaction; canonical rows and all Inbox rows remain unchanged. |
 | Atomicity | Instrument the continuation to assert P39 `primary`, `RetryVerificationOriginRepositoryLive`, and `TransactionPort` all use the same primary SqlClient/connection; exactly one `TransactionPort.transact` supplies one TransactionScope/BEGIN/COMMIT boundary. Inject failure after at least one candidate insert/move but before commit; verify all Inbox changes roll back. Snapshot canonical Projects/Workspaces/Works/Verifications/Commands/Events/origins/dispositions before/after and require exact equality. |
-| Crash/restart | Kill child after P39 report-sidecar initialization and after writer-lock DB initialization but before permit acquisition; require only exact P39 infrastructure effects, unchanged primary, absent JSONL manifest. Also kill at permit-acquired/pre-Prepared, after `Prepared`, before transaction, mid-transaction, immediately before SQLite COMMIT, immediately after COMMIT before audit acknowledgment, and after `Committed`; resume only with same target/sidecar/manifest identities. Require no duplicate key, no double revision increment, exact same final key-route digest, and correct single Committed record. |
+| Crash/restart | Kill child immediately after P39 `wx` sidecar creation before SQLite init; after schema-init transaction start/rollback; and after schema-init commit before exact readback. Require respectively a zero-byte owned sidecar, a pristine DB with application_id/user_version 0 and no user objects (journal mode may already be WAL), or an exact initialized P39 report DB; retry may initialize only the two recognized pristine/exact states, never deletes. Race two child processes on a new sidecar: one wins `wx`, the loser never overwrites/unlinks, may fail validation during setup, and only proceeds after exact schema readback; then contend for the P39 permit. Kill after report-sidecar and writer-lock DB setup but before permit; require only P39 infrastructure effects, unchanged primary, absent JSONL manifest. Also kill at permit-acquired/pre-Prepared, after `Prepared`, before transaction, mid-transaction, immediately before SQLite COMMIT, immediately after COMMIT before audit acknowledgment, and after `Committed`; resume only with same target/sidecar/manifest identities. Require no duplicate key, no double revision increment, exact same final key-route digest, and correct single Committed record. |
 | Competition | Two independent operator processes target same DB: one obtains P39 exclusive permit, the other waits/fails bounded with no primary/JSONL writes (while allowing only the separately stated P39 sidecar init); a RuntimeShared process cannot enter while maintenance is held. Verify lock release and a subsequent fresh-process read-only check. |
 | Audit | Hash-chain/tamper/truncate, wrong identity/nonce, short/zero write, fsync error, target replacement/TOCTOU, missing manifest on resume, changed DB/prefix/input, unresolved commit acknowledgment all fail closed or reconcile by the stated cases; safe diagnostics contain no SQL, secrets or receipt/event payloads. |
 | Read-after-rebuild | Public current root/direct-Parent human reads the one typed entry; foreign human/Agent remains denied; read does not consume/ack/clear; no ProviderTurn, Execution, Event, receipt, canonical write or Agent admission is produced. |
@@ -338,14 +351,25 @@ same-transaction helper use, and before/after receipt-commit crash cases.
 
 Acceptance requires a human-governed landing in the owning frozen documents,
 then an independent consistency review. The recommended landing scope is the
-DID summary plus P6 `00` contract index, P6 `02`/`06` and P1 `03`/`04`: explicitly mark owner/Parent
-route-move command qualification N/A for v1 while retaining the future-command
-same-transaction constraint, and assign the required offline rebuild to the
-P6 operator surface with its schema-48/P39/sidecar/manifest/atomicity contract. P1 `01`
-and P8 `01` should be checked for references that imply a v1 owner-move command;
-edit them only if needed to make the accepted contract internally consistent.
-P10 remains unchanged and does not gain an Attention source. None of these
-manual document updates or implementation steps is authorized by this draft.
+DID summary plus P6 `00` contract index, P6 `02`/`06`, P8 `06` Story H, and P1
+`03`/`04`. In P8 `06`, amend only the cross-owner UnboundLegacy route-command
+clause: because no canonical Work-owner or Workspace-Parent mutation command
+exists, command-level route-move and its command/process crash qualification
+are N/A **for v1**. Keep the old/new current-recipient visibility requirement,
+same-key `BEGIN IMMEDIATE` helper contract, and ordinary P1
+`TerminalRejected(AuthorityDenied)`/no-mutation rule as mandatory constraints
+for any future separately-governed route-mutating command. The route helper and
+its adapter-level transaction/rebuild tests are not N/A. Keep P8 Story H's
+distinct frozen old Verification owner-snapshot and successor-current-owner
+semantics unchanged.
+
+P6 `02`/`06` and P1 `03`/`04` should assign the required offline rebuild to the
+P6 operator surface with its schema-48/P39/sidecar/manifest/atomicity contract.
+P1 `01` and P8 `01` should be checked for references that imply a v1 owner-move
+command; edit them only if needed to make the accepted contract internally
+consistent. P10 remains unchanged and does not gain an Attention source. None
+of these manual document updates or implementation steps is authorized by this
+draft.
 
 ## Explicit exclusions
 
