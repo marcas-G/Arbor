@@ -3,6 +3,7 @@ import type {
   ArtifactId,
   CanonicalResourceRegion,
   NoEffectDenialCode as DomainNoEffectDenialCode,
+  ExecutionEpisodeBinding,
   ExecutionId,
   LeaseGeneration,
   Principal,
@@ -24,6 +25,7 @@ import type {
   ToolRuntimeError,
 } from "./errors.js";
 import type { InvocationRef } from "./execution.js";
+import type { SandboxProcessPolicy } from "./sandbox-process.js";
 import type { TransactionScope } from "./session.js";
 
 export type SideEffectSemantics =
@@ -116,6 +118,9 @@ export interface RecoveryBindingPolicyRevisions {
 
 export interface ToolExecutionContext {
   readonly executionId: ExecutionId;
+  readonly executionEpisodeBinding?: ExecutionEpisodeBinding | null;
+  /** Set only by P9 from the exact durable decision; absence fails closed. */
+  readonly sandboxProcessPolicy?: SandboxProcessPolicy;
   readonly workspaceId: WorkspaceId;
   readonly sessionId: SessionId;
   readonly projectId: ProjectId;

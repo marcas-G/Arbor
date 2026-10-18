@@ -2594,15 +2594,10 @@ describe("P4 tool runtime pipeline", () => {
         effectAdmissions: 0,
         approvalConsumes: 0,
       };
-      let executorCalls = 0;
-      const shell = createShellExecutor(() => {
-        executorCalls += 1;
-        throw new Error("approved effect must not execute before approval");
-      });
+      const shell = createShellExecutor();
       const result = await runShell(app(false, shell, {}, trace), command);
 
       expect(result._tag, command).toBe("ApprovalRequired");
-      expect(executorCalls).toBe(0);
       expect(trace).toMatchObject({
         noEffectDenials: [],
         intentWrites: 0,

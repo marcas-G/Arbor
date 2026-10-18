@@ -3,7 +3,7 @@ import type {
   ResourceAddress,
   Workspace,
 } from "@arbor/domain";
-import { ArtifactId, parse } from "@arbor/domain";
+import { ArtifactId, parse, resolveSandboxProvider } from "@arbor/domain";
 import {
   ArtifactService,
   approvalTargetDigestV1,
@@ -27,6 +27,8 @@ import {
   recoveryBindingV1Digest,
   type SandboxHandle,
   SandboxPort,
+  SandboxProcessPort,
+  type SandboxProcessRunner,
   type SelectedP39RecoveryEvidence,
   ToolAuthorityResolver,
   type ToolDefinition,
@@ -87,6 +89,7 @@ export interface ToolExecutor {
     readonly context: ToolExecutionContext;
     readonly sandbox: SandboxHandle;
     readonly regions: ReadonlyArray<CanonicalResourceRegion>;
+    readonly runProcess?: SandboxProcessRunner;
   }) => Effect.Effect<ToolExecutionResult, ToolRuntimeError>;
 }
 
@@ -598,6 +601,7 @@ export const ToolRuntimeLive = (
     Effect.gen(function* () {
       const definitions = yield* ToolDefinitionStore;
       const sandbox = yield* SandboxPort;
+      const sandboxProcess = yield* Effect.serviceOption(SandboxProcessPort);
       const admission = yield* ResourceAdmission;
       const store = yield* ToolInvocationStore;
       const executableApprovals = yield* Effect.serviceOption(
@@ -648,6 +652,75 @@ export const ToolRuntimeLive = (
           invocationRef,
           cause,
         });
+
+      const runProcessFor =
+        (
+          context: ToolExecutionContext,
+          handle: SandboxHandle,
+        ): SandboxProcessRunner =>
+        (invocation) =>
+          Effect.gen(function* () {
+            const policy = context.sandboxProcessPolicy;
+            if (
+              !Option.isSome(sandboxProcess) ||
+              policy === undefined ||
+              policy.executionId !== context.executionId ||
+              policy.sandboxHandleId !== handle.handleId ||
+              context.executionEpisodeBinding === undefined ||
+              JSON.stringify(policy.episodeBinding) !==
+                JSON.stringify(context.executionEpisodeBinding)
+            ) {
+              return {
+                _tag: "Unavailable" as const,
+                failureCode: "sandbox_policy_unavailable",
+              };
+            }
+
+            const actualMounts = (handle.mounts ?? []).map(
+              ({ ref, rootPath, access }) => ({ ref, rootPath, access }),
+            );
+            const policyMounts = policy.admittedMounts.map(
+              ({ ref, rootPath, access }) => ({ ref, rootPath, access }),
+            );
+            const canonicalMounts = (mounts: typeof actualMounts) =>
+              JSON.stringify(
+                [...mounts].sort((left, right) =>
+                  left.ref.localeCompare(right.ref),
+                ),
+              );
+            if (
+              actualMounts.length === 0 ||
+              canonicalMounts(actualMounts) !== canonicalMounts(policyMounts)
+            ) {
+              return {
+                _tag: "Unavailable" as const,
+                failureCode: "sandbox_mount_binding_mismatch",
+              };
+            }
+
+            const capabilities = yield* sandboxProcess.value.capabilities();
+            const resolved = resolveSandboxProvider(
+              {
+                providerId: policy.providerId,
+                profile: policy.profile,
+                networkMode: policy.networkMode,
+                boundary: policy.boundary,
+              },
+              capabilities,
+            );
+            if (resolved._tag !== "Available") {
+              return {
+                _tag: "Unavailable" as const,
+                failureCode: `sandbox_${resolved.reason.toLowerCase()}`,
+              };
+            }
+
+            return yield* sandboxProcess.value.run({
+              ...invocation,
+              policy,
+              handle,
+            });
+          });
 
       const replayFailureCode = (
         cause: unknown,
@@ -3780,6 +3853,7 @@ export const ToolRuntimeLive = (
                       context,
                       sandbox: handle,
                       regions,
+                      runProcess: runProcessFor(context, handle),
                     }),
                     {
                       onFailure: (cause) => ({ ok: false as const, cause }),
