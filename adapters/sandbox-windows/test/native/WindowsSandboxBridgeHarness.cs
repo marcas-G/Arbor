@@ -3,6 +3,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -37,6 +39,124 @@ internal static class WindowsSandboxBridgeHarness
     private const uint FileMapWrite = 0x0002;
 
     private static readonly IntPtr InvalidHandle = new IntPtr(-1);
+
+    private sealed class DirectoryAclSnapshot
+    {
+        public string Path;
+        public string OriginalAccessSddl;
+    }
+
+    private sealed class FileAclSnapshot
+    {
+        public string Path;
+        public string OriginalAccessSddl;
+    }
+
+    private sealed class TemporaryDirectoryAcls
+    {
+        private readonly List<DirectoryAclSnapshot> snapshots = new List<DirectoryAclSnapshot>();
+        private readonly List<FileAclSnapshot> fileSnapshots = new List<FileAclSnapshot>();
+
+        public int Count { get { return snapshots.Count + fileSnapshots.Count; } }
+
+        public void Grant(string path, SecurityIdentifier identity, FileSystemRights rights, InheritanceFlags inheritance)
+        {
+            DirectorySecurity original = Directory.GetAccessControl(path);
+            DirectoryAclSnapshot snapshot = new DirectoryAclSnapshot();
+            snapshot.Path = path;
+            snapshot.OriginalAccessSddl = original.GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+            NormalizeAccessSddl(snapshot.OriginalAccessSddl);
+            snapshots.Add(snapshot);
+
+            DirectorySecurity modified = Directory.GetAccessControl(path);
+            modified.AddAccessRule(new FileSystemAccessRule(identity, rights, inheritance,
+                PropagationFlags.None, AccessControlType.Allow));
+            Directory.SetAccessControl(path, modified);
+        }
+
+        public void GrantFile(string path, SecurityIdentifier identity, FileSystemRights rights)
+        {
+            FileSecurity original = File.GetAccessControl(path);
+            FileAclSnapshot snapshot = new FileAclSnapshot();
+            snapshot.Path = path;
+            snapshot.OriginalAccessSddl = original.GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+            NormalizeAccessSddl(snapshot.OriginalAccessSddl);
+            fileSnapshots.Add(snapshot);
+
+            FileSecurity modified = File.GetAccessControl(path);
+            modified.AddAccessRule(new FileSystemAccessRule(identity, rights, AccessControlType.Allow));
+            File.SetAccessControl(path, modified);
+        }
+
+        public void RestoreAndVerify()
+        {
+            Exception firstFailure = null;
+            for (int index = fileSnapshots.Count - 1; index >= 0; index--)
+            {
+                FileAclSnapshot snapshot = fileSnapshots[index];
+                try
+                {
+                    FileSecurity restore = File.GetAccessControl(snapshot.Path);
+                    restore.SetSecurityDescriptorSddlForm(snapshot.OriginalAccessSddl, AccessControlSections.Access);
+                    File.SetAccessControl(snapshot.Path, restore);
+                    string restored = File.GetAccessControl(snapshot.Path)
+                        .GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+                    if (!String.Equals(NormalizeAccessSddl(restored), NormalizeAccessSddl(snapshot.OriginalAccessSddl), StringComparison.Ordinal))
+                        throw new InvalidOperationException("file ACL snapshot mismatch after restore: " +
+                            AclEntryDifference(snapshot.OriginalAccessSddl, restored));
+                }
+                catch (Exception exception)
+                {
+                    if (firstFailure == null) firstFailure = exception;
+                }
+            }
+            for (int index = snapshots.Count - 1; index >= 0; index--)
+            {
+                DirectoryAclSnapshot snapshot = snapshots[index];
+                try
+                {
+                    DirectorySecurity restore = Directory.GetAccessControl(snapshot.Path);
+                    restore.SetSecurityDescriptorSddlForm(snapshot.OriginalAccessSddl, AccessControlSections.Access);
+                    Directory.SetAccessControl(snapshot.Path, restore);
+                    string restored = Directory.GetAccessControl(snapshot.Path)
+                        .GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+                    if (!String.Equals(NormalizeAccessSddl(restored), NormalizeAccessSddl(snapshot.OriginalAccessSddl), StringComparison.Ordinal))
+                        throw new InvalidOperationException("ACL snapshot mismatch after restore: " +
+                            AclEntryDifference(snapshot.OriginalAccessSddl, restored));
+                }
+                catch (Exception exception)
+                {
+                    if (firstFailure == null) firstFailure = exception;
+                }
+            }
+            if (firstFailure != null) throw new InvalidOperationException("test ACL restore failed", firstFailure);
+        }
+
+        private static string NormalizeAccessSddl(string sddl)
+        {
+            int firstAce = sddl.IndexOf('(');
+            if (firstAce < 0) return sddl;
+            string[] entries = sddl.Substring(firstAce).Split(new[] { ')' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string entry in entries)
+                if (!entry.StartsWith("(A;", StringComparison.Ordinal))
+                    throw new InvalidOperationException("temporary ACL has order-sensitive or unsupported ACE");
+            Array.Sort(entries, StringComparer.Ordinal);
+            return sddl.Substring(0, firstAce) + String.Join(")", entries);
+        }
+
+        private static string AclEntryDifference(string before, string after)
+        {
+            string[] oldEntries = before.Split(new[] { ')' }, StringSplitOptions.RemoveEmptyEntries);
+            string[] newEntries = after.Split(new[] { ')' }, StringSplitOptions.RemoveEmptyEntries);
+            HashSet<string> oldSet = new HashSet<string>(oldEntries, StringComparer.Ordinal);
+            HashSet<string> newSet = new HashSet<string>(newEntries, StringComparer.Ordinal);
+            int added = 0;
+            int removed = 0;
+            foreach (string entry in newSet) if (!oldSet.Contains(entry)) added++;
+            foreach (string entry in oldSet) if (!newSet.Contains(entry)) removed++;
+            return "before=" + oldEntries.Length + ",after=" + newEntries.Length + ",added=" + added + ",removed=" + removed;
+        }
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SecurityAttributes
@@ -175,6 +295,12 @@ internal static class WindowsSandboxBridgeHarness
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetHandleInformation(IntPtr handle, out uint flags);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateEvent(ref SecurityAttributes attributes, bool manualReset, bool initialState, string name);
+
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
 
@@ -233,6 +359,9 @@ internal static class WindowsSandboxBridgeHarness
     private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -240,7 +369,8 @@ internal static class WindowsSandboxBridgeHarness
 
     public static int Main(string[] args)
     {
-        if (args.Length != 8 || args[0] != "launch")
+        bool resourceMode = args.Length > 2 && (args[2] == "filesystem" || args[2] == "reparse");
+        if (args.Length == 0 || args[0] != "launch" || args.Length != (resourceMode ? 9 : 8))
         {
             Console.Error.WriteLine("invalid test harness arguments");
             return 2;
@@ -249,6 +379,12 @@ internal static class WindowsSandboxBridgeHarness
         {
             string child = Path.GetFullPath(args[1]);
             string mode = args[2];
+            string resourceRoot = resourceMode ? ValidateDisposableResourceRoot(args[8]) : null;
+            if (mode == "reparse")
+            {
+                Console.WriteLine("REPARSE_REJECTED=" + (ContainsReparsePoint(Path.Combine(resourceRoot, "admitted")) ? "1" : "0"));
+                return 0;
+            }
             uint wallTimeMs = ParseBounded(args[3], 100, 60000, "walltime");
             int stdoutBytes = (int)ParseBounded(args[4], 64, 1048576, "stdout");
             int stderrBytes = (int)ParseBounded(args[5], 64, 1048576, "stderr");
@@ -256,11 +392,12 @@ internal static class WindowsSandboxBridgeHarness
             ulong memoryBytes = ParseBounded64(args[7], 64UL * 1024UL * 1024UL, 1024UL * 1024UL * 1024UL, "memory");
             uint cpuTimeMs = mode == "cpu" ? 500U : 5000U;
             uint closeAfterMs = mode == "tree" ? 1200U : 0U;
-            return Launch(child, mode, wallTimeMs, stdoutBytes, stderrBytes, processCount, memoryBytes, cpuTimeMs, closeAfterMs);
+            return Launch(child, mode, wallTimeMs, stdoutBytes, stderrBytes, processCount, memoryBytes, cpuTimeMs, closeAfterMs, resourceRoot);
         }
         catch (Exception exception)
         {
-            Console.WriteLine("HARNESS_ERROR=" + exception.GetType().Name + ":" + exception.Message);
+            Console.WriteLine("HARNESS_ERROR=" + exception.GetType().Name + ":" + exception.Message +
+                (exception.InnerException == null ? "" : ":" + exception.InnerException.GetType().Name + ":" + exception.InnerException.Message));
             return 3;
         }
     }
@@ -281,7 +418,36 @@ internal static class WindowsSandboxBridgeHarness
         return parsed;
     }
 
-    private static int Launch(string child, string mode, uint wallTimeMs, int stdoutLimit, int stderrLimit, uint processLimit, ulong memoryLimit, uint cpuTimeMs, uint closeAfterMs)
+    private static string ValidateDisposableResourceRoot(string value)
+    {
+        string root = Path.GetFullPath(value).TrimEnd(Path.DirectorySeparatorChar);
+        string temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!root.StartsWith(temp, StringComparison.OrdinalIgnoreCase) ||
+            !Path.GetFileName(root).StartsWith("arbor-sandbox-t3b-", StringComparison.Ordinal) ||
+            !Directory.Exists(Path.Combine(root, "admitted")))
+            throw new ArgumentException("resource root must be a disposable T3-B fixture under TEMP");
+        return root;
+    }
+
+    private static bool ContainsReparsePoint(string root)
+    {
+        Stack<string> pending = new Stack<string>();
+        pending.Push(root);
+        int visited = 0;
+        while (pending.Count > 0)
+        {
+            string path = pending.Pop();
+            visited++;
+            if (visited > 128) throw new InvalidOperationException("reparse preflight entry bound exceeded");
+            FileAttributes attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.ReparsePoint) != 0) return true;
+            if ((attributes & FileAttributes.Directory) == 0) continue;
+            foreach (string entry in Directory.GetFileSystemEntries(path)) pending.Push(entry);
+        }
+        return false;
+    }
+
+    private static int Launch(string child, string mode, uint wallTimeMs, int stdoutLimit, int stderrLimit, uint processLimit, ulong memoryLimit, uint cpuTimeMs, uint closeAfterMs, string resourceRoot)
     {
         if (!File.Exists(child)) throw new FileNotFoundException("test child missing");
         string profile = "ArborSandboxT3A-" + Guid.NewGuid().ToString("N");
@@ -294,6 +460,7 @@ internal static class WindowsSandboxBridgeHarness
         IntPtr stdoutWrite = IntPtr.Zero;
         IntPtr stderrRead = IntPtr.Zero;
         IntPtr stderrWrite = IntPtr.Zero;
+        IntPtr inheritableSentinel = IntPtr.Zero;
         IntPtr attributeList = IntPtr.Zero;
         IntPtr attributeListBuffer = IntPtr.Zero;
         IntPtr capabilityBuffer = IntPtr.Zero;
@@ -308,6 +475,10 @@ internal static class WindowsSandboxBridgeHarness
         JobLimitSnapshot configuredJob = null;
         BasicAccountingInformation accounting = new BasicAccountingInformation();
         bool accountingAvailable = false;
+        bool sentinelInheritable = false;
+        TemporaryDirectoryAcls temporaryAcls = new TemporaryDirectoryAcls();
+        TcpListener listener = null;
+        int networkPort = 0;
         uint exitCode = UInt32.MaxValue;
         try
         {
@@ -315,7 +486,27 @@ internal static class WindowsSandboxBridgeHarness
             if (profileResult != 0) ThrowLastError("CreateAppContainerProfile", profileResult);
             profileCreated = true;
 
-            ApplyTestScratchAcl(Path.GetDirectoryName(child), appContainerSid);
+            SecurityIdentifier appContainerIdentity = new SecurityIdentifier(appContainerSid);
+            temporaryAcls.Grant(Path.GetDirectoryName(child), appContainerIdentity,
+                mode == "tree" ? FileSystemRights.Modify | FileSystemRights.ReadAndExecute : FileSystemRights.ReadAndExecute,
+                InheritanceFlags.None);
+            temporaryAcls.GrantFile(child, appContainerIdentity, FileSystemRights.ReadAndExecute);
+            if (mode == "filesystem")
+            {
+                temporaryAcls.Grant(resourceRoot, appContainerIdentity, FileSystemRights.ReadAndExecute, InheritanceFlags.None);
+                temporaryAcls.Grant(Path.Combine(resourceRoot, "admitted"), appContainerIdentity,
+                    FileSystemRights.Modify | FileSystemRights.ReadAndExecute, InheritanceFlags.None);
+                temporaryAcls.GrantFile(Path.Combine(resourceRoot, "admitted", "root.txt"),
+                    appContainerIdentity, FileSystemRights.Modify | FileSystemRights.ReadAndExecute);
+            }
+            if (mode == "network")
+            {
+                listener = new TcpListener(IPAddress.Loopback, 0);
+                listener.Start();
+                networkPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+            }
+            if (mode == "fail-after-acl")
+                throw new InvalidOperationException("injected failure after ACL grants");
 
             if (!OpenProcessToken(Process.GetCurrentProcess().Handle, TokenAssignPrimary | TokenDuplicate | TokenQuery | TokenAdjustDefault, out baseToken))
                 ThrowLastError("OpenProcessToken", Marshal.GetLastWin32Error());
@@ -343,6 +534,13 @@ internal static class WindowsSandboxBridgeHarness
             if (!CreatePipe(out stderrRead, out stderrWrite, ref pipeAttributes, 0)) ThrowLastError("CreatePipe(stderr)", Marshal.GetLastWin32Error());
             if (!SetHandleInformation(stdoutRead, HandleFlagInherit, 0) || !SetHandleInformation(stderrRead, HandleFlagInherit, 0))
                 ThrowLastError("SetHandleInformation", Marshal.GetLastWin32Error());
+            inheritableSentinel = CreateEvent(ref pipeAttributes, false, false, null);
+            if (inheritableSentinel == IntPtr.Zero) ThrowLastError("CreateEvent(inheritance sentinel)", Marshal.GetLastWin32Error());
+            uint sentinelFlags;
+            if (!GetHandleInformation(inheritableSentinel, out sentinelFlags))
+                ThrowLastError("GetHandleInformation(inheritance sentinel)", Marshal.GetLastWin32Error());
+            sentinelInheritable = (sentinelFlags & HandleFlagInherit) != 0;
+            if (!sentinelInheritable) throw new InvalidOperationException("inheritance sentinel not inheritable");
 
             job = CreateJobObject(IntPtr.Zero, null);
             if (job == IntPtr.Zero) ThrowLastError("CreateJobObject", Marshal.GetLastWin32Error());
@@ -363,10 +561,12 @@ internal static class WindowsSandboxBridgeHarness
             if (!UpdateProcThreadAttribute(attributeList, 0, new IntPtr(ProcThreadAttributeSecurityCapabilities), capabilityBuffer, new IntPtr(Marshal.SizeOf(typeof(SecurityCapabilities))), IntPtr.Zero, IntPtr.Zero))
                 ThrowLastError("UpdateProcThreadAttribute(SecurityCapabilities)", Marshal.GetLastWin32Error());
 
-            handleListBuffer = Marshal.AllocHGlobal(IntPtr.Size * 2);
+            int handleCount = mode == "handle-positive" ? 3 : 2;
+            handleListBuffer = Marshal.AllocHGlobal(IntPtr.Size * handleCount);
             Marshal.WriteIntPtr(handleListBuffer, 0, stdoutWrite);
             Marshal.WriteIntPtr(handleListBuffer, IntPtr.Size, stderrWrite);
-            if (!UpdateProcThreadAttribute(attributeList, 0, new IntPtr(ProcThreadAttributeHandleList), handleListBuffer, new IntPtr(IntPtr.Size * 2), IntPtr.Zero, IntPtr.Zero))
+            if (handleCount == 3) Marshal.WriteIntPtr(handleListBuffer, IntPtr.Size * 2, inheritableSentinel);
+            if (!UpdateProcThreadAttribute(attributeList, 0, new IntPtr(ProcThreadAttributeHandleList), handleListBuffer, new IntPtr(IntPtr.Size * handleCount), IntPtr.Zero, IntPtr.Zero))
                 ThrowLastError("UpdateProcThreadAttribute(HandleList)", Marshal.GetLastWin32Error());
 
             environmentBlock = CreateProjectedEnvironmentBlock();
@@ -384,7 +584,10 @@ internal static class WindowsSandboxBridgeHarness
             Marshal.StructureToPtr(startupEx, startupBuffer, false);
             try
             {
-                string commandLine = Quote(child) + " " + Quote(mode);
+                string commandLine = Quote(child) + " " + Quote(mode == "handle-positive" ? "identity" : mode);
+                if (mode == "identity" || mode == "handle-positive") commandLine += " " + inheritableSentinel.ToInt64().ToString();
+                if (mode == "filesystem") commandLine += " " + Quote(resourceRoot);
+                if (mode == "network") commandLine += " " + networkPort.ToString();
                 StringBuilder mutableCommandLine = new StringBuilder(commandLine);
                 if (!CreateProcessAsUser(restrictedToken, child, mutableCommandLine, IntPtr.Zero, IntPtr.Zero, true,
                     CreateSuspended | CreateUnicodeEnvironment | ExtendedStartupInfoPresent, environmentBlock,
@@ -441,7 +644,10 @@ internal static class WindowsSandboxBridgeHarness
             Print("ROOT_EXIT_CODE_HEX", exitCode.ToString("X8"));
             Print("WALLTIME_EXPIRED", timedOut ? "1" : "0");
             Print("OUTPUT_LIMIT_EXCEEDED", outputLimitExceeded ? "1" : "0");
-            Print("HANDLE_LIST_COUNT", "2");
+            Print("HANDLE_LIST_COUNT", (mode == "handle-positive" ? 3 : 2).ToString());
+            Print("PARENT_SENTINEL_INHERITABLE", sentinelInheritable ? "1" : "0");
+            Print("PARENT_SENTINEL_HANDLE_VALUE", inheritableSentinel.ToInt64().ToString());
+            if (listener != null) Print("LOCAL_LISTENER_PENDING", listener.Pending() ? "1" : "0");
             Print("JOB_LIMIT_FLAGS", configuredJob.Extended.BasicLimitInformation.LimitFlags.ToString());
             Print("JOB_KILL_ON_CLOSE", (configuredJob.Extended.BasicLimitInformation.LimitFlags & JobLimitKillOnJobClose) != 0 ? "1" : "0");
             Print("JOB_PROCESS_LIMIT", configuredJob.Extended.BasicLimitInformation.ActiveProcessLimit.ToString());
@@ -466,12 +672,19 @@ internal static class WindowsSandboxBridgeHarness
         finally
         {
             if (job != IntPtr.Zero) CloseHandle(job);
+            if (process.Process != IntPtr.Zero && !rootCompleted)
+            {
+                TerminateProcess(process.Process, 0x00000104);
+                WaitForSingleObject(process.Process, 5000);
+            }
             if (process.Thread != IntPtr.Zero) CloseHandle(process.Thread);
             if (process.Process != IntPtr.Zero) CloseHandle(process.Process);
             CloseIfSet(ref stdoutRead);
             CloseIfSet(ref stdoutWrite);
             CloseIfSet(ref stderrRead);
             CloseIfSet(ref stderrWrite);
+            CloseIfSet(ref inheritableSentinel);
+            if (listener != null) listener.Stop();
             if (attributeListBuffer != IntPtr.Zero) Marshal.FreeHGlobal(attributeListBuffer);
             if (capabilityBuffer != IntPtr.Zero) Marshal.FreeHGlobal(capabilityBuffer);
             if (handleListBuffer != IntPtr.Zero) Marshal.FreeHGlobal(handleListBuffer);
@@ -480,11 +693,26 @@ internal static class WindowsSandboxBridgeHarness
             if (baseToken != IntPtr.Zero) CloseHandle(baseToken);
             if (lowIntegritySid != IntPtr.Zero) LocalFree(lowIntegritySid);
             if (appContainerSid != IntPtr.Zero) LocalFree(appContainerSid);
+            Exception cleanupFailure = null;
+            try
+            {
+                temporaryAcls.RestoreAndVerify();
+                Print("ACL_SNAPSHOTS_RESTORED", temporaryAcls.Count.ToString());
+                Print("ACL_RESTORED", "1");
+            }
+            catch (Exception exception)
+            {
+                Print("ACL_RESTORED", "0");
+                cleanupFailure = exception;
+            }
             if (profileCreated)
             {
                 int deleteResult = DeleteAppContainerProfile(profile);
-                if (deleteResult != 0) ThrowLastError("DeleteAppContainerProfile", deleteResult);
+                if (deleteResult != 0 && cleanupFailure == null)
+                    cleanupFailure = new InvalidOperationException("DeleteAppContainerProfile failed (" + deleteResult + ")");
+                if (deleteResult == 0) Print("PROFILE_DELETED", "1");
             }
+            if (cleanupFailure != null) throw cleanupFailure;
         }
     }
 
@@ -593,16 +821,6 @@ internal static class WindowsSandboxBridgeHarness
         finally { Marshal.FreeHGlobal(data); }
     }
 
-    private static void ApplyTestScratchAcl(string directory, IntPtr appContainerSid)
-    {
-        SecurityIdentifier identity = new SecurityIdentifier(appContainerSid);
-        DirectorySecurity security = Directory.GetAccessControl(directory);
-        security.AddAccessRule(new FileSystemAccessRule(identity, FileSystemRights.ReadAndExecute | FileSystemRights.Modify,
-            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
-            PropagationFlags.None, AccessControlType.Allow));
-        Directory.SetAccessControl(directory, security);
-    }
-
     private static IntPtr CreateProjectedEnvironmentBlock()
     {
         string[] names = { "LOCALAPPDATA", "PATH", "SystemRoot" };
@@ -622,7 +840,7 @@ internal static class WindowsSandboxBridgeHarness
 
     private static string Quote(string value)
     {
-        return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        return "\"" + value.Replace("\"", "\\\"") + "\"";
     }
 
     private static uint ParsePid(string text, string key)
