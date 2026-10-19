@@ -1,8 +1,9 @@
 import type {
   PermissionGrant,
-  PermissionGrantId,
   ProjectId,
+  SandboxPolicyGrantIssuerProvenanceV1,
 } from "@arbor/domain";
+import { CommandId, PermissionGrantId, Principal, parse } from "@arbor/domain";
 import {
   PermissionGrantRepository,
   type PermissionGrantRepositoryError,
@@ -125,6 +126,98 @@ export const PermissionGrantRepositoryLive: Layer.Layer<
           return rows[0] === undefined
             ? Option.none()
             : Option.some(toPermissionGrant(rows[0]));
+        }),
+      findSandboxPolicyGrantIssuerProvenanceByGrantId: (
+        permissionGrantId: PermissionGrantId,
+      ) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{
+              permission_grant_id: string;
+              grant_permission_command_id: string;
+              issuer_principal: string;
+              operator_config_revision: number;
+              operator_config_digest: string;
+            }>(
+              `SELECT permission_grant_id, grant_permission_command_id,
+                      issuer_principal, operator_config_revision,
+                      operator_config_digest
+                 FROM sandbox_policy_grant_issuer_provenance
+                WHERE permission_grant_id = ?`,
+              [permissionGrantId],
+            ),
+          );
+          const row = rows[0];
+          if (row === undefined) return Option.none();
+          if (
+            !Number.isSafeInteger(row.operator_config_revision) ||
+            row.operator_config_revision < 1 ||
+            !/^[0-9a-f]{64}$/u.test(row.operator_config_digest) ||
+            !row.issuer_principal.startsWith("user:")
+          ) {
+            return yield* Effect.fail({
+              _tag: "PersistenceCorruption" as const,
+              repository: "PermissionGrantRepository" as const,
+              operation: "find-sandbox-policy-grant-provenance",
+              reason: "stored sandbox grant provenance failed strict decoding",
+            });
+          }
+          try {
+            return Option.some({
+              permissionGrantId: parse(PermissionGrantId)(
+                row.permission_grant_id,
+              ),
+              grantPermissionCommandId: parse(CommandId)(
+                row.grant_permission_command_id,
+              ),
+              issuerPrincipal: parse(Principal)(row.issuer_principal),
+              operatorConfigRevision: row.operator_config_revision,
+              operatorConfigDigest: row.operator_config_digest,
+            });
+          } catch {
+            return yield* Effect.fail({
+              _tag: "PersistenceCorruption" as const,
+              repository: "PermissionGrantRepository" as const,
+              operation: "find-sandbox-policy-grant-provenance",
+              reason: "stored sandbox grant provenance failed strict decoding",
+            });
+          }
+        }),
+      insertSandboxPolicyGrantIssuerProvenance: (
+        provenance: SandboxPolicyGrantIssuerProvenanceV1,
+      ) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          if (
+            !Number.isSafeInteger(provenance.operatorConfigRevision) ||
+            provenance.operatorConfigRevision < 1 ||
+            !/^[0-9a-f]{64}$/u.test(provenance.operatorConfigDigest) ||
+            !provenance.issuerPrincipal.startsWith("user:")
+          ) {
+            return yield* Effect.fail({
+              _tag: "PersistenceCorruption" as const,
+              repository: "PermissionGrantRepository" as const,
+              operation: "insert-sandbox-policy-grant-provenance",
+              reason: "sandbox grant provenance failed strict validation",
+            });
+          }
+          yield* run(
+            sql.unsafe(
+              `INSERT INTO sandbox_policy_grant_issuer_provenance (
+                permission_grant_id, grant_permission_command_id,
+                issuer_principal, operator_config_revision,
+                operator_config_digest
+              ) VALUES (?, ?, ?, ?, ?)`,
+              [
+                provenance.permissionGrantId,
+                provenance.grantPermissionCommandId,
+                provenance.issuerPrincipal,
+                provenance.operatorConfigRevision,
+                provenance.operatorConfigDigest,
+              ],
+            ),
+          );
         }),
       put: (grant: PermissionGrant, projectId: ProjectId) =>
         Effect.gen(function* () {
