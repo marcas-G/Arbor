@@ -12,9 +12,12 @@ import type {
   AgentEpisodeIdentity,
   AgentExecutionState,
   CommandSubmissionContext,
+  Execution,
   ExecutionId,
   LeaseGeneration,
   Principal,
+  SandboxAuthorityBundleSnapshotV2,
+  SandboxPolicyDecisionCommittedInternalV1,
   WakeReason,
 } from "@arbor/domain";
 import { encodeExecutionEpisodeBinding, executionEpisode } from "@arbor/domain";
@@ -23,7 +26,9 @@ import {
   AgentLoopStepStore,
   AttentionProjectionStore,
   Clock,
+  type CommittedSandboxPolicyDecisionV1,
   ControlApprovalStore,
+  CurrentSandboxAuthoritySnapshotPort,
   DecisionRequestStore,
   ExecutableApprovalStore,
   type ExecutionDriverOwnershipLost,
@@ -39,6 +44,7 @@ import {
   RecoveryAttentionFactStore,
   RuntimeSafetyGate,
   SandboxPolicyDecisionStore,
+  SandboxPolicyRequirementReadPort,
   SandboxProviderUnavailableStore,
   SessionRepository,
   type TransactionOperationalFailure,
@@ -151,6 +157,77 @@ const episodeIdentityMatches = (
         stored.executionId === expected.executionId
       );
   }
+};
+
+/** P2 pre-dispatch check. P4 still performs the final currentness check at
+ * effect admission; this earlier guard prevents a known-stale policy from
+ * acquiring a lease or dispatching a Worker. */
+const sandboxPolicyDecisionIsCurrentForRequirement = (input: {
+  readonly execution: Execution;
+  readonly requirement: import("@arbor/ports").SandboxPolicyRequirementV1;
+  readonly committed: CommittedSandboxPolicyDecisionV1;
+  readonly authority: SandboxAuthorityBundleSnapshotV2;
+  readonly now: string;
+}): boolean => {
+  const { execution, requirement, committed, authority } = input;
+  const decision = committed.decision;
+  const result: SandboxPolicyDecisionCommittedInternalV1 = committed.result;
+  const snapshot = result.effectivePolicySnapshot;
+  const currentEpisode = executionEpisode(execution);
+  if (currentEpisode === undefined) return false;
+  const episodeJson = encodeExecutionEpisodeBinding(currentEpisode);
+  const bundle = authority.bundle;
+  const commonCurrent =
+    execution.projectId === requirement.projectId &&
+    execution.workspaceId === requirement.workspaceId &&
+    execution.executionId === requirement.executionId &&
+    encodeExecutionEpisodeBinding(requirement.episodeBinding) === episodeJson &&
+    decision.projectId === requirement.projectId &&
+    decision.workspaceId === requirement.workspaceId &&
+    decision.executionId === requirement.executionId &&
+    encodeExecutionEpisodeBinding(decision.episodeBinding) === episodeJson &&
+    decision.expectedExecutionRevision ===
+      requirement.expectedEpisodeRevision &&
+    result.commandId === decision.decisionCommandId &&
+    result.projectId === decision.projectId &&
+    result.workspaceId === decision.workspaceId &&
+    result.executionId === decision.executionId &&
+    encodeExecutionEpisodeBinding(result.episodeBinding) === episodeJson &&
+    result.policyRevision === decision.policyRevision &&
+    result.policyDigest === decision.policyDigest &&
+    snapshot.projectId === decision.projectId &&
+    snapshot.workspaceId === decision.workspaceId &&
+    snapshot.executionId === decision.executionId &&
+    encodeExecutionEpisodeBinding(snapshot.episodeBinding) === episodeJson &&
+    snapshot.policyRevision === decision.policyRevision &&
+    snapshot.expiresAt === decision.expiresAt &&
+    Date.parse(decision.expiresAt) > Date.parse(input.now) &&
+    snapshot.authorityBundleRevision === bundle.bundleRevision &&
+    snapshot.authorityBundleDigest === authority.bundleDigest;
+  if (!commonCurrent) return false;
+
+  if (snapshot.kind === "TrustedLocalUnconfinedV1") {
+    return (
+      snapshot.trustedRuntimeIdentity === "TrustedLocal" &&
+      snapshot.trustedRuntimeVersion === "builtin-v1" &&
+      snapshot.profile === "FullAccess" &&
+      snapshot.networkBoundary === "Unconfined" &&
+      decision.providerId === "TrustedLocal" &&
+      decision.profile === "FullAccess" &&
+      decision.networkPolicy.kind === "TrustedLocalUnconfinedV1" &&
+      decision.networkPolicy.version === 1
+    );
+  }
+
+  return (
+    decision.providerId === snapshot.providerId &&
+    decision.profile === snapshot.profile &&
+    decision.networkPolicy.kind === "OsEnforced" &&
+    JSON.stringify(decision.networkPolicy.policy) ===
+      JSON.stringify(snapshot.networkPolicy) &&
+    snapshot.providerRegistryRevision === bundle.providerRegistryRevision &&
+    snapshot.providerRegistryDigest === bundle.providerRegistryDigest
+  );
 };
 
 const executionEpisodeIdentity = (
@@ -296,6 +373,12 @@ export const runExecution = (
     const sandboxPolicyDecisions = yield* Effect.serviceOption(
       SandboxPolicyDecisionStore,
     );
+    const sandboxPolicyRequirements = yield* Effect.serviceOption(
+      SandboxPolicyRequirementReadPort,
+    );
+    const currentAuthoritySnapshotPort = yield* Effect.serviceOption(
+      CurrentSandboxAuthoritySnapshotPort,
+    );
     const loopSteps = yield* Effect.serviceOption(AgentLoopStepStore);
     const attentionProjection = yield* Effect.serviceOption(
       AttentionProjectionStore,
@@ -325,6 +408,46 @@ export const runExecution = (
       );
     if (Option.isNone(execution)) {
       return yield* Effect.fail({ _tag: "ExecutionNotFound" as const });
+    }
+    if (Option.isSome(sandboxPolicyRequirements)) {
+      const currentAuthority = Option.isSome(currentAuthoritySnapshotPort)
+        ? yield* currentAuthoritySnapshotPort.value.loadCurrentVerifiedV2()
+        : { _tag: "Unavailable" as const, failure: "SourceMissing" as const };
+      const now = yield* clock.now();
+      const policyMustWaitForHuman = yield* tx.transact(
+        Effect.gen(function* () {
+          const requirement =
+            yield* sandboxPolicyRequirements.value.findPendingByExecution({
+              projectId: execution.value.projectId,
+              workspaceId: execution.value.workspaceId,
+              executionId,
+            });
+          if (Option.isNone(requirement)) return false;
+          if (
+            currentAuthority._tag !== "Available" ||
+            Option.isNone(sandboxPolicyDecisions)
+          ) {
+            return true;
+          }
+          const current =
+            yield* sandboxPolicyDecisions.value.findCurrentForExecution(
+              execution.value.projectId,
+              execution.value.workspaceId,
+              executionId,
+            );
+          if (Option.isNone(current)) return true;
+          return !sandboxPolicyDecisionIsCurrentForRequirement({
+            execution: execution.value,
+            requirement: requirement.value,
+            committed: current.value,
+            authority: currentAuthority.snapshot,
+            now,
+          });
+        }),
+      );
+      if (policyMustWaitForHuman) {
+        return { _tag: "RecoveryBlocked" as const };
+      }
     }
     if (
       Option.isSome(attentionProjection) &&

@@ -120,6 +120,7 @@ import {
   releaseP39WriterPermit,
   runMigrations,
   SandboxPolicyDecisionStoreLive,
+  SandboxPolicyRequirementReadPortLive,
   SandboxProviderUnavailableAttentionQueueLive,
   SandboxProviderUnavailableStoreLive,
   SchedulerTimerStoreLive,
@@ -143,6 +144,7 @@ import {
   type CanonicalProviderEvent,
   Clock,
   type CommandStore,
+  type CurrentSandboxAuthoritySnapshotPort,
   type DecisionRequestStore,
   type DeliverableRepository,
   DomainEventJournal,
@@ -176,6 +178,7 @@ import {
   resolvedModelBindingFingerprint,
   resolveModelBinding,
   SandboxPolicyDecisionStore,
+  type SandboxPolicyRequirementReadPort,
   SandboxProcessPort,
   SecretMaterial,
   type SecretRef,
@@ -239,6 +242,7 @@ import {
   SingleWorkspaceControlActionHandlersLive,
   SingleWorkspaceControlActionHandlersWithQualificationProbes,
 } from "./control-actions.js";
+import { CurrentSandboxAuthoritySnapshotPortLive } from "./current-sandbox-authority-snapshot-port.js";
 import {
   ExecutableToolHandler,
   ExecutableToolHandlerLive,
@@ -495,6 +499,8 @@ export type SingleWorkspaceServices =
   | TransportBoundary
   | ProjectResourceProfilePort
   | SandboxProcessPort
+  | SandboxPolicyRequirementReadPort
+  | CurrentSandboxAuthoritySnapshotPort
   | HumanMessageStore
   | InputPromotionService
   | WorkflowSignalConsumer
@@ -540,6 +546,12 @@ export const buildSingleWorkspaceLayer = (
   );
   const sandboxAuthoritySnapshotLayer = Layer.provide(
     SandboxAuthoritySnapshotLive(config.trustedHostConfigurationSource),
+    infra,
+  );
+  const currentAuthoritySnapshotPortLayer = Layer.provide(
+    CurrentSandboxAuthoritySnapshotPortLive(
+      config.trustedHostConfigurationSource,
+    ),
     infra,
   );
   const transactionPortLayer = Layer.provide(
@@ -729,6 +741,7 @@ export const buildSingleWorkspaceLayer = (
   );
   const repos = Layer.mergeAll(
     transactionPortLayer,
+    currentAuthoritySnapshotPortLayer,
     Layer.provide(CommandStoreLive, infra),
     domainEventJournal,
     Layer.provide(ProjectRepositoryLive, infra),
@@ -772,6 +785,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(AcceptanceRepositoryLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
     Layer.provide(SandboxPolicyDecisionStoreLive, infra),
+    Layer.provide(SandboxPolicyRequirementReadPortLive, infra),
     Layer.provide(HumanMessageStoreLive, infra),
     Layer.provide(ConversationResponseJobStoreLive, infra),
     Layer.provide(ConversationCheckpointStoreLive, infra),

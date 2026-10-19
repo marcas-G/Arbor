@@ -7,6 +7,7 @@ export * from "./consumer.js";
 export * from "./control-approval.js";
 export * from "./conversation-checkpoint.js";
 export * from "./conversation-response.js";
+export * from "./current-sandbox-authority-snapshot.js";
 export * from "./decision-request.js";
 export * from "./dependency-store.js";
 export * from "./environment.js";
