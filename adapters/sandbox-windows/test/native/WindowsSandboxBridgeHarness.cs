@@ -150,6 +150,25 @@ internal static class WindowsSandboxBridgeHarness
         public uint CpuRate;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BasicAccountingInformation
+    {
+        public long TotalUserTime;
+        public long TotalKernelTime;
+        public long ThisPeriodTotalUserTime;
+        public long ThisPeriodTotalKernelTime;
+        public uint TotalPageFaultCount;
+        public uint TotalProcesses;
+        public uint ActiveProcesses;
+        public uint TotalTerminatedProcesses;
+    }
+
+    private sealed class JobLimitSnapshot
+    {
+        public ExtendedLimitInformation Extended;
+        public CpuRateControlInformation Cpu;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreatePipe(out IntPtr readPipe, out IntPtr writePipe, ref SecurityAttributes attributes, uint size);
 
@@ -185,6 +204,9 @@ internal static class WindowsSandboxBridgeHarness
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetInformationJobObject(IntPtr job, int informationClass, IntPtr information, uint informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryInformationJobObject(IntPtr job, int informationClass, IntPtr information, uint informationLength, out uint returnLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
@@ -283,6 +305,9 @@ internal static class WindowsSandboxBridgeHarness
         bool timedOut = false;
         bool outputLimitExceeded = false;
         bool jobClosedByStop = false;
+        JobLimitSnapshot configuredJob = null;
+        BasicAccountingInformation accounting = new BasicAccountingInformation();
+        bool accountingAvailable = false;
         uint exitCode = UInt32.MaxValue;
         try
         {
@@ -322,6 +347,7 @@ internal static class WindowsSandboxBridgeHarness
             job = CreateJobObject(IntPtr.Zero, null);
             if (job == IntPtr.Zero) ThrowLastError("CreateJobObject", Marshal.GetLastWin32Error());
             ConfigureJob(job, processLimit, memoryLimit, cpuTimeMs);
+            configuredJob = ReadJobLimits(job);
 
             IntPtr attributeListSize = IntPtr.Zero;
             InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref attributeListSize);
@@ -394,7 +420,13 @@ internal static class WindowsSandboxBridgeHarness
                 else rootCompleted = wait == 0;
             }
 
-            if (rootCompleted) GetExitCodeProcess(process.Process, out exitCode);
+            if (rootCompleted && !GetExitCodeProcess(process.Process, out exitCode))
+                ThrowLastError("GetExitCodeProcess", Marshal.GetLastWin32Error());
+            if (job != IntPtr.Zero)
+            {
+                accounting = ReadJobAccounting(job);
+                accountingAvailable = true;
+            }
             if (stdoutTask.Wait(10000)) outputLimitExceeded |= stdoutTask.Result.LimitExceeded;
             if (stderrTask.Wait(10000)) outputLimitExceeded |= stderrTask.Result.LimitExceeded;
             string stdout = stdoutTask.IsCompleted ? stdoutTask.Result.Text : "";
@@ -406,13 +438,24 @@ internal static class WindowsSandboxBridgeHarness
             Print("CHILD_STDOUT_B64", Convert.ToBase64String(Encoding.UTF8.GetBytes(stdout)));
             Print("CHILD_STDERR_B64", Convert.ToBase64String(Encoding.UTF8.GetBytes(stderr)));
             Print("ROOT_EXIT_CODE", exitCode.ToString());
+            Print("ROOT_EXIT_CODE_HEX", exitCode.ToString("X8"));
             Print("WALLTIME_EXPIRED", timedOut ? "1" : "0");
             Print("OUTPUT_LIMIT_EXCEEDED", outputLimitExceeded ? "1" : "0");
             Print("HANDLE_LIST_COUNT", "2");
-            Print("JOB_KILL_ON_CLOSE", "1");
-            Print("JOB_PROCESS_LIMIT", processLimit.ToString());
-            Print("JOB_MEMORY_LIMIT", memoryLimit.ToString());
-            Print("JOB_CPU_TIME_MS", cpuTimeMs.ToString());
+            Print("JOB_LIMIT_FLAGS", configuredJob.Extended.BasicLimitInformation.LimitFlags.ToString());
+            Print("JOB_KILL_ON_CLOSE", (configuredJob.Extended.BasicLimitInformation.LimitFlags & JobLimitKillOnJobClose) != 0 ? "1" : "0");
+            Print("JOB_PROCESS_LIMIT", configuredJob.Extended.BasicLimitInformation.ActiveProcessLimit.ToString());
+            Print("JOB_PROCESS_MEMORY_LIMIT", configuredJob.Extended.ProcessMemoryLimit.ToUInt64().ToString());
+            Print("JOB_MEMORY_LIMIT", configuredJob.Extended.JobMemoryLimit.ToUInt64().ToString());
+            Print("JOB_CPU_TIME_MS", (configuredJob.Extended.BasicLimitInformation.PerJobUserTimeLimit / 10000L).ToString());
+            Print("JOB_CPU_RATE_FLAGS", configuredJob.Cpu.ControlFlags.ToString());
+            Print("JOB_CPU_RATE", configuredJob.Cpu.CpuRate.ToString());
+            Print("JOB_ACCOUNTING_AVAILABLE", accountingAvailable ? "1" : "0");
+            if (accountingAvailable)
+            {
+                Print("JOB_TOTAL_USER_TIME_MS", (accounting.TotalUserTime / 10000L).ToString());
+                Print("JOB_TOTAL_TERMINATED_PROCESSES", accounting.TotalTerminatedProcesses.ToString());
+            }
             Print("PARENT_USER_SID", WindowsIdentity.GetCurrent().User.Value);
             Print("STOP_CLOSED_JOB", jobClosedByStop ? "1" : "0");
             Print("ROOT_TERMINATED", rootCompleted ? "1" : "0");
@@ -502,6 +545,50 @@ internal static class WindowsSandboxBridgeHarness
             Marshal.StructureToPtr(cpu, data, false);
             if (!SetInformationJobObject(job, 15, data, (uint)Marshal.SizeOf(typeof(CpuRateControlInformation))))
                 ThrowLastError("SetInformationJobObject(CpuRate)", Marshal.GetLastWin32Error());
+        }
+        finally { Marshal.FreeHGlobal(data); }
+    }
+
+    private static JobLimitSnapshot ReadJobLimits(IntPtr job)
+    {
+        JobLimitSnapshot snapshot = new JobLimitSnapshot();
+        IntPtr data = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(ExtendedLimitInformation)));
+        try
+        {
+            uint returned;
+            if (!QueryInformationJobObject(job, 9, data, (uint)Marshal.SizeOf(typeof(ExtendedLimitInformation)), out returned))
+                ThrowLastError("QueryInformationJobObject(ExtendedLimit)", Marshal.GetLastWin32Error());
+            if (returned < Marshal.SizeOf(typeof(ExtendedLimitInformation)))
+                throw new InvalidOperationException("short Job Object extended limit readback");
+            snapshot.Extended = (ExtendedLimitInformation)Marshal.PtrToStructure(data, typeof(ExtendedLimitInformation));
+        }
+        finally { Marshal.FreeHGlobal(data); }
+
+        data = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(CpuRateControlInformation)));
+        try
+        {
+            uint returned;
+            if (!QueryInformationJobObject(job, 15, data, (uint)Marshal.SizeOf(typeof(CpuRateControlInformation)), out returned))
+                ThrowLastError("QueryInformationJobObject(CpuRate)", Marshal.GetLastWin32Error());
+            if (returned < Marshal.SizeOf(typeof(CpuRateControlInformation)))
+                throw new InvalidOperationException("short Job Object CPU rate readback");
+            snapshot.Cpu = (CpuRateControlInformation)Marshal.PtrToStructure(data, typeof(CpuRateControlInformation));
+        }
+        finally { Marshal.FreeHGlobal(data); }
+        return snapshot;
+    }
+
+    private static BasicAccountingInformation ReadJobAccounting(IntPtr job)
+    {
+        IntPtr data = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(BasicAccountingInformation)));
+        try
+        {
+            uint returned;
+            if (!QueryInformationJobObject(job, 1, data, (uint)Marshal.SizeOf(typeof(BasicAccountingInformation)), out returned))
+                ThrowLastError("QueryInformationJobObject(BasicAccounting)", Marshal.GetLastWin32Error());
+            if (returned < Marshal.SizeOf(typeof(BasicAccountingInformation)))
+                throw new InvalidOperationException("short Job Object accounting readback");
+            return (BasicAccountingInformation)Marshal.PtrToStructure(data, typeof(BasicAccountingInformation));
         }
         finally { Marshal.FreeHGlobal(data); }
     }

@@ -41,23 +41,41 @@ that query as proof of a restricted token. The bridge calls
 that call fails. Profile creation and deletion failures abort the test bridge.
 
 The focused tests also observed Job Object descendant containment,
-active-process limit rejection, kill-on-close, walltime and stdout bounds, and
-job memory and CPU-time limits. These are test-process observations only. No
-exact admitted-root filesystem enforcement, reparse/junction defense,
+active-process limit rejection, kill-on-close, and walltime and stdout bounds.
+`QueryInformationJobObject` independently reads back extended limits (class 9),
+CPU-rate control (class 15), and post-run basic accounting (class 1). The
+readback, rather than the requested values, is emitted by the bridge:
+
+| Probe | Kernel readback | Child/process observation |
+|---|---|---|
+| 64 MiB memory | Job and process memory limits both 67,108,864 bytes; limit flags 8,972 | A touched 64 MiB allocation throws `OutOfMemoryException`; child exits 24 |
+| 256 MiB memory control | Job and process memory limits both 268,435,456 bytes | The same allocation completes; child exits 0 |
+| CPU | Per-job user-time setting 500 ms; CPU rate flags 5 and rate 2,000 (20%) | Root exits `0xC0000044` (`STATUS_QUOTA_EXCEEDED` in the installed Windows SDK), Job terminated-process count is 1, and the 10 s harness walltime guard did not fire |
+
+The CPU status is a generic quota status, not a dedicated CPU-limit
+notification. Job accounting readback exceeded the configured 500 ms in the
+diagnostic run, so this checkpoint does not claim precise 500 ms cutoff.
+The memory contrast does not prove an exact peak-usage threshold. These are
+test-process observations only. No exact admitted-root filesystem enforcement,
+reparse/junction defense,
 direct-network denial, named-pipe broker, or cooperative Stop was implemented
 or qualified. `windows-restricted-appcontainer-job` remains
 Experimental/empty/typed Unavailable; no Windows provider is Supported.
 
 ## Source integrity and verification
 
-The Vitest fixture checks the exact C# source bytes before compilation:
+The Vitest fixture checks the exact C# source bytes before compilation.
 `.gitattributes` pins these two C# files to LF on checkout so the byte digests
 remain valid on Windows as well as other hosts.
 
 | Source | SHA-256 |
 |---|---|
-| `adapters/sandbox-windows/test/native/WindowsSandboxBridgeHarness.cs` | `13d90437697290e2cffe0394cc27f5c5063fa563214b90aee7537089b7afa393` |
-| `adapters/sandbox-windows/test/native/WindowsSandboxChild.cs` | `0d7252568c1e9248522323555e36dcaa5d2a936d9fede35211dc6c5f32503e16` |
+| `adapters/sandbox-windows/test/native/WindowsSandboxBridgeHarness.cs` | `aefa0bed85c3a8b4ae11af92f29ad2e20cb3006b8424b1ebf89c5c2ccb96c709` |
+| `adapters/sandbox-windows/test/native/WindowsSandboxChild.cs` | `ae4e8d60e18206407938013e7005c79ef813054bdd512b16204a84ca7d3231b1` |
+
+The local `csc.exe` compilation is an execution step. This fixture has no
+trusted compiled-EXE digest, signature, or binary attestation; a 64-character
+hash shape check was removed because it could not establish integrity.
 
 - Native bridge focused test: PASS, 4/4.
 - Native bridge plus existing Windows provider tests: PASS, 8/8.
