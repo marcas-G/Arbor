@@ -196,3 +196,10 @@ provider-neutral execution boundary while retaining `SandboxPort` mount,
 target and open/close ownership. Related changes are in `01`, `02`, `04` and
 `08`; P4 does not own host provider implementation, durable sandbox decisions
 or operator authorization.
+
+## V21 RecoveryBinding Attention compatibility note
+
+P4's existing immutable RecoveryBindingV1 remains the sole proof authority.
+No RecoveryBinding storage or P4 observation semantics change; malformed
+proof is inspected read-only by P9 and projected without a new P9/P40 fact.
+P4 does not gain a repair/rebind operation.

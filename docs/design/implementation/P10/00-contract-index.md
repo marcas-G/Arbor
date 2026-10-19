@@ -182,3 +182,13 @@ claim/consume state machine and P9-fact-keyed Attention marker;
 `04-rebuild-atscale.md` owns the atomic source-snapshot, queue re-arm, marker
 reset and offset rewind; `07` owns V5 qualification. The queue survives
 Consumed and event pruning; the P9 fact remains the source of truth.
+
+## Accepted V21 derived RecoveryBinding Attention
+
+P10 `02`/`05`/`07` derive the non-persisted
+`SandboxRecoveryBindingFailure` source per authorized query from immutable P4
+invocation/binding rows. P9 creates no replay fact/event/marker for this
+condition. The fixed safe summary, stable canonical identity, immutable
+`intent_at` timestamp and fail-closed corruption behavior are specified in
+those owners. This does not alter the V5 provider-unavailable fact queue,
+marker, or rebuild contract.

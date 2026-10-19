@@ -125,3 +125,10 @@ The v1.22 SCRC successor is design-frozen but implementation is **not
 authorized**. It supersedes only the representations and delivery/compaction
 mechanisms named above; historical P3 completion remains an audit fact, not
 SCRC implementation evidence.
+
+## V21 RecoveryBinding Attention compatibility note
+
+Invalid persisted binding proof leaves the existing action Pending and
+AgentLoopStep ActionsInProgress without ToolResult/Observation or cursor
+advance; P3 adds no new action result, codec, or recovery state. P10 Attention
+is a derived view over existing P4 durable rows.

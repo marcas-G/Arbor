@@ -218,3 +218,10 @@ transports the human command and P10-owned status/unavailable contracts;
 owns the conformance matrix. These addenda change no unrelated P12 auth,
 authority submission order, or worker identity contract. Runtime/provider
 implementation remains separately authorized.
+
+## V21 RecoveryBinding Attention transport compatibility note
+
+P12 transports the existing P10 Attention DTO, including the new
+non-persisted `SandboxRecoveryBindingFailure` source literal. It adds no
+endpoint, Problem category, authority rule, persistence, or browser retry
+behavior; malformed hash/time follows the existing corruption Problem path.

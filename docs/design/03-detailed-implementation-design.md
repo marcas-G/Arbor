@@ -1,10 +1,10 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.53\
+**Version:** 1.54\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.52\
-**Date:** 2026-10-18\
-**Depends on:** `Arbor System Design Specification v1.20`
+**Supersedes:** v1.53\
+**Date:** 2026-10-19\
+**Depends on:** `Arbor System Design Specification v1.21`
 
 **Governance changes (v1.51 → v1.52): F23 P6 operator rebuild and v1 route-command qualification**
 
@@ -7820,6 +7820,63 @@ or backfilled.
 
 The independent post-landing consistency review is a separate gate. The
 distinct implementation authorization
-`AUTHORIZE_NATIVE_OS_SANDBOX_CONVERGENCE_IMPLEMENTATION` remains NOT
-GRANTED; this design landing authorizes no code, tests, migration execution,
-database upgrade, deployment or release.
+`AUTHORIZE_NATIVE_OS_SANDBOX_CONVERGENCE_IMPLEMENTATION` was NOT GRANTED
+at the V1.53 checkpoint. This historical status is corrected by the
+V21 authorization corrigendum below; this V21 design landing itself authorizes
+no code, tests, migration execution, database upgrade, deployment or release.
+
+## Accepted Native OS Sandbox RecoveryBinding Attention closure (DID v1.54)
+
+Accepted token `ACCEPT_NATIVE_OS_SANDBOX_REMAINING_RUNTIME_CONTRACT_CLOSURE_V21`,
+proposal raw SHA-256
+`5CF4E41F1940F7ABB6C61D5B963A9E9D687D967AC4C72EE7A31E18424873486A`.
+This owner amendment is applied to the schema-48 current-main baseline at
+`8cd0a94653f1278a194cf23e63503bf154885373`; the exact user decision and
+authorization context are recorded in the V21 acceptance record.
+
+P4's existing immutable RecoveryBindingV1 remains the only binding authority.
+On missing/corrupt/mismatched proof, P9 performs read-only classification
+from durable `tool_invocations` and
+`tool_invocation_recovery_bindings`; it creates no P9 failure-code enum,
+persisted event enum, DB table/column, marker, or P40 ToolObservationReplay
+fact. The invocation remains NotAdmitted and Pending, its Step remains
+ActionsInProgress, and there is no lease renewal/acquisition, P4 call, Provider
+dispatch, effect, ToolObservation, or settlement. Current resource/authority/
+control drift remains on existing P4 Denied or policy-required paths.
+
+P10 exposes the non-persisted API AttentionSource literal
+`SandboxRecoveryBindingFailure` by strict per-query derivation from those
+existing P4 rows. The exact safe summary is
+“Sandbox recovery binding evidence is missing or invalid; execution is paused.”
+`attentionFactId` is lowercase SHA-256 over canonical UTF-8 JSON with fixed
+keys `version,executionId,invocationId,bindingShaOr`; SQL NULL is JSON null,
+and a syntactically valid lowercase 64-hex stored SHA is used byte-for-byte
+even if it does not match the binding content. Malformed non-NULL hash format
+is a Persistence/ProjectionIntegrityFailure: fail closed, use the existing
+corruption Problem/operational path, and emit no derived Attention. The
+Attention `occurredAt` is the immutable `tool_invocations.intent_at`, decoded
+as canonical UTC; absent/invalid time is also projection-integrity failure
+with no fabricated timestamp. The source never exposes raw binding or
+resource evidence and never materializes a marker, event, queue, or rebuild
+state. It disappears only on exact invocation terminality or Execution Stop;
+v1 has no repair/rebind path. A verified backup or new Execution is outside
+this contract. Event pruning is immaterial to this read-only projection.
+
+The owner landing advances System Design 1.20→1.21 and DID 1.53→1.54; Scenarios
+1.5→1.6 records the user-visible pause/Attention behavior. P1/P2/P3/P4/P5/P11/
+P12/P13/API owners receive only the compatibility and cross-reference notes
+specified by the acceptance manifest; their existing command, execution,
+resource, authority, provider and transport contracts are otherwise unchanged.
+No migration is added or registered, no schema-50 change is made, and no
+implementation/database/deployment/release action is included in this landing.
+
+### V21 authorization corrigendum
+
+The historical V1.53 “NOT GRANTED” statement is superseded by the user's
+direct authorization in thread `01a0ec9b-9a9f-7242-9d1e-973451238d05` on
+2026-10-18: `AUTHORIZE_NATIVE_OS_SANDBOX_CONVERGENCE_IMPLEMENTATION`, scope
+T0–T4. This corrigendum records that pre-existing grant; V21 does not mint a
+new implementation token. Implementation may resume only after this accepted
+design landing receives independent post-review. No migration is activated,
+no existing database is upgraded, and no release is authorized by this
+landing or corrigendum.

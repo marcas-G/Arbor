@@ -216,3 +216,26 @@ or explicitly disposable copy of the pinned activated prefix, exercises
 offline upgrade/interruption/resume, foreign keys/indexes and runtime
 readiness, and converts only the named fixture baseline. Never open or upgrade
 the preserved database; do not renumber or modify prior migrations.
+
+## Accepted V21 derived RecoveryBinding Attention qualification
+
+For missing, corrupt, or mismatched immutable P4 RecoveryBindingV1 evidence
+on an active NotAdmitted/Pending invocation, assert P9 read-only RecoveryBlocked
+classification with no P9/P40 fact, event, marker, lease/dispatch/P4/Provider
+call, effect, observation, settlement, or cursor advance. P10 derives the
+same `SandboxRecoveryBindingFailure` identity and fixed safe summary on
+duplicate authorized reads without materializing any state; event pruning
+does not affect it. Assert the canonical `attentionFactId` JSON/hash vectors:
+SQL NULL becomes JSON null, syntactically valid lowercase 64-hex stored value
+is used exactly even when content hash mismatches, and malformed non-NULL
+format fails closed as Persistence/ProjectionIntegrityFailure with no derived
+row and existing corruption Problem/operational handling. `occurredAt` is
+strictly decoded from immutable `tool_invocations.intent_at`; missing or
+invalid input is projection integrity failure, never a query/update-time
+fallback. Exact invocation terminality or Execution Stop removes the row;
+there is no auto/manual in-v1 repair/rebind path. Distinguish current-source
+resource/authority/control drift with otherwise valid proof (existing P4
+denial/policy-required path, no RecoveryBinding Attention) from proof
+corruption. Existing SandboxProviderUnavailableFactV1 projection remains
+unchanged. No P40 reuse, new persisted enum/table/event, schema change, or
+migration is allowed.

@@ -63,3 +63,9 @@ continuation, Tool effects and restarts, and emits a `CompletionClaim`.
 FROZEN (contracts) — independent review round 1 complete, **Blocking = 0**.
 No P5 planning is generated until the phase plan + tasks are derived from these
 contracts.
+
+## V21 RecoveryBinding Attention compatibility note
+
+P5 composition and trusted configuration loading are unchanged. The V21
+derived Attention consumes existing P4/P9 durable state and requires no
+new provider, configuration, initialization, or migration wiring in P5.

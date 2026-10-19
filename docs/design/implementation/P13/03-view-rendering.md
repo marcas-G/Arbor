@@ -108,3 +108,16 @@ never infer or select it from provider failure. Render the existing
 `sandbox/provider-unavailable` 503 Problem as the standard unavailable state
 and keep the Work visibly blocked; no browser retry may bypass the human
 command route.
+
+## Accepted V21 derived RecoveryBinding Attention rendering
+
+Render the P10 `SandboxRecoveryBindingFailure` ActionRequired row on its exact
+Execution Workspace with the fixed safe summary “Sandbox recovery binding
+evidence is missing or invalid; execution is paused.” Use the supplied
+immutable `occurredAt` (sourced from `tool_invocations.intent_at`) and stable
+`attentionFactId`; repeated query results render identically. Never expose
+RecoveryBinding hash/bytes, arguments, resolved regions, host paths or parser
+diagnostics. The row is not dismissible and has no repair/rebind control. A
+corruption Problem from malformed binding-hash format or invalid intent time
+uses the existing corruption rendering; the UI must not fabricate a row or
+timestamp. Existing provider-unavailable rendering is unchanged.

@@ -55,4 +55,12 @@ The accepted Native OS Sandbox amendment adds only the human-only
 P13 remains a renderer/client boundary: authority is server-side, profile
 status comes from P10 DTOs, and submission uses the existing P12 authenticated
 `/commands` route. No browser-local state grants policy authority.
+
+## Accepted V21 RecoveryBinding Attention rendering
+
+P13 renders P10's non-persisted `SandboxRecoveryBindingFailure` row with its
+fixed safe summary, canonical Execution Workspace target, stable identity and
+immutable `intent_at` timestamp. It exposes no repair/rebind action or raw
+binding/resource evidence. Corrupt projection inputs use existing corruption
+handling; prior sandbox-policy and provider-unavailable rendering is unchanged.
 ```
