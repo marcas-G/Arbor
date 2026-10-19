@@ -176,6 +176,7 @@ import {
   SecretMaterial,
   type SecretRef,
   SecretStorePort,
+  SandboxProcessPort,
   type SessionRepository,
   SkillRegistry,
   type ToolCatalogPort,
@@ -199,7 +200,13 @@ import {
   ProviderRuntimeLive,
 } from "@arbor/provider-runtime";
 import { SandboxPortLive } from "@arbor/sandbox-local";
-import { NativePosixSandboxProcessPortLive } from "@arbor/sandbox-native-posix";
+import {
+  makeNativePosixSandboxProcessPort,
+} from "@arbor/sandbox-native-posix";
+import {
+  makeWindowsSandboxProcessPort,
+  WINDOWS_SANDBOX_PROVIDER_IDS,
+} from "@arbor/sandbox-windows";
 import { SecretEnvLive } from "@arbor/secret-env";
 import { SecretFileLive } from "@arbor/secret-file";
 import {
@@ -539,6 +546,22 @@ export const buildSingleWorkspaceLayer = (
     ProjectEnvironmentPortFromResolverLive,
     environmentResolver,
   );
+  const nativePosixSandbox = makeNativePosixSandboxProcessPort();
+  const windowsSandbox = makeWindowsSandboxProcessPort();
+  const windowsSandboxProviderIds = new Set<string>(
+    Object.values(WINDOWS_SANDBOX_PROVIDER_IDS),
+  );
+  const nativeSandboxProcessPort = Layer.succeed(SandboxProcessPort, {
+    capabilities: () =>
+      Effect.all([
+        nativePosixSandbox.capabilities(),
+        windowsSandbox.capabilities(),
+      ]).pipe(Effect.map((groups) => groups.flat())),
+    run: (request) =>
+      windowsSandboxProviderIds.has(request.policy.providerId)
+        ? windowsSandbox.run(request)
+        : nativePosixSandbox.run(request),
+  });
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
 
@@ -834,7 +857,7 @@ export const buildSingleWorkspaceLayer = (
             ),
           ]),
       SandboxPortLive,
-      NativePosixSandboxProcessPortLive(),
+      nativeSandboxProcessPort,
       infra,
       toolAuthority,
       artifactService,

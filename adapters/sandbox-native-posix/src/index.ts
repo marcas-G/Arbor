@@ -578,9 +578,9 @@ export interface NativePosixSandboxOptions {
   readonly seatbeltProbe?: () => Promise<NativePosixCapability>;
 }
 
-export const NativePosixSandboxProcessPortLive = (
+export const makeNativePosixSandboxProcessPort = (
   options: NativePosixSandboxOptions = {},
-): Layer.Layer<SandboxProcessPort> => {
+): SandboxProcessPortService => {
   const platform = options.platform ?? process.platform;
   const linuxProbe =
     options.linuxProbe ?? (() => probeLinuxBwrap({ platform }));
@@ -632,8 +632,13 @@ export const NativePosixSandboxProcessPortLive = (
         ),
       ),
   };
-  return Layer.succeed(SandboxProcessPort, service);
+  return service;
 };
+
+export const NativePosixSandboxProcessPortLive = (
+  options: NativePosixSandboxOptions = {},
+): Layer.Layer<SandboxProcessPort> =>
+  Layer.succeed(SandboxProcessPort, makeNativePosixSandboxProcessPort(options));
 
 const unavailableCapability = (
   providerId: string,

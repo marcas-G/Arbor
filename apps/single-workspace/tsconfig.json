@@ -64,6 +64,9 @@
       "path": "../../adapters/sandbox-native-posix"
     },
     {
+      "path": "../../adapters/sandbox-windows"
+    },
+    {
       "path": "../../adapters/secret-env"
     },
     {
