@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 import {
@@ -5,11 +6,63 @@ import {
   decodeRegisteredCommandReceipt,
   isCommandRejection,
 } from "../../packages/application/src/index.js";
+import {
+  type EffectivePolicySummaryV1,
+  encodeEffectivePolicySummaryV1,
+} from "../../packages/domain/src/index.js";
 import type { StoredCommandResolution } from "../../packages/ports/src/index.js";
 
 const uuid = "018f2b3c-4d5e-7abc-8def-0123456789af";
 const id = (prefix: string) => `${prefix}${uuid}`;
-
+const policyEpisode = {
+  _tag: "InboxEpisode" as const,
+  entryKey: "inbox:receipt-test",
+  inputKind: "HumanMessage",
+};
+const policySnapshot: EffectivePolicySummaryV1 = {
+  version: 1,
+  kind: "TrustedLocalUnconfinedV1",
+  projectId: id("prj_") as never,
+  workspaceId: id("ws_") as never,
+  executionId: id("exe_") as never,
+  episodeBinding: policyEpisode,
+  workspaceRevision: 1,
+  resourceBoundaryRevision: 1,
+  resourceBoundaryDigest: "a".repeat(64),
+  sandboxEnvironmentBasisDigest: "b".repeat(64),
+  policyRevision: 1,
+  expiresAt: "2099-10-20T00:00:00.000Z",
+  trustedRuntimeIdentity: "TrustedLocal",
+  trustedRuntimeVersion: "builtin-v1",
+  profile: "FullAccess",
+  networkBoundary: "Unconfined",
+  sandboxHandleBindingDigest: "c".repeat(64),
+  mounts: [
+    {
+      mountId: "workspace",
+      targetRef: "workspace",
+      targetIdentityDigest: "d".repeat(64),
+      access: "ReadOnly",
+    },
+  ],
+  environmentAllowlist: ["PATH"],
+  limits: {
+    wallTimeMs: 1000,
+    stdoutBytes: 1000,
+    stderrBytes: 1000,
+    processCount: 1,
+    memoryBytes: 1024,
+    cpuTimeMs: 1000,
+  },
+  auditRefs: ["audit:one"],
+  authorityBundleRevision: 1,
+  authorityBundleDigest: "e".repeat(64),
+  operatorConfigRevision: 1,
+  operatorConfigDigest: "f".repeat(64),
+};
+const policyDigest = createHash("sha256")
+  .update(encodeEffectivePolicySummaryV1(policySnapshot))
+  .digest("hex");
 const resultByCommand = {
   CreateProject: {
     projectId: id("prj_"),
@@ -174,6 +227,17 @@ const resultByCommand = {
     channel1Release: { workId: id("wrk_"), targetWorkRevision: 0 },
   },
   GrantPermission: { permissionGrantId: id("pgr_"), state: "Active" },
+  DecideSandboxPolicy: {
+    version: 1,
+    commandId: id("cmd_") as never,
+    projectId: id("prj_") as never,
+    workspaceId: id("ws_") as never,
+    executionId: id("exe_") as never,
+    episodeBinding: policySnapshot.episodeBinding,
+    policyRevision: 1,
+    policyDigest,
+    effectivePolicySnapshot: policySnapshot,
+  },
   RevokePermission: { permissionGrantId: id("pgr_"), state: "Revoked" },
   SubmitHumanMessage: { messageId: "human-message-1", state: "Pending" },
   ResumeConversationResponse: {

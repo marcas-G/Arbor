@@ -166,8 +166,8 @@ export const makeDecideSandboxPolicyHandler = (
       authority.episodeRevision === payload.expectedEpisodeRevision,
   },
   stopAdmission: { _tag: "Unclassified" },
-  prepare: (envelope, _context) => {
-    const authority = envelope.resolvedAuthority;
+  prepare: (envelope, _context, resolvedAuthority) => {
+    const authority = resolvedAuthority;
     if (authority?._tag !== "SandboxPolicyDecisionAuthority") {
       return Effect.fail({
         _tag: "TransactionOperationalFailure",

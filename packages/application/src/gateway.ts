@@ -58,6 +58,12 @@ export type CommandGatewayQualificationProbe = (
         readonly fencingGeneration: LeaseGeneration;
       }
     | {
+        readonly boundary: "SandboxPolicyDecisionBeforeCommit";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+        readonly executionId: ExecutionId;
+      }
+    | {
         readonly boundary:
           | "P38StopExecutionBeforeTransaction"
           | "P38StopExecutionBeforeCommit";
@@ -225,7 +231,7 @@ export const makeCommandGatewayLive = (
             );
             if (Option.isNone(advisory)) {
               const preparation = yield* Effect.match(
-                handler.prepare(envelope, context),
+                handler.prepare(envelope, context, authority),
                 {
                   onFailure: (error) => ({ _tag: "Failure" as const, error }),
                   onSuccess: (value) => ({ _tag: "Prepared" as const, value }),
@@ -455,6 +461,26 @@ export const makeCommandGatewayLive = (
             );
             if (outcome.value.events.length > 0 && receiptFirstEvents) {
               yield* journal.append(outcome.value.events);
+            }
+            if (
+              qualificationProbe !== undefined &&
+              envelope.commandType === "DecideSandboxPolicy" &&
+              typeof envelope.payload === "object" &&
+              envelope.payload !== null &&
+              "executionId" in envelope.payload &&
+              typeof (envelope.payload as { readonly executionId?: unknown })
+                .executionId === "string"
+            ) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "SandboxPolicyDecisionBeforeCommit",
+                  commandId: envelope.commandId,
+                  projectId: envelope.projectId,
+                  executionId: (
+                    envelope.payload as { readonly executionId: ExecutionId }
+                  ).executionId,
+                }),
+              );
             }
             if (outcome.value.afterReceipt !== undefined) {
               yield* outcome.value.afterReceipt;

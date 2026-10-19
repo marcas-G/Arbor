@@ -13,6 +13,7 @@ import {
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import {
+  type AuthorityDecisionInput,
   AuthorityResolverPort,
   AuthorityResolverPortLive,
 } from "../src/authority-resolver.js";
@@ -84,7 +85,7 @@ const input = (overrides: Record<string, unknown> = {}) => {
   } as const;
 };
 
-const resolve = (value: ReturnType<typeof input>) =>
+const resolve = (value: AuthorityDecisionInput) =>
   Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
@@ -224,7 +225,7 @@ describe("P12 DecideSandboxPolicy CAPA preflight", () => {
         operatorConfigRevision: 4,
         operatorConfigDigest: "a".repeat(64),
       },
-    } as const;
+    } as AuthorityDecisionInput;
   };
 
   it("binds the exact active human grant, episode and immutable issuer provenance", async () => {

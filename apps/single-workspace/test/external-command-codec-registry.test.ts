@@ -7,6 +7,7 @@ import {
   makeCommandInputContractRegistry,
   makeCompleteWorkHandler,
   makeConcludeVerificationHandler,
+  makeDecideSandboxPolicyHandler,
   makeDeclareDependencyHandler,
   makeDeliverMessageHandler,
   makeGrantPermissionHandler,
@@ -45,6 +46,7 @@ import {
   ProjectRepository,
   ProjectResourceProfilePort,
   ResourceOwnershipRepository,
+  SandboxPolicyDecisionStore,
   SessionRepository,
   VerificationRepository,
   WorkRepository,
@@ -83,6 +85,7 @@ describe("external command codec registry parity", () => {
       "RecordVerificationEvidence",
       "ConcludeVerification",
       "GrantPermission",
+      "DecideSandboxPolicy",
       "RevokePermission",
       "SubmitHumanMessage",
       "ResumeConversationResponse",
@@ -108,6 +111,7 @@ describe("external command codec registry parity", () => {
       makeCompleteWorkHandler,
       makeConcludeVerificationHandler,
       makeDeclareDependencyHandler,
+      makeDecideSandboxPolicyHandler,
       makeDeliverMessageHandler,
       makeGrantPermissionHandler,
       makeProduceDeliverableHandler,
@@ -149,8 +153,8 @@ describe("external command codec registry parity", () => {
     }
 
     const registry = makeCommandInputContractRegistry(productionHandlerTypes);
-    expect(registry.commandTypes).toHaveLength(29);
-    expect(new Set(registry.commandTypes).size).toBe(29);
+    expect(registry.commandTypes).toHaveLength(30);
+    expect(new Set(registry.commandTypes).size).toBe(30);
     expect(
       registry.commandTypes
         .filter(
@@ -209,6 +213,7 @@ describe("external command codec registry parity", () => {
         Layer.succeed(VerificationRepository, {} as never),
         Layer.succeed(AcceptanceRepository, {} as never),
         Layer.succeed(PermissionGrantRepository, {} as never),
+        Layer.succeed(SandboxPolicyDecisionStore, {} as never),
         Layer.succeed(HumanMessageStore, {} as never),
         Layer.succeed(ConversationResponseJobStore, {} as never),
         Layer.succeed(DependencyRepository, {} as never),
@@ -245,10 +250,10 @@ describe("external command codec registry parity", () => {
     const fullRegistry = makeCommandInputContractRegistry(withApproval);
     const reducedRegistry = makeCommandInputContractRegistry(withoutApproval);
 
-    expect(withApproval).toHaveLength(29);
-    expect(fullRegistry.commandTypes).toHaveLength(29);
-    expect(withoutApproval).toHaveLength(28);
-    expect(reducedRegistry.commandTypes).toHaveLength(28);
+    expect(withApproval).toHaveLength(30);
+    expect(fullRegistry.commandTypes).toHaveLength(30);
+    expect(withoutApproval).toHaveLength(29);
+    expect(reducedRegistry.commandTypes).toHaveLength(29);
     expect(reducedRegistry.lookup("ResolveControlApproval")).toBeUndefined();
     expect(withApproval.toSorted()).toEqual(
       CommandInputContractRegistry.commandTypes.toSorted(),
