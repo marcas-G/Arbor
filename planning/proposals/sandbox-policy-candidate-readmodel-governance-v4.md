@@ -1,10 +1,16 @@
-# Sandbox Policy Candidate Read Model — Fixed Proposal V4
+# Sandbox Policy Candidate Read Model — V4 (Superseded)
 
-**Status:** FIXED PROPOSAL — awaiting manual governance decision; planning-only
-**Supersedes:** `sandbox-policy-candidate-readmodel-governance-v3.md` (V3)
-**Decision token:** `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL_V4`
+**Status:** SUPERSEDED — historical fixed draft; do not accept or implement
+**Replaced by:** `sandbox-policy-candidate-readmodel-governance-v5.md`
+**Former decision token:** `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL_V4` — invalid
+for current governance
 **Scope:** Candidate read snapshot, committed TrustedLocal validity boundary,
 and P4-derived policy-requirement read seam.
+
+> V4 failed independent review. Its split command-time/ongoing TrustedLocal
+> currentness rule is superseded by V5's explicit full-bundle invalidation for
+> all committed variants. Retained as audit history only; do not use its
+> semantics or token.
 
 ## 1. Decision
 
