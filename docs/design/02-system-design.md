@@ -2392,3 +2392,36 @@ lowercase 64-hex text when syntactically valid, even if its content hash does
 not match. The binding is immutable in v1; only invocation terminality or
 Execution Stop clears the derived Attention. Existing policy-required
 interruption and provider-unavailable fact behavior are unchanged.
+
+
+## Accepted full-chain Native OS Sandbox system contract (V1–V21)
+
+A process-capable action executes only under a committed, human-selected
+Execution/Episode policy. Approval and sandbox policy remain independent.
+ReadOnly/WorkspaceWrite are OS-enforced candidates; FullAccess is only the
+explicit human pair TrustedLocal+FullAccess/Unconfined and is never fallback
+or advertised as isolation. Policy binds exact canonical episode revision,
+Workspace/resource boundary, original targets/mount access, provider/operator
+authority basis and monotone policy revision. It does not depend on ordinary
+workspace content, dirty state, mtime or P11 EnvironmentRevision.
+
+OS-enforced outbound networking is broker-only under the closed Disabled /
+Restricted / Enabled HTTPS-origin policy. Local/private/reserved, loopback,
+raw-IP, direct DNS/network, UDP and bypass routes are denied. Provider support
+is an exact operator-qualified provider/version/capability/OS build/profile×
+network-mode tuple with rule-set and evidence digest; unsupported controls
+mean no spawn. Linux/macOS/Windows primitive sets and T3 qualification remain
+exactly as owned by P4/P12; a Git worktree is not an OS boundary.
+
+Before effect admission, policy absence/staleness parks the same verified
+NotAdmitted invocation on the same active Execution via existing
+HumanIntervention. RecoveryBindingV1 is immutable proof; no re-resolve/rebind,
+new Step state, retry invocation or P40 fact is created. P9 materializes only
+actual provider failures from a durable P4 no-effect observation, atomically
+with the existing fact/queue/wake contract, and never re-probes on restart.
+P10 derives NeedsDecision, provider-Unavailable and V21 binding-integrity
+Attention from their distinct existing sources. V21 binding Attention is
+read-only, sanitized, keyed by exact canonical binding hash/null identity and
+uses immutable intent_at; corrupt identity/time fails closed through the
+existing corruption path. No new persistence/migration is added; 0049/0050,
+complete schema 50 and existing 0043/0044 prefix remain unchanged.

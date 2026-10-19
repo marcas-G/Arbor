@@ -500,3 +500,14 @@ authorization.
 - No new Execution settlement variants.
 - No implementation beyond separately authorized contracts; P41 landing does
   not authorize P41 code/migration implementation or qualification.
+
+## Accepted V21 SandboxPolicyRequired step state
+
+Policy-required interruption adds no Step/action state and does not settle
+Execution: existing Step remains ActionsInProgress, exact action is Pending,
+ToolInvocation is NotAdmitted with settled_at NULL, and active Execution is
+unchanged. Recovery resumes only after strict existing RecoveryBinding
+verification and exact original arguments/regions/target/mount admission.
+Invalid proof does not synthesize P3/P4 truth; P10 derives safe Attention
+from immutable P4 rows. Real provider failure follows the existing terminal
+no-effect observation and P9 fact path without a second Provider call.

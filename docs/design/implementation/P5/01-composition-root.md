@@ -125,4 +125,118 @@ scheduler-origin under P13 `02`.
 - No verification/acceptance/CompleteWork wiring (P8).
 - No dependency coordination (P7).
 - No multi-workspace formation (P6).
-- No advanced environment/sandbox isolation (P11).
+
+
+## Accepted full-chain Native Sandbox authority/configuration source (V21)
+
+P5 owns the startup-loaded closed SandboxAuthorityBundleV1 and the immutable
+snapshots injected into P1/P4. Bundle JSON is compact canonical UTF-8 (no BOM,
+whitespace, trailing newline, unknown/missing/duplicate fields, alternate
+encoding, noncanonical strings or integer notation; canonical JCS string/
+number rules with the exact schema key order below):
+
+{"version":1,"sourceIdentity":"<canonical opaque ID>","bundleRevision":1,"issuerConfigRevision":1,"issuerConfigDigest":"<64 lowerhex>","issuerConfig":{"version":1,"revision":1,"issuers":["<canonical HumanPrincipal>"]},"providerRegistryRevision":1,"providerRegistryDigest":"<64 lowerhex>","providerRegistry":{"version":1,"revision":1,"entries":[]}}.
+
+bundleDigest is SHA-256 lowerhex of full canonical bundle bytes, not an
+in-band self-reference. bundleRevision, issuerConfigRevision and
+providerRegistryRevision are positive canonical safe integers and exactly
+equal their nested object revisions. Subdigests are SHA-256 of exact canonical embedded
+issuer/provider objects; nested revisions equal adjacent bundle revision
+fields. The issuer ADT is
+SandboxPolicyGrantIssuerConfigV1 has exactly
+{"version":1,"revision":1,"issuers":["<canonical HumanPrincipal>"]}; revision is a
+positive safe integer; issuers are nonempty, sorted by unsigned UTF-8 bytes,
+unique canonical HumanPrincipal IDs. Reject wildcard, empty, non-human,
+noncanonical, duplicate, unknown or malformed IDs and any decode/re-encode
+mismatch. Config comes only from a stable OS-protected deployment source;
+reject writable/untrusted parents, symlink/reparse redirection, source
+identity changes, truncation and insecure ACLs before parsing. Workspace,
+model, command, inherited environment and provider output are never sources.
+No cryptographic signature field or signature-validation step exists in this
+contract; trust comes only from protected source identity/OS ACL/reparse
+checks and the separate monotone high-water.
+
+SandboxProviderQualificationRegistryV1 is exactly
+{"version":1,"revision":1,"entries":[]} (key order version,revision,entries),
+with closed entry fields/order
+providerId,providerVersion,capabilityRevision,osFamily,osBuild,tuple,status,qualificationEvidenceRef.
+The tuple is exactly {"profile":"ReadOnly|WorkspaceWrite","networkMode":"Disabled|Restricted|Enabled","networkPolicyCodecVersion":1,"enforcementRuleSetDigest":"<64 lowercase hex>"}
+in that key order; status is Experimental|Unavailable|Supported.
+The evidence ref is null only for non-Supported entries; Supported requires
+blob:sha256:<64-lowercase-hex> for an operator-issued manifest. Entries sort
+strictly/uniquely by canonical UTF-8 tuple
+providerId,providerVersion,capabilityRevision,osFamily,osBuild,profile,networkMode,networkPolicyCodecVersion,enforcementRuleSetDigest.
+Runtime performs exact lookup only: no independent profile/mode arrays or
+implied Cartesian product, wildcard, nearest-version, family-only fallback,
+or provider self-assertion. The registry/evidence binds exact OS build,
+provider/version/capability revision, profile×networkMode tuple, T3 matrix,
+artifact digests, networkPolicyCodecVersion=1 and enforcementRuleSetDigest;
+it does not bind decision-specific destinations.
+
+
+The provider-entry canonical JSON shape is exactly
+{"providerId":"<canonical>","providerVersion":"<canonical>","capabilityRevision":1,"osFamily":"Linux|macOS|Windows","osBuild":"<exact build>","tuple":{"profile":"ReadOnly|WorkspaceWrite","networkMode":"Disabled|Restricted|Enabled","networkPolicyCodecVersion":1,"enforcementRuleSetDigest":"<64 lowerhex>"},"status":"Experimental|Unavailable|Supported","qualificationEvidenceRef":null}.
+Evidence ref is exactly null or blob:sha256:<64 lowercase hex> and MUST be
+non-null for Supported. The provider registry sort key is the exact
+length-prefixed UTF-8 tuple stated above; duplicate or unsorted entries
+invalidate the whole snapshot.
+
+SandboxAuthorityHighWaterV1 exact canonical JSON key order and shape is
+{"version":1,"sourceIdentity":"<opaque ID>","bundleRevision":1,"bundleDigest":"<64 lowerhex>","issuerConfigRevision":1,"issuerConfigDigest":"<64 lowerhex>","providerRegistryRevision":1,"providerRegistryDigest":"<64 lowerhex>"}.
+It is a separate OS-protected
+monotone object outside replaceable source config and application SQLite.
+Initial provisioning and source re-enrollment are operator operations, never
+daemon mutation; every source/digest change advances its relevant revision and
+preserves previous high-water. Forward revision jumps are allowed only when
+the new tuple commits durably. Rollback, same-revision digest reuse/change,
+unapproved source replacement or failed write disables policy authority and
+Supported providers. Source replacement requires quiesced operator
+re-enrollment carrying old high-water forward. No hot reload crosses Resolver/
+Gateway; config changes require quiesced restart and one snapshot for both
+checks.
+
+The closed load status is Available(validated immutable snapshot) or
+Unavailable(SandboxAuthorityLoadErrorV1). Bundle failure disables decisions
+and automatic spawn; there is no default issuer or allow-all fallback.
+
+The audit record's occurredAt is required and comes from the same injected
+P1 GatewayNow Port; nullable source/revision/digest members are null only
+before those values are safely established. No system/provider/caller time is
+accepted. SandboxAuthorityLoadErrorV1 is not command or provider failure.
+DecideSandboxPolicyCommandRejectionV1 is the separate closed set
+MalformedRequest, UnauthorizedActor, GrantMissing, GrantRevoked, GrantExpired,
+GrantScopeMismatch, AuthorityUnavailable, SandboxAuthorityUnavailable,
+StaleSandboxPolicyInputs, SandboxPolicySummaryTooLarge, ExecutionTerminal,
+DecisionExpiryInvalid and ReceiptReplayMismatch. Staleness is only a durable
+HTTP 200 TerminalRejected receipt; no 409/Problem. SandboxProviderUnavailable
+codes are a third separate P4/P9 algebra and are never used for authority or
+command rejections.
+
+
+Exact closed error/audit ADTs:
+SandboxAuthorityLoadErrorV1 is exactly SourceMissing, SourceUnreadable,
+SourceAclInvalid, SourceIdentityInvalid, SourceReparseDetected, BundleMalformed,
+IssuerConfigMalformed, ProviderRegistryMalformed, CanonicalEncodingInvalid,
+DigestMismatch, HighWaterMissing, HighWaterUnreadable, HighWaterCorrupt,
+RevisionRollback, RevisionReuseMismatch, SourceReenrollmentRequired and
+HighWaterCommitFailed. This ADT contains only source/config/high-water/registry
+canonical-load errors, not provider runtime failures. SandboxAuthorityAuditOutcomeV1
+is exactly Loaded, Rejected, HighWaterAdvanced, ReenrollmentRequired,
+QualificationAccepted or QualificationRejected; detail is exactly
+SandboxAuthorityLoadErrorV1|None. The sanitized canonical audit object has
+fixed keys version,outcome,detail,sourceIdentity,bundleRevision,bundleDigest,
+issuerConfigRevision,issuerConfigDigest,providerRegistryRevision,
+providerRegistryDigest,occurredAt; unknown details/raw OS errors never persist.
+
+The separate closed SandboxProviderUnavailableCodeV1 contains exactly
+sandbox/probe-interrupted, sandbox/no-exact-supported-tuple,
+sandbox/provider-identity-mismatch, sandbox/provider-version-mismatch,
+sandbox/capability-revision-mismatch, sandbox/os-build-mismatch,
+sandbox/qualification-evidence-mismatch, sandbox/pref64-unknown,
+sandbox/broker-control-unavailable, sandbox/os-control-unavailable,
+sandbox/resource-limit-unavailable and
+sandbox/network-policy-enforcement-unavailable. It excludes pref64-changed,
+policy-basis-stale, and all P11 environment/resource basis-changed codes.
+These are P4 no-effect outcomes materialized by existing P9 only after actual
+provider failure; authority-load and human-command rejections never enter this
+fact channel.

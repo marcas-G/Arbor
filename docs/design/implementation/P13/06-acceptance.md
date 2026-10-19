@@ -73,7 +73,8 @@ P13 FORMALLY CLOSED = result record（planning/results/P13.result.md）
 ## Accepted Native OS Sandbox browser acceptance
 
 Add a browser story proving the human may inspect the exact current profile,
-provider, network mode, revision, expiry and Configured/Unavailable status;
+variant, provider/network fields where applicable, revision, expiry and
+Committed/Unavailable/NeedsDecision status;
 select a profile and submit only through authenticated `/commands`; explicit
 `FullAccess` requires confirmation. Prove model-originated input cannot
 submit or change policy, ordinary approval does not widen the profile, and
@@ -82,3 +83,19 @@ or TrustedLocal fallback. Verify restart/refresh reconstructs the same
 durable status, and no host path, environment value, network destination or
 provider diagnostic is displayed. This additive contract does not reopen P13
 completion or claim implementation evidence.
+
+
+## V21 final Native Sandbox UI qualification
+
+Assert the exact human-only policy variant chooser and explicit FullAccess
+high-risk confirmation; no automatic fallback, profile widening by approval or
+model-originated policy submission. Test NeedsDecision vs Committed/Unavailable
+status, precondition refetch after stale terminal receipt, immutable policy
+revision and no silent old-receipt mutation. Test SandboxPolicySummaryTooLarge
+as HTTP 200 TerminalRejected inline message (no Problem/409, no truncation and
+no sensitive details). Provider failure shows fixed safe summary/503 or current
+P9 Unavailable Attention without spawn; no browser timer/poll retry. Policy
+required is NeedsDecision, not provider-unavailable/503. RecoveryBinding
+failure Attention has immutable intent_at, safe summary and no repair action.
+No raw paths, target refs, hashes, env values, provider diagnostics or broker
+responses are rendered.

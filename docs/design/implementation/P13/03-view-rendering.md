@@ -98,8 +98,9 @@ render tests + TerminalRejected 内联态）。
 ## Accepted Native OS Sandbox rendering
 
 Render P10's optional `WorkspaceDetail.executionSummary.sandboxPolicy`
-fields as the exact current profile, provider, network mode, policy revision,
-expiry and Configured/Unavailable state. Render the
+fields as the exact current variant/profile, provider where applicable,
+network mode where applicable, policy revision, expiry and
+Committed/Unavailable/NeedsDecision state. Render the
 `SandboxProviderUnavailable` Attention row with its fixed safe summary and
 Execution Workspace target. Do not display host paths, provider diagnostics,
 network destinations, environment values or operator-config secrets. Render
@@ -120,4 +121,24 @@ RecoveryBinding hash/bytes, arguments, resolved regions, host paths or parser
 diagnostics. The row is not dismissible and has no repair/rebind control. A
 corruption Problem from malformed binding-hash format or invalid intent time
 uses the existing corruption rendering; the UI must not fabricate a row or
-timestamp. Existing provider-unavailable rendering is unchanged.
+
+
+## V21 policy status and large-summary rendering
+
+Render NeedsDecision as a required-human-policy state distinct from provider
+Unavailable and success; show safe preconditions and refetch through existing
+Workspace Detail when CAS rejection says inputs changed. Never auto-select a
+profile/provider/network policy or reuse stale refs. FullAccess is explicitly
+labelled TrustedLocal/Unconfined, high risk, requires affirmative separate
+confirmation and is never fallback after OS provider failure. Do not describe
+it as OS-isolated or T3 Supported.
+
+Render durable SandboxPolicySummaryTooLarge as the existing HTTP 200
+TerminalRejected CommandReceiptView inline hint with no raw fields, no Problem/
+409 and no truncation. User reduces policy inputs and submits a fresh
+CommandId. Provider unavailable renders fixed safe Attention/503 state, keeps
+Work visibly blocked and has no auto-retry/spawn; wait for existing WebSocket
+invalidation or explicit manual refetch. Policy-required interruption displays
+NeedsDecision without provider-unavailable label or 503. RecoveryBinding
+failure Attention has fixed safe summary and immutable intent_at, with no
+repair/rebind UI.

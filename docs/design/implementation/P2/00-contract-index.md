@@ -183,7 +183,8 @@ P2 completion. Migration 0019 and implementation require separate authorization.
 
 ## V21 RecoveryBinding Attention compatibility note
 
-The V21 RecoveryBinding Attention does not add an Execution wait/state or
-change lease, HumanIntervention, Stop, or scheduler semantics. The same
-active Execution and pending invocation remain governed by the existing P2
-contracts; P10's row is a read-only derived projection.
+P2/04's already-existing EGP `executions.episode_revision` is the direct
+expectedEpisodeRevision source; this landing adds no column/migration. P2/05/06
+continue the existing HumanIntervention park/wake of the same active
+Execution/action/invocation, with no new wait state or execution record. The
+V21 P10 binding-failure source remains read-only derived Attention.

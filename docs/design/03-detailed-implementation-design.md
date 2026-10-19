@@ -7862,13 +7862,31 @@ state. It disappears only on exact invocation terminality or Execution Stop;
 v1 has no repair/rebind path. A verified backup or new Execution is outside
 this contract. Event pruning is immaterial to this read-only projection.
 
-The owner landing advances System Design 1.20→1.21 and DID 1.53→1.54; Scenarios
-1.5→1.6 records the user-visible pause/Attention behavior. P1/P2/P3/P4/P5/P11/
-P12/P13/API owners receive only the compatibility and cross-reference notes
-specified by the acceptance manifest; their existing command, execution,
-resource, authority, provider and transport contracts are otherwise unchanged.
-No migration is added or registered, no schema-50 change is made, and no
-implementation/database/deployment/release action is included in this landing.
+The complete accepted V1–V21 contract chain is forward-ported from this
+schema-48 current-main baseline to Scenarios 1.6 / System Design 1.21 / DID
+1.54. Owner contracts are substantive and ownership-aligned: P1/01/03/04/05/06
+specify the exact human wire/CAS/fingerprint/rejections, atomic receipt/result/
+decision/event join, unchanged schema and recovery; P2/04/05/06 use the
+already-existing executions.episode_revision and same-Execution park/wake;
+P3/03/08 define Pending/NotAdmitted Step progression; P4/01/02/04/05/06 own
+process policy, network/provider controls, target/basis digests and recovery;
+P5/01 owns closed authority/issuer/provider-registry configuration; P9/07
+owns typed no-reprobe provider-failure facts and read-only RecoveryBinding
+classification; P10/02/03/04/05/07 own exact freshness, queue/rebuild,
+derived Attention, preconditions and status/Problem DTOs; P11/04/12 own current
+region resolution and logical handoff; P12/02/09/10/13/14 own authority,
+mapping, transport and T2/T3 qualification; P13/02/03/06 render the human-only
+choice, NeedsDecision/Unavailable states and safe receipts. V21 binding
+Attention is an API/source literal only, not a persisted enum. P1/07 command-
+identity owner is not amended; no write-once envelope/sidecar is introduced.
+P11/03/05
+EnvironmentRevision/drift does not become sandbox policy freshness.
+
+No 0051 is added or reserved. Existing migrations 0049/requires48 and
+0050/requires49, schema 50, and inherited 0043/0044 state remain unchanged;
+none is registered/activated or executed here. No existing database is
+upgraded, and this owner landing performs no implementation, test, deployment
+or release action.
 
 ### V21 authorization corrigendum
 

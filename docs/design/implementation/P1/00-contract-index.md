@@ -84,8 +84,8 @@ upgraded.
 
 ## V21 RecoveryBinding Attention compatibility note
 
-P1 `01`–`06` retain the existing command fingerprint/receipt, transaction,
-schema, event and recovery contracts. The V21 derived
-`SandboxRecoveryBindingFailure` Attention adds no P1 command, persisted enum,
-event, marker, table, column, migration or schema change; P1 remains the
-owner of the unchanged immutable RecoveryBinding bytes/hash.
+P1 `01`/`03`/`04`/`05`/`06` own the complete human wire/CAS/fingerprint,
+linearized result/receipt/decision/event join, unchanged DDL, and restart
+matrix. `executions.episode_revision` is the already existing P2/EGP CAS
+source. P1 owns no new RecoveryBinding fact/event/table/schema; the V21
+SandboxRecoveryBindingFailure is a non-persisted P10 projection.

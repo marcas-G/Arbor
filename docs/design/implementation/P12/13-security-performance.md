@@ -187,3 +187,140 @@ release matrix. Only after T3 may an individual provider be called Supported.
 Numeric budgets and OS versions remain empirical P12 measurements and are not
 invented by this addendum. This design landing does not authorize runtime
 implementation or release.
+
+
+## Accepted full-chain T2/T3 authority and network enforcement (V21)
+
+NetworkPolicyV1 canonical policy is the closed OsEnforced union with
+version 1, mode Disabled|Restricted|Enabled and sorted unique canonical HTTPS
+DNS-origin destinations. Origin requires lowercase ASCII IDNA A-label and
+implicit port 443; reject IP literals, wildcard, custom/explicit port,
+userinfo, path/query/fragment, trailing dot, percent escapes and noncanonical
+IDNA. Disabled and Enabled require empty destinations; Restricted requires a
+nonempty exact allowlist. FullAccess is only explicit TrustedLocal+FullAccess,
+Unconfined and excluded from every OsEnforced Supported tuple/T3 claim.
+
+SandboxEnforcementRuleSetV1 exact canonical key order is version,
+networkPolicyCodecVersion,filesystemRuleVersion,environmentRuleVersion,
+processTreeRuleVersion,resourceLimitRuleVersion,brokerProtocolVersion,
+addressClassificationSnapshotId,pref64PolicyVersion,redirectPolicyVersion,
+platformPrimitiveSetId; every version is 1. It is UTF-8 JSON without BOM,
+whitespace or final newline, canonical strings/positive integer notation and
+closed fields. enforcementRuleSetDigest is SHA-256 lowerhex over exact bytes,
+not embedded. The address-classification snapshot is IANA special-purpose
+registries 2025-10-09 with exact canonical snapshot hash
+86583d4bbc916863208c3fbb5a75ee3e6500dd12aa4f9bd3a72caaacb4a3da6a.
+The exact object template (using the provider-specific primitive ID) is
+{"version":1,"networkPolicyCodecVersion":1,"filesystemRuleVersion":1,"environmentRuleVersion":1,"processTreeRuleVersion":1,"resourceLimitRuleVersion":1,"brokerProtocolVersion":1,"addressClassificationSnapshotId":"iana-special-purpose-2025-10-09+sha256:86583d4bbc916863208c3fbb5a75ee3e6500dd12aa4f9bd3a72caaacb4a3da6a","pref64PolicyVersion":1,"redirectPolicyVersion":1,"platformPrimitiveSetId":"<exact closed provider primitive ID>"}.
+
+The fixed conservative denied CIDRs are IPv4: 0.0.0.0/8, 10.0.0.0/8,
+100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
+192.0.0.0/24, 192.0.2.0/24, 192.31.196.0/24, 192.52.193.0/24,
+192.88.99.0/24, 192.168.0.0/16, 192.175.48.0/24, 198.18.0.0/15,
+198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4,
+255.255.255.255/32; IPv6: ::/128, ::1/128, 64:ff9b::/96,
+64:ff9b:1::/48, 100::/64, 100:0:0:1::/64, 2001::/23, 2001:db8::/32,
+2002::/16, 2620:4f:8000::/48, 3fff::/20, 5f00::/16, fc00::/7,
+fe80::/10, ff00::/8. Normalize IPv4-mapped IPv6 into IPv4 before checking;
+never preserve mapped representation. Reject any DNS answer set with one
+non-public address. The table is frozen even if IANA labels a special-purpose
+exception globally reachable.
+
+All egress is broker-only. Disabled has no DNS/egress/loopback. Restricted
+allows exact listed HTTPS origins only. Enabled allows arbitrary public HTTPS
+through the broker, no local/private/reserved targets. No child direct DNS,
+loopback, raw IP, UDP/QUIC, arbitrary ports, DoH or bypass. Broker resolves,
+filters and pins each connection address; certificate, SNI and Host must match
+origin. Each redirect hop is independently parsed/authorized/resolved/pinned;
+maximum five redirects, sixth/downgrade/unlisted restricted/raw IP/mixed or
+blocked DNS answer fails closed.
+
+Every new DNS resolution/connection obtains fresh Pref64 discovery using its
+operator-qualified RFC7050/platform method; no cross-connection cache. One
+snapshot may be reused only within that handshake. Unknown/unverifiable is
+sandbox/pref64-unknown and typed unavailable; a valid newly discovered set is
+not a change error. T3 evidence binds method/version and adversarial/known-
+answer vectors, not a specific network prefix. Existing pinned connections
+only close normally; no redirect/reconnect/pool reuse without fresh checks.
+
+Only exact operator-issued registry entry and evidence manifest permit
+Supported. Entry tuple binds provider ID/version, capability revision, exact
+OS family/build, profile×networkMode, codec version and enforcementRuleSetDigest;
+manifest binds all T3 matrix cases and separate artifact hashes, never
+self-references, and does not bind decision destinations. T2 probes run in
+isolated qualification harnesses only; Experimental does not spawn production.
+No host is declared Supported absent exact operator-issued T3 evidence.
+
+
+### Exact platform primitive identity and T3 evidence
+
+platformPrimitiveSetId is closed and provider-specific:
+linux-bwrap-user-mount-pid-netns-cgroupv2-seccomp-v1,
+macos-seatbelt-denydefault-processgroup-rlimits-v1,
+windows-restricted-token-lowintegrity-appcontainer-job-namedpipe-v1,
+windows-mxc-probe-only-v1,
+windows-elevated-dedicated-user-probe-only-v1. IDs cannot alias or transfer
+evidence.
+
+- Linux linux-bwrap: user/mount/PID/network namespaces; exact RO/RW binds;
+  no direct network plus broker-only channel; cgroup v2 pids/memory/CPU;
+  seccomp; process-tree kill.
+- macOS macos-seatbelt: deny-default filesystem/network/process Seatbelt and
+  exact loaded profile; broker-only channel; process-group/descendant kill;
+  explicit rlimits/hard limits. If a build cannot prove any control, it is
+  Unavailable.
+- Windows MXC and elevated-dedicated-user are distinct probe-only Experimental
+  identities and never Supported. Only windows-restricted-appcontainer-job can
+  qualify: restricted low-integrity token, AppContainer ACL filesystem, no
+  Internet capability/direct network, named-pipe broker only, Job Object
+  kill-on-close and active process/memory/CPU limits, reparse/junction defense.
+- Container/Remote remain contract-only without separate qualification.
+
+T3 evidence binds exact provider/build/tuple/rule-set digest, discovery
+method/version, matrix/test IDs/results and artifact hashes. Manifest digest is
+SHA-256 of canonical manifest bytes, artifacts are listed separately, and the
+manifest never self-references. Require every control and adversarial/negative
+case PASS before Supported. Pref64 tests cover RFC7050 positive vectors for
+RFC6052 lengths /32,/40,/48,/56,/64,/96 embedding 192.0.0.170 and .171 plus
+malformed, missing, duplicate, multiple-prefix and adversarial synthesis.
+Empty prefix set is allowed only with trusted NoDns64Pref64 plus negative
+probes proving no synthesis; timeout/silence/unknown is sandbox/pref64-unknown.
+There is no pref64-changed error; fresh network prefixes are not compared to
+past hosts. Every resolved AAAA contained by any currently discovered Pref64
+is rejected outright; do not decode/synthesize the embedded IPv4 target.
+
+
+### T2/T3 exact provider qualification matrix
+
+Registry rows are individual profile×networkMode tuples; a row never implies
+other combinations. Candidate exact identities and eligible tuple coverage:
+
+| providerId | platform identity | eligible profile×networkMode rows | status rule |
+|---|---|---|---|
+| linux-bwrap | Linux exact OS build; bwrap/user+mount+pid+netns/cgroupv2/seccomp primitive set | ReadOnly or WorkspaceWrite × Disabled, Restricted, Enabled, each separate row | Experimental during T2; Supported only with exact per-row operator T3 evidence |
+| macos-seatbelt | macOS exact OS build; deny-default Seatbelt/processgroup/rlimits primitive set | ReadOnly or WorkspaceWrite × Disabled, Restricted, Enabled, each separate row | Experimental during T2; Supported only with exact per-row operator T3 evidence |
+| windows-restricted-appcontainer-job | Windows exact OS build; restricted token/AppContainer/Job/namedpipe primitive set | ReadOnly or WorkspaceWrite × Disabled, Restricted, Enabled, each separate row | sole Windows Supported candidate; still Experimental/Unavailable until each exact row passes T3 |
+| windows-mxc | Windows MXC identity | probe-only, no eligible Supported row | Experimental forever in V1; never spawn authority |
+| windows-elevated-dedicated-user | Windows elevated dedicated-user identity | probe-only, no eligible Supported row | Experimental forever in V1; never spawn authority |
+| container / remote | contract-only, no fixed primitive set | none | no Supported registry entry |
+
+Every row additionally binds providerVersion, capabilityRevision, exact OS
+family/build, networkPolicyCodecVersion=1 and enforcementRuleSetDigest plus
+operator evidence manifest. Missing controls or evidence set Unavailable; T2
+success alone does not set Supported. No host is declared Supported by this
+document.
+
+
+Exact deny set pinned by addressClassificationSnapshotId
+iana-special-purpose-2025-10-09+sha256:86583d4bbc916863208c3fbb5a75ee3e6500dd12aa4f9bd3a72caaacb4a3da6a:
+IPv4: 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8,
+169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24,
+192.31.196.0/24, 192.52.193.0/24, 192.88.99.0/24, 192.168.0.0/16,
+192.175.48.0/24, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24,
+224.0.0.0/4, 240.0.0.0/4, 255.255.255.255/32.
+IPv6: ::/128, ::1/128, 64:ff9b::/96, 64:ff9b:1::/48, 100::/64,
+100:0:0:1::/64, 2001::/23, 2001:db8::/32, 2002::/16,
+2620:4f:8000::/48, 3fff::/20, 5f00::/16, fc00::/7, fe80::/10,
+ff00::/8. IPv4-mapped IPv6 is excluded from the IPv6 list; normalize it to
+IPv4 before the IPv4 checks. Preserve this deny set even if IANA marks an
+individual special-purpose range globally reachable.

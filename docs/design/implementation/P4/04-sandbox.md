@@ -121,4 +121,127 @@ network modes are `Disabled`, `Restricted` and `Enabled`. Restricted/Enabled
 require the exact durable human policy authority; ordinary approval does not
 grant network. If any required control cannot be probed/enforced, the provider
 is `Unavailable` and no process starts. Platform adapters report effective
-capability; unsupported controls cannot be reported as success.
+
+
+## Accepted full-chain OS policy, network and provider contract (V21)
+
+The process boundary consumes exactly one closed policy variant and the
+canonical effective-policy summary from the committed decision. OsEnforced
+permits only ReadOnly or WorkspaceWrite and binds provider/version/capability/
+OS build/evidence, NetworkPolicyV1/digest/broker controls, mounts, sorted
+environment allowlist names, bounded limits, audit refs and authority/
+operator/registry revision+digest. TrustedLocalUnconfined is the sole
+FullAccess choice: trustedRuntimeIdentity=TrustedLocal,
+trustedRuntimeVersion=builtin-v1, profile=FullAccess,
+networkBoundary=Unconfined, and no OS/provider/T3/networkMode/broker fields.
+It is an explicit human choice, never fallback, and P13 labels it high risk.
+
+Persisted network_policy_json is a closed v1 union with these exact forms:
+{"kind":"OsEnforced","policy":{"version":1,"mode":"Disabled|Restricted|Enabled","destinations":[]}}
+or {"kind":"TrustedLocalUnconfinedV1","version":1}; all discriminants
+and nested keys use fixed closed-codec ordering and reject unknown fields.
+The OsEnforced nested NetworkPolicyV1 has exactly version=1,
+mode Disabled|Restricted|Enabled, and sorted unique destinations. Each
+destination is a canonical HTTPS DNS origin with ASCII lowercase IDNA
+A-label and implicit port 443; reject IP literals, wildcard, userinfo,
+custom/explicit port, path/query/fragment, trailing dot, percent escapes and
+noncanonical IDNA. Disabled and Enabled require empty destinations;
+Restricted requires a nonempty exact allowlist. Union discriminant and exact
+canonical bytes are included in the policy digest. The unpublished Wave-A
+draft is superseded before first persistence.
+
+All OsEnforced egress is broker-only: children receive no direct DNS/network,
+loopback, raw socket/IP, UDP/QUIC, arbitrary ports, DoH or bypass. Disabled
+denies DNS and all egress. Restricted permits exact listed HTTPS origins.
+Enabled permits arbitrary public HTTPS only through the broker, never local
+or private targets. Broker resolves A/AAAA, rejects the whole set if any
+answer is denied, normalizes mapped IPv6 to IPv4 before classification, pins
+one validated address per connection, and verifies certificate/SNI/Host for
+the same origin. Every redirect is parsed, reauthorized, resolved, filtered
+and pinned; allow at most five hops, reject downgrade, raw IP, denied/mixed
+answer, unlisted Restricted origin and hop six. Use the fixed conservative
+IANA 2025-10-09 special-purpose deny-set/hash and CIDRs owned in P12/13;
+never weaken it from registry flags. DNS rebinding or broker/OS control
+failure is Unavailable.
+
+For Restricted/Enabled, perform fresh Pref64 discovery for every new DNS
+resolution and connection using the qualified RFC7050/platform method; no
+cross-connection cache or pooled route reuse. One immutable result may be
+used within one handshake. Unknown/unverifiable discovery yields
+sandbox/pref64-unknown. A newly discovered valid prefix is not itself an
+error. Reject every AAAA falling within any freshly discovered Pref64; do not
+decode it into an IPv4 target, synthesize an alternate address or route around
+the deny set. A trusted empty-set result requires the qualified no-DNS64 proof.
+Affected pools are closed/disabled. An existing pinned connection may only
+finish normally and may not redirect, resolve, reconnect or re-enter a pool.
+Disabled does no DNS or Pref64 discovery.
+
+Provider capability is an exact operator-issued tuple: provider ID/version,
+capability revision, exact OS family/build, profile×networkMode,
+networkPolicyCodecVersion=1 and enforcementRuleSetDigest. Qualification
+evidence is blob:sha256:<manifestDigest>; the canonical manifest lists
+artifact hashes separately and never self-references. Supported requires
+exact tuple, manifest/artifact hashes and all T3 PASS evidence. No inferred
+Cartesian product or provider self-assertion is accepted.
+
+Hard primitive sets are:
+- Linux linux-bwrap: user/mount/PID/network namespaces; exact RO/RW binds;
+  no direct network plus broker-only channel; cgroup v2 pids/memory/CPU;
+  seccomp; process-tree kill.
+- macOS macos-seatbelt: deny-default filesystem/network/process Seatbelt
+  policy and exact loaded profile; broker-only channel; process-group/
+  descendant kill; explicit rlimits and hard resource limits. If the OS/build
+  cannot prove any required deny/limit, return Unavailable.
+- Windows windows-mxc and windows-elevated-dedicated-user are separate
+  probe-only Experimental IDs and can never be Supported. The only Supported
+  candidate is windows-restricted-appcontainer-job: restricted low-integrity
+  token; AppContainer ACL filesystem; no Internet capability/direct network;
+  named-pipe broker only; Job Object kill-on-close and active process/memory/
+  CPU limits; reparse-point/junction defense. Missing any control is
+  Unavailable before spawn.
+- Container and Remote remain contract-only until separately qualified.
+
+SandboxProcessPort is the only process-spawn boundary. Before spawn it binds
+the committed variant snapshot, exact resource/mount targets/access,
+environment-name allowlist and limits; creates a process-local handle; and
+reports typed capability evidence. Missing/stale/unprovable enforcement
+produces provider-unavailable before effect admission, with no spawn. P4
+never infers Supported from host defaults or reports a failed probe as
+success.
+
+
+## Closed effective policy snapshot/result variants
+
+OsEnforcedPolicySnapshotV1 has exact canonical key order:
+version,kind,projectId,workspaceId,executionId,episodeBinding,workspaceRevision,
+resourceBoundaryRevision,resourceBoundaryDigest,sandboxEnvironmentBasisDigest,
+policyRevision,expiresAt,profile,providerId,providerVersion,capabilityRevision,
+osFamily,osBuild,qualificationEvidenceRef,networkPolicy,networkPolicyDigest,
+networkBrokerControls,providerRegistryRevision,providerRegistryDigest,
+sandboxHandleBindingDigest,mounts,environmentAllowlist,limits,auditRefs,
+authorityBundleRevision,authorityBundleDigest,operatorConfigRevision,
+operatorConfigDigest.
+TrustedLocalUnconfinedPolicySnapshotV1 has exact canonical key order:
+version,kind,projectId,workspaceId,executionId,episodeBinding,workspaceRevision,
+resourceBoundaryRevision,resourceBoundaryDigest,sandboxEnvironmentBasisDigest,
+policyRevision,expiresAt,trustedRuntimeIdentity,trustedRuntimeVersion,profile,
+networkBoundary,sandboxHandleBindingDigest,mounts,environmentAllowlist,limits,
+auditRefs,authorityBundleRevision,authorityBundleDigest,operatorConfigRevision,
+operatorConfigDigest. It omits providerRegistry and all OS/T3/network-policy/
+broker fields. No nullable superset is allowed.
+
+Both variants use canonical ExecutionEpisodeBinding, sorted mounts with each
+entry mountId,targetRef,targetIdentityDigest,access; sorted unique environment
+names (never values); limits exactly wallTimeMs,stdoutBytes,stderrBytes,
+processCount,memoryBytes,cpuTimeMs as positive finite safe integers under
+operator/platform maxima; auditRefs are sorted unique opaque IDs, at most 32
+entries and at most 128 UTF-8 bytes per ID, internal only.
+The full snapshot digest is SHA-256 of its exact canonical UTF-8 bytes,
+lowercase hex. P1 stores the bounded closed internal result in existing
+commands.result_json with the snapshot and digest in the same transaction as
+the decision, receipt and event; the decision row policy_digest and
+ decision_command_id join must validate against it on recovery. No BlobStore,
+prune or separate result table. Public DTO/receipt expose only the safe
+variant projection and never refs, digests, paths, environment values or audit
+refs. Result over 65,536 bytes is TerminalRejected(SandboxPolicySummaryTooLarge)
+with receipt only, no decision/event and no truncation.

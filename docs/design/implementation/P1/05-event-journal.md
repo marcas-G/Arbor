@@ -200,3 +200,13 @@ Command cause. It is only a wake/audit channel, not the fact source. P10
 validates it against the P9 fact/queue identity before wake processing. The
 fact's `event_id` is not FK-bound to prunable `domain_events`, and journal
 pruning cannot delete the P9 fact or durable queue work.
+
+## V21 event boundary
+
+`DecideSandboxPolicy` emits only the existing `SandboxPolicyDecisionRecorded`
+event in the exact P1 decision/result/receipt transaction. RecoveryBinding
+proof failure has no P9 failure-code event, no P40 replay event, and no
+attention marker/event. P10 derives its RecoveryBinding Attention from
+existing P4 rows; no event is a truth or rebuild source for that projection.
+Actual `SandboxProviderUnavailable(v1)` emission for provider failure remains
+as defined above. No event enum/version or journal schema is added.

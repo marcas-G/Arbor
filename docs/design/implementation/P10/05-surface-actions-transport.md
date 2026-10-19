@@ -205,33 +205,16 @@ P12 owns : HTTP/WebSocket/CLI/web shell/auth/deployment transports —
 
 ## Accepted Native OS Sandbox public projection
 
-P10 adds no ViewId, endpoint, request field or new Problem category. The
-existing `WorkspaceDetail.executionSummary` may include exactly this
-path-free optional projection, sourced only from the current durable P1
-`SandboxPolicyDecision` and matching P9 fact:
-
-```ts
-sandboxPolicy?: {
-  policyRevision: number
-  profile: "ReadOnly" | "WorkspaceWrite" | "FullAccess"
-  providerId: string
-  networkMode: "Disabled" | "Restricted" | "Enabled"
-  status: "Configured" | "Unavailable"
-  expiresAt: Instant
-}
-```
-
-Return `Configured` only while the exact decision is current and unexpired
-with no matching unavailable fact; return `Unavailable` only when the exact
-P9 `(executionId, episodeBinding, policyRevision)` fact exists. With no exact
-decision, omit the projection; never infer a profile from defaults. Do not
-return network destinations, host paths, environment values, provider output
-or config secrets. A matching P9 fact also produces the source-specific
-Attention defined by `02`; its public summary is fixed and path-free. Provider
-failure returned before a durable view exists uses the existing typed 503
-`projection/unavailable` Problem vocabulary, with stable code
-`sandbox/provider-unavailable` and no raw diagnostics. P12 only transports
-these P10-owned contracts.
+The earlier V5 single-shape example is superseded by the final V1–V21 closed
+OsEnforced/TrustedLocalUnconfined union in the V21 section below. Retain the
+existing POST Workspace Detail route/request, no new ViewId/Problem category,
+and P12-only transport boundary. The final status set is Committed,
+Unavailable and NeedsDecision; it never infers defaults and never exposes
+mount/target refs, digests, paths, environment values, provider diagnostics or
+configuration secrets. Actual provider failure after P4 outcome but before
+P9 fact commit uses the exact safe V21 transient 503; after P9 commit the view
+is HTTP 200 with Unavailable/Attention. Ordinary projection lag is not this
+provider-specific 503.
 
 ## 4. Must Not Decide
 
@@ -247,3 +230,60 @@ The public row uses the exact V21 fixed safe summary, canonical Execution
 Workspace target, `attentionFactId` dedup, and `occurredAt=intent_at`. Corrupt
 hash-format or timestamp values fail closed through the existing corruption
 Problem path without a derived row. P12 only transports the existing DTO.
+
+
+## Accepted full-chain SandboxPolicy DTO/freshness/read-barrier contract (V21)
+
+Keep the existing POST /views/workspace-detail and WorkspaceDetailReq={workspaceId};
+no GET route, endpoint, ViewId or Problem category is added. Only an authorized
+human with an exact visible active Execution/Episode receives the optional
+sandboxPolicyPreconditions. It is one coherent P10 read-barrier snapshot and
+contains exactly expectedEpisodeRevision (nonnegative integer sourced from
+executions.episode_revision), latestCommittedPolicyRevision (0 only if never
+committed; expired/superseded latest still returned), full canonical
+episodeBinding, workspaceRevision/resourceBoundaryRevision (nonnegative
+integers), sandboxHandleBindingDigest (lowercase 64-hex),
+authorityBundleRevision/digest and operatorConfigRevision/digest (positive
+revisions, lowercase 64-hex digests). Its OsEnforced variant adds
+providerRegistryRevision and providerRegistryDigest; TrustedLocal omits both.
+No environment revision/fingerprint or raw evidence ref is included. The
+object is only returned to an authorized human with exact active visible
+Execution/Episode; otherwise it is omitted or existing query fails closed.
+
+sandboxPolicy is a closed union with status Committed, Unavailable or
+NeedsDecision. The public OsEnforced summary fields, in exact order, are kind,
+profile ReadOnly|WorkspaceWrite, providerId, providerVersion, networkMode,
+policyRevision, expiresAt, status. The public TrustedLocalUnconfined summary
+fields, in exact order, are kind, profile=FullAccess, networkBoundary=Unconfined,
+policyRevision, expiresAt, status; it has no providerId/version, OS, T3 or
+networkMode fields and makes no isolation claim. The public committed receipt
+view uses the same two safe variant projections. Neither view contains mounts,
+target refs, digests, audit refs, paths, env values or policy destinations.
+NeedsDecision is only for a policy-required pending invocation whose exact
+current decision/basis is absent or stale;
+Unavailable is only for a matching current provider-unavailable P9 fact or
+its exact transient P4 terminal outcome. Policy stale is not a provider fact.
+
+P10's SandboxPolicyStatusViewPort reads current P1 decision/command result,
+P9 fact/queue and, only for the short pre-materialization window, P4's explicit
+read-only P4SandboxOutcomeReadPort in one read transaction/effective-facts
+barrier. P10 never opens P4 private stores. Exact current terminal provider
+unavailable outcome + matching current decision/active Execution + no
+committed P9 fact/queue yet yields HTTP 503 on that existing POST, with the
+full Problem DTO fields correlationId (request/transport correlation or null),
+code sandbox/provider-unavailable, category unavailable, fixed safe message,
+retryDisposition retryable, and safeDetails exactly executionId,workspaceId,
+policyRevision. Full Problem member order is correlationId,code,category,
+message,retryDisposition,safeDetails; safeDetails order is executionId,
+workspaceId,policyRevision. Correlation is the request/transport value or
+null. Canonical response fields and exact safe message are:
+{"correlationId":null,"code":"sandbox/provider-unavailable","category":"unavailable","message":"required sandbox capability was unavailable or could not be verified; execution did not start","retryDisposition":"retryable","safeDetails":{"executionId":"<ExecutionId>","workspaceId":"<WorkspaceId>","policyRevision":1}}.
+No provider/path/env/target diagnostics are allowed. This 503
+applies to every exact current terminal SandboxProviderUnavailable outcome
+before matching P9 fact/queue commit, not only probe-interrupted. After P9
+fact/queue commit the same endpoint returns HTTP 200, Unavailable and the
+existing ActionRequired Attention. Ordinary projection lag, missing decision,
+authority/config rejection, stale policy and NeedsDecision are never this 503;
+ordinary lag uses the existing generic lag behavior. Web waits for existing
+WebSocket invalidation or explicit manual refetch and performs no timer,
+polling or automatic retry.

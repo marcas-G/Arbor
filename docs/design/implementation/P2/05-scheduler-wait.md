@@ -202,3 +202,15 @@ persist via SettleExecution (ExecutionOrigin, fenced)
   signals produced by the source phase.
 - Projection rebuild scheduling (P10).
 - Distributed / multi-process scheduling (P12).
+
+## Accepted full-chain SandboxPolicyRequired park/wake (V21)
+
+A verified NotAdmitted process-capable ToolInvocation with no current
+SandboxPolicyDecision is parked through the existing HumanIntervention lease
+release/wake behavior on the same active Execution/Episode. No new P2 WaitSpec,
+Execution wait row, blocker, scheduler state or migration is introduced. A
+committed DecideSandboxPolicy event is only a wake hint; current P1 decision,
+P4 pending intent and basis are truth. After a human decision, P2/P9 may
+redispatch only the same pending action/invocation under existing lease and
+fence rules; missing/stale decision leaves it parked, and Stop remains
+independent.

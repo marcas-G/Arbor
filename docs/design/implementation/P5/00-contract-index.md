@@ -64,8 +64,12 @@ FROZEN (contracts) — independent review round 1 complete, **Blocking = 0**.
 No P5 planning is generated until the phase plan + tasks are derived from these
 contracts.
 
-## V21 RecoveryBinding Attention compatibility note
+## Accepted full-chain Native Sandbox authority/configuration owner
 
-P5 composition and trusted configuration loading are unchanged. The V21
-derived Attention consumes existing P4/P9 durable state and requires no
-new provider, configuration, initialization, or migration wiring in P5.
+P5 `01` loads and validates SandboxAuthorityBundleV1 from the protected
+deployment source and exposes one immutable snapshot to P1/P4. It owns exact
+issuer/registry codecs, OS-protected source identity and independent
+monotone high-water, safe error/audit ADTs and fail-closed unavailable
+behavior. No daemon auto-initialization/reset, default issuer, hot reload or
+allow-all mode exists. V21 derived RecoveryBinding Attention uses existing
+P4/P9 data and does not change this P5 source contract.

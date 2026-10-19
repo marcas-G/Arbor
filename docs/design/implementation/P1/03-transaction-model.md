@@ -376,3 +376,53 @@ neither resolution nor progression. Exact replay returns the immutable
 resolution, and a different tuple cannot replace it. This amendment does not
 alter `TransactionScope`, `BEGIN IMMEDIATE`, shared transaction semantics, or
 authorize implementation/migration.
+
+## Accepted full-chain DecideSandboxPolicy linearization (V21)
+
+For this command, initial receipt lookup is advisory only. Execution order is:
+authenticated human + exact P12 CAPA authority/provenance preflight; compute
+the frozen P1 semantic fingerprint; advisory prior receipt lookup; if absent,
+perform read-only P11 resource/mount and P5 authority/provider preparation
+outside the SQLite transaction; then enter `BEGIN IMMEDIATE` and perform the
+final receipt lookup, which is the sole linearization point. If an identical
+receipt now exists, return it without re-reading or recapturing source state;
+different fingerprint is the existing idempotency conflict. If absent,
+revalidate trusted GatewayNow, exact live Grant and immutable issuer
+provenance, current authority/operator/provider bundle revisions and digests,
+Execution/Episode identity and `episode_revision`, workspace/resource/CAS
+preconditions, exact current basis and expiry under this transaction. Any
+changed expected source is the existing durable TerminalRejected
+`StaleSandboxPolicyInputs` receipt, with no decision/event.
+
+Commit the immutable decision row, bounded `SandboxPolicyDecisionCommittedInternalV1`
+result in existing `commands.result_json`, exact receipt and
+`SandboxPolicyDecisionRecorded` event in the same `BEGIN IMMEDIATE` transaction.
+The row `policy_digest` is SHA-256 of the exact canonical full
+effectivePolicySnapshot variant carried by the strict result codec;
+`decision_command_id` is the join
+anchor used to validate the command result/receipt. P9 restart strictly
+decodes the same result and checks row identity and digest; mismatch is
+corruption/fail-closed. No BlobStore, envelope table, or migration 0051 is
+introduced. No P1 transaction holds over provider or filesystem probing.
+
+If read-only preparation fails transiently before transaction, perform a final
+receipt lookup before returning: identical receipt replays, different
+fingerprint conflicts, and absent receipt yields the existing retryable
+`SandboxPolicyPreparationUnavailable` with no Command row/receipt or
+TerminalRejected. Trusted authority/grant invalidity remains the existing
+TerminalRejected `AuthorityUnavailable`. A pre-commit process crash permits
+retry to recapture only if every caller expected revision/digest remains
+current; post-commit retry replays the exact persisted receipt. `latestCommittedPolicyRevision`
+is the latest row even if expired/superseded (0 only if no decision); the
+next request CASes against that value. `expiresAt` satisfies
+`now < expiresAt <= exact Grant.expiresAt`, and the Execution must be
+nonterminal at commit.
+
+The failure domains stay disjoint: startup source/bundle/high-water/registry
+canonical-load errors are SandboxAuthorityLoadErrorV1 and disable command
+authority; qualification/evidence missing or invalid during Decide preflight
+is durable TerminalRejected(SandboxAuthorityUnavailable), with no decision or
+event. Evidence/blob/provider loss after the decision is committed is a P4
+typed provider-unavailable outcome and may only then enter the existing P9
+fact/queue path. None is converted into another class or TrustedLocal
+fallback.

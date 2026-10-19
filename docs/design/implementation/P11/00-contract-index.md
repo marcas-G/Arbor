@@ -31,11 +31,14 @@
 | `11-startup-recovery.md` | Startup drift probe; worktree damage recovery; sandbox-root ephemerality |
 | `12-sandbox-handoff.md` | SandboxPort continuity; advanced adapter; P4 guarantees inherited |
 
-## V21 RecoveryBinding Attention compatibility note
+## Accepted V21 Native Sandbox region/mount owner boundary
 
-P11 region resolution, mount handoff, resource ownership, and environment
-revision contracts are unchanged. The derived P10 Attention reads existing
-P4 invocation/binding evidence and adds no P11 source mutation or migration.
+P11/04 owns path-free SandboxTargetRefV1 derivation from existing
+CanonicalResourceRegion bytes; P11/12 owns logical mount/handle-basis handoff.
+They do not alter canonical region meaning, ResourceBoundary authority or
+environment revisions. Sandbox policy binds resource/mount revisions, not
+P11 EnvironmentRevision, file content, dirty state or mtimes. V21 Recovery-
+Binding Attention reads existing P4 rows and adds no P11 mutation/migration.
 | `13-verdict-consumer.md` | P8 binding unchanged; stale overlay integration |
 
 ## Boundaries (explicitly out of P11)

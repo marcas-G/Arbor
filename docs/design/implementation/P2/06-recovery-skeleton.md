@@ -187,3 +187,16 @@ is not replayed; recovery requests portable Summary/frontier rebuild.
 - Provider/Tool `OutcomeUnknown` reconciliation implementation (P3/P4).
 - Projection rebuild (P10).
 - Distributed recovery / multi-host failover (P12).
+
+## Accepted V21 sandbox recovery boundary
+
+P2 recovery recognizes the existing same-Execution HumanIntervention park for
+SandboxPolicyRequiredInterruption. Before reacquiring/dispatching, the normal
+recovery controller checks the durable pending NotAdmitted invocation and its
+strict P4 RecoveryBinding. It does not create a new Execution or Step state.
+If the exact binding is missing/corrupt/mismatched, the owning P9 read-only
+RecoveryBlocked classification prevents lease/P4/Provider/effect calls while
+the invocation remains Pending. A valid binding with missing/stale policy
+stays parked; a committed policy decision wakes the same active Execution.
+Actual persisted P4 provider-unavailable observation is consumed without
+probe/spawn replay. T4 remains read-only.

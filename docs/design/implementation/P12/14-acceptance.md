@@ -171,3 +171,42 @@ each elevated/unelevated provider separately, plus container/remote contract
 tests where claimed. Missing required evidence is Unavailable, not Supported.
 This acceptance gate specifies evidence only; it neither performs provider
 implementation nor authorizes release.
+
+
+## V21 Native Sandbox T2/T3 qualification matrix
+
+Acceptance evidence is per exact provider/version/capabilityRevision/OS build/
+profile×networkMode tuple and matching enforcementRuleSetDigest; no independent
+profile/mode arrays or inferred tuple is supported. Include canonical closed
+registry/evidence codecs, high-water/source rollback/reuse and manifest/artifact
+hash validation, all T3 control IDs/results, process-tree crash/kill, exact RO/RW
+mounts, environment allowlist and every resource limit. Run each Linux/macOS/
+Windows primitive separately. MXC/elevated Windows are probe-only Experimental;
+absence of a required AppContainer/Job/broker/reparse control is Unavailable.
+Container/Remote remain contract-only.
+
+Network cases cover every fixed IPv4/IPv6 denied prefix, mapped-IPv6 normalize-
+then-IPv4 classification, reserved/local/loopback/link-local/private, mixed
+A/AAAA rejecting whole resolution, public IP pinning, certificate/SNI/Host
+match, broker-only egress, redirect hops zero through five and rejection of six,
+downgrade, DNS rebinding, raw IP/UDP/direct DNS/DoH/bypass. Restricted exact
+origin and Enabled public HTTPS are qualified separately; Disabled verifies no
+DNS/egress. Pref64 tests run a fresh discovery for each resolution/connection,
+RFC7050 known answers for all six prefix lengths, explicit no-DNS64 proof for
+empty result, malformed/timeout/unknown fail-closed and no pool reuse. T2
+probe-only results never establish production Supported. No test may access or
+upgrade a preserved database; schema 50 remains unchanged.
+
+
+Authority/configuration acceptance covers exact SandboxAuthorityBundleV1 and
+nested issuer/registry canonical bytes/JCS key order; every unknown/missing/
+duplicate/alternate string/number/Principal encoding; sorted unique nonempty
+human issuer set; stable protected source identity, ACL/reparse/truncation and
+atomic replacement; high-water missing/corrupt/unreadable, forward jumps,
+same-revision reuse/change, rollback, source reenrollment and commit failure.
+It verifies one immutable snapshot is shared across Resolver/Gateway after
+quiesced restart, with zero hot reload/default-allow, fixed load/rejection/audit
+ADTs, safe field filtering, and all audit timestamps using injected GatewayNow.
+Authority load, Decide command rejection, P4 provider-unavailable and P10
+projection-integrity failures are tested as disjoint closed outcomes; no raw
+source path, principal list, OS error, provider diagnostic or secret leaks.
