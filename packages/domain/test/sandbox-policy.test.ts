@@ -18,12 +18,17 @@ import {
   type SandboxProviderCapability,
 } from "../src/sandbox-policy.js";
 
+const ruleSetDigest = "b".repeat(64);
+const qualificationEvidenceRef = `blob:sha256:${"a".repeat(64)}`;
+
 const capabilities: ReadonlyArray<SandboxProviderCapability> = [
   {
     providerId: "bwrap",
     providerVersion: "0.8.0",
     capabilityRevision: "caps-v3",
-    probeEvidenceRef: "evidence:bwrap-0.8.0",
+    probeEvidenceRef: qualificationEvidenceRef,
+    enforcementRuleSetDigest: ruleSetDigest,
+    qualificationEvidenceRef,
     status: "Experimental",
     boundary: "OsEnforced",
     profiles: ["WorkspaceWrite"],
@@ -34,6 +39,8 @@ const capabilities: ReadonlyArray<SandboxProviderCapability> = [
     providerVersion: "builtin-v1",
     capabilityRevision: "trusted-v1",
     probeEvidenceRef: "evidence:trusted-local-v1",
+    enforcementRuleSetDigest: null,
+    qualificationEvidenceRef: null,
     status: "Supported",
     boundary: "TrustedLocal",
     profiles: ["WorkspaceWrite", "FullAccess"],
@@ -60,6 +67,8 @@ describe("sandbox policy provider selection", () => {
           providerId: "bwrap",
           expectedProviderVersion: "0.8.0",
           expectedCapabilityRevision: "caps-v3",
+          expectedEnforcementRuleSetDigest: ruleSetDigest,
+          expectedQualificationEvidenceRef: qualificationEvidenceRef,
           profile: "WorkspaceWrite",
           networkPolicy: { version: 1, mode: "Disabled", destinations: [] },
           boundary: "OsEnforced",
@@ -80,6 +89,8 @@ describe("sandbox policy provider selection", () => {
           providerId: "TrustedLocal",
           expectedProviderVersion: "builtin-v1",
           expectedCapabilityRevision: "trusted-v1",
+          expectedEnforcementRuleSetDigest: null,
+          expectedQualificationEvidenceRef: null,
           profile: "WorkspaceWrite",
           networkPolicy: { version: 1, mode: "Disabled", destinations: [] },
           boundary: "TrustedLocal",
@@ -96,6 +107,8 @@ describe("sandbox policy provider selection", () => {
           providerId: "LocalTrusted",
           expectedProviderVersion: "builtin-v1",
           expectedCapabilityRevision: "trusted-v1",
+          expectedEnforcementRuleSetDigest: null,
+          expectedQualificationEvidenceRef: null,
           profile: "WorkspaceWrite",
           networkPolicy: { version: 1, mode: "Disabled", destinations: [] },
           boundary: "OsEnforced",
@@ -110,6 +123,8 @@ describe("sandbox policy provider selection", () => {
       providerId: "bwrap",
       expectedProviderVersion: "0.7.0",
       expectedCapabilityRevision: "caps-v3",
+      expectedEnforcementRuleSetDigest: ruleSetDigest,
+      expectedQualificationEvidenceRef: qualificationEvidenceRef,
       profile: "WorkspaceWrite" as const,
       networkPolicy: {
         version: 1 as const,
@@ -136,6 +151,71 @@ describe("sandbox policy provider selection", () => {
       _tag: "Unavailable",
       reason: "CapabilityRevisionMismatch",
       capability: { providerId: "bwrap", providerVersion: "0.8.0" },
+    });
+  });
+
+  it("requires exact full enforcement digest and qualification evidence on OS selections", () => {
+    const selection = {
+      providerId: "bwrap",
+      expectedProviderVersion: "0.8.0",
+      expectedCapabilityRevision: "caps-v3",
+      expectedEnforcementRuleSetDigest: ruleSetDigest,
+      expectedQualificationEvidenceRef: qualificationEvidenceRef,
+      profile: "WorkspaceWrite" as const,
+      networkPolicy: {
+        version: 1 as const,
+        mode: "Disabled" as const,
+        destinations: [],
+      },
+      boundary: "OsEnforced" as const,
+    };
+    const baseCapability = capabilities.find(
+      (capability) => capability.providerId === "bwrap",
+    );
+    if (baseCapability === undefined)
+      throw new Error("bwrap test capability is missing");
+    const supportedCapability = {
+      ...baseCapability,
+      status: "Supported" as const,
+      profiles: ["WorkspaceWrite" as const],
+    };
+    expect(
+      resolveSandboxProvider(selection, [supportedCapability]),
+    ).toMatchObject({
+      _tag: "Available",
+    });
+    expect(
+      resolveSandboxProvider(selection, [
+        { ...supportedCapability, probeEvidenceRef: "sha256:old-probe" },
+      ]),
+    ).toMatchObject({
+      _tag: "Unavailable",
+      reason: "QualificationEvidenceMismatch",
+    });
+    expect(
+      resolveSandboxProvider(selection, [
+        { ...supportedCapability, qualificationEvidenceRef: null },
+      ]),
+    ).toMatchObject({
+      _tag: "Unavailable",
+      reason: "QualificationEvidenceMismatch",
+    });
+    expect(
+      resolveSandboxProvider(selection, [
+        { ...supportedCapability, enforcementRuleSetDigest: "c".repeat(64) },
+      ]),
+    ).toMatchObject({
+      _tag: "Unavailable",
+      reason: "EnforcementRuleSetDigestMismatch",
+    });
+    expect(
+      resolveSandboxProvider(
+        { ...selection, expectedQualificationEvidenceRef: null },
+        [supportedCapability],
+      ),
+    ).toMatchObject({
+      _tag: "Unavailable",
+      reason: "QualificationEvidenceMismatch",
     });
   });
 

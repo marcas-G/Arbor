@@ -764,6 +764,10 @@ export const ToolRuntimeLive = (
                   policy.providerId ||
                   policy.providerVersion.trim().length === 0 ||
                   policy.capabilityRevision.trim().length === 0 ||
+                  !/^[0-9a-f]{64}$/u.test(policy.enforcementRuleSetDigest) ||
+                  !/^blob:sha256:[0-9a-f]{64}$/u.test(
+                    policy.qualificationEvidenceRef,
+                  ) ||
                   networkPolicy === undefined ||
                   encodeNetworkPolicyV1(networkPolicy) !==
                     encodeNetworkPolicyV1(policy.networkPolicy))) ||
@@ -861,6 +865,10 @@ export const ToolRuntimeLive = (
                 providerId: policy.providerId,
                 expectedProviderVersion: policy.providerVersion,
                 expectedCapabilityRevision: policy.capabilityRevision,
+                expectedEnforcementRuleSetDigest:
+                  policy.enforcementRuleSetDigest,
+                expectedQualificationEvidenceRef:
+                  policy.qualificationEvidenceRef,
                 profile: policy.profile,
                 networkPolicy,
                 boundary: policy.boundary,

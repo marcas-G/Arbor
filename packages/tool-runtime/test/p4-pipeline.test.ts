@@ -1473,6 +1473,8 @@ const processPolicy = (
   providerId,
   providerVersion,
   capabilityRevision: "capability-v1",
+  enforcementRuleSetDigest: "b".repeat(64),
+  qualificationEvidenceRef: `blob:sha256:${"a".repeat(64)}`,
   boundary: "OsEnforced",
   networkPolicy: { version: 1, mode: "Disabled", destinations: [] },
   policyDigest: "a".repeat(64),
@@ -1577,7 +1579,14 @@ const sandboxCapability = (
   providerId,
   providerVersion,
   capabilityRevision,
-  probeEvidenceRef: `evidence:${providerId}:${providerVersion}`,
+  probeEvidenceRef:
+    providerId === "TrustedLocal"
+      ? `evidence:${providerId}:${providerVersion}`
+      : `blob:sha256:${"a".repeat(64)}`,
+  enforcementRuleSetDigest:
+    providerId === "TrustedLocal" ? null : "b".repeat(64),
+  qualificationEvidenceRef:
+    providerId === "TrustedLocal" ? null : `blob:sha256:${"a".repeat(64)}`,
   status,
   boundary: providerId === "TrustedLocal" ? "TrustedLocal" : "OsEnforced",
   profiles: ["ReadOnly"],
@@ -1646,6 +1655,70 @@ describe("P4 tool runtime pipeline", () => {
     expect(result._tag).toBe("RuntimeFailure");
     expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
   });
+
+  it.each([
+    "missing-policy-evidence",
+    "missing-policy-rule-digest",
+    "provider-evidence-mismatch",
+    "provider-rule-digest-mismatch",
+  ] as const)(
+    "rejects %s before the SandboxProcessPort run seam",
+    async (caseName) => {
+      const trace: PipelineTrace = {
+        noEffectDenials: [],
+        events: [],
+        approvalConsumer: null,
+        intentWrites: 0,
+        effectAdmissions: 0,
+        approvalConsumes: 0,
+        sandboxCapabilities: [
+          {
+            ...sandboxCapability("bwrap", "Supported", "0.8.0"),
+            ...(caseName === "provider-evidence-mismatch"
+              ? { probeEvidenceRef: `blob:sha256:${"c".repeat(64)}` }
+              : {}),
+            ...(caseName === "provider-rule-digest-mismatch"
+              ? { enforcementRuleSetDigest: "c".repeat(64) }
+              : {}),
+          },
+        ],
+      };
+      const policy = processPolicy(processEpisode);
+      const selectedPolicy: SandboxProcessPolicy =
+        caseName === "missing-policy-evidence"
+          ? ({
+              ...policy,
+              qualificationEvidenceRef: undefined,
+            } as unknown as SandboxProcessPolicy)
+          : caseName === "missing-policy-rule-digest"
+            ? ({
+                ...policy,
+                enforcementRuleSetDigest: undefined,
+              } as unknown as SandboxProcessPolicy)
+            : policy;
+      const result = await run(
+        app(false, processExecutor, {}, trace),
+        '{"target":{"mount":"workspace","path":"."}}',
+        null,
+        processContext(selectedPolicy),
+      );
+      expect(result._tag).not.toBe("Success");
+      expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+      expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
+      if (
+        caseName === "provider-evidence-mismatch" ||
+        caseName === "provider-rule-digest-mismatch"
+      ) {
+        expect(result).toMatchObject({
+          _tag: "SandboxProviderUnavailable",
+          failureCode:
+            caseName === "provider-evidence-mismatch"
+              ? "QualificationEvidenceMismatch"
+              : "EnforcementRuleSetDigestMismatch",
+        });
+      }
+    },
+  );
 
   it.each(["handle", "mount"] as const)(
     "rejects a %s-mismatched policy before provider execution",
@@ -1830,6 +1903,8 @@ describe("P4 tool runtime pipeline", () => {
             providerVersion: "0.8.0",
             capabilityRevision: "capability-v1",
             probeEvidenceRef: null,
+            enforcementRuleSetDigest: null,
+            qualificationEvidenceRef: null,
             failureCode: "ForgedUnavailability",
             actionBinding: {
               identity: {
