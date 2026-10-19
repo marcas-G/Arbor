@@ -59,6 +59,7 @@ const EXPECTED_EVENTS = [
   "ExecutionSettled",
   "PermissionChanged",
   "SandboxPolicyGrantIssued",
+  "SandboxPolicyDecisionRecorded",
   "DecisionRecorded",
   "EnvironmentChanged",
   "HumanInterventionApplied",
@@ -115,6 +116,22 @@ describe("domain event catalog", () => {
       "permissionGrantId",
       "grantPermissionCommandId",
       "executionId",
+      "operatorConfigRevision",
+      "operatorConfigDigest",
+    ]);
+  });
+
+  it("keeps SandboxPolicyDecisionRecorded as the exact minimal P1 wake tuple", () => {
+    const schema = EVENT_CATALOG.SandboxPolicyDecisionRecorded as unknown as {
+      readonly fields: Readonly<Record<string, unknown>>;
+    };
+    expect(Object.keys(schema.fields)).toEqual([
+      "_tag",
+      "workspaceId",
+      "executionId",
+      "episodeBinding",
+      "policyRevision",
+      "permissionGrantId",
       "operatorConfigRevision",
       "operatorConfigDigest",
     ]);

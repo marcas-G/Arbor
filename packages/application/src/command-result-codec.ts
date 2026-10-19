@@ -1,6 +1,7 @@
 import type { CommandReceipt } from "@arbor/domain";
 import {
   aggregateVerdict,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
   ID_SCHEMAS,
   type IdTypeName,
   NO_EFFECT_DENIAL_CODES,
@@ -8,7 +9,11 @@ import {
   Sha256,
   VerificationVerdict,
 } from "@arbor/domain";
-import type { CommandStoreError, StoredCommandResolution } from "@arbor/ports";
+import {
+  type CommandStoreError,
+  type StoredCommandResolution,
+  sha256Hex,
+} from "@arbor/ports";
 import { Effect, Schema } from "effect";
 import type { RegisteredCommandType } from "./external-command-codec.js";
 import type { CommandRejection } from "./rejection.js";
@@ -616,6 +621,20 @@ const resultDecoders: ResultDecoderRegistry = {
         state: permissionGrantLifecycle,
       }),
   },
+  DecideSandboxPolicy: {
+    "1": (value) => {
+      try {
+        return (
+          decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+            JSON.stringify(value),
+            sha256Hex,
+          ) !== undefined
+        );
+      } catch {
+        return false;
+      }
+    },
+  },
   RevokePermission: {
     "1": (value) =>
       objectWith(value, {
@@ -755,6 +774,25 @@ const rejectionDecoders = {
     worktreeId: stringValue,
     claimIds: arrayOf(stringValue),
   }),
+  StaleSandboxPolicyInputs: tagged("StaleSandboxPolicyInputs", {
+    safeDetails: (details) =>
+      objectWith(details, {
+        field: oneOf(
+          "EpisodeRevision",
+          "PolicyRevision",
+          "WorkspaceRevision",
+          "ResourceBoundaryRevision",
+          "SandboxHandleBindingDigest",
+          "AuthorityBundleRevision",
+          "OperatorConfigRevision",
+          "ProviderRegistryRevision",
+        ),
+      }),
+  }),
+  SandboxPolicySummaryTooLarge: tagged("SandboxPolicySummaryTooLarge"),
+  SandboxAuthorityUnavailable: tagged("SandboxAuthorityUnavailable"),
+  ExecutionTerminal: tagged("ExecutionTerminal"),
+  DecisionExpiryInvalid: tagged("DecisionExpiryInvalid"),
 } satisfies Record<CommandRejection["_tag"], Validator>;
 
 export const isCommandRejection = (
@@ -805,6 +843,13 @@ export const decodeRegisteredCommandReceipt = <R>(
       }
       const parsed: unknown = JSON.parse(stored.resultJson);
       if (!validateResult(parsed)) return Effect.fail(corruption());
+      if (
+        commandType === "DecideSandboxPolicy" &&
+        (recordOf(parsed)?.commandId !== stored.commandId ||
+          recordOf(parsed)?.projectId !== stored.projectId)
+      ) {
+        return Effect.fail(corruption());
+      }
       const result =
         commandType === "ConcludeVerification" &&
         recordOf(parsed) !== undefined &&

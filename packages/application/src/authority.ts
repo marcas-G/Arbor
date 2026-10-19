@@ -2,14 +2,17 @@ import type {
   CommandId,
   DeliverableId,
   DependencyId,
+  ExecutionEpisodeBinding,
   ExecutionId,
   FormationProposalId,
   LeaseGeneration,
+  PermissionGrant,
   PermissionGrantId,
   PluginId,
   PluginVersion,
   Principal,
   ProjectId,
+  SandboxPolicyGrantIssuerProvenanceV1,
   SemanticRequestFingerprint,
   VerificationId,
   WorkId,
@@ -336,6 +339,28 @@ export type VerifiedCommandAuthority =
       readonly contentHash: string;
     }
   | {
+      /** P12-produced exact human CAPA binding for the V21 sandbox decision.
+       * The command handler independently re-reads Grant and provenance in
+       * the Gateway transaction before any durable write. */
+      readonly _tag: "SandboxPolicyDecisionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly workspaceId: WorkspaceId;
+      readonly executionId: ExecutionId;
+      readonly episodeBinding: ExecutionEpisodeBinding;
+      readonly episodeRevision: number;
+      readonly permissionGrant: PermissionGrant;
+      readonly issuerProvenance: SandboxPolicyGrantIssuerProvenanceV1;
+      readonly authorityBundleRevision: number;
+      readonly authorityBundleDigest: string;
+      readonly providerRegistryRevision: number;
+      readonly providerRegistryDigest: string;
+      readonly operatorConfigRevision: number;
+      readonly operatorConfigDigest: string;
+    }
+  | {
       /** P12 `02` §5 (G2): `GrantPermission` governance command. The variant
        * is the authority surface the resolver produces and the handler
        * exact-matches; `put` is the only durable writer (CI-1). */
@@ -351,6 +376,10 @@ export type VerifiedCommandAuthority =
         readonly executionId: ExecutionId;
         readonly operatorConfigRevision: number;
         readonly operatorConfigDigest: string;
+        readonly authorityBundleRevision: number;
+        readonly authorityBundleDigest: string;
+        readonly providerRegistryRevision: number;
+        readonly providerRegistryDigest: string;
       };
     }
   | {

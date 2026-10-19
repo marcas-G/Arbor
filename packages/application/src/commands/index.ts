@@ -4,6 +4,7 @@ export * from "./conclude-verification.js";
 export * from "./conversation-response.js";
 export * from "./create-child-workspace.js";
 export * from "./create-project.js";
+export * from "./decide-sandbox-policy.js";
 export * from "./declare-dependency.js";
 export * from "./deliver-command.js";
 export * from "./deliver-message.js";

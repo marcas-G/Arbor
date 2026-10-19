@@ -37,13 +37,19 @@ import type {
   ProjectPolicy,
   QueryResult,
   SandboxPolicyGrantIssuerConfigSnapshotV1,
+  SandboxPolicyGrantIssuerProvenanceV1,
   VerificationId,
   ViewId,
   WorkId,
   WorkspaceId,
   WorkspacePolicy,
 } from "@arbor/domain";
-import { makeProjectPolicy } from "@arbor/domain";
+import {
+  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
+  executionEpisode,
+  makeProjectPolicy,
+  sandboxPolicyCommittedViewOf,
+} from "@arbor/domain";
 import type {
   ProjectionQueryError,
   ProjectionQueryPortService,
@@ -62,6 +68,7 @@ import {
   ProjectRepository,
   ResourceOwnershipRepository,
   RetryVerificationOriginRepository,
+  sha256Hex,
   TransactionPort,
   VerificationRepository,
   WorkBlockerStore,
@@ -100,6 +107,7 @@ export interface AuthorityInputs {
   readonly policy: ProjectPolicy | WorkspacePolicy;
   readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1;
   readonly sandboxPolicyAuthorityNow?: string;
+  readonly sandboxPolicyGrantIssuerProvenance?: SandboxPolicyGrantIssuerProvenanceV1;
 }
 
 /** The view face is the frozen `ProjectionQueryPort` binding (P10 `05` §1);
@@ -461,6 +469,10 @@ export const makeRepositoryInputsLoader = (
           executionId === null
             ? Option.none()
             : yield* tx.transact(executions.findById(executionId));
+        const episodeRevision =
+          executionId === null
+            ? Option.none()
+            : yield* tx.transact(executions.findEpisodeRevision(executionId));
         const work =
           workId === null
             ? Option.none()
@@ -526,6 +538,38 @@ export const makeRepositoryInputsLoader = (
             String(envelope.commandType) === "DecideSandboxPolicy")
             ? yield* clock.now()
             : undefined;
+        const requestedSandboxExecutionId =
+          envelope.commandType === "DecideSandboxPolicy"
+            ? (payloadString(payload, "executionId") as ExecutionId | null)
+            : null;
+        const resolverGrantCandidates =
+          requestedSandboxExecutionId === null
+            ? []
+            : activeGrants.filter(
+                (grant) =>
+                  grant.state === "Active" &&
+                  grant.subject?._tag === "HumanPrincipal" &&
+                  String(grant.subject.principal) === String(envelope.actor) &&
+                  grant.capability === "DecideSandboxPolicy" &&
+                  grant.target === requestedSandboxExecutionId,
+              );
+        const selectedResolverGrant =
+          resolverGrantCandidates.length === 1
+            ? resolverGrantCandidates[0]
+            : undefined;
+        const sandboxPolicyGrantIssuerProvenance =
+          selectedResolverGrant !== undefined
+            ? (Option.getOrUndefined(
+                yield* tx.transact(
+                  grants.findSandboxPolicyGrantIssuerProvenanceByGrantId(
+                    selectedResolverGrant.permissionGrantId,
+                  ),
+                ),
+              ) ?? undefined)
+            : undefined;
+        const exactEpisodeBinding = Option.isSome(execution)
+          ? executionEpisode(execution.value)
+          : undefined;
 
         const canonicalFacts: CanonicalAuthorityFacts = {
           projectId,
@@ -548,6 +592,12 @@ export const makeRepositoryInputsLoader = (
                   projectId: execution.value.projectId,
                   workspaceId: execution.value.workspaceId,
                   status: execution.value.state.status,
+                  ...(exactEpisodeBinding === undefined
+                    ? {}
+                    : { episodeBinding: exactEpisodeBinding }),
+                  ...(Option.isSome(episodeRevision)
+                    ? { episodeRevision: episodeRevision.value }
+                    : {}),
                 },
               }
             : {}),
@@ -601,6 +651,9 @@ export const makeRepositoryInputsLoader = (
           ...(sandboxPolicyAuthorityNow === undefined
             ? {}
             : { sandboxPolicyAuthorityNow }),
+          ...(sandboxPolicyGrantIssuerProvenance === undefined
+            ? {}
+            : { sandboxPolicyGrantIssuerProvenance }),
           policy: Option.isSome(project)
             ? project.value.projectPolicy
             : makeProjectPolicy({}),
@@ -636,12 +689,28 @@ export type CreateProjectPostCommitBeforeActivationQualificationProbe = (
 
 const receiptToView = (
   receipt: CommandReceipt<unknown, CommandRejection>,
+  commandType?: string,
 ): CommandReceiptView =>
   receipt.resolution._tag === "Committed"
     ? {
         commandId: receipt.commandId,
         resolution: "Committed",
-        result: receipt.resolution.result,
+        result:
+          commandType === "DecideSandboxPolicy"
+            ? (() => {
+                const decoded =
+                  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+                    JSON.stringify(receipt.resolution.result),
+                    sha256Hex,
+                  );
+                if (decoded === undefined) {
+                  throw new Error(
+                    "committed sandbox policy receipt failed strict view projection",
+                  );
+                }
+                return sandboxPolicyCommittedViewOf(decoded);
+              })()
+            : receipt.resolution.result,
       }
     : {
         commandId: receipt.commandId,
@@ -739,6 +808,12 @@ export const makeExternalSubmission = (
         ...(inputs.sandboxPolicyAuthorityNow === undefined
           ? {}
           : { sandboxPolicyAuthorityNow: inputs.sandboxPolicyAuthorityNow }),
+        ...(inputs.sandboxPolicyGrantIssuerProvenance === undefined
+          ? {}
+          : {
+              sandboxPolicyGrantIssuerProvenance:
+                inputs.sandboxPolicyGrantIssuerProvenance,
+            }),
       };
       const resolved = yield* Effect.match(deps.resolver.resolve(decision), {
         onFailure: (error) => ({ _tag: "denied" as const, error }),
@@ -800,7 +875,7 @@ export const makeExternalSubmission = (
             return {
               ok: true as const,
               status: 200,
-              body: receiptToView(executed.receipt),
+              body: receiptToView(executed.receipt, envelope.commandType),
             };
           }
           return failureResponse(
@@ -814,7 +889,7 @@ export const makeExternalSubmission = (
       return {
         ok: true as const,
         status: 200,
-        body: receiptToView(executed.receipt),
+        body: receiptToView(executed.receipt, envelope.commandType),
       };
     }),
 });

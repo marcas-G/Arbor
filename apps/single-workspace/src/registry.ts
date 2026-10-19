@@ -1,10 +1,12 @@
 import {
   type CommandHandler,
   CommandHandlerRegistry,
+  type DecideSandboxPolicyPreparation,
   makeAcceptWorkOutcomeHandler,
   makeCancelConversationResponseHandler,
   makeCompleteWorkHandler,
   makeConcludeVerificationHandler,
+  makeDecideSandboxPolicyHandler,
   makeDeclareDependencyHandler,
   makeDeliverMessageHandler,
   makeGrantPermissionHandler,
@@ -67,6 +69,7 @@ import {
   ProjectResourceProfilePort,
   ResourceOwnershipRepository,
   RetryVerificationOriginRepository,
+  SandboxPolicyDecisionStore,
   SessionRepository,
   VerificationRepository,
   type VerificationRepositoryService,
@@ -108,6 +111,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
     directParentOf: [],
   },
   sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
+  sandboxPolicyDecisionPreparation?: DecideSandboxPolicyPreparation,
 ): Layer.Layer<
   CommandHandlerRegistry,
   never,
@@ -127,6 +131,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
   | VerificationRepository
   | AcceptanceRepository
   | PermissionGrantRepository
+  | SandboxPolicyDecisionStore
   | ResourceOwnershipRepository
   | HumanMessageStore
   | ConversationResponseJobStore
@@ -175,6 +180,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
       }));
       const acceptances = yield* AcceptanceRepository;
       const grants = yield* PermissionGrantRepository;
+      const sandboxPolicyDecisions = yield* SandboxPolicyDecisionStore;
       const assignWorkBindings = yield* Effect.serviceOption(
         AssignWorkTargetBindingRepository,
       );
@@ -411,6 +417,25 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
           ...(sandboxPolicyGrantIssuerConfigSnapshot === undefined
             ? {}
             : { sandboxPolicyGrantIssuerConfigSnapshot }),
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeDecideSandboxPolicyHandler({
+          grants: grants as PermissionGrantRepositoryService,
+          executions,
+          decisions: sandboxPolicyDecisions,
+          preparation: sandboxPolicyDecisionPreparation ?? {
+            prepare: () =>
+              Effect.fail({
+                _tag: "TransactionOperationalFailure",
+                cause: "sandbox policy decision preparation is unavailable",
+              }),
+            currentPreconditions: () =>
+              Effect.die(
+                new Error("sandbox policy preconditions are unavailable"),
+              ),
+          },
+          clock: Option.getOrElse(clock, () => ({
+            now: () => Effect.succeed(new Date().toISOString()),
+          })),
         }) as unknown as CommandHandler<unknown, unknown>,
         makeRevokePermissionHandler({
           grants: grants as PermissionGrantRepositoryService,

@@ -11,6 +11,7 @@ import type {
 } from "@arbor/domain";
 import {
   Actor,
+  decodeSandboxNetworkPolicySelectionV1,
   ID_SCHEMAS,
   type IdTypeName,
   isIsoTimestamp,
@@ -32,6 +33,7 @@ import type {
 } from "./commands/conversation-response.js";
 import type { CreateChildWorkspacePayload } from "./commands/create-child-workspace.js";
 import type { CreateProjectPayload } from "./commands/create-project.js";
+import type { DecideSandboxPolicyPayload } from "./commands/decide-sandbox-policy.js";
 import type { DeclareDependencyPayload } from "./commands/declare-dependency.js";
 import type { DeliverMessagePayload } from "./commands/deliver-message.js";
 import type { GrantPermissionPayload } from "./commands/grant-permission.js";
@@ -78,6 +80,7 @@ export type RegisteredCommandType =
   | "ConcludeVerification"
   | "RetryVerification"
   | "GrantPermission"
+  | "DecideSandboxPolicy"
   | "RevokePermission"
   | "SubmitHumanMessage"
   | "ResumeConversationResponse"
@@ -169,6 +172,7 @@ export interface ExternalCommandPayloadMap {
   readonly ConcludeVerification: ConcludeVerificationPayload;
   readonly RetryVerification: RetryVerificationPayload;
   readonly GrantPermission: GrantPermissionPayload;
+  readonly DecideSandboxPolicy: DecideSandboxPolicyPayload;
   readonly RevokePermission: RevokePermissionPayload;
   readonly SubmitHumanMessage: SubmitHumanMessagePayload;
   readonly ResumeConversationResponse: ResumeConversationResponsePayload;
@@ -284,6 +288,43 @@ const verificationMission = object({
     }),
   ),
   riskRequirements: stringArray,
+});
+const executionEpisodeBinding = union("_tag", {
+  WorkEpisode: object({
+    _tag: literal("WorkEpisode"),
+    workId: id("WorkId"),
+    targetWorkRevision: revision,
+  }),
+  ConversationResponseEpisode: object({
+    _tag: literal("ConversationResponseEpisode"),
+    messageId: id("MessageId"),
+    responseJobRevision: revision,
+  }),
+  InboxEpisode: object({
+    _tag: literal("InboxEpisode"),
+    entryKey: nonEmptyString,
+    inputKind: nonEmptyString,
+  }),
+  DecisionEpisode: object({
+    _tag: literal("DecisionEpisode"),
+    decisionId: id("DecisionId"),
+    decisionKind: literal("SelectCurrentWork"),
+    requestRevision: revision,
+  }),
+});
+const sandboxPolicySelection = union("kind", {
+  OsEnforced: object({
+    kind: literal("OsEnforced"),
+    policy: object({
+      version: literal(1),
+      mode: enumRule("Disabled", "Restricted", "Enabled"),
+      destinations: stringArray,
+    }),
+  }),
+  TrustedLocalUnconfinedV1: object({
+    kind: literal("TrustedLocalUnconfinedV1"),
+    version: literal(1),
+  }),
 });
 const resourceAddress = union("_tag", {
   FileTree: object({ _tag: literal("FileTree"), path: string }),
@@ -774,6 +815,27 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
     target: trimmedNonEmptyString,
     expiresAt: isoTimestamp,
   }),
+  DecideSandboxPolicy: object({
+    projectId: id("ProjectId"),
+    workspaceId: id("WorkspaceId"),
+    executionId: id("ExecutionId"),
+    episodeBinding: executionEpisodeBinding,
+    expectedEpisodeRevision: revision,
+    expectedPolicyRevision: revision,
+    expectedWorkspaceRevision: revision,
+    expectedResourceBoundaryRevision: revision,
+    expectedSandboxHandleBindingDigest: string,
+    expectedAuthorityBundleRevision: revision,
+    expectedAuthorityBundleDigest: string,
+    expectedOperatorConfigRevision: revision,
+    expectedOperatorConfigDigest: string,
+    expectedProviderRegistryRevision: optional(revision),
+    expectedProviderRegistryDigest: optional(string),
+    profile: enumRule("ReadOnly", "WorkspaceWrite", "FullAccess"),
+    providerId: nonEmptyString,
+    networkPolicy: sandboxPolicySelection,
+    decisionExpiresAt: isoTimestamp,
+  }),
   RevokePermission: object({ permissionGrantId: id("PermissionGrantId") }),
   SubmitHumanMessage: object({
     messageId: id("MessageId"),
@@ -821,6 +883,7 @@ const externalOriginPolicies: Readonly<
   ConcludeVerification: "reject external; Verification consumer/runtime",
   RetryVerification: "external authenticated human",
   GrantPermission: "external only when P12 authority resolves the principal",
+  DecideSandboxPolicy: "external human governance",
   RevokePermission: "external only when P12 authority resolves the principal",
   SubmitHumanMessage: "external authenticated human",
   ResumeConversationResponse:
@@ -1196,6 +1259,40 @@ const decodeEnvelopeWithRegistry = (
   });
   const decoded = decodeAgainstRule(envelopeRule, envelope);
   if (!decoded.ok) return decoded;
+  if (commandType === "DecideSandboxPolicy") {
+    const decodedEnvelope = decoded.value as {
+      readonly payload: Record<string, unknown>;
+    };
+    const payload = decodedEnvelope.payload;
+    const selection = decodeSandboxNetworkPolicySelectionV1(
+      payload.networkPolicy,
+    );
+    const hasRegistryRevision = Object.hasOwn(
+      payload,
+      "expectedProviderRegistryRevision",
+    );
+    const hasRegistryDigest = Object.hasOwn(
+      payload,
+      "expectedProviderRegistryDigest",
+    );
+    const variantMatches =
+      selection?.kind === "OsEnforced"
+        ? payload.profile !== "FullAccess" &&
+          payload.providerId !== "TrustedLocal" &&
+          hasRegistryRevision &&
+          hasRegistryDigest
+        : selection?.kind === "TrustedLocalUnconfinedV1" &&
+          payload.profile === "FullAccess" &&
+          payload.providerId === "TrustedLocal" &&
+          !hasRegistryRevision &&
+          !hasRegistryDigest;
+    if (!variantMatches) {
+      return {
+        ok: false,
+        issues: [{ path: ["payload"], rule: "format" }],
+      };
+    }
+  }
   return { ok: true, value: decoded.value as DecodedExternalCommandEnvelope };
 };
 

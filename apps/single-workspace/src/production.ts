@@ -32,7 +32,6 @@ import {
   type ExecutionId,
   type Principal,
   type ProjectId,
-  type SandboxPolicyGrantIssuerConfigSnapshotV1,
   type WakeReason,
 } from "@arbor/domain";
 import {
@@ -104,6 +103,10 @@ import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { T1RecoveryState } from "./health.js";
 import { makeResponseBodyOf } from "./response-body.js";
+import {
+  SandboxAuthoritySnapshot,
+  sandboxIssuerSnapshotOf,
+} from "./sandbox-authority-bundle.js";
 import type { AuthenticatorService } from "./transport/auth.js";
 import {
   publishConversationSettled,
@@ -192,7 +195,8 @@ export type TransportBoundaryServices =
   | ExecutionScheduler
   | ProjectEnvironmentPort
   | OwnershipWriteService
-  | ResourceOwnershipRepository;
+  | ResourceOwnershipRepository
+  | SandboxAuthoritySnapshot;
 
 /** The production transport boundary: the composition-root submission face
  * (resolver + canonicalFacts/grants loading) plus the P12 shells bound to the
@@ -202,7 +206,6 @@ export const TransportBoundaryLive = (
   governance: ParentUserGovernanceFacts,
   authenticatorConfigured: boolean,
   postCommitBeforeActivationProbe?: CreateProjectPostCommitBeforeActivationQualificationProbe,
-  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
 ): Layer.Layer<TransportBoundary, never, TransportBoundaryServices> =>
   Layer.effect(
     TransportBoundary,
@@ -210,6 +213,9 @@ export const TransportBoundaryLive = (
       const queryPort = yield* ProjectionQueryPort;
       const resolver = yield* AuthorityResolverPort;
       const transaction = yield* TransactionPort;
+      const authoritySnapshot = yield* SandboxAuthoritySnapshot;
+      const sandboxPolicyGrantIssuerConfigSnapshot =
+        sandboxIssuerSnapshotOf(authoritySnapshot);
       const retryVerificationOrigins = yield* Effect.serviceOption(
         RetryVerificationOriginRepository,
       );

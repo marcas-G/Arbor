@@ -37,6 +37,7 @@ import type {
   ReadmissionTargetMismatch,
   ResourceOwnershipRepositoryError,
   RetryVerificationOriginRepositoryError,
+  SandboxPolicyDecisionStoreError,
   SchedulerTimerStoreError,
   SessionRepositoryError,
   ToolInvocationStoreError,
@@ -103,6 +104,7 @@ export type CommandHandlerError =
   | ExecutionRepositoryError
   | WorkWaitStoreError
   | SchedulerTimerStoreError
+  | SandboxPolicyDecisionStoreError
   | CommandStoreError
   | DomainEventJournalError
   | FormationProposalStoreError
@@ -149,9 +151,20 @@ export interface CommandHandler<C, R> {
     envelope: GatewayEnvelope<C>,
     context: CommandSubmissionContext,
   ) => Effect.Effect<void, CommandHandlerError, TransactionScope>;
+  /** Optional read-only preparation hook. The Gateway runs it only after an
+   * advisory receipt miss and before BEGIN IMMEDIATE; its output is not
+   * authority and must be revalidated by execute inside the transaction. */
+  readonly prepare?: (
+    envelope: GatewayEnvelope<C>,
+    context: CommandSubmissionContext,
+  ) => Effect.Effect<
+    unknown,
+    CommandHandlerError | TransactionOperationalFailure
+  >;
   readonly execute: (
     envelope: GatewayEnvelope<C>,
     context: CommandSubmissionContext,
+    prepared?: unknown,
   ) => Effect.Effect<
     CommandResult<CommandOutcome<R>>,
     CommandHandlerError,

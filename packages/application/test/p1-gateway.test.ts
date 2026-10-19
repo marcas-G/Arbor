@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   Actor,
   CommandId,
@@ -5,6 +6,8 @@ import {
   type DomainError,
   type DomainResult,
   ExecutionId,
+  encodeEffectivePolicySummaryV1,
+  encodeSandboxPolicyDecisionCommittedInternalV1,
   err,
   LeaseGeneration,
   MessageId,
@@ -466,6 +469,169 @@ describe("typed internal command input validation", () => {
 });
 
 describe("command gateway", () => {
+  it("prepares only after an advisory miss and replays without recapturing inputs", async () => {
+    let prepareCalls = 0;
+    let executeCalls = 0;
+    const episodeBinding = {
+      _tag: "InboxEpisode" as const,
+      entryKey: "inbox:one",
+      inputKind: "HumanMessage",
+    };
+    const summary = {
+      version: 1 as const,
+      kind: "TrustedLocalUnconfinedV1" as const,
+      projectId,
+      workspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ac" as never,
+      executionId: executionContext.executionId,
+      episodeBinding,
+      workspaceRevision: 1,
+      resourceBoundaryRevision: 1,
+      resourceBoundaryDigest: "a".repeat(64),
+      sandboxEnvironmentBasisDigest: "b".repeat(64),
+      policyRevision: 1,
+      expiresAt: "2026-10-20T00:00:00.000Z",
+      trustedRuntimeIdentity: "TrustedLocal" as const,
+      trustedRuntimeVersion: "builtin-v1" as const,
+      profile: "FullAccess" as const,
+      networkBoundary: "Unconfined" as const,
+      sandboxHandleBindingDigest: "c".repeat(64),
+      mounts: [
+        {
+          mountId: "workspace",
+          targetRef: "workspace",
+          targetIdentityDigest: "d".repeat(64),
+          access: "ReadOnly" as const,
+        },
+      ],
+      environmentAllowlist: ["PATH"],
+      limits: {
+        wallTimeMs: 1000,
+        stdoutBytes: 1000,
+        stderrBytes: 1000,
+        processCount: 1,
+        memoryBytes: 1024,
+        cpuTimeMs: 1000,
+      },
+      auditRefs: ["audit:one"],
+      authorityBundleRevision: 1,
+      authorityBundleDigest: "e".repeat(64),
+      operatorConfigRevision: 1,
+      operatorConfigDigest: "f".repeat(64),
+    };
+    const policyDigest = createHash("sha256")
+      .update(encodeEffectivePolicySummaryV1(summary))
+      .digest("hex");
+    const decisionResult = {
+      version: 1 as const,
+      commandId,
+      projectId,
+      workspaceId: summary.workspaceId,
+      executionId: executionContext.executionId,
+      episodeBinding,
+      policyRevision: 1,
+      policyDigest,
+      effectivePolicySnapshot: summary,
+    };
+    // Constructing canonical bytes here also asserts the test fixture follows
+    // the same closed internal DTO used by receipt replay.
+    encodeSandboxPolicyDecisionCommittedInternalV1(decisionResult);
+    const baseHandler = handler(
+      () => ok({ result: decisionResult, events: [] }),
+      () => {
+        executeCalls += 1;
+      },
+      undefined,
+      "DecideSandboxPolicy",
+    );
+    const policyHandler: CommandHandler<unknown, unknown> = {
+      ...baseHandler,
+      schemaVersion: "1",
+      prepare: () =>
+        Effect.sync(() => {
+          prepareCalls += 1;
+          return { prepared: true };
+        }),
+    };
+    const { app, state } = buildApp([policyHandler]);
+    const payload = { identity: "same" };
+    const command = envelope(payload, "DecideSandboxPolicy");
+    const authority: VerifiedCommandAuthority = {
+      _tag: "CreateProjectAuthority",
+      principal,
+      commandId,
+      projectId,
+      semanticRequestFingerprint: fpFor(payload, "DecideSandboxPolicy"),
+    };
+    const receipts = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        const first = yield* gateway.execute(
+          command,
+          externalContext,
+          authority,
+        );
+        const replay = yield* gateway.execute(
+          command,
+          externalContext,
+          authority,
+        );
+        return { first, replay };
+      }),
+      app,
+    );
+    expect(receipts.first.resolution._tag).toBe("Committed");
+    expect(receipts.replay.resolution).toEqual(receipts.first.resolution);
+    expect(prepareCalls).toBe(1);
+    expect(executeCalls).toBe(1);
+    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
+  });
+
+  it("rechecks the receipt after transient preparation failure without inserting a command", async () => {
+    const baseHandler = handler(
+      () => ok({ result: { committed: true }, events: [] }),
+      undefined,
+      undefined,
+      "DecideSandboxPolicy",
+    );
+    const policyHandler: CommandHandler<unknown, unknown> = {
+      ...baseHandler,
+      schemaVersion: "1",
+      prepare: () =>
+        Effect.fail({
+          _tag: "TransactionOperationalFailure",
+          cause: "fixture preparation unavailable",
+        }),
+    };
+    const { app, state } = buildApp([policyHandler]);
+    const payload = { identity: "unprepared" };
+    const result = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* Effect.match(
+          gateway.execute(
+            envelope(payload, "DecideSandboxPolicy"),
+            externalContext,
+            {
+              _tag: "CreateProjectAuthority",
+              principal,
+              commandId,
+              projectId,
+              semanticRequestFingerprint: fpFor(payload, "DecideSandboxPolicy"),
+            },
+          ),
+          {
+            onFailure: (error) => ({ _tag: "Failure" as const, error }),
+            onSuccess: (receipt) => ({ _tag: "Receipt" as const, receipt }),
+          },
+        );
+      }),
+      app,
+    );
+    expect(result._tag).toBe("Failure");
+    expect(state.rows.has(commandId)).toBe(false);
+    expect(state.appended).toHaveLength(0);
+  });
+
   it("inserts the GrantPermission receipt before its events in the same transaction", async () => {
     const permissionGrantId = parse(PermissionGrantId)(
       "pgr_018f2b3c-4d5e-7abc-8def-0123456789ab",
