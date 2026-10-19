@@ -2,7 +2,11 @@
 
 Date: 2026-10-19
 
-Candidate: `28907165738d48cd3bc24226b003fc42665a3a2a`
+Code candidate: `28907165738d48cd3bc24226b003fc42665a3a2a`
+
+Current HEAD also contains the docs-only owner landing cherry-pick
+`7ad5c19a3e9eff0a5da33b25d228f0e22dff2643`; it does not change the code
+checkpoint below.
 
 Status: **Wave C transactional closure complete; Wave D partial; T2 provider identities integrated; T3 open.**
 
@@ -15,7 +19,7 @@ full-suite qualification.
 | Area | Status | Evidence / open work |
 |---|---|---|
 | Wave C policy/grant and decision transaction path | **Closed** | Decision-result codecs and exact receipt/result joins; Gateway command boundary; SQLite transaction and process-crash qualification. Commits are listed below. The primary crash qualification is `packages/application/test/sandbox-policy-decision-gateway.atomic.test.ts` plus its crash child. |
-| Wave D provider-unavailable recovery and surfaces | **Partial** | P9 fact/queue/wake and P3 action settlement, P10 Attention projection/polling, recovery replay, Web views, and successor resume are implemented. Remaining: production `sandboxProcessPolicy` wiring, real two-daemon SQLite qualification, and first-decision V5 acceptance/landing. These gates are not inferred from the focused green tests. |
+| Wave D provider-unavailable recovery and surfaces | **Partial** | P9 fact/queue/wake and P3 action settlement, P10 Attention projection/polling, recovery replay, Web views, and successor resume are implemented. Remaining: production `sandboxProcessPolicy` wiring and real two-daemon SQLite qualification. Candidate-read V5 is now accepted and landed; its independent post-landing review remains pending. These gates are not inferred from the focused green tests. |
 | T2 provider identities | **Integrated; experimental only** | Composition advertises Linux `linux-bwrap`, macOS `macos-seatbelt`, and Windows `windows-mxc`, `windows-elevated-dedicated-user`, `windows-restricted-appcontainer-job`. All remain `Experimental`, publish empty profile/network tuples, and return typed `Unavailable`. No TrustedLocal fallback or process spawn is enabled. |
 | T3 enforcement and release qualification | **Open** | No provider is `Supported`; filesystem/network enforcement, broker behavior, process-tree cleanup, limits, and stop behavior are not qualified. No release claim. |
 
@@ -58,6 +62,29 @@ T2 provider adapters and final integration:
 `301655b283c5b4d307abe2df9ccb237e2239ad98`,
 `552a07d32fba104761088acf660a034fe37793fe`,
 `28907165738d48cd3bc24226b003fc42665a3a2a`.
+
+## Governance owner landing
+
+Owner contracts were accepted and integrated by cherry-picking
+`de6868febf328e0be3c3a12fa1bb82c03eb140bf` as
+`7ad5c19a3e9eff0a5da33b25d228f0e22dff2643`. The commit changes only
+`docs/design/**` and `planning/results/**`; it adds no production code or
+database change.
+
+- Producer Mapping Closure V3 accepted SHA-256:
+  `3944B1E8BBA9A7A0EBB47988B4B67965718C94EB4EE05D9605E9711AC1FF8A8A`.
+- High-Water Amendment V2 accepted SHA-256:
+  `09F67CCA1DA295C08011890C96E6409990EB9A3CB45D7F555E3776925C0BA1EE`.
+- Candidate Read Model V5 accepted SHA-256:
+  `26B4BDAA4F79DCF2A0EA7C601A1037372A9C5308AB761663A921235076CE8D13`.
+
+Acceptance records are
+`planning/results/native-os-sandbox-v21-producer-mapping-closure-acceptance.record.md`,
+`planning/results/native-os-sandbox-v21-producer-mapping-highwater-amendment-v2-acceptance.record.md`,
+and `planning/results/sandbox-policy-candidate-readmodel-v5-acceptance.record.md`.
+Each records independent post-landing review as pending. The accepted owner
+landing does not itself authorize implementation or close the outstanding Wave
+D code gates.
 
 ## Tests and checks
 
