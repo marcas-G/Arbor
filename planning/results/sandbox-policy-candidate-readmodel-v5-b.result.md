@@ -21,13 +21,19 @@ or accepted candidate DTO changes were made.
 - Added a regression with an unexpired TrustedLocal result whose bundle is
   stale after a registry-only bundle revision. It proves P2 parks before lease
   acquisition and before dispatch/driver invocation.
+- Strengthened the P2 fixture with the strict production
+  `SandboxPolicyDecisionCommittedInternalV1` encoder/decoder, exact
+  `TrustedLocalUnconfinedV1` selection/provider/runtime literals, and the full
+  episode-binding schema (`P38_MIGRATIONS`). The adjacent exact-bundle match
+  case proves one dispatch/driver invocation; the registry-only drift case
+  proves zero. A no-requirement case verifies P5 is not read/audited.
 
 ## Verification
 
 - `pnpm --filter @arbor/ports build` — PASS
 - `pnpm --filter @arbor/execution-runtime build` — PASS
 - `pnpm --filter @arbor/single-workspace build` — PASS
-- `pnpm exec vitest run tests/p2-driver.test.ts` — PASS, 9/9
+- `pnpm exec vitest run tests/p2-driver.test.ts` — PASS, 11/11
 - Targeted Biome check and `git diff --check` — PASS
 
 ## P10 design-gap counterexample
