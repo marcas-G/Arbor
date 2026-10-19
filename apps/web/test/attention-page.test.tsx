@@ -115,6 +115,59 @@ afterEach(() => {
 });
 
 describe("W-06 关注事项页（只读）", () => {
+  it("renders sandbox Attention sources as read-only safe rows", async () => {
+    const urls = installAttention({
+      dto: {
+        rows: [
+          {
+            source: "SandboxProviderUnavailable",
+            severity: "ActionRequired",
+            targetWorkspaceId: "ws_1",
+            dedupKey: "att_provider",
+            summaryRef:
+              "Required sandbox capabilities are unavailable; execution did not start.",
+            occurredAt: "2026-10-19T10:00:00.000Z",
+          },
+          {
+            source: "SandboxRecoveryBindingFailure",
+            severity: "ActionRequired",
+            targetWorkspaceId: "ws_2",
+            dedupKey: "a".repeat(64),
+            summaryRef:
+              "Sandbox recovery binding evidence is missing or invalid; execution is paused.",
+            occurredAt: "2026-10-19T10:00:01.000Z",
+          },
+        ],
+      },
+    });
+    renderAttention();
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "Sandbox recovery binding evidence is missing or invalid; execution is paused.",
+        ),
+      ).toBeTruthy(),
+    );
+    expect(
+      screen.getAllByText(
+        "Required sandbox capabilities are unavailable; execution did not start.",
+      ),
+    ).toHaveLength(3);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Sandbox recovery binding evidence is missing or invalid/,
+      }),
+    );
+    const inspection = screen.getByRole("complementary", {
+      name: "关注事项检查面板",
+    });
+    expect(within(inspection).getByText("a".repeat(64))).toBeTruthy();
+    expect(
+      within(inspection).queryByRole("button", { name: /repair|rebind/i }),
+    ).toBeNull();
+    expect(urls.every((url) => url.startsWith("/views/"))).toBe(true);
+  });
+
   it("severity 分组顺序：ActionRequired 组在前；组头 danger/attention Badge + 计数", async () => {
     installAttention();
     renderAttention();

@@ -5,7 +5,13 @@
  */
 import type { Problem } from "@arbor/api-contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceTab } from "../src/api/router.js";
 import {
@@ -118,6 +124,39 @@ afterEach(() => {
 });
 
 describe("W-05 Workspace page", () => {
+  it("shows only the path-free current sandbox policy projection", async () => {
+    const detail = {
+      ...detailTypical,
+      executionSummary: {
+        executionId: "exe_sandbox",
+        admittedAt: "2026-10-19T09:00:00.000Z",
+        sandboxPolicy: {
+          policyRevision: 3,
+          profile: "WorkspaceWrite" as const,
+          providerId: "bwrap",
+          networkMode: "Restricted" as const,
+          status: "Unavailable" as const,
+          expiresAt: "2026-10-19T12:00:00.000Z",
+        },
+      },
+    };
+    installViews({
+      ...defaultHandlers,
+      "workspace-detail": () => ({ dto: detail }),
+    });
+    renderWorkspace();
+    await waitFor(() => expect(screen.getByText("bwrap")).toBeTruthy());
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+    expect(screen.getByText("WorkspaceWrite")).toBeTruthy();
+    expect(screen.getByText("Restricted")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
+    expect(
+      within(screen.getByLabelText("Sandbox policy")).queryByText(
+        /\/srv\/|C:\\\\Users/u,
+      ),
+    ).toBeNull();
+  });
+
   it("头部：workspaceId（Mono）/ purpose / status 徽章 / attention 计数 / boundary 简述", async () => {
     installViews();
     renderWorkspace();

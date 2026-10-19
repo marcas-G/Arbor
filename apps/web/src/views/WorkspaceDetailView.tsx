@@ -8,7 +8,7 @@ import { Card } from "../components/Card.js";
 import { Empty } from "../components/Empty.js";
 import { DependencyTable } from "./DependencyView.js";
 import { InboxRows } from "./InboxView.js";
-import { EnumBadge, Mono, TimeText } from "./shared.js";
+import { EnumBadge, Mono, SandboxPolicySummary, TimeText } from "./shared.js";
 import { VerificationView } from "./VerificationView.js";
 
 type Address = WorkspaceDetailRes["boundary"]["addresses"][number];
@@ -109,6 +109,12 @@ export function WorkspaceDetailView({
                   <Mono>{res.currentWork.activeExecution.executionId}</Mono>{" "}
                   <TimeText at={res.currentWork.activeExecution.admittedAt} />
                 </span>
+                {res.currentWork.activeExecution.sandboxPolicy ===
+                undefined ? null : (
+                  <SandboxPolicySummary
+                    policy={res.currentWork.activeExecution.sandboxPolicy}
+                  />
+                )}
               </div>
             )}
           </div>
@@ -120,6 +126,9 @@ export function WorkspaceDetailView({
             <Mono>{res.executionSummary.executionId}</Mono>{" "}
             <TimeText at={res.executionSummary.admittedAt} />
           </span>
+          {res.executionSummary.sandboxPolicy === undefined ? null : (
+            <SandboxPolicySummary policy={res.executionSummary.sandboxPolicy} />
+          )}
         </Card>
       )}
       <Card title="Pending Works">

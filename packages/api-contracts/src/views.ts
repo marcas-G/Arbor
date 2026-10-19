@@ -31,6 +31,14 @@ import type {
 export interface ExecutionSummary {
   readonly executionId: ExecutionId;
   readonly admittedAt: string;
+  readonly sandboxPolicy?: {
+    readonly policyRevision: number;
+    readonly profile: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
+    readonly providerId: string;
+    readonly networkMode: "Disabled" | "Restricted" | "Enabled";
+    readonly status: "Configured" | "Unavailable";
+    readonly expiresAt: string;
+  };
 }
 
 export interface CurrentWorkSummary {
@@ -67,6 +75,8 @@ export type AttentionSource =
   | "WorkspaceResourceActivationPending"
   | "ToolObservationReplayEvidenceFailure"
   | "LegacyAdoptionEvidenceInsufficient"
+  | "SandboxProviderUnavailable"
+  | "SandboxRecoveryBindingFailure"
   | "VerifierOrphan"
   | "VacantProducer";
 
@@ -79,6 +89,8 @@ export const ATTENTION_SOURCES: ReadonlyArray<AttentionSource> = [
   "DeliverReplayFailure",
   "ToolObservationReplayEvidenceFailure",
   "LegacyAdoptionEvidenceInsufficient",
+  "SandboxProviderUnavailable",
+  "SandboxRecoveryBindingFailure",
   "VerifierOrphan",
   "VacantProducer",
 ];
