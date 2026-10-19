@@ -5,8 +5,8 @@ Date: 2026-10-19
 Code candidate: `28907165738d48cd3bc24226b003fc42665a3a2a`
 
 Current HEAD also contains the docs-only owner landing cherry-pick
-`7ad5c19a3e9eff0a5da33b25d228f0e22dff2643`; it does not change the code
-checkpoint below.
+`7ad5c19a3e9eff0a5da33b25d228f0e22dff2643` and post-review record
+`c1c4371a`; neither changes the code checkpoint below.
 
 Status: **Wave C transactional closure complete; Wave D partial; T2 provider identities integrated; T3 open.**
 
@@ -19,7 +19,7 @@ full-suite qualification.
 | Area | Status | Evidence / open work |
 |---|---|---|
 | Wave C policy/grant and decision transaction path | **Closed** | Decision-result codecs and exact receipt/result joins; Gateway command boundary; SQLite transaction and process-crash qualification. Commits are listed below. The primary crash qualification is `packages/application/test/sandbox-policy-decision-gateway.atomic.test.ts` plus its crash child. |
-| Wave D provider-unavailable recovery and surfaces | **Partial** | P9 fact/queue/wake and P3 action settlement, P10 Attention projection/polling, recovery replay, Web views, and successor resume are implemented. Remaining: production `sandboxProcessPolicy` wiring and real two-daemon SQLite qualification. Candidate-read V5 is now accepted and landed; its independent post-landing review remains pending. These gates are not inferred from the focused green tests. |
+| Wave D provider-unavailable recovery and surfaces | **Partial** | P9 fact/queue/wake and P3 action settlement, P10 Attention projection/polling, recovery replay, Web views, and successor resume are implemented. Remaining: production `sandboxProcessPolicy` wiring and real two-daemon SQLite qualification. Candidate-read V5 is accepted and landed; its independent post-landing review passed B0/B1/B2 = 0. These code gates are not inferred from the focused green tests. |
 | T2 provider identities | **Integrated; experimental only** | Composition advertises Linux `linux-bwrap`, macOS `macos-seatbelt`, and Windows `windows-mxc`, `windows-elevated-dedicated-user`, `windows-restricted-appcontainer-job`. All remain `Experimental`, publish empty profile/network tuples, and return typed `Unavailable`. No TrustedLocal fallback or process spawn is enabled. |
 | T3 enforcement and release qualification | **Open** | No provider is `Supported`; filesystem/network enforcement, broker behavior, process-tree cleanup, limits, and stop behavior are not qualified. No release claim. |
 
@@ -82,9 +82,12 @@ Acceptance records are
 `planning/results/native-os-sandbox-v21-producer-mapping-closure-acceptance.record.md`,
 `planning/results/native-os-sandbox-v21-producer-mapping-highwater-amendment-v2-acceptance.record.md`,
 and `planning/results/sandbox-policy-candidate-readmodel-v5-acceptance.record.md`.
-Each records independent post-landing review as pending. The accepted owner
-landing does not itself authorize implementation or close the outstanding Wave
-D code gates.
+The independent post-landing review is recorded at
+`planning/results/native-os-sandbox-v21-producer-and-candidate-read-postlanding-review.result.md`:
+PASS, B0 = 0, B1 = 0, B2 = 0. The review clears the owner-landing gate under
+the pre-existing Native Sandbox implementation authorization. Candidate Read
+Model V5 grants no separate implementation authority. Wave D code gates remain
+open.
 
 ## Tests and checks
 
@@ -121,11 +124,18 @@ or upgraded.
 
 ## Independent reviews
 
-Two independent reviews were supplied in the integration task thread; neither
-has a persisted repository review artifact or hash yet:
+The two independent owner post-reviews are persisted in
+`planning/results/native-os-sandbox-v21-producer-and-candidate-read-postlanding-review.result.md`:
+B0 = 0, B1 = 0, B2 = 0. Review sources were
+`/root/native_sandbox_wave_a_review` and
+`/root/sandbox_remaining_contract_review`. The reviews matched all three
+accepted proposal hashes and all 23 owner postimage SHA-256 values in the
+landing manifest.
+
+Separate provider reviews remain thread-local and do not constitute a final
+integrated implementation review:
 
 - `/root/native_sandbox_posix_review`: B0/B1/B2 = 0; rerun counts `13 + 6 + 1 + 24`.
 - `/root/native_sandbox_windows_review`: B2 closed; rerun counts `5 + 37`.
 
-These are scoped provider-review results, not final integrated review records.
-Persisted final review evidence and full-suite qualification remain pending.
+Full-suite and release qualification remain pending.
