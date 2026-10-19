@@ -240,6 +240,14 @@ export interface AttentionReadDeps {
     ReadonlyArray<SandboxRecoveryBindingFailureProjectionRow>,
     ProjectionReadError
   >;
+  readonly listSandboxPolicyDecisionRequired?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<
+      import("@arbor/ports").SandboxPolicyDecisionRequiredProjectionRow
+    >,
+    ProjectionReadError
+  >;
 }
 
 const asRecord = (payload: unknown): Record<string, unknown> =>
@@ -1326,6 +1334,21 @@ export const deriveProjectAttention = (
           dedupKey: row.attentionFactId,
           summary:
             "Sandbox recovery binding evidence is missing or invalid; execution is paused.",
+          occurredAt: row.intentAt,
+        })),
+      ];
+    }
+    if (deps.listSandboxPolicyDecisionRequired !== undefined) {
+      const pending = yield* deps.listSandboxPolicyDecisionRequired(projectId);
+      rows = [
+        ...rows,
+        ...pending.map((row) => ({
+          source: "SandboxPolicyDecisionRequired" as const,
+          severity: "ActionRequired" as const,
+          targetWorkspaceId: row.workspaceId,
+          dedupKey: row.attentionFactId,
+          summary:
+            "A sandbox policy decision is required before execution can continue.",
           occurredAt: row.intentAt,
         })),
       ];

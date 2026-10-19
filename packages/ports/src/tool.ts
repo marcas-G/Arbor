@@ -26,6 +26,7 @@ import type {
 } from "./errors.js";
 import type { InvocationRef } from "./execution.js";
 import type {
+  SandboxPolicyRequiredInterruption,
   SandboxProcessPolicy,
   SandboxProviderUnavailableOutcome,
 } from "./sandbox-process.js";
@@ -238,6 +239,7 @@ export type CanonicalToolObservation =
     }
   | { readonly _tag: "RuntimeFailure"; readonly cause: string }
   | SandboxProviderUnavailableOutcome
+  | SandboxPolicyRequiredInterruption
   | {
       readonly _tag: "ReconciledNoEffect";
       readonly reasonCode:

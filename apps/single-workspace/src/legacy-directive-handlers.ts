@@ -99,6 +99,12 @@ const toOutcome = (
       return observation("Runtime", `tool runtime failure: ${result.cause}`);
     case "SandboxProviderUnavailable":
       return observation("Runtime", "sandbox process provider unavailable");
+    case "SandboxPolicyRequiredInterruption":
+      return {
+        _tag: "Unsupported",
+        reason:
+          "sandbox policy decision requires the durable AgentLoop action route",
+      };
     case "ReconciledNoEffect":
       return {
         _tag: "Observation",

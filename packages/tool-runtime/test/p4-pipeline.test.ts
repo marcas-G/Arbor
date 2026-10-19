@@ -1474,6 +1474,10 @@ const processContext = (
     actionIndex: 0,
     callRef: "c",
   },
+  recoveryBindingPolicyRevisions: {
+    workspacePolicyRevision: 0,
+    projectPolicyRevision: 0,
+  },
   sandboxProcessPolicy: policy,
 });
 
@@ -1547,7 +1551,8 @@ const sandboxCapability = (
 });
 
 describe("P4 tool runtime pipeline", () => {
-  it("rejects a process-capable executor without a durable policy before provider execution", async () => {
+  it("parks the same bound invocation when process policy is absent, before effect admission", async () => {
+    const p39Case = p39ApprovedCase("c7", "action-p4-policy-required");
     const trace: PipelineTrace = {
       noEffectDenials: [],
       events: [],
@@ -1555,15 +1560,32 @@ describe("P4 tool runtime pipeline", () => {
       intentWrites: 0,
       effectAdmissions: 0,
       approvalConsumes: 0,
+      resolvedEnvironmentRevisionSequence: ["rev-exact", "rev-exact"],
+      currentEnvironmentRevisionValues: ["rev-exact", "rev-exact"],
       sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
     };
+    const { sandboxProcessPolicy: _policy, ...contextWithoutPolicy } =
+      p39Case.approvedContext;
+    expect(_policy).toBeUndefined();
     const result = await run(
-      app(false, processExecutor, {}, trace),
-      '{"target":{"mount":"workspace","path":"."}}',
-      null,
-      context,
+      app(
+        false,
+        { ...processExecutor, requiresApproval: () => true },
+        {},
+        trace,
+        p39Case.approval,
+        false,
+        undefined,
+        "rev-exact",
+      ),
+      p39Case.argumentsJson,
+      p39Case.approvalId,
+      contextWithoutPolicy,
     );
-    expect(result._tag).toBe("RuntimeFailure");
+    expect(result._tag).toBe("SandboxPolicyRequiredInterruption");
+    expect(trace.intentWrites).toBe(1);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(trace.settlementWrites ?? 0).toBe(0);
     expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
   });
 

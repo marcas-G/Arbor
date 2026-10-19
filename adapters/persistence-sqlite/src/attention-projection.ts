@@ -1,5 +1,9 @@
 import type { DomainEvent, ProjectId } from "@arbor/domain";
 import {
+  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
+  encodeExecutionEpisodeBinding,
+} from "@arbor/domain";
+import {
   type AssignWorkBindingAttentionFact,
   type AssignWorkBindingAttentionProjectionRow,
   AttentionProjectionStore,
@@ -16,6 +20,7 @@ import {
   legacyAdoptionResolutionFactIdV1,
   type ProjectionStoreService,
   type RecoveryAttentionFactStoreService,
+  type SandboxPolicyDecisionRequiredProjectionRow,
   type SandboxProviderUnavailableAttentionProjectionRow,
   type SandboxProviderUnavailableAttentionQueueService,
   type SandboxProviderUnavailableStoreService,
@@ -25,6 +30,7 @@ import {
   type ToolObservationReplayAttentionFactStoreService,
   type ToolObservationReplayAttentionProjectionRow,
   TransactionScope,
+  targetResourceIdentityDigestV1,
   verifyRecoveryBindingV1,
   type WorkspaceResourceActivationAttentionProjectionRow,
   type WorkspaceResourceActivationIntent,
@@ -113,6 +119,17 @@ interface SandboxProviderUnavailableAttentionDbRow {
   readonly policy_digest: string;
   readonly profile_id: string;
   readonly provider_id: string;
+  readonly provider_version: string;
+  readonly probe_evidence_ref: string | null;
+  readonly failure_code: string;
+  readonly episode_binding_json: string;
+  readonly active_episode_json: string;
+  readonly decision_command_id: string;
+  readonly command_resolution: string | null;
+  readonly command_schema_version: string | null;
+  readonly command_result_json: string | null;
+  readonly command_project_id: string | null;
+  readonly disposition_json: string;
 }
 
 interface SandboxRecoveryBindingDbRow {
@@ -129,6 +146,7 @@ interface SandboxRecoveryBindingDbRow {
   readonly tool_version: string;
   readonly side_effect_semantics: string;
   readonly arguments_json: string;
+  readonly resolved_regions_json?: string;
   readonly binding_version: number | null;
   readonly canonical_binding_json: string | null;
   readonly binding_sha256: string | null;
@@ -141,6 +159,7 @@ interface SandboxRecoveryBindingDbRow {
   readonly p3_call_ref: string | null;
   readonly p3_provider_turn_id: string | null;
   readonly p3_step_state: string | null;
+  readonly p3_step_next_action_index?: number | null;
 }
 
 const canonicalUtcText = (value: string): boolean => {
@@ -1201,7 +1220,14 @@ export const makeAttentionProjectionStoreLive = (
               sql.unsafe<SandboxProviderUnavailableAttentionDbRow>(
                 `SELECT f.project_id, f.attention_fact_id, f.workspace_id,
                         f.execution_id, f.policy_revision, f.first_detected_at,
-                        d.policy_digest, d.profile_id, d.provider_id
+                        f.provider_version, f.probe_evidence_ref, f.failure_code,
+                        d.policy_digest, d.profile_id, d.provider_id,
+                        d.episode_binding_json, s.episode_json AS active_episode_json,
+                        d.decision_command_id, c.resolution AS command_resolution,
+                        c.schema_version AS command_schema_version,
+                        c.result_json AS command_result_json,
+                        c.project_id AS command_project_id,
+                        a.disposition_json
                    FROM sandbox_provider_unavailable_attention_rows m
                    JOIN sandbox_provider_unavailable_facts f
                      ON f.project_id = m.project_id
@@ -1219,6 +1245,11 @@ export const makeAttentionProjectionStoreLive = (
                     AND json_extract(a.disposition_json, '$.attentionFactId') = f.attention_fact_id
                     AND json_extract(a.disposition_json, '$.policyRevision') = f.policy_revision
                     AND json_extract(a.disposition_json, '$.policyDigest') = f.policy_digest
+                    AND json_extract(a.disposition_json, '$.profile') = f.profile_id
+                    AND json_extract(a.disposition_json, '$.providerId') = f.provider_id
+                    AND json_extract(a.disposition_json, '$.providerVersion') = f.provider_version
+                    AND json_extract(a.disposition_json, '$.probeEvidenceRef') IS f.probe_evidence_ref
+                    AND json_extract(a.disposition_json, '$.failureCode') = f.failure_code
                    JOIN agent_loop_steps step
                      ON step.execution_id = a.execution_id
                     AND step.logical_step_no = a.logical_step_no
@@ -1230,6 +1261,7 @@ export const makeAttentionProjectionStoreLive = (
                     AND d.project_id = e.project_id AND d.workspace_id = e.workspace_id
                     AND d.episode_binding_json = s.episode_json
                     AND d.policy_revision = f.policy_revision
+                  JOIN commands c ON c.command_id = d.decision_command_id
                   WHERE m.project_id = ? AND e.settled_at IS NULL
                     AND e.stop_requested_at IS NULL
                     AND d.policy_revision = (
@@ -1251,13 +1283,80 @@ export const makeAttentionProjectionStoreLive = (
                   ),
                 );
               }
+              const committed =
+                row.command_resolution === "Committed" &&
+                row.command_schema_version === "1" &&
+                row.command_project_id === row.project_id &&
+                row.command_result_json !== null
+                  ? decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+                      row.command_result_json,
+                      sha256Hex,
+                    )
+                  : undefined;
+              if (
+                committed === undefined ||
+                committed.commandId !== row.decision_command_id ||
+                committed.projectId !== row.project_id ||
+                committed.workspaceId !== row.workspace_id ||
+                committed.executionId !== row.execution_id ||
+                committed.policyRevision !== row.policy_revision ||
+                committed.policyDigest !== row.policy_digest ||
+                encodeExecutionEpisodeBinding(committed.episodeBinding) !==
+                  row.episode_binding_json ||
+                row.episode_binding_json !== row.active_episode_json ||
+                committed.effectivePolicySnapshot.kind !== "OsEnforced" ||
+                committed.effectivePolicySnapshot.profile !== row.profile_id ||
+                committed.effectivePolicySnapshot.providerId !==
+                  row.provider_id ||
+                committed.effectivePolicySnapshot.providerVersion !==
+                  row.provider_version
+              ) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "AttentionProjectionStore",
+                    "sandbox-provider-unavailable-read",
+                    "committed policy result does not match the P9 fact binding",
+                  ),
+                );
+              }
+              const disposition = JSON.parse(row.disposition_json) as Record<
+                string,
+                unknown
+              >;
+              if (
+                disposition._tag !== "SandboxUnavailableV1" ||
+                disposition.attentionFactId !== row.attention_fact_id ||
+                disposition.policyRevision !== row.policy_revision ||
+                disposition.policyDigest !== row.policy_digest ||
+                disposition.profile !== row.profile_id ||
+                disposition.providerId !== row.provider_id ||
+                disposition.providerVersion !== row.provider_version ||
+                disposition.capabilityRevision !==
+                  String(
+                    committed.effectivePolicySnapshot.capabilityRevision,
+                  ) ||
+                disposition.probeEvidenceRef !== row.probe_evidence_ref ||
+                disposition.failureCode !== row.failure_code
+              ) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "AttentionProjectionStore",
+                    "sandbox-provider-unavailable-read",
+                    "P3 terminal disposition does not match the P9 unavailable fact",
+                  ),
+                );
+              }
               const factRows = yield* run(
                 sql.unsafe<{
                   readonly policy_digest: string;
                   readonly profile_id: string;
                   readonly provider_id: string;
+                  readonly provider_version: string;
+                  readonly probe_evidence_ref: string | null;
+                  readonly failure_code: string;
                 }>(
-                  `SELECT policy_digest, profile_id, provider_id
+                  `SELECT policy_digest, profile_id, provider_id,
+                          provider_version, probe_evidence_ref, failure_code
                      FROM sandbox_provider_unavailable_facts
                     WHERE project_id = ? AND attention_fact_id = ?`,
                   [projectId, row.attention_fact_id],
@@ -1268,7 +1367,10 @@ export const makeAttentionProjectionStoreLive = (
                 fact === undefined ||
                 fact.policy_digest !== row.policy_digest ||
                 fact.profile_id !== row.profile_id ||
-                fact.provider_id !== row.provider_id
+                fact.provider_id !== row.provider_id ||
+                fact.provider_version !== row.provider_version ||
+                fact.probe_evidence_ref !== row.probe_evidence_ref ||
+                fact.failure_code !== row.failure_code
               ) {
                 return yield* Effect.fail(
                   persistenceCorruption(
@@ -1439,6 +1541,180 @@ export const makeAttentionProjectionStoreLive = (
               });
             }
             return failures;
+          }),
+        listSandboxPolicyDecisionRequired: (projectId, now) =>
+          Effect.gen(function* () {
+            if (!canonicalUtcText(now)) {
+              return yield* Effect.fail(
+                persistenceCorruption(
+                  "AttentionProjectionStore",
+                  "sandbox-policy-decision-required-read",
+                  "query time is not canonical UTC",
+                ),
+              );
+            }
+            const rows = yield* run(
+              sql.unsafe<SandboxRecoveryBindingDbRow>(
+                `SELECT e.project_id, e.execution_id, e.workspace_id,
+                        i.invocation_id, i.intent_at, i.recovery_binding_state,
+                        i.recovery_binding_sha256, i.effect_admission_state,
+                        i.settled_at, i.tool_name, i.tool_version,
+                        i.side_effect_semantics, i.arguments_json,
+                        i.resolved_regions_json, b.binding_version,
+                        b.canonical_binding_json, b.binding_sha256,
+                        a.profile_id, act.state AS action_state,
+                        act.input_hash AS action_input_hash,
+                        act.action_kind AS action_kind,
+                        act.logical_action_id AS p3_logical_action_id,
+                        act.action_index AS p3_action_index,
+                        act.call_ref AS p3_call_ref,
+                        step.provider_turn_id AS p3_provider_turn_id,
+                        step.state AS p3_step_state,
+                        step.next_action_index AS p3_step_next_action_index
+                   FROM tool_invocations i
+                   JOIN executions e ON e.execution_id = i.execution_id
+                    AND e.workspace_id = i.workspace_id
+                   JOIN agent_execution_state s ON s.execution_id = e.execution_id
+                   LEFT JOIN tool_invocation_recovery_bindings b
+                    ON b.invocation_id = i.invocation_id
+                   LEFT JOIN tool_invocation_effect_attempts a
+                    ON a.invocation_id = i.invocation_id AND a.attempt_no = 0
+                   LEFT JOIN agent_loop_step_actions act
+                    ON act.execution_id = i.execution_id
+                   AND act.logical_action_id = CASE
+                     WHEN b.canonical_binding_json IS NOT NULL
+                      AND json_valid(b.canonical_binding_json)
+                     THEN json_extract(b.canonical_binding_json, '$.logicalActionId')
+                     ELSE NULL END
+                   AND act.action_index = CASE
+                     WHEN b.canonical_binding_json IS NOT NULL
+                      AND json_valid(b.canonical_binding_json)
+                     THEN json_extract(b.canonical_binding_json, '$.actionIndex')
+                     ELSE NULL END
+                   AND act.call_ref = CASE
+                     WHEN b.canonical_binding_json IS NOT NULL
+                      AND json_valid(b.canonical_binding_json)
+                     THEN json_extract(b.canonical_binding_json, '$.callRef')
+                     ELSE NULL END
+                   LEFT JOIN agent_loop_steps step
+                    ON step.execution_id = act.execution_id
+                   AND step.logical_step_no = act.logical_step_no
+                   AND step.repair_attempt = act.repair_attempt
+                  WHERE e.project_id = ? AND e.settled_at IS NULL
+                    AND e.stop_requested_at IS NULL AND i.settled_at IS NULL
+                    AND i.effect_admission_state = 'NotAdmitted'
+                    AND (i.tool_name = 'shell' OR a.profile_id IS NOT NULL
+                         OR CASE WHEN b.canonical_binding_json IS NOT NULL
+                                   AND json_valid(b.canonical_binding_json)
+                                 THEN json_extract(b.canonical_binding_json, '$.profileId')
+                                 ELSE NULL END IS NOT NULL)
+                    AND NOT EXISTS (
+                      SELECT 1 FROM sandbox_policy_decisions d
+                       WHERE d.execution_id = e.execution_id
+                         AND d.project_id = e.project_id
+                         AND d.workspace_id = e.workspace_id
+                         AND d.episode_binding_json = s.episode_json
+                         AND d.expires_at > ?
+                    )
+                  ORDER BY e.execution_id, i.intent_at, i.invocation_id`,
+                [projectId, now],
+              ),
+            );
+            const pending: SandboxPolicyDecisionRequiredProjectionRow[] = [];
+            for (const row of rows) {
+              if (!canonicalUtcText(row.intent_at)) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "AttentionProjectionStore",
+                    "sandbox-policy-decision-required-read",
+                    "pending invocation timestamp is malformed",
+                  ),
+                );
+              }
+              if (
+                typeof row.recovery_binding_sha256 === "string" &&
+                !/^[0-9a-f]{64}$/u.test(row.recovery_binding_sha256)
+              ) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "AttentionProjectionStore",
+                    "sandbox-policy-decision-required-read",
+                    "stored binding digest is malformed",
+                  ),
+                );
+              }
+              const verified =
+                row.binding_version === 1 &&
+                row.canonical_binding_json !== null &&
+                row.binding_sha256 !== null
+                  ? verifyRecoveryBindingV1({
+                      invocationId: row.invocation_id as never,
+                      canonicalJson: row.canonical_binding_json,
+                      bindingSha256: row.binding_sha256,
+                    })
+                  : null;
+              const binding = verified?.value;
+              let validRegions = false;
+              try {
+                const regions = JSON.parse(
+                  row.resolved_regions_json ?? "null",
+                ) as ReadonlyArray<
+                  import("@arbor/domain").CanonicalResourceRegion
+                >;
+                validRegions =
+                  Array.isArray(regions) &&
+                  JSON.stringify(regions) === row.resolved_regions_json &&
+                  binding?.targetResourceIdentityDigest ===
+                    targetResourceIdentityDigestV1(regions);
+              } catch {
+                validRegions = false;
+              }
+              const valid =
+                row.recovery_binding_state === "Bound" &&
+                row.recovery_binding_sha256 !== null &&
+                row.recovery_binding_sha256 === row.binding_sha256 &&
+                binding !== undefined &&
+                binding !== null &&
+                binding.executionId === row.execution_id &&
+                binding.invocationId === row.invocation_id &&
+                binding.toolName === row.tool_name &&
+                binding.toolVersion === row.tool_version &&
+                binding.sideEffectSemantics === row.side_effect_semantics &&
+                binding.profileId !== null &&
+                binding.profileId === row.profile_id &&
+                row.action_state === "Pending" &&
+                row.action_input_hash === sha256Hex(row.arguments_json) &&
+                row.action_kind === row.tool_name &&
+                row.p3_logical_action_id === binding.logicalActionId &&
+                row.p3_action_index === binding.actionIndex &&
+                row.p3_call_ref === binding.callRef &&
+                row.p3_provider_turn_id === binding.providerTurnId &&
+                row.p3_step_state === "ActionsInProgress" &&
+                row.p3_step_next_action_index === binding.actionIndex &&
+                validRegions &&
+                (() => {
+                  try {
+                    return (
+                      binding.canonicalArgumentsDigest ===
+                      canonicalArgumentsDigestV1(
+                        JSON.parse(row.arguments_json) as unknown,
+                      )
+                    );
+                  } catch {
+                    return false;
+                  }
+                })();
+              if (!valid) continue;
+              pending.push({
+                projectId: row.project_id as ProjectId,
+                executionId: row.execution_id,
+                invocationId: row.invocation_id,
+                workspaceId: row.workspace_id as never,
+                attentionFactId: `sandbox-policy-decision-required:${row.execution_id}:${row.invocation_id}`,
+                intentAt: row.intent_at,
+              });
+            }
+            return pending;
           }),
         resetProject: (projectId) =>
           Effect.gen(function* () {

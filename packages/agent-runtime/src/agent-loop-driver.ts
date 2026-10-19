@@ -681,6 +681,11 @@ export const AgentLoopDriverLive = (
             if (actionProgression._tag === "SandboxProviderUnavailable") {
               return actionProgression;
             }
+            if (
+              actionProgression._tag === "SandboxPolicyRequiredInterruption"
+            ) {
+              return actionProgression;
+            }
             if (actionProgression._tag === "DecisionStale") {
               continue;
             }

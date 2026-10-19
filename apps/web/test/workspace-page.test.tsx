@@ -131,9 +131,11 @@ describe("W-05 Workspace page", () => {
         executionId: "exe_sandbox",
         admittedAt: "2026-10-19T09:00:00.000Z",
         sandboxPolicy: {
+          kind: "OsEnforced" as const,
           policyRevision: 3,
           profile: "WorkspaceWrite" as const,
           providerId: "bwrap",
+          providerVersion: "0.8.0",
           networkMode: "Restricted" as const,
           status: "Unavailable" as const,
           expiresAt: "2026-10-19T12:00:00.000Z",
@@ -148,6 +150,7 @@ describe("W-05 Workspace page", () => {
     await waitFor(() => expect(screen.getByText("bwrap")).toBeTruthy());
     expect(screen.getByText("Unavailable")).toBeTruthy();
     expect(screen.getByText("WorkspaceWrite")).toBeTruthy();
+    expect(screen.getByText("OS enforced")).toBeTruthy();
     expect(screen.getByText("Restricted")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
     expect(
@@ -155,6 +158,33 @@ describe("W-05 Workspace page", () => {
         /\/srv\/|C:\\\\Users/u,
       ),
     ).toBeNull();
+  });
+
+  it("renders NeedsDecision and TrustedLocal without implying a provider or network sandbox", async () => {
+    const detail = {
+      ...detailTypical,
+      executionSummary: {
+        executionId: "exe_sandbox",
+        admittedAt: "2026-10-19T09:00:00.000Z",
+        sandboxPolicy: {
+          kind: "TrustedLocalUnconfinedV1" as const,
+          profile: "FullAccess" as const,
+          networkBoundary: "Unconfined" as const,
+          policyRevision: 2,
+          expiresAt: "2026-10-19T12:00:00.000Z",
+          status: "NeedsDecision" as const,
+        },
+      },
+    };
+    installViews({
+      ...defaultHandlers,
+      "workspace-detail": () => ({ dto: detail }),
+    });
+    renderWorkspace();
+    await waitFor(() => expect(screen.getByText("NeedsDecision")).toBeTruthy());
+    expect(screen.getByText("Trusted local / unconfined")).toBeTruthy();
+    expect(screen.queryByText("Network mode")).toBeNull();
+    expect(screen.queryByText("os-sandbox")).toBeNull();
   });
 
   it("头部：workspaceId（Mono）/ purpose / status 徽章 / attention 计数 / boundary 简述", async () => {

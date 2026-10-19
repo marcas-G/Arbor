@@ -417,7 +417,8 @@ export type AgentLoopActionOutcome =
   | {
       readonly _tag: "SandboxProviderUnavailable";
       readonly outcome: SandboxProviderUnavailableOutcome;
-    };
+    }
+  | { readonly _tag: "SandboxPolicyRequiredInterruption" };
 
 /**
  * Owns one decoded turn's action phase. This boundary deliberately includes
@@ -1570,6 +1571,9 @@ export const executeAgentLoopActions = (
             _tag: "SandboxProviderUnavailable",
             outcome: executed.outcome.outcome,
           };
+        }
+        if (executed.outcome._tag === "SandboxPolicyRequiredInterruption") {
+          return { _tag: "SandboxPolicyRequiredInterruption" };
         }
         if (executed.outcome._tag === "Settle") {
           yield* persistActionSettlement(executed.outcome.settlement);

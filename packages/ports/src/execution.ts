@@ -227,6 +227,7 @@ export type ExecutionDriveOutcome =
       readonly _tag: "SandboxProviderUnavailable";
       readonly outcome: import("./sandbox-process.js").SandboxProviderUnavailableOutcome;
     }
+  | { readonly _tag: "SandboxPolicyRequiredInterruption" }
   | {
       readonly _tag: "SubmittedDecisionBindingMismatch";
       readonly failureCode:

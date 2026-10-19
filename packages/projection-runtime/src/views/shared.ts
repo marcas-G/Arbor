@@ -27,14 +27,7 @@ import type { RetryVerificationUnboundLegacyInboxProjection } from "@arbor/ports
 export interface ExecutionSummaryView {
   readonly executionId: ExecutionId;
   readonly admittedAt: string;
-  readonly sandboxPolicy?: {
-    readonly policyRevision: number;
-    readonly profile: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
-    readonly providerId: string;
-    readonly networkMode: "Disabled" | "Restricted" | "Enabled";
-    readonly status: "Configured" | "Unavailable";
-    readonly expiresAt: string;
-  };
+  readonly sandboxPolicy?: import("@arbor/domain").SandboxPolicyStatusViewV1;
 }
 
 /** Mirrors CurrentWorkSummary (P10 `05` §1). */

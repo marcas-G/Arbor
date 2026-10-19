@@ -16,6 +16,7 @@ import type {
 } from "@arbor/domain";
 import type {
   EvidenceRecordRow,
+  ProjectionQueryError,
   RetryVerificationUnboundLegacyInboxProjection,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -60,6 +61,12 @@ export interface WorkspaceDetailView {
   readonly inboxUnconsumed: ReadonlyArray<InboxUnconsumedEntryView>;
   readonly verification?: VerificationViewView | undefined;
   readonly auditTimeline: ReadonlyArray<AuditTimelineEntryView>;
+  readonly sandboxPolicyPreconditions?: import("@arbor/domain").SandboxPolicyPreconditionsV1;
+}
+
+export interface WorkspaceDetailSandboxPolicyProjection {
+  readonly sandboxPolicy?: ExecutionSummaryView["sandboxPolicy"];
+  readonly sandboxPolicyPreconditions?: import("@arbor/domain").SandboxPolicyPreconditionsV1;
 }
 
 /** Read faces the Workspace Detail derives from (P10 `01` §1 derive
@@ -81,8 +88,8 @@ export interface WorkspaceDetailDeps {
   readonly sandboxPolicyForExecution?: (
     execution: Execution,
   ) => Effect.Effect<
-    ExecutionSummaryView["sandboxPolicy"],
-    ProjectionReadError
+    WorkspaceDetailSandboxPolicyProjection,
+    ProjectionReadError | ProjectionQueryError
   >;
   readonly listDependenciesByWorkspace: (
     workspaceId: WorkspaceId,
@@ -197,7 +204,10 @@ const readAllEvents = (
 export const deriveWorkspaceDetail = (
   workspaceId: WorkspaceId,
   deps: WorkspaceDetailDeps,
-): Effect.Effect<WorkspaceDetailView, ProjectionReadError> =>
+): Effect.Effect<
+  WorkspaceDetailView,
+  ProjectionReadError | ProjectionQueryError
+> =>
   Effect.gen(function* () {
     const found = yield* deps.findWorkspace(workspaceId);
     if (Option.isNone(found)) {
@@ -213,14 +223,21 @@ export const deriveWorkspaceDetail = (
 
     const activeMain = yield* deps.findActiveMainExecution(workspaceId);
     let executionSummary: ExecutionSummaryView | undefined;
+    let sandboxPolicyPreconditions:
+      | import("@arbor/domain").SandboxPolicyPreconditionsV1
+      | undefined;
     if (Option.isSome(activeMain)) {
-      const sandboxPolicy = yield* deps.sandboxPolicyForExecution?.(
+      const sandboxPolicyProjection = yield* deps.sandboxPolicyForExecution?.(
         activeMain.value,
       ) ?? Effect.succeed(undefined);
+      sandboxPolicyPreconditions =
+        sandboxPolicyProjection?.sandboxPolicyPreconditions;
       executionSummary = {
         executionId: activeMain.value.executionId,
         admittedAt: activeMain.value.admittedAt,
-        ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
+        ...(sandboxPolicyProjection?.sandboxPolicy === undefined
+          ? {}
+          : { sandboxPolicy: sandboxPolicyProjection.sandboxPolicy }),
       };
     }
 
@@ -367,5 +384,8 @@ export const deriveWorkspaceDetail = (
       ],
       verification: verificationView,
       auditTimeline,
+      ...(sandboxPolicyPreconditions === undefined
+        ? {}
+        : { sandboxPolicyPreconditions }),
     };
   });
