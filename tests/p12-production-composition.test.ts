@@ -51,7 +51,7 @@ import {
 import { UsageService } from "../packages/projection-runtime/src/index.js";
 import { p7Project, p7RootWorkspace, p7SeedProject } from "./support/p7-app.js";
 import {
-  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createSchema50TestDatabaseFactory as createSchema44TestDatabaseFactory,
   withSchema44TestDatabase,
 } from "./support/schema44-database.js";
 

@@ -16,7 +16,8 @@ describe("Windows native sandbox boundary", () => {
       "workspace:*",
     );
     expect(composition).toContain('from "@arbor/sandbox-windows"');
-    expect(composition).toContain("WindowsSandboxProcessPortLive()");
+    expect(composition).toContain("makeWindowsSandboxProcessPort()");
+    expect(composition).toContain("nativeSandboxProcessPort");
   });
 
   it("contains no arbitrary process or network spawn path", () => {

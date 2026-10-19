@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
@@ -421,24 +420,17 @@ const hostReadFile = async (path: string) => {
   }
 };
 
-const hostRun = async (command: string, args: ReadonlyArray<string>) => {
-  const result = spawnSync(command, [...args], {
-    encoding: "utf8",
-    timeout: 2_000,
-    windowsHide: true,
-  });
-  return result.error === undefined && result.status === 0
-    ? `${result.stdout}${result.stderr}`
-    : undefined;
-};
-
 /** Detect Linux prerequisites without creating cgroups or installing packages. */
 export const probeLinuxBwrap = async (
   input: LinuxProbeInput,
 ): Promise<NativePosixCapability> => {
   let probe = input.probe;
-  if (probe === undefined && input.platform === "linux") {
-    const probeCommand = input.run ?? hostRun;
+  if (
+    probe === undefined &&
+    input.platform === "linux" &&
+    input.run !== undefined
+  ) {
+    const probeCommand = input.run;
     const readFile = input.readFile ?? hostReadFile;
     const version = await probeCommand("bwrap", ["--version"]);
     const help = await probeCommand("bwrap", ["--help"]);
@@ -618,11 +610,13 @@ export const makeNativePosixSandboxProcessPort = (
               request.policy,
               capability.failureCode,
               capability.probeEvidenceRef,
+              capability.capabilityRevision,
             );
           return unavailable(
             request.policy,
             "ExperimentalProviderExecutionDisabled",
             capability.probeEvidenceRef,
+            capability.capabilityRevision,
           );
         },
         catch: () => unavailable(request.policy, "CapabilityProbeFailed", null),
@@ -660,10 +654,12 @@ const unavailable = (
   policy: SandboxProcessPolicy,
   failureCode: string,
   probeEvidenceRef: string | null,
+  capabilityRevision: string = policy.capabilityRevision,
 ): SandboxProcessProviderOutcome => ({
   _tag: "Unavailable",
   providerId: policy.providerId as SandboxProviderId,
   providerVersion: policy.providerVersion,
+  capabilityRevision,
   probeEvidenceRef,
   failureCode,
 });

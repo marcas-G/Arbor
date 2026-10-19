@@ -61,14 +61,7 @@ describe("Windows native sandbox provider registry", () => {
             networkPolicy: {
               version: 1,
               mode: "Restricted",
-              destinations: [
-                {
-                  _tag: "Hostname",
-                  hostname: "example.com",
-                  protocol: "https",
-                  port: 443,
-                },
-              ],
+              destinations: ["https://example.com:443"],
             },
             policyDigest: "0".repeat(64),
             admittedMounts: [

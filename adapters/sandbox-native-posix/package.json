@@ -9,10 +9,14 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "@arbor/domain": "workspace:*",
     "@arbor/ports": "workspace:*"
   },
-  "scripts": { "build": "tsc -b" }
+  "scripts": {
+    "build": "tsc -b"
+  }
 }
