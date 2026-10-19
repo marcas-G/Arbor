@@ -265,7 +265,12 @@ const trustedLocalCommittedFixture = () => {
     mounts: [
       {
         mountId: "workspace",
-        targetRef: "workspace",
+        targetRef: {
+          version: 1 as const,
+          kind: "RegionDigest" as const,
+          resourceSpace: "filesystem" as const,
+          regionIdentityDigest: "7".repeat(64),
+        },
         targetIdentityDigest: "4".repeat(64),
         access: "ReadWrite" as const,
       },

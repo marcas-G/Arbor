@@ -39,7 +39,7 @@ describe("P11 resolver → complete sandbox boundary integration", () => {
               path: "packages/domain",
             };
             const boundary = {
-              basisResponsibilityRevision: 0,
+              basisResponsibilityRevision: 0 as never,
               addresses: [managedAddress, fileAddress],
             } as ResourceBoundary;
             const observation = yield* p11.observe(

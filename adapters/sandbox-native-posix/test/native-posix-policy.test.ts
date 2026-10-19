@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type SandboxProcessPolicy,
+  type OsEnforcedSandboxProcessPolicy,
   SandboxProcessPort,
   type SandboxProcessRequest,
 } from "@arbor/ports";
@@ -38,8 +38,9 @@ const makeRoot = () => {
   return root;
 };
 
-const policyFor = (root: string): SandboxProcessPolicy => ({
-  executionId: "exe_test" as SandboxProcessPolicy["executionId"],
+const policyFor = (root: string): OsEnforcedSandboxProcessPolicy => ({
+  kind: "OsEnforcedProcessPolicy",
+  executionId: "exe_test" as OsEnforcedSandboxProcessPolicy["executionId"],
   episodeBinding: {
     _tag: "WorkEpisode",
     workId: "work_test" as never,

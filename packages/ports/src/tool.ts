@@ -125,6 +125,9 @@ export interface ToolExecutionContext {
   readonly executionEpisodeBinding?: ExecutionEpisodeBinding;
   /** Set only by P9 from the exact durable decision; absence fails closed. */
   readonly sandboxProcessPolicy?: SandboxProcessPolicy;
+  /** Process-local full-boundary mounts materialized from the same current
+   * P1 decision. Never persisted, decoded from model input, or projected. */
+  readonly sandboxProcessMountBindings?: ReadonlyArray<SandboxMountBinding>;
   readonly workspaceId: WorkspaceId;
   readonly sessionId: SessionId;
   readonly projectId: ProjectId;

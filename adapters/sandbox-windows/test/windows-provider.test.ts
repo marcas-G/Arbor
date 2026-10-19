@@ -45,6 +45,7 @@ describe("Windows native sandbox provider registry", () => {
       const outcome = await Effect.runPromise(
         provider.run({
           policy: {
+            kind: "OsEnforcedProcessPolicy",
             executionId: "exe_1" as never,
             episodeBinding: {
               _tag: "WorkEpisode",
@@ -147,6 +148,7 @@ describe("Windows native sandbox provider registry", () => {
       const outcome = await Effect.runPromise(
         provider.run({
           policy: {
+            kind: "OsEnforcedProcessPolicy",
             executionId: "exe_1" as never,
             episodeBinding: {
               _tag: "WorkEpisode",

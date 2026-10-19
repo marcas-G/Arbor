@@ -40,7 +40,12 @@ const policySnapshot: EffectivePolicySummaryV1 = {
   mounts: [
     {
       mountId: "workspace",
-      targetRef: "workspace",
+      targetRef: {
+        version: 1 as const,
+        kind: "RegionDigest" as const,
+        resourceSpace: "filesystem" as const,
+        regionIdentityDigest: "9".repeat(64),
+      },
       targetIdentityDigest: "d".repeat(64),
       access: "ReadOnly",
     },

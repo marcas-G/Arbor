@@ -14,6 +14,7 @@ import {
   Principal,
   ProjectId,
   parse,
+  type SandboxAuthorityBundleSnapshotV2,
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
@@ -26,24 +27,40 @@ import {
   layer,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
+  ResourceOwnershipRepositoryLive,
   SandboxPolicyDecisionStoreLive,
   TransactionPortLive,
+  WorkspaceRepositoryLive,
+  WorktreeStoreLive,
 } from "@arbor/persistence-sqlite";
 import {
   Clock,
   CommandStore,
+  EnvironmentResolverPort,
   ExecutionRepository,
   PermissionGrantRepository,
+  ResourceOwnershipRepository,
   SandboxPolicyDecisionStore,
   TransactionPort,
+  WorkspaceRepository,
+  WorktreeStore,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
+import { makeSandboxPolicyDecisionPreparation } from "../dist/sandbox-policy-decision-preparation.js";
 
-const [databaseFile, requestedStage, nonce] = process.argv.slice(2);
+const [
+  databaseFile,
+  requestedStage,
+  nonce,
+  worktreePath,
+  expectedHandleDigest,
+] = process.argv.slice(2);
 if (
   databaseFile === undefined ||
   requestedStage === undefined ||
-  nonce === undefined
+  nonce === undefined ||
+  worktreePath === undefined ||
+  expectedHandleDigest === undefined
 ) {
   throw new Error("database filename, stage, and nonce are required");
 }
@@ -121,7 +138,7 @@ const payload = {
   expectedPolicyRevision: 0,
   expectedWorkspaceRevision: 3,
   expectedResourceBoundaryRevision: 1,
-  expectedSandboxHandleBindingDigest: "c".repeat(64),
+  expectedSandboxHandleBindingDigest: expectedHandleDigest,
   expectedAuthorityBundleRevision: 4,
   expectedAuthorityBundleDigest: "e".repeat(64),
   expectedOperatorConfigRevision: 4,
@@ -134,7 +151,7 @@ const payload = {
   },
   decisionExpiresAt: "2099-10-19T12:00:00.000Z",
 };
-const snapshot = {
+const _snapshot = {
   version: 1 as const,
   kind: "TrustedLocalUnconfinedV1" as const,
   projectId,
@@ -180,6 +197,95 @@ const snapshot = {
   operatorConfigRevision: 4,
   operatorConfigDigest: "f".repeat(64),
 };
+const authoritySnapshot = {
+  bundle: {
+    version: 2 as const,
+    sourceIdentity: "host:gateway-fixture",
+    bundleRevision: 4,
+    issuerConfigRevision: 1,
+    issuerConfigDigest: "1".repeat(64),
+    issuerConfig: {
+      version: 1 as const,
+      revision: 1,
+      issuers: [operator],
+    },
+    operatorConfigRevision: 4,
+    operatorConfigDigest: "f".repeat(64),
+    operatorConfig: {
+      version: 1 as const,
+      revision: 4,
+      environmentAllowlist: ["PATH"],
+      limitsByProfile: [
+        {
+          profile: "ReadOnly" as const,
+          limits: {
+            wallTimeMs: 60_000,
+            stdoutBytes: 8192,
+            stderrBytes: 8192,
+            processCount: 16,
+            memoryBytes: 268_435_456,
+            cpuTimeMs: 30_000,
+          },
+        },
+        {
+          profile: "WorkspaceWrite" as const,
+          limits: {
+            wallTimeMs: 60_000,
+            stdoutBytes: 8192,
+            stderrBytes: 8192,
+            processCount: 16,
+            memoryBytes: 268_435_456,
+            cpuTimeMs: 30_000,
+          },
+        },
+        {
+          profile: "FullAccess" as const,
+          limits: {
+            wallTimeMs: 60_000,
+            stdoutBytes: 8192,
+            stderrBytes: 8192,
+            processCount: 16,
+            memoryBytes: 268_435_456,
+            cpuTimeMs: 30_000,
+          },
+        },
+      ],
+      trustedLocalRuntimeVersion: "builtin-v1" as const,
+    },
+    providerRegistryRevision: 3,
+    providerRegistryDigest: "2".repeat(64),
+    providerRegistry: { version: 1 as const, revision: 3, entries: [] },
+  },
+  bundleDigest: "e".repeat(64),
+  canonicalJson: "{}",
+} satisfies SandboxAuthorityBundleSnapshotV2;
+const environmentResolverTestLayer = Layer.succeed(EnvironmentResolverPort, {
+  observe: (projectId, addresses) => {
+    const entries = addresses.map((address) => {
+      if (address._tag !== "GitWorktree" && address._tag !== "FileTree")
+        throw new Error("test P11 resolver only supports filesystem addresses");
+      return {
+        address,
+        resolved: {
+          resourceSpaceId: "filesystem",
+          normalizedRegion:
+            address._tag === "GitWorktree"
+              ? { kind: "GitWorktree", path: address.path }
+              : { kind: "FileTree", path: address.path },
+        },
+        probe: {} as never,
+      };
+    });
+    return Effect.succeed({
+      projectId,
+      observedRevision: "0",
+      fingerprint: "9".repeat(64) as never,
+      snapshotBlobRef: `blob:sha256:${"9".repeat(64)}`,
+      changedRegions: entries.map((entry) => entry.resolved),
+      entries,
+    });
+  },
+});
 
 function makeAuthority(
   fingerprint: ReturnType<typeof semanticRequestFingerprint>,
@@ -212,6 +318,9 @@ const commandStore = Layer.provide(CommandStoreLive, infra);
 const eventJournal = Layer.provide(DomainEventJournalLive, infra);
 const decisions = Layer.provide(SandboxPolicyDecisionStoreLive, infra);
 const projects = Layer.provide(ProjectRepositoryLive, infra);
+const workspaces = Layer.provide(WorkspaceRepositoryLive, infra);
+const ownership = Layer.provide(ResourceOwnershipRepositoryLive, infra);
+const worktrees = Layer.provide(WorktreeStoreLive, infra);
 const executions = Layer.provide(ExecutionRepositoryLive, infra);
 const grants = Layer.provide(PermissionGrantRepositoryLive, infra);
 const repos = Layer.mergeAll(
@@ -220,8 +329,12 @@ const repos = Layer.mergeAll(
   eventJournal,
   decisions,
   projects,
+  workspaces,
+  ownership,
+  worktrees,
   executions,
   grants,
+  environmentResolverTestLayer,
 );
 const registry = Layer.provide(
   Layer.unwrap(
@@ -229,29 +342,26 @@ const registry = Layer.provide(
       const grantRepo = yield* PermissionGrantRepository;
       const executionRepo = yield* ExecutionRepository;
       const decisionStore = yield* SandboxPolicyDecisionStore;
+      const transactionPort = yield* TransactionPort;
+      const workspaceRepo = yield* WorkspaceRepository;
+      const ownershipRepo = yield* ResourceOwnershipRepository;
+      const worktreeStore = yield* WorktreeStore;
+      const environmentResolver = yield* EnvironmentResolverPort;
       const clock = yield* Clock;
       const handler = makeDecideSandboxPolicyHandler({
         grants: grantRepo,
         executions: executionRepo,
         decisions: decisionStore,
-        preparation: {
-          prepare: () => Effect.succeed(snapshot),
-          currentPreconditions: () =>
-            Effect.succeed({
-              kind: "TrustedLocalUnconfinedV1" as const,
-              expectedEpisodeRevision: 2,
-              latestCommittedPolicyRevision: 0,
-              episodeBinding,
-              workspaceRevision: 3,
-              resourceBoundaryRevision: 1,
-              sandboxHandleBindingDigest:
-                payload.expectedSandboxHandleBindingDigest,
-              authorityBundleRevision: 4,
-              authorityBundleDigest: "e".repeat(64),
-              operatorConfigRevision: 4,
-              operatorConfigDigest: "f".repeat(64),
-            }),
-        },
+        preparation: makeSandboxPolicyDecisionPreparation({
+          transaction: transactionPort,
+          workspaces: workspaceRepo,
+          executions: executionRepo,
+          decisions: decisionStore,
+          ownership: ownershipRepo,
+          worktrees: worktreeStore,
+          environmentResolver,
+          authoritySnapshot,
+        }),
         clock,
       });
       return CommandHandlerRegistryLive([handler as never]);

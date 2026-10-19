@@ -29,6 +29,8 @@ const skippedDirectories = new Set([
 ]);
 const p39SpawnModule =
   "adapters/persistence-sqlite/src/p39-windows-security.ts";
+const trustedLocalSpawnModule =
+  "adapters/sandbox-local/src/trusted-local-process.ts";
 const p39QueryCallers = new Set([
   "adapters/persistence-sqlite/src/p39-report-database.ts",
   "adapters/persistence-sqlite/src/p39-windows-security.ts",
@@ -167,13 +169,15 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
   const values = tokens.map(({ value }) => value);
   const findings: string[] = [];
   const isP39 = path === p39SpawnModule;
-  const p39SpecifierIndex = isP39
-    ? tokens.findIndex(
-        (token) =>
-          token.value === "node:child_process" &&
-          tokens[tokens.indexOf(token) - 1]?.value === "from",
-      )
-    : -1;
+  const isTrustedLocal = path === trustedLocalSpawnModule;
+  const nativeSpecifierIndex =
+    isP39 || isTrustedLocal
+      ? tokens.findIndex(
+          (token) =>
+            token.value === "node:child_process" &&
+            tokens[tokens.indexOf(token) - 1]?.value === "from",
+        )
+      : -1;
 
   tokens.forEach((token, index) => {
     const globalThisComputedAccess =
@@ -189,7 +193,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
         SyntaxKind.LastTemplateToken,
       ].includes(token.kind) &&
       forbiddenNativeModuleFragment.test(token.value) &&
-      !(isP39 && index === p39SpecifierIndex)
+      !((isP39 || isTrustedLocal) && index === nativeSpecifierIndex)
     ) {
       findings.push(
         `${path}: forbidden process module value ${JSON.stringify(token.value)}`,
@@ -306,7 +310,8 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
       token.kind === SyntaxKind.Identifier &&
       nativeSpawnIdentifiers.has(callName) &&
       isCall &&
-      !(isP39 && callName === "execFileSync")
+      !(isP39 && callName === "execFileSync") &&
+      !(isTrustedLocal && callName === "execFile")
     ) {
       findings.push(`${path}: unregistered native process call ${callName}`);
     }
@@ -395,6 +400,49 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     ) {
       findings.push(
         `${path}: P39 process probe is outside its fixed audited template`,
+      );
+    }
+  }
+
+  if (isTrustedLocal) {
+    const execFileCalls = tokens.filter(
+      (token, index) =>
+        token.value === "execFile" && tokens[index + 1]?.text === "(",
+    ).length;
+    const fixedImport = hasSequence(values, [
+      "import",
+      "{",
+      "execFile",
+      "}",
+      "from",
+      "node:child_process",
+      ";",
+    ]);
+    const fixedSpawn = hasSequence(values, [
+      "execFile",
+      "(",
+      "request",
+      ".",
+      "executable",
+      ",",
+      "[",
+      "...",
+      "request",
+      ".",
+      "args",
+      "]",
+      ",",
+    ]);
+    const normalizedSource = source.replace(/\r\n?/gu, "\n");
+    if (
+      createHash("sha256").update(normalizedSource, "utf8").digest("hex") !==
+        "4932a9ae2e5f9a8645aa1c4f1e1f36728fa38f286adf8edfc461eb548c915897" ||
+      execFileCalls !== 1 ||
+      !fixedImport ||
+      !fixedSpawn
+    ) {
+      findings.push(
+        `${path}: TrustedLocal process adapter is outside its fixed audited template`,
       );
     }
   }
@@ -525,5 +573,27 @@ describe("SandboxProcessPort architecture boundary", () => {
       ),
     ).toBe(true);
     expect(scanSource(source, p39SpawnModule)).toEqual([]);
+  });
+
+  it("keeps the explicit TrustedLocal spawn in its fixed adapter template", () => {
+    const files = productionRoots.flatMap(productionFiles);
+    const directNativeModules = files
+      .filter((file) => {
+        const source = readFileSync(file, "utf8");
+        return source.includes('from "node:child_process"');
+      })
+      .map(normalized)
+      .sort();
+    expect(directNativeModules).toEqual(
+      [p39SpawnModule, trustedLocalSpawnModule].sort(),
+    );
+    const source = readFileSync(
+      join(repoRoot, trustedLocalSpawnModule),
+      "utf8",
+    );
+    expect(scanSource(source, trustedLocalSpawnModule)).toEqual([]);
+    expect(callCount(source, "execFile")).toBe(1);
+    expect(source).toContain("Explicit TrustedLocal execution");
+    expect(source).toContain("policy limits are disclosure/best-effort only");
   });
 });

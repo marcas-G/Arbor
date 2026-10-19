@@ -3,6 +3,8 @@ import {
   encodeSandboxAuthorityBundleV2,
   encodeSandboxAuthorityHighWaterV2,
   encodeSandboxOperatorPolicyConfigV1,
+  Principal,
+  parse,
 } from "@arbor/domain";
 import { SANDBOX_ENV_ALLOWLIST } from "@arbor/ports";
 import { Effect } from "effect";
@@ -16,7 +18,7 @@ const fixture = (bundleRevision = 2) => {
   const issuerConfig = {
     version: 1 as const,
     revision: 1,
-    issuers: ["user:operator"],
+    issuers: [parse(Principal)("user:operator")],
   };
   const issuerConfigJson =
     '{"version":1,"revision":1,"issuers":["user:operator"]}';
@@ -24,19 +26,19 @@ const fixture = (bundleRevision = 2) => {
     version: 1 as const,
     revision: 1,
     environmentAllowlist: ["PATH"],
-    limitsByProfile: ["ReadOnly", "WorkspaceWrite", "FullAccess"].map(
-      (profile) => ({
-        profile,
-        limits: {
-          wallTimeMs: 60_000,
-          stdoutBytes: 8192,
-          stderrBytes: 8192,
-          processCount: 8,
-          memoryBytes: 134_217_728,
-          cpuTimeMs: 30_000,
-        },
-      }),
-    ),
+    limitsByProfile: (
+      ["ReadOnly", "WorkspaceWrite", "FullAccess"] as const
+    ).map((profile) => ({
+      profile,
+      limits: {
+        wallTimeMs: 60_000,
+        stdoutBytes: 8192,
+        stderrBytes: 8192,
+        processCount: 8,
+        memoryBytes: 134_217_728,
+        cpuTimeMs: 30_000,
+      },
+    })),
     trustedLocalRuntimeVersion: "builtin-v1" as const,
   };
   const operatorConfigJson =

@@ -28,6 +28,21 @@ const executionFor = (executionId: string) =>
     state: { status: "Active", settlement: null },
   }) as never;
 
+const episodeExecutionFor = (executionId: string, episode: never) => ({
+  executionId: executionId as ExecutionId,
+  projectId: "prj_identity-test" as never,
+  workspaceId: "ws_identity-test" as never,
+  sessionId: "ses_identity-test" as never,
+  binding: {
+    _tag: "WorkspaceExecution" as const,
+    workspaceId: "ws_identity-test" as never,
+    episode,
+  },
+  admittedAt: "2026-10-05T00:00:00.000Z",
+  stopRequestedAt: null,
+  state: { status: "Active" as const, settlement: null },
+});
+
 const contextFor = (executionId: string) =>
   ({
     _tag: "ExecutionOrigin",
@@ -234,6 +249,156 @@ describe("executable tool invocation identity scope", () => {
     );
     expect(observedContext?.recoveryBindingIdentity).toBeUndefined();
     expect(observedContext?.recoveryBindingPolicyRevisions).toBeUndefined();
+  });
+
+  it("injects the exact runtime-only current sandbox policy and full mount set for shell", async () => {
+    let observedContext:
+      | import("@arbor/ports").ToolExecutionContext
+      | undefined;
+    const episode = {
+      _tag: "WorkEpisode" as const,
+      workId: "wrk_identity-test" as never,
+      targetWorkRevision: 1 as never,
+    };
+    const execution = episodeExecutionFor(
+      "exe_identity_policy",
+      episode as never,
+    );
+    const policy = {
+      kind: "TrustedLocalUnconfinedRuntimePolicy",
+      executionId: "exe_identity_policy",
+      episodeBinding: episode,
+      sandboxHandleId: "sbx_exe_identity_policy",
+      policyRevision: 3,
+      profile: "FullAccess",
+      providerId: "TrustedLocal",
+      providerVersion: "builtin-v1",
+      capabilityRevision: "builtin-v1",
+      boundary: "TrustedLocal",
+      trustedRuntimeIdentity: "TrustedLocal",
+      trustedRuntimeVersion: "builtin-v1",
+      networkBoundary: "Unconfined",
+      policyDigest: "a".repeat(64),
+      admittedMounts: [
+        {
+          ref: "workspace",
+          rootPath: "C:/runtime/workspace",
+          access: "ReadWrite",
+        },
+        {
+          ref: "resource-2",
+          rootPath: "C:/runtime/other",
+          access: "ReadWrite",
+        },
+      ],
+      environmentAllowlist: ["PATH"],
+      limits: {
+        wallTimeMs: 5000,
+        stdoutBytes: 1024,
+        stderrBytes: 1024,
+        processCount: 1,
+        memoryBytes: 1_000_000,
+        cpuTimeMs: 5000,
+      },
+      auditRefs: ["cmd_exact_policy"],
+    };
+    const mounts = [
+      {
+        ref: "workspace",
+        address: { _tag: "GitWorktree", path: "C:/runtime/workspace" },
+        region: {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: {
+            kind: "GitWorktree",
+            path: "C:/runtime/workspace",
+          },
+        },
+        access: "ReadWrite",
+      },
+      {
+        ref: "resource-2",
+        address: { _tag: "FileTree", path: "C:/runtime/other" },
+        region: {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { kind: "FileTree", path: "C:/runtime/other" },
+        },
+        access: "ReadWrite",
+      },
+    ];
+    const handler = makeExecutableToolHandler(
+      {
+        invoke: (_toolIntent, toolContext) => {
+          observedContext = toolContext;
+          return Effect.succeed({
+            _tag: "Success" as const,
+            observation: { text: "ok", truncated: false },
+            resultRef: null,
+          });
+        },
+      },
+      { now: () => Effect.succeed("2026-10-19T00:00:00.000Z") },
+      {
+        visibleRefs: () =>
+          Effect.succeed([{ name: "shell", version: "1", hash: "shell-v1" }]),
+        resolveForModel: () => Effect.die("unused"),
+      },
+      undefined,
+      undefined,
+      undefined,
+      () => Effect.succeed({ policy, mounts } as never),
+    );
+    await Effect.runPromise(
+      handler.handle({
+        invocation: { ...invocation, toolName: "shell" },
+        execution,
+        context: contextFor("exe_identity_policy"),
+        controlBasis: {} as never,
+      } as never),
+    );
+    expect(observedContext?.executionEpisodeBinding).toEqual(episode);
+    expect(observedContext?.sandboxProcessPolicy).toBe(policy);
+    expect(observedContext?.sandboxProcessMountBindings).toBe(mounts);
+  });
+
+  it("parks shell before ToolRuntime when the exact committed policy is unavailable", async () => {
+    let invocationCalls = 0;
+    const handler = makeExecutableToolHandler(
+      {
+        invoke: () => {
+          invocationCalls += 1;
+          return Effect.succeed({
+            _tag: "Success" as const,
+            observation: { text: "must not run", truncated: false },
+            resultRef: null,
+          });
+        },
+      },
+      { now: () => Effect.succeed("2026-10-19T00:00:00.000Z") },
+      {
+        visibleRefs: () =>
+          Effect.succeed([{ name: "shell", version: "1", hash: "shell-v1" }]),
+        resolveForModel: () => Effect.die("unused"),
+      },
+      undefined,
+      undefined,
+      undefined,
+      () => Effect.succeed(undefined),
+    );
+    const execution = episodeExecutionFor("exe_identity_policy_missing", {
+      _tag: "WorkEpisode",
+      workId: "wrk_identity-test" as never,
+      targetWorkRevision: 1 as never,
+    } as never);
+    const result = await Effect.runPromise(
+      handler.handle({
+        invocation: { ...invocation, toolName: "shell" },
+        execution,
+        context: contextFor("exe_identity_policy_missing"),
+        controlBasis: {} as never,
+      } as never),
+    );
+    expect(result._tag).toBe("SandboxPolicyRequiredInterruption");
+    expect(invocationCalls).toBe(0);
   });
 
   it("fails closed before ToolRuntime when an active ExecutionOrigin lacks the lease holder triple", async () => {
