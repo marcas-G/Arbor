@@ -1050,11 +1050,16 @@ export const buildSingleWorkspaceLayer = (
     persistenceHealthProbe,
   );
   const projectionQuery = Layer.provide(
-    ProjectionQueryPortLive(
-      config.projectId,
-      sandboxPolicyGrantIssuerConfigSnapshot,
+    Layer.unwrap(
+      Effect.gen(function* () {
+        const authoritySnapshot = yield* SandboxAuthoritySnapshot;
+        return ProjectionQueryPortLive(
+          config.projectId,
+          sandboxIssuerSnapshotOf(authoritySnapshot),
+        );
+      }),
     ),
-    Layer.mergeAll(coreAll, toolCatalog),
+    Layer.mergeAll(coreAll, toolCatalog, sandboxAuthoritySnapshotLayer),
   );
   const transportBoundary = Layer.provide(
     TransportBoundaryLive(
