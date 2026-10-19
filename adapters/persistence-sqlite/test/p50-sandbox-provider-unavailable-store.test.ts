@@ -60,6 +60,17 @@ CREATE TABLE execution_leases (
 CREATE TABLE agent_execution_state (
   execution_id TEXT PRIMARY KEY, episode_json TEXT NOT NULL
 );
+CREATE TABLE agent_loop_steps (
+  execution_id TEXT NOT NULL, logical_step_no INTEGER NOT NULL,
+  repair_attempt INTEGER NOT NULL, state TEXT NOT NULL,
+  next_action_index INTEGER NOT NULL,
+  PRIMARY KEY(execution_id, logical_step_no, repair_attempt)
+);
+CREATE TABLE agent_loop_step_actions (
+  execution_id TEXT NOT NULL, logical_step_no INTEGER NOT NULL,
+  repair_attempt INTEGER NOT NULL, action_index INTEGER NOT NULL,
+  state TEXT NOT NULL, disposition_json TEXT
+);
 CREATE TABLE sandbox_policy_decisions (
   project_id TEXT NOT NULL, workspace_id TEXT NOT NULL, execution_id TEXT NOT NULL,
   episode_binding_json TEXT NOT NULL, policy_revision INTEGER NOT NULL,
@@ -217,10 +228,10 @@ describe("P50 sandbox provider-unavailable fact and Attention queue", () => {
       Effect.provide(
         Effect.gen(function* () {
           yield* seed;
+          const sql = yield* SqlClient;
           const tx = yield* TransactionPort;
           const facts = yield* SandboxStorePort;
           const journal = yield* DomainEventJournal;
-          const sql = yield* SqlClient;
           const first = yield* tx.transact(facts.record(factInput()));
           const retry = yield* tx.transact(
             facts.record({
@@ -439,11 +450,33 @@ describe("P50 sandbox provider-unavailable fact and Attention queue", () => {
       Effect.provide(
         Effect.gen(function* () {
           yield* seed;
+          const sql = yield* SqlClient;
           const tx = yield* TransactionPort;
           const facts = yield* SandboxStorePort;
           const queue = yield* SandboxQueuePort;
           const projection = yield* AttentionProjectionStorePort;
+          const listUnavailable =
+            projection.listProjectedSandboxProviderUnavailableFailures;
+          if (listUnavailable === undefined) {
+            throw new Error("sandbox unavailable projection is unavailable");
+          }
           const fact = yield* tx.transact(facts.record(factInput()));
+          yield* sql.unsafe(
+            `INSERT INTO agent_loop_steps VALUES (?, 0, 0, 'StepEffectsCommitted', 1)`,
+            [executionId],
+          );
+          yield* sql.unsafe(
+            `INSERT INTO agent_loop_step_actions VALUES (?, 0, 0, 0, 'TerminalRejected', ?)`,
+            [
+              executionId,
+              JSON.stringify({
+                _tag: "SandboxUnavailableV1",
+                attentionFactId: fact.attentionFactId,
+                policyRevision: fact.policyRevision,
+                policyDigest: fact.policyDigest,
+              }),
+            ],
+          );
           const claims = yield* tx.transact(
             queue.claimBatch({
               projectId,
@@ -487,10 +520,7 @@ describe("P50 sandbox provider-unavailable fact and Attention queue", () => {
           ).toBeUndefined();
           expect(
             yield* tx.transact(
-              projection.listProjectedSandboxProviderUnavailableFailures(
-                projectId,
-                now,
-              ),
+              listUnavailable(projectId, now),
             ),
           ).toMatchObject([
             {
@@ -506,14 +536,16 @@ describe("P50 sandbox provider-unavailable fact and Attention queue", () => {
           const rebuildStore = makeProjectAttentionProjectionStore(
             projectId,
             {
+              listLegacyAdoptionFailures: () => Effect.succeed([]),
+              listLegacyAdoptionResolutions: () => Effect.succeed([]),
               listDeliverReplayFailures: () => Effect.succeed([]),
               listPendingDeliverReplayAttention: () => Effect.succeed([]),
               acknowledgePendingDeliverReplayAttention: () => Effect.void,
             } as never,
             {
               ...projection,
-              listLegacyAdoptionFailures: undefined,
-              putLegacyAdoptionFailure: undefined,
+              listLegacyAdoptionFailures: () => Effect.succeed([]),
+              putLegacyAdoptionFailure: () => Effect.void,
               reconcileStaleWorkRevisionRows: () => Effect.void,
             },
             undefined,

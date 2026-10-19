@@ -657,6 +657,7 @@ export const ToolRuntimeLive = (
         (
           context: ToolExecutionContext,
           handle: SandboxHandle,
+          intent: ToolIntent,
         ): SandboxProcessRunner =>
         (invocation) =>
           Effect.gen(function* () {
@@ -665,6 +666,20 @@ export const ToolRuntimeLive = (
               return {
                 _tag: "Rejected" as const,
                 failureCode: "PolicyMissing",
+              };
+            }
+            const sourceAction = context.recoveryBindingIdentity;
+            if (
+              sourceAction === undefined ||
+              sourceAction.executionId !== context.executionId ||
+              sourceAction.callRef !== intent.callRef ||
+              sourceAction.logicalStepNo < 0 ||
+              sourceAction.repairAttempt < 0 ||
+              sourceAction.actionIndex < 0
+            ) {
+              return {
+                _tag: "Rejected" as const,
+                failureCode: "ExecutionBindingMismatch",
               };
             }
             const unavailable = (
@@ -682,8 +697,21 @@ export const ToolRuntimeLive = (
               profileId: policy.profile,
               providerId: policy.providerId,
               providerVersion,
+              capabilityRevision: policy.capabilityRevision,
               probeEvidenceRef,
               failureCode,
+              actionBinding: {
+                identity: {
+                  executionId: sourceAction.executionId,
+                  logicalStepNo: sourceAction.logicalStepNo,
+                  repairAttempt: sourceAction.repairAttempt,
+                },
+                providerTurnId: sourceAction.providerTurnId,
+                logicalActionId: sourceAction.logicalActionId,
+                actionIndex: sourceAction.actionIndex,
+                callRef: sourceAction.callRef,
+                invocationId: intent.invocationId,
+              },
             });
             if (
               policy.executionId !== context.executionId ||
@@ -1160,6 +1188,70 @@ export const ToolRuntimeLive = (
                 );
               }
             }
+          }
+          if (
+            observation._tag === "ExpectedFailure" &&
+            observation.sandboxProviderUnavailable !== undefined
+          ) {
+            const unavailable = observation.sandboxProviderUnavailable;
+            const policy = context.sandboxProcessPolicy;
+            const sourceAction = context.recoveryBindingIdentity;
+            const currentEpisode =
+              context.executionEpisodeBinding === undefined
+                ? undefined
+                : decodeExecutionEpisodeBinding(
+                    context.executionEpisodeBinding,
+                  );
+            if (
+              policy === undefined ||
+              policy.executionId !== context.executionId ||
+              policy.policyRevision !== unavailable.policyRevision ||
+              policy.policyDigest !== unavailable.policyDigest ||
+              policy.profile !== unavailable.profile ||
+              policy.providerId !== unavailable.providerId ||
+              policy.providerVersion !== unavailable.providerVersion ||
+              policy.capabilityRevision !== unavailable.capabilityRevision ||
+              sourceAction === undefined ||
+              sourceAction.executionId !== context.executionId ||
+              sourceAction.callRef !== intent.callRef ||
+              currentEpisode === undefined ||
+              encodeExecutionEpisodeBinding(policy.episodeBinding) !==
+                encodeExecutionEpisodeBinding(currentEpisode)
+            ) {
+              return yield* Effect.fail<ToolRuntimeError>(
+                operationalFailure(
+                  "RecoveryBinding",
+                  String(intent.invocationId),
+                )({ _tag: "SandboxUnavailableObservationPolicyMismatch" }),
+              );
+            }
+            return {
+              _tag: "SandboxProviderUnavailable" as const,
+              projectId: context.projectId,
+              workspaceId: context.workspaceId,
+              executionId: context.executionId,
+              episodeBinding: policy.episodeBinding,
+              policyRevision: unavailable.policyRevision,
+              policyDigest: unavailable.policyDigest,
+              profileId: unavailable.profile,
+              providerId: unavailable.providerId,
+              providerVersion: unavailable.providerVersion,
+              capabilityRevision: unavailable.capabilityRevision,
+              probeEvidenceRef: unavailable.probeEvidenceRef,
+              failureCode: unavailable.failureCode,
+              actionBinding: {
+                identity: {
+                  executionId: sourceAction.executionId,
+                  logicalStepNo: sourceAction.logicalStepNo,
+                  repairAttempt: sourceAction.repairAttempt,
+                },
+                providerTurnId: sourceAction.providerTurnId,
+                logicalActionId: sourceAction.logicalActionId,
+                actionIndex: sourceAction.actionIndex,
+                callRef: sourceAction.callRef,
+                invocationId: intent.invocationId,
+              },
+            };
           }
           return observation;
         });
@@ -3967,7 +4059,7 @@ export const ToolRuntimeLive = (
                       sandbox: handle,
                       regions,
                       ...(executor.processCapability === "SandboxProcess"
-                        ? { runProcess: runProcessFor(context, handle) }
+                        ? { runProcess: runProcessFor(context, handle, intent) }
                         : {}),
                     }),
                     {
@@ -4206,6 +4298,32 @@ export const ToolRuntimeLive = (
                   return {
                     _tag: "ExpectedFailure",
                     observation: outcome.observation,
+                    ...(outcome.sandboxProviderUnavailable === undefined
+                      ? {}
+                      : {
+                          sandboxProviderUnavailable: {
+                            policyRevision:
+                              outcome.sandboxProviderUnavailable.policyRevision,
+                            policyDigest:
+                              outcome.sandboxProviderUnavailable.policyDigest,
+                            profile:
+                              outcome.sandboxProviderUnavailable.profileId,
+                            providerId:
+                              outcome.sandboxProviderUnavailable.providerId,
+                            providerVersion:
+                              outcome.sandboxProviderUnavailable
+                                .providerVersion,
+                            capabilityRevision:
+                              outcome.sandboxProviderUnavailable
+                                .capabilityRevision,
+                            probeEvidenceRef:
+                              outcome.sandboxProviderUnavailable
+                                .probeEvidenceRef,
+                            failureCode:
+                              outcome.sandboxProviderUnavailable.failureCode,
+                            effectDisposition: "NoEffect" as const,
+                          },
+                        }),
                   };
                 case "Interrupted":
                   return { _tag: "Interrupted" };

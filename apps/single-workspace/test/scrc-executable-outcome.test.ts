@@ -79,8 +79,21 @@ describe("SCRC executable outcome taxonomy", () => {
       profileId: "WorkspaceWrite" as const,
       providerId: "bwrap",
       providerVersion: "0.8.0",
+      capabilityRevision: "cap-v1",
       probeEvidenceRef: null,
       failureCode: "ProviderNotSupported",
+      actionBinding: {
+        identity: {
+          executionId: "exe_test" as never,
+          logicalStepNo: 0,
+          repairAttempt: 0,
+        },
+        providerTurnId: "ptn_test" as never,
+        logicalActionId: "lac_test",
+        actionIndex: 0,
+        callRef: "call_test",
+        invocationId: "tin_test" as never,
+      },
     };
     expect(toExecutableOutcome(outcome)).toEqual({
       _tag: "SandboxProviderUnavailable",

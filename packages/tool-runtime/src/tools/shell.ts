@@ -166,7 +166,9 @@ export const createShellExecutor = (): ToolExecutor => ({
           settlement: {
             _tag: "ExpectedFailure",
           },
-          observation: bounded("sandbox provider unavailable"),
+          observation: bounded(
+            "required sandbox capability was unavailable or could not be verified; execution did not start",
+          ),
           resultRef: null,
           sandboxProviderUnavailable: result,
         };

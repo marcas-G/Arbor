@@ -1210,6 +1210,21 @@ export const makeAttentionProjectionStoreLive = (
                    JOIN executions e ON e.execution_id = f.execution_id
                     AND e.project_id = f.project_id
                     AND e.workspace_id = f.workspace_id
+                   JOIN agent_loop_step_actions a
+                     ON a.execution_id = e.execution_id
+                    AND a.state = 'TerminalRejected'
+                    AND a.disposition_json IS NOT NULL
+                    AND json_valid(a.disposition_json)
+                    AND json_extract(a.disposition_json, '$._tag') = 'SandboxUnavailableV1'
+                    AND json_extract(a.disposition_json, '$.attentionFactId') = f.attention_fact_id
+                    AND json_extract(a.disposition_json, '$.policyRevision') = f.policy_revision
+                    AND json_extract(a.disposition_json, '$.policyDigest') = f.policy_digest
+                   JOIN agent_loop_steps step
+                     ON step.execution_id = a.execution_id
+                    AND step.logical_step_no = a.logical_step_no
+                    AND step.repair_attempt = a.repair_attempt
+                    AND step.state = 'StepEffectsCommitted'
+                    AND step.next_action_index = a.action_index + 1
                    JOIN agent_execution_state s ON s.execution_id = e.execution_id
                    JOIN sandbox_policy_decisions d ON d.execution_id = e.execution_id
                     AND d.project_id = e.project_id AND d.workspace_id = e.workspace_id

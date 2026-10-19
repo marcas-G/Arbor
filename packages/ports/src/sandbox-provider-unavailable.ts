@@ -11,6 +11,7 @@ import { Context, type Effect } from "effect";
 import type { AgentLoopStepFence } from "./agent-loop-step.js";
 import type { DomainEventJournalError, RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
+import type { ToolObservationEvidenceStoreError } from "./tool-observation-evidence.js";
 
 export const SANDBOX_UNAVAILABLE_ATTENTION_CLAIM_TTL_MS = 30_000;
 export const SANDBOX_UNAVAILABLE_ATTENTION_BATCH_MAX = 100;
@@ -134,3 +135,29 @@ export class SandboxProviderUnavailableAttentionQueue extends Context.Service<
   SandboxProviderUnavailableAttentionQueue,
   SandboxProviderUnavailableAttentionQueueService
 >()("arbor/SandboxProviderUnavailableAttentionQueue") {}
+
+export type P4SandboxUnavailableObservationV1 =
+  import("./tool-observation-evidence.js").SandboxProviderUnavailableObservationV1 & {
+    readonly invocationId: string;
+    readonly executionId: ExecutionId;
+    readonly workspaceId: WorkspaceId;
+    readonly summary: "required sandbox capability was unavailable or could not be verified; execution did not start";
+  };
+
+/** Read-only bridge for the short interval after exact P4 terminal evidence
+ * commits but before P9 materializes its immutable fact and queue row. */
+export interface P4SandboxOutcomeReadPortService {
+  readonly findUnavailableByExecutionAndRevision: (
+    executionId: ExecutionId,
+    policyRevision: number,
+  ) => Effect.Effect<
+    ReadonlyArray<P4SandboxUnavailableObservationV1>,
+    ToolObservationEvidenceStoreError,
+    TransactionScope
+  >;
+}
+
+export class P4SandboxOutcomeReadPort extends Context.Service<
+  P4SandboxOutcomeReadPort,
+  P4SandboxOutcomeReadPortService
+>()("arbor/P4SandboxOutcomeReadPort") {}
