@@ -47,9 +47,10 @@ schema 0049/0050 disposable migration suite 5/5; P5 composition 1/1; `pnpm
 build`; focused Biome and `git diff --check`. Full workspace suites were not run.
 
 Remaining implementation slices include the offline V1→V2 operator transition
-and process-kill proof, P11 complete boundary/mount/access producer, production
-preparation/materialization with exact CAS/audit refs, and P1/P4/P9 consumer
-convergence. No Supported OS provider or fallback was introduced.
+and process-kill proof, preparation adapter composition wiring, production
+SQLite CAS/crash qualification, exact audit-ref end-to-end qualification, and
+P1/P4/P9 consumer convergence. No Supported OS provider or fallback was
+introduced.
 
 ## B review follow-up — V1 forensic path is read-only
 
@@ -64,21 +65,33 @@ tests guard this no-write boundary.
 ## Wave C — pure complete-boundary producer
 
 The new domain-only `produceSandboxBoundaryV1` accepts the exact current
-Workspace responsibility/resource-boundary revisions, full ResourceBoundary,
-ordered resolver output, primary managed GitWorktree, current ownership facts,
-and closed policy kind/profile. It validates the full input mapping; collapses
-canonical filesystem aliases; rejects incomplete/malformed regions, digest
-identity collisions, malformed claims, active current claims outside the
-boundary, and missing or mismatched primary worktree; derives path-free target
-refs for all admitted regions; materializes deterministic filesystem-only
-mounts and exact logical access; and returns the ResourceBoundary and
-handle-binding digests. No host
-path appears in the producer result. It performs no I/O; production
-preparation/materialization remains a later wave.
+Workspace responsibility/resource-boundary revisions, the complete normalized
+region set from P11, an independently resolved exact primary managed
+GitWorktree, current ownership facts, and a closed policy kind/profile. The
+production adapter calls P11 `observe` with the Workspace's exact full
+`ResourceBoundary.addresses` and checks the resolver's `entries` against its
+normalized region set; it does not reconstruct normalized paths from raw
+address strings. The producer collapses canonical filesystem aliases and
+rejects malformed source/region data, conflicting GitWorktree metadata,
+digest identity collisions, malformed claims, active current claims outside
+the boundary, and missing or mismatched primary worktree. It derives
+path-free target refs for all admitted regions, deterministic filesystem-only
+mounts and logical access, plus the ResourceBoundary and handle-binding
+digests. No host path appears in the result.
 
-Verification: boundary producer and codec suites 9/9; fixed revision-zero
-ResourceBoundaryDigest and V21 TargetRef vectors; alias/determinism,
-non-filesystem metadata, resolver-shaped canonical-set dedup/alias handling,
-wrong-path/omitted/extra region rejection, ownership revision/status,
-access/profile, incomplete-boundary and digest-collision cases; `pnpm build`,
-focused Biome and `git diff --check`.
+`makeSandboxPolicyDecisionPreparation` now provides an independent production
+adapter module: repository reads use short transactions; the full P11
+resolution and materialization occur outside the Gateway transaction; the
+final P1 preconditions re-read the exact Workspace/Episode/policy head/claims
+and recompute mount binding from the captured resolver set without filesystem
+I/O inside the transaction. It supports only an explicit V2-configured
+TrustedLocal decision today. OsEnforced fails closed when there is no exact
+currently Supported tuple; it does not select or fall back. The adapter is not
+yet wired into `composition.ts`, and production integration/real SQLite CAS
+qualification remains open.
+
+Verification: boundary producer/codec, real P11 resolver-normalization, and
+materializer suites 12/12; revision-zero ResourceBoundaryDigest and V21
+TargetRef vectors; FileTree-first alias, relative/dot-segment path,
+observation consistency, claims/access, source-boundary, Worktree selection,
+and no-fallback cases; `pnpm build`, focused Biome and `git diff --check`.

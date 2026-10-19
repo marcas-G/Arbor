@@ -273,51 +273,6 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
     ).toBeUndefined();
     expect(
       produceSandboxBoundaryV1(
-        input(
-          [
-            { _tag: "GitWorktree", path: "/repo/workspace" },
-            { _tag: "DatabaseNamespace", namespace: "tenant:one" },
-          ],
-          [primary, database("tenant:other")],
-        ),
-        hash,
-      ),
-    ).toBeUndefined();
-    expect(
-      produceSandboxBoundaryV1(
-        input(
-          [
-            { _tag: "GitWorktree", path: "/repo/workspace" },
-            { _tag: "FileTree", path: "/repo/extra" },
-          ],
-          [primary, fileTree("/repo/wrong")],
-        ),
-        hash,
-      ),
-    ).toBeUndefined();
-    expect(
-      produceSandboxBoundaryV1(
-        input(
-          [
-            { _tag: "GitWorktree", path: "/repo/workspace" },
-            { _tag: "FileTree", path: "/repo/extra" },
-          ],
-          [primary],
-        ),
-        hash,
-      ),
-    ).toBeUndefined();
-    expect(
-      produceSandboxBoundaryV1(
-        input(
-          [{ _tag: "GitWorktree", path: "/repo/workspace" }],
-          [primary, fileTree("/repo/extra")],
-        ),
-        hash,
-      ),
-    ).toBeUndefined();
-    expect(
-      produceSandboxBoundaryV1(
         input(validAddress, [primary], {
           primaryManagedGitWorktreeRegion: gitWorktree("/repo/elsewhere"),
         }),
@@ -369,11 +324,38 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
     const region = gitWorktree("/repo/workspace");
     expect(
       produceSandboxBoundaryV1(
-        input([primary, conflicting], [region], {
-          primaryManagedGitWorktreeRegion: region,
-        }),
+        input(
+          [{ _tag: "FileTree", path: "/repo/workspace" }, primary, conflicting],
+          [fileTree("/repo/workspace")],
+          {
+            primaryManagedGitWorktreeRegion: region,
+          },
+        ),
         hash,
       ),
     ).toBeUndefined();
+  });
+
+  it("accepts P11 resolver-normalized relative paths and a FileTree alias representative for primary", () => {
+    const resolvedPrimary = gitWorktree("C:\\resolved\\workspace");
+    const result = produceSandboxBoundaryV1(
+      input(
+        [
+          { _tag: "FileTree", path: "./relative/workspace" },
+          { _tag: "GitWorktree", path: "./relative/workspace" },
+        ],
+        [fileTree("C:\\resolved\\workspace")],
+        { primaryManagedGitWorktreeRegion: resolvedPrimary },
+      ),
+      hash,
+    );
+    expect(result?.mounts).toHaveLength(1);
+    expect(result?.mounts[0]).toMatchObject({
+      mountId: "workspace",
+      targetRef: {
+        resourceSpace: "filesystem",
+        regionIdentityDigest: hash(canonicalRegionString(resolvedPrimary)),
+      },
+    });
   });
 });

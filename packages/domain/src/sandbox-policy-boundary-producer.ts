@@ -31,7 +31,9 @@ export interface SandboxBoundaryProductionInputV1 {
   readonly resourceBoundaryRevision: number;
   readonly responsibilityRevision: number;
   readonly boundary: ResourceBoundary;
-  /** Complete resolver output for every address in boundary, in request order. */
+  /** Full normalized set returned by one P11 resolve call with exactly
+   * boundary.addresses. The resolver is authoritative for path normalization
+   * and may collapse FileTree/GitWorktree aliases before this producer runs. */
   readonly resolvedRegions: ReadonlyArray<CanonicalResourceRegion>;
   /** Exact active P11 Worktree binding selected as the primary mount. */
   readonly primaryManagedGitWorktreeRegion: CanonicalResourceRegion;
@@ -186,32 +188,30 @@ const canonicalAddressRegion = (
   }
 };
 
-const boundaryCanonicalSetV1 = (
+const validateBoundaryAddressesV1 = (
   addresses: ReadonlyArray<ResourceAddress>,
-): Map<string, ResourceAddress> | undefined => {
-  const result = new Map<string, ResourceAddress>();
+): boolean => {
   for (const address of addresses) {
     const region = canonicalAddressRegion(address);
-    if (region === undefined) return undefined;
-    const canonical = canonicalRegionString(region);
-    const prior = result.get(canonical);
-    if (prior !== undefined) {
-      if (prior._tag === "GitWorktree" && address._tag === "GitWorktree") {
-        const priorMetadata = JSON.stringify([
-          prior.repositoryRef ?? null,
-          prior.branch ?? null,
-        ]);
-        const currentMetadata = JSON.stringify([
-          address.repositoryRef ?? null,
-          address.branch ?? null,
-        ]);
-        if (priorMetadata !== currentMetadata) return undefined;
-      }
-    } else {
-      result.set(canonical, address);
-    }
+    if (region === undefined) return false;
   }
-  return result;
+  const gitMetadataByCanonical = new Map<string, Set<string>>();
+  for (const address of addresses) {
+    if (address._tag !== "GitWorktree") continue;
+    const region = canonicalAddressRegion(address);
+    if (region === undefined) return false;
+    const canonical = canonicalRegionString(region);
+    const metadata = JSON.stringify([
+      address.repositoryRef ?? null,
+      address.branch ?? null,
+    ]);
+    const values = gitMetadataByCanonical.get(canonical) ?? new Set<string>();
+    values.add(metadata);
+    gitMetadataByCanonical.set(canonical, values);
+  }
+  return [...gitMetadataByCanonical.values()].every(
+    (values) => values.size <= 1,
+  );
 };
 
 const resolvedCanonicalSetV1 = (
@@ -248,15 +248,11 @@ export const produceSandboxBoundaryV1 = (
   )
     return undefined;
 
-  const boundarySet = boundaryCanonicalSetV1(input.boundary.addresses);
+  const boundaryAddressesValid = validateBoundaryAddressesV1(
+    input.boundary.addresses,
+  );
   const resolvedSet = resolvedCanonicalSetV1(input.resolvedRegions);
-  if (
-    boundarySet === undefined ||
-    resolvedSet === undefined ||
-    boundarySet.size !== resolvedSet.size ||
-    [...boundarySet.keys()].some((canonical) => !resolvedSet.has(canonical))
-  )
-    return undefined;
+  if (!boundaryAddressesValid || resolvedSet === undefined) return undefined;
 
   const primaryKind = resolvedRegionKind(input.primaryManagedGitWorktreeRegion);
   if (primaryKind !== "GitWorktree") return undefined;
@@ -267,12 +263,6 @@ export const produceSandboxBoundaryV1 = (
   const uniqueRegions = resolvedSet;
   if (uniqueRegions === undefined) return undefined;
   if (!uniqueRegions.has(primaryCanonical)) return undefined;
-  const primaryResolvedRegion = uniqueRegions.get(primaryCanonical);
-  if (
-    primaryResolvedRegion === undefined ||
-    resolvedRegionKind(primaryResolvedRegion) !== "GitWorktree"
-  )
-    return undefined;
 
   const digestToCanonical = new Map<string, string>();
   const orderedEntries = [...uniqueRegions.entries()].sort(([left], [right]) =>
