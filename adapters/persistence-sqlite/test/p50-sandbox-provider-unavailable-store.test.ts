@@ -389,6 +389,51 @@ describe("P50 sandbox provider-unavailable fact and Attention queue", () => {
     );
   });
 
+  it("rejects non-contract TTL and expiry overflow before mutating queue state", async () => {
+    await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* seed;
+          const tx = yield* TransactionPort;
+          const facts = yield* SandboxStorePort;
+          const queue = yield* SandboxQueuePort;
+          const fact = yield* tx.transact(facts.record(factInput()));
+          const invalidTtl = yield* Effect.result(
+            tx.transact(
+              queue.claimBatch({
+                projectId,
+                now,
+                claimTtlMs: 30_001,
+                limit: 1,
+              }),
+            ),
+          );
+          expect(invalidTtl._tag).toBe("Failure");
+          const overflow = yield* Effect.result(
+            tx.transact(
+              queue.claimBatch({
+                projectId,
+                now: "+275760-09-13T00:00:00.000Z",
+                claimTtlMs: 30_000,
+                limit: 1,
+              }),
+            ),
+          );
+          expect(overflow._tag).toBe("Failure");
+          if (overflow._tag === "Failure") {
+            expect(overflow.failure).toMatchObject({
+              _tag: "PersistenceCorruption",
+              operation: "queue-claim",
+            });
+          }
+          const state = yield* sqlQueueState(projectId, fact.attentionFactId);
+          expect(state).toMatchObject({ state: "Pending", attempt_count: 0 });
+        }),
+        makeApp(),
+      ),
+    );
+  });
+
   it("reclaims expired claims, consumes only the current claim, and re-arms after rebuild", async () => {
     await Effect.runPromise(
       Effect.provide(

@@ -102,7 +102,7 @@ describe("P50 sandbox unavailable Attention queue polling", () => {
 
     expect(result).toMatchObject({ applied: 0, quarantined: 0 });
     expect(trace.filter((item) => item === "transaction-start")).toHaveLength(
-      3,
+      4,
     );
     expect(trace.indexOf("sandbox-claim")).toBeGreaterThan(-1);
     expect(trace.indexOf("sandbox-consume:claim-1")).toBeGreaterThan(

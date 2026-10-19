@@ -17,6 +17,10 @@ import type {
   SandboxProviderUnavailableStoreError,
   TransactionPortService,
 } from "@arbor/ports";
+import {
+  SANDBOX_UNAVAILABLE_ATTENTION_BATCH_MAX,
+  SANDBOX_UNAVAILABLE_ATTENTION_CLAIM_TTL_MS,
+} from "@arbor/ports";
 import { Effect, Option, Result } from "effect";
 import type { ConsumerLoopError, ConsumerLoopResult } from "./consumer-loop.js";
 
@@ -80,6 +84,9 @@ export type AttentionPollLoopError =
   | SandboxProviderUnavailableStoreError
   | ReturnType<typeof attentionPollError>
   | ReturnType<typeof claimLost>;
+
+const SANDBOX_UNAVAILABLE_QUEUE_SCAN_INTERVAL_MS = 5_000;
+const lastSandboxUnavailableQueueScanAt = new Map<string, number>();
 
 const attentionPollError = (
   failureCode: Exclude<AttentionPollFailureCode, "PollLeaseExpired">,
@@ -248,17 +255,78 @@ export const runAttentionPollOnce = (
     if (claimResult._tag === "NoClaim") return emptyResult();
     const projectId = claimResult.claim.projectId;
 
-    const sandboxClaims =
-      deps.sandboxUnavailableQueue === undefined
-        ? []
-        : yield* deps.tx.transact(
-            deps.sandboxUnavailableQueue.claimBatch({
-              projectId,
-              now: yield* deps.clock.now(),
-              claimTtlMs: policy.leaseTtlMs,
-              limit: policy.queueBatchSize,
-            }),
+    let sandboxClaims: ReadonlyArray<
+      import("@arbor/ports").SandboxProviderUnavailableAttentionQueueClaim
+    > = [];
+    if (deps.sandboxUnavailableQueue !== undefined) {
+      const scanNow = yield* deps.clock.now();
+      const scanNowMillis = Date.parse(scanNow);
+      if (
+        !Number.isFinite(scanNowMillis) ||
+        new Date(scanNowMillis).toISOString() !== scanNow
+      ) {
+        return yield* Effect.fail<AttentionPollLoopError>({
+          _tag: "PersistenceCorruption",
+          repository: "AttentionPollStore",
+          operation: "sandbox-queue-scan-clock",
+          reason: "scan clock did not provide canonical UTC milliseconds",
+        });
+      }
+      const currentClaimAndWake = yield* deps.tx.transact(
+        Effect.gen(function* () {
+          const current = yield* deps.pollStore.isCurrentClaim(
+            claimResult.claim,
+            scanNow,
           );
+          if (!current) return { current: false, wake: false };
+          const offset = yield* deps.offsets.read(consumerId, projectId);
+          const events = yield* deps.journal.readAfterRaw(
+            projectId,
+            offset,
+            policy.eventBatchSize,
+          );
+          return {
+            current: true,
+            wake: events.some(
+              (event) => event.eventTypeRaw === "SandboxProviderUnavailable",
+            ),
+          };
+        }),
+      );
+      if (!currentClaimAndWake.current) return emptyResult();
+      const scanKey = `${consumerId}:${projectId}`;
+      const previousScanAt = lastSandboxUnavailableQueueScanAt.get(scanKey);
+      const scanDue =
+        previousScanAt === undefined ||
+        scanNowMillis < previousScanAt ||
+        scanNowMillis - previousScanAt >=
+          SANDBOX_UNAVAILABLE_QUEUE_SCAN_INTERVAL_MS;
+      if (scanDue || currentClaimAndWake.wake) {
+        const claimed = yield* deps.tx.transact(
+          Effect.gen(function* () {
+            const current = yield* deps.pollStore.isCurrentClaim(
+              claimResult.claim,
+              scanNow,
+            );
+            if (!current) return Option.none();
+            return Option.some(
+              yield* deps.sandboxUnavailableQueue?.claimBatch({
+                projectId,
+                now: scanNow,
+                claimTtlMs: SANDBOX_UNAVAILABLE_ATTENTION_CLAIM_TTL_MS,
+                limit: Math.min(
+                  policy.queueBatchSize,
+                  SANDBOX_UNAVAILABLE_ATTENTION_BATCH_MAX,
+                ),
+              }) ?? Effect.succeed([]),
+            );
+          }),
+        );
+        if (Option.isNone(claimed)) return emptyResult();
+        sandboxClaims = claimed.value;
+        lastSandboxUnavailableQueueScanAt.set(scanKey, scanNowMillis);
+      }
+    }
 
     let fromSequence = 0;
     let lastSequence = 0;

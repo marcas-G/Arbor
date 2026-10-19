@@ -12,6 +12,8 @@ import {
   DomainEventJournal,
   IdGenerator,
   type RecordSandboxProviderUnavailableInput,
+  SANDBOX_UNAVAILABLE_ATTENTION_BATCH_MAX,
+  SANDBOX_UNAVAILABLE_ATTENTION_CLAIM_TTL_MS,
   SandboxProviderUnavailableAttentionQueue,
   type SandboxProviderUnavailableAttentionQueueClaim,
   type SandboxProviderUnavailableAttentionQueueService,
@@ -496,9 +498,10 @@ const makeQueueLayer = () =>
             if (
               !canonicalUtc(input.now) ||
               !Number.isSafeInteger(input.claimTtlMs) ||
-              input.claimTtlMs <= 0 ||
+              input.claimTtlMs !== SANDBOX_UNAVAILABLE_ATTENTION_CLAIM_TTL_MS ||
               !Number.isSafeInteger(input.limit) ||
-              input.limit <= 0
+              input.limit <= 0 ||
+              input.limit > SANDBOX_UNAVAILABLE_ATTENTION_BATCH_MAX
             ) {
               return yield* Effect.fail(
                 persistenceCorruption(
@@ -508,6 +511,22 @@ const makeQueueLayer = () =>
                 ),
               );
             }
+            const expiresAtMillis =
+              Date.parse(input.now) +
+              SANDBOX_UNAVAILABLE_ATTENTION_CLAIM_TTL_MS;
+            if (
+              !Number.isFinite(expiresAtMillis) ||
+              Math.abs(expiresAtMillis) > 8.64e15
+            ) {
+              return yield* Effect.fail(
+                persistenceCorruption(
+                  "SandboxProviderUnavailableStore",
+                  "queue-claim",
+                  "claim expiry exceeds the finite canonical UTC date range",
+                ),
+              );
+            }
+            const claimExpiresAt = new Date(expiresAtMillis).toISOString();
             const rows = yield* run(
               sql.unsafe<{
                 readonly attention_fact_id: string;
@@ -529,9 +548,6 @@ const makeQueueLayer = () =>
               const claimId = yield* ids.generate<string>(
                 "sandbox-attention-claim",
               );
-              const claimExpiresAt = new Date(
-                Date.parse(input.now) + input.claimTtlMs,
-              ).toISOString();
               const updated = yield* run(
                 sql.unsafe<{ readonly claim_id: string }>(
                   `UPDATE sandbox_provider_unavailable_attention_queue

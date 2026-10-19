@@ -12,6 +12,9 @@ import type { AgentLoopStepFence } from "./agent-loop-step.js";
 import type { DomainEventJournalError, RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
 
+export const SANDBOX_UNAVAILABLE_ATTENTION_CLAIM_TTL_MS = 30_000;
+export const SANDBOX_UNAVAILABLE_ATTENTION_BATCH_MAX = 100;
+
 /** Immutable P9 source for a provider that could not meet the pinned process policy. */
 export interface SandboxProviderUnavailableFactV1 {
   readonly attentionFactId: string;
