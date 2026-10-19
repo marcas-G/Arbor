@@ -27,13 +27,16 @@ or accepted candidate DTO changes were made.
   episode-binding schema (`P38_MIGRATIONS`). The adjacent exact-bundle match
   case proves one dispatch/driver invocation; the registry-only drift case
   proves zero. A no-requirement case verifies P5 is not read/audited.
+- Added the equivalent strict OsEnforced joined-result case. An exact current
+  bundle and exact registry binding proceeds once; registry revision/digest
+  drift also changes the full V2 bundle and parks before lease/dispatch/drive.
 
 ## Verification
 
 - `pnpm --filter @arbor/ports build` — PASS
 - `pnpm --filter @arbor/execution-runtime build` — PASS
 - `pnpm --filter @arbor/single-workspace build` — PASS
-- `pnpm exec vitest run tests/p2-driver.test.ts` — PASS, 11/11
+- `pnpm exec vitest run tests/p2-driver.test.ts` — PASS, 13/13
 - Targeted Biome check and `git diff --check` — PASS
 
 ## P10 design-gap counterexample
