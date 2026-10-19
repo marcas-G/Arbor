@@ -10,8 +10,13 @@
 
 **Landing base:** `dbe05ab4155aa08c3909135413241d79f2327d20`
 
+**Reviewed landing commit:** `24307d68d8f6d080aa42cecf727101b94ec8dbdc`
+
 **Acceptance record raw SHA-256:**
-`4EF0B7AC05E8507964EDD207E8FA0BD2019BD13062AAC3A60F89DD8401D4A969`
+`7AE3C8E4345DEE2E85313A7FD617D2674CA64DAE3B2918695A24C163FA71BF2B`
+
+**Independent postreview result raw SHA-256:**
+`9CE4955D4D2CF7CBB197E622E47C69AA68E5A6B732C9E06BD690F9E3F046A0A3`
 
 The base blob IDs are `HEAD:path` at the landing base; postimage SHA-256
 values hash exact working-tree file bytes. The manifest is intentionally not
@@ -32,5 +37,6 @@ self-hashed.
 
 Design-only boundary: no source code, tests, migration definitions or
 registration, database files, deployment or release artifacts. Independent
-post-landing consistency review remains separately required before resuming
-implementation at this seam.
+post-landing consistency review of the reviewed landing commit is complete
+with B0 = 0, B1 = 0, B2 = 0, Blocking = 0; see the linked result record.
+Implementation authorization remains separate.
