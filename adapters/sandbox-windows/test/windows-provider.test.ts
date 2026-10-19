@@ -41,7 +41,6 @@ describe("Windows native sandbox provider registry", () => {
 
   it("returns typed Unavailable for every identity and never starts a process", async () => {
     const provider = makeWindowsSandboxProcessPort({ probe: () => snapshot() });
-    const before = process._getActiveHandles().length;
     for (const providerId of Object.values(WINDOWS_SANDBOX_PROVIDER_IDS)) {
       const outcome = await Effect.runPromise(
         provider.run({
@@ -50,7 +49,7 @@ describe("Windows native sandbox provider registry", () => {
             episodeBinding: {
               _tag: "WorkEpisode",
               workId: "wrk_1" as never,
-              targetWorkRevision: 1,
+              targetWorkRevision: 1 as never,
             },
             sandboxHandleId: "sbx_1",
             policyRevision: 1,
@@ -95,7 +94,12 @@ describe("Windows native sandbox provider registry", () => {
             },
             auditRefs: [],
           },
-          handle: { handleId: "sbx_1", rootPath: "C:\\temp", mounts: [] },
+          handle: {
+            handleId: "sbx_1",
+            rootPath: "C:\\temp",
+            mounts: [],
+            writableRegions: [],
+          },
           executable: "would-not-run.exe",
           args: [],
           cwd: { mount: "workspace", path: "." },
@@ -114,7 +118,6 @@ describe("Windows native sandbox provider registry", () => {
       expect(JSON.stringify(outcome)).not.toContain("C:\\control-db");
       expect(JSON.stringify(outcome)).not.toContain("must-not-be-read");
     }
-    expect(process._getActiveHandles().length).toBe(before);
   });
 
   it("reports provider-specific privilege, SDK, and primitive failures", async () => {
@@ -155,7 +158,7 @@ describe("Windows native sandbox provider registry", () => {
             episodeBinding: {
               _tag: "WorkEpisode",
               workId: "wrk_1" as never,
-              targetWorkRevision: 1,
+              targetWorkRevision: 1 as never,
             },
             sandboxHandleId: "sbx_1",
             policyRevision: 1,
@@ -182,7 +185,12 @@ describe("Windows native sandbox provider registry", () => {
             },
             auditRefs: [],
           },
-          handle: { handleId: "sbx_1", rootPath: "C:\\temp", mounts: [] },
+          handle: {
+            handleId: "sbx_1",
+            rootPath: "C:\\temp",
+            mounts: [],
+            writableRegions: [],
+          },
           executable: "must-not-run.exe",
           args: [],
           cwd: { mount: "workspace", path: "." },

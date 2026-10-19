@@ -53,9 +53,10 @@ Stop. These controls remain unavailable; no test represents them as passed.
 ## Verification
 
 - `pnpm --filter @arbor/sandbox-windows build` — PASS.
-- `pnpm exec vitest run adapters/sandbox-windows/test/windows-provider.test.ts` — PASS, 4/4. Covers exact distinct provider IDs, Experimental-only capability snapshots, no advertised profile/network mode, typed provider-specific Unavailable reasons, no process handle creation, second admitted control-DB mount, and environment sentinel non-disclosure.
+- `pnpm exec vitest run adapters/sandbox-windows/test/windows-provider.test.ts` — PASS, 4/4. Covers exact distinct provider IDs, Experimental-only capability snapshots, no advertised profile/network mode, typed provider-specific Unavailable reasons, second admitted control-DB mount, and environment sentinel non-disclosure.
 - `pnpm exec vitest run --config vitest.architecture.config.ts tests/architecture/native-os-sandbox-windows.test.ts tests/architecture/package-dag.test.ts` — PASS, 15/15. Covers composition registration, allowed package edge, and absence of arbitrary spawn imports/calls.
 - `pnpm exec tsc -b apps/single-workspace` — PASS.
+- Targeted TypeScript check of the two new test files — PASS.
 - `pnpm exec biome check` on changed source/config/test files — PASS.
 - Existing `apps/single-workspace/test/p5-composition.test.ts` was attempted separately and failed before assertions because its fixture rejects online upgrade from schema 48 to schema 50 (`database user_version 48 requires an offline upgrade to schema 50`). This failure is retained and is not counted as a pass.
 - No full suite, database upgrade, deployment, or network access was run.
