@@ -28,8 +28,13 @@ const grantId = parse(PermissionGrantId)(
 );
 const commandId = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const configSnapshot = {
-  config: { version: 1 as const, revision: 4, operators: [operator] },
+  config: { version: 1 as const, revision: 4, issuers: [operator] },
   configDigest: "a".repeat(64),
+  authorityBundleRevision: 4,
+  authorityBundleDigest: "b".repeat(64),
+  providerRegistryRevision: 3,
+  providerRegistryDigest: "c".repeat(64),
+  providerRegistry: { version: 1 as const, revision: 3, entries: [] },
 };
 const now = "2026-10-19T00:00:00.000Z";
 
@@ -46,6 +51,10 @@ const setup = () => {
       executionId,
       operatorConfigRevision: 4,
       operatorConfigDigest: configSnapshot.configDigest,
+      authorityBundleRevision: configSnapshot.authorityBundleRevision,
+      authorityBundleDigest: configSnapshot.authorityBundleDigest,
+      providerRegistryRevision: configSnapshot.providerRegistryRevision,
+      providerRegistryDigest: configSnapshot.providerRegistryDigest,
     },
   };
   const handler = makeGrantPermissionHandler({

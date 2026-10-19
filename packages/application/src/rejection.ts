@@ -107,4 +107,22 @@ export type CommandRejection =
       readonly _tag: "ActiveClaimsExist";
       readonly worktreeId: string;
       readonly claimIds: ReadonlyArray<string>;
-    };
+    }
+  | {
+      readonly _tag: "StaleSandboxPolicyInputs";
+      readonly safeDetails: {
+        readonly field:
+          | "EpisodeRevision"
+          | "PolicyRevision"
+          | "WorkspaceRevision"
+          | "ResourceBoundaryRevision"
+          | "SandboxHandleBindingDigest"
+          | "AuthorityBundleRevision"
+          | "OperatorConfigRevision"
+          | "ProviderRegistryRevision";
+      };
+    }
+  | { readonly _tag: "SandboxPolicySummaryTooLarge" }
+  | { readonly _tag: "SandboxAuthorityUnavailable" }
+  | { readonly _tag: "ExecutionTerminal" }
+  | { readonly _tag: "DecisionExpiryInvalid" };

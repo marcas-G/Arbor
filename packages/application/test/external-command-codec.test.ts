@@ -197,6 +197,61 @@ describe("external wire-v1 command payload codec", () => {
     expect(result.value.payload).toMatchObject({ messageId: `msg_${UUID_V7}` });
   });
 
+  it("accepts only the closed human-selected sandbox policy variants", () => {
+    const payload = {
+      projectId: `prj_${UUID_V7}`,
+      workspaceId: `ws_${UUID_V7}`,
+      executionId: `exe_${UUID_V7}`,
+      episodeBinding: {
+        _tag: "InboxEpisode",
+        entryKey: "inbox:one",
+        inputKind: "HumanMessage",
+      },
+      expectedEpisodeRevision: 2,
+      expectedPolicyRevision: 0,
+      expectedWorkspaceRevision: 3,
+      expectedResourceBoundaryRevision: 1,
+      expectedSandboxHandleBindingDigest: "a".repeat(64),
+      expectedAuthorityBundleRevision: 4,
+      expectedAuthorityBundleDigest: "b".repeat(64),
+      expectedOperatorConfigRevision: 4,
+      expectedOperatorConfigDigest: "c".repeat(64),
+      expectedProviderRegistryRevision: 3,
+      expectedProviderRegistryDigest: "d".repeat(64),
+      profile: "ReadOnly",
+      providerId: "bwrap",
+      networkPolicy: {
+        kind: "OsEnforced",
+        policy: { version: 1, mode: "Disabled", destinations: [] },
+      },
+      decisionExpiresAt: "2099-10-12T08:30:00.000Z",
+    };
+    const envelope = {
+      commandType: "DecideSandboxPolicy",
+      commandId: `cmd_${UUID_V7}`,
+      projectId: `prj_${UUID_V7}`,
+      actor: "user:alice",
+      issuedAt: "2026-10-10T00:00:00.000Z",
+      payload,
+    };
+    expect(decodeExternalCommand(envelope).ok).toBe(true);
+    expect(
+      decodeExternalCommand({
+        ...envelope,
+        payload: { ...payload, profile: "FullAccess" },
+      }),
+    ).toEqual({
+      ok: false,
+      issues: [{ path: ["payload"], rule: "format" }],
+    });
+    expect(
+      decodeExternalCommand({
+        ...envelope,
+        payload: { ...payload, extra: "operator-ref" },
+      }).ok,
+    ).toBe(false);
+  });
+
   it("decodes the authenticated-human RetryVerification command and rejects authority/BlobRef fields", () => {
     const payload = {
       workId: `wrk_${UUID_V7}`,

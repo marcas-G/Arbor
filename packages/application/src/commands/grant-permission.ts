@@ -111,7 +111,15 @@ export const makeGrantPermissionHandler = (
         if (
           issuerBinding.operatorConfigRevision !== snapshot.config.revision ||
           issuerBinding.operatorConfigDigest !== snapshot.configDigest ||
-          !snapshot.config.operators.includes(context.principal) ||
+          issuerBinding.authorityBundleRevision !==
+            snapshot.authorityBundleRevision ||
+          issuerBinding.authorityBundleDigest !==
+            snapshot.authorityBundleDigest ||
+          issuerBinding.providerRegistryRevision !==
+            snapshot.providerRegistryRevision ||
+          issuerBinding.providerRegistryDigest !==
+            snapshot.providerRegistryDigest ||
+          !snapshot.config.issuers.includes(context.principal) ||
           payload.issuer !== context.principal ||
           payload.subject._tag !== "HumanPrincipal" ||
           payload.subject.principal === context.principal ||

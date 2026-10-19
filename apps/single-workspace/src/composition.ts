@@ -13,6 +13,7 @@ import {
   type CommandGateway,
   type CommandGatewayQualificationProbe,
   type CommandHandlerRegistry,
+  type DecideSandboxPolicyPreparation,
   type InputPromotionQualificationProbe,
   type InputPromotionService,
   InputPromotionServiceLive,
@@ -117,6 +118,7 @@ import {
   RuntimeClockLive,
   releaseP39WriterPermit,
   runMigrations,
+  SandboxPolicyDecisionStoreLive,
   SchedulerTimerStoreLive,
   SessionRepositoryLive,
   sqliteAdapterError,
@@ -248,7 +250,11 @@ import { INLINE_SECRET_REF } from "./provider-config.js";
 import { PROVIDER_REGISTRY_TABLE } from "./provider-registry.table.js";
 import { makeSingleWorkspaceCommandHandlerRegistryLive } from "./registry.js";
 import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
-import { loadSandboxPolicyGrantIssuerConfigSnapshot } from "./sandbox-policy-issuer-config.js";
+import {
+  SandboxAuthoritySnapshot,
+  SandboxAuthoritySnapshotLive,
+  sandboxIssuerSnapshotOf,
+} from "./sandbox-authority-bundle.js";
 import { ToolAuthorityResolverLive } from "./tool-authority-resolver.js";
 import {
   type AuthenticatorService,
@@ -317,6 +323,9 @@ export interface SingleWorkspaceConfig {
    * host configuration source; absence or invalid data disables sandbox
    * policy authority. This is never loaded from environment or a request. */
   readonly trustedHostConfigurationSource?: TrustedHostConfigurationSourceService;
+  /** Accepted V21 P4/P11 preparation seam. Production without a validated
+   * materializer remains fail-closed and exposes no local-default fallback. */
+  readonly sandboxPolicyDecisionPreparation?: DecideSandboxPolicyPreparation;
   /** Test-only startup trace; absent from ordinary production composition. */
   readonly startupDiagnosticProbe?: (phase: string) => void;
   /** Test-only pre-BEGIN barrier; ordinary production composition leaves it absent. */
@@ -481,10 +490,6 @@ export const buildSingleWorkspaceLayer = (
   config: SingleWorkspaceConfig,
 ): Layer.Layer<SingleWorkspaceServices> => {
   const governance = resolveCompositionGovernance(config);
-  const sandboxPolicyGrantIssuerConfigSnapshot =
-    loadSandboxPolicyGrantIssuerConfigSnapshot(
-      config.trustedHostConfigurationSource,
-    );
   try {
     config.startupDiagnosticProbe?.("p39.layer-path-validation.before");
   } catch {
@@ -513,6 +518,10 @@ export const buildSingleWorkspaceLayer = (
     ClockLive,
     RuntimeClockLive,
     IdGeneratorLive,
+  );
+  const sandboxAuthoritySnapshotLayer = Layer.provide(
+    SandboxAuthoritySnapshotLive(config.trustedHostConfigurationSource),
+    infra,
   );
   const transactionPortLayer = Layer.provide(
     makeTransactionPortLive(config.transactionBeginQualificationProbe),
@@ -725,6 +734,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(EvidenceRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
+    Layer.provide(SandboxPolicyDecisionStoreLive, infra),
     Layer.provide(HumanMessageStoreLive, infra),
     Layer.provide(ConversationResponseJobStoreLive, infra),
     Layer.provide(ConversationCheckpointStoreLive, infra),
@@ -824,11 +834,22 @@ export const buildSingleWorkspaceLayer = (
     config.projectResourceProfiles ?? makeProjectResourceProfilePort([]),
   );
   const registry = Layer.provide(
-    makeSingleWorkspaceCommandHandlerRegistryLive(
-      governance,
-      sandboxPolicyGrantIssuerConfigSnapshot,
+    Layer.unwrap(
+      Effect.gen(function* () {
+        const authoritySnapshot = yield* SandboxAuthoritySnapshot;
+        return makeSingleWorkspaceCommandHandlerRegistryLive(
+          governance,
+          sandboxIssuerSnapshotOf(authoritySnapshot),
+          config.sandboxPolicyDecisionPreparation,
+        );
+      }),
     ),
-    Layer.mergeAll(repos, infra, projectResourceProfilePort),
+    Layer.mergeAll(
+      repos,
+      infra,
+      projectResourceProfilePort,
+      sandboxAuthoritySnapshotLayer,
+    ),
   );
   const gateway = Layer.provide(
     makeCommandGatewayLive(config.gatewayQualificationProbe),
@@ -1031,9 +1052,13 @@ export const buildSingleWorkspaceLayer = (
       governance,
       config.authenticator !== undefined,
       config.createProjectPostCommitBeforeActivationQualificationProbe,
-      sandboxPolicyGrantIssuerConfigSnapshot,
     ),
-    Layer.mergeAll(coreAll, authorityResolver, projectionQuery),
+    Layer.mergeAll(
+      coreAll,
+      authorityResolver,
+      projectionQuery,
+      sandboxAuthoritySnapshotLayer,
+    ),
   );
   const productionDaemon = Layer.provide(
     ProductionDaemonServiceLive({

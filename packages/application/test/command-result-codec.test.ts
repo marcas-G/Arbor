@@ -45,7 +45,7 @@ describe("registered command receipt decoders", () => {
     );
 
     expect(external.filter((descriptor) => descriptor.required)).toHaveLength(
-      29,
+      30,
     );
     expect(external.filter((descriptor) => !descriptor.required)).toEqual([
       expect.objectContaining({
@@ -71,6 +71,55 @@ describe("registered command receipt decoders", () => {
     const messageId = id("msg");
     const dependencyId = id("dep");
     const deliverableId = id("del");
+    const policyEpisode = {
+      _tag: "InboxEpisode" as const,
+      entryKey: "inbox:one",
+      inputKind: "HumanMessage",
+    };
+    const policySummary: EffectivePolicySummaryV1 = {
+      version: 1,
+      kind: "TrustedLocalUnconfinedV1",
+      projectId: projectId as never,
+      workspaceId: workspaceId as never,
+      executionId: executionId as never,
+      episodeBinding: policyEpisode,
+      workspaceRevision: 1,
+      resourceBoundaryRevision: 1,
+      resourceBoundaryDigest: "a".repeat(64),
+      sandboxEnvironmentBasisDigest: "b".repeat(64),
+      policyRevision: 1,
+      expiresAt: "2026-10-20T00:00:00.000Z",
+      trustedRuntimeIdentity: "TrustedLocal",
+      trustedRuntimeVersion: "builtin-v1",
+      profile: "FullAccess",
+      networkBoundary: "Unconfined",
+      sandboxHandleBindingDigest: "c".repeat(64),
+      mounts: [
+        {
+          mountId: "workspace",
+          targetRef: "workspace",
+          targetIdentityDigest: "d".repeat(64),
+          access: "ReadOnly",
+        },
+      ],
+      environmentAllowlist: ["PATH"],
+      limits: {
+        wallTimeMs: 1000,
+        stdoutBytes: 1000,
+        stderrBytes: 1000,
+        processCount: 1,
+        memoryBytes: 1024,
+        cpuTimeMs: 1000,
+      },
+      auditRefs: ["audit:one"],
+      authorityBundleRevision: 1,
+      authorityBundleDigest: "e".repeat(64),
+      operatorConfigRevision: 1,
+      operatorConfigDigest: "f".repeat(64),
+    };
+    const policyDigest = createHash("sha256")
+      .update(encodeEffectivePolicySummaryV1(policySummary))
+      .digest("hex");
     const validResults: Readonly<Record<string, unknown>> = {
       CreateProject: {
         projectId,
@@ -212,6 +261,17 @@ describe("registered command receipt decoders", () => {
         state: "OrphanedAndRetried",
       },
       GrantPermission: { permissionGrantId: id("pgr"), state: "Active" },
+      DecideSandboxPolicy: {
+        version: 1,
+        commandId: id("cmd"),
+        projectId,
+        workspaceId,
+        executionId,
+        episodeBinding: policyEpisode,
+        policyRevision: 1,
+        policyDigest,
+        effectivePolicySnapshot: policySummary,
+      },
       RevokePermission: { permissionGrantId: id("pgr"), state: "Revoked" },
       SubmitHumanMessage: { messageId, state: "Pending" },
       ResumeConversationResponse: {
@@ -484,3 +544,9 @@ describe("registered command receipt decoders", () => {
     }
   });
 });
+
+import { createHash } from "node:crypto";
+import {
+  type EffectivePolicySummaryV1,
+  encodeEffectivePolicySummaryV1,
+} from "@arbor/domain";

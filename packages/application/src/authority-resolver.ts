@@ -1,6 +1,7 @@
 import type {
   CommandId,
   CommandSubmissionContext,
+  ExecutionEpisodeBinding,
   ExecutionId,
   FormationProposalId,
   PermissionGrant,
@@ -11,13 +12,18 @@ import type {
   ProjectId,
   ProjectPolicy,
   SandboxPolicyGrantIssuerConfigSnapshotV1,
+  SandboxPolicyGrantIssuerProvenanceV1,
   SemanticRequestFingerprint,
   VerificationId,
   WorkId,
   WorkspaceId,
   WorkspacePolicy,
 } from "@arbor/domain";
-import { isIsoTimestamp } from "@arbor/domain";
+import {
+  decodeExecutionEpisodeBinding,
+  encodeExecutionEpisodeBinding,
+  isIsoTimestamp,
+} from "@arbor/domain";
 import type {
   InvocationApproval,
   InvocationAuthority,
@@ -60,6 +66,8 @@ export interface CanonicalExecutionSnapshot {
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
   readonly status?: "Active" | "Settled";
+  readonly episodeRevision?: number;
+  readonly episodeBinding?: ExecutionEpisodeBinding;
 }
 
 export interface CanonicalWorkSnapshot {
@@ -132,6 +140,9 @@ export interface AuthorityDecisionInput {
   /** Composition/Resolver trusted instant. Sandbox-specific CAPA checks never
    * use caller-controlled CommandEnvelope.issuedAt. */
   readonly sandboxPolicyAuthorityNow?: string;
+  /** Exact immutable provenance loaded by the composition root for the one
+   * resolver-selected CAPA grant; never caller-provided. */
+  readonly sandboxPolicyGrantIssuerProvenance?: SandboxPolicyGrantIssuerProvenanceV1;
 }
 
 /** P4 `03` §2/§4 invocation-scoped facts. `AuthorityDecisionInput` cannot
@@ -930,7 +941,13 @@ const governanceCommandFact = (
           !Number.isSafeInteger(snapshot.config.revision) ||
           snapshot.config.revision < 1 ||
           !/^[0-9a-f]{64}$/u.test(snapshot.configDigest) ||
-          !snapshot.config.operators.includes(principal) ||
+          !Number.isSafeInteger(snapshot.authorityBundleRevision) ||
+          snapshot.authorityBundleRevision < 1 ||
+          !/^[0-9a-f]{64}$/u.test(snapshot.authorityBundleDigest) ||
+          !Number.isSafeInteger(snapshot.providerRegistryRevision) ||
+          snapshot.providerRegistryRevision < 1 ||
+          !/^[0-9a-f]{64}$/u.test(snapshot.providerRegistryDigest) ||
+          !snapshot.config.issuers.includes(principal) ||
           execution === undefined ||
           execution.executionId !== targetExecutionId ||
           execution.projectId !== projectId ||
@@ -949,6 +966,10 @@ const governanceCommandFact = (
             executionId: execution.executionId,
             operatorConfigRevision: snapshot.config.revision,
             operatorConfigDigest: snapshot.configDigest,
+            authorityBundleRevision: snapshot.authorityBundleRevision,
+            authorityBundleDigest: snapshot.authorityBundleDigest,
+            providerRegistryRevision: snapshot.providerRegistryRevision,
+            providerRegistryDigest: snapshot.providerRegistryDigest,
           },
         });
       }
@@ -965,6 +986,92 @@ const governanceCommandFact = (
         semanticRequestFingerprint,
         projectId,
         permissionGrantId,
+      });
+    }
+    case "DecideSandboxPolicy": {
+      const targetExecutionId = payloadString(payload, "executionId");
+      const targetWorkspaceId = payloadString(payload, "workspaceId");
+      const payloadEpisode = decodeExecutionEpisodeBinding(
+        payloadRecord(payload).episodeBinding,
+      );
+      const expectedEpisodeRevision = payloadNumber(
+        payload,
+        "expectedEpisodeRevision",
+      );
+      const episode = input.canonicalFacts.execution;
+      const snapshot = input.sandboxPolicyGrantIssuerConfigSnapshot;
+      const now = input.sandboxPolicyAuthorityNow;
+      const provenance = input.sandboxPolicyGrantIssuerProvenance;
+      const selected = input.grants.filter(
+        (grant) =>
+          grant.state === "Active" &&
+          grant.subject?._tag === "HumanPrincipal" &&
+          grant.subject.principal === principal &&
+          grant.capability === "DecideSandboxPolicy" &&
+          grant.target === targetExecutionId &&
+          grant.validFrom !== undefined &&
+          now !== undefined &&
+          Date.parse(grant.validFrom) <= Date.parse(now) &&
+          grant.expiresAt != null &&
+          Date.parse(now) < Date.parse(grant.expiresAt),
+      );
+      if (
+        input.submissionContext._tag !== "External" ||
+        !isAuthenticatedHuman(input) ||
+        targetExecutionId === null ||
+        targetWorkspaceId === null ||
+        payloadString(payload, "projectId") !== projectId ||
+        now === undefined ||
+        !isIsoTimestamp(now) ||
+        snapshot === undefined ||
+        episode === undefined ||
+        episode.executionId !== targetExecutionId ||
+        episode.projectId !== projectId ||
+        episode.workspaceId !== targetWorkspaceId ||
+        episode.status !== "Active" ||
+        !Number.isSafeInteger(episode.episodeRevision) ||
+        episode.episodeRevision === undefined ||
+        episode.episodeRevision < 0 ||
+        episode.episodeBinding === undefined ||
+        expectedEpisodeRevision !== episode.episodeRevision ||
+        payloadEpisode === undefined ||
+        encodeExecutionEpisodeBinding(payloadEpisode) !==
+          encodeExecutionEpisodeBinding(episode.episodeBinding) ||
+        selected.length !== 1 ||
+        provenance === undefined
+      ) {
+        return Effect.fail(denyCommand(input, "DecideSandboxPolicy", "Denied"));
+      }
+      const grant = selected[0];
+      if (
+        grant === undefined ||
+        grant.issuer !== provenance.issuerPrincipal ||
+        provenance.permissionGrantId !== grant.permissionGrantId ||
+        !snapshot.config.issuers.includes(provenance.issuerPrincipal) ||
+        provenance.operatorConfigRevision !== snapshot.config.revision ||
+        provenance.operatorConfigDigest !== snapshot.configDigest ||
+        grant.issuer === principal
+      ) {
+        return Effect.fail(denyCommand(input, "DecideSandboxPolicy", "Denied"));
+      }
+      return Effect.succeed({
+        _tag: "SandboxPolicyDecisionAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        workspaceId: episode.workspaceId,
+        executionId: episode.executionId,
+        episodeBinding: episode.episodeBinding,
+        episodeRevision: episode.episodeRevision,
+        permissionGrant: grant,
+        issuerProvenance: provenance,
+        authorityBundleRevision: snapshot.authorityBundleRevision,
+        authorityBundleDigest: snapshot.authorityBundleDigest,
+        providerRegistryRevision: snapshot.providerRegistryRevision,
+        providerRegistryDigest: snapshot.providerRegistryDigest,
+        operatorConfigRevision: snapshot.config.revision,
+        operatorConfigDigest: snapshot.configDigest,
       });
     }
     case "RevokePermission": {

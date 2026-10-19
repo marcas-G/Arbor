@@ -6,6 +6,7 @@ import type {
   LeaseGeneration,
   ProjectId,
 } from "@arbor/domain";
+import type { StoredCommandResolution } from "@arbor/ports";
 import {
   Clock,
   CommandStore,
@@ -155,62 +156,111 @@ export const makeCommandGatewayLive = (
           });
           const startedAt = yield* clock.now();
 
+          const replayStored = (
+            stored: StoredCommandResolution,
+          ): Effect.Effect<
+            CommandReceipt<R, CommandRejection>,
+            CommandGatewayError,
+            import("@arbor/ports").TransactionScope
+          > => {
+            const priorVersionAllowed =
+              stored.schemaVersion !== schemaVersion &&
+              (handler.priorReceiptSchemaVersions ?? []).includes(
+                stored.schemaVersion,
+              );
+            const storedFingerprint = priorVersionAllowed
+              ? semanticRequestFingerprint({
+                  commandType: envelope.commandType,
+                  projectId: envelope.projectId,
+                  actor: envelope.actor,
+                  schemaVersion: stored.schemaVersion,
+                  payload: envelope.payload,
+                })
+              : fingerprint;
+            if (
+              stored.semanticRequestFingerprint === storedFingerprint &&
+              (stored.schemaVersion === schemaVersion || priorVersionAllowed) &&
+              stored.fingerprintAlgorithmVersion ===
+                FINGERPRINT_ALGORITHM_VERSION
+            ) {
+              return decodeRegisteredCommandReceipt<R>(
+                stored,
+                envelope.commandType,
+                stored.schemaVersion,
+              ).pipe(
+                Effect.tap((receipt) =>
+                  handler.validateReceiptReplay === undefined
+                    ? Effect.void
+                    : handler.validateReceiptReplay(
+                        receipt,
+                        envelope.payload,
+                        envelope,
+                        context,
+                      ),
+                ),
+              );
+            }
+            return Effect.succeed({
+              commandId: stored.commandId,
+              projectId: stored.projectId,
+              semanticRequestFingerprint: fingerprint,
+              schemaVersion: stored.schemaVersion,
+              fingerprintAlgorithmVersion: stored.fingerprintAlgorithmVersion,
+              resolution: {
+                _tag: "TerminalRejected" as const,
+                error: {
+                  _tag: "IdempotencyConflict" as const,
+                  commandId: envelope.commandId,
+                } satisfies CommandRejection,
+              },
+              createdAt: stored.createdAt,
+              settledAt: stored.settledAt,
+            } satisfies CommandReceipt<R, CommandRejection>);
+          };
+
+          let prepared: unknown;
+          if (handler.prepare !== undefined) {
+            const advisory = yield* tx.transact(
+              store.findResolution(envelope.commandId),
+            );
+            if (Option.isNone(advisory)) {
+              const preparation = yield* Effect.match(
+                handler.prepare(envelope, context),
+                {
+                  onFailure: (error) => ({ _tag: "Failure" as const, error }),
+                  onSuccess: (value) => ({ _tag: "Prepared" as const, value }),
+                },
+              );
+              if (preparation._tag === "Failure") {
+                const finalResolution = yield* tx.transact(
+                  store.findResolution(envelope.commandId),
+                );
+                if (Option.isSome(finalResolution)) {
+                  return yield* tx.transact(
+                    replayStored(finalResolution.value),
+                  );
+                }
+                const settledAt = yield* clock.now();
+                yield* tx
+                  .transact(
+                    store.recordRetryableAttempt(
+                      envelope.commandId,
+                      "SandboxPolicyPreparationUnavailable",
+                      startedAt,
+                      settledAt,
+                    ),
+                  )
+                  .pipe(Effect.ignore);
+                return yield* Effect.fail(preparation.error);
+              }
+              prepared = preparation.value;
+            }
+          }
+
           const body = Effect.gen(function* () {
             const existing = yield* store.findResolution(envelope.commandId);
             if (Option.isSome(existing)) {
-              const stored = existing.value;
-              const priorVersionAllowed =
-                stored.schemaVersion !== schemaVersion &&
-                (handler.priorReceiptSchemaVersions ?? []).includes(
-                  stored.schemaVersion,
-                );
-              const storedFingerprint = priorVersionAllowed
-                ? semanticRequestFingerprint({
-                    commandType: envelope.commandType,
-                    projectId: envelope.projectId,
-                    actor: envelope.actor,
-                    schemaVersion: stored.schemaVersion,
-                    payload: envelope.payload,
-                  })
-                : fingerprint;
-              if (
-                stored.semanticRequestFingerprint === storedFingerprint &&
-                (stored.schemaVersion === schemaVersion ||
-                  priorVersionAllowed) &&
-                stored.fingerprintAlgorithmVersion ===
-                  FINGERPRINT_ALGORITHM_VERSION
-              ) {
-                const receipt = yield* decodeRegisteredCommandReceipt<R>(
-                  stored,
-                  envelope.commandType,
-                  stored.schemaVersion,
-                );
-                if (handler.validateReceiptReplay !== undefined) {
-                  yield* handler.validateReceiptReplay(
-                    receipt,
-                    envelope.payload,
-                    envelope,
-                    context,
-                  );
-                }
-                return receipt;
-              }
-              return {
-                commandId: stored.commandId,
-                projectId: stored.projectId,
-                semanticRequestFingerprint: fingerprint,
-                schemaVersion: stored.schemaVersion,
-                fingerprintAlgorithmVersion: stored.fingerprintAlgorithmVersion,
-                resolution: {
-                  _tag: "TerminalRejected" as const,
-                  error: {
-                    _tag: "IdempotencyConflict" as const,
-                    commandId: envelope.commandId,
-                  } satisfies CommandRejection,
-                },
-                createdAt: stored.createdAt,
-                settledAt: stored.settledAt,
-              } satisfies CommandReceipt<R, CommandRejection>;
+              return yield* replayStored(existing.value);
             }
 
             if (authority._tag === "RetryVerificationReplayOnlyAuthority") {
@@ -360,6 +410,7 @@ export const makeCommandGatewayLive = (
             const outcome = yield* handler.execute(
               { ...envelope, resolvedAuthority: authority },
               context,
+              prepared,
             );
             const settledAt = yield* clock.now();
             if (!outcome.ok) {

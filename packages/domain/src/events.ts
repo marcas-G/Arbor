@@ -292,6 +292,18 @@ export const SandboxPolicyGrantIssued = Schema.TaggedStruct(
     operatorConfigDigest: Schema.String,
   },
 );
+export const SandboxPolicyDecisionRecorded = Schema.TaggedStruct(
+  "SandboxPolicyDecisionRecorded",
+  {
+    workspaceId: Schema.String,
+    executionId: Schema.String,
+    episodeBinding: Schema.Unknown,
+    policyRevision: Schema.Number,
+    permissionGrantId: Schema.String,
+    operatorConfigRevision: Schema.Number,
+    operatorConfigDigest: Schema.String,
+  },
+);
 export const DecisionRecorded = Schema.TaggedStruct("DecisionRecorded", {});
 export const WorktreeCreated = Schema.TaggedStruct("WorktreeCreated", {
   worktreeId: Schema.String,
@@ -440,6 +452,7 @@ export const DomainEventPayload = Schema.Union([
   ExecutionSettled,
   PermissionChanged,
   SandboxPolicyGrantIssued,
+  SandboxPolicyDecisionRecorded,
   DecisionRecorded,
   EnvironmentChanged,
   WorktreeCreated,
@@ -500,6 +513,7 @@ export const EVENT_CATALOG = {
   ExecutionSettled,
   PermissionChanged,
   SandboxPolicyGrantIssued,
+  SandboxPolicyDecisionRecorded,
   DecisionRecorded,
   EnvironmentChanged,
   WorktreeCreated,
