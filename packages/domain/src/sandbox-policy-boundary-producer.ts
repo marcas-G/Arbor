@@ -122,28 +122,109 @@ const resolvedRegionKind = (
   return region.resourceSpaceId === expectedSpace ? kind : undefined;
 };
 
-const addressSpaceMatches = (
+const canonicalAddressRegion = (
   address: ResourceAddress,
-  region: CanonicalResourceRegion,
-): boolean => {
-  const kind = resolvedRegionKind(region);
-  if (kind === undefined) return false;
-  const normalized = region.normalizedRegion as Record<string, unknown>;
-  switch (address._tag) {
+): CanonicalResourceRegion | undefined => {
+  if (typeof address !== "object" || address === null) return undefined;
+  const row = address as unknown as Record<string, unknown>;
+  switch (row._tag) {
     case "FileTree":
-      return kind === "FileTree";
-    case "GitWorktree":
-      return kind === "GitWorktree";
+      return exactKeys(row, ["_tag", "path"]) &&
+        typeof row.path === "string" &&
+        hasOnlyScalarValues(row.path)
+        ? {
+            resourceSpaceId: "filesystem",
+            normalizedRegion: { kind: "FileTree", path: row.path },
+          }
+        : undefined;
+    case "GitWorktree": {
+      const keys = ["_tag", "path"];
+      if (Object.hasOwn(row, "repositoryRef")) keys.push("repositoryRef");
+      if (Object.hasOwn(row, "branch")) keys.push("branch");
+      if (
+        !exactKeys(row, keys) ||
+        typeof row.path !== "string" ||
+        !hasOnlyScalarValues(row.path) ||
+        (row.repositoryRef !== undefined &&
+          (typeof row.repositoryRef !== "string" ||
+            !hasOnlyScalarValues(row.repositoryRef))) ||
+        (row.branch !== undefined &&
+          (typeof row.branch !== "string" || !hasOnlyScalarValues(row.branch)))
+      )
+        return undefined;
+      return {
+        resourceSpaceId: "filesystem",
+        normalizedRegion: { kind: "GitWorktree", path: row.path },
+      };
+    }
     case "DatabaseNamespace":
-      return (
-        kind === "DatabaseNamespace" &&
-        normalized.namespace === address.namespace
-      );
+      return exactKeys(row, ["_tag", "namespace"]) &&
+        typeof row.namespace === "string" &&
+        hasOnlyScalarValues(row.namespace)
+        ? {
+            resourceSpaceId: "database",
+            normalizedRegion: {
+              kind: "DatabaseNamespace",
+              namespace: row.namespace,
+            },
+          }
+        : undefined;
     case "ExternalResource":
-      return (
-        kind === "ExternalResource" && normalized.address === address.address
-      );
+      return exactKeys(row, ["_tag", "address"]) &&
+        typeof row.address === "string" &&
+        hasOnlyScalarValues(row.address)
+        ? {
+            resourceSpaceId: "external",
+            normalizedRegion: {
+              kind: "ExternalResource",
+              address: row.address,
+            },
+          }
+        : undefined;
+    default:
+      return undefined;
   }
+};
+
+const boundaryCanonicalSetV1 = (
+  addresses: ReadonlyArray<ResourceAddress>,
+): Map<string, ResourceAddress> | undefined => {
+  const result = new Map<string, ResourceAddress>();
+  for (const address of addresses) {
+    const region = canonicalAddressRegion(address);
+    if (region === undefined) return undefined;
+    const canonical = canonicalRegionString(region);
+    const prior = result.get(canonical);
+    if (prior !== undefined) {
+      if (prior._tag === "GitWorktree" && address._tag === "GitWorktree") {
+        const priorMetadata = JSON.stringify([
+          prior.repositoryRef ?? null,
+          prior.branch ?? null,
+        ]);
+        const currentMetadata = JSON.stringify([
+          address.repositoryRef ?? null,
+          address.branch ?? null,
+        ]);
+        if (priorMetadata !== currentMetadata) return undefined;
+      }
+    } else {
+      result.set(canonical, address);
+    }
+  }
+  return result;
+};
+
+const resolvedCanonicalSetV1 = (
+  regions: ReadonlyArray<CanonicalResourceRegion>,
+): Map<string, CanonicalResourceRegion> | undefined => {
+  const result = new Map<string, CanonicalResourceRegion>();
+  for (const region of regions) {
+    if (resolvedRegionKind(region) === undefined) return undefined;
+    const canonical = canonicalRegionString(region);
+    if (!hasOnlyScalarValues(canonical)) return undefined;
+    if (!result.has(canonical)) result.set(canonical, region);
+  }
+  return result;
 };
 
 /** Pure P11→P4 complete-boundary producer. All environment resolution and
@@ -161,18 +242,21 @@ export const produceSandboxBoundaryV1 = (
     !Number.isSafeInteger(input.responsibilityRevision) ||
     input.responsibilityRevision !==
       input.boundary.basisResponsibilityRevision ||
-    input.boundary.addresses.length !== input.resolvedRegions.length ||
     (input.policyKind === "OsEnforced" && input.profile === "FullAccess") ||
     (input.policyKind === "TrustedLocalUnconfinedV1" &&
       input.profile !== "FullAccess")
   )
     return undefined;
 
-  for (const [index, address] of input.boundary.addresses.entries()) {
-    const region = input.resolvedRegions[index];
-    if (region === undefined || !addressSpaceMatches(address, region))
-      return undefined;
-  }
+  const boundarySet = boundaryCanonicalSetV1(input.boundary.addresses);
+  const resolvedSet = resolvedCanonicalSetV1(input.resolvedRegions);
+  if (
+    boundarySet === undefined ||
+    resolvedSet === undefined ||
+    boundarySet.size !== resolvedSet.size ||
+    [...boundarySet.keys()].some((canonical) => !resolvedSet.has(canonical))
+  )
+    return undefined;
 
   const primaryKind = resolvedRegionKind(input.primaryManagedGitWorktreeRegion);
   if (primaryKind !== "GitWorktree") return undefined;
@@ -180,20 +264,15 @@ export const produceSandboxBoundaryV1 = (
     input.primaryManagedGitWorktreeRegion,
   );
 
-  const uniqueRegions = new Map<string, CanonicalResourceRegion>();
-  for (const region of input.resolvedRegions) {
-    if (resolvedRegionKind(region) === undefined) return undefined;
-    const canonical = canonicalRegionString(region);
-    if (!hasOnlyScalarValues(canonical)) return undefined;
-    const prior = uniqueRegions.get(canonical);
-    if (prior === undefined) uniqueRegions.set(canonical, region);
-    else {
-      const duplicateKind = resolvedRegionKind(region);
-      if (canonical === primaryCanonical && duplicateKind === "GitWorktree")
-        uniqueRegions.set(canonical, region);
-    }
-  }
+  const uniqueRegions = resolvedSet;
+  if (uniqueRegions === undefined) return undefined;
   if (!uniqueRegions.has(primaryCanonical)) return undefined;
+  const primaryResolvedRegion = uniqueRegions.get(primaryCanonical);
+  if (
+    primaryResolvedRegion === undefined ||
+    resolvedRegionKind(primaryResolvedRegion) !== "GitWorktree"
+  )
+    return undefined;
 
   const digestToCanonical = new Map<string, string>();
   const orderedEntries = [...uniqueRegions.entries()].sort(([left], [right]) =>

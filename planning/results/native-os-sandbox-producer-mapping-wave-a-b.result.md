@@ -76,8 +76,9 @@ handle-binding digests. No host
 path appears in the producer result. It performs no I/O; production
 preparation/materialization remains a later wave.
 
-Verification: boundary producer and codec suites 8/8; fixed revision-zero
+Verification: boundary producer and codec suites 9/9; fixed revision-zero
 ResourceBoundaryDigest and V21 TargetRef vectors; alias/determinism,
-non-filesystem metadata, ownership revision/status, access/profile,
-incomplete-boundary and digest-collision cases; `pnpm build`, focused Biome and
-`git diff --check`.
+non-filesystem metadata, resolver-shaped canonical-set dedup/alias handling,
+wrong-path/omitted/extra region rejection, ownership revision/status,
+access/profile, incomplete-boundary and digest-collision cases; `pnpm build`,
+focused Biome and `git diff --check`.

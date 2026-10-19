@@ -101,13 +101,9 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
       },
     ];
     const result = produceSandboxBoundaryV1(
-      input(
-        addresses,
-        [primary, primaryAlias, extra, databaseTarget, externalTarget],
-        {
-          ownershipClaims: claims,
-        },
-      ),
+      input(addresses, [primary, extra, databaseTarget, externalTarget], {
+        ownershipClaims: claims,
+      }),
       hash,
     );
 
@@ -148,13 +144,7 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
     const reordered = produceSandboxBoundaryV1(
       input(
         [...addresses].reverse(),
-        [
-          primary,
-          primaryAlias,
-          extra,
-          databaseTarget,
-          externalTarget,
-        ].reverse(),
+        [primary, extra, databaseTarget, externalTarget].reverse(),
         { ownershipClaims: claims },
       ),
       hash,
@@ -295,6 +285,39 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
     ).toBeUndefined();
     expect(
       produceSandboxBoundaryV1(
+        input(
+          [
+            { _tag: "GitWorktree", path: "/repo/workspace" },
+            { _tag: "FileTree", path: "/repo/extra" },
+          ],
+          [primary, fileTree("/repo/wrong")],
+        ),
+        hash,
+      ),
+    ).toBeUndefined();
+    expect(
+      produceSandboxBoundaryV1(
+        input(
+          [
+            { _tag: "GitWorktree", path: "/repo/workspace" },
+            { _tag: "FileTree", path: "/repo/extra" },
+          ],
+          [primary],
+        ),
+        hash,
+      ),
+    ).toBeUndefined();
+    expect(
+      produceSandboxBoundaryV1(
+        input(
+          [{ _tag: "GitWorktree", path: "/repo/workspace" }],
+          [primary, fileTree("/repo/extra")],
+        ),
+        hash,
+      ),
+    ).toBeUndefined();
+    expect(
+      produceSandboxBoundaryV1(
         input(validAddress, [primary], {
           primaryManagedGitWorktreeRegion: gitWorktree("/repo/elsewhere"),
         }),
@@ -326,6 +349,28 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
               releasedAt: null,
             },
           ],
+        }),
+        hash,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("rejects conflicting GitWorktree metadata hidden by canonical aliasing", () => {
+    const primary = {
+      _tag: "GitWorktree" as const,
+      path: "/repo/workspace",
+      repositoryRef: "repo:one",
+    };
+    const conflicting = {
+      _tag: "GitWorktree" as const,
+      path: "/repo/workspace",
+      repositoryRef: "repo:two",
+    };
+    const region = gitWorktree("/repo/workspace");
+    expect(
+      produceSandboxBoundaryV1(
+        input([primary, conflicting], [region], {
+          primaryManagedGitWorktreeRegion: region,
         }),
         hash,
       ),
