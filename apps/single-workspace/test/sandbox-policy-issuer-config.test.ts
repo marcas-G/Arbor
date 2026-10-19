@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { loadSandboxAuthorityBundleSnapshotV1Forensic } from "../src/sandbox-authority-bundle.js";
+import {
+  loadSandboxAuthorityBundleSnapshotV1Forensic,
+  type SandboxAuthorityForensicReadPort,
+} from "../src/sandbox-authority-bundle.js";
 
 const hash = (value: string) =>
   createHash("sha256").update(value, "utf8").digest("hex");
@@ -47,8 +50,7 @@ const fixture = (revision = 1) => {
 const sourceFor = (
   bundleJson: string | undefined,
   highWaterJson: string | undefined,
-  writes: { highWater?: string; audit: string[] } = { audit: [] },
-) => ({
+): SandboxAuthorityForensicReadPort => ({
   readVerifiedSandboxAuthorityBundle: () =>
     Effect.succeed(
       bundleJson === undefined
@@ -56,27 +58,14 @@ const sourceFor = (
         : { sourceIdentity: "host-config-test", canonicalJson: bundleJson },
     ),
   readSandboxAuthorityHighWater: () => Effect.succeed(highWaterJson),
-  commitSandboxAuthorityHighWater: (json: string) =>
-    Effect.sync(() => {
-      writes.highWater = json;
-      return true;
-    }),
-  appendSandboxAuthorityAudit: (json: string) =>
-    Effect.sync(() => {
-      writes.audit.push(json);
-      return true;
-    }),
 });
 
 describe("P5 SandboxAuthorityBundleV1", () => {
   it("validates canonical bundle/high-water and returns one immutable snapshot", async () => {
     const current = fixture();
-    const writes: { highWater?: string; audit: string[] } = { audit: [] };
+    const source = sourceFor(current.bundleJson, current.highWaterJson);
     const result = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotV1Forensic(
-        sourceFor(current.bundleJson, current.highWaterJson, writes),
-        "2026-10-19T00:00:00.000Z",
-      ),
+      loadSandboxAuthorityBundleSnapshotV1Forensic(source),
     );
     expect(result._tag).toBe("Available");
     if (result._tag !== "Available") return;
@@ -90,30 +79,26 @@ describe("P5 SandboxAuthorityBundleV1", () => {
       providerRegistryDigest: current.bundle.providerRegistryDigest,
     });
     expect(Object.isFrozen(result.snapshot)).toBe(true);
-    expect(writes.highWater).toBeUndefined();
-    expect(JSON.parse(writes.audit[0] ?? "{}")).toMatchObject({
-      version: 1,
-      outcome: "Loaded",
-      detail: null,
-      occurredAt: "2026-10-19T00:00:00.000Z",
-    });
+    expect(Object.keys(source).sort()).toEqual([
+      "readSandboxAuthorityHighWater",
+      "readVerifiedSandboxAuthorityBundle",
+    ]);
+    expect(source).not.toHaveProperty("commitSandboxAuthorityHighWater");
+    expect(source).not.toHaveProperty("appendSandboxAuthorityAudit");
   });
 
-  it("requires forward monotone high-water advancement before loading changed config", async () => {
+  it("never advances high-water when a forensic source is ahead", async () => {
     const previous = fixture(1);
     const next = fixture(2);
-    const writes: { highWater?: string; audit: string[] } = { audit: [] };
     const result = await Effect.runPromise(
       loadSandboxAuthorityBundleSnapshotV1Forensic(
-        sourceFor(next.bundleJson, previous.highWaterJson, writes),
-        "2026-10-19T00:00:00.000Z",
+        sourceFor(next.bundleJson, previous.highWaterJson),
       ),
     );
-    expect(result._tag).toBe("Available");
-    expect(writes.highWater).toBe(next.highWaterJson);
-    expect(JSON.parse(writes.audit[0] ?? "{}").outcome).toBe(
-      "HighWaterAdvanced",
-    );
+    expect(result).toEqual({
+      _tag: "Unavailable",
+      failure: "HighWaterCommitFailed",
+    });
   });
 
   it.each([
@@ -126,7 +111,6 @@ describe("P5 SandboxAuthorityBundleV1", () => {
       const result = await Effect.runPromise(
         loadSandboxAuthorityBundleSnapshotV1Forensic(
           sourceFor(current.bundleJson, highWater),
-          "2026-10-19T00:00:00.000Z",
         ),
       );
       expect(result).toEqual({ _tag: "Unavailable", failure });
@@ -136,15 +120,13 @@ describe("P5 SandboxAuthorityBundleV1", () => {
   it("rejects bundle tampering and source rollback without updating high-water", async () => {
     const current = fixture(2);
     const prior = fixture(1);
-    const writes: { highWater?: string; audit: string[] } = { audit: [] };
     const tampered = current.bundleJson.replace(
       '"sourceIdentity":"host-config-test"',
       '"sourceIdentity":"host-config-test","unknown":true',
     );
     const malformed = await Effect.runPromise(
       loadSandboxAuthorityBundleSnapshotV1Forensic(
-        sourceFor(tampered, current.highWaterJson, writes),
-        "2026-10-19T00:00:00.000Z",
+        sourceFor(tampered, current.highWaterJson),
       ),
     );
     expect(malformed).toEqual({
@@ -153,14 +135,12 @@ describe("P5 SandboxAuthorityBundleV1", () => {
     });
     const rollback = await Effect.runPromise(
       loadSandboxAuthorityBundleSnapshotV1Forensic(
-        sourceFor(prior.bundleJson, current.highWaterJson, writes),
-        "2026-10-19T00:00:00.000Z",
+        sourceFor(prior.bundleJson, current.highWaterJson),
       ),
     );
     expect(rollback).toEqual({
       _tag: "Unavailable",
       failure: "RevisionRollback",
     });
-    expect(writes.highWater).toBeUndefined();
   });
 });
