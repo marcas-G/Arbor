@@ -36,6 +36,7 @@ import type {
   ProjectId,
   ProjectPolicy,
   QueryResult,
+  SandboxPolicyGrantIssuerConfigSnapshotV1,
   VerificationId,
   ViewId,
   WorkId,
@@ -97,6 +98,7 @@ export interface AuthorityInputs {
   readonly grants: ReadonlyArray<PermissionGrant>;
   readonly governance: ParentUserGovernanceFacts;
   readonly policy: ProjectPolicy | WorkspacePolicy;
+  readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1;
 }
 
 /** The view face is the frozen `ProjectionQueryPort` binding (P10 `05` §1);
@@ -396,6 +398,7 @@ export type AuthorityInputsServices =
  * snapshots only; the loader lives at the composition root. */
 export const makeRepositoryInputsLoader = (
   governance: ParentUserGovernanceFacts,
+  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
 ): Effect.Effect<
   (
     envelope: DecodedExternalCommandEnvelope,
@@ -577,6 +580,9 @@ export const makeRepositoryInputsLoader = (
           canonicalFacts,
           grants: activeGrants,
           governance,
+          ...(sandboxPolicyGrantIssuerConfigSnapshot === undefined
+            ? {}
+            : { sandboxPolicyGrantIssuerConfigSnapshot }),
           policy: Option.isSome(project)
             ? project.value.projectPolicy
             : makeProjectPolicy({}),
@@ -706,6 +712,12 @@ export const makeExternalSubmission = (
         grants: inputs.grants,
         governance: inputs.governance,
         policy: inputs.policy,
+        ...(inputs.sandboxPolicyGrantIssuerConfigSnapshot === undefined
+          ? {}
+          : {
+              sandboxPolicyGrantIssuerConfigSnapshot:
+                inputs.sandboxPolicyGrantIssuerConfigSnapshot,
+            }),
       };
       const resolved = yield* Effect.match(deps.resolver.resolve(decision), {
         onFailure: (error) => ({ _tag: "denied" as const, error }),
@@ -792,6 +804,7 @@ export const makeExternalSubmission = (
 export const makeExternalSubmissionFromServices = (
   governance: ParentUserGovernanceFacts,
   postCommitBeforeActivationProbe?: CreateProjectPostCommitBeforeActivationQualificationProbe,
+  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
 ): Effect.Effect<
   ExternalSubmissionPort,
   never,
@@ -804,7 +817,10 @@ export const makeExternalSubmissionFromServices = (
     const resolver = yield* AuthorityResolverPort;
     const gateway = yield* CommandGateway;
     const registry = yield* CommandHandlerRegistry;
-    const loadInputs = yield* makeRepositoryInputsLoader(governance);
+    const loadInputs = yield* makeRepositoryInputsLoader(
+      governance,
+      sandboxPolicyGrantIssuerConfigSnapshot,
+    );
     const afterGatewayCommitBeforeCreateProjectActivation =
       postCommitBeforeActivationProbe === undefined
         ? undefined

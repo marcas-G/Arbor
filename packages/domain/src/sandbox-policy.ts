@@ -1,6 +1,12 @@
-import { Principal } from "./actor.js";
+import { Principal, type Principal as PrincipalType } from "./actor.js";
 import type { ExecutionEpisodeBinding } from "./execution.js";
-import type { ExecutionId, ProjectId, WorkspaceId } from "./ids.js";
+import type {
+  CommandId,
+  ExecutionId,
+  PermissionGrantId,
+  ProjectId,
+  WorkspaceId,
+} from "./ids.js";
 import { DecisionId, MessageId, parse, WorkId } from "./ids.js";
 
 export type SandboxProfile = "ReadOnly" | "WorkspaceWrite" | "FullAccess";
@@ -17,7 +23,12 @@ export type SandboxProviderId = string;
 export interface SandboxPolicyGrantIssuerConfigV1 {
   readonly version: 1;
   readonly revision: number;
-  readonly operators: ReadonlyArray<Principal>;
+  readonly operators: ReadonlyArray<PrincipalType>;
+}
+
+export interface SandboxPolicyGrantIssuerConfigSnapshotV1 {
+  readonly config: SandboxPolicyGrantIssuerConfigV1;
+  readonly configDigest: string;
 }
 
 const compareUtf8Ordinal = (left: string, right: string): number => {
@@ -54,7 +65,7 @@ export const decodeSandboxPolicyGrantIssuerConfigV1 = (
   ) {
     return undefined;
   }
-  const operators: Principal[] = [];
+  const operators: PrincipalType[] = [];
   for (const candidate of value.operators) {
     if (
       typeof candidate !== "string" ||
@@ -486,12 +497,29 @@ export interface SandboxPolicyDecision {
   readonly executionId: ExecutionId;
   readonly episodeBinding: ExecutionEpisodeBinding;
   readonly policyRevision: number;
+  readonly expectedExecutionRevision: number;
+  readonly expectedPolicyRevision: number;
   readonly profile: SandboxProfile;
   readonly providerId: SandboxProviderId;
   readonly networkPolicy: NetworkPolicyV1;
   readonly policyDigest: string;
+  readonly permissionGrantId: PermissionGrantId;
+  readonly grantPermissionCommandId: CommandId;
+  readonly grantIssuerPrincipal: PrincipalType;
+  readonly operatorConfigRevision: number;
+  readonly operatorConfigDigest: string;
+  readonly actorPrincipal: PrincipalType;
+  readonly decisionCommandId: CommandId;
   readonly issuedAt: string;
   readonly expiresAt: string;
+}
+
+export interface SandboxPolicyGrantIssuerProvenanceV1 {
+  readonly permissionGrantId: PermissionGrantId;
+  readonly grantPermissionCommandId: CommandId;
+  readonly issuerPrincipal: PrincipalType;
+  readonly operatorConfigRevision: number;
+  readonly operatorConfigDigest: string;
 }
 
 const isRevision = (value: unknown): value is number =>
