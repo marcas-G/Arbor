@@ -1,10 +1,15 @@
-# Sandbox Policy Candidate Read Model — Fixed Proposal V3
+# Sandbox Policy Candidate Read Model — V3 (Superseded)
 
-**Status:** FIXED PROPOSAL — awaiting manual governance decision; planning-only
-**Supersedes:** `sandbox-policy-candidate-readmodel-governance-v2.md` (V2)
-**Decision token:** `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL_V3`
+**Status:** SUPERSEDED — historical fixed draft; do not accept or implement
+**Replaced by:** `sandbox-policy-candidate-readmodel-governance-v4.md`
+**Former decision token:** `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL_V3` — invalid
+for current governance
 **Scope:** Close initial-choice and stale-policy refresh presentation under
 the accepted Native Sandbox V21 and Producer Mapping Closure V3 contracts.
+
+> V3 failed independent review (B1=2). Its committed TrustedLocal
+> currentness wording and P4 requirement-read boundary are superseded by V4.
+> Retained as audit history only; do not use its semantics or token.
 
 ## 1. Decision
 
