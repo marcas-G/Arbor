@@ -31,6 +31,7 @@ import {
   ResourceAdmission,
   reconciliationFactId,
   recoveryBindingV1Digest,
+  type SandboxMountBinding,
   SandboxPort,
   type SandboxProcessPolicy,
   SandboxProcessPort,
@@ -590,6 +591,9 @@ interface PipelineTrace {
   readonly sandboxCapabilities?: ReadonlyArray<SandboxProviderCapability>;
   sandboxProcessPortRuns?: number;
   sandboxProcessTimeouts?: Array<number>;
+  persistedSandboxInvocation?: ToolInvocationRecord;
+  readonly persistSandboxInvocations?: boolean;
+  transactionDepth?: number;
   readonly stopAtEffectAdmission?: boolean;
   readonly resolvedEnvironmentRevisionSequence?: ReadonlyArray<string>;
   readonly currentEnvironmentRevisionValues?: ReadonlyArray<string | null>;
@@ -671,7 +675,20 @@ const app = (
       : undefined;
   const tx = Layer.succeed(TransactionPort, {
     transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
-      Effect.provideService(body, TransactionScope, { session: { id: "t" } }),
+      Effect.suspend(() => {
+        if (trace !== undefined)
+          trace.transactionDepth = (trace.transactionDepth ?? 0) + 1;
+        return Effect.provideService(body, TransactionScope, {
+          session: { id: "t" },
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (trace !== undefined)
+                trace.transactionDepth = (trace.transactionDepth ?? 1) - 1;
+            }),
+          ),
+        );
+      }),
   });
   const baseDeps = Layer.mergeAll(
     tx,
@@ -795,10 +812,24 @@ const app = (
       },
     } as never),
     Layer.succeed(ToolInvocationStore, {
-      recordIntent: () => {
+      recordIntent: (record: ToolInvocationIntent) => {
         if (trace !== undefined) {
-          trace.intentWrites += 1;
-          trace.events.push("intent");
+          if (trace.persistSandboxInvocations === true) {
+            if (trace.persistedSandboxInvocation === undefined) {
+              trace.persistedSandboxInvocation = {
+                ...record,
+                effectAdmissionState: "NotAdmitted",
+                settledAt: null,
+                settlement: null,
+                resultRef: null,
+              };
+              trace.intentWrites += 1;
+              trace.events.push("intent");
+            }
+          } else {
+            trace.intentWrites += 1;
+            trace.events.push("intent");
+          }
         }
         return faults.intentJournal === true
           ? Effect.fail({
@@ -811,10 +842,26 @@ const app = (
             })
           : Effect.succeed("Recorded" as const);
       },
-      settle: () => {
+      settle: (
+        id: typeof invocationId,
+        settlement: ToolInvocationRecord["settlement"],
+        resultRef: string | null,
+        settledAt: string,
+      ) => {
         if (trace !== undefined) {
           trace.settlementWrites = (trace.settlementWrites ?? 0) + 1;
           trace.events.push("settlement");
+          if (
+            trace.persistSandboxInvocations === true &&
+            trace.persistedSandboxInvocation?.invocationId === id
+          ) {
+            trace.persistedSandboxInvocation = {
+              ...trace.persistedSandboxInvocation,
+              settledAt,
+              settlement,
+              resultRef,
+            };
+          }
         }
         return faults.settlementJournal === true
           ? Effect.fail({
@@ -874,10 +921,18 @@ const app = (
         }
         return Effect.succeed(false);
       },
-      admitEffect: () => {
+      admitEffect: (id: typeof invocationId) => {
         if (trace !== undefined) {
           trace.effectAdmissions += 1;
           trace.events.push("effect-admission");
+          if (
+            trace.persistSandboxInvocations === true &&
+            trace.persistedSandboxInvocation?.invocationId === id
+          )
+            trace.persistedSandboxInvocation = {
+              ...trace.persistedSandboxInvocation,
+              effectAdmissionState: "MayHaveStarted",
+            };
         }
         return Effect.succeed(
           trace?.stopAtEffectAdmission === true
@@ -939,6 +994,13 @@ const app = (
               Option.some(reconciliationRetry.priorOverride),
             );
           }
+          if (
+            trace?.persistSandboxInvocations === true &&
+            trace.persistedSandboxInvocation !== undefined
+          )
+            return Effect.succeed(
+              Option.some(trace.persistedSandboxInvocation),
+            );
           return Effect.succeed(
             faults.settlementUnapplied === true && calls > 1
               ? Option.some(canonicalUnknown)
@@ -1192,15 +1254,30 @@ const app = (
             }
             return Effect.succeed("Bound" as const);
           },
-          findBinding: () =>
-            Effect.succeed(
-              reconciliationRetry === undefined
-                ? Option.none()
-                : Option.some(
-                    reconciliationRetry.bindingOverride ??
-                      reconciliationRetry.verifiedBinding,
-                  ),
-            ),
+          findBinding: (id: typeof invocationId) => {
+            if (reconciliationRetry !== undefined)
+              return Effect.succeed(
+                Option.some(
+                  reconciliationRetry.bindingOverride ??
+                    reconciliationRetry.verifiedBinding,
+                ),
+              );
+            const binding =
+              trace?.persistSandboxInvocations === true
+                ? trace.claimedBindings?.find(
+                    (candidate) => candidate.invocationId === id,
+                  )
+                : undefined;
+            if (binding === undefined) return Effect.succeed(Option.none());
+            const verified = verifyRecoveryBindingV1({
+              invocationId: id,
+              canonicalJson: canonicalizeRecoveryBindingV1(binding),
+              bindingSha256: recoveryBindingV1Digest(binding),
+            });
+            return Effect.succeed(
+              verified === undefined ? Option.none() : Option.some(verified),
+            );
+          },
           findSelected: () => {
             if (trace !== undefined) {
               trace.p39SelectedReads = (trace.p39SelectedReads ?? 0) + 1;
@@ -1603,7 +1680,12 @@ describe("P4 tool runtime pipeline", () => {
       intentWrites: 0,
       effectAdmissions: 0,
       approvalConsumes: 0,
-      resolvedEnvironmentRevisionSequence: ["rev-exact", "rev-exact"],
+      resolvedEnvironmentRevisionSequence: [
+        "rev-exact",
+        "rev-exact",
+        "rev-exact",
+        "rev-exact",
+      ],
       currentEnvironmentRevisionValues: ["rev-exact", "rev-exact"],
       sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
     };
@@ -1719,6 +1801,118 @@ describe("P4 tool runtime pipeline", () => {
       }
     },
   );
+
+  it("parks only after exact intent/binding, then reuses that NotAdmitted action when lazy policy appears", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
+      persistSandboxInvocations: true,
+      resolvedEnvironmentRevisionSequence: [
+        "rev-exact",
+        "rev-exact",
+        "rev-exact",
+        "rev-exact",
+      ],
+    };
+    const policy = processPolicy(processEpisode);
+    const mounts: ReadonlyArray<SandboxMountBinding> = [
+      {
+        ref: "workspace",
+        address: { _tag: "GitWorktree", path: "/tmp/s" },
+        region: {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { kind: "GitWorktree", path: "/tmp/s" },
+        },
+        access: "ReadOnly",
+      },
+    ];
+    let policyAvailable = false;
+    let policyResolutions = 0;
+    const {
+      sandboxProcessPolicy: eagerPolicy,
+      sandboxProcessMountBindings: eagerMounts,
+      ...contextWithoutEagerPolicy
+    } = processContext(policy);
+    void eagerPolicy;
+    void eagerMounts;
+    const contextWithLazyPolicy = {
+      ...contextWithoutEagerPolicy,
+      authority: {
+        ...authority,
+        controlBasisDigest: "d".repeat(64),
+        sourceRevision: JSON.stringify({
+          workspacePolicyRevision: 0,
+          activeGrants: [],
+          verifierId: null,
+        }),
+      },
+      controlBasisDigest: "d".repeat(64),
+      resolveSandboxProcessPolicy: ({ now }: { readonly now: string }) =>
+        Effect.sync(() => {
+          policyResolutions += 1;
+          trace.events.push("policy-resolver");
+          expect(now).toBe("2026-01-01T00:00:00.000Z");
+          expect(trace.transactionDepth ?? 0).toBe(0);
+          expect(trace.intentWrites).toBe(1);
+          expect(trace.claimedBindings).toHaveLength(1);
+          expect(
+            trace.qualificationEvents?.some(
+              (event) => event.boundary === "AH7AfterToolIntentCommit",
+            ),
+          ).toBe(true);
+          return policyAvailable ? { policy, mounts } : undefined;
+        }),
+    };
+    const appLayer = app(
+      false,
+      processExecutor,
+      {},
+      trace,
+      undefined,
+      false,
+      undefined,
+      "rev-exact",
+    );
+    const first = await run(
+      appLayer,
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      contextWithLazyPolicy,
+    );
+    expect(first._tag).toBe("SandboxPolicyRequiredInterruption");
+    expect(trace.persistedSandboxInvocation).toMatchObject({
+      effectAdmissionState: "NotAdmitted",
+      settlement: null,
+      settledAt: null,
+    });
+    expect(trace.intentWrites).toBe(1);
+    expect(trace.p39BindingCalls).toBe(1);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(trace.settlementWrites ?? 0).toBe(0);
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+
+    policyAvailable = true;
+    const resumed = await run(
+      appLayer,
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      contextWithLazyPolicy,
+    );
+    expect(resumed._tag).toBe("Success");
+    expect(policyResolutions).toBe(2);
+    expect(trace.intentWrites).toBe(1);
+    expect(trace.claimedBindings).toHaveLength(1);
+    expect(trace.p39BindingCalls).toBe(1);
+    expect(trace.effectAdmissions).toBe(1);
+    expect(trace.settlementWrites).toBe(1);
+    expect(trace.sandboxProcessPortRuns).toBe(1);
+    expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
+  });
 
   it.each(["handle", "mount"] as const)(
     "rejects a %s-mismatched policy before provider execution",

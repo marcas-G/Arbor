@@ -24,6 +24,7 @@ import {
   PermissionGrantRepository,
   ResourceOwnershipRepository,
   SandboxPolicyDecisionStore,
+  type SandboxProcessPolicyResolution,
   sha256Hex,
   ToolCatalogPort,
   type ToolCatalogPortService,
@@ -38,10 +39,7 @@ import {
   WorktreeStore,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
-import {
-  type MaterializedSandboxProcessPolicy,
-  materializeCurrentSandboxProcessPolicy,
-} from "./sandbox-process-policy-materializer.js";
+import { materializeCurrentSandboxProcessPolicy } from "./sandbox-process-policy-materializer.js";
 
 export class ExecutableToolHandler extends Context.Service<
   ExecutableToolHandler,
@@ -232,7 +230,7 @@ export const makeExecutableToolHandler = (
     readonly workspaceId: import("@arbor/domain").WorkspaceId;
     readonly executionId: import("@arbor/domain").ExecutionId;
     readonly now: string;
-  }) => Effect.Effect<MaterializedSandboxProcessPolicy | undefined>,
+  }) => Effect.Effect<SandboxProcessPolicyResolution | undefined>,
 ): ExecutableInvocationHandler => ({
   handle: ({
     invocation,
@@ -358,23 +356,9 @@ export const makeExecutableToolHandler = (
         // lookup; no model-facing argument can set it.
         intent = { ...intent, approvalId: currentApproval.approvalId };
       }
-      let materializedSandboxPolicy:
-        | MaterializedSandboxProcessPolicy
-        | undefined;
       if (invocation.toolName === "shell") {
         const currentEpisode = executionEpisode(execution);
         if (currentEpisode === undefined) {
-          return { _tag: "SandboxPolicyRequiredInterruption" as const };
-        }
-        if (materializeSandboxProcessPolicy !== undefined) {
-          materializedSandboxPolicy = yield* materializeSandboxProcessPolicy({
-            projectId: execution.projectId,
-            workspaceId: execution.workspaceId,
-            executionId: execution.executionId,
-            now: requestedAt,
-          });
-        }
-        if (materializedSandboxPolicy === undefined) {
           return { _tag: "SandboxPolicyRequiredInterruption" as const };
         }
       }
@@ -403,12 +387,22 @@ export const makeExecutableToolHandler = (
         delegationDepth:
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,
-        ...(materializedSandboxPolicy === undefined
-          ? {}
-          : {
-              sandboxProcessPolicy: materializedSandboxPolicy.policy,
-              sandboxProcessMountBindings: materializedSandboxPolicy.mounts,
-            }),
+        ...(invocation.toolName === "shell" &&
+        materializeSandboxProcessPolicy !== undefined
+          ? {
+              resolveSandboxProcessPolicy: ({
+                now,
+              }: {
+                readonly now: string;
+              }) =>
+                materializeSandboxProcessPolicy({
+                  projectId: execution.projectId,
+                  workspaceId: execution.workspaceId,
+                  executionId: execution.executionId,
+                  now,
+                }),
+            }
+          : {}),
         ...(currentApproval === undefined
           ? {}
           : {
