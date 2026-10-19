@@ -109,7 +109,10 @@ const preconditionMismatch = (
 ): CommandRejection | undefined => {
   if (payload.expectedEpisodeRevision !== current.expectedEpisodeRevision)
     return stale("EpisodeRevision");
-  if (expectedPolicyRevision !== current.latestCommittedPolicyRevision)
+  if (
+    payload.expectedPolicyRevision !== current.latestCommittedPolicyRevision ||
+    expectedPolicyRevision !== current.latestCommittedPolicyRevision
+  )
     return stale("PolicyRevision");
   if (payload.expectedWorkspaceRevision !== current.workspaceRevision)
     return stale("WorkspaceRevision");
