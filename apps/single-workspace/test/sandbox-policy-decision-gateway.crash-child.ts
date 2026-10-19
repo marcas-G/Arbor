@@ -53,8 +53,20 @@ const emitHandshake = (markerStage: string, kill: boolean) =>
     process.stdout.write(
       `ARBOR_SANDBOX_GATEWAY_KILL_V1:${nonce}:${markerStage}:${process.pid}\n`,
       () => {
-        if (kill) process.kill(process.pid, "SIGKILL");
-        else resolve();
+        if (!kill) {
+          resolve();
+          return;
+        }
+        try {
+          if (!process.kill(process.pid, "SIGKILL")) {
+            throw new Error("process.kill returned false");
+          }
+        } catch (error) {
+          process.stderr.write(
+            `ARBOR_SANDBOX_GATEWAY_KILL_FAILED_V1:${nonce}:${markerStage}:${String(error)}\n`,
+            () => process.exit(86),
+          );
+        }
       },
     );
   });
