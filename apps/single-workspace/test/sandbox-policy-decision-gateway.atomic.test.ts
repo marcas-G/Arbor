@@ -602,6 +602,17 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
       expect(matches, JSON.stringify(result)).toHaveLength(1);
       expect(matches[0]?.[1]).toBe(String(result.pid));
     };
+    const expectExactKillResult = (result: ReturnType<typeof launch>) => {
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      if (process.platform === "win32") {
+        expect(result.status).toBe(1);
+        expect(result.signal).toBeNull();
+      } else {
+        expect(result.signal).toBe("SIGKILL");
+        expect([null, 137]).toContain(result.status);
+      }
+    };
     const readCounts = Effect.gen(function* () {
       const sql = yield* SqlClient;
       return yield* sql.unsafe<{
@@ -624,7 +635,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
       const beforeNonce = randomUUID();
       const before = launch(beforeDb, "before-commit", beforeNonce);
       expectChildHandshake(before, beforeNonce, "before-commit");
-      expect(before.status, JSON.stringify(before)).not.toBe(0);
+      expectExactKillResult(before);
       expect(
         await Effect.runPromise(Effect.provide(readCounts, beforeStack.app)),
       ).toEqual([{ decisions: 0, receipts: 0, events: 0 }]);
@@ -637,7 +648,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
       const afterNonce = randomUUID();
       const after = launch(afterDb, "after-commit", afterNonce);
       expectChildHandshake(after, afterNonce, "after-commit");
-      expect(after.status).not.toBe(0);
+      expectExactKillResult(after);
       expect(
         await Effect.runPromise(Effect.provide(readCounts, afterStack.app)),
       ).toEqual([{ decisions: 1, receipts: 1, events: 1 }]);
@@ -645,6 +656,8 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
       const replay = launch(afterDb, "replay", replayNonce);
       expectChildHandshake(replay, replayNonce, "replay");
       expect(replay.status).toBe(0);
+      expect(replay.signal).toBeNull();
+      expect(replay.stderr).toBe("");
       expect(
         await Effect.runPromise(Effect.provide(readCounts, afterStack.app)),
       ).toEqual([{ decisions: 1, receipts: 1, events: 1 }]);
