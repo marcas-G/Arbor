@@ -58,6 +58,7 @@ const EXPECTED_EVENTS = [
   "ExecutionStopRequested",
   "ExecutionSettled",
   "PermissionChanged",
+  "SandboxPolicyGrantIssued",
   "DecisionRecorded",
   "EnvironmentChanged",
   "HumanInterventionApplied",
@@ -103,6 +104,20 @@ describe("domain event catalog", () => {
     ]) {
       expect(Object.keys(EVENT_CATALOG)).not.toContain(trace);
     }
+  });
+
+  it("keeps SandboxPolicyGrantIssued as the exact P1 audit/wake tuple", () => {
+    const schema = EVENT_CATALOG.SandboxPolicyGrantIssued as unknown as {
+      readonly fields: Readonly<Record<string, unknown>>;
+    };
+    expect(Object.keys(schema.fields)).toEqual([
+      "_tag",
+      "permissionGrantId",
+      "grantPermissionCommandId",
+      "executionId",
+      "operatorConfigRevision",
+      "operatorConfigDigest",
+    ]);
   });
 
   it("payloads carry change facts, not aggregate snapshots", () => {
