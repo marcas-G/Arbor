@@ -220,3 +220,19 @@ create a provider-unavailable fact, change profile authority, or auto-select
 a replacement. A later human decision uses the existing common V21 bundle
 preconditions; OsEnforced alone retains the provider-registry branch
 precondition.
+
+## Accepted candidate profile binding digest V6
+
+At both initial and refreshed P10 candidate reads, project P11's complete
+current ResourceBoundary and exact active Workspace ResourceOwnership through
+the existing profile-specific full-boundary producer for each offered profile.
+Compute that candidate's `SandboxHandleBindingDigestV1` from its exact derived
+mounts and access: ReadOnly is all ReadOnly, WorkspaceWrite is ReadWrite only
+for exact active owned regions, and FullAccess has logical ReadWrite mounts
+without an OS isolation claim. The existing `TargetIdentityDigestV1` and
+`SandboxHandleBindingDigestV1` codecs and access mapping above are unchanged.
+The initial read does not require a committed policy snapshot; a refreshed
+read never borrows the stale policy's handle digest. P10 uses one coherent P11
+boundary/ownership read barrier and a typed all-or-nothing failure when that
+full projection cannot be proved. P1's existing submitted-profile CAS still
+recomputes the same current full-boundary/ownership projection.

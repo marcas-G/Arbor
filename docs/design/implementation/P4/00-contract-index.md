@@ -223,3 +223,10 @@ and bound RecoveryBinding under the caller's transaction. It writes no
 requirement/Attention state; P10 reads no P3/P4 private store directly. P4/05
 compares the complete authority-bundle pair for both policy variants,
 including TrustedLocal. See P4/05/06 and the V5 acceptance record.
+
+## Accepted candidate profile binding digest V6
+
+P4/05 makes explicit that its unchanged full-boundary/ownership producer and
+handle-digest codec project each offered profile separately at initial and
+refresh candidate reads. P10 consumes one coherent P11 source snapshot. See
+P4/05 and the V6 acceptance record.

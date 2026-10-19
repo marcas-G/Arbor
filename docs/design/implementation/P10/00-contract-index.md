@@ -201,3 +201,10 @@ identity, exact current-host tuple filtering, and same-transaction barrier
 using P4/06's read-only requirement port. The existing POST route and
 preconditions remain unchanged; no candidate persistence is introduced.
 See P10/03/05 and the V5 acceptance record.
+
+## Accepted candidate profile binding digest V6
+
+P10/05 places `sandboxHandleBindingDigest` on each closed candidate variant,
+derived from its profile and the same complete current P11 boundary/ownership
+read barrier. The singular legacy V21 preconditions remain unchanged.
+See P10/05 and the V6 acceptance record.

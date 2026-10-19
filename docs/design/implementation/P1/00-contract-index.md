@@ -107,3 +107,10 @@ authority-bundle CAS for both variants; candidate IDs/list/reason are not
 command fields. OsEnforced alone retains the registry branch precondition.
 Candidate read is P10 projection data, not P1 authority or fingerprint
 input. See P1/01 and the V5 acceptance record.
+
+## Accepted candidate profile binding digest V6
+
+P1/01 keeps the existing profile-specific
+`expectedSandboxHandleBindingDigest` CAS. P13 maps only the selected P10
+candidate's digest to that field; candidate ID remains presentation-only.
+No P1 wire or persistence contract changes. See the V6 acceptance record.

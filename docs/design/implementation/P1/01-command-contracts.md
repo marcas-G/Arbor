@@ -805,3 +805,18 @@ command through its common authority-bundle precondition; a fresh explicit
 TrustedLocal command succeeds without registry branch fields. `candidateId`,
 candidate list/reason, and candidate-only fields are rejected as unknown wire
 fields, and identical P1 fingerprint/receipt replay semantics remain exact.
+
+## Accepted candidate profile binding digest V6 command mapping
+
+P13 copies only the human-selected candidate's
+`sandboxHandleBindingDigest` into the existing
+`expectedSandboxHandleBindingDigest` payload field. The common candidate
+preconditions contain no handle digest. P1 recomputes the current complete
+P11 boundary and exact active ownership through the existing P4 profile
+producer for the submitted variant and applies its unchanged CAS; a changed
+selected-profile mount/access projection uses the existing
+`StaleSandboxPolicyInputs` `SandboxHandleBindingDigest` field. Existing
+revision preconditions remain authoritative when they change. `candidateId`
+remains presentation identity and is never submitted. This mapping adds no P1
+wire field, codec, fingerprint input, rejection, event, decision snapshot,
+SQL table or migration.
