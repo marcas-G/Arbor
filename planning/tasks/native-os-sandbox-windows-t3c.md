@@ -33,3 +33,12 @@ Do not connect `SandboxProcessPort.run` to the helper, advertise a Supported
 tuple, or issue T3 operator evidence if any required filesystem/network/
 artifact control remains unproved. Preserve typed Unavailable and the exact
 Experimental/empty capability rows.
+
+## Disposition after implementation
+
+The source/build contract and read-only artifact seam are implemented.
+Handle-based inspection rejects static aliases and detects the demonstrated
+inspection-window replacement. The concurrent rename counterexample leaves
+effect-lifetime race resistance unproved; exact Disabled loopback denial,
+signed binary/operator manifest verification, and the broker remain open.
+The stop condition applies: production `run` stays Unavailable.
