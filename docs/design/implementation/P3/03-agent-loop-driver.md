@@ -191,4 +191,16 @@ current-generation SettleExecution command under P1 `07`.
 - No tool authorization/execution (P4).
 - No verification verdict or acceptance (P8).
 - No canonical writes outside `CommandGateway`.
+
+## Accepted V21 sandbox interruption handling
+
+P3 receives P4's internal SandboxPolicyRequiredInterruption only after the
+ToolInvocation intent and VerifiedRecoveryBindingV1 are durable. It preserves
+the exact invocation as NotAdmitted/unsettled, Action Pending, and current
+AgentLoopStep ActionsInProgress; it writes no ToolResult/Observation, cursor
+advance or Provider call. Existing HumanIntervention release/wake resumes that
+same action/invocation after current policy and original-target checks pass.
+Repeated scans with missing/stale policy or invalid binding do not issue a
+provider decision, lease or P4 dispatch. Actual provider-unavailable is
+consumed only from its durable P4 ExpectedFailure, never by re-probe/re-spawn.
 - No lease acquisition/settlement mechanics (P2).

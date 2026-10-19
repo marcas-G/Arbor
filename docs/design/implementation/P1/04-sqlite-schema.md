@@ -883,6 +883,25 @@ No historical Grant receives provenance by backfill. Only a Committed exact
 P1 `03` order. The same migration creates the immutable decision table below.
 Duplicate, missing, corrupt or mismatched bindings are unavailable/fail-closed.
 
+## V21 full-chain existing-result integrity (no schema change)
+
+The accepted policy decision row and the existing P1 command receipt/result
+remain the complete durable contract on the current schema-50 design. Do not
+add `effective_snapshot` columns, BlobStore retention, a command-envelope
+table, an Attention table for RecoveryBinding failures, or migration 0051.
+`decision_command_id` joins the immutable decision to the exact existing
+`commands` receipt whose closed `result_json` stores the bounded
+`SandboxPolicyDecisionCommittedInternalV1`. The decision row's
+`policy_digest` is SHA-256 of the exact canonical full effectivePolicySnapshot
+bytes in that result. Strict decode must verify result variant, command/decision
+identity, row digest, policy revision and canonical snapshot digest; absent,
+oversize or mismatched result is rejected/fails closed under the existing
+P1 corruption contract. The summary is capped at 65,536 UTF-8 bytes before
+commit, with no truncation. The P1 current schema and migration prefix remain
+unchanged: 0049 requires 48; 0050 requires 49; 0043/0044 and their exact
+prefix state remain present. V21 adds no SQL object, enum, event, column or
+migration.
+
 `SandboxPolicyDecision` is committed-only and keyed by exact
 Project/Workspace/Execution/Episode plus monotone policy revision. Its exact
 physical mapping is fixed by accepted schema-48 plan SHA
@@ -934,7 +953,9 @@ BEGIN SELECT RAISE(ABORT, 'sandbox policy decisions are retained'); END;
 ```
 
 `issued_at` is GatewayNow. Network policy uses canonical versioned JSON v1;
-`policy_digest` is the complete effective provider-policy digest. Canonical
+`policy_digest` is the lowercase SHA-256 of the exact canonical full
+effectivePolicySnapshot bytes stored in the joined committed command result.
+Canonical
 PrincipalId codecs and exact Grant/provenance equality are enforced by P1;
 no SQL PrincipalId regex or root-Workspace-only condition is added. The
 deferred command FK permits the same-transaction committed decision/receipt/

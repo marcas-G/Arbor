@@ -523,6 +523,13 @@ Persistence/ProjectionIntegrityFailure: fail closed, do not emit a derived
 row, and use the existing corruption Problem/operational path. Never expose
 binding hashes/bytes, arguments, regions, host paths, or parser details.
 
+The canonical preimage forms are
+{"version":1,"executionId":"<exact-id>","invocationId":"<exact-id>","bindingShaOr":null}
+when the stored SQL value is NULL, and
+{"version":1,"executionId":"<exact-id>","invocationId":"<exact-id>","bindingShaOr":"<exact stored lowercase 64-hex>"}
+when the stored value has exact valid format. Hash the exact UTF-8 JSON bytes
+with no whitespace or trailing newline; never include malformed bytes.
+
 The derived row disappears only when that invocation is terminal or its
 Execution is stopped. RecoveryBinding is immutable and v1 has no automatic or
 manual repair/rebind path; a verified backup or new Execution is outside this
@@ -530,3 +537,41 @@ contract. Current resource/authority/control drift with a valid binding is
 handled by existing P4 denial or policy-required behavior and is not this
 Attention source. Existing `SandboxProviderUnavailable` P9 fact/queue/marker
 semantics are unchanged.
+
+
+## Full-chain P9 fact freshness and sandbox queue constants (V21)
+
+A SandboxProviderUnavailableFactV1 contributes a live row only when strict
+fact identity/codec validation passes; the exact committed P1 decision matches
+Project/Workspace/Execution and full EpisodeBinding; its policyRevision equals
+the fact and no higher committed revision exists for that Execution; canonical
+Execution still has the same tenant/workspace/episode and is active; the active
+AgentLoopStep is the exact SandboxUnavailableV1 disposition naming this
+attentionFactId; and the joined command result, row policy_digest, provider/
+version/capability/OS build/profile/network/evidence bindings all match. The
+fact remains immutable when its decision expires; expiry removes Committed
+status but not historical fact. Higher revision, terminal/Stop or changed
+Episode makes it stale for live Attention without deleting it.
+
+The retained sandbox-provider queue specifically uses max claim batch 100,
+periodic scan every 5 seconds, and claim TTL 30 seconds; this is separate from
+other P10 source/event batch defaults. A wake may trigger an earlier scan but
+never bypasses the queue. Trusted P10 Clock supplies canonical UTC milliseconds.
+Due Pending or Claimed rows with claimExpiresAt<=now are ordered by
+(enqueuedAt,projectId,attentionFactId). Claim is one BEGIN IMMEDIATE with fresh
+claimId, expiry=now+30s, attemptCount incremented only on commit. Consume is a
+new BEGIN IMMEDIATE, requires exact unexpired current claim, rechecks P9 fact,
+decision/result, Execution/Episode and freshness, then marker and queue
+Consumed transition commit atomically. Reclaim replaces claim and increments
+once; no retry cap, dead-letter or row deletion. Duplicate events, expired
+claims, changed identity, marker conflict or stale lease never consume or
+advance offsets. Authorized full rebuild uses one transaction to reset only
+this source marker, snapshot retained facts/queue, re-arm unresolved current
+items and rewind the existing offset atomically; below-floor safety refuses
+rebuild without destroying current rows.
+
+SandboxPolicyDecisionRequired is a separate derived NeedsDecision/ActionRequired
+projection for an active Execution with verified durable NotAdmitted/Pending
+invocation and no matching current policy decision. It is not provider
+Unavailable and writes no fact/queue/event. The V21 RecoveryBinding failure
+source remains pure-derived and follows its own exact identity/integrity rules.

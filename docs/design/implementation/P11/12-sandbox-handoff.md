@@ -59,4 +59,18 @@ mounts to `SandboxHandle` and the current Execution-scoped
 `SandboxProcessPort`. Provider close/stop cleans its process tree and
 provider-owned scratch without deleting or retiring the P11 Worktree. P11
 recovery preserves the exact resource/worktree ownership and never promotes a
-worktree into an isolation guarantee.
+
+
+## Accepted V21 sandbox target/mount handoff digest
+
+P11/12 supplies the exact logical mount rows from P11/04 resolution and
+existing ResourceBoundary ownership. P4 derives each path-free target
+identity and SandboxHandleBindingDigestV1 from existing canonical region,
+mount ID/access and resourceBoundaryRevision; no SandboxHandleId, host path,
+OS process handle, EnvironmentRevision, environment value or Workspace
+content enters the digest. Mount rows sort by mountId; access remains exact
+ReadOnly/ReadWrite. Restart may create a new process-local SandboxHandle but
+must recompute and compare stable basis before process admission. Target/mount/
+boundary changes use the existing ResourceBoundary revision/CAS path. P12/09
+is only a mapping cross-reference, not a changed region codec. P11/12 owns
+logical mount open/close and Worktree lifecycle, not OS isolation.

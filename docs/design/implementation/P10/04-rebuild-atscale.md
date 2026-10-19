@@ -306,3 +306,24 @@ consumer and validate against the exact facts. A pruned original failure or
 resolution event does not erase its P9 fact or prevent correct rebuild.
 Resolved failure markers are not revived. P10 never deletes or modifies either
 P9 fact, and below-retained-floor refusal remains the existing P1/P10 rule.
+
+
+## V21 Native Sandbox queue/rebuild concurrency
+
+For SandboxProviderUnavailable only, P10 uses max batch 100, 5-second periodic
+scan (wake may trigger earlier), and 30-second claim TTL with trusted canonical
+UTC millisecond clock. This source-specific contract does not change the
+independent P1 journal batch or other P10 queue defaults. Claim/consume/reclaim
+are atomic and fenced by exact claim ID/expiry; only committed claim increments
+attemptCount once. Duplicate wakes and concurrent workers converge on one
+queue row/marker/offset update; a reclaimed/expired worker cannot consume.
+Queue rows are retained, never deleted or silently dead-lettered. Authorized
+full rebuild atomically snapshots retained P9 facts/queue, resets only this
+source marker, re-arms unresolved current items and rewinds existing offset;
+below-floor refusal preserves current projection. P9 facts are never rewritten.
+
+SandboxRecoveryBindingFailure and SandboxPolicyDecisionRequired are pure query
+projections over existing P4/P1 rows and carry no marker, event, queue,
+full-rebuild state or offset. They are recomputed on each authorized read;
+pruning events cannot remove them. Existing provider-fact rebuild does not
+materialize or clear those derived sources.

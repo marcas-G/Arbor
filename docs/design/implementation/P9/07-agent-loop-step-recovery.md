@@ -979,3 +979,56 @@ SandboxPolicyRequiredInterruption path and is not binding corruption. The
 durable `SandboxProviderUnavailableFactV1` path for actual provider failures
 is unchanged. P10's `SandboxRecoveryBindingFailure` is derived from the same
 existing P4 rows and is not a P9 fact/event.
+
+
+## Full-chain durable provider-unavailable recovery (V1–V21)
+
+P4 SandboxProbeResultV1.Unavailable is a typed no-spawn value, never an
+exception that retries or falls back. For a live action, P4 persists one
+complete terminal ExpectedFailure before returning: exact ToolInvocation and
+policy/provider/version/capability/evidence binding, effectDisposition=NoEffect,
+canonical observedAt from trusted GatewayNow, bounded sanitized failure code,
+optional immutable probeEvidenceRef and fixed safe summary. If intent is
+committed but observation is missing after crash, normal RecoveryController /
+AgentLoop resume under a valid current lease/fence calls the P4-owned
+observation persistence service to commit sandbox/probe-interrupted with
+bindings copied from the exact intent. It does not probe or spawn again; an
+existing exact observation is reused, mismatch/corruption fails closed.
+
+P9 consumes only the exact persisted P4 observation. Under valid current
+lease/generation fence it atomically persists the existing terminal no-effect
+SandboxUnavailableV1 disposition for that exact action, one immutable
+SandboxProviderUnavailableFactV1, one retained P10 queue row and one
+SandboxProviderUnavailable(v1) wake event. The disposition binds exact
+Step/ProviderTurn/action ordinal/callRef, Execution/Episode, policy revision/
+digest, provider version/capability revision and bounded failure code. It
+advances the action cursor past the exact failed action and ends only that
+action/Step; no later action in the ProviderTurn is admitted,
+and no Execution/Work completion/cancellation/PASS occurs. A strictly higher
+human policy revision may admit a successor Step; old observation/fact is
+immutable and never replayed as a new provider call. Stale fence writes none.
+
+firstDetectedAt is one trusted P9 Clock reading captured for the transaction,
+serialized as canonical UTC milliseconds; provider/caller/event timestamps are
+ignored. Queue enqueuedAt and event occurredAt equal firstDetectedAt. Exact
+retry returns the original fact/event/Step. Closed P9 errors include
+LeaseFenceLost, UnavailableIdentityConflict, PolicySnapshotMissingOrCorrupt,
+ProviderBindingMismatch, ProbeEvidenceInvalid, PersistenceUnavailable and
+PersistenceCorruption. Failure transaction errors do not create an
+unavailable fact. This P9 provider-failure fact is distinct from V21
+RecoveryBinding proof failure, which stays read-only and has no fact/event.
+
+
+## V21 P1 decision-result recovery binding
+
+P9 obtains exact committed policy only by following
+SandboxPolicyDecision.decision_command_id to its existing Command receipt and
+strictly decoding commands.result_json as SandboxPolicyDecisionCommittedInternalV1.
+The outer result must match commandId, project/workspace/execution/full
+Episode/policyRevision; decode exactly one closed OsEnforced or
+TrustedLocalUnconfined snapshot, compute canonical UTF-8 SHA-256, and compare
+to both outer policyDigest and decision-row policy_digest. Missing result/
+receipt, wrong variant, unknown field, noncanonical bytes, identity mismatch
+or digest mismatch is persistence corruption/fail-closed. Never reconstruct
+from current bundle/provider/defaults or event payload. No BlobStore or
+migration is used.

@@ -422,3 +422,19 @@ scheduler_timers      deleted on fire/cancel.
 - ProviderTurn / ToolInvocation / Evidence / Usage tables (P3/P4/P8).
 - Environment change DDL (P11).
 - Projection tables (P10).
+
+## Accepted EGP execution episode revision used by Sandbox CAS (V21)
+
+The current `executions` schema includes the existing
+`episode_kind`, `episode_ref`, and nonnegative `episode_revision` columns
+introduced by the already accepted EGP schema chain. The historical focus-era
+DDL above remains archival; the current exact mapping and migration prefix
+remain the EGP/P43/P50 baseline. Native Sandbox adds no execution column and
+no migration. `DecideSandboxPolicy.expectedEpisodeRevision` is a direct
+nonnegative-integer CAS against `executions.episode_revision` for the exact
+canonical `ExecutionEpisodeBinding`; it is not an independently supplied
+episode counter or a decoded shorthand. The command simultaneously validates
+the existing execution revision and exact episode kind/ref relation. Any
+episode transition between Workspace Detail and command commit yields the
+existing durable `StaleSandboxPolicyInputs` rejection, not an event or policy
+decision.

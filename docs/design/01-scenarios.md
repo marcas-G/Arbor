@@ -1107,3 +1107,14 @@ If the timestamp or stored binding-hash format is corrupt, the read fails
 closed through the existing corruption path rather than inventing public
 Attention identity or time. Existing provider-unavailable fact Attention is
 unchanged.
+
+The user journey is the same active Execution throughout. A missing/stale
+policy pauses the exact already-persisted process-capable invocation before
+effect admission; no new Work, Execution or retry is created. The human sees
+NeedsDecision and explicitly chooses the exact policy through the existing
+command route. After commitment, recovery resumes the same action only if the
+immutable original binding/targets and current access still verify. If the
+provider cannot prove a required OS control, no process starts; the durable
+no-effect outcome produces safe Unavailable Attention and the browser does
+not auto-retry. FullAccess is a separately confirmed, non-isolated
+TrustedLocal choice and never an automatic fallback.

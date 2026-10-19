@@ -23,4 +23,21 @@ With real probing the ownership CAS sequence can genuinely observe counter movem
 
 - No caller-subset fingerprint as project fingerprint (multi-workspace interleaving hazard); no cache (fresh probe each resolve; caching empirical later); no network resources in v1 (ExternalResource resolves to itself).
 
+
+## Accepted V21 Native Sandbox region digest producer
+
+The trusted P11/04 real resolver remains the source of admitted
+CanonicalResourceRegion values and logical access. For Native Sandbox it
+additionally produces the separate SandboxTargetRefV1 mapping used by P4:
+resourceSpaceId must be exactly filesystem, database or external; FileTree/
+GitWorktree map to filesystem, DatabaseNamespace to database and
+ExternalResource to external. Compute regionIdentityDigest from SHA-256 of the
+exact existing canonicalRegionString UTF-8 bytes while still inside the trusted
+boundary. The persisted policy ref is {version:1,kind:RegionDigest,
+resourceSpace,regionIdentityDigest}; it contains no host path. It is a stable
+internal binding only, not a confidentiality control. This producer does not
+modify canonical region representation, authorization, overlap or resolver
+semantics. Resolver/source changes feed resourceBoundaryRevision/CAS; they do
+not use P11 EnvironmentRevision, file dirtiness or mtimes to stale policy.
+
 ## (mapping: CI-1, CI-2)

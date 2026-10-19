@@ -219,9 +219,11 @@ owns the conformance matrix. These addenda change no unrelated P12 auth,
 authority submission order, or worker identity contract. Runtime/provider
 implementation remains separately authorized.
 
-## V21 RecoveryBinding Attention transport compatibility note
+## Accepted full-chain Native Sandbox P12 scope (V21)
 
-P12 transports the existing P10 Attention DTO, including the new
-non-persisted `SandboxRecoveryBindingFailure` source literal. It adds no
-endpoint, Problem category, authority rule, persistence, or browser retry
-behavior; malformed hash/time follows the existing corruption Problem path.
+P12/02 resolves exact CAPA grant/provenance against P5's closed protected
+bundle; P12/09 maps existing CanonicalResourceRegion only; P12/10 transports
+P10's existing POST/Problem DTO, including non-persisted AttentionSource and
+exact transient 503; P12/13 owns exact T2/T3 network/provider primitives and
+evidence; P12/14 owns the per-tuple conformance matrix. No new endpoint,
+Problem category, authority permission, persistence or migration is added.

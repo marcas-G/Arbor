@@ -128,7 +128,8 @@ SCRC implementation evidence.
 
 ## V21 RecoveryBinding Attention compatibility note
 
-Invalid persisted binding proof leaves the existing action Pending and
-AgentLoopStep ActionsInProgress without ToolResult/Observation or cursor
-advance; P3 adds no new action result, codec, or recovery state. P10 Attention
-is a derived view over existing P4 durable rows.
+P3/03 and P3/08 keep SandboxPolicyRequired on the same pending NotAdmitted
+invocation and ActionsInProgress step without ToolResult/Observation/cursor
+advance; recovery uses the existing HumanIntervention wake and strict P4
+RecoveryBinding. No new P3 codec/state exists. P10 binding Attention derives
+from existing P4 rows.

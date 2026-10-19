@@ -250,6 +250,21 @@ authority, or direct store/event write. Model inputs cannot select or submit a
 trusted human policy. P12/10 preserves all existing resolver-before-receipt
 and Gateway command semantics; it only forwards and presents.
 
+
+## V21 transport binding
+
+P12 transports the existing POST /views/workspace-detail request/response.
+The exact provider-unavailable transient Problem is the full existing Problem
+DTO: correlationId from request/transport or null, code
+sandbox/provider-unavailable, category unavailable, fixed safe message,
+retryDisposition retryable and safeDetails containing only executionId,
+workspaceId and policyRevision. It applies only to the exact current terminal
+P4 provider-unavailable outcome before matching P9 fact/queue commit; after
+P9 atomic commit status is HTTP 200 with Unavailable/Attention. Ordinary lag,
+policy-required NeedsDecision, authorization rejection and stale command are
+not this 503. P12 adds no route, Problem category or response fields. P13/Web
+must not auto-retry; only WS invalidation or explicit manual refetch.
+
 ## 9. Host Project Resource Profile catalog (FT-DG-01 functional scope)
 
 P12 host configuration supplies the Profile catalog consumed by the P1

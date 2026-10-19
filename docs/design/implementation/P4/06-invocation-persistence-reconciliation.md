@@ -1049,4 +1049,63 @@ under the same 0039 number. Since 0039 is not registered/released on the
 supported user-database line, qualification rebuilds disposable fixtures
 through the exact authorized prefix. If any supported database is found
 already at 39 with the earlier DDL, stop and seek separate migration
-governance rather than adapting this package.
+
+
+## Accepted full-chain Sandbox interruption/recovery contract (V21)
+
+P4 may return SandboxPolicyRequiredInterruption only after exact ToolInvocation
+intent is durable and existing RecoveryBindingV1 is Bound and strictly
+verified. The invocation remains effectAdmissionState=NotAdmitted, settled_at
+NULL, Action Pending and AgentLoopStep ActionsInProgress. It is internal, not a
+ToolObservation, ExpectedFailure, Command result or P9 unavailable fact. The
+existing HumanIntervention flow releases/does not renew the lease and parks the
+same active Execution/Episode; no new wait, Execution, WorkEpisode, invocation,
+Step state/ID, blocker, table or migration is added. P10 derives
+SandboxPolicyDecisionRequired/NeedsDecision from existing pending-intent and
+policy facts. DecideSandboxPolicy remains bound to the same Execution/Episode;
+its committed event is only a wake hint; P2/P9 redispatches the same action and
+invocation. Read-only startup/periodic scan resumes only with exact current
+policy/basis and original admission proof; otherwise it remains parked or uses
+existing no-effect Denied. Event pruning does not erase the durable state.
+
+RecoveryBindingV1 is sole same-invocation authority. Never synthesize, upgrade,
+repair, rebind, re-resolve or substitute intent/regions. Strictly decode stored
+binding bytes/hash; recompute canonicalArgumentsDigestV1(JSON.parse(arguments_json))
+and targetResourceIdentityDigestV1(decoded resolved_regions_json); exact-match
+both and all bound execution/invocation/step/action/callRef/tool/version/
+definition/side-effect, authority/grant, resource/policy/control/approval and
+effect fields. Persisted arguments/regions remain original authority. Current
+path-free target refs/mounts separately must cover the same original targets
+with same-or-stricter access under the pinned ToolDefinition; never rebind.
+Missing/non-Bound/corrupt/mismatched proof is internal RecoveryBlocked with
+Pending/NotAdmitted and zero effect/dispatch; V21 forbids P9/P40 fact/event/
+marker; P10 derives non-persisted SandboxRecoveryBindingFailure Attention.
+Current source drift after valid proof uses existing P4 denial/approval or
+policy-required path, not proof corruption. Existing intents are never
+re-probed or re-spawned by recovery.
+
+For an interrupted real provider probe after durable intent, P4's persistence
+service uses exact lease/fence and trusted GatewayNow to commit one typed
+ExpectedFailure, code sandbox/probe-interrupted, NoEffect, exact provider/
+version/capability/policy/evidence/intent binding, and the sole safe summary
+“required sandbox capability was unavailable or could not be verified;
+execution did not start”. Restart reuses this observation and never re-probes
+or respawns. Under valid fence, P9 atomically materializes terminal
+SandboxUnavailable action disposition, immutable SandboxProviderUnavailableFactV1,
+one P10 queue row and wake event. Before commit only observation persists;
+after commit restart reuses terminal Step/fact without duplicate/provider call.
+Stale fence writes none. This ends only the action/Step; no Execution/Work
+settlement, PASS or later action occurs. Completion remains gated for that
+current failed policy; T4 is read-only. Ordinary authorized WorkspaceWrite,
+content dirtiness and mtimes do not stale policy.
+
+If the committed policy is missing/stale against otherwise unchanged
+original source/admission facts, P4 returns SandboxPolicyRequiredInterruption
+before effect admission and writes no ExpectedFailure/Observation/P9 fact. The
+same active Execution parks for a new human decision. It does not emit a
+sandbox/policy-basis-stale Observation/code; that earlier proposal branch is
+superseded by the final same-Execution NotAdmitted policy interruption.
+Current resource access denial uses existing ResourceAdmissionDenied; current
+authority/approval drift uses existing P4 denial/approval. Only actual
+provider probe/broker/OS primitive failure after policy admission follows the
+distinct ExpectedFailure→P9 SandboxProviderUnavailableFact path.

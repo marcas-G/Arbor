@@ -224,3 +224,15 @@ regionsOverlap(resolverRegion, boundaryRegion) reflects true overlap
 narrow invalidation test passes without re-wrapping
 production composition wires the real resolver (not the fake)
 ```
+
+
+## Accepted V21 SandboxTargetRef mapping cross-reference
+
+Native Sandbox uses the existing CanonicalResourceRegion and its exact
+canonicalRegionString output unchanged. P12/09 supplies only this mapping:
+FileTree/GitWorktree use resourceSpace=filesystem, DatabaseNamespace=database,
+ExternalResource=external, using the existing closed resourceSpaceId value.
+P4/P11 derives the separate path-free SandboxTargetRefV1 RegionDigest from
+SHA-256 of those exact existing UTF-8 bytes. No canonical region keys, order,
+equality, overlap, authorization, address resolution or persistence change;
+no target-ref codec is owned by P12/09, and no host path enters policy DTOs.

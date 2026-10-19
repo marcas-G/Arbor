@@ -638,10 +638,14 @@ When it arrives, P1 handlers need no change — that is the value of this seam.
 
 ## Native OS Sandbox accepted command amendment
 
-`DecideSandboxPolicy` is an External human-only command with exact
-Project/Workspace/Execution/Episode and expected Execution/policy revisions,
-profile, provider, network mode/targets, provider-policy digest and decision
-expiry. P12 `02` must produce the Application-owned
+`DecideSandboxPolicy` is an External human-only command bound to exact
+Project/Workspace/Execution/full canonical Episode and the V21 closed policy
+request/preconditions below. The former shorthand wording “expected
+Execution/policy revisions, profile, provider, network mode/targets,
+provider-policy digest” is superseded; caller wire values are the exact
+human-selected policy union plus caller-visible CAS values, not internal
+provider/evidence digests or destinations as an alternate codec. P12 `02`
+must produce the Application-owned
 `SandboxPolicyDecisionAuthority` before any receipt read. Resolver-before-
 receipt remains mandatory; only after successful preflight does normal
 receipt-first replay apply.
@@ -665,3 +669,92 @@ Project/Workspace/Episode and foreign targets fail closed without disclosure.
 `TerminalRejected` writes no decision or event; Committed decision/event/
 receipt is atomic. Grant issuance order and event identity are fixed in P1
 `03`/`05` below.
+
+## Accepted full-chain Native Sandbox decision command contract (V21)
+
+The closed external `DecideSandboxPolicy` request contains only human-selected
+policy inputs and caller-visible CAS preconditions. It carries the exact
+canonical `ExecutionEpisodeBinding` codec (all existing variant fields, not
+`{kind,id}` shorthand), `expectedEpisodeRevision` sourced from
+`executions.episode_revision`,
+`expectedWorkspaceRevision`, `expectedResourceBoundaryRevision`, and
+`expectedPolicyRevision`. Environment revision is not a sandbox precondition.
+The human supplies the profile and its exact network-policy union, provider
+choice where applicable, expiry, and other already-exposed stable selection
+fields. The current AuthorityBundle/operator-config/provider-registry
+revision+digest references returned by the authorized Workspace Detail view
+are echoed as expected values; arbitrary unseen references are rejected.
+The wire decoder rejects unknown/duplicate fields and cross-variant fields.
+
+PermissionGrantId, issuer provenance, authority snapshots, qualification
+entry/evidence, runtime basis digests, expected effective-policy digest,
+GatewayNow, lease/generation/fence and actor provenance are internal trusted
+envelope values supplied by P12/P5/P4/Application; clients cannot submit
+them. The P1 semantic fingerprint is exactly the existing full canonical
+envelope `{commandType,projectId,actor,schemaVersion,payload}` algorithm,
+including the canonical human actor, command type, schema version and exact
+wire payload. The fingerprint algorithm version is receipt metadata, not a
+hash input. Same CommandId replays the committed receipt exactly; a different
+fingerprint conflicts. No new command identity or pre-receipt envelope table
+is introduced.
+
+The committed internal result has exact closed outer key order
+version,commandId,projectId,workspaceId,executionId,episodeBinding,
+policyRevision,policyDigest,effectivePolicySnapshot. It is a closed
+SandboxPolicyDecisionCommittedInternalV1 with either OsEnforced full snapshot
+(profile ReadOnly/WorkspaceWrite, provider/T3/network fields) or
+TrustedLocalUnconfined full snapshot (profile FullAccess, networkBoundary
+Unconfined; no provider-qualification/T3/networkMode fields). It includes the
+exact canonical effectivePolicySnapshot, its policyDigest, bounded auditRefs,
+and the public-view projection source.
+`commands.result_json` is the existing durable result carrier; P12 projects a
+closed `SandboxPolicyDecisionCommittedViewV1` with only safe fields. The
+decision table remains anchored by `decision_command_id`; recovery joins the
+decision row to its exact Command result receipt and verifies the stored
+`policy_digest` against canonical result bytes. No new DDL is required.
+
+`SandboxPolicySummaryTooLarge` is an existing closed terminal rejection when
+the canonical internal result would exceed 65,536 UTF-8 bytes: no decision or
+event is committed, the exact durable rejection receipt is replayed, and P13
+renders an inline fixed hint. It is not a 409/Problem and fields are not
+truncated.
+The exact selected human payload is the following closed shape (the existing
+CommandEnvelope supplies commandId/actor/schemaVersion outside payload):
+
+The common fields are projectId, workspaceId, executionId, full existing
+canonical ExecutionEpisodeBinding, expectedEpisodeRevision,
+expectedPolicyRevision, expectedWorkspaceRevision,
+expectedResourceBoundaryRevision, expectedSandboxHandleBindingDigest,
+expectedAuthorityBundleRevision/digest, expectedOperatorConfigRevision/
+digest, profile, providerId, networkPolicy and decisionExpiresAt. The closed
+variant is either OsEnforced (profile ReadOnly|WorkspaceWrite, exact provider,
+closed NetworkPolicyV1, expectedProviderRegistryRevision/digest) or
+TrustedLocalUnconfinedV1 (profile FullAccess, providerId TrustedLocal, exact
+Unconfined codec, and no provider-registry fields). No executionRevision or
+expectedEnvironmentRevision alias exists.
+
+Canonical external payload key order is projectId,workspaceId,executionId,
+episodeBinding,expectedEpisodeRevision,expectedPolicyRevision,
+expectedWorkspaceRevision,expectedResourceBoundaryRevision,
+expectedSandboxHandleBindingDigest,expectedAuthorityBundleRevision,
+expectedAuthorityBundleDigest,expectedOperatorConfigRevision,
+expectedOperatorConfigDigest, then for OsEnforced only
+expectedProviderRegistryRevision,expectedProviderRegistryDigest, then profile,
+providerId,networkPolicy,decisionExpiresAt. TrustedLocal omits those two
+registry keys as a codec rule, not nullable values. The top-level P1
+CommandEnvelope still supplies actor/commandId/schemaVersion outside payload.
+
+The provider-registry expected pair is present only for the OsEnforced variant;
+TrustedLocalUnconfinedV1 uses its exact closed discriminant and has no registry
+precondition. No environment revision/fingerprint, network-broker result,
+operator/registry entry, evidence blob, GrantId/provenance, actor override,
+expected effective-policy digest, lease/fence, trusted clock, host path,
+target ref or audit ref is caller-supplied. Unknown fields at either union
+level are rejected. StaleSandboxPolicyInputs is an existing closed durable
+TerminalRejected receipt with safeDetails.field exactly one of
+EpisodeRevision,PolicyRevision,WorkspaceRevision,ResourceBoundaryRevision,
+SandboxHandleBindingDigest,AuthorityBundleRevision,OperatorConfigRevision,
+ProviderRegistryRevision. It exposes no old/current numeric value, digest,
+target/path or diagnosis. POST /commands
+returns HTTP 200 CommandReceiptView and same-CommandId replay returns that
+same receipt. Do not add 409 or Problem mapping.

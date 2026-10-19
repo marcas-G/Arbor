@@ -199,7 +199,9 @@ or operator authorization.
 
 ## V21 RecoveryBinding Attention compatibility note
 
-P4's existing immutable RecoveryBindingV1 remains the sole proof authority.
-No RecoveryBinding storage or P4 observation semantics change; malformed
-proof is inspected read-only by P9 and projected without a new P9/P40 fact.
-P4 does not gain a repair/rebind operation.
+P4/04 owns closed OS-vs-TrustedLocal policy snapshots, NetworkPolicyV1,
+broker/address/Pref64/platform primitives and process-port gate; P4/05 owns
+path-free TargetRef and basis digest; P4/06 owns same-invocation interruption,
+strict immutable RecoveryBindingV1 and no-reprobe ExpectedFailure boundaries.
+P4 RecoveryBinding remains sole proof authority; no repair/rebind is added.
+P9/P10 do not persist a replay fact for binding-proof failure.

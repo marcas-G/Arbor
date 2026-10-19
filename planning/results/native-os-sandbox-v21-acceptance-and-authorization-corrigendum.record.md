@@ -49,3 +49,30 @@ are changed. No production code, tests, migration files/registry, database,
 deployment or release artifacts are changed. No migration is registered or
 executed and no database is upgraded. The landing starts from the exact base
 above; side-branch owner files are not copied wholesale.
+
+## Full-chain completeness corrigendum (same acceptance)
+
+The accepted V21 package is interpreted together with its incorporated final
+V1–V20 clauses. This follow-up does not change the user decision, proposal raw
+hash or acceptance token and requests no new token. It substantively fills the
+named P1/P2/P3/P4/P5/P9/P10/P11/P12/P13/API owners: existing
+episode_revision/CAS; exact command/fingerprint/result/receipt rules; protected
+authority bundle and provider qualification; process/network/platform/T3
+contracts; same-Execution HumanIntervention and no-reprobe recovery; P9 fact
+freshness and P10 100/5s/30s queue, derived Attention, exact DTO/503; UI and
+region mapping. Full owner coverage and all changed-file base/postimage hashes
+are recorded in the amended landing manifest. Current migration head remains
+0050/schema 50; no 0051, DDL, activation, implementation, test, DB mutation or
+release is added by this completeness follow-up.
+
+The incorporated full-chain implementation evidence baseline is
+`f705a517f7f9e0bb46e527bb438d96beaea539b4`; it is audit evidence only, not
+the owner preimage. Preserved read-only audit files and raw SHA-256 values are:
+
+| Audit | Raw SHA-256 |
+|---|---|
+| `planning/results/native-os-sandbox-wave-c-authority-gap-audit-f705a517.result.md` | `A1EB042817CB6886405982A7CA17D790A0E325762ECF835A23C840A567A6772B` |
+| `planning/results/native-os-sandbox-t2-t3-provider-gap-audit-f705a517.result.md` | `14E0B8D8D64A2684AE33FBE65CCF8F6A7BB7B19F05D6712555549146CF4FCDEE` |
+| `planning/results/native-os-sandbox-wave-d-recovery-gap-audit-f705a517.result.md` | `412E79EC9CA466A397B8E698AFF195676300662934763E3CF0CC50268C33F7E5` |
+
+The audit index `planning/results/native-os-sandbox-runtime-gap-audits-f705a517.record.md` remains raw SHA-256 `BB9D1BDE75397FCDCC8EFBE3BB19760A0F7A33644725E12976245356823A54C1`.

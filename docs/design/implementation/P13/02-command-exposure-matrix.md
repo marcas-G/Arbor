@@ -232,3 +232,16 @@ expiry; it submits only through the existing `/commands` Gateway path. A
 `FullAccess` selection requires explicit warning/confirmation. The matrix
 does not create service-side authority; P12/P1 enforce the exact Grant and
 durable decision.
+
+
+## V21 sandbox command/status UI contract
+
+The existing human-only DecideSandboxPolicy is submitted through /commands
+using exact current Workspace Detail preconditions. StaleSandboxPolicyInputs is
+an HTTP 200 durable TerminalRejected receipt with field-enum-safe inline
+message; there is no HTTP 409/Problem mapping and same CommandId replays the
+same receipt. The user refetches current refs and uses a fresh CommandId.
+FullAccess is explicit TrustedLocal/Unconfined with warning and confirmation,
+never an automatic provider fallback. NeedsDecision is policy-required pause;
+Unavailable is reserved for actual current provider no-spawn fact/outcome. No
+browser auto-retry or model-originated decision is permitted.

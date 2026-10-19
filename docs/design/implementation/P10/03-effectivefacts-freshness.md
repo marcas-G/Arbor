@@ -51,3 +51,28 @@ existing watermark/barrier contract.
 
 - No RYW SLA; no clock-based freshness (sequence watermark only).
 - No changes to P3 ControlBasis/DecisionStale semantics.
+
+
+## V21 Native Sandbox exact effective-facts freshness
+
+A P9 SandboxProviderUnavailable fact is live only when strict fact/codec and
+identity validation passes; exact committed P1 decision and joined command
+result match Project/Workspace/Execution/full EpisodeBinding; policyRevision
+matches and no newer committed revision exists; canonical Execution remains
+same and nonterminal; active Step is the exact SandboxUnavailableV1 disposition
+naming attentionFactId; row policy_digest equals the canonical full
+effectivePolicySnapshot digest joined from commands.result_json; and
+provider/version/capability/profile/network/OS/evidence tuple is
+exact. Expired decisions do not erase immutable facts, but do not render
+Committed; higher policy revision, terminal/stopped Execution or changed
+Episode makes the old fact stale for active Attention only. No time-only
+freshness, P11 EnvironmentRevision, ordinary writes, dirty state, mtimes or
+filesystem lookup enters this predicate. TrustedLocal is a separate
+Unconfined variant and provider-registry drift cannot stale it.
+
+SandboxPolicyDecisionRequired/NeedsDecision is separately derived from a
+current active Execution and exact pending NotAdmitted invocation whose policy
+is absent/stale; it is not a provider-unavailable fact. V21
+SandboxRecoveryBindingFailure is derived from P4 invocation/binding evidence
+with its own integrity rules and must never be conflated with current source
+drift or provider-unavailable freshness.

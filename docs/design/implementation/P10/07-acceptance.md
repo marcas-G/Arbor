@@ -128,8 +128,8 @@ never mutate Work, call Provider, or retry an action.
 
 **Story — durable sandbox policy and unavailable projection.** A human submits
 the exact policy through the existing authenticated command route; the
-Workspace Detail projection shows only the current P1 decision's profile,
-provider, network mode, revision, expiry and Configured/Unavailable state.
+Workspace Detail projection shows the exact current closed OS/TrustedLocal
+variant, revision, expiry and Committed/Unavailable/NeedsDecision state.
 When a required provider capability is unavailable before spawn, P9 persists
 one exact `SandboxProviderUnavailableFactV1`; P10
 shows one `SandboxProviderUnavailable` ActionRequired row at the canonical
@@ -239,3 +239,45 @@ denial/policy-required path, no RecoveryBinding Attention) from proof
 corruption. Existing SandboxProviderUnavailableFactV1 projection remains
 unchanged. No P40 reuse, new persisted enum/table/event, schema change, or
 migration is allowed.
+
+
+## Full-chain Native Sandbox T0–T4 qualification (V21)
+
+Qualify OS/TrustedLocal closed variants, cross-field rejection and
+FullAccess-only human consent; authority/operator/registry refs and exact
+precondition echo; `executions.episode_revision" mapping; exact P1 fingerprint
+`{commandType,projectId,actor,schemaVersion,payload}"; same-command receipt-first
+replay with no recapture; final BEGIN IMMEDIATE CAS, postcommit exact result
+replay, precommit crash no partial state; strict commands.result_json/result
+variant and policy_digest join; 65,536-byte bound and durable
+SandboxPolicySummaryTooLarge receipt only. No 0051 or schema change.
+
+Provider tests assert exact Registry/EnforcementRuleSetV1 codec, rule digest,
+operator-issued content-addressed T3 manifest and artifact hashes, exact tuple
+lookup (never Cartesian-product inference), Supported only with every required
+T3 PASS. Run negative/adversarial T2/T3 vectors for broker bypass, all denied
+IPv4/IPv6 ranges and mapped IPv6 normalization, mixed DNS answers, public-IP
+pinning, TLS/SNI/Host, redirect hop 0–5/6, DNS rebinding, fresh Pref64 per
+resolution/connection and unavailable on unknown discovery. Test Linux bwrap,
+macOS Seatbelt and each Windows identity/primitive exactly; Windows MXC and
+elevated dedicated user remain probe-only Experimental; any missing primitive
+means no spawn. Container/Remote remain non-Supported.
+
+Recovery tests cover policy-required same active Execution, same pending
+NotAdmitted invocation, verified RecoveryBinding only, HumanIntervention wake,
+startup/event-pruned scan, no new Execution/Step/migration, no reprobe after
+intent, crash before/after P4 synthetic ExpectedFailure, P9 fact/queue/wake
+commit, stale fencing and no provider respawn. Current-source drift is distinct
+from binding proof failure; ordinary WorkspaceWrite/content/mtime changes do
+not stale policy.
+
+Read/API tests preserve POST /views/workspace-detail and existing request DTO;
+exact coherent preconditions and OS/TL DTO unions; NeedsDecision vs actual
+Unavailable; full Problem DTO and correlated/null 503 only for exact terminal
+P4 outcome before P9 fact/queue commit; HTTP 200+Unavailable+Attention after
+P9 commit; ordinary lag and all negative 503 conditions; no Web automatic
+retry. Sandbox provider queue tests assert max batch 100, scan 5s, claim TTL
+30s, claim/reclaim/consume and offset/marker atomicity under concurrent polls,
+crashes and rebuild. Derived RecoveryBinding attention tests assert JSON null
+identity, valid-hash-content mismatch, malformed hash no row, strict
+intent_at/occurredAt and no materialization.

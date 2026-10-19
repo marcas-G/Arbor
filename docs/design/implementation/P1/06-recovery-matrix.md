@@ -107,3 +107,13 @@ Resolve/canonicalize happens outside the write transaction (DID §9.5).
 AgentLoopStep action/settlement takeover reuses this matrix per generated
 CommandId. Cross-generation logical eligibility and receipt-first convergence
 are owned by `07`; AgentLoopStep state recovery is P9 `07`.
+
+## V21 policy decision and binding-recovery cases
+
+| Boundary | Before commit / failure | After commit / restart |
+|---|---|---|
+| DecideSandboxPolicy preparation before final transaction | Transient read-only P11/P5 preparation failure triggers one final receipt lookup; if still absent, retryable preparation-unavailable with no command/receipt/rejection row. | An already committed same-fingerprint receipt is returned without recapturing source state. |
+| Final transaction before decision commit | Crash rolls back decision, command result/receipt and `SandboxPolicyDecisionRecorded` together; no partial decision is authoritative. | Receipt lookup returns the exact committed closed result; P9 verifies `decision_command_id`, variant and policy digest against existing `commands.result_json`. |
+| Policy result exceeds 65,536 UTF-8 bytes | Commit only durable `TerminalRejected(SandboxPolicySummaryTooLarge)` receipt; no decision/event and no truncation. | Same CommandId replays the same rejection. |
+| Missing/corrupt/mismatched RecoveryBindingV1 proof | No P9/P40 fact/event/marker, lease, P4/Provider call, effect, observation or settlement; invocation remains NotAdmitted/Pending and Step ActionsInProgress. | P10 derives safe Attention by query from existing P4 rows; Stop or invocation terminality clears it. No automatic/manual repair or rebind. |
+| Malformed non-NULL binding SHA format or missing/invalid immutable `intent_at` | P10 projection fails closed as Persistence/ProjectionIntegrityFailure, emits no derived row and does not fabricate an identity/timestamp. | Existing corruption Problem/operational handling applies; no persistent Attention marker is created. |

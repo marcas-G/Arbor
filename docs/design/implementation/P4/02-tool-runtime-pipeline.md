@@ -249,3 +249,20 @@ required enforcement returns typed unavailable/Attention and performs no
 spawn; it never falls back to `TrustedLocal`. The invocation owns the whole
 descendant process tree and close/stop cleans that tree without deleting the
 P11-owned Worktree.
+
+
+## V21 process policy admission order
+
+For any process-capable tool, P4 first resolves the exact canonical
+ExecutionEpisodeBinding and current committed policy/basis. Missing/stale
+policy with unchanged valid source bindings returns internal
+SandboxPolicyRequiredInterruption before effect admission; it creates no
+ExpectedFailure/ToolObservation and leaves the exact invocation NotAdmitted,
+Action Pending, Step ActionsInProgress. Only after durable intent and strict
+existing RecoveryBinding verification may same-invocation resume be parked.
+A valid current OsEnforced or explicit TrustedLocalUnconfined snapshot then
+binds original target refs/mounts, allowlist and limits to SandboxProcessPort.
+The OS provider must probe all exact T2 controls before effect/spawn. Any
+unavailable/unverifiable control becomes terminal no-effect ExpectedFailure,
+with no process spawn. Neither policy-required nor provider-unavailable path
+falls back or widens scope through action approval.

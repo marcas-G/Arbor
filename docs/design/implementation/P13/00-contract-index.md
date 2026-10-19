@@ -56,11 +56,12 @@ P13 remains a renderer/client boundary: authority is server-side, profile
 status comes from P10 DTOs, and submission uses the existing P12 authenticated
 `/commands` route. No browser-local state grants policy authority.
 
-## Accepted V21 RecoveryBinding Attention rendering
+## Accepted full-chain Native Sandbox UI contracts (V21)
 
-P13 renders P10's non-persisted `SandboxRecoveryBindingFailure` row with its
-fixed safe summary, canonical Execution Workspace target, stable identity and
-immutable `intent_at` timestamp. It exposes no repair/rebind action or raw
-binding/resource evidence. Corrupt projection inputs use existing corruption
-handling; prior sandbox-policy and provider-unavailable rendering is unchanged.
+P13/02 exposes only human DecideSandboxPolicy; /03 and /06 render the exact
+OsEnforced/TrustedLocal variants, high-risk FullAccess consent, NeedsDecision,
+safe Unavailable/Attention/503 and SandboxPolicySummaryTooLarge receipt. The
+non-persisted SandboxRecoveryBindingFailure row uses fixed safe summary and
+intent_at, with no repair/rebind control or raw evidence. Browser has no
+automatic retry or local authority; all actions route through existing P12.
 ```

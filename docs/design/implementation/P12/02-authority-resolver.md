@@ -502,3 +502,33 @@ originating command and current operator snapshot match exactly. Removed or
 re-added operators cannot revive old Grants; a new Grant is required. P1
 Gateway performs its independent same-transaction exact recheck. No other
 P12 command scope or P12/10 authorization path is added.
+
+
+## Accepted full-chain Native Sandbox exact authority projection (V21)
+
+P12/02 remains the only CAPA-v2 resolver. For GrantPermission to create
+sandbox issuer provenance, authenticated actor and configured issuer are the
+same currently listed canonical HumanPrincipal; capability is exactly
+DecideSandboxPolicy; target is exactly one ExecutionId; subject is a distinct
+HumanPrincipal and exactly the later decision actor; lifetime is finite and
+checked with trusted AuthorityNow (validFrom <= now < expiresAt). Preserve
+exact subject/scope/capability/target/revision/state/issuer projection without
+P1 parsing or widening. Committed Grant, provenance, receipt and existing
+PermissionChanged plus SandboxPolicyGrantIssued ordering remain atomic per P1.
+
+SandboxPolicyDecisionAuthority binds authenticated actor, exact Grant ID,
+issuer provenance and current immutable authority/operator bundle revision and
+digest, exact canonical Execution/Episode and human-selected policy CAS
+preconditions. Resolver preflight precedes any receipt disclosure; P1 performs
+an independent exact same-transaction Grant/provenance/current-bundle recheck.
+Removed or re-added issuer cannot revive an old grant; a new exact grant is
+required. Cross-Execution, wildcard, expired/revoked, nonhuman, same-issuer/
+subject or malformed decisions fail closed through existing terminal
+rejections with sanitized details. Authority/config failures are not
+provider-unavailable facts and never trigger FullAccess fallback.
+
+P12 consumes P5's one OS-protected SandboxAuthorityBundleV1 snapshot only
+through explicit injected ports; P12/02 does not read files, SQLite, receipt
+or decision stores. P1 command fields never accept caller-supplied authority,
+issuer, high-water, registry or evidence internals. P12/02 adds no resolver
+route, permission, capability or broader admin/RBAC semantics.
