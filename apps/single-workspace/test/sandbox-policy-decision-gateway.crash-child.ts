@@ -39,11 +39,25 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 
-const [databaseFile, requestedStage] = process.argv.slice(2);
-if (databaseFile === undefined || requestedStage === undefined) {
-  throw new Error("database filename and stage are required");
+const [databaseFile, requestedStage, nonce] = process.argv.slice(2);
+if (
+  databaseFile === undefined ||
+  requestedStage === undefined ||
+  nonce === undefined
+) {
+  throw new Error("database filename, stage, and nonce are required");
 }
 const stage = requestedStage;
+const emitHandshake = (markerStage: string, kill: boolean) =>
+  new Promise<void>((resolve) => {
+    process.stdout.write(
+      `ARBOR_SANDBOX_GATEWAY_KILL_V1:${nonce}:${markerStage}:${process.pid}\n`,
+      () => {
+        if (kill) process.kill(process.pid, "SIGKILL");
+        else resolve();
+      },
+    );
+  });
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
@@ -232,7 +246,7 @@ const qualificationProbe =
   stage === "before-commit"
     ? async (event: { readonly boundary: string }) => {
         if (event.boundary === "SandboxPolicyDecisionBeforeCommit") {
-          process.kill(process.pid, "SIGKILL");
+          return emitHandshake("before-commit", true);
         }
       }
     : undefined;
@@ -275,6 +289,7 @@ const program = Effect.gen(function* () {
       makeAuthority(fingerprint),
     );
     if (replayed.resolution._tag !== "Committed") process.exitCode = 3;
+    yield* Effect.promise(() => emitHandshake("replay", false));
     return;
   }
   const fingerprint = semanticRequestFingerprint({
@@ -300,7 +315,9 @@ const program = Effect.gen(function* () {
     process.exitCode = 2;
     return;
   }
-  if (stage === "after-commit") process.kill(process.pid, "SIGKILL");
+  if (stage === "after-commit") {
+    yield* Effect.promise(() => emitHandshake("after-commit", true));
+  }
   void grantRepository;
 });
 

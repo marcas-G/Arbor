@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -198,6 +198,7 @@ const makeTestStack = (
 ) => {
   let failed = false;
   let preparationCalls = 0;
+  let latestPolicyRevision = 0;
   const base = layer({ filename: databaseFile });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const realJournal = Layer.provide(DomainEventJournalLive, infra);
@@ -270,7 +271,7 @@ const makeTestStack = (
               Effect.succeed({
                 kind: "OsEnforced" as const,
                 expectedEpisodeRevision: 2,
-                latestCommittedPolicyRevision: 0,
+                latestCommittedPolicyRevision: latestPolicyRevision,
                 episodeBinding,
                 workspaceRevision:
                   options.staleWorkspaceRevision === true ? 4 : 3,
@@ -302,12 +303,18 @@ const makeTestStack = (
       Layer.mergeAll(infra, repos, registry, FenceStopCheckInertLive),
     ),
   );
-  return { app, preparationCalls: () => preparationCalls };
+  return {
+    app,
+    preparationCalls: () => preparationCalls,
+    setLatestPolicyRevision: (revision: number) => {
+      latestPolicyRevision = revision;
+    },
+  };
 };
 
-const envelope = () => ({
+const envelope = (id = commandId) => ({
   commandType: "DecideSandboxPolicy",
-  commandId,
+  commandId: id,
   projectId,
   actor,
   issuedAt: "1999-01-01T00:00:00.000Z",
@@ -524,6 +531,49 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
     expect(result.counts).toEqual({ decisions: 0, receipts: 1, events: 0 });
   });
 
+  it("rejects expectedPolicyRevision against an existing SQLite decision head", async () => {
+    const stack = makeTestStack();
+    const retryCommandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a4",
+    );
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* seedSchema50AndGrant;
+          const gateway = yield* CommandGateway;
+          const fingerprint = semanticRequestFingerprint({
+            commandType: "DecideSandboxPolicy",
+            projectId,
+            actor,
+            schemaVersion: "1",
+            payload,
+          });
+          const committed = yield* gateway.execute(
+            envelope(),
+            { _tag: "External", principal },
+            makeAuthority(fingerprint),
+          );
+          stack.setLatestPolicyRevision(1);
+          const stale = yield* gateway.execute(
+            envelope(retryCommandId),
+            { _tag: "External", principal },
+            makeAuthority(fingerprint, retryCommandId),
+          );
+          return { committed, stale };
+        }),
+        stack.app,
+      ),
+    );
+    expect(result.committed.resolution._tag).toBe("Committed");
+    expect(result.stale.resolution).toMatchObject({
+      _tag: "TerminalRejected",
+      error: {
+        _tag: "StaleSandboxPolicyInputs",
+        safeDetails: { field: "PolicyRevision" },
+      },
+    });
+  });
+
   it("survives child-process kills immediately before and after the SQLite commit", async () => {
     const folder = mkdtempSync(join(tmpdir(), "arbor-sandbox-decision-crash-"));
     const childPath = fileURLToPath(
@@ -532,12 +582,26 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
         import.meta.url,
       ),
     );
-    const launch = (databaseFile: string, stage: string) =>
+    const launch = (databaseFile: string, stage: string, nonce: string) =>
       spawnSync(
         process.execPath,
-        ["--experimental-strip-types", childPath, databaseFile, stage],
+        ["--experimental-strip-types", childPath, databaseFile, stage, nonce],
         { encoding: "utf8", timeout: 30_000 },
       );
+    const expectChildHandshake = (
+      result: ReturnType<typeof launch>,
+      nonce: string,
+      stage: string,
+    ) => {
+      const escapedNonce = nonce.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      const marker = new RegExp(
+        `^ARBOR_SANDBOX_GATEWAY_KILL_V1:${escapedNonce}:${stage}:([0-9]+)$`,
+        "gmu",
+      );
+      const matches = [...result.stdout.matchAll(marker)];
+      expect(matches, JSON.stringify(result)).toHaveLength(1);
+      expect(matches[0]?.[1]).toBe(String(result.pid));
+    };
     const readCounts = Effect.gen(function* () {
       const sql = yield* SqlClient;
       return yield* sql.unsafe<{
@@ -557,7 +621,9 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
       await Effect.runPromise(
         Effect.provide(seedSchema50AndGrant, beforeStack.app),
       );
-      const before = launch(beforeDb, "before-commit");
+      const beforeNonce = randomUUID();
+      const before = launch(beforeDb, "before-commit", beforeNonce);
+      expectChildHandshake(before, beforeNonce, "before-commit");
       expect(before.status, JSON.stringify(before)).not.toBe(0);
       expect(
         await Effect.runPromise(Effect.provide(readCounts, beforeStack.app)),
@@ -568,12 +634,16 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
       await Effect.runPromise(
         Effect.provide(seedSchema50AndGrant, afterStack.app),
       );
-      const after = launch(afterDb, "after-commit");
+      const afterNonce = randomUUID();
+      const after = launch(afterDb, "after-commit", afterNonce);
+      expectChildHandshake(after, afterNonce, "after-commit");
       expect(after.status).not.toBe(0);
       expect(
         await Effect.runPromise(Effect.provide(readCounts, afterStack.app)),
       ).toEqual([{ decisions: 1, receipts: 1, events: 1 }]);
-      const replay = launch(afterDb, "replay");
+      const replayNonce = randomUUID();
+      const replay = launch(afterDb, "replay", replayNonce);
+      expectChildHandshake(replay, replayNonce, "replay");
       expect(replay.status).toBe(0);
       expect(
         await Effect.runPromise(Effect.provide(readCounts, afterStack.app)),
@@ -586,10 +656,11 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
 
 const makeAuthority = (
   fingerprint: ReturnType<typeof semanticRequestFingerprint>,
+  id = commandId,
 ) => ({
   _tag: "SandboxPolicyDecisionAuthority" as const,
   principal,
-  commandId,
+  commandId: id,
   semanticRequestFingerprint: fingerprint,
   projectId,
   workspaceId,
