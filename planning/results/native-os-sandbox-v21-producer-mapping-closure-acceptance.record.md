@@ -12,7 +12,9 @@
 
 **Landing branch:** `codex/native-sandbox-v21-owner-landing`.
 
-**Independent post-landing review:** pending; this record does not claim PASS.
+**Independent post-landing review:** PASS — B0 = 0, B1 = 0, B2 = 0. See
+`planning/results/native-os-sandbox-v21-producer-and-candidate-read-postlanding-review.result.md`,
+raw SHA-256 `E35DEC30C5CE09DD2CD0DC34B77B42025FBCA86B50CB2B1688A3854BE48B3002`.
 
 ## Accepted semantic delta
 
@@ -43,8 +45,9 @@ The pre-existing user authorization is
 `AUTHORIZE_NATIVE_OS_SANDBOX_CONVERGENCE_IMPLEMENTATION`, granted 2026-10-18
 in thread `01a0ec9b-9a9f-7242-9d1e-973451238d05`, scope T0–T4. This accepted
 design package requests no new implementation token. Implementation may
-continue under that existing grant only after this exact owner landing passes
-independent post-review. This landing changes no code, tests, migration,
+continue only within the pre-existing authorization scope; the combined V3,
+HWA V2, and Candidate V5 owner landing has passed independent post-review.
+This record itself changes no code, tests, migration,
 database, deployment, or release artifact; migration 0049/0050 is not
 activated and no database is upgraded.
 
@@ -64,3 +67,7 @@ The owner changes are limited to:
 P10 and Scenarios are unchanged because the accepted delta is producer
 contract closure with no new view or externally observable journey. No
 System Design/domain semantics change is introduced.
+
+The subsequently accepted Candidate Read Model V5 adds its own P10/P13 owner
+contracts and advances the current top-level DID summary to 1.56; that later
+decision is recorded separately and does not alter the V3 acceptance scope.

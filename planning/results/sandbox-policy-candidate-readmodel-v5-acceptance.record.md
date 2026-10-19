@@ -38,13 +38,17 @@ prefix and all P3/P4/P9 execution gates remain unchanged.
 
 This is owner-contract acceptance only. It grants no implementation, test,
 database, migration, provider qualification, or release authority. The
-existing Native Sandbox implementation authorization remains subject to the
-separate accepted V3 landing and independent post-review. No new endpoint,
-wire field, persisted candidate, durable fact, table, or migration is added.
+combined V3/HWA V2/Candidate V5 owner landing has passed independent
+post-review; this V5 acceptance itself grants no new implementation
+authorization. No new endpoint, wire field, persisted candidate, durable
+fact, table, or migration is added.
 
 ## Owner scope and review
 
 The owner changes are P4/05/06, P10/03/05, P1/01, P5/01 and P13/03/06, with
 contract-index/dependency cross-references. DID is advanced to 1.56 only as a
 cross-owner version summary; Scenarios 1.6 and System Design 1.21 are
-unchanged. Independent post-landing review is pending.
+unchanged. Independent post-landing review is PASS (B0 = 0, B1 = 0, B2 = 0),
+recorded in
+`planning/results/native-os-sandbox-v21-producer-and-candidate-read-postlanding-review.result.md`,
+raw SHA-256 `E35DEC30C5CE09DD2CD0DC34B77B42025FBCA86B50CB2B1688A3854BE48B3002`.
