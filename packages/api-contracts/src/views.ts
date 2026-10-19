@@ -13,6 +13,7 @@ import type {
   ProjectId,
   ResourceBoundary,
   ResponsibilityDefinition,
+  SandboxPolicyCandidateReadV1,
   SandboxPolicyPreconditionsV1,
   SandboxPolicyStatusViewV1,
   SessionId,
@@ -223,7 +224,7 @@ export interface WorkspaceDetailReq {
   readonly workspaceId: WorkspaceId;
 }
 
-export interface WorkspaceDetailRes {
+interface WorkspaceDetailResCore {
   readonly responsibility: ResponsibilityDefinition;
   readonly boundary: ResourceBoundary;
   readonly currentWork?: CurrentWorkSummary | undefined;
@@ -233,8 +234,21 @@ export interface WorkspaceDetailRes {
   readonly inboxUnconsumed: ReadonlyArray<InboxUnconsumedEntry>;
   readonly verification?: VerificationView | undefined;
   readonly auditTimeline: ReadonlyArray<AuditTimelineEntry>;
-  readonly sandboxPolicyPreconditions?: SandboxPolicyPreconditionsV1;
 }
+
+/** Candidate choice and singular preconditions are alternative response
+ * shapes; neither is present when policy input is not currently required. */
+export type WorkspaceDetailRes = WorkspaceDetailResCore &
+  (
+    | {
+        readonly sandboxPolicyPreconditions?: SandboxPolicyPreconditionsV1;
+        readonly sandboxPolicyCandidateRead?: never;
+      }
+    | {
+        readonly sandboxPolicyPreconditions?: never;
+        readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateReadV1;
+      }
+  );
 
 export interface AcceptedWorkResult {
   readonly acceptanceId: AcceptanceId;
