@@ -1,9 +1,17 @@
-# Sandbox Policy Candidate Read Model — Governance Proposal Draft
+# Sandbox Policy Candidate Read Model — B0 (Superseded)
 
-**Status:** DRAFT — planning-only; no design landing or implementation authorization
-**Decision token:** `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL`
+**Status:** SUPERSEDED — historical draft; do not accept or implement
+**Replaced by:** `sandbox-policy-candidate-readmodel-governance-v2.md`
+**Former decision token:** `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL` — invalid
+for current governance
 **Scope:** Close the first-decision presentation gap found in Wave D after the
 accepted Native Sandbox V21 and Producer Mapping Closure V3 contracts.
+
+> This B0 draft failed independent review (B0=0, B1=3, B2=2). In particular,
+> its CAS fields did not match the existing V21/P1 preconditions, it exposed
+> internal invocation/interruption identities, and its candidate fields did
+> not match the V3/P1 tuple. The fixed replacement is V2. This file is retained
+> only as audit history; do not use its DTO, semantics, or token.
 
 ## 1. Decision requested
 
