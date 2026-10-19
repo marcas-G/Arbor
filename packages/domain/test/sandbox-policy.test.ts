@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   decodeCanonicalExecutionEpisodeBinding,
   decodeCanonicalNetworkPolicyV1,
+  decodeCanonicalSandboxPolicyGrantIssuerConfigV1,
   decodeExecutionEpisodeBinding,
   decodeNetworkPolicyV1,
+  decodeSandboxPolicyGrantIssuerConfigV1,
   decodeSandboxProviderId,
   encodeExecutionEpisodeBinding,
   encodeNetworkPolicyV1,
+  encodeSandboxPolicyGrantIssuerConfigV1,
   type NetworkPolicyV1,
   resolveSandboxProvider,
   type SandboxProviderCapability,
@@ -208,6 +211,48 @@ describe("sandbox policy provider selection", () => {
     expect(
       decodeCanonicalExecutionEpisodeBinding(
         encoded.replace('"entryKey":"entry-1"', '"entryKey": "entry-1"'),
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("SandboxPolicyGrantIssuerConfigV1", () => {
+  it("decodes a closed, sorted config and encodes its JCS bytes", () => {
+    const config = decodeSandboxPolicyGrantIssuerConfigV1({
+      version: 1,
+      revision: 3,
+      operators: ["user:admin-a", "user:admin-b"],
+    });
+    expect(config).toEqual({
+      version: 1,
+      revision: 3,
+      operators: ["user:admin-a", "user:admin-b"],
+    });
+    const canonical =
+      '{"operators":["user:admin-a","user:admin-b"],"revision":3,"version":1}';
+    expect(config && encodeSandboxPolicyGrantIssuerConfigV1(config)).toBe(
+      canonical,
+    );
+    expect(decodeCanonicalSandboxPolicyGrantIssuerConfigV1(canonical)).toEqual(
+      config,
+    );
+  });
+
+  it.each([
+    { version: 1, revision: 0, operators: [] },
+    { version: 1, revision: 1.5, operators: [] },
+    { version: 1, revision: 1, operators: ["user:b", "user:a"] },
+    { version: 1, revision: 1, operators: ["user:a", "user:a"] },
+    { version: 1, revision: 1, operators: ["runtime:system"] },
+    { version: 1, revision: 1, operators: [], unexpected: true },
+  ])("rejects invalid config %#", (input) => {
+    expect(decodeSandboxPolicyGrantIssuerConfigV1(input)).toBeUndefined();
+  });
+
+  it("rejects non-canonical JSON bytes even when their values decode", () => {
+    expect(
+      decodeCanonicalSandboxPolicyGrantIssuerConfigV1(
+        '{"version":1,"revision":3,"operators":["user:admin-a"]}',
       ),
     ).toBeUndefined();
   });
