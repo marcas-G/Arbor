@@ -62,6 +62,9 @@
       "path": "./adapters/sandbox-local"
     },
     {
+      "path": "./adapters/sandbox-windows"
+    },
+    {
       "path": "./adapters/secret-env"
     },
     {
