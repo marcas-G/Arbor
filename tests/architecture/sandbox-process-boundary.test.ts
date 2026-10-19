@@ -353,7 +353,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     const fixedQuery = hasSequence(values, [
       "executor",
       "(",
-      "powershell.exe",
+      "P39_WINDOWS_POWERSHELL_EXECUTABLE",
       ",",
       "[",
       "-NoProfile",
@@ -394,7 +394,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     const fixedAtomicMove = hasSequence(values, [
       "execFileSync",
       "(",
-      "powershell.exe",
+      "P39_WINDOWS_POWERSHELL_EXECUTABLE",
       ",",
       "[",
       "-NoProfile",
@@ -583,7 +583,7 @@ describe("SandboxProcessPort architecture boundary", () => {
     const normalizedSource = source.replace(/\r\n?/gu, "\n");
     expect(
       createHash("sha256").update(normalizedSource, "utf8").digest("hex"),
-    ).toBe("97ec83041e62f6dddd673aa30289c5c735720a39085a27f45c9fc8aedb21cedc");
+    ).toBe("da129df2c462af35cd8133463d902fc6614db63cdafd91d2c151e08ecb3483f5");
     expect(
       hasSequence(
         tokenize(source).map(({ value }) => value),
@@ -650,7 +650,7 @@ describe("SandboxProcessPort architecture boundary", () => {
     const normalizedSource = source.replace(/\r\n?/gu, "\n");
     expect(
       createHash("sha256").update(normalizedSource, "utf8").digest("hex"),
-    ).toBe("97ec83041e62f6dddd673aa30289c5c735720a39085a27f45c9fc8aedb21cedc");
+    ).toBe("da129df2c462af35cd8133463d902fc6614db63cdafd91d2c151e08ecb3483f5");
     expect(
       hasSequence(
         tokenize(source).map(({ value }) => value),

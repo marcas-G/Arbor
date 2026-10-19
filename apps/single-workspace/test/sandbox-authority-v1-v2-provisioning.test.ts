@@ -109,6 +109,24 @@ const provisionArgs = (
   nonce,
 ];
 
+const restartProbe = (root: string, nonce: string) =>
+  spawnSync(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      fileURLToPath(
+        new URL(
+          "./sandbox-authority-v1-v2-provisioning.crash-child.ts",
+          import.meta.url,
+        ),
+      ),
+      root,
+      "probe",
+      nonce,
+    ],
+    { cwd: process.cwd(), encoding: "utf8", timeout: 120_000 },
+  );
+
 const assertExactKill = (
   result: ReturnType<typeof spawnSync>,
   nonce: string,
@@ -324,6 +342,22 @@ describe("P5 operator-only V1→V2 sandbox authority provisioning", () => {
           },
         );
         assertExactKill(child, nonce, markerStage);
+        const restarted = restartProbe(root, nonce);
+        expect(restarted.error).toBeUndefined();
+        expect(restarted.status).toBe(0);
+        expect(restarted.signal).toBeNull();
+        expect(restarted.stderr).toBe("");
+        const restartMarker = new RegExp(
+          `^ARBOR_SANDBOX_AUTHORITY_RESTART_PROBE_V1:${nonce}:(.+)$`,
+          "mu",
+        );
+        const restartMatch = String(restarted.stdout ?? "").match(
+          restartMarker,
+        );
+        expect(restartMatch, JSON.stringify(restarted)).not.toBeNull();
+        const restartedSnapshot = JSON.parse(restartMatch?.[1] ?? "null") as {
+          readonly _tag: string;
+        };
         const sourceBytes = readFileSync(join(root, "authority.json"), "utf8");
         const activeHighWater = readFileSync(
           join(root, "high-water.json"),
@@ -358,6 +392,7 @@ describe("P5 operator-only V1→V2 sandbox authority provisioning", () => {
           expect(activeHighWater).toBe(v1HighWaterJson);
           expect(JSON.parse(sourceBytes).version).toBe(2);
           expect(v2).toMatchObject({ _tag: "Unavailable" });
+          expect(restartedSnapshot._tag).toBe("Unavailable");
           const forensic = await Effect.runPromise(
             loadSandboxAuthorityBundleSnapshotV1Forensic(store),
           );
@@ -378,6 +413,7 @@ describe("P5 operator-only V1→V2 sandbox authority provisioning", () => {
               bundle: { version: 2, sourceIdentity, bundleRevision: 2 },
             },
           });
+          expect(restartedSnapshot._tag).toBe("Available");
         }
       } finally {
         removeP39PrivateTestDirectory(root);

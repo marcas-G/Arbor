@@ -1,17 +1,8 @@
-import { randomUUID } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { SandboxAuthorityProvisioningStore } from "@arbor/ports";
 import { Effect, Layer } from "effect";
+import { loadSandboxAuthorityBundleSnapshotV2 } from "../dist/sandbox-authority-bundle.js";
+import { makeSandboxAuthorityProvisioningFileStore } from "../dist/sandbox-authority-provisioning-file-store.js";
 import { provisionSandboxAuthorityV1ToV2 } from "../dist/sandbox-authority-v1-v2-provisioning.js";
 
 const [root, requestedStage, nonce] = process.argv.slice(2);
@@ -21,88 +12,28 @@ const sourceIdentity = "host:offline-provisioning-test";
 const sourcePath = join(root, "authority.json");
 const highWaterPath = join(root, "high-water.json");
 const evidenceDir = join(root, "forensic");
-mkdirSync(evidenceDir, { recursive: true });
 
-const atomicWrite = (path: string, exactBytes: string) => {
-  const temporary = join(
-    root,
-    `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`,
+const store = await Effect.runPromise(
+  makeSandboxAuthorityProvisioningFileStore({
+    protectedRoot: root,
+    sourceFile: sourcePath,
+    highWaterFile: highWaterPath,
+    forensicDirectory: evidenceDir,
+    sourceIdentity,
+  }),
+);
+
+if (requestedStage === "probe") {
+  const loaded = await Effect.runPromise(
+    loadSandboxAuthorityBundleSnapshotV2(store, "2026-10-19T00:00:00.000Z", [
+      "PATH",
+    ]),
   );
-  const descriptor = openSync(temporary, "wx", 0o600);
-  try {
-    writeFileSync(descriptor, exactBytes, "utf8");
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
-  renameSync(temporary, path);
-};
-
-const store = SandboxAuthorityProvisioningStore.of({
-  readVerifiedSandboxAuthorityBundle: () =>
-    Effect.try({
-      try: () =>
-        existsSync(sourcePath)
-          ? {
-              sourceIdentity,
-              canonicalJson: readFileSync(sourcePath, "utf8"),
-            }
-          : undefined,
-      catch: () => "SourceUnreadable" as const,
-    }),
-  readSandboxAuthorityHighWater: () =>
-    Effect.try({
-      try: () =>
-        existsSync(highWaterPath)
-          ? readFileSync(highWaterPath, "utf8")
-          : undefined,
-      catch: () => "HighWaterUnreadable" as const,
-    }),
-  commitSandboxAuthorityHighWater: (canonicalJson) =>
-    Effect.try({
-      try: () => {
-        atomicWrite(highWaterPath, canonicalJson);
-        return true;
-      },
-      catch: () => "HighWaterCommitFailed" as const,
-    }),
-  appendSandboxAuthorityAudit: () => Effect.succeed(true),
-  writeSandboxAuthorityBundleAtomically: (canonicalJson) =>
-    Effect.try({
-      try: () => {
-        atomicWrite(sourcePath, canonicalJson);
-        return true;
-      },
-      catch: () => "SourceUnreadable" as const,
-    }),
-  preserveForensicEvidence: ({ evidenceId, exactBytes }) =>
-    Effect.try({
-      try: () => {
-        const path = join(evidenceDir, `${evidenceId}.raw`);
-        try {
-          const descriptor = openSync(path, "wx", 0o600);
-          try {
-            writeFileSync(descriptor, exactBytes, "utf8");
-            fsyncSync(descriptor);
-          } finally {
-            closeSync(descriptor);
-          }
-          return true;
-        } catch {
-          return existsSync(path) && readFileSync(path, "utf8") === exactBytes;
-        }
-      },
-      catch: () => "SourceUnreadable" as const,
-    }),
-  readForensicEvidence: (evidenceId) =>
-    Effect.try({
-      try: () => {
-        const path = join(evidenceDir, `${evidenceId}.raw`);
-        return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-      },
-      catch: () => "SourceUnreadable" as const,
-    }),
-});
+  process.stdout.write(
+    `ARBOR_SANDBOX_AUTHORITY_RESTART_PROBE_V1:${nonce}:${JSON.stringify(loaded)}\n`,
+  );
+  process.exit(0);
+}
 
 const operatorConfig = {
   version: 1,
