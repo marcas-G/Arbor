@@ -60,3 +60,24 @@ capabilities, emits no audit write, and fails closed when source is ahead of
 the existing V1 high-water. The prior high-water advancement behavior is
 removed; V1→V2 transition remains offline-only. Architecture and type-directed
 tests guard this no-write boundary.
+
+## Wave C — pure complete-boundary producer
+
+The new domain-only `produceSandboxBoundaryV1` accepts the exact current
+Workspace responsibility/resource-boundary revisions, full ResourceBoundary,
+ordered resolver output, primary managed GitWorktree, current ownership facts,
+and closed policy kind/profile. It validates the full input mapping; collapses
+canonical filesystem aliases; rejects incomplete/malformed regions, digest
+identity collisions, malformed claims, active current claims outside the
+boundary, and missing or mismatched primary worktree; derives path-free target
+refs for all admitted regions; materializes deterministic filesystem-only
+mounts and exact logical access; and returns the ResourceBoundary and
+handle-binding digests. No host
+path appears in the producer result. It performs no I/O; production
+preparation/materialization remains a later wave.
+
+Verification: boundary producer and codec suites 8/8; fixed revision-zero
+ResourceBoundaryDigest and V21 TargetRef vectors; alias/determinism,
+non-filesystem metadata, ownership revision/status, access/profile,
+incomplete-boundary and digest-collision cases; `pnpm build`, focused Biome and
+`git diff --check`.
