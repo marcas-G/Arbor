@@ -36,7 +36,7 @@ import {
   loadSandboxAuthorityBundleSnapshotV1Forensic,
   loadSandboxAuthorityBundleSnapshotV2,
 } from "../src/sandbox-authority-bundle.js";
-import { runSandboxAuthorityProvisioningCommand } from "../src/sandbox-authority-provisioning-cli.js";
+import { runSandboxAuthorityProvisioningCommand } from "../src/transport/sandbox-authority-provisioning-cli.js";
 import { makeSandboxAuthorityProvisioningFileStore } from "../src/sandbox-authority-provisioning-file-store.js";
 import { provisionSandboxAuthorityV1ToV2 } from "../src/sandbox-authority-v1-v2-provisioning.js";
 
