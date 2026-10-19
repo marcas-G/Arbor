@@ -6,8 +6,10 @@ import {
   encodeNetworkBrokerControlsV1,
   encodeNetworkPolicyV1,
   executionEpisode,
+  type OsEnforcedPolicySummaryV1,
   produceSandboxBoundaryV1,
   type SandboxPolicyDecisionCommittedInternalV1,
+  type SandboxProviderQualificationEntryV1,
   sandboxEnvironmentBasisDigestOfV1,
   sandboxTargetRefOfRegionV1,
 } from "@arbor/domain";
@@ -27,6 +29,41 @@ import {
 } from "@arbor/ports";
 import { Context, Effect, Option } from "effect";
 import { loadSandboxAuthorityBundleSnapshotV2 } from "./sandbox-authority-bundle.js";
+
+export const exactSupportedOsProviderEntry = (
+  entries: ReadonlyArray<SandboxProviderQualificationEntryV1>,
+  summary: Pick<
+    OsEnforcedPolicySummaryV1,
+    | "providerId"
+    | "providerVersion"
+    | "capabilityRevision"
+    | "osFamily"
+    | "osBuild"
+    | "qualificationEvidenceRef"
+    | "profile"
+    | "networkPolicy"
+    | "networkBrokerControls"
+  >,
+): SandboxProviderQualificationEntryV1 | undefined => {
+  const exact = entries.filter(
+    (entry) =>
+      entry.status === "Supported" &&
+      entry.providerId === summary.providerId &&
+      entry.providerVersion === summary.providerVersion &&
+      entry.capabilityRevision === summary.capabilityRevision &&
+      entry.osFamily === summary.osFamily &&
+      entry.osBuild === summary.osBuild &&
+      entry.qualificationEvidenceRef === summary.qualificationEvidenceRef &&
+      entry.tuple.profile === summary.profile &&
+      entry.tuple.networkMode === summary.networkPolicy.mode &&
+      entry.tuple.enforcementRuleSetDigest ===
+        sha256Hex(
+          encodeNetworkBrokerControlsV1(summary.networkBrokerControls),
+        ) &&
+      entry.tuple.networkPolicyCodecVersion === 1,
+  );
+  return exact.length === 1 ? exact[0] : undefined;
+};
 
 export interface MaterializedSandboxProcessPolicy {
   readonly policy: SandboxProcessPolicy;
@@ -146,25 +183,12 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
       return undefined;
 
     if (summary.kind === "OsEnforced") {
-      const registry = bundle.providerRegistry.entries.filter(
-        (entry) =>
-          entry.providerId === summary.providerId &&
-          entry.providerVersion === summary.providerVersion &&
-          String(entry.capabilityRevision) ===
-            String(summary.capabilityRevision) &&
-          entry.osFamily === summary.osFamily &&
-          entry.osBuild === summary.osBuild &&
-          entry.qualificationEvidenceRef === summary.qualificationEvidenceRef &&
-          entry.tuple.profile === summary.profile &&
-          entry.tuple.networkMode === summary.networkPolicy.mode &&
-          entry.tuple.enforcementRuleSetDigest ===
-            sha256Hex(
-              encodeNetworkBrokerControlsV1(summary.networkBrokerControls),
-            ) &&
-          entry.tuple.networkPolicyCodecVersion === 1,
+      const supportedEntry = exactSupportedOsProviderEntry(
+        bundle.providerRegistry.entries,
+        summary,
       );
       if (
-        registry.length !== 1 ||
+        supportedEntry === undefined ||
         summary.providerRegistryRevision !== bundle.providerRegistryRevision ||
         summary.providerRegistryDigest !== bundle.providerRegistryDigest ||
         committed.decision.providerId !== summary.providerId ||
