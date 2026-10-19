@@ -335,6 +335,32 @@ export const ExecutionRepositoryLive: Layer.Layer<
             ? Option.none()
             : Option.some(toExecution(row));
         }),
+      findEpisodeRevision: (executionId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{ episode_revision: number | null }>(
+              "SELECT episode_revision FROM executions WHERE execution_id = ?",
+              [executionId],
+            ),
+          );
+          const row = rows[0];
+          if (row === undefined || row.episode_revision === null) {
+            return Option.none();
+          }
+          if (
+            !Number.isSafeInteger(row.episode_revision) ||
+            row.episode_revision < 0
+          ) {
+            return yield* Effect.fail({
+              _tag: "PersistenceCorruption" as const,
+              repository: "ExecutionRepository" as const,
+              operation: "find-episode-revision",
+              reason: "stored Execution episode revision is invalid",
+            });
+          }
+          return Option.some(row.episode_revision);
+        }),
       findActiveMainByWorkspace: (workspaceId) =>
         Effect.gen(function* () {
           yield* TransactionScope;

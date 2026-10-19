@@ -54,6 +54,16 @@ export interface ExecutionRepositoryService {
     ExecutionRepositoryError,
     TransactionScope
   >;
+  /** V21 sandbox-policy CAS reads the exact persisted
+   * `executions.episode_revision`; it is not reconstructed from a lossy
+   * Execution projection or caller payload. */
+  readonly findEpisodeRevision: (
+    executionId: ExecutionId,
+  ) => Effect.Effect<
+    Option.Option<number>,
+    ExecutionRepositoryError,
+    TransactionScope
+  >;
   readonly findActiveMainByWorkspace: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<
