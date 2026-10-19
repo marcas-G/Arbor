@@ -282,6 +282,16 @@ export const ExecutionSettled = Schema.TaggedStruct("ExecutionSettled", {
   claimRef: Schema.String,
 });
 export const PermissionChanged = Schema.TaggedStruct("PermissionChanged", {});
+export const SandboxPolicyGrantIssued = Schema.TaggedStruct(
+  "SandboxPolicyGrantIssued",
+  {
+    permissionGrantId: Schema.String,
+    grantPermissionCommandId: Schema.String,
+    executionId: Schema.String,
+    operatorConfigRevision: Schema.Number,
+    operatorConfigDigest: Schema.String,
+  },
+);
 export const DecisionRecorded = Schema.TaggedStruct("DecisionRecorded", {});
 export const WorktreeCreated = Schema.TaggedStruct("WorktreeCreated", {
   worktreeId: Schema.String,
@@ -429,6 +439,7 @@ export const DomainEventPayload = Schema.Union([
   ExecutionStopRequested,
   ExecutionSettled,
   PermissionChanged,
+  SandboxPolicyGrantIssued,
   DecisionRecorded,
   EnvironmentChanged,
   WorktreeCreated,
@@ -488,6 +499,7 @@ export const EVENT_CATALOG = {
   ExecutionStopRequested,
   ExecutionSettled,
   PermissionChanged,
+  SandboxPolicyGrantIssued,
   DecisionRecorded,
   EnvironmentChanged,
   WorktreeCreated,

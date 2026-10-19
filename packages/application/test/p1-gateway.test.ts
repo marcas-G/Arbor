@@ -9,6 +9,7 @@ import {
   LeaseGeneration,
   MessageId,
   ok,
+  PermissionGrantId,
   Principal,
   ProjectId,
   parse,
@@ -153,6 +154,7 @@ interface FakeState {
     readonly outcome: string;
   }>;
   readonly appended: PendingDomainEvent[];
+  readonly order: string[];
 }
 
 const TransactionPortLive: Layer.Layer<TransactionPort> = Layer.succeed(
@@ -173,6 +175,7 @@ const buildApp = (
     rows: new Map(),
     attempts: [],
     appended: [],
+    order: [],
   };
   const store: CommandStoreService = {
     findResolution: (id) =>
@@ -189,6 +192,7 @@ const buildApp = (
       resultJson,
     ) =>
       Effect.sync(() => {
+        state.order.push("receipt");
         state.rows.set(id, {
           commandId: id,
           projectId: project,
@@ -239,6 +243,7 @@ const buildApp = (
   const journal: DomainEventJournalService = {
     append: (drafts) =>
       Effect.sync(() => {
+        state.order.push("event");
         state.appended.push(...drafts);
       }),
     appendReturningIds: () => Effect.succeed([]),
@@ -461,6 +466,77 @@ describe("typed internal command input validation", () => {
 });
 
 describe("command gateway", () => {
+  it("inserts the GrantPermission receipt before its events in the same transaction", async () => {
+    const permissionGrantId = parse(PermissionGrantId)(
+      "pgr_018f2b3c-4d5e-7abc-8def-0123456789ab",
+    );
+    const payload = { permissionGrantId };
+    const events: PendingDomainEvent[] = [
+      {
+        projectId,
+        eventType: "PermissionChanged",
+        eventVersion: 1,
+        occurredAt: "t",
+        aggregateRef: permissionGrantId,
+        actor,
+        payload: {},
+      },
+      {
+        projectId,
+        eventType: "SandboxPolicyGrantIssued",
+        eventVersion: 1,
+        occurredAt: "t",
+        aggregateRef: permissionGrantId,
+        actor,
+        payload: {
+          permissionGrantId,
+          grantPermissionCommandId: commandId,
+          executionId: executionContext.executionId,
+          operatorConfigRevision: 1,
+          operatorConfigDigest: "a".repeat(64),
+        },
+      },
+    ];
+    const { app, state } = buildApp([
+      handler(
+        () => ok({ result: { permissionGrantId }, events }),
+        undefined,
+        {
+          tag: "GrantPermissionAuthority",
+          targetMatches: (authority, commandPayload) =>
+            authority._tag === "GrantPermissionAuthority" &&
+            authority.permissionGrantId ===
+              (commandPayload as typeof payload).permissionGrantId,
+        },
+        "GrantPermission",
+      ),
+    ]);
+    const receipt = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway.execute(
+          envelope(payload, "GrantPermission"),
+          externalContext,
+          {
+            _tag: "GrantPermissionAuthority",
+            principal,
+            commandId,
+            projectId,
+            semanticRequestFingerprint: fpFor(payload, "GrantPermission"),
+            permissionGrantId,
+          },
+        );
+      }),
+      app,
+    );
+    expect(receipt.resolution._tag).toBe("Committed");
+    expect(state.order).toEqual(["receipt", "event"]);
+    expect(state.appended.map(({ eventType }) => eventType)).toEqual([
+      "PermissionChanged",
+      "SandboxPolicyGrantIssued",
+    ]);
+  });
+
   it("commits, appends events, and records a resolving attempt", async () => {
     const events: PendingDomainEvent[] = [
       {

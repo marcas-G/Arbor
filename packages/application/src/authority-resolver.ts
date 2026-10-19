@@ -17,6 +17,7 @@ import type {
   WorkspaceId,
   WorkspacePolicy,
 } from "@arbor/domain";
+import { isIsoTimestamp } from "@arbor/domain";
 import type {
   InvocationApproval,
   InvocationAuthority,
@@ -128,6 +129,9 @@ export interface AuthorityDecisionInput {
   /** P5 startup-only snapshot from the OS-protected trusted host source.
    * Missing means sandbox issuer authority is unavailable. */
   readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1;
+  /** Composition/Resolver trusted instant. Sandbox-specific CAPA checks never
+   * use caller-controlled CommandEnvelope.issuedAt. */
+  readonly sandboxPolicyAuthorityNow?: string;
 }
 
 /** P4 `03` §2/§4 invocation-scoped facts. `AuthorityDecisionInput` cannot
@@ -892,6 +896,62 @@ const governanceCommandFact = (
         payload,
         "permissionGrantId",
       ) as PermissionGrantId | null;
+      if (payloadString(payload, "capability") === "DecideSandboxPolicy") {
+        const targetExecutionId = payloadString(payload, "target");
+        const issuer = payloadString(payload, "issuer");
+        const subjectValue = payloadRecord(payload).subject;
+        const subject =
+          typeof subjectValue === "object" &&
+          subjectValue !== null &&
+          !Array.isArray(subjectValue) &&
+          (subjectValue as Record<string, unknown>)._tag === "HumanPrincipal" &&
+          typeof (subjectValue as Record<string, unknown>).principal ===
+            "string"
+            ? ((subjectValue as Record<string, unknown>).principal as string)
+            : null;
+        const expiresAt = payloadString(payload, "expiresAt");
+        const now = input.sandboxPolicyAuthorityNow;
+        const snapshot = input.sandboxPolicyGrantIssuerConfigSnapshot;
+        const execution = input.canonicalFacts.execution;
+        if (
+          input.submissionContext._tag !== "External" ||
+          permissionGrantId === null ||
+          targetExecutionId === null ||
+          issuer !== principal ||
+          subject === null ||
+          subject === issuer ||
+          !isAuthenticatedHuman(input) ||
+          now === undefined ||
+          !isIsoTimestamp(now) ||
+          expiresAt === null ||
+          !isIsoTimestamp(expiresAt) ||
+          Date.parse(expiresAt) <= Date.parse(now) ||
+          snapshot === undefined ||
+          !Number.isSafeInteger(snapshot.config.revision) ||
+          snapshot.config.revision < 1 ||
+          !/^[0-9a-f]{64}$/u.test(snapshot.configDigest) ||
+          !snapshot.config.operators.includes(principal) ||
+          execution === undefined ||
+          execution.executionId !== targetExecutionId ||
+          execution.projectId !== projectId ||
+          execution.status !== "Active"
+        ) {
+          return Effect.fail(denyCommand(input, "GrantPermission", "Denied"));
+        }
+        return Effect.succeed({
+          _tag: "GrantPermissionAuthority",
+          principal,
+          commandId,
+          semanticRequestFingerprint,
+          projectId,
+          permissionGrantId,
+          sandboxPolicyIssuerBinding: {
+            executionId: execution.executionId,
+            operatorConfigRevision: snapshot.config.revision,
+            operatorConfigDigest: snapshot.configDigest,
+          },
+        });
+      }
       const error = guarded("GrantPermission", permissionGrantId);
       if (error !== null || permissionGrantId === null) {
         return Effect.fail(

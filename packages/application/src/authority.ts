@@ -345,6 +345,13 @@ export type VerifiedCommandAuthority =
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
       readonly projectId: ProjectId;
       readonly permissionGrantId: PermissionGrantId;
+      /** Present only when this exact GrantPermission issues a sandbox policy
+       * decision Grant under the current P5 operator snapshot. */
+      readonly sandboxPolicyIssuerBinding?: {
+        readonly executionId: ExecutionId;
+        readonly operatorConfigRevision: number;
+        readonly operatorConfigDigest: string;
+      };
     }
   | {
       /** P12 `02` §5 (G2): `RevokePermission` governance command. The variant
