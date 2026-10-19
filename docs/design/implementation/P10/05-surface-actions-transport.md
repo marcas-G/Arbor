@@ -236,3 +236,14 @@ these P10-owned contracts.
 ## 4. Must Not Decide
 
 - No transport protocol/auth choices; no P2 runtime-semantics change; no resolver implementation; no P14 program redefinition (P8 owns; consume only — v1.11 G6).
+
+## Accepted V21 AttentionSource API literal
+
+The transport-neutral closed `AttentionSource` union includes the
+non-persisted literal `SandboxRecoveryBindingFailure`. It is a pure P10 query
+projection from existing P4 invocation/binding rows; it adds no endpoint,
+request field, Problem category, persisted enum, event, marker, or migration.
+The public row uses the exact V21 fixed safe summary, canonical Execution
+Workspace target, `attentionFactId` dedup, and `occurredAt=intent_at`. Corrupt
+hash-format or timestamp values fail closed through the existing corruption
+Problem path without a derived row. P12 only transports the existing DTO.

@@ -180,3 +180,10 @@ runtime implementation.
 source-key Inbox promotion and checkpoint/epoch recovery are additive
 cross-phase design contracts in `02`/`04`/`06`. They do not reopen historical
 P2 completion. Migration 0019 and implementation require separate authorization.
+
+## V21 RecoveryBinding Attention compatibility note
+
+The V21 RecoveryBinding Attention does not add an Execution wait/state or
+change lease, HumanIntervention, Stop, or scheduler semantics. The same
+active Execution and pending invocation remain governed by the existing P2
+contracts; P10's row is a read-only derived projection.

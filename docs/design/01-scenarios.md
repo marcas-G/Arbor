@@ -1,8 +1,8 @@
 # Arbor 核心场景定义（S1–S4）
 
-**Version:** 1.5
+**Version:** 1.6
 **Status:** FROZEN — Minimal Architecture Convergence and Native OS Sandbox governance addendum
-**Date:** 2026-10-18
+**Date:** 2026-10-19
 **Depends on:** `Arbor Problem Definition & Goals v1.3`
 **Owns:** S1–S4 的参与者、端到端行为、分支、异常与恢复的用户可感知语义  
 **Does not own:** Domain Entity、Runtime/module、数据库、Command/Event、状态机、接口、技术实现
@@ -1093,3 +1093,17 @@ the clearly labeled weaker configured path where policy allows it. Approval
 still authorizes only the exact action and never widens the sandbox; the
 sandbox never supplies approval. These are cross-scenario observable
 behaviors and do not alter S1–S4 goal or domain meaning.
+
+## Governance addendum — RecoveryBinding Attention projection (v1.6)
+
+For a process-capable invocation that cannot be safely resumed because its
+immutable recovery binding is absent or invalid, the same active Execution
+stays paused before effect admission and is shown an ActionRequired Attention.
+The Attention is derived from durable invocation/binding evidence and is not
+a second persisted recovery event. It exposes no binding bytes, hash,
+arguments, regions or paths. It disappears only when the invocation is
+terminal or the Execution is stopped; v1 has no binding repair/rebind action.
+If the timestamp or stored binding-hash format is corrupt, the read fails
+closed through the existing corruption path rather than inventing public
+Attention identity or time. Existing provider-unavailable fact Attention is
+unchanged.

@@ -956,3 +956,26 @@ ResponseJob that has not settled Answered (including RetryScheduled), blocks
 coverage of later Answered messages and remains a fail-closed frontier after
 restart. Work Session checkpoints are not Conversation recovery evidence.
 This amendment adds no physical owner-state or migration decision.
+
+## Accepted Native OS Sandbox RecoveryBinding projection (V21)
+
+When a process-capable invocation remains NotAdmitted/Pending and its
+immutable P4 RecoveryBindingV1 proof is absent, non-Bound, corrupt or fails
+the exact immutable-intent/source-identity checks, P9 classifies it internally
+as RecoveryBlocked by read-only inspection of the existing
+`tool_invocations` and `tool_invocation_recovery_bindings` rows. P9 writes no
+ToolObservationReplay fact, event, marker, attention record, or P40 state; it
+does not acquire/renew a lease, invoke P4, dispatch a Provider, admit an
+effect, settle Action, write ToolResult/Observation, or advance the cursor.
+The Action remains Pending and the AgentLoopStep remains ActionsInProgress.
+Repeated bounded scans over unchanged invalid evidence are read-only and
+produce zero dispatch/lease/P4/Provider calls. No binding is synthesized,
+repaired, or rebound in v1.
+
+P9 continues to distinguish invalid immutable proof from current-source
+resource/authority/control drift: the latter follows the existing P4 current
+Denied, ApprovalNoLongerAuthorized, ResourceAdmissionDenied, or
+SandboxPolicyRequiredInterruption path and is not binding corruption. The
+durable `SandboxProviderUnavailableFactV1` path for actual provider failures
+is unchanged. P10's `SandboxRecoveryBindingFailure` is derived from the same
+existing P4 rows and is not a P9 fact/event.

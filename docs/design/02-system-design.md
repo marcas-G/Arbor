@@ -1,12 +1,12 @@
 # Arbor System Design Specification
 
-**Version:** 1.20
+**Version:** 1.21
 
 **Status:** FROZEN — Minimal Architecture Convergence and Native OS Sandbox governance addendum
 
-**Supersedes:** v1.19
+**Supersedes:** v1.20
 
-**Date:** 2026-10-18
+**Date:** 2026-10-19
 
 **Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.5`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
@@ -2373,3 +2373,22 @@ distinct configured human operator issues only the exact Grant; immutable
 provenance binds Grant, issuer and operator-config revision/digest. Recovery
 never reconstructs authority or policy from model text, current defaults,
 events or Worktree state. P1/P4/P5/P9/P10/P12/P13 own executable contracts.
+
+## Accepted Native OS Sandbox V21 RecoveryBinding projection
+
+For a pending process-capable invocation whose existing immutable P4
+RecoveryBinding proof is missing, corrupt or mismatched, P9 classifies the
+condition read-only from the durable invocation and binding rows. It writes
+no ToolObservationReplay fact, event or marker and does not acquire/renew a
+lease, invoke P4, dispatch a Provider, or admit an effect. The Action remains
+Pending and the AgentLoopStep remains ActionsInProgress. P10 derives the
+ActionRequired SandboxRecoveryBindingFailure Attention directly from those
+rows; this is a non-persisted projection, not a reuse of P40 facts. It has the
+fixed safe summary and immutable occurredAt from tool_invocations.intent_at.
+Missing/invalid timestamps or malformed non-NULL binding hashes fail closed
+through the existing corruption path and produce no derived Attention.
+Binding SHA identity uses JSON null for SQL NULL and the exact stored
+lowercase 64-hex text when syntactically valid, even if its content hash does
+not match. The binding is immutable in v1; only invocation terminality or
+Execution Stop clears the derived Attention. Existing policy-required
+interruption and provider-unavailable fact behavior are unchanged.

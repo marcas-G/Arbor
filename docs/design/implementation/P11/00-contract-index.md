@@ -30,6 +30,12 @@
 | `10-ownership-wiring.md` | Minimal claim/release wiring + scope fence |
 | `11-startup-recovery.md` | Startup drift probe; worktree damage recovery; sandbox-root ephemerality |
 | `12-sandbox-handoff.md` | SandboxPort continuity; advanced adapter; P4 guarantees inherited |
+
+## V21 RecoveryBinding Attention compatibility note
+
+P11 region resolution, mount handoff, resource ownership, and environment
+revision contracts are unchanged. The derived P10 Attention reads existing
+P4 invocation/binding evidence and adds no P11 source mutation or migration.
 | `13-verdict-consumer.md` | P8 binding unchanged; stale overlay integration |
 
 ## Boundaries (explicitly out of P11)

@@ -496,3 +496,37 @@ insert/delete and offset acknowledgement occur in one transaction. Failure
 marker insertion is idempotent. Resolution deletes only the matching active
 marker; it never deletes or rewrites either P9 fact. There is no human dismiss
 command and no timeout clearing path.
+
+## Accepted V21 derived RecoveryBinding Attention
+
+Add the non-persisted API `AttentionSource` literal
+`SandboxRecoveryBindingFailure`. P10 derives this row on each authorized
+Attention/Workspace Detail query by strict read-only evaluation of the exact
+P4 `tool_invocations` and `tool_invocation_recovery_bindings` rows. Emit only
+while the exact Execution is active and its exact invocation remains
+NotAdmitted, unsettled and Action Pending, with missing/corrupt/mismatched
+immutable RecoveryBindingV1 proof. No marker, event, fact, queue, or rebuild
+state is written; this source is not P40 `ToolObservationReplay` and event
+pruning is irrelevant. Duplicate reads produce the same identity and summary.
+
+The public target is the canonical Execution Workspace, severity is
+`ActionRequired`, and the exact safe summary is “Sandbox recovery binding
+evidence is missing or invalid; execution is paused.” `occurredAt` is the
+immutable `tool_invocations.intent_at`, strict-decoded as canonical UTC;
+missing or invalid value is a projection-integrity failure with no fallback
+timestamp and no derived Attention. The dedup `attentionFactId` is lowercase
+SHA-256 of exact canonical UTF-8 JSON with fixed key order
+`version,executionId,invocationId,bindingShaOr`. NULL hash is JSON null; a
+syntactically valid stored lowercase 64-hex hash is used exactly even when
+content hash mismatches. A non-NULL malformed hash is a
+Persistence/ProjectionIntegrityFailure: fail closed, do not emit a derived
+row, and use the existing corruption Problem/operational path. Never expose
+binding hashes/bytes, arguments, regions, host paths, or parser details.
+
+The derived row disappears only when that invocation is terminal or its
+Execution is stopped. RecoveryBinding is immutable and v1 has no automatic or
+manual repair/rebind path; a verified backup or new Execution is outside this
+contract. Current resource/authority/control drift with a valid binding is
+handled by existing P4 denial or policy-required behavior and is not this
+Attention source. Existing `SandboxProviderUnavailable` P9 fact/queue/marker
+semantics are unchanged.

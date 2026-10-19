@@ -122,3 +122,11 @@ exact retry/conflict semantics, and `listSandboxProviderUnavailableFacts`
 snapshot. Event is only wake/audit; P9 fact is source of truth and is
 independent of `domain_events` retention. No runtime implementation is
 authorized by this storage design.
+
+## Accepted Native OS Sandbox RecoveryBinding Attention amendment (V21)
+
+P9 `07` classifies invalid/missing existing RecoveryBindingV1 evidence
+read-only from P4 invocation/binding rows as internal RecoveryBlocked. It
+does not persist a replay fact/event/marker or call P4/Provider/lease/effect;
+P10 derives the non-persisted `SandboxRecoveryBindingFailure` Attention.
+Actual `SandboxProviderUnavailableFactV1` persistence remains unchanged.

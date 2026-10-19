@@ -81,3 +81,11 @@ queue and marker storage). P1 `05` owns the
 fact and P10 the retained admission queue/Attention marker. These migrations
 are design-only: neither is registered nor activated, and no database is
 upgraded.
+
+## V21 RecoveryBinding Attention compatibility note
+
+P1 `01`–`06` retain the existing command fingerprint/receipt, transaction,
+schema, event and recovery contracts. The V21 derived
+`SandboxRecoveryBindingFailure` Attention adds no P1 command, persisted enum,
+event, marker, table, column, migration or schema change; P1 remains the
+owner of the unchanged immutable RecoveryBinding bytes/hash.
