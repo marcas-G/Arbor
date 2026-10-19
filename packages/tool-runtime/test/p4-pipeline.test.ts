@@ -141,7 +141,7 @@ const okExecutor: ToolExecutor = {
 };
 
 const p39ApprovedCase = (
-  suffix: "c4" | "c5" | "c6",
+  suffix: "c4" | "c5" | "c6" | "c7",
   logicalActionId: string,
 ) => {
   const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';

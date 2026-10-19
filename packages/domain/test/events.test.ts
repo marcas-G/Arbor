@@ -60,6 +60,7 @@ const EXPECTED_EVENTS = [
   "PermissionChanged",
   "SandboxPolicyGrantIssued",
   "SandboxPolicyDecisionRecorded",
+  "SandboxProviderUnavailable",
   "DecisionRecorded",
   "EnvironmentChanged",
   "HumanInterventionApplied",

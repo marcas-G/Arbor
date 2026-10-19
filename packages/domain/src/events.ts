@@ -180,6 +180,15 @@ export const SubmittedDecisionBindingEscalated = Schema.TaggedStruct(
     ]),
   },
 );
+export const SandboxProviderUnavailable = Schema.TaggedStruct(
+  "SandboxProviderUnavailable",
+  {
+    attentionFactId: Schema.String,
+    executionId: Schema.String,
+    workspaceId: Schema.String,
+    policyRevision: Schema.Number,
+  },
+);
 export const LegacyAdoptionEvidenceEscalated = Schema.Struct({
   factId: Schema.String,
   attentionFactId: Schema.String,
@@ -438,6 +447,7 @@ export const DomainEventPayload = Schema.Union([
   DeliverReplayEscalated,
   ToolObservationReplayEvidenceEscalated,
   SubmittedDecisionBindingEscalated,
+  SandboxProviderUnavailable,
   LegacyAdoptionEvidenceEscalated,
   LegacyAdoptionEvidenceResolved,
   DependencyWithdrawn,
@@ -501,6 +511,7 @@ export const EVENT_CATALOG = {
   DeliverReplayEscalated,
   ToolObservationReplayEvidenceEscalated,
   SubmittedDecisionBindingEscalated,
+  SandboxProviderUnavailable,
   LegacyAdoptionEvidenceEscalated,
   LegacyAdoptionEvidenceResolved,
   DeliverableProduced,

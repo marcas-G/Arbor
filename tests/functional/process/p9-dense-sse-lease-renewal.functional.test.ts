@@ -157,6 +157,7 @@ let running:
           readonly _tag: "SandboxProviderUnavailable";
           readonly outcome: SandboxProviderUnavailableOutcome;
         }
+      | { readonly _tag: "SandboxPolicyRequiredInterruption" }
       | { readonly _tag: "RecoveryBlocked" }
     >
   | undefined;
