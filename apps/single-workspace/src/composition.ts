@@ -179,6 +179,7 @@ import {
   type ToolReconciliationProfile,
   ToolReconciliationProfileRegistry,
   TransactionPort,
+  type TrustedHostConfigurationSourceService,
   type WorkReadmissionGateStore,
   type WorkRepository,
   type WorkspaceKnowledgePort,
@@ -247,6 +248,7 @@ import { INLINE_SECRET_REF } from "./provider-config.js";
 import { PROVIDER_REGISTRY_TABLE } from "./provider-registry.table.js";
 import { makeSingleWorkspaceCommandHandlerRegistryLive } from "./registry.js";
 import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
+import { loadSandboxPolicyGrantIssuerConfigSnapshot } from "./sandbox-policy-issuer-config.js";
 import { ToolAuthorityResolverLive } from "./tool-authority-resolver.js";
 import {
   type AuthenticatorService,
@@ -311,6 +313,10 @@ export const selectProviderLayer = (
 
 export interface SingleWorkspaceConfig {
   readonly databaseFile: string;
+  /** P5 startup-only source. Production must inject the OS-protected trusted
+   * host configuration source; absence or invalid data disables sandbox
+   * policy authority. This is never loaded from environment or a request. */
+  readonly trustedHostConfigurationSource?: TrustedHostConfigurationSourceService;
   /** Test-only startup trace; absent from ordinary production composition. */
   readonly startupDiagnosticProbe?: (phase: string) => void;
   /** Test-only pre-BEGIN barrier; ordinary production composition leaves it absent. */
@@ -475,6 +481,10 @@ export const buildSingleWorkspaceLayer = (
   config: SingleWorkspaceConfig,
 ): Layer.Layer<SingleWorkspaceServices> => {
   const governance = resolveCompositionGovernance(config);
+  const sandboxPolicyGrantIssuerConfigSnapshot =
+    loadSandboxPolicyGrantIssuerConfigSnapshot(
+      config.trustedHostConfigurationSource,
+    );
   try {
     config.startupDiagnosticProbe?.("p39.layer-path-validation.before");
   } catch {
@@ -1020,6 +1030,7 @@ export const buildSingleWorkspaceLayer = (
       governance,
       config.authenticator !== undefined,
       config.createProjectPostCommitBeforeActivationQualificationProbe,
+      sandboxPolicyGrantIssuerConfigSnapshot,
     ),
     Layer.mergeAll(coreAll, authorityResolver, projectionQuery),
   );

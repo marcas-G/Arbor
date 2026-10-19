@@ -10,6 +10,7 @@ import type {
   Principal,
   ProjectId,
   ProjectPolicy,
+  SandboxPolicyGrantIssuerConfigSnapshotV1,
   SemanticRequestFingerprint,
   VerificationId,
   WorkId,
@@ -124,6 +125,9 @@ export interface AuthorityDecisionInput {
   readonly grants: ReadonlyArray<PermissionGrant>;
   readonly governance: ParentUserGovernanceFacts;
   readonly policy: ProjectPolicy | WorkspacePolicy;
+  /** P5 startup-only snapshot from the OS-protected trusted host source.
+   * Missing means sandbox issuer authority is unavailable. */
+  readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1;
 }
 
 /** P4 `03` §2/§4 invocation-scoped facts. `AuthorityDecisionInput` cannot

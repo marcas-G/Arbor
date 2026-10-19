@@ -32,6 +32,7 @@ import {
   type ExecutionId,
   type Principal,
   type ProjectId,
+  type SandboxPolicyGrantIssuerConfigSnapshotV1,
   type WakeReason,
 } from "@arbor/domain";
 import {
@@ -201,6 +202,7 @@ export const TransportBoundaryLive = (
   governance: ParentUserGovernanceFacts,
   authenticatorConfigured: boolean,
   postCommitBeforeActivationProbe?: CreateProjectPostCommitBeforeActivationQualificationProbe,
+  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
 ): Layer.Layer<TransportBoundary, never, TransportBoundaryServices> =>
   Layer.effect(
     TransportBoundary,
@@ -211,10 +213,14 @@ export const TransportBoundaryLive = (
       const retryVerificationOrigins = yield* Effect.serviceOption(
         RetryVerificationOriginRepository,
       );
-      const loadInputs = yield* makeRepositoryInputsLoader(governance);
+      const loadInputs = yield* makeRepositoryInputsLoader(
+        governance,
+        sandboxPolicyGrantIssuerConfigSnapshot,
+      );
       const submission = yield* makeExternalSubmissionFromServices(
         governance,
         postCommitBeforeActivationProbe,
+        sandboxPolicyGrantIssuerConfigSnapshot,
       );
       const core = makeTransportCore({
         views: viewQueryFaceWithRetryAvailability(
