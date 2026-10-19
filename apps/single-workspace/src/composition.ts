@@ -135,6 +135,7 @@ import {
   WorkspaceRepositoryLive,
   type WorkspaceResourceActivationQualificationProbe,
   WorkspaceResourceActivationStoreLive,
+  WorktreeStoreLive,
   WorkWaitStoreLive,
 } from "@arbor/persistence-sqlite";
 import {
@@ -145,6 +146,7 @@ import {
   type DecisionRequestStore,
   type DeliverableRepository,
   DomainEventJournal,
+  EnvironmentResolverPort,
   type ExecutionDriverPort,
   ExecutionRepository,
   type ExecutionScheduler,
@@ -168,11 +170,12 @@ import {
   type ProviderPort,
   type ReconciliationSource,
   type ResolvedModelBinding,
-  type ResourceOwnershipRepository,
+  ResourceOwnershipRepository,
   type RetryVerificationOriginRepository,
   type RunnableWorkSource,
   resolvedModelBindingFingerprint,
   resolveModelBinding,
+  SandboxPolicyDecisionStore,
   SandboxProcessPort,
   SecretMaterial,
   type SecretRef,
@@ -190,7 +193,8 @@ import {
   type WorkRepository,
   type WorkspaceKnowledgePort,
   type WorkspacePlacementPort,
-  type WorkspaceRepository,
+  WorkspaceRepository,
+  WorktreeStore,
   type WorkWaitStore,
 } from "@arbor/ports";
 import { type UsageService, UsageServiceLive } from "@arbor/projection-runtime";
@@ -264,6 +268,7 @@ import {
   SandboxAuthoritySnapshotLive,
   sandboxIssuerSnapshotOf,
 } from "./sandbox-authority-bundle.js";
+import { makeSandboxPolicyDecisionPreparation } from "./sandbox-policy-decision-preparation.js";
 import { ToolAuthorityResolverLive } from "./tool-authority-resolver.js";
 import {
   type AuthenticatorService,
@@ -463,6 +468,7 @@ export type SingleWorkspaceServices =
   | RetryVerificationOriginRepository
   | ProjectRepository
   | ResourceOwnershipRepository
+  | WorktreeStore
   | SessionRepository
   | WorkRepository
   | WorkspaceRepository
@@ -747,6 +753,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(SchedulerTimerStoreLive, infra),
     Layer.provide(ResourceOwnershipRepositoryLive, infra),
+    Layer.provide(WorktreeStoreLive, infra),
     Layer.provide(EnvironmentRevisionStoreLive, infra),
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(FormationFulfillmentStoreLive, infra),
@@ -870,10 +877,25 @@ export const buildSingleWorkspaceLayer = (
     Layer.unwrap(
       Effect.gen(function* () {
         const authoritySnapshot = yield* SandboxAuthoritySnapshot;
+        const preparation =
+          config.sandboxPolicyDecisionPreparation ??
+          makeSandboxPolicyDecisionPreparation({
+            transaction: yield* TransactionPort,
+            workspaces: yield* WorkspaceRepository,
+            executions: yield* ExecutionRepository,
+            decisions: yield* SandboxPolicyDecisionStore,
+            ownership: yield* ResourceOwnershipRepository,
+            worktrees: yield* WorktreeStore,
+            environmentResolver: yield* EnvironmentResolverPort,
+            authoritySnapshot:
+              authoritySnapshot._tag === "Available"
+                ? authoritySnapshot.snapshot
+                : undefined,
+          });
         return makeSingleWorkspaceCommandHandlerRegistryLive(
           governance,
           sandboxIssuerSnapshotOf(authoritySnapshot),
-          config.sandboxPolicyDecisionPreparation,
+          preparation,
         );
       }),
     ),

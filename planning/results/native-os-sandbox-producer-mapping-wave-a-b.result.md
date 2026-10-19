@@ -84,14 +84,27 @@ adapter module: repository reads use short transactions; the full P11
 resolution and materialization occur outside the Gateway transaction; the
 final P1 preconditions re-read the exact Workspace/Episode/policy head/claims
 and recompute mount binding from the captured resolver set without filesystem
-I/O inside the transaction. It supports only an explicit V2-configured
+I/O or nested transaction inside the existing P1 transaction scope. The
+composition root wires this adapter by default using the verified V2 snapshot,
+SQLite P11 WorktreeStore, and exact P11 resolver; the existing injection seam
+is retained for focused tests. It supports only an explicit V2-configured
 TrustedLocal decision today. OsEnforced fails closed when there is no exact
-currently Supported tuple; it does not select or fall back. The adapter is not
-yet wired into `composition.ts`, and production integration/real SQLite CAS
-qualification remains open.
+currently Supported tuple; it does not select or fall back. The authority audit
+store exposes no stable record reference, so TrustedLocal records only the
+exact P1 CommandId/receipt reference and OsEnforced would additionally require
+its qualified evidence ref.
 
-Verification: boundary producer/codec, real P11 resolver-normalization, and
-materializer suites 12/12; revision-zero ResourceBoundaryDigest and V21
-TargetRef vectors; FileTree-first alias, relative/dot-segment path,
-observation consistency, claims/access, source-boundary, Worktree selection,
-and no-fallback cases; `pnpm build`, focused Biome and `git diff --check`.
+The V2 preparation integration test uses a fresh disposable schema-50 SQLite
+Gateway and the real TransactionPort/repositories/immutable decision store. It
+proves commit + exact replay + stale policy-head CAS without a nested
+transaction. Its V2 snapshot is a deterministic test fixture; codec/high-water
+admission is independently covered by the P5 loader suite.
+
+Verification: six focused files, 25/25 tests across producer/codec, real P11
+resolver-normalization, WorktreeStore, preparation and schema-50 Gateway
+(11/11 preparation + Gateway tests); revision-zero ResourceBoundaryDigest and
+V21 TargetRef vectors;
+FileTree-first alias, relative/dot-segment path, observation consistency,
+claims/access, source-boundary, Worktree selection, commit/replay/stale CAS and
+no-fallback cases. SQLite WorktreeStore adapter tests 3/3. `pnpm build`, focused
+Biome and `git diff --check` pass.

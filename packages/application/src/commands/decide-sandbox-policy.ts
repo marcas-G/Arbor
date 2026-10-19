@@ -21,11 +21,17 @@ import {
 } from "@arbor/domain";
 import type {
   ClockService,
+  ExecutionRepositoryError,
   ExecutionRepositoryService,
   PendingDomainEvent,
   PermissionGrantRepositoryService,
+  ResourceOwnershipRepositoryError,
+  SandboxPolicyDecisionStoreError,
   SandboxPolicyDecisionStoreService,
   TransactionOperationalFailure,
+  TransactionScope,
+  WorkspaceRepositoryError,
+  WorktreeStoreError,
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -69,7 +75,15 @@ export interface DecideSandboxPolicyPreparation {
    * transaction. This is deliberately separate from provider probing. */
   readonly currentPreconditions: (
     payload: DecideSandboxPolicyPayload,
-  ) => Effect.Effect<SandboxPolicyPreconditionsV1>;
+  ) => Effect.Effect<
+    SandboxPolicyPreconditionsV1,
+    | WorkspaceRepositoryError
+    | ExecutionRepositoryError
+    | SandboxPolicyDecisionStoreError
+    | ResourceOwnershipRepositoryError
+    | WorktreeStoreError,
+    TransactionScope
+  >;
 }
 
 export interface DecideSandboxPolicyDependencies {

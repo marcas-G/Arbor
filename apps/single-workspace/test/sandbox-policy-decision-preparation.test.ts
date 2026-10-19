@@ -4,6 +4,7 @@ import type {
   Execution,
   ResourceAddress,
   ResourceBoundary,
+  SandboxAuthorityBundleSnapshotV2,
   Workspace,
 } from "@arbor/domain";
 import {
@@ -16,6 +17,8 @@ import {
 import type {
   EnvironmentResolverService,
   ResourceOwnershipClaimRecord,
+  TransactionOperationalFailure,
+  TransactionPortService,
   WorktreeRecord,
 } from "@arbor/ports";
 import { TransactionScope } from "@arbor/ports";
@@ -191,6 +194,7 @@ const fixture = (
     latestPolicyRevision: number;
   }) => void,
   environmentResolver: EnvironmentResolverService = resolver,
+  authoritySnapshotOverride: SandboxAuthorityBundleSnapshotV2 | null = authorityBundleSnapshot,
 ) => {
   const state = {
     workspace,
@@ -198,13 +202,28 @@ const fixture = (
     worktrees: [primaryWorktree],
     latestPolicyRevision: 0,
   };
+  let transactionActive = false;
+  const transaction: TransactionPortService = {
+    transact: (body) =>
+      Effect.suspend(() => {
+        if (transactionActive)
+          return Effect.fail({
+            _tag: "TransactionOperationalFailure",
+            cause: "nested transaction rejected by test sentinel",
+          } satisfies TransactionOperationalFailure);
+        transactionActive = true;
+        return Effect.ensuring(
+          Effect.provideService(body, TransactionScope, {
+            session: { id: "preparation-test" },
+          }),
+          Effect.sync(() => {
+            transactionActive = false;
+          }),
+        );
+      }),
+  };
   const dependencies: SandboxPolicyDecisionPreparationDependencies = {
-    transaction: {
-      transact: (body) =>
-        Effect.provideService(body, TransactionScope, {
-          session: { id: "preparation-test" },
-        }),
-    },
+    transaction,
     workspaces: {
       findById: () => Effect.succeed(Option.some(state.workspace)),
     } as never,
@@ -230,18 +249,19 @@ const fixture = (
       findByWorkspace: () => Effect.succeed(state.worktrees),
     } as never,
     environmentResolver,
-    authoritySnapshot: authorityBundleSnapshot,
+    authoritySnapshot: authoritySnapshotOverride ?? undefined,
   };
   mutate?.(state);
   return {
     preparation: makeSandboxPolicyDecisionPreparation(dependencies),
+    transaction,
     state,
   };
 };
 
 describe("production sandbox decision materializer", () => {
   it("materializes TrustedLocal from one V2 bundle and complete P11 boundary", async () => {
-    const { preparation } = fixture();
+    const { preparation, transaction } = fixture();
     const request = payload();
     const prepared = await Effect.runPromise(
       preparation.prepare(request, authority),
@@ -262,7 +282,7 @@ describe("production sandbox decision materializer", () => {
     expect(JSON.stringify(prepared)).not.toContain("/repo/workspace");
     expect(prepared.sandboxHandleBindingDigest).not.toBe("5".repeat(64));
     const current = await Effect.runPromise(
-      preparation.currentPreconditions(request),
+      transaction.transact(preparation.currentPreconditions(request)),
     );
     expect(current.sandboxHandleBindingDigest).toBe(
       prepared.sandboxHandleBindingDigest,
@@ -309,6 +329,20 @@ describe("production sandbox decision materializer", () => {
           onSuccess: (value) => ({ _tag: "Right" as const, value }),
         },
       ),
+    );
+    expect(outcome).toMatchObject({
+      _tag: "Left",
+      error: { _tag: "TransactionOperationalFailure" },
+    });
+  });
+
+  it("fails closed when the startup V2 authority snapshot is unavailable", async () => {
+    const { preparation } = fixture(undefined, resolver, null);
+    const outcome = await Effect.runPromise(
+      Effect.match(preparation.prepare(payload(), authority), {
+        onFailure: (error) => ({ _tag: "Left" as const, error }),
+        onSuccess: (value) => ({ _tag: "Right" as const, value }),
+      }),
     );
     expect(outcome).toMatchObject({
       _tag: "Left",
