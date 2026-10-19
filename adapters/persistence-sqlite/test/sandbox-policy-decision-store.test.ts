@@ -6,6 +6,7 @@ import {
   encodeEffectivePolicySummaryV1,
   encodeNetworkPolicyV1,
   encodeSandboxPolicyDecisionCommittedInternalV1,
+  networkBrokerControlsV1ForMode,
   PermissionGrantId,
   ProjectId,
   parse,
@@ -73,21 +74,19 @@ const summary = {
       encodeNetworkPolicyV1({ version: 1, mode: "Disabled", destinations: [] }),
     )
     .digest("hex"),
-  networkBrokerControls: {
-    version: 1 as const,
-    egress: "BrokerOnly" as const,
-    dns: "BrokerResolveAndPin" as const,
-    addressPolicy: "SandboxPublicInternetDenyV1" as const,
-    redirectMaxHops: 5 as const,
-    tlsIdentity: "OriginCertificateSniHostMatch" as const,
-  },
+  networkBrokerControls: networkBrokerControlsV1ForMode("Disabled"),
   providerRegistryRevision: 1,
   providerRegistryDigest: "c".repeat(64),
   sandboxHandleBindingDigest: "d".repeat(64),
   mounts: [
     {
       mountId: "workspace",
-      targetRef: "workspace",
+      targetRef: {
+        version: 1,
+        kind: "RegionDigest",
+        resourceSpace: "filesystem",
+        regionIdentityDigest: "9".repeat(64),
+      },
       targetIdentityDigest: "e".repeat(64),
       access: "ReadOnly" as const,
     },

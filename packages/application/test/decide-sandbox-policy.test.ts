@@ -5,6 +5,7 @@ import {
   CommandId,
   ExecutionId,
   encodeNetworkPolicyV1,
+  networkBrokerControlsV1ForMode,
   PermissionGrantId,
   Principal,
   ProjectId,
@@ -141,21 +142,19 @@ const snapshot = {
   networkPolicyDigest: createHash("sha256")
     .update(encodeNetworkPolicyV1(osNetworkSelection.policy))
     .digest("hex"),
-  networkBrokerControls: {
-    version: 1 as const,
-    egress: "BrokerOnly" as const,
-    dns: "BrokerResolveAndPin" as const,
-    addressPolicy: "SandboxPublicInternetDenyV1" as const,
-    redirectMaxHops: 5 as const,
-    tlsIdentity: "OriginCertificateSniHostMatch" as const,
-  },
+  networkBrokerControls: networkBrokerControlsV1ForMode("Disabled"),
   providerRegistryRevision: 3,
   providerRegistryDigest: "2".repeat(64),
   sandboxHandleBindingDigest: payload.expectedSandboxHandleBindingDigest,
   mounts: [
     {
       mountId: "workspace",
-      targetRef: "workspace",
+      targetRef: {
+        version: 1,
+        kind: "RegionDigest",
+        resourceSpace: "filesystem",
+        regionIdentityDigest: "9".repeat(64),
+      },
       targetIdentityDigest: "4".repeat(64),
       access: "ReadOnly" as const,
     },

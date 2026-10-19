@@ -14,13 +14,21 @@ import {
   encodeExecutionEpisodeBinding,
   encodeNetworkPolicyV1,
 } from "./sandbox-policy.js";
+import type {
+  SandboxNetworkBrokerControlsV1,
+  SandboxPolicyMountV1,
+} from "./sandbox-policy-producers.js";
+import {
+  decodeNetworkBrokerControlsV1,
+  decodeSandboxTargetRefV1,
+  encodeNetworkBrokerControlsV1,
+  encodeSandboxTargetRefV1,
+} from "./sandbox-policy-producers.js";
 
-export interface SandboxPolicyMountV1 {
-  readonly mountId: string;
-  readonly targetRef: string;
-  readonly targetIdentityDigest: string;
-  readonly access: "ReadOnly" | "ReadWrite";
-}
+export type {
+  SandboxNetworkBrokerControlsV1,
+  SandboxPolicyMountV1,
+} from "./sandbox-policy-producers.js";
 
 export interface SandboxPolicyLimitsV1 {
   readonly wallTimeMs: number;
@@ -29,15 +37,6 @@ export interface SandboxPolicyLimitsV1 {
   readonly processCount: number;
   readonly memoryBytes: number;
   readonly cpuTimeMs: number;
-}
-
-export interface SandboxNetworkBrokerControlsV1 {
-  readonly version: 1;
-  readonly egress: "BrokerOnly";
-  readonly dns: "BrokerResolveAndPin";
-  readonly addressPolicy: "SandboxPublicInternetDenyV1";
-  readonly redirectMaxHops: 5;
-  readonly tlsIdentity: "OriginCertificateSniHostMatch";
 }
 
 export interface OsEnforcedPolicySummaryV1 {
@@ -227,11 +226,11 @@ const utf8Length = (text: string): number => {
 };
 
 const encodeMount = (mount: SandboxPolicyMountV1): string =>
-  `{"mountId":${JSON.stringify(mount.mountId)},"targetRef":${JSON.stringify(mount.targetRef)},"targetIdentityDigest":${JSON.stringify(mount.targetIdentityDigest)},"access":${JSON.stringify(mount.access)}}`;
+  `{"mountId":${JSON.stringify(mount.mountId)},"targetRef":${encodeSandboxTargetRefV1(mount.targetRef)},"targetIdentityDigest":${JSON.stringify(mount.targetIdentityDigest)},"access":${JSON.stringify(mount.access)}}`;
 const encodeLimits = (limits: SandboxPolicyLimitsV1): string =>
   `{"wallTimeMs":${limits.wallTimeMs},"stdoutBytes":${limits.stdoutBytes},"stderrBytes":${limits.stderrBytes},"processCount":${limits.processCount},"memoryBytes":${limits.memoryBytes},"cpuTimeMs":${limits.cpuTimeMs}}`;
-const encodeBroker = (_controls: SandboxNetworkBrokerControlsV1): string =>
-  `{"version":1,"egress":"BrokerOnly","dns":"BrokerResolveAndPin","addressPolicy":"SandboxPublicInternetDenyV1","redirectMaxHops":5,"tlsIdentity":"OriginCertificateSniHostMatch"}`;
+const encodeBroker = (controls: SandboxNetworkBrokerControlsV1): string =>
+  encodeNetworkBrokerControlsV1(controls);
 
 export const encodeEffectivePolicySummaryV1 = (
   summary: EffectivePolicySummaryV1,
@@ -264,6 +263,7 @@ const decodeMounts = (
     if (typeof raw !== "object" || raw === null || Array.isArray(raw))
       return undefined;
     const mount = raw as Record<string, unknown>;
+    const targetRef = decodeSandboxTargetRefV1(mount.targetRef);
     if (
       !exactKeys(mount, [
         "mountId",
@@ -272,14 +272,14 @@ const decodeMounts = (
         "access",
       ]) ||
       !opaque(mount.mountId) ||
-      !opaque(mount.targetRef) ||
+      targetRef === undefined ||
       !digestPattern.test(String(mount.targetIdentityDigest)) ||
       !["ReadOnly", "ReadWrite"].includes(String(mount.access))
     )
       return undefined;
     mounts.push({
       mountId: mount.mountId,
-      targetRef: mount.targetRef,
+      targetRef,
       targetIdentityDigest: mount.targetIdentityDigest as string,
       access: mount.access as SandboxPolicyMountV1["access"],
     });
@@ -393,10 +393,9 @@ export const decodeEffectivePolicySummaryV1 = (
         "operatorConfigDigest",
       ];
       const policy = decodeNetworkPolicyV1(value.networkPolicy);
-      const controls = value.networkBrokerControls as Record<
-        string,
-        unknown
-      > | null;
+      const controls = decodeNetworkBrokerControlsV1(
+        value.networkBrokerControls,
+      );
       if (
         !exactKeys(value, keys) ||
         !validCommon(value) ||
@@ -411,23 +410,8 @@ export const decodeEffectivePolicySummaryV1 = (
         policy === undefined ||
         !digestPattern.test(String(value.networkPolicyDigest)) ||
         digestOf(encodeNetworkPolicyV1(policy)) !== value.networkPolicyDigest ||
-        controls === null ||
-        typeof controls !== "object" ||
-        Array.isArray(controls) ||
-        !exactKeys(controls, [
-          "version",
-          "egress",
-          "dns",
-          "addressPolicy",
-          "redirectMaxHops",
-          "tlsIdentity",
-        ]) ||
-        controls.version !== 1 ||
-        controls.egress !== "BrokerOnly" ||
-        controls.dns !== "BrokerResolveAndPin" ||
-        controls.addressPolicy !== "SandboxPublicInternetDenyV1" ||
-        controls.redirectMaxHops !== 5 ||
-        controls.tlsIdentity !== "OriginCertificateSniHostMatch" ||
+        controls === undefined ||
+        controls.mode !== policy.mode ||
         !safePositive(value.providerRegistryRevision) ||
         !digestPattern.test(String(value.providerRegistryDigest))
       )

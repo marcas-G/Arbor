@@ -97,7 +97,12 @@ describe("registered command receipt decoders", () => {
       mounts: [
         {
           mountId: "workspace",
-          targetRef: "workspace",
+          targetRef: {
+            version: 1,
+            kind: "RegionDigest",
+            resourceSpace: "filesystem",
+            regionIdentityDigest: "9".repeat(64),
+          },
           targetIdentityDigest: "d".repeat(64),
           access: "ReadOnly",
         },
