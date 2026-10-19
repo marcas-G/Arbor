@@ -99,6 +99,7 @@ export interface AuthorityInputs {
   readonly governance: ParentUserGovernanceFacts;
   readonly policy: ProjectPolicy | WorkspacePolicy;
   readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1;
+  readonly sandboxPolicyAuthorityNow?: string;
 }
 
 /** The view face is the frozen `ProjectionQueryPort` binding (P10 `05` §1);
@@ -391,7 +392,8 @@ export type AuthorityInputsServices =
   | ExecutionRepository
   | WorkRepository
   | VerificationRepository
-  | PermissionGrantRepository;
+  | PermissionGrantRepository
+  | Clock;
 
 /** The production facts loader: repository snapshots + the `PermissionGrant`
  * store's active-only read (`02` §5.1). The resolver receives declared
@@ -417,6 +419,7 @@ export const makeRepositoryInputsLoader = (
       RetryVerificationOriginRepository,
     );
     const grants = yield* PermissionGrantRepository;
+    const clock = yield* Clock;
     const executableApprovals = yield* Effect.serviceOption(
       ExecutableApprovalStore,
     );
@@ -438,7 +441,13 @@ export const makeRepositoryInputsLoader = (
           (Option.isSome(executableApproval)
             ? executableApproval.value.workspaceId
             : null)) as WorkspaceId | null;
+        const grantTargetsSandboxPolicy =
+          envelope.commandType === "GrantPermission" &&
+          payloadString(payload, "capability") === "DecideSandboxPolicy";
         const executionId = (payloadString(payload, "executionId") ??
+          (grantTargetsSandboxPolicy
+            ? payloadString(payload, "target")
+            : null) ??
           (Option.isSome(executableApproval)
             ? executableApproval.value.executionId
             : null)) as ExecutionId | null;
@@ -511,6 +520,12 @@ export const makeRepositoryInputsLoader = (
             : [];
         const project = yield* tx.transact(projects.findById(projectId));
         const activeGrants = yield* tx.transact(grants.activeGrants(projectId));
+        const sandboxPolicyAuthorityNow =
+          sandboxPolicyGrantIssuerConfigSnapshot !== undefined &&
+          (grantTargetsSandboxPolicy ||
+            String(envelope.commandType) === "DecideSandboxPolicy")
+            ? yield* clock.now()
+            : undefined;
 
         const canonicalFacts: CanonicalAuthorityFacts = {
           projectId,
@@ -583,6 +598,9 @@ export const makeRepositoryInputsLoader = (
           ...(sandboxPolicyGrantIssuerConfigSnapshot === undefined
             ? {}
             : { sandboxPolicyGrantIssuerConfigSnapshot }),
+          ...(sandboxPolicyAuthorityNow === undefined
+            ? {}
+            : { sandboxPolicyAuthorityNow }),
           policy: Option.isSome(project)
             ? project.value.projectPolicy
             : makeProjectPolicy({}),
@@ -718,6 +736,9 @@ export const makeExternalSubmission = (
               sandboxPolicyGrantIssuerConfigSnapshot:
                 inputs.sandboxPolicyGrantIssuerConfigSnapshot,
             }),
+        ...(inputs.sandboxPolicyAuthorityNow === undefined
+          ? {}
+          : { sandboxPolicyAuthorityNow: inputs.sandboxPolicyAuthorityNow }),
       };
       const resolved = yield* Effect.match(deps.resolver.resolve(decision), {
         onFailure: (error) => ({ _tag: "denied" as const, error }),

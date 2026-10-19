@@ -388,7 +388,10 @@ export const makeCommandGatewayLive = (
                 settledAt,
               );
             }
-            if (outcome.value.events.length > 0) {
+            const receiptFirstEvents =
+              envelope.commandType === "GrantPermission" ||
+              envelope.commandType === "DecideSandboxPolicy";
+            if (outcome.value.events.length > 0 && !receiptFirstEvents) {
               yield* journal.append(outcome.value.events);
             }
             yield* store.insertCommitted(
@@ -399,6 +402,9 @@ export const makeCommandGatewayLive = (
               FINGERPRINT_ALGORITHM_VERSION,
               JSON.stringify(outcome.value.result),
             );
+            if (outcome.value.events.length > 0 && receiptFirstEvents) {
+              yield* journal.append(outcome.value.events);
+            }
             if (outcome.value.afterReceipt !== undefined) {
               yield* outcome.value.afterReceipt;
             }

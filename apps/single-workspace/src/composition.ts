@@ -825,7 +825,8 @@ export const buildSingleWorkspaceLayer = (
   );
   const registry = Layer.provide(
     makeSingleWorkspaceCommandHandlerRegistryLive(
-      config.governance ?? { authenticatedHumans: [], directParentOf: [] },
+      governance,
+      sandboxPolicyGrantIssuerConfigSnapshot,
     ),
     Layer.mergeAll(repos, infra, projectResourceProfilePort),
   );

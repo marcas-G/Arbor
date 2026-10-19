@@ -26,7 +26,10 @@ import {
   makeSubmitHumanMessageHandler,
   type ParentUserGovernanceFacts,
 } from "@arbor/application";
-import type { ProjectId } from "@arbor/domain";
+import type {
+  ProjectId,
+  SandboxPolicyGrantIssuerConfigSnapshotV1,
+} from "@arbor/domain";
 import { makeP2CommandHandlers } from "@arbor/execution-runtime";
 import { repositoryFailure } from "@arbor/persistence-sqlite";
 import {
@@ -104,6 +107,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
     authenticatedHumans: [],
     directParentOf: [],
   },
+  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
 ): Layer.Layer<
   CommandHandlerRegistry,
   never,
@@ -402,6 +406,11 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         }) as unknown as CommandHandler<unknown, unknown>,
         makeGrantPermissionHandler({
           grants: grants as PermissionGrantRepositoryService,
+          executions,
+          ...(Option.isSome(clock) ? { clock: clock.value } : {}),
+          ...(sandboxPolicyGrantIssuerConfigSnapshot === undefined
+            ? {}
+            : { sandboxPolicyGrantIssuerConfigSnapshot }),
         }) as unknown as CommandHandler<unknown, unknown>,
         makeRevokePermissionHandler({
           grants: grants as PermissionGrantRepositoryService,
