@@ -1,11 +1,15 @@
-# Sandbox Policy Candidate Read Model — Fixed Proposal V2
+# Sandbox Policy Candidate Read Model — V2 (Superseded)
 
-**Status:** FIXED PROPOSAL — awaiting manual governance decision; no design
-landing or implementation authorization
-**Supersedes:** `sandbox-policy-candidate-readmodel-governance-draft.md` (B0)
-**Decision token:** `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL_V2`
+**Status:** SUPERSEDED — historical fixed draft; do not accept or implement
+**Replaced by:** `sandbox-policy-candidate-readmodel-governance-v3.md`
+**Former decision token:** `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL_V2` — invalid
+for current governance
 **Scope:** Close the first-choice and stale-policy refresh presentation gap
 under the already accepted Native Sandbox V21 and Producer Mapping Closure V3.
+
+> V2 failed independent review (B1=2, B2=3). Its registry-drift behavior,
+> field inventory, and P5 dispatch ownership are superseded by V3. Retained as
+> audit history only; do not use its DTO or token.
 
 ## 1. Decision requested
 
