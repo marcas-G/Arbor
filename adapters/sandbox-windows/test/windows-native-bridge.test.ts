@@ -15,9 +15,9 @@ const helperSource = join(
 const childSource = join(nativeSourceDirectory, "WindowsSandboxChild.cs");
 const expectedSourceDigests = {
   "WindowsSandboxBridgeHarness.cs":
-    "13d90437697290e2cffe0394cc27f5c5063fa563214b90aee7537089b7afa393",
+    "aefa0bed85c3a8b4ae11af92f29ad2e20cb3006b8424b1ebf89c5c2ccb96c709",
   "WindowsSandboxChild.cs":
-    "0d7252568c1e9248522323555e36dcaa5d2a936d9fede35211dc6c5f32503e16",
+    "ae4e8d60e18206407938013e7005c79ef813054bdd512b16204a84ca7d3231b1",
 } as const;
 
 const sha256 = (value: Buffer | string): string =>
@@ -138,8 +138,6 @@ describe.skipIf(process.platform !== "win32")(
         [...common, "/target:exe", `/out:${bridgeExecutable}`, helperSource],
         { windowsHide: true, timeout: 30000, maxBuffer: 64 * 1024 },
       );
-      expect(sha256(readFileSync(bridgeExecutable))).toMatch(/^[0-9a-f]{64}$/u);
-      expect(sha256(readFileSync(childExecutable))).toMatch(/^[0-9a-f]{64}$/u);
     });
 
     afterAll(() => {
@@ -148,7 +146,7 @@ describe.skipIf(process.platform !== "win32")(
       }
     });
 
-    it("runs a same-user restricted low-integrity AppContainer with explicit handles and projected environment", () => {
+    it("runs a same-user low-integrity AppContainer with explicit handles and projected environment", () => {
       const result = run("identity");
       const output = childStdout(result);
       expect(output).toContain("APPCONTAINER=1");
@@ -178,6 +176,7 @@ describe.skipIf(process.platform !== "win32")(
       expect(output).toContain("THIRD_CREATED=0");
       expect(output).toContain("THIRD_ERROR=1816");
       expect(result.JOB_KILL_ON_CLOSE).toBe("1");
+      expect(result.JOB_LIMIT_FLAGS).toBe("8972");
       expect(result.JOB_PROCESS_LIMIT).toBe("2");
       expect(result.STOP_CLOSED_JOB).toBe("1");
       expect(result.ROOT_TERMINATED).toBe("1");
@@ -196,16 +195,34 @@ describe.skipIf(process.platform !== "win32")(
       ).toBeLessThanOrEqual(1024);
     });
 
-    it("enforces Job Object memory and CPU-time ceilings", () => {
+    it("records Job Object memory contrast and CPU quota termination", () => {
       const memory = run("memory", { memoryBytes: 64 * 1024 * 1024 });
       expect(childStdout(memory)).toContain("ALLOCATING=1");
+      expect(childStdout(memory)).toContain("CHILD_ERROR=OutOfMemoryException");
+      expect(memory.JOB_LIMIT_FLAGS).toBe("8972");
+      expect(memory.JOB_PROCESS_MEMORY_LIMIT).toBe(String(64 * 1024 * 1024));
       expect(memory.JOB_MEMORY_LIMIT).toBe(String(64 * 1024 * 1024));
-      expect(Number(memory.ROOT_EXIT_CODE)).not.toBe(0);
+      expect(memory.ROOT_EXIT_CODE).toBe("24");
+
+      const memoryControl = run("memory", {
+        memoryBytes: 256 * 1024 * 1024,
+      });
+      expect(childStdout(memoryControl)).toContain("ALLOCATED=1");
+      expect(memoryControl.JOB_PROCESS_MEMORY_LIMIT).toBe(
+        String(256 * 1024 * 1024),
+      );
+      expect(memoryControl.JOB_MEMORY_LIMIT).toBe(String(256 * 1024 * 1024));
+      expect(memoryControl.ROOT_EXIT_CODE).toBe("0");
 
       const cpu = run("cpu", { walltimeMs: 10000 });
       expect(childStdout(cpu)).toContain("BURNING_CPU=1");
       expect(cpu.JOB_CPU_TIME_MS).toBe("500");
-      expect(Number(cpu.ROOT_EXIT_CODE)).not.toBe(0);
+      expect(cpu.JOB_CPU_RATE_FLAGS).toBe("5");
+      expect(cpu.JOB_CPU_RATE).toBe("2000");
+      expect(cpu.JOB_ACCOUNTING_AVAILABLE).toBe("1");
+      expect(cpu.ROOT_EXIT_CODE_HEX).toBe("C0000044");
+      expect(cpu.JOB_TOTAL_TERMINATED_PROCESSES).toBe("1");
+      expect(Number(cpu.JOB_TOTAL_USER_TIME_MS)).toBeGreaterThanOrEqual(500);
       expect(cpu.WALLTIME_EXPIRED).toBe("0");
     });
   },

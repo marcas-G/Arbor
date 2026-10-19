@@ -164,13 +164,10 @@ internal static class WindowsSandboxChild
     {
         Console.WriteLine("ALLOCATING=1");
         Console.Out.Flush();
-        byte[][] allocations = new byte[16][];
-        for (int i = 0; i < allocations.Length; i++)
-        {
-            allocations[i] = new byte[64 * 1024 * 1024];
-            allocations[i][0] = 1;
-        }
+        byte[] allocation = new byte[64 * 1024 * 1024];
+        for (int i = 0; i < allocation.Length; i += 4096) allocation[i] = 1;
         Console.WriteLine("ALLOCATED=1");
+        GC.KeepAlive(allocation);
         return 0;
     }
 
