@@ -321,6 +321,9 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
       "DeliverReplayFailure",
       "ToolObservationReplayEvidenceFailure",
       "LegacyAdoptionEvidenceInsufficient",
+      "SandboxProviderUnavailable",
+      "SandboxRecoveryBindingFailure",
+      "SandboxPolicyDecisionRequired",
       "VerifierOrphan",
       "VacantProducer",
     ]);

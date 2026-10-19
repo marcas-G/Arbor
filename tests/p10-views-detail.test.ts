@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Exit, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import type {
   CurrentWorkRes,
@@ -288,6 +288,115 @@ const seedDetail = seedCanonical(
 );
 
 describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
+  it("projects a candidate choice instead of the singular preconditions union", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        const sandboxPolicyCandidateRead = {
+          reason: "InitialDecision" as const,
+          commonPreconditions: {
+            expectedEpisodeRevision: 2,
+            latestCommittedPolicyRevision: 0,
+            episodeBinding: {
+              _tag: "WorkEpisode" as const,
+              workId: W_ROOT,
+              targetWorkRevision: 7 as never,
+            },
+            workspaceRevision: 4,
+            resourceBoundaryRevision: 2,
+            sandboxHandleBindingDigest: "a".repeat(64) as never,
+            authorityBundleRevision: 3,
+            authorityBundleDigest: "b".repeat(64) as never,
+            operatorConfigRevision: 2,
+            operatorConfigDigest: "c".repeat(64) as never,
+          },
+          candidates: [
+            {
+              kind: "TrustedLocalUnconfinedV1" as const,
+              candidateId:
+                "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+            },
+          ],
+        };
+        const detail = yield* deriveWorkspaceDetail(p10Root, {
+          ...deps.workspaceDetail,
+          sandboxPolicyForExecution: () =>
+            Effect.succeed({ sandboxPolicyCandidateRead }),
+        });
+        expect(detail.sandboxPolicyCandidateRead).toEqual(
+          sandboxPolicyCandidateRead,
+        );
+        expect(detail.sandboxPolicyPreconditions).toBeUndefined();
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("rejects a response that contains both candidate and singular preconditions", async () => {
+    const exit = await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        return yield* Effect.exit(
+          deriveWorkspaceDetail(p10Root, {
+            ...deps.workspaceDetail,
+            sandboxPolicyForExecution: () =>
+              Effect.succeed({
+                sandboxPolicyPreconditions: {
+                  kind: "TrustedLocalUnconfinedV1" as const,
+                  expectedEpisodeRevision: 2,
+                  latestCommittedPolicyRevision: 0,
+                  episodeBinding: {
+                    _tag: "WorkEpisode" as const,
+                    workId: W_ROOT,
+                    targetWorkRevision: 7 as never,
+                  },
+                  workspaceRevision: 4,
+                  resourceBoundaryRevision: 2,
+                  sandboxHandleBindingDigest: "a".repeat(64) as never,
+                  authorityBundleRevision: 3,
+                  authorityBundleDigest: "b".repeat(64) as never,
+                  operatorConfigRevision: 2,
+                  operatorConfigDigest: "c".repeat(64) as never,
+                },
+                sandboxPolicyCandidateRead: {
+                  reason: "InitialDecision" as const,
+                  commonPreconditions: {
+                    expectedEpisodeRevision: 2,
+                    latestCommittedPolicyRevision: 0,
+                    episodeBinding: {
+                      _tag: "WorkEpisode" as const,
+                      workId: W_ROOT,
+                      targetWorkRevision: 7 as never,
+                    },
+                    workspaceRevision: 4,
+                    resourceBoundaryRevision: 2,
+                    sandboxHandleBindingDigest: "a".repeat(64) as never,
+                    authorityBundleRevision: 3,
+                    authorityBundleDigest: "b".repeat(64) as never,
+                    operatorConfigRevision: 2,
+                    operatorConfigDigest: "c".repeat(64) as never,
+                  },
+                  candidates: [
+                    {
+                      kind: "TrustedLocalUnconfinedV1" as const,
+                      candidateId:
+                        "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+                    },
+                  ],
+                },
+              } as never),
+          }),
+        );
+      }),
+      makeP10App(),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+  });
+
   it("projects the exact current sandbox policy onto the active Execution summary", async () => {
     await runP10(
       Effect.gen(function* () {

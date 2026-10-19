@@ -51,7 +51,7 @@ export type {
 // in the test suite. ⑥ = audit timeline from domain_events (the frozen
 // Memory/Decisions-store substitute — P10 `00` boundary list).
 
-export interface WorkspaceDetailView {
+interface WorkspaceDetailViewCore {
   readonly responsibility: ResponsibilityDefinition;
   readonly boundary: ResourceBoundary;
   readonly currentWork?: CurrentWorkSummaryView | undefined;
@@ -61,13 +61,32 @@ export interface WorkspaceDetailView {
   readonly inboxUnconsumed: ReadonlyArray<InboxUnconsumedEntryView>;
   readonly verification?: VerificationViewView | undefined;
   readonly auditTimeline: ReadonlyArray<AuditTimelineEntryView>;
-  readonly sandboxPolicyPreconditions?: import("@arbor/domain").SandboxPolicyPreconditionsV1;
 }
 
-export interface WorkspaceDetailSandboxPolicyProjection {
+export type WorkspaceDetailView = WorkspaceDetailViewCore &
+  (
+    | {
+        readonly sandboxPolicyPreconditions?: import("@arbor/domain").SandboxPolicyPreconditionsV1;
+        readonly sandboxPolicyCandidateRead?: never;
+      }
+    | {
+        readonly sandboxPolicyPreconditions?: never;
+        readonly sandboxPolicyCandidateRead?: import("@arbor/domain").SandboxPolicyCandidateReadV1;
+      }
+  );
+
+export type WorkspaceDetailSandboxPolicyProjection = {
   readonly sandboxPolicy?: ExecutionSummaryView["sandboxPolicy"];
-  readonly sandboxPolicyPreconditions?: import("@arbor/domain").SandboxPolicyPreconditionsV1;
-}
+} & (
+  | {
+      readonly sandboxPolicyPreconditions?: import("@arbor/domain").SandboxPolicyPreconditionsV1;
+      readonly sandboxPolicyCandidateRead?: never;
+    }
+  | {
+      readonly sandboxPolicyPreconditions?: never;
+      readonly sandboxPolicyCandidateRead?: import("@arbor/domain").SandboxPolicyCandidateReadV1;
+    }
+);
 
 /** Read faces the Workspace Detail derives from (P10 `01` §1 derive
  * inputs: workspaces / works / executions / dependencies+messages+inbox /
@@ -226,12 +245,27 @@ export const deriveWorkspaceDetail = (
     let sandboxPolicyPreconditions:
       | import("@arbor/domain").SandboxPolicyPreconditionsV1
       | undefined;
+    let sandboxPolicyCandidateRead:
+      | import("@arbor/domain").SandboxPolicyCandidateReadV1
+      | undefined;
     if (Option.isSome(activeMain)) {
       const sandboxPolicyProjection = yield* deps.sandboxPolicyForExecution?.(
         activeMain.value,
       ) ?? Effect.succeed(undefined);
       sandboxPolicyPreconditions =
         sandboxPolicyProjection?.sandboxPolicyPreconditions;
+      sandboxPolicyCandidateRead =
+        sandboxPolicyProjection?.sandboxPolicyCandidateRead;
+      if (
+        sandboxPolicyPreconditions !== undefined &&
+        sandboxPolicyCandidateRead !== undefined
+      ) {
+        return yield* Effect.fail(
+          projectionReadError(
+            "sandbox policy candidate read and singular preconditions cannot coexist",
+          ),
+        );
+      }
       executionSummary = {
         executionId: activeMain.value.executionId,
         admittedAt: activeMain.value.admittedAt,
@@ -331,7 +365,7 @@ export const deriveWorkspaceDetail = (
       (proposalId) => proposalOrigins.get(proposalId) ?? null,
     );
 
-    return {
+    const view = {
       responsibility: workspace.responsibilityDefinition,
       boundary: workspace.resourceBoundary,
       currentWork,
@@ -384,8 +418,12 @@ export const deriveWorkspaceDetail = (
       ],
       verification: verificationView,
       auditTimeline,
-      ...(sandboxPolicyPreconditions === undefined
-        ? {}
-        : { sandboxPolicyPreconditions }),
     };
+    if (sandboxPolicyCandidateRead !== undefined) {
+      return { ...view, sandboxPolicyCandidateRead };
+    }
+    if (sandboxPolicyPreconditions !== undefined) {
+      return { ...view, sandboxPolicyPreconditions };
+    }
+    return view;
   });

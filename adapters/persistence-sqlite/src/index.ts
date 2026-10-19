@@ -50,6 +50,7 @@ export * from "./repository-error.js";
 export * from "./retry-verification-origin.js";
 export * from "./runtime.js";
 export * from "./sandbox-policy-decision-store.js";
+export * from "./sandbox-policy-requirement-read-port.js";
 export * from "./sandbox-provider-unavailable.js";
 export * from "./submitted-decision-binding-attention-codec.js";
 export * from "./tool-invocations.js";

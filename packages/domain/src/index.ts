@@ -21,6 +21,7 @@ export * from "./result.js";
 export * from "./sandbox-policy.js";
 export * from "./sandbox-policy-authority-v2.js";
 export * from "./sandbox-policy-boundary-producer.js";
+export * from "./sandbox-policy-candidate.js";
 export * from "./sandbox-policy-producers.js";
 export * from "./sandbox-policy-result.js";
 export * from "./scheduler.js";
