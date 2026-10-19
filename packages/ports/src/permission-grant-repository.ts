@@ -2,6 +2,7 @@ import type {
   PermissionGrant,
   PermissionGrantId,
   ProjectId,
+  SandboxPolicyGrantIssuerProvenanceV1,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
 import type { RepositoryFailure } from "./errors.js";
@@ -44,6 +45,20 @@ export interface PermissionGrantRepositoryService {
     PermissionGrantRepositoryError,
     TransactionScope
   >;
+  /** Exact immutable sandbox-only CAPA provenance lookup. Resolver composition
+   * reads it; the pure resolver never performs repository I/O. */
+  readonly findSandboxPolicyGrantIssuerProvenanceByGrantId: (
+    permissionGrantId: PermissionGrantId,
+  ) => Effect.Effect<
+    Option.Option<SandboxPolicyGrantIssuerProvenanceV1>,
+    PermissionGrantRepositoryError,
+    TransactionScope
+  >;
+  /** Write-once provenance. Callable only by the exact authenticated
+   * GrantPermission command handler inside CommandGateway's transaction. */
+  readonly insertSandboxPolicyGrantIssuerProvenance: (
+    provenance: SandboxPolicyGrantIssuerProvenanceV1,
+  ) => Effect.Effect<void, PermissionGrantRepositoryError, TransactionScope>;
   readonly put: (
     grant: PermissionGrant,
     projectId: ProjectId,
