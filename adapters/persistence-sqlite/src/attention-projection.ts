@@ -6,6 +6,7 @@ import {
   type AttentionProjectionStoreError,
   type AttentionProjectionStoreService,
   type ConsumerOffsetStoreError,
+  canonicalArgumentsDigestV1,
   canonicalizeLegacyActionDispositionSummaryV1,
   type DeliverReplayAttentionProjectionRow,
   deriveLegacyAdoptionResolutionCodeV1,
@@ -15,11 +16,16 @@ import {
   legacyAdoptionResolutionFactIdV1,
   type ProjectionStoreService,
   type RecoveryAttentionFactStoreService,
+  type SandboxProviderUnavailableAttentionProjectionRow,
+  type SandboxProviderUnavailableAttentionQueueService,
+  type SandboxProviderUnavailableStoreService,
+  type SandboxRecoveryBindingFailureProjectionRow,
   type SubmittedDecisionBindingAttentionProjectionRow,
   sha256Hex,
   type ToolObservationReplayAttentionFactStoreService,
   type ToolObservationReplayAttentionProjectionRow,
   TransactionScope,
+  verifyRecoveryBindingV1,
   type WorkspaceResourceActivationAttentionProjectionRow,
   type WorkspaceResourceActivationIntent,
   type WorkspaceResourceActivationStoreService,
@@ -27,7 +33,10 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
-import { repositoryFailure } from "./repository-error.js";
+import {
+  persistenceCorruption,
+  repositoryFailure,
+} from "./repository-error.js";
 
 interface AttentionProjectionDbRow {
   readonly project_id: string;
@@ -93,6 +102,65 @@ interface LegacyAdoptionAttentionDbRow {
   readonly source_fact_id: string;
   readonly source_execution_id: string;
 }
+
+interface SandboxProviderUnavailableAttentionDbRow {
+  readonly project_id: string;
+  readonly attention_fact_id: string;
+  readonly workspace_id: string;
+  readonly execution_id: string;
+  readonly policy_revision: number;
+  readonly first_detected_at: string;
+  readonly policy_digest: string;
+  readonly profile_id: string;
+  readonly provider_id: string;
+}
+
+interface SandboxRecoveryBindingDbRow {
+  readonly project_id: string;
+  readonly execution_id: string;
+  readonly invocation_id: string;
+  readonly workspace_id: string;
+  readonly intent_at: string;
+  readonly recovery_binding_state: string;
+  readonly recovery_binding_sha256: string | null;
+  readonly effect_admission_state: string;
+  readonly settled_at: string | null;
+  readonly tool_name: string;
+  readonly tool_version: string;
+  readonly side_effect_semantics: string;
+  readonly arguments_json: string;
+  readonly binding_version: number | null;
+  readonly canonical_binding_json: string | null;
+  readonly binding_sha256: string | null;
+  readonly profile_id: string | null;
+  readonly action_state: string | null;
+  readonly action_input_hash: string | null;
+  readonly action_kind: string | null;
+  readonly p3_logical_action_id: string | null;
+  readonly p3_action_index: number | null;
+  readonly p3_call_ref: string | null;
+  readonly p3_provider_turn_id: string | null;
+  readonly p3_step_state: string | null;
+}
+
+const canonicalUtcText = (value: string): boolean => {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+};
+
+const sandboxRecoveryBindingAttentionId = (
+  executionId: string,
+  invocationId: string,
+  bindingShaOr: string | null,
+): string =>
+  sha256Hex(
+    JSON.stringify({
+      version: 1,
+      executionId,
+      invocationId,
+      bindingShaOr,
+    }),
+  );
 
 export type AttentionProjectionQualificationEvent =
   | {
@@ -1118,6 +1186,245 @@ export const makeAttentionProjectionStoreLive = (
             ),
             (rows) => rows.map(activationRowFromDb),
           ),
+        listProjectedSandboxProviderUnavailableFailures: (projectId, now) =>
+          Effect.gen(function* () {
+            if (!canonicalUtcText(now)) {
+              return yield* Effect.fail(
+                persistenceCorruption(
+                  "AttentionProjectionStore",
+                  "sandbox-provider-unavailable-read",
+                  "query time is not canonical UTC",
+                ),
+              );
+            }
+            const rows = yield* run(
+              sql.unsafe<SandboxProviderUnavailableAttentionDbRow>(
+                `SELECT f.project_id, f.attention_fact_id, f.workspace_id,
+                        f.execution_id, f.policy_revision, f.first_detected_at,
+                        d.policy_digest, d.profile_id, d.provider_id
+                   FROM sandbox_provider_unavailable_attention_rows m
+                   JOIN sandbox_provider_unavailable_facts f
+                     ON f.project_id = m.project_id
+                    AND f.attention_fact_id = m.attention_fact_id
+                    AND f.workspace_id = m.workspace_id
+                   JOIN executions e ON e.execution_id = f.execution_id
+                    AND e.project_id = f.project_id
+                    AND e.workspace_id = f.workspace_id
+                   JOIN agent_execution_state s ON s.execution_id = e.execution_id
+                   JOIN sandbox_policy_decisions d ON d.execution_id = e.execution_id
+                    AND d.project_id = e.project_id AND d.workspace_id = e.workspace_id
+                    AND d.episode_binding_json = s.episode_json
+                    AND d.policy_revision = f.policy_revision
+                  WHERE m.project_id = ? AND e.settled_at IS NULL
+                    AND e.stop_requested_at IS NULL
+                    AND d.policy_revision = (
+                      SELECT MAX(d2.policy_revision) FROM sandbox_policy_decisions d2
+                       WHERE d2.execution_id = e.execution_id
+                         AND d2.episode_binding_json = s.episode_json
+                    )
+                  ORDER BY f.first_detected_at, f.attention_fact_id`,
+                [projectId],
+              ),
+            );
+            for (const row of rows) {
+              if (!canonicalUtcText(row.first_detected_at)) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "AttentionProjectionStore",
+                    "sandbox-provider-unavailable-read",
+                    "fact timestamp is not canonical UTC",
+                  ),
+                );
+              }
+              const factRows = yield* run(
+                sql.unsafe<{
+                  readonly policy_digest: string;
+                  readonly profile_id: string;
+                  readonly provider_id: string;
+                }>(
+                  `SELECT policy_digest, profile_id, provider_id
+                     FROM sandbox_provider_unavailable_facts
+                    WHERE project_id = ? AND attention_fact_id = ?`,
+                  [projectId, row.attention_fact_id],
+                ),
+              );
+              const fact = factRows[0];
+              if (
+                fact === undefined ||
+                fact.policy_digest !== row.policy_digest ||
+                fact.profile_id !== row.profile_id ||
+                fact.provider_id !== row.provider_id
+              ) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "AttentionProjectionStore",
+                    "sandbox-provider-unavailable-read",
+                    "current policy decision conflicts with its immutable source fact",
+                  ),
+                );
+              }
+            }
+            return rows.map(
+              (row) =>
+                ({
+                  projectId: row.project_id as ProjectId,
+                  attentionFactId: row.attention_fact_id,
+                  workspaceId: row.workspace_id as never,
+                  executionId: row.execution_id,
+                  policyRevision: row.policy_revision,
+                  firstDetectedAt: row.first_detected_at,
+                }) satisfies SandboxProviderUnavailableAttentionProjectionRow,
+            );
+          }),
+        listSandboxRecoveryBindingFailures: (projectId, now) =>
+          Effect.gen(function* () {
+            if (!canonicalUtcText(now)) {
+              return yield* Effect.fail(
+                persistenceCorruption(
+                  "AttentionProjectionStore",
+                  "sandbox-recovery-binding-read",
+                  "query time is not canonical UTC",
+                ),
+              );
+            }
+            const rows = yield* run(
+              sql.unsafe<SandboxRecoveryBindingDbRow>(
+                `SELECT e.project_id, e.execution_id, e.workspace_id,
+                        i.invocation_id, i.intent_at, i.recovery_binding_state,
+                        i.recovery_binding_sha256, i.effect_admission_state,
+                        i.settled_at, i.tool_name, i.tool_version,
+                        i.side_effect_semantics, i.arguments_json, b.binding_version,
+                        b.canonical_binding_json, b.binding_sha256,
+                        a.profile_id, act.state AS action_state,
+                        act.input_hash AS action_input_hash,
+                        act.action_kind AS action_kind,
+                        act.logical_action_id AS p3_logical_action_id,
+                        act.action_index AS p3_action_index,
+                        act.call_ref AS p3_call_ref,
+                        step.provider_turn_id AS p3_provider_turn_id,
+                        step.state AS p3_step_state
+                   FROM tool_invocations i
+                   JOIN executions e ON e.execution_id = i.execution_id
+                    AND e.workspace_id = i.workspace_id
+                   LEFT JOIN tool_invocation_recovery_bindings b
+                    ON b.invocation_id = i.invocation_id
+                   LEFT JOIN tool_invocation_effect_attempts a
+                    ON a.invocation_id = i.invocation_id AND a.attempt_no = 0
+                   LEFT JOIN agent_loop_step_actions act
+                    ON act.execution_id = i.execution_id
+                   AND act.logical_action_id = CASE
+                     WHEN b.canonical_binding_json IS NOT NULL
+                      AND json_valid(b.canonical_binding_json)
+                     THEN json_extract(b.canonical_binding_json, '$.logicalActionId')
+                     ELSE NULL END
+                   AND act.action_index = CASE
+                     WHEN b.canonical_binding_json IS NOT NULL
+                      AND json_valid(b.canonical_binding_json)
+                     THEN json_extract(b.canonical_binding_json, '$.actionIndex')
+                     ELSE NULL END
+                   AND act.call_ref = CASE
+                     WHEN b.canonical_binding_json IS NOT NULL
+                      AND json_valid(b.canonical_binding_json)
+                     THEN json_extract(b.canonical_binding_json, '$.callRef')
+                     ELSE NULL END
+                   LEFT JOIN agent_loop_steps step
+                    ON step.execution_id = act.execution_id
+                   AND step.logical_step_no = act.logical_step_no
+                   AND step.repair_attempt = act.repair_attempt
+                  WHERE e.project_id = ? AND e.settled_at IS NULL
+                    AND e.stop_requested_at IS NULL AND i.settled_at IS NULL
+                    AND i.effect_admission_state = 'NotAdmitted'
+                    AND (i.tool_name = 'shell' OR a.profile_id IS NOT NULL
+                         OR CASE WHEN b.canonical_binding_json IS NOT NULL
+                                   AND json_valid(b.canonical_binding_json)
+                                 THEN json_extract(b.canonical_binding_json, '$.profileId')
+                                 ELSE NULL END IS NOT NULL)
+                  ORDER BY e.execution_id, i.intent_at, i.invocation_id`,
+                [projectId],
+              ),
+            );
+            const failures: SandboxRecoveryBindingFailureProjectionRow[] = [];
+            for (const row of rows) {
+              if (
+                typeof row.recovery_binding_sha256 === "string" &&
+                !/^[0-9a-f]{64}$/u.test(row.recovery_binding_sha256)
+              ) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "AttentionProjectionStore",
+                    "sandbox-recovery-binding-read",
+                    "stored binding digest is malformed",
+                  ),
+                );
+              }
+              if (!canonicalUtcText(row.intent_at)) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "AttentionProjectionStore",
+                    "sandbox-recovery-binding-read",
+                    "invocation intent timestamp is malformed",
+                  ),
+                );
+              }
+              const verified =
+                row.binding_version === 1 &&
+                row.canonical_binding_json !== null &&
+                row.binding_sha256 !== null
+                  ? verifyRecoveryBindingV1({
+                      invocationId: row.invocation_id as never,
+                      canonicalJson: row.canonical_binding_json,
+                      bindingSha256: row.binding_sha256,
+                    })
+                  : null;
+              const valid =
+                row.recovery_binding_state === "Bound" &&
+                row.recovery_binding_sha256 !== null &&
+                row.recovery_binding_sha256 === row.binding_sha256 &&
+                verified !== null &&
+                verified.value.executionId === row.execution_id &&
+                verified.value.invocationId === row.invocation_id &&
+                verified.value.toolName === row.tool_name &&
+                verified.value.toolVersion === row.tool_version &&
+                verified.value.sideEffectSemantics ===
+                  row.side_effect_semantics &&
+                verified.value.profileId !== null &&
+                verified.value.profileId === row.profile_id &&
+                row.action_state === "Pending" &&
+                row.action_input_hash === sha256Hex(row.arguments_json) &&
+                row.action_kind === row.tool_name &&
+                row.p3_logical_action_id === verified.value.logicalActionId &&
+                row.p3_action_index === verified.value.actionIndex &&
+                row.p3_call_ref === verified.value.callRef &&
+                row.p3_provider_turn_id === verified.value.providerTurnId &&
+                row.p3_step_state === "ActionsInProgress" &&
+                (() => {
+                  try {
+                    return (
+                      verified.value.canonicalArgumentsDigest ===
+                      canonicalArgumentsDigestV1(
+                        JSON.parse(row.arguments_json) as unknown,
+                      )
+                    );
+                  } catch {
+                    return false;
+                  }
+                })();
+              if (valid) continue;
+              failures.push({
+                projectId: row.project_id as ProjectId,
+                executionId: row.execution_id,
+                invocationId: row.invocation_id,
+                workspaceId: row.workspace_id as never,
+                attentionFactId: sandboxRecoveryBindingAttentionId(
+                  row.execution_id,
+                  row.invocation_id,
+                  row.recovery_binding_sha256,
+                ),
+                intentAt: row.intent_at,
+              });
+            }
+            return failures;
+          }),
         resetProject: (projectId) =>
           Effect.gen(function* () {
             const submittedMarkers =
@@ -1188,6 +1495,21 @@ export const makeAttentionProjectionStoreLive = (
               yield* run(
                 sql.unsafe(
                   "DELETE FROM tool_observation_replay_attention_rows WHERE project_id = ?",
+                  [projectId],
+                ),
+              );
+            }
+            const sandboxMarkers = yield* run(
+              sql.unsafe<{ readonly name: string }>(
+                `SELECT name FROM sqlite_master WHERE type='table'
+                  AND name='sandbox_provider_unavailable_attention_rows'`,
+              ),
+            );
+            if (sandboxMarkers.length > 0) {
+              yield* run(
+                sql.unsafe(
+                  `DELETE FROM sandbox_provider_unavailable_attention_rows
+                    WHERE project_id = ?`,
                   [projectId],
                 ),
               );
@@ -1273,6 +1595,14 @@ export const makeProjectAttentionProjectionStore = (
   toolObservationFacts?: Pick<
     ToolObservationReplayAttentionFactStoreService,
     "findById"
+  >,
+  sandboxUnavailableFacts?: Pick<
+    SandboxProviderUnavailableStoreService,
+    "list"
+  >,
+  sandboxUnavailableQueue?: Pick<
+    SandboxProviderUnavailableAttentionQueueService,
+    "rearm"
   >,
 ): ProjectionStoreService => ({
   apply: (batch: ReadonlyArray<DomainEvent<unknown>>) =>
@@ -1931,6 +2261,31 @@ export const makeProjectAttentionProjectionStore = (
         for (const fact of submittedFacts) {
           yield* attentionRows
             .putSubmittedDecisionBindingFailure(fact)
+            .pipe(Effect.mapError(projectionFailure));
+        }
+      }
+      if (
+        sandboxUnavailableFacts !== undefined ||
+        sandboxUnavailableQueue !== undefined
+      ) {
+        if (
+          sandboxUnavailableFacts === undefined ||
+          sandboxUnavailableQueue === undefined
+        ) {
+          return yield* Effect.fail<ConsumerOffsetStoreError>({
+            _tag: "PersistenceCorruption",
+            repository: "ConsumerOffsetStore",
+            operation: "sandbox-provider-unavailable-rebuild",
+            reason:
+              "P50 fact snapshot and queue re-arm ports are not both available",
+          });
+        }
+        const sandboxFacts = yield* sandboxUnavailableFacts
+          .list(projectId)
+          .pipe(Effect.mapError(projectionFailure));
+        for (const fact of sandboxFacts) {
+          yield* sandboxUnavailableQueue
+            .rearm(fact)
             .pipe(Effect.mapError(projectionFailure));
         }
       }

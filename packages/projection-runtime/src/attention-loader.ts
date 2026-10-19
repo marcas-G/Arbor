@@ -17,6 +17,8 @@ import type {
   LegacyAdoptionAttentionFact,
   LegacyAdoptionAttentionProjectionRow,
   LegacyAdoptionAttentionResolutionFact,
+  SandboxProviderUnavailableAttentionProjectionRow,
+  SandboxRecoveryBindingFailureProjectionRow,
   SubmittedDecisionBindingAttentionFact,
   SubmittedDecisionBindingAttentionProjectionRow,
   ToolObservationReplayAttentionProjectionRow,
@@ -224,6 +226,18 @@ export interface AttentionReadDeps {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<ToolObservationReplayAttentionProjectionRow>,
+    ProjectionReadError
+  >;
+  readonly listProjectedSandboxProviderUnavailableFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<SandboxProviderUnavailableAttentionProjectionRow>,
+    ProjectionReadError
+  >;
+  readonly listSandboxRecoveryBindingFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<SandboxRecoveryBindingFailureProjectionRow>,
     ProjectionReadError
   >;
 }
@@ -1281,6 +1295,38 @@ export const deriveProjectAttention = (
           dedupKey: row.dedupKey,
           summary: row.summary,
           occurredAt: row.occurredAt,
+        })),
+      ];
+    }
+    if (deps.listProjectedSandboxProviderUnavailableFailures !== undefined) {
+      const unavailable =
+        yield* deps.listProjectedSandboxProviderUnavailableFailures(projectId);
+      rows = [
+        ...rows.filter((row) => row.source !== "SandboxProviderUnavailable"),
+        ...unavailable.map((row) => ({
+          source: "SandboxProviderUnavailable" as const,
+          severity: "ActionRequired" as const,
+          targetWorkspaceId: row.workspaceId,
+          dedupKey: row.attentionFactId,
+          summary:
+            "Required sandbox capabilities are unavailable; execution did not start.",
+          occurredAt: row.firstDetectedAt,
+        })),
+      ];
+    }
+    if (deps.listSandboxRecoveryBindingFailures !== undefined) {
+      const failures =
+        yield* deps.listSandboxRecoveryBindingFailures(projectId);
+      rows = [
+        ...rows,
+        ...failures.map((row) => ({
+          source: "SandboxRecoveryBindingFailure" as const,
+          severity: "ActionRequired" as const,
+          targetWorkspaceId: row.workspaceId,
+          dedupKey: row.attentionFactId,
+          summary:
+            "Sandbox recovery binding evidence is missing or invalid; execution is paused.",
+          occurredAt: row.intentAt,
         })),
       ];
     }

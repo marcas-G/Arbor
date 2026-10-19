@@ -78,6 +78,12 @@ export interface WorkspaceDetailDeps {
   readonly findActiveMainExecution: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<Option.Option<Execution>, ProjectionReadError>;
+  readonly sandboxPolicyForExecution?: (
+    execution: Execution,
+  ) => Effect.Effect<
+    ExecutionSummaryView["sandboxPolicy"],
+    ProjectionReadError
+  >;
   readonly listDependenciesByWorkspace: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<ReadonlyArray<Dependency>, ProjectionReadError>;
@@ -206,14 +212,17 @@ export const deriveWorkspaceDetail = (
     const openWorks = works.filter((work) => work.lifecycle === "Open");
 
     const activeMain = yield* deps.findActiveMainExecution(workspaceId);
-    const executionSummary: ExecutionSummaryView | undefined = Option.isSome(
-      activeMain,
-    )
-      ? {
-          executionId: activeMain.value.executionId,
-          admittedAt: activeMain.value.admittedAt,
-        }
-      : undefined;
+    let executionSummary: ExecutionSummaryView | undefined;
+    if (Option.isSome(activeMain)) {
+      const sandboxPolicy = yield* deps.sandboxPolicyForExecution?.(
+        activeMain.value,
+      ) ?? Effect.succeed(undefined);
+      executionSummary = {
+        executionId: activeMain.value.executionId,
+        admittedAt: activeMain.value.admittedAt,
+        ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
+      };
+    }
 
     let currentWork: CurrentWorkSummaryView | undefined;
     if (workspace.currentWorkId !== null) {
