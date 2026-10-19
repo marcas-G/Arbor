@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,6 +20,23 @@ export const WINDOWS_NATIVE_COMPILER_ARGUMENTS = [
 
 const sha256 = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
+
+export interface WindowsNativeArtifactIo {
+  readonly lstat: (path: string) => {
+    readonly isFile: () => boolean;
+    readonly isSymbolicLink: () => boolean;
+  };
+  readonly realpath: (path: string) => string;
+  readonly read: (path: string) => Buffer;
+  readonly hash: (bytes: Buffer) => string;
+}
+
+const nativeArtifactIo: WindowsNativeArtifactIo = {
+  lstat: lstatSync,
+  realpath: realpathSync.native,
+  read: readFileSync,
+  hash: sha256,
+};
 
 /** Paths are fixed by the adapter package and Windows Framework installation.
  * Neither PATH search nor caller-supplied executable paths are accepted. */
@@ -83,6 +100,36 @@ export type WindowsNativeArtifactInspection =
       readonly observed: WindowsNativeArtifactDigests;
     };
 
+const missingIoError = (error: unknown): boolean => {
+  try {
+    const code = (error as { readonly code?: unknown } | null)?.code;
+    return code === "ENOENT" || code === "ENOTDIR";
+  } catch {
+    return false;
+  }
+};
+
+const readFixedArtifactDigest = (
+  path: string,
+  label: "NativeSource" | "NativeCompiler" | "NativeBinary",
+  io: WindowsNativeArtifactIo,
+):
+  | { readonly _tag: "Digest"; readonly sha256: string }
+  | WindowsNativeArtifactInspection => {
+  try {
+    const status = io.lstat(path);
+    if (!status.isFile() || status.isSymbolicLink())
+      return { _tag: "Unavailable", reason: `${label}NotRegularFile` };
+    const finalPath = io.realpath(path);
+    return { _tag: "Digest", sha256: io.hash(io.read(finalPath)) };
+  } catch (error) {
+    return {
+      _tag: "Unavailable",
+      reason: `${label}${missingIoError(error) ? "Missing" : "Unreadable"}`,
+    };
+  }
+};
+
 export const inspectWindowsNativeArtifactEvidence = (
   observed: WindowsNativeArtifactDigests,
   binding: WindowsNativeOperatorBuildBindingV1 | undefined,
@@ -113,28 +160,46 @@ export const inspectWindowsNativeArtifactEvidence = (
 };
 
 /** Read-only candidate inspection. It never compiles, loads, or launches a helper. */
+export const inspectWindowsNativeArtifactPaths = (
+  paths: ReturnType<typeof fixedWindowsNativeArtifactPaths>,
+  binding: WindowsNativeOperatorBuildBindingV1 | undefined,
+  io: WindowsNativeArtifactIo,
+): WindowsNativeArtifactInspection => {
+  const source = readFixedArtifactDigest(paths.source, "NativeSource", io);
+  if (source._tag !== "Digest") return source;
+  if (source.sha256 !== WINDOWS_NATIVE_BRIDGE_SOURCE_SHA256)
+    return { _tag: "Unavailable", reason: "NativeSourceHashMismatch" };
+  const compiler = readFixedArtifactDigest(
+    paths.compiler,
+    "NativeCompiler",
+    io,
+  );
+  if (compiler._tag !== "Digest") return compiler;
+  const binary = readFixedArtifactDigest(paths.binary, "NativeBinary", io);
+  if (binary._tag !== "Digest") return binary;
+  return inspectWindowsNativeArtifactEvidence(
+    {
+      sourceSha256: source.sha256,
+      compilerSha256: compiler.sha256,
+      binarySha256: binary.sha256,
+    },
+    binding,
+  );
+};
+
 export const inspectFixedWindowsNativeArtifact = (
   windowsRoot: string | undefined,
   binding?: WindowsNativeOperatorBuildBindingV1,
 ): WindowsNativeArtifactInspection => {
   if (windowsRoot === undefined || windowsRoot.length === 0)
     return { _tag: "Unavailable", reason: "WindowsRootMissing" };
-  const paths = fixedWindowsNativeArtifactPaths(windowsRoot);
-  if (!existsSync(paths.source))
-    return { _tag: "Unavailable", reason: "NativeSourceMissing" };
-  const sourceSha256 = sha256(readFileSync(paths.source));
-  if (sourceSha256 !== WINDOWS_NATIVE_BRIDGE_SOURCE_SHA256)
-    return { _tag: "Unavailable", reason: "NativeSourceHashMismatch" };
-  if (!existsSync(paths.compiler))
-    return { _tag: "Unavailable", reason: "NativeCompilerMissing" };
-  if (!existsSync(paths.binary))
-    return { _tag: "Unavailable", reason: "NativeBinaryMissing" };
-  return inspectWindowsNativeArtifactEvidence(
-    {
-      sourceSha256,
-      compilerSha256: sha256(readFileSync(paths.compiler)),
-      binarySha256: sha256(readFileSync(paths.binary)),
-    },
-    binding,
-  );
+  try {
+    return inspectWindowsNativeArtifactPaths(
+      fixedWindowsNativeArtifactPaths(windowsRoot),
+      binding,
+      nativeArtifactIo,
+    );
+  } catch {
+    return { _tag: "Unavailable", reason: "NativeArtifactInspectionFailed" };
+  }
 };

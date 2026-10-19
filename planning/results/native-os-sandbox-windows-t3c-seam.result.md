@@ -86,3 +86,20 @@ restoration tests continue to run, but do not close those remaining controls.
 
 No full-suite, operator T3 manifest, Supported tuple, production process,
 online endpoint, or release qualification is claimed.
+
+## B2 review follow-up: artifact I/O race closure
+
+The read-only artifact inspector no longer performs `existsSync` followed by
+an unguarded read. Each fixed source/compiler/binary stage now performs
+`lstat`, `realpath`, read, and SHA-256 hashing inside a fail-closed boundary.
+`ENOENT`/`ENOTDIR` returns a stage-specific typed `*Missing` reason; other
+I/O errors return typed `*Unreadable`. Non-regular files and symlinks reject
+before read. Returned reasons contain neither a filesystem path nor the raw
+exception. A fixture injects deletion and unreadability after each stage of
+all three artifacts (24 fault cases), plus non-file/symlink cases. The
+production `run` path and Experimental/empty capabilities remain unchanged.
+
+Follow-up verification: Windows provider/artifact/native tests PASS 19/19;
+architecture PASS 15/15; targeted typecheck, Biome, build, and
+`git diff --check` PASS. The built read-only inspector still returns
+`Unavailable/NativeBinaryMissing` on this host.
