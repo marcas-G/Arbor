@@ -1,3 +1,4 @@
+import { Principal } from "./actor.js";
 import type { ExecutionEpisodeBinding } from "./execution.js";
 import type { ExecutionId, ProjectId, WorkspaceId } from "./ids.js";
 import { DecisionId, MessageId, parse, WorkId } from "./ids.js";
@@ -10,6 +11,101 @@ export type SandboxProviderStatus =
   | "Experimental"
   | "Unavailable";
 export type SandboxProviderId = string;
+
+/** Host-owned, startup-only issuer allowlist. The source that supplies this
+ * value is responsible for OS protection and a durable monotone revision. */
+export interface SandboxPolicyGrantIssuerConfigV1 {
+  readonly version: 1;
+  readonly revision: number;
+  readonly operators: ReadonlyArray<Principal>;
+}
+
+const compareUtf8Ordinal = (left: string, right: string): number => {
+  const leftCodePoints = Array.from(
+    left,
+    (character) => character.codePointAt(0) ?? 0,
+  );
+  const rightCodePoints = Array.from(
+    right,
+    (character) => character.codePointAt(0) ?? 0,
+  );
+  const count = Math.min(leftCodePoints.length, rightCodePoints.length);
+  for (let index = 0; index < count; index += 1) {
+    const difference =
+      (leftCodePoints[index] ?? 0) - (rightCodePoints[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return leftCodePoints.length - rightCodePoints.length;
+};
+
+export const decodeSandboxPolicyGrantIssuerConfigV1 = (
+  input: unknown,
+): SandboxPolicyGrantIssuerConfigV1 | undefined => {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return undefined;
+  }
+  const value = input as Record<string, unknown>;
+  if (
+    !exactKeys(value, ["version", "revision", "operators"]) ||
+    value.version !== 1 ||
+    !Number.isSafeInteger(value.revision) ||
+    (value.revision as number) < 1 ||
+    !Array.isArray(value.operators)
+  ) {
+    return undefined;
+  }
+  const operators: Principal[] = [];
+  for (const candidate of value.operators) {
+    if (
+      typeof candidate !== "string" ||
+      !candidate.startsWith("user:") ||
+      candidate.length <= "user:".length ||
+      candidate !== candidate.trim() ||
+      /\p{Cc}/u.test(candidate)
+    ) {
+      return undefined;
+    }
+    try {
+      operators.push(parse(Principal)(candidate));
+    } catch {
+      return undefined;
+    }
+  }
+  for (let index = 1; index < operators.length; index += 1) {
+    if (
+      compareUtf8Ordinal(operators[index - 1] ?? "", operators[index] ?? "") >=
+      0
+    ) {
+      return undefined;
+    }
+  }
+  return {
+    version: 1,
+    revision: value.revision as number,
+    operators,
+  };
+};
+
+/** Canonical RFC 8785 JSON bytes for the closed config shape. Object keys use
+ * JCS ordinal order; the codec requires already-sorted operator principals. */
+export const encodeSandboxPolicyGrantIssuerConfigV1 = (
+  config: SandboxPolicyGrantIssuerConfigV1,
+): string =>
+  `{"operators":${JSON.stringify(config.operators)},"revision":${config.revision},"version":1}`;
+
+export const decodeCanonicalSandboxPolicyGrantIssuerConfigV1 = (
+  json: string,
+): SandboxPolicyGrantIssuerConfigV1 | undefined => {
+  try {
+    const decoded = decodeSandboxPolicyGrantIssuerConfigV1(JSON.parse(json));
+    return decoded !== undefined &&
+      encodeSandboxPolicyGrantIssuerConfigV1(decoded) === json
+      ? decoded
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 export type NetworkDestinationV1 =
   | {
