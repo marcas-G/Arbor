@@ -33,3 +33,26 @@ export class TrustedHostConfigurationSource extends Context.Service<
   TrustedHostConfigurationSource,
   TrustedHostConfigurationSourceService
 >()("arbor/TrustedHostConfigurationSource") {}
+
+/** Operator-only offline mutation boundary for the one-time V1→V2 source and
+ * high-water transition. This port is deliberately not part of composition
+ * root/daemon wiring. Implementations must atomically replace the protected
+ * source/high-water and create-only preserve exact raw evidence. */
+export interface SandboxAuthorityProvisioningStoreService
+  extends TrustedHostConfigurationSourceService {
+  readonly writeSandboxAuthorityBundleAtomically: (
+    canonicalJson: string,
+  ) => Effect.Effect<boolean, SandboxAuthorityLoadErrorV1>;
+  readonly preserveForensicEvidence: (input: {
+    readonly evidenceId: string;
+    readonly exactBytes: string;
+  }) => Effect.Effect<boolean, SandboxAuthorityLoadErrorV1>;
+  readonly readForensicEvidence: (
+    evidenceId: string,
+  ) => Effect.Effect<string | undefined, SandboxAuthorityLoadErrorV1>;
+}
+
+export class SandboxAuthorityProvisioningStore extends Context.Service<
+  SandboxAuthorityProvisioningStore,
+  SandboxAuthorityProvisioningStoreService
+>()("arbor/SandboxAuthorityProvisioningStore") {}

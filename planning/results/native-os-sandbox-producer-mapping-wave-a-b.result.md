@@ -151,3 +151,51 @@ single-workspace handler + schema-50 Gateway 13/13; sandbox process boundary
 architecture 23/23; V2/P11 fixture migration suites 60/60 (Persistence 10,
 single-workspace 9, Application 28, Domain 6, command-result codec 7). Biome
 on changed files and `git diff --check` PASS. Full `pnpm test` was not run.
+
+## Offline V1→V2 provisioning qualification
+
+Added the operator-only `sandbox:authority-upgrade` command, which requires
+`--offline-v1-to-v2` plus explicit absolute protected-root, source, high-water,
+forensic-directory, operator-config-file and source-identity arguments. It is
+not imported or constructed by daemon composition and accepts no request,
+workspace, daemon environment or DB inputs. The dedicated
+`SandboxAuthorityProvisioningStore` is separate from the daemon's read-only
+`TrustedHostConfigurationSource` capability.
+
+The service first validates the exact V1 source/high-water pair using the
+read-only forensic V1 loader, captures and preserves both raw canonical byte
+strings with create-only/readback verification, and refuses non-exact operator
+config. It carries issuer/provider children and their exact revisions/digests
+forward, adds the explicit V2 operator config, and sets
+`bundleRevision = oldV1HighWater.bundleRevision + 1`. It atomically writes the
+V2 source, re-reads and decodes those exact bytes, then atomically replaces the
+active high-water with the exact matching V2 tuple and re-reads both. It does
+not initialize or roll back state on any failure.
+
+The file adapter requires an existing protected root and pre-created forensic
+directory, validates all explicit paths under that root, rejects reparse/symlink
+paths and cross-volume/single-link violations, and uses the existing P39
+owner/ACL validation. POSIX requires the current owner and exact 0700
+directories/0600 files, and keeps same-directory rename plus file/directory
+fsync. Windows evidence and active-file transitions use a fixed P39-owned
+`MoveFileExW` helper: CREATE_ONLY uses WRITE_THROUGH and refuses existing
+evidence; replacement uses REPLACE_EXISTING|WRITE_THROUGH. Its fixed PowerShell
+script receives paths/flags as encoded environment data, not interpolated
+script. P39 native-process scanner now audits and hash-locks both exact call
+templates. The documented EPERM from Node directory fsync on Windows is kept as
+the platform RED evidence; the Win32 path does not claim directory fsync.
+
+On fresh P39-protected disposable directories, the explicit CLI success path,
+invalid-config refusal, evidence-preservation/source-readback failure cases and
+real child-process crash matrix pass. Before-high-water kill leaves exact V1
+active high-water, V2 source ahead, both exact V1 forensic blobs, and V2 loader
+Unavailable. After-high-water kill leaves the exact V2 source/high-water pair,
+both V1 evidence blobs forensic-only, and V2 loader Available. Ordinary
+unprotected TEMP was rejected by P39 checks; tests now use newly created P39
+private directories. No online database was opened or upgraded.
+
+Verification after this qualification: `pnpm build`, `pnpm typecheck`, and
+changed-file Biome PASS; P39/native-spawn architecture 24/24 PASS; offline
+provisioning CLI/failure tests 3/3 PASS; Windows before/after high-water
+process-kill cases 2/2 PASS; `git diff --check` PASS. Full `pnpm test` remains
+unrun.

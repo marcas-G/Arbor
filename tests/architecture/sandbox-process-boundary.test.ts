@@ -391,15 +391,52 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
       "}",
       ")",
     ]);
+    const fixedAtomicMove = hasSequence(values, [
+      "execFileSync",
+      "(",
+      "powershell.exe",
+      ",",
+      "[",
+      "-NoProfile",
+      ",",
+      "-NonInteractive",
+      ",",
+      "-Command",
+      ",",
+      "atomicMoveScript",
+      "]",
+      ",",
+      "{",
+      "encoding",
+      ":",
+      "utf8",
+      ",",
+      "timeout",
+      ":",
+      "P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS",
+      ",",
+      "windowsHide",
+      ":",
+      "true",
+      ",",
+      "env",
+      ":",
+      "environment",
+      ",",
+      "}",
+      ",",
+      ")",
+    ]);
     if (
-      execFileSyncCalls !== 1 ||
+      execFileSyncCalls !== 2 ||
       !fixedImport ||
       !fixedQuery ||
       !fixedTimeout ||
-      !fixedProcessExecutor
+      !fixedProcessExecutor ||
+      !fixedAtomicMove
     ) {
       findings.push(
-        `${path}: P39 process probe is outside its fixed audited template`,
+        `${path}: P39 process probe is outside its fixed audited template (calls=${execFileSyncCalls}, import=${fixedImport}, query=${fixedQuery}, timeout=${fixedTimeout}, executor=${fixedProcessExecutor}, atomic=${fixedAtomicMove})`,
       );
     }
   }
@@ -546,7 +583,7 @@ describe("SandboxProcessPort architecture boundary", () => {
     const normalizedSource = source.replace(/\r\n?/gu, "\n");
     expect(
       createHash("sha256").update(normalizedSource, "utf8").digest("hex"),
-    ).toBe("b15f80d7d462c5693beab86fbb121596480384264c263bf29a9ba736e5f0ee49");
+    ).toBe("97ec83041e62f6dddd673aa30289c5c735720a39085a27f45c9fc8aedb21cedc");
     expect(
       hasSequence(
         tokenize(source).map(({ value }) => value),
@@ -595,5 +632,35 @@ describe("SandboxProcessPort architecture boundary", () => {
     expect(callCount(source, "execFile")).toBe(1);
     expect(source).toContain("Explicit TrustedLocal execution");
     expect(source).toContain("policy limits are disclosure/best-effort only");
+  });
+
+  it("routes Windows write-through replacement through the fixed P39 helper", () => {
+    const files = productionRoots.flatMap(productionFiles);
+    const moveCallers = files
+      .filter((file) =>
+        readFileSync(file, "utf8").includes("moveP39ProtectedFileAtomically"),
+      )
+      .map(normalized)
+      .sort();
+    expect(moveCallers).toEqual([
+      "adapters/persistence-sqlite/src/p39-windows-security.ts",
+      "apps/single-workspace/src/sandbox-authority-provisioning-file-store.ts",
+    ]);
+    const source = readFileSync(join(repoRoot, p39SpawnModule), "utf8");
+    const normalizedSource = source.replace(/\r\n?/gu, "\n");
+    expect(
+      createHash("sha256").update(normalizedSource, "utf8").digest("hex"),
+    ).toBe("97ec83041e62f6dddd673aa30289c5c735720a39085a27f45c9fc8aedb21cedc");
+    expect(
+      hasSequence(
+        tokenize(source).map(({ value }) => value),
+        ["export", "const", "moveP39ProtectedFileAtomically", "=", "("],
+      ),
+    ).toBe(true);
+    expect(source).toContain("MoveFileEx");
+    expect(source).toContain('replaceExisting ? "9" : "8"');
+    expect(source).toContain("WRITE_THROUGH");
+    expect(source).toContain("const atomicMoveScript = [");
+    expect(scanSource(source, p39SpawnModule)).toEqual([]);
   });
 });

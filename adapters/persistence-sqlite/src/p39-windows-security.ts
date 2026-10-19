@@ -1,7 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export const P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS = 30_000;
+const atomicMoveCompleteMarker = "P39_ATOMIC_WRITE_THROUGH_MOVE_OK";
+const atomicMoveScript = [
+  "$ErrorActionPreference='Stop'",
+  "$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:ARBOR_P39_ATOMIC_SOURCE_B64))",
+  "$d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:ARBOR_P39_ATOMIC_DESTINATION_B64))",
+  "$f=[uint32]$env:ARBOR_P39_ATOMIC_FLAGS",
+  "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class P39AtomicMove { [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool MoveFileEx(string source, string destination, uint flags); }'",
+  "if(![P39AtomicMove]::MoveFileEx($s,$d,$f)){throw 'P39 atomic write-through move failed'}",
+  `Write-Output '${atomicMoveCompleteMarker}'`,
+].join(";");
 
 export interface P39WindowsSecurityQueryOptions {
   readonly encoding: "utf8";
@@ -58,6 +68,54 @@ export const executeP39WindowsSecurityQuery = (
       windowsHide: true,
     },
   ).trim();
+
+/** Fixed Win32 atomic replacement primitive for protected operator source and
+ * high-water files. Paths/flags are data in dedicated environment values;
+ * the PowerShell script is a fixed literal, never caller-authored text. Flag 8
+ * is WRITE_THROUGH for create-only moves; flag 9 adds REPLACE_EXISTING. */
+export const moveP39ProtectedFileAtomically = (
+  sourcePath: string,
+  destinationPath: string,
+  replaceExisting: boolean,
+): boolean => {
+  if (process.platform !== "win32") return false;
+  const source = resolve(sourcePath);
+  const destination = resolve(destinationPath);
+  if (dirname(source).toLowerCase() !== dirname(destination).toLowerCase())
+    return false;
+  const systemRoot =
+    process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows";
+  const environment = {
+    ...process.env,
+    PSModulePath: join(
+      systemRoot,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "Modules",
+    ),
+    ARBOR_P39_ATOMIC_SOURCE_B64: Buffer.from(source, "utf8").toString("base64"),
+    ARBOR_P39_ATOMIC_DESTINATION_B64: Buffer.from(destination, "utf8").toString(
+      "base64",
+    ),
+    ARBOR_P39_ATOMIC_FLAGS: replaceExisting ? "9" : "8",
+  };
+  try {
+    const output = execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", atomicMoveScript],
+      {
+        encoding: "utf8",
+        timeout: P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
+        windowsHide: true,
+        env: environment,
+      },
+    );
+    return output.trim() === atomicMoveCompleteMarker;
+  } catch {
+    return false;
+  }
+};
 
 const protectedPathsSuccess = "P39_PROTECTED_PATHS_OK";
 
