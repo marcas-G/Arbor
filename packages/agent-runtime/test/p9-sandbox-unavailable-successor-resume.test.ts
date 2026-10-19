@@ -1,5 +1,13 @@
 import {
+  CommandId,
+  decodeCanonicalSandboxNetworkPolicySelectionV1,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
   ExecutionId,
+  encodeEffectivePolicySummaryV1,
+  encodeExecutionEpisodeBinding,
+  encodeSandboxNetworkPolicySelectionV1,
+  encodeSandboxPolicyDecisionCommittedInternalV1,
+  PermissionGrantId,
   ProjectId,
   parse,
   SessionId,
@@ -223,6 +231,146 @@ const priorAppliedAction = {
   observationSourceRef: "obs_prior-applied",
   revision: 1,
   updatedAt: "2026-10-18T09:58:00.000Z",
+};
+
+const trustedLocalCommittedFixture = () => {
+  const decisionCommandId = parse(CommandId)(
+    "cmd_00000000-0000-7000-8000-000000000082",
+  );
+  const policyNetworkSelection = {
+    kind: "TrustedLocalUnconfinedV1" as const,
+    version: 1 as const,
+  };
+  const canonicalNetworkSelection = encodeSandboxNetworkPolicySelectionV1(
+    policyNetworkSelection,
+  );
+  const trustedSummary = {
+    version: 1 as const,
+    kind: "TrustedLocalUnconfinedV1" as const,
+    projectId,
+    workspaceId,
+    executionId,
+    episodeBinding: episode,
+    workspaceRevision: 5,
+    resourceBoundaryRevision: 2,
+    resourceBoundaryDigest: "1".repeat(64),
+    sandboxEnvironmentBasisDigest: "2".repeat(64),
+    policyRevision: 8,
+    expiresAt: "2026-10-19T00:00:00.000Z",
+    trustedRuntimeIdentity: "TrustedLocal" as const,
+    trustedRuntimeVersion: "builtin-v1" as const,
+    profile: "FullAccess" as const,
+    networkBoundary: "Unconfined" as const,
+    sandboxHandleBindingDigest: "3".repeat(64),
+    mounts: [
+      {
+        mountId: "workspace",
+        targetRef: "workspace",
+        targetIdentityDigest: "4".repeat(64),
+        access: "ReadWrite" as const,
+      },
+    ],
+    environmentAllowlist: ["PATH"],
+    limits: {
+      wallTimeMs: 1000,
+      stdoutBytes: 1000,
+      stderrBytes: 1000,
+      processCount: 2,
+      memoryBytes: 1024,
+      cpuTimeMs: 1000,
+    },
+    auditRefs: ["audit:trusted-local"],
+    authorityBundleRevision: 3,
+    authorityBundleDigest: "5".repeat(64),
+    operatorConfigRevision: 4,
+    operatorConfigDigest: "6".repeat(64),
+  };
+  const policyDigest = sha256Hex(
+    encodeEffectivePolicySummaryV1(trustedSummary as never),
+  );
+  const committedResult = {
+    version: 1 as const,
+    commandId: decisionCommandId,
+    projectId,
+    workspaceId,
+    executionId,
+    episodeBinding: episode,
+    policyRevision: 8,
+    policyDigest,
+    effectivePolicySnapshot: trustedSummary,
+  };
+  const resultJson = encodeSandboxPolicyDecisionCommittedInternalV1(
+    committedResult as never,
+  );
+  const decodedResult = decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+    resultJson,
+    sha256Hex,
+  );
+  const decision = {
+    projectId,
+    workspaceId,
+    executionId,
+    episodeBinding: episode,
+    policyRevision: 8,
+    expectedExecutionRevision: 2,
+    expectedPolicyRevision: 7,
+    profile: "FullAccess" as const,
+    providerId: "TrustedLocal",
+    networkPolicy: policyNetworkSelection,
+    policyDigest,
+    permissionGrantId: parse(PermissionGrantId)(
+      "pgr_00000000-0000-7000-8000-000000000082",
+    ),
+    grantPermissionCommandId: parse(CommandId)(
+      "cmd_00000000-0000-7000-8000-000000000083",
+    ),
+    grantIssuerPrincipal: "user:operator" as never,
+    operatorConfigRevision: 4,
+    operatorConfigDigest: "6".repeat(64),
+    actorPrincipal: "user:subject" as never,
+    decisionCommandId,
+    issuedAt: "2026-10-18T10:00:00.000Z",
+    expiresAt: trustedSummary.expiresAt,
+  };
+  const commandReceipt = {
+    commandId: decisionCommandId,
+    projectId,
+    schemaVersion: "1",
+    resolution: "Committed",
+    resultJson,
+  };
+  const join = (receipt = commandReceipt) => {
+    const result = decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+      receipt.resultJson,
+      sha256Hex,
+    );
+    if (
+      receipt.commandId !== decision.decisionCommandId ||
+      receipt.projectId !== decision.projectId ||
+      receipt.schemaVersion !== "1" ||
+      receipt.resolution !== "Committed" ||
+      result === undefined ||
+      result.commandId !== decision.decisionCommandId ||
+      result.projectId !== decision.projectId ||
+      result.workspaceId !== decision.workspaceId ||
+      result.executionId !== decision.executionId ||
+      result.policyRevision !== decision.policyRevision ||
+      result.policyDigest !== decision.policyDigest ||
+      encodeExecutionEpisodeBinding(result.episodeBinding) !==
+        encodeExecutionEpisodeBinding(decision.episodeBinding)
+    ) {
+      return Option.none();
+    }
+    return Option.some({ decision, result });
+  };
+  return {
+    decision,
+    result: decodedResult,
+    resultJson,
+    commandReceipt,
+    join,
+    canonicalNetworkSelection,
+  };
 };
 
 describe("P9 SandboxUnavailableV1 successor recovery", () => {
@@ -528,27 +676,27 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
   });
 
   it("accepts the exact TrustedLocalUnconfinedV1 runtime literals from a joined, current result", async () => {
-    const trustedDecision = {
-      ...decision,
-      profile: "FullAccess",
-      providerId: "trusted-local",
-    };
-    const trustedResult = {
-      ...result,
-      effectivePolicySnapshot: {
-        kind: "TrustedLocalUnconfinedV1",
-        policyRevision: decision.policyRevision,
-        profile: "FullAccess",
-        networkBoundary: "Unconfined",
-        trustedRuntimeIdentity: "TrustedLocal",
-        trustedRuntimeVersion: "builtin-v1",
-        projectId,
-        workspaceId,
-        executionId,
-        episodeBinding: episode,
-        expiresAt: decision.expiresAt,
-      },
-    };
+    const fixture = trustedLocalCommittedFixture();
+    expect(
+      decodeCanonicalSandboxNetworkPolicySelectionV1(
+        fixture.canonicalNetworkSelection,
+      ),
+    ).toEqual({ kind: "TrustedLocalUnconfinedV1", version: 1 });
+    expect(fixture.decision.providerId).toBe("TrustedLocal");
+    expect(fixture.decision.networkPolicy).toEqual({
+      kind: "TrustedLocalUnconfinedV1",
+      version: 1,
+    });
+    expect(fixture.result).toBeDefined();
+    expect(fixture.join()).toEqual(
+      Option.some({ decision: fixture.decision, result: fixture.result }),
+    );
+    expect(
+      fixture.join({
+        ...fixture.commandReceipt,
+        commandId: parse(CommandId)("cmd_00000000-0000-7000-8000-000000000084"),
+      }),
+    ).toEqual(Option.none());
     const resumed = await Effect.runPromise(
       Effect.provideService(
         verifySandboxUnavailableStepActionResume({
@@ -559,13 +707,7 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
             findByExecutionAndRevision: () => Effect.succeed(fact),
           } as never,
           decisions: {
-            findCurrentForExecution: () =>
-              Effect.succeed(
-                Option.some({
-                  decision: trustedDecision,
-                  result: trustedResult,
-                }),
-              ),
+            findCurrentForExecution: () => Effect.succeed(fixture.join()),
           } as never,
           now: "2026-10-18T10:01:00.000Z",
         }),
@@ -575,37 +717,15 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
     );
     expect(resumed).toBe(true);
 
-    const wrongRuntime = {
-      ...trustedResult,
-      effectivePolicySnapshot: {
-        ...trustedResult.effectivePolicySnapshot,
-        trustedRuntimeVersion: "unverified-v1",
-      },
-    };
-    const rejected = await Effect.runPromise(
-      Effect.provideService(
-        verifySandboxUnavailableStepActionResume({
-          execution,
-          step: step as never,
-          action: terminalAction as never,
-          facts: {
-            findByExecutionAndRevision: () => Effect.succeed(fact),
-          } as never,
-          decisions: {
-            findCurrentForExecution: () =>
-              Effect.succeed(
-                Option.some({
-                  decision: trustedDecision,
-                  result: wrongRuntime,
-                }),
-              ),
-          } as never,
-          now: "2026-10-18T10:01:00.000Z",
-        }),
-        TransactionScope,
-        { session: { id: "p9-sandbox-successor-wrong-runtime" } },
-      ),
+    const wrongRuntimeJson = fixture.resultJson.replace(
+      '"trustedRuntimeVersion":"builtin-v1"',
+      '"trustedRuntimeVersion":"unverified-v1"',
     );
-    expect(rejected).toBe(false);
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+        wrongRuntimeJson,
+        sha256Hex,
+      ),
+    ).toBeUndefined();
   });
 });
