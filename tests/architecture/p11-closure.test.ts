@@ -173,6 +173,7 @@ describe("p11-closure", () => {
       "worker-local",
       "provider-fake",
       "sandbox-local",
+      "sandbox-native-posix",
       "blob-local",
     ]) {
       expect([...internalDependencyKeysOf(adapter)].sort()).toEqual([

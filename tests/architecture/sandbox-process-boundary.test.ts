@@ -29,6 +29,7 @@ const skippedDirectories = new Set([
 ]);
 const p39SpawnModule =
   "adapters/persistence-sqlite/src/p39-windows-security.ts";
+const posixSandboxProbeModule = "adapters/sandbox-native-posix/src/index.ts";
 const p39QueryCallers = new Set([
   "adapters/persistence-sqlite/src/p39-report-database.ts",
   "adapters/persistence-sqlite/src/p39-windows-security.ts",
@@ -167,6 +168,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
   const values = tokens.map(({ value }) => value);
   const findings: string[] = [];
   const isP39 = path === p39SpawnModule;
+  const isPosixSandboxProbe = path === posixSandboxProbeModule;
   const p39SpecifierIndex = isP39
     ? tokens.findIndex(
         (token) =>
@@ -189,7 +191,8 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
         SyntaxKind.LastTemplateToken,
       ].includes(token.kind) &&
       forbiddenNativeModuleFragment.test(token.value) &&
-      !(isP39 && index === p39SpecifierIndex)
+      !(isP39 && index === p39SpecifierIndex) &&
+      !(isPosixSandboxProbe && token.value === "node:child_process")
     ) {
       findings.push(
         `${path}: forbidden process module value ${JSON.stringify(token.value)}`,
@@ -306,7 +309,8 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
       token.kind === SyntaxKind.Identifier &&
       nativeSpawnIdentifiers.has(callName) &&
       isCall &&
-      !(isP39 && callName === "execFileSync")
+      !(isP39 && callName === "execFileSync") &&
+      !(isPosixSandboxProbe && callName === "spawnSync")
     ) {
       findings.push(`${path}: unregistered native process call ${callName}`);
     }
@@ -395,6 +399,42 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     ) {
       findings.push(
         `${path}: P39 process probe is outside its fixed audited template`,
+      );
+    }
+  }
+
+  if (isPosixSandboxProbe) {
+    const spawnSyncCalls = tokens.filter(
+      (token, index) =>
+        token.value === "spawnSync" && tokens[index + 1]?.text === "(",
+    ).length;
+    const fixedImport = hasSequence(values, [
+      "import",
+      "{",
+      "spawnSync",
+      "}",
+      "from",
+      "node:child_process",
+      ";",
+    ]);
+    const fixedTimeout =
+      /spawnSync\s*\(\s*command\s*,\s*\[\s*\.\.\.args\s*\]\s*,\s*\{\s*encoding:\s*"utf8"\s*,\s*timeout:\s*2_000\s*,\s*windowsHide:\s*true\s*,?\s*\}\s*\)/u.test(
+        source,
+      );
+    const onlyFixedProbeCommand = tokens.every(
+      (token, index) =>
+        token.value !== "probeCommand" ||
+        tokens[index + 1]?.text !== "(" ||
+        tokens[index + 2]?.value === "bwrap",
+    );
+    if (
+      spawnSyncCalls !== 1 ||
+      !fixedImport ||
+      !fixedTimeout ||
+      !onlyFixedProbeCommand
+    ) {
+      findings.push(
+        `${path}: POSIX probe process call is outside its fixed bwrap template (calls=${spawnSyncCalls}, import=${fixedImport}, timeout=${fixedTimeout}, fixedCommands=${onlyFixedProbeCommand})`,
       );
     }
   }

@@ -19,6 +19,7 @@ export const ALLOWED_EDGES: Record<string, ReadonlyArray<string>> = {
   "provider-testecho": ["domain", "ports"],
   "provider-openai": ["domain", "ports"],
   "sandbox-local": ["domain", "ports"],
+  "sandbox-native-posix": ["domain", "ports"],
   "sandbox-worktree": ["domain", "ports"],
   "secret-env": ["domain", "ports"],
   "secret-file": ["domain", "ports"],

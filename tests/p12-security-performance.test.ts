@@ -198,7 +198,11 @@ describe("P12-013 §3 sandbox trajectory + env allow-list", () => {
     const sandboxAdapters = readdirSync(join(repoRoot, "adapters"))
       .filter((entry) => entry.startsWith("sandbox-"))
       .sort();
-    expect(sandboxAdapters).toEqual(["sandbox-local", "sandbox-worktree"]);
+    expect(sandboxAdapters).toEqual([
+      "sandbox-local",
+      "sandbox-native-posix",
+      "sandbox-worktree",
+    ]);
 
     for (const adapter of sandboxAdapters) {
       const source = readRepoFile(`adapters/${adapter}/src/index.ts`);

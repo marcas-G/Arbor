@@ -275,6 +275,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ports
 
+  adapters/sandbox-native-posix:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
   adapters/sandbox-worktree:
     dependencies:
       '@arbor/domain':
@@ -370,6 +379,9 @@ importers:
       '@arbor/sandbox-local':
         specifier: workspace:*
         version: link:../../adapters/sandbox-local
+      '@arbor/sandbox-native-posix':
+        specifier: workspace:*
+        version: link:../../adapters/sandbox-native-posix
       '@arbor/secret-env':
         specifier: workspace:*
         version: link:../../adapters/secret-env
