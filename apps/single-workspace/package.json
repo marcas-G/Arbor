@@ -40,7 +40,8 @@
   "scripts": {
     "build": "tsc -b",
     "schema:upgrade": "node dist/schema-upgrade.js",
-    "p6:inbox-rebuild": "node dist/p6-inbox-rebuild.js"
+    "p6:inbox-rebuild": "node dist/p6-inbox-rebuild.js",
+    "sandbox:authority-upgrade": "node dist/sandbox-authority-provisioning-cli.js"
   },
   "devDependencies": {
     "@types/ws": "8.18.1"
