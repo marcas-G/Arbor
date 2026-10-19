@@ -1,11 +1,12 @@
 import {
   CommandId,
   decodeCanonicalExecutionEpisodeBinding,
-  decodeCanonicalNetworkPolicyV1,
+  decodeCanonicalSandboxNetworkPolicySelectionV1,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
   decodeSandboxProviderId,
   ExecutionId,
   encodeExecutionEpisodeBinding,
-  encodeNetworkPolicyV1,
+  encodeSandboxNetworkPolicySelectionV1,
   isIsoTimestamp,
   PermissionGrantId,
   Principal,
@@ -16,8 +17,10 @@ import {
   WorkspaceId,
 } from "@arbor/domain";
 import {
+  type CommittedSandboxPolicyDecisionV1,
   SandboxPolicyDecisionStore,
   type SandboxPolicyDecisionStoreError,
+  sha256Hex,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -46,6 +49,10 @@ interface SandboxPolicyDecisionRow {
   readonly decision_command_id: string;
   readonly issued_at: string;
   readonly expires_at: string;
+  readonly command_resolution?: string | null;
+  readonly command_schema_version?: string | null;
+  readonly command_result_json?: string | null;
+  readonly command_project_id?: string | null;
 }
 
 const isRevision = (value: number): boolean =>
@@ -62,7 +69,9 @@ const decodeRow = (
   const episodeBinding = decodeCanonicalExecutionEpisodeBinding(
     row.episode_binding_json,
   );
-  const networkPolicy = decodeCanonicalNetworkPolicyV1(row.network_policy_json);
+  const networkPolicy = decodeCanonicalSandboxNetworkPolicySelectionV1(
+    row.network_policy_json,
+  );
   const providerId = decodeSandboxProviderId(row.provider_id);
   if (
     episodeBinding === undefined ||
@@ -70,7 +79,8 @@ const decodeRow = (
     providerId === undefined ||
     encodeExecutionEpisodeBinding(episodeBinding) !==
       row.episode_binding_json ||
-    encodeNetworkPolicyV1(networkPolicy) !== row.network_policy_json ||
+    encodeSandboxNetworkPolicySelectionV1(networkPolicy) !==
+      row.network_policy_json ||
     !isRevision(row.expected_execution_revision) ||
     !isRevision(row.expected_policy_revision) ||
     !isPositiveRevision(row.operator_config_revision) ||
@@ -118,12 +128,60 @@ const decodeRow = (
   }
 };
 
-const columns = `project_id, workspace_id, execution_id, episode_binding_json,
-  policy_revision, expected_execution_revision, expected_policy_revision,
-  profile_id, provider_id, network_policy_json, policy_digest,
-  permission_grant_id, grant_permission_command_id, grant_issuer_principal,
-  operator_config_revision, operator_config_digest, actor_principal,
-  decision_command_id, issued_at, expires_at`;
+const columns = `d.project_id, d.workspace_id, d.execution_id, d.episode_binding_json,
+  d.policy_revision, d.expected_execution_revision, d.expected_policy_revision,
+  d.profile_id, d.provider_id, d.network_policy_json, d.policy_digest,
+  d.permission_grant_id, d.grant_permission_command_id, d.grant_issuer_principal,
+  d.operator_config_revision, d.operator_config_digest, d.actor_principal,
+  d.decision_command_id, d.issued_at, d.expires_at,
+  c.resolution AS command_resolution, c.schema_version AS command_schema_version,
+  c.result_json AS command_result_json, c.project_id AS command_project_id`;
+
+const decodeCommitted = (
+  row: SandboxPolicyDecisionRow,
+): CommittedSandboxPolicyDecisionV1 | undefined => {
+  const decision = decodeRow(row);
+  if (
+    decision === undefined ||
+    row.command_resolution !== "Committed" ||
+    row.command_schema_version !== "1" ||
+    row.command_project_id !== row.project_id ||
+    typeof row.command_result_json !== "string"
+  )
+    return undefined;
+  const result = decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+    row.command_result_json,
+    sha256Hex,
+  );
+  if (
+    result === undefined ||
+    result.commandId !== decision.decisionCommandId ||
+    result.projectId !== decision.projectId ||
+    result.workspaceId !== decision.workspaceId ||
+    result.executionId !== decision.executionId ||
+    result.policyRevision !== decision.policyRevision ||
+    result.policyDigest !== decision.policyDigest ||
+    JSON.stringify(result.episodeBinding) !==
+      JSON.stringify(decision.episodeBinding)
+  )
+    return undefined;
+  const snapshot = result.effectivePolicySnapshot;
+  if (
+    snapshot.kind === "OsEnforced"
+      ? decision.profile === "FullAccess" ||
+        snapshot.profile !== decision.profile ||
+        snapshot.providerId !== decision.providerId ||
+        JSON.stringify({
+          kind: "OsEnforced",
+          policy: snapshot.networkPolicy,
+        }) !== JSON.stringify(decision.networkPolicy)
+      : decision.profile !== "FullAccess" ||
+        decision.providerId !== "TrustedLocal" ||
+        decision.networkPolicy.kind !== "TrustedLocalUnconfinedV1"
+  )
+    return undefined;
+  return { decision, result };
+};
 
 export const SandboxPolicyDecisionStoreLive = Layer.effect(
   SandboxPolicyDecisionStore,
@@ -141,11 +199,11 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
       row: SandboxPolicyDecisionRow | undefined,
       operation: string,
     ): Effect.Effect<
-      Option.Option<SandboxPolicyDecision>,
+      Option.Option<CommittedSandboxPolicyDecisionV1>,
       SandboxPolicyDecisionStoreError
     > => {
       if (row === undefined) return Effect.succeed(Option.none());
-      const decision = decodeRow(row);
+      const decision = decodeCommitted(row);
       return decision === undefined
         ? Effect.fail({
             _tag: "PersistenceCorruption" as const,
@@ -162,9 +220,10 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
           yield* TransactionScope;
           const rows = yield* run(
             sql.unsafe<SandboxPolicyDecisionRow>(
-              `SELECT ${columns} FROM sandbox_policy_decisions
-                WHERE project_id = ? AND workspace_id = ? AND execution_id = ?
-                  AND episode_binding_json = ? AND policy_revision = ?`,
+              `SELECT ${columns} FROM sandbox_policy_decisions d
+                LEFT JOIN commands c ON c.command_id = d.decision_command_id
+                WHERE d.project_id = ? AND d.workspace_id = ? AND d.execution_id = ?
+                  AND d.episode_binding_json = ? AND d.policy_revision = ?`,
               [
                 key.projectId,
                 key.workspaceId,
@@ -181,9 +240,10 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
           yield* TransactionScope;
           const rows = yield* run(
             sql.unsafe<SandboxPolicyDecisionRow>(
-              `SELECT ${columns} FROM sandbox_policy_decisions
-                WHERE project_id = ? AND workspace_id = ? AND execution_id = ?
-                ORDER BY policy_revision DESC LIMIT 1`,
+              `SELECT ${columns} FROM sandbox_policy_decisions d
+                LEFT JOIN commands c ON c.command_id = d.decision_command_id
+                WHERE d.project_id = ? AND d.workspace_id = ? AND d.execution_id = ?
+                ORDER BY d.policy_revision DESC LIMIT 1`,
               [projectId, workspaceId, executionId],
             ),
           );
@@ -205,7 +265,7 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
               expected_policy_revision: decision.expectedPolicyRevision,
               profile_id: decision.profile,
               provider_id: decision.providerId,
-              network_policy_json: encodeNetworkPolicyV1(
+              network_policy_json: encodeSandboxNetworkPolicySelectionV1(
                 decision.networkPolicy,
               ),
               policy_digest: decision.policyDigest,
@@ -248,7 +308,7 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
                 decision.expectedPolicyRevision,
                 decision.profile,
                 decision.providerId,
-                encodeNetworkPolicyV1(decision.networkPolicy),
+                encodeSandboxNetworkPolicySelectionV1(decision.networkPolicy),
                 decision.policyDigest,
                 decision.permissionGrantId,
                 decision.grantPermissionCommandId,

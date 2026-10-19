@@ -2,6 +2,7 @@ import type {
   ExecutionId,
   ProjectId,
   SandboxPolicyDecision,
+  SandboxPolicyDecisionCommittedInternalV1,
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
@@ -10,6 +11,14 @@ import type { TransactionScope } from "./session.js";
 
 export type SandboxPolicyDecisionStoreError =
   RepositoryFailure<"SandboxPolicyDecisionStore">;
+
+/** A policy row is usable only together with its exact committed P1 result.
+ * The SQLite adapter verifies the command receipt and snapshot digest before
+ * returning this joined value. */
+export interface CommittedSandboxPolicyDecisionV1 {
+  readonly decision: SandboxPolicyDecision;
+  readonly result: SandboxPolicyDecisionCommittedInternalV1;
+}
 
 export interface SandboxPolicyDecisionStoreService {
   /** Exact P1 key lookup. Used by P9 to rehydrate the durable decision and by
@@ -24,7 +33,7 @@ export interface SandboxPolicyDecisionStoreService {
       | "policyRevision"
     >,
   ) => Effect.Effect<
-    Option.Option<SandboxPolicyDecision>,
+    Option.Option<CommittedSandboxPolicyDecisionV1>,
     SandboxPolicyDecisionStoreError,
     TransactionScope
   >;
@@ -35,7 +44,7 @@ export interface SandboxPolicyDecisionStoreService {
     workspaceId: WorkspaceId,
     executionId: ExecutionId,
   ) => Effect.Effect<
-    Option.Option<SandboxPolicyDecision>,
+    Option.Option<CommittedSandboxPolicyDecisionV1>,
     SandboxPolicyDecisionStoreError,
     TransactionScope
   >;
