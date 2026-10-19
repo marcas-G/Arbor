@@ -37,6 +37,7 @@ export * from "./resources.js";
 export * from "./retry-verification-origin.js";
 export * from "./runtime.js";
 export * from "./sandbox-env.js";
+export * from "./sandbox-policy-candidate-boundary.js";
 export * from "./sandbox-policy-decision.js";
 export * from "./sandbox-policy-requirement.js";
 export * from "./sandbox-process.js";

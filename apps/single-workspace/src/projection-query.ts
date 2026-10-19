@@ -21,6 +21,7 @@ import {
   AgentLoopStepStore,
   AttentionProjectionStore,
   Clock,
+  CurrentSandboxAuthoritySnapshotPort,
   DependencyRepository,
   DomainEventJournal,
   EvidenceRepository,
@@ -33,7 +34,10 @@ import {
   RecoveryAttentionFactStore,
   RetryVerificationOriginRepository,
   RunnableWorkSource,
+  SandboxPolicyCandidateBoundaryReadPort,
   SandboxPolicyDecisionStore,
+  SandboxPolicyRequirementReadPort,
+  type SandboxPolicyRequirementV1,
   SandboxProviderUnavailableStore,
   sha256Hex,
   ToolCatalogPort,
@@ -73,6 +77,7 @@ import {
 } from "@arbor/projection-runtime";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+import { buildSandboxPolicyCandidateReadV1 } from "./sandbox-policy-candidate-read.js";
 
 interface ConversationJobViewRow {
   readonly message_id: string;
@@ -130,6 +135,25 @@ const responseStatusOf = (
   }
 };
 
+const sameSandboxPolicyRequirement = (
+  left: SandboxPolicyRequirementV1,
+  right: SandboxPolicyRequirementV1,
+): boolean =>
+  left.projectId === right.projectId &&
+  left.workspaceId === right.workspaceId &&
+  left.executionId === right.executionId &&
+  encodeExecutionEpisodeBinding(left.episodeBinding) ===
+    encodeExecutionEpisodeBinding(right.episodeBinding) &&
+  left.expectedEpisodeRevision === right.expectedEpisodeRevision &&
+  left.invocationId === right.invocationId &&
+  left.providerTurnId === right.providerTurnId &&
+  left.logicalStepNo === right.logicalStepNo &&
+  left.repairAttempt === right.repairAttempt &&
+  left.logicalActionId === right.logicalActionId &&
+  left.actionIndex === right.actionIndex &&
+  left.callRef === right.callRef &&
+  left.recoveryBindingDigest === right.recoveryBindingDigest;
+
 /**
  * B-7 — the production `ProjectionQueryPort` wiring.
  *
@@ -157,6 +181,9 @@ export type ProjectionQueryWiringServices =
   | DomainEventJournal
   | RecoveryAttentionFactStore
   | SandboxPolicyDecisionStore
+  | SandboxPolicyCandidateBoundaryReadPort
+  | SandboxPolicyRequirementReadPort
+  | CurrentSandboxAuthoritySnapshotPort
   | SandboxProviderUnavailableStore
   | AttentionProjectionStore
   | MessageStore
@@ -248,6 +275,15 @@ const projectionQueryService = (
     const attentionProjection = yield* AttentionProjectionStore;
     const sandboxPolicyStore = yield* Effect.serviceOption(
       SandboxPolicyDecisionStore,
+    );
+    const sandboxPolicyCandidateBoundary = yield* Effect.serviceOption(
+      SandboxPolicyCandidateBoundaryReadPort,
+    );
+    const sandboxPolicyRequirement = yield* Effect.serviceOption(
+      SandboxPolicyRequirementReadPort,
+    );
+    const currentSandboxAuthority = yield* Effect.serviceOption(
+      CurrentSandboxAuthoritySnapshotPort,
     );
     const p4SandboxOutcomeReadPort = yield* Effect.serviceOption(
       P4SandboxOutcomeReadPort,
@@ -714,92 +750,183 @@ const projectionQueryService = (
       findActiveMainExecution: (workspaceId) =>
         inTx(executions.findActiveMainByWorkspace(workspaceId)),
       sandboxPolicyForExecution: (execution) =>
-        inTx(
-          Effect.gen(function* () {
-            if (
-              Option.isNone(sandboxPolicyStore) ||
-              Option.isNone(sandboxUnavailableStore)
-            ) {
-              return {};
-            }
-            const episode = executionEpisode(execution);
-            if (episode === undefined) return {};
-            const decision =
-              yield* sandboxPolicyStore.value.findCurrentForExecution(
-                execution.projectId,
-                execution.workspaceId,
-                execution.executionId,
-              );
-            if (Option.isNone(decision)) return {};
-            const { decision: committed, result } = decision.value;
-            const snapshot = result.effectivePolicySnapshot;
-            if (
-              committed.projectId !== execution.projectId ||
-              committed.workspaceId !== execution.workspaceId ||
-              committed.executionId !== execution.executionId ||
-              encodeExecutionEpisodeBinding(committed.episodeBinding) !==
-                encodeExecutionEpisodeBinding(episode) ||
-              snapshot.projectId !== execution.projectId ||
-              snapshot.workspaceId !== execution.workspaceId ||
-              snapshot.executionId !== execution.executionId ||
-              encodeExecutionEpisodeBinding(snapshot.episodeBinding) !==
-                encodeExecutionEpisodeBinding(episode)
-            ) {
+        Effect.gen(function* () {
+          const pendingRequirement = Option.isSome(sandboxPolicyRequirement)
+            ? yield* inTx(
+                sandboxPolicyRequirement.value
+                  .findPendingByExecution({
+                    projectId: execution.projectId,
+                    workspaceId: execution.workspaceId,
+                    executionId: execution.executionId,
+                  })
+                  .pipe(Effect.mapError(projectionReadError)),
+              )
+            : Option.none();
+          if (Option.isSome(pendingRequirement)) {
+            const requirementReadPort = Option.isSome(sandboxPolicyRequirement)
+              ? sandboxPolicyRequirement.value
+              : undefined;
+            if (requirementReadPort === undefined)
               return yield* Effect.fail(
                 projectionReadError({
-                  _tag: "SandboxProviderUnavailableDecisionMismatch",
+                  _tag: "SandboxPolicyCandidateReadPortUnavailable",
                 }),
               );
-            }
-            const unavailable =
-              yield* sandboxUnavailableStore.value.findByExecutionAndRevision(
-                execution.executionId,
-                committed.policyRevision,
-              );
-            const exactUnavailable =
-              unavailable !== undefined &&
-              unavailable.projectId === execution.projectId &&
-              unavailable.workspaceId === execution.workspaceId &&
-              encodeExecutionEpisodeBinding(unavailable.episodeBinding) ===
-                encodeExecutionEpisodeBinding(committed.episodeBinding) &&
-              unavailable.policyDigest === committed.policyDigest &&
-              snapshot.kind === "OsEnforced" &&
-              unavailable.profileId === snapshot.profile &&
-              unavailable.providerId === snapshot.providerId &&
-              unavailable.providerVersion === snapshot.providerVersion;
-            if (unavailable !== undefined && !exactUnavailable) {
+            const authorityResult = Option.isSome(currentSandboxAuthority)
+              ? yield* currentSandboxAuthority.value.loadCurrentVerifiedV2()
+              : {
+                  _tag: "Unavailable" as const,
+                  failure: "SourceMissing" as const,
+                };
+            if (authorityResult._tag !== "Available")
               return yield* Effect.fail(
                 projectionReadError({
-                  _tag: "SandboxProviderUnavailableDecisionMismatch",
+                  _tag: "SandboxPolicyCandidateAuthorityUnavailable",
+                  failure: authorityResult.failure,
                 }),
               );
-            }
-            const now = yield* clock.now();
-            const committedView = sandboxPolicyCommittedViewOf(result);
-            if (
-              unavailable === undefined &&
-              Option.isSome(p4SandboxOutcomeReadPort)
-            ) {
-              const outcomes = yield* p4SandboxOutcomeReadPort.value
-                .findUnavailableByExecutionAndRevision(
-                  execution.executionId,
-                  committed.policyRevision,
+            return yield* inTx(
+              Effect.gen(function* () {
+                const requirement = yield* requirementReadPort
+                  .findPendingByExecution({
+                    projectId: execution.projectId,
+                    workspaceId: execution.workspaceId,
+                    executionId: execution.executionId,
+                  })
+                  .pipe(Effect.mapError(projectionReadError));
+                if (
+                  Option.isNone(requirement) ||
+                  !sameSandboxPolicyRequirement(
+                    pendingRequirement.value,
+                    requirement.value,
+                  )
                 )
-                .pipe(Effect.mapError(projectionReadError));
-              const exactOutcome = outcomes.find(
-                (candidate) =>
-                  snapshot.kind === "OsEnforced" &&
-                  candidate.policyRevision === committed.policyRevision &&
-                  candidate.policyDigest === committed.policyDigest &&
-                  candidate.profile === snapshot.profile &&
-                  candidate.providerId === snapshot.providerId &&
-                  candidate.providerVersion === snapshot.providerVersion &&
-                  String(snapshot.capabilityRevision) ===
-                    candidate.capabilityRevision,
-              );
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxPolicyCandidateRequirementChanged",
+                    }),
+                  );
+                const currentExecution = yield* executions.findById(
+                  execution.executionId,
+                );
+                if (
+                  Option.isNone(currentExecution) ||
+                  currentExecution.value.state.status !== "Active"
+                )
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxPolicyCandidateExecutionUnavailable",
+                    }),
+                  );
+                const currentEpisode = executionEpisode(currentExecution.value);
+                const suppliedEpisode = executionEpisode(execution);
+                if (
+                  currentEpisode === undefined ||
+                  suppliedEpisode === undefined ||
+                  encodeExecutionEpisodeBinding(currentEpisode) !==
+                    encodeExecutionEpisodeBinding(suppliedEpisode)
+                )
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxPolicyCandidateExecutionChanged",
+                    }),
+                  );
+                const episodeRevision = yield* executions.findEpisodeRevision(
+                  execution.executionId,
+                );
+                if (
+                  Option.isNone(episodeRevision) ||
+                  episodeRevision.value !==
+                    requirement.value.expectedEpisodeRevision
+                )
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxPolicyCandidateEpisodeRevisionChanged",
+                    }),
+                  );
+                if (
+                  Option.isNone(sandboxPolicyStore) ||
+                  Option.isNone(sandboxPolicyCandidateBoundary)
+                )
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxPolicyCandidateReadPortUnavailable",
+                    }),
+                  );
+                const currentDecision =
+                  yield* sandboxPolicyStore.value.findCurrentForExecution(
+                    currentExecution.value.projectId,
+                    currentExecution.value.workspaceId,
+                    currentExecution.value.executionId,
+                  );
+                const boundary = yield* sandboxPolicyCandidateBoundary.value
+                  .readCurrentForWorkspace({
+                    projectId: currentExecution.value.projectId,
+                    workspaceId: currentExecution.value.workspaceId,
+                  })
+                  .pipe(Effect.mapError(projectionReadError));
+                const built = buildSandboxPolicyCandidateReadV1({
+                  reason: Option.isSome(currentDecision)
+                    ? "RefreshStaleCommittedPolicy"
+                    : "InitialDecision",
+                  execution: currentExecution.value,
+                  requirement: requirement.value,
+                  latestCommittedPolicyRevision: Option.isSome(currentDecision)
+                    ? currentDecision.value.decision.policyRevision
+                    : 0,
+                  expectedEpisodeRevision: episodeRevision.value,
+                  boundary,
+                  authority: authorityResult.snapshot,
+                  currentHost: authorityResult.currentHost,
+                });
+                if (built._tag !== "Ready")
+                  return yield* Effect.fail(projectionReadError(built));
+                return {
+                  ...(Option.isSome(currentDecision)
+                    ? {
+                        sandboxPolicy: {
+                          ...sandboxPolicyCommittedViewOf(
+                            currentDecision.value.result,
+                          ),
+                          status: "NeedsDecision" as const,
+                        },
+                      }
+                    : {}),
+                  sandboxPolicyCandidateRead: built.value,
+                };
+              }),
+            );
+          }
+          return yield* inTx(
+            Effect.gen(function* () {
               if (
-                outcomes.length > 1 ||
-                (outcomes.length > 0 && exactOutcome === undefined)
+                Option.isNone(sandboxPolicyStore) ||
+                Option.isNone(sandboxUnavailableStore)
+              ) {
+                return {};
+              }
+              const episode = executionEpisode(execution);
+              if (episode === undefined) return {};
+              const decision =
+                yield* sandboxPolicyStore.value.findCurrentForExecution(
+                  execution.projectId,
+                  execution.workspaceId,
+                  execution.executionId,
+                );
+              if (Option.isNone(decision)) return {};
+              const { decision: committed, result } = decision.value;
+              const snapshot = result.effectivePolicySnapshot;
+              if (
+                committed.projectId !== execution.projectId ||
+                committed.workspaceId !== execution.workspaceId ||
+                committed.executionId !== execution.executionId ||
+                encodeExecutionEpisodeBinding(committed.episodeBinding) !==
+                  encodeExecutionEpisodeBinding(episode) ||
+                snapshot.projectId !== execution.projectId ||
+                snapshot.workspaceId !== execution.workspaceId ||
+                snapshot.executionId !== execution.executionId ||
+                encodeExecutionEpisodeBinding(snapshot.episodeBinding) !==
+                  encodeExecutionEpisodeBinding(episode)
               ) {
                 return yield* Effect.fail(
                   projectionReadError({
@@ -807,132 +934,191 @@ const projectionQueryService = (
                   }),
                 );
               }
-              if (exactOutcome !== undefined) {
-                return yield* Effect.fail({
-                  _tag: "SandboxProviderUnavailableProjection" as const,
-                  code: "sandbox/provider-unavailable" as const,
-                  category: "unavailable" as const,
-                  correlationId: null,
-                  retryDisposition: "retryable" as const,
-                  message:
-                    "required sandbox capability was unavailable or could not be verified; execution did not start" as const,
-                  safeDetails: {
-                    executionId: execution.executionId,
-                    workspaceId: execution.workspaceId,
-                    policyRevision: committed.policyRevision,
-                  },
-                });
+              const unavailable =
+                yield* sandboxUnavailableStore.value.findByExecutionAndRevision(
+                  execution.executionId,
+                  committed.policyRevision,
+                );
+              const exactUnavailable =
+                unavailable !== undefined &&
+                unavailable.projectId === execution.projectId &&
+                unavailable.workspaceId === execution.workspaceId &&
+                encodeExecutionEpisodeBinding(unavailable.episodeBinding) ===
+                  encodeExecutionEpisodeBinding(committed.episodeBinding) &&
+                unavailable.policyDigest === committed.policyDigest &&
+                snapshot.kind === "OsEnforced" &&
+                unavailable.profileId === snapshot.profile &&
+                unavailable.providerId === snapshot.providerId &&
+                unavailable.providerVersion === snapshot.providerVersion;
+              if (unavailable !== undefined && !exactUnavailable) {
+                return yield* Effect.fail(
+                  projectionReadError({
+                    _tag: "SandboxProviderUnavailableDecisionMismatch",
+                  }),
+                );
               }
-            }
-            const workspace = yield* workspaces.findById(execution.workspaceId);
-            if (Option.isNone(workspace)) return {};
-            const episodeRevisionRows = yield* sql.unsafe<{
-              readonly episode_revision: number;
-            }>(
-              "SELECT episode_revision FROM executions WHERE execution_id = ?",
-              [execution.executionId],
-            );
-            const expectedEpisodeRevision =
-              episodeRevisionRows[0]?.episode_revision;
-            if (
-              expectedEpisodeRevision === undefined ||
-              !Number.isSafeInteger(expectedEpisodeRevision) ||
-              expectedEpisodeRevision < 0
-            ) {
-              return yield* Effect.fail(
-                projectionReadError({
-                  _tag: "SandboxProviderUnavailableDecisionMismatch",
-                }),
+              const now = yield* clock.now();
+              const committedView = sandboxPolicyCommittedViewOf(result);
+              if (
+                unavailable === undefined &&
+                Option.isSome(p4SandboxOutcomeReadPort)
+              ) {
+                const outcomes = yield* p4SandboxOutcomeReadPort.value
+                  .findUnavailableByExecutionAndRevision(
+                    execution.executionId,
+                    committed.policyRevision,
+                  )
+                  .pipe(Effect.mapError(projectionReadError));
+                const exactOutcome = outcomes.find(
+                  (candidate) =>
+                    snapshot.kind === "OsEnforced" &&
+                    candidate.policyRevision === committed.policyRevision &&
+                    candidate.policyDigest === committed.policyDigest &&
+                    candidate.profile === snapshot.profile &&
+                    candidate.providerId === snapshot.providerId &&
+                    candidate.providerVersion === snapshot.providerVersion &&
+                    String(snapshot.capabilityRevision) ===
+                      candidate.capabilityRevision,
+                );
+                if (
+                  outcomes.length > 1 ||
+                  (outcomes.length > 0 && exactOutcome === undefined)
+                ) {
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxProviderUnavailableDecisionMismatch",
+                    }),
+                  );
+                }
+                if (exactOutcome !== undefined) {
+                  return yield* Effect.fail({
+                    _tag: "SandboxProviderUnavailableProjection" as const,
+                    code: "sandbox/provider-unavailable" as const,
+                    category: "unavailable" as const,
+                    correlationId: null,
+                    retryDisposition: "retryable" as const,
+                    message:
+                      "required sandbox capability was unavailable or could not be verified; execution did not start" as const,
+                    safeDetails: {
+                      executionId: execution.executionId,
+                      workspaceId: execution.workspaceId,
+                      policyRevision: committed.policyRevision,
+                    },
+                  });
+                }
+              }
+              const workspace = yield* workspaces.findById(
+                execution.workspaceId,
               );
-            }
-            const authoritySnapshot = sandboxAuthoritySnapshot;
-            const preconditions =
-              authoritySnapshot === undefined
-                ? undefined
-                : {
-                    kind:
-                      snapshot.kind === "OsEnforced"
-                        ? ("OsEnforced" as const)
-                        : ("TrustedLocalUnconfinedV1" as const),
-                    expectedEpisodeRevision,
-                    latestCommittedPolicyRevision: committed.policyRevision,
-                    episodeBinding: episode,
-                    workspaceRevision: workspace.value.revision,
-                    resourceBoundaryRevision:
-                      workspace.value.resourceBoundaryRevision,
-                    sandboxHandleBindingDigest:
-                      snapshot.sandboxHandleBindingDigest,
-                    authorityBundleRevision:
-                      authoritySnapshot.authorityBundleRevision,
-                    authorityBundleDigest:
-                      authoritySnapshot.authorityBundleDigest,
-                    operatorConfigRevision: authoritySnapshot.config.revision,
-                    operatorConfigDigest: authoritySnapshot.configDigest,
-                    ...(snapshot.kind === "OsEnforced"
-                      ? {
-                          providerRegistryRevision:
-                            authoritySnapshot.providerRegistryRevision,
-                          providerRegistryDigest:
-                            authoritySnapshot.providerRegistryDigest,
-                        }
-                      : {}),
-                  };
-            const sourceCurrent =
-              snapshot.workspaceRevision === workspace.value.revision &&
-              snapshot.resourceBoundaryRevision ===
-                workspace.value.resourceBoundaryRevision &&
-              authoritySnapshot !== undefined &&
-              snapshot.authorityBundleRevision ===
-                authoritySnapshot.authorityBundleRevision &&
-              snapshot.authorityBundleDigest ===
-                authoritySnapshot.authorityBundleDigest &&
-              snapshot.operatorConfigRevision ===
-                authoritySnapshot.config.revision &&
-              snapshot.operatorConfigDigest ===
-                authoritySnapshot.configDigest &&
-              (snapshot.kind !== "OsEnforced" ||
-                (snapshot.providerRegistryRevision ===
-                  authoritySnapshot.providerRegistryRevision &&
-                  snapshot.providerRegistryDigest ===
-                    authoritySnapshot.providerRegistryDigest));
-            if (!sourceCurrent || snapshot.expiresAt <= now) {
-              const pendingPolicyRequired =
-                attentionProjection.listSandboxPolicyDecisionRequired ===
-                undefined
-                  ? []
-                  : yield* attentionProjection.listSandboxPolicyDecisionRequired(
-                      execution.projectId,
-                      now,
-                    );
-              const hasPendingAction = pendingPolicyRequired.some(
-                (pending) =>
-                  pending.executionId === execution.executionId &&
-                  pending.workspaceId === execution.workspaceId,
+              if (Option.isNone(workspace)) return {};
+              const episodeRevisionRows = yield* sql.unsafe<{
+                readonly episode_revision: number;
+              }>(
+                "SELECT episode_revision FROM executions WHERE execution_id = ?",
+                [execution.executionId],
               );
-              if (!hasPendingAction) return {};
+              const expectedEpisodeRevision =
+                episodeRevisionRows[0]?.episode_revision;
+              if (
+                expectedEpisodeRevision === undefined ||
+                !Number.isSafeInteger(expectedEpisodeRevision) ||
+                expectedEpisodeRevision < 0
+              ) {
+                return yield* Effect.fail(
+                  projectionReadError({
+                    _tag: "SandboxProviderUnavailableDecisionMismatch",
+                  }),
+                );
+              }
+              const authoritySnapshot = sandboxAuthoritySnapshot;
+              const preconditions =
+                authoritySnapshot === undefined
+                  ? undefined
+                  : {
+                      kind:
+                        snapshot.kind === "OsEnforced"
+                          ? ("OsEnforced" as const)
+                          : ("TrustedLocalUnconfinedV1" as const),
+                      expectedEpisodeRevision,
+                      latestCommittedPolicyRevision: committed.policyRevision,
+                      episodeBinding: episode,
+                      workspaceRevision: workspace.value.revision,
+                      resourceBoundaryRevision:
+                        workspace.value.resourceBoundaryRevision,
+                      sandboxHandleBindingDigest:
+                        snapshot.sandboxHandleBindingDigest,
+                      authorityBundleRevision:
+                        authoritySnapshot.authorityBundleRevision,
+                      authorityBundleDigest:
+                        authoritySnapshot.authorityBundleDigest,
+                      operatorConfigRevision: authoritySnapshot.config.revision,
+                      operatorConfigDigest: authoritySnapshot.configDigest,
+                      ...(snapshot.kind === "OsEnforced"
+                        ? {
+                            providerRegistryRevision:
+                              authoritySnapshot.providerRegistryRevision,
+                            providerRegistryDigest:
+                              authoritySnapshot.providerRegistryDigest,
+                          }
+                        : {}),
+                    };
+              const sourceCurrent =
+                snapshot.workspaceRevision === workspace.value.revision &&
+                snapshot.resourceBoundaryRevision ===
+                  workspace.value.resourceBoundaryRevision &&
+                authoritySnapshot !== undefined &&
+                snapshot.authorityBundleRevision ===
+                  authoritySnapshot.authorityBundleRevision &&
+                snapshot.authorityBundleDigest ===
+                  authoritySnapshot.authorityBundleDigest &&
+                snapshot.operatorConfigRevision ===
+                  authoritySnapshot.config.revision &&
+                snapshot.operatorConfigDigest ===
+                  authoritySnapshot.configDigest &&
+                (snapshot.kind !== "OsEnforced" ||
+                  (snapshot.providerRegistryRevision ===
+                    authoritySnapshot.providerRegistryRevision &&
+                    snapshot.providerRegistryDigest ===
+                      authoritySnapshot.providerRegistryDigest));
+              if (!sourceCurrent || snapshot.expiresAt <= now) {
+                const pendingPolicyRequired =
+                  attentionProjection.listSandboxPolicyDecisionRequired ===
+                  undefined
+                    ? []
+                    : yield* attentionProjection.listSandboxPolicyDecisionRequired(
+                        execution.projectId,
+                        now,
+                      );
+                const hasPendingAction = pendingPolicyRequired.some(
+                  (pending) =>
+                    pending.executionId === execution.executionId &&
+                    pending.workspaceId === execution.workspaceId,
+                );
+                if (!hasPendingAction) return {};
+                return {
+                  sandboxPolicy: {
+                    ...committedView,
+                    status: "NeedsDecision" as const,
+                  },
+                  ...(preconditions === undefined
+                    ? {}
+                    : { sandboxPolicyPreconditions: preconditions }),
+                };
+              }
               return {
                 sandboxPolicy: {
                   ...committedView,
-                  status: "NeedsDecision" as const,
+                  status: exactUnavailable
+                    ? ("Unavailable" as const)
+                    : ("Committed" as const),
                 },
                 ...(preconditions === undefined
                   ? {}
                   : { sandboxPolicyPreconditions: preconditions }),
               };
-            }
-            return {
-              sandboxPolicy: {
-                ...committedView,
-                status: exactUnavailable
-                  ? ("Unavailable" as const)
-                  : ("Committed" as const),
-              },
-              ...(preconditions === undefined
-                ? {}
-                : { sandboxPolicyPreconditions: preconditions }),
-            };
-          }),
-        ),
+            }),
+          );
+        }),
       listDependenciesByWorkspace,
       listUnconsumedInbox: (workspaceId) =>
         inTx(

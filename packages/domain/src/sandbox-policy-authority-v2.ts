@@ -58,6 +58,13 @@ export interface SandboxAuthorityBundleSnapshotV2 {
   readonly canonicalJson: string;
 }
 
+/** Trusted process identity used to select exact host-qualified P5 provider
+ * tuples. This is not a policy decision or provider probe result. */
+export interface SandboxPolicyCurrentHostV1 {
+  readonly osFamily: "Linux" | "macOS" | "Windows";
+  readonly osBuild: string;
+}
+
 export interface SandboxAuthorityHighWaterV2 {
   readonly version: 2;
   readonly sourceIdentity: string;

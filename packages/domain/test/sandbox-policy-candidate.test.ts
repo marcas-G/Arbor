@@ -26,14 +26,17 @@ const candidateRead: SandboxPolicyCandidateReadV1 = {
     episodeBinding,
     workspaceRevision: 9,
     resourceBoundaryRevision: 2,
-    sandboxHandleBindingDigest: "a".repeat(64) as never,
     authorityBundleRevision: 5,
     authorityBundleDigest: "b".repeat(64) as never,
     operatorConfigRevision: 2,
     operatorConfigDigest: "c".repeat(64) as never,
   },
   candidates: [
-    { kind: "TrustedLocalUnconfinedV1", candidateId: trustedCandidateId },
+    {
+      kind: "TrustedLocalUnconfinedV1",
+      candidateId: trustedCandidateId,
+      sandboxHandleBindingDigest: "a".repeat(64) as never,
+    },
   ],
 };
 
@@ -49,6 +52,26 @@ describe("SandboxPolicyCandidateReadV1", () => {
 
   it("round-trips the closed candidate DTO in canonical owner order", () => {
     const json = encodeSandboxPolicyCandidateReadV1(candidateRead, sha256Bytes);
+    const decoded = JSON.parse(json) as {
+      readonly candidates: ReadonlyArray<Record<string, unknown>>;
+      readonly commonPreconditions: Record<string, unknown>;
+    };
+    expect(Object.keys(decoded.commonPreconditions)).toEqual([
+      "expectedEpisodeRevision",
+      "latestCommittedPolicyRevision",
+      "episodeBinding",
+      "workspaceRevision",
+      "resourceBoundaryRevision",
+      "authorityBundleRevision",
+      "authorityBundleDigest",
+      "operatorConfigRevision",
+      "operatorConfigDigest",
+    ]);
+    expect(Object.keys(decoded.candidates[0] ?? {})).toEqual([
+      "kind",
+      "candidateId",
+      "sandboxHandleBindingDigest",
+    ]);
     expect(
       decodeCanonicalSandboxPolicyCandidateReadV1(json, sha256Bytes),
     ).toEqual(candidateRead);
@@ -63,6 +86,7 @@ describe("SandboxPolicyCandidateReadV1", () => {
       networkMode: "Disabled" as const,
       providerRegistryRevision: 5,
       providerRegistryDigest: "d".repeat(64) as never,
+      sandboxHandleBindingDigest: "e".repeat(64) as never,
     };
     const osCandidateWithId = {
       ...osCandidate,
@@ -77,6 +101,20 @@ describe("SandboxPolicyCandidateReadV1", () => {
       candidates: [osCandidateWithId, trustedCandidate],
     };
     const json = encodeSandboxPolicyCandidateReadV1(read, sha256Bytes);
+    const decoded = JSON.parse(json) as {
+      readonly candidates: ReadonlyArray<Record<string, unknown>>;
+    };
+    expect(Object.keys(decoded.candidates[0] ?? {})).toEqual([
+      "kind",
+      "candidateId",
+      "sandboxHandleBindingDigest",
+      "providerId",
+      "providerVersion",
+      "profile",
+      "networkMode",
+      "providerRegistryRevision",
+      "providerRegistryDigest",
+    ]);
     expect(
       decodeCanonicalSandboxPolicyCandidateReadV1(json, sha256Bytes),
     ).toEqual(read);
@@ -112,5 +150,37 @@ describe("SandboxPolicyCandidateReadV1", () => {
     expect(() =>
       encodeSandboxPolicyCandidateReadV1(withoutTrustedLocal, sha256Bytes),
     ).toThrow();
+  });
+
+  it("rejects the legacy common digest and malformed per-candidate digests", () => {
+    const json = encodeSandboxPolicyCandidateReadV1(candidateRead, sha256Bytes);
+    const legacyCommon = json.replace(
+      '"resourceBoundaryRevision":2,"authorityBundleRevision":5',
+      `"resourceBoundaryRevision":2,"sandboxHandleBindingDigest":"${"a".repeat(64)}","authorityBundleRevision":5`,
+    );
+    expect(
+      decodeCanonicalSandboxPolicyCandidateReadV1(legacyCommon, sha256Bytes),
+    ).toBeUndefined();
+    expect(
+      decodeSandboxPolicyCandidateReadV1(
+        {
+          ...candidateRead,
+          candidates: [
+            {
+              ...candidateRead.candidates[0],
+              sandboxHandleBindingDigest: "A".repeat(64),
+            },
+          ],
+        },
+        sha256Bytes,
+      ),
+    ).toBeUndefined();
+    const missingCandidateDigest = JSON.parse(json) as {
+      candidates: Array<Record<string, unknown>>;
+    };
+    delete missingCandidateDigest.candidates[0]?.sandboxHandleBindingDigest;
+    expect(
+      decodeSandboxPolicyCandidateReadV1(missingCandidateDigest, sha256Bytes),
+    ).toBeUndefined();
   });
 });

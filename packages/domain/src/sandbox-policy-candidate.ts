@@ -10,6 +10,7 @@ export type SandboxPolicyCandidateV1 =
   | {
       readonly kind: "OsEnforced";
       readonly candidateId: string;
+      readonly sandboxHandleBindingDigest: Sha256;
       readonly providerId: string;
       readonly providerVersion: string;
       readonly profile: "ReadOnly" | "WorkspaceWrite";
@@ -20,6 +21,7 @@ export type SandboxPolicyCandidateV1 =
   | {
       readonly kind: "TrustedLocalUnconfinedV1";
       readonly candidateId: string;
+      readonly sandboxHandleBindingDigest: Sha256;
     };
 
 export interface SandboxPolicyCandidateCommonPreconditionsV1 {
@@ -28,7 +30,6 @@ export interface SandboxPolicyCandidateCommonPreconditionsV1 {
   readonly episodeBinding: ExecutionEpisodeBinding;
   readonly workspaceRevision: number;
   readonly resourceBoundaryRevision: number;
-  readonly sandboxHandleBindingDigest: Sha256;
   readonly authorityBundleRevision: number;
   readonly authorityBundleDigest: Sha256;
   readonly operatorConfigRevision: number;
@@ -116,7 +117,7 @@ export const sandboxPolicyCandidateIdV2 = (
   candidate:
     | Omit<
         Extract<SandboxPolicyCandidateV1, { readonly kind: "OsEnforced" }>,
-        "candidateId"
+        "candidateId" | "sandboxHandleBindingDigest"
       >
     | { readonly kind: "TrustedLocalUnconfinedV1" },
   hashBytes: SandboxPolicyCandidateByteHasher,
@@ -192,9 +193,14 @@ const decodeCandidate = (
   if (!isRecord(value)) return undefined;
   if (value.kind === "TrustedLocalUnconfinedV1") {
     if (
-      !hasExactKeys(value, ["kind", "candidateId"]) ||
+      !hasExactKeys(value, [
+        "kind",
+        "candidateId",
+        "sandboxHandleBindingDigest",
+      ]) ||
       typeof value.candidateId !== "string" ||
       !CANDIDATE_ID.test(value.candidateId) ||
+      !digest(value.sandboxHandleBindingDigest) ||
       sandboxPolicyCandidateIdV2(
         { kind: "TrustedLocalUnconfinedV1" },
         hashBytes,
@@ -205,6 +211,7 @@ const decodeCandidate = (
     return {
       kind: "TrustedLocalUnconfinedV1",
       candidateId: value.candidateId,
+      sandboxHandleBindingDigest: value.sandboxHandleBindingDigest,
     };
   }
   if (
@@ -212,6 +219,7 @@ const decodeCandidate = (
     !hasExactKeys(value, [
       "kind",
       "candidateId",
+      "sandboxHandleBindingDigest",
       "providerId",
       "providerVersion",
       "profile",
@@ -221,6 +229,7 @@ const decodeCandidate = (
     ]) ||
     typeof value.candidateId !== "string" ||
     !CANDIDATE_ID.test(value.candidateId) ||
+    !digest(value.sandboxHandleBindingDigest) ||
     typeof value.providerId !== "string" ||
     value.providerId.length === 0 ||
     typeof value.providerVersion !== "string" ||
@@ -236,6 +245,7 @@ const decodeCandidate = (
   }
   const candidate = {
     kind: "OsEnforced" as const,
+    sandboxHandleBindingDigest: value.sandboxHandleBindingDigest as Sha256,
     providerId: value.providerId,
     providerVersion: value.providerVersion,
     profile: value.profile as "ReadOnly" | "WorkspaceWrite",
@@ -290,7 +300,6 @@ const decodeCommonPreconditions = (
       "episodeBinding",
       "workspaceRevision",
       "resourceBoundaryRevision",
-      "sandboxHandleBindingDigest",
       "authorityBundleRevision",
       "authorityBundleDigest",
       "operatorConfigRevision",
@@ -302,7 +311,6 @@ const decodeCommonPreconditions = (
     !nonnegative(value.resourceBoundaryRevision) ||
     !positive(value.authorityBundleRevision) ||
     !positive(value.operatorConfigRevision) ||
-    !digest(value.sandboxHandleBindingDigest) ||
     !digest(value.authorityBundleDigest) ||
     !digest(value.operatorConfigDigest)
   ) {
@@ -316,7 +324,6 @@ const decodeCommonPreconditions = (
     episodeBinding,
     workspaceRevision: value.workspaceRevision,
     resourceBoundaryRevision: value.resourceBoundaryRevision,
-    sandboxHandleBindingDigest: value.sandboxHandleBindingDigest,
     authorityBundleRevision: value.authorityBundleRevision,
     authorityBundleDigest: value.authorityBundleDigest,
     operatorConfigRevision: value.operatorConfigRevision,
@@ -388,13 +395,13 @@ export const decodeSandboxPolicyCandidateReadV1 = (
 
 const encodeCandidate = (candidate: SandboxPolicyCandidateV1): string =>
   candidate.kind === "OsEnforced"
-    ? `{"kind":"OsEnforced","candidateId":${JSON.stringify(candidate.candidateId)},"providerId":${JSON.stringify(candidate.providerId)},"providerVersion":${JSON.stringify(candidate.providerVersion)},"profile":${JSON.stringify(candidate.profile)},"networkMode":${JSON.stringify(candidate.networkMode)},"providerRegistryRevision":${candidate.providerRegistryRevision},"providerRegistryDigest":${JSON.stringify(candidate.providerRegistryDigest)}}`
-    : `{"kind":"TrustedLocalUnconfinedV1","candidateId":${JSON.stringify(candidate.candidateId)}}`;
+    ? `{"kind":"OsEnforced","candidateId":${JSON.stringify(candidate.candidateId)},"sandboxHandleBindingDigest":${JSON.stringify(candidate.sandboxHandleBindingDigest)},"providerId":${JSON.stringify(candidate.providerId)},"providerVersion":${JSON.stringify(candidate.providerVersion)},"profile":${JSON.stringify(candidate.profile)},"networkMode":${JSON.stringify(candidate.networkMode)},"providerRegistryRevision":${candidate.providerRegistryRevision},"providerRegistryDigest":${JSON.stringify(candidate.providerRegistryDigest)}}`
+    : `{"kind":"TrustedLocalUnconfinedV1","candidateId":${JSON.stringify(candidate.candidateId)},"sandboxHandleBindingDigest":${JSON.stringify(candidate.sandboxHandleBindingDigest)}}`;
 
 const encodeCommonPreconditions = (
   value: SandboxPolicyCandidateCommonPreconditionsV1,
 ): string =>
-  `{"expectedEpisodeRevision":${value.expectedEpisodeRevision},"latestCommittedPolicyRevision":${value.latestCommittedPolicyRevision},"episodeBinding":${encodeExecutionEpisodeBinding(value.episodeBinding)},"workspaceRevision":${value.workspaceRevision},"resourceBoundaryRevision":${value.resourceBoundaryRevision},"sandboxHandleBindingDigest":${JSON.stringify(value.sandboxHandleBindingDigest)},"authorityBundleRevision":${value.authorityBundleRevision},"authorityBundleDigest":${JSON.stringify(value.authorityBundleDigest)},"operatorConfigRevision":${value.operatorConfigRevision},"operatorConfigDigest":${JSON.stringify(value.operatorConfigDigest)}}`;
+  `{"expectedEpisodeRevision":${value.expectedEpisodeRevision},"latestCommittedPolicyRevision":${value.latestCommittedPolicyRevision},"episodeBinding":${encodeExecutionEpisodeBinding(value.episodeBinding)},"workspaceRevision":${value.workspaceRevision},"resourceBoundaryRevision":${value.resourceBoundaryRevision},"authorityBundleRevision":${value.authorityBundleRevision},"authorityBundleDigest":${JSON.stringify(value.authorityBundleDigest)},"operatorConfigRevision":${value.operatorConfigRevision},"operatorConfigDigest":${JSON.stringify(value.operatorConfigDigest)}}`;
 
 export const encodeSandboxPolicyCandidateReadV1 = (
   input: SandboxPolicyCandidateReadV1,

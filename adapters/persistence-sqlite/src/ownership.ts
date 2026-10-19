@@ -177,6 +177,17 @@ export const ResourceOwnershipRepositoryLive: Layer.Layer<
           );
           return rows.map(toClaim);
         }),
+      listByWorkspace: (workspaceId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<ClaimRow>(
+              "SELECT * FROM resource_ownership WHERE workspace_id = ? ORDER BY claim_id",
+              [workspaceId],
+            ),
+          );
+          return rows.map(toClaim);
+        }),
     });
   }),
 );

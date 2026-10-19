@@ -386,6 +386,15 @@ export interface ResourceOwnershipRepositoryService {
     ResourceOwnershipRepositoryError,
     TransactionScope
   >;
+  /** P10/V6 read-only full snapshot, including released records. Optional on
+   * legacy test adapters; candidate reads fail closed when unavailable. */
+  readonly listByWorkspace?: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<ResourceOwnershipClaimRecord>,
+    ResourceOwnershipRepositoryError,
+    TransactionScope
+  >;
 }
 
 export class ResourceOwnershipRepository extends Context.Service<
