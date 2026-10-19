@@ -31,6 +31,7 @@ import {
   Actor,
   CommandId,
   decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
+  type EffectivePolicySummaryV1,
   ExecutionId,
   encodeEffectivePolicySummaryV1,
   encodeNetworkPolicyV1,
@@ -39,11 +40,14 @@ import {
   PermissionGrantId,
   Principal,
   ProjectId,
+  ProviderTurnId,
   parse,
   type SandboxAuthorityBundleSnapshotV2,
   type SandboxPolicyDecision,
   type SandboxPolicyDecisionCommittedInternalV1,
   SessionId,
+  Sha256,
+  ToolInvocationId,
   WorkId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
@@ -559,7 +563,7 @@ describe("P2-014 driver / dispatch / safety", () => {
       const decisionCommandId = parse(CommandId)(
         "cmd_018f2b3c-4d5e-7abc-8def-0123456789a2",
       );
-      const snapshot = {
+      const snapshot: EffectivePolicySummaryV1 = {
         version: 1 as const,
         kind: "TrustedLocalUnconfinedV1" as const,
         projectId,
@@ -622,10 +626,10 @@ describe("P2-014 driver / dispatch / safety", () => {
           "pgr_018f2b3c-4d5e-7abc-8def-0123456789a2",
         ),
         grantPermissionCommandId: decisionCommandId,
-        grantIssuerPrincipal: "user:operator",
+        grantIssuerPrincipal: parse(Principal)("user:operator"),
         operatorConfigRevision: 1,
         operatorConfigDigest: "3".repeat(64),
-        actorPrincipal: "user:operator",
+        actorPrincipal: parse(Principal)("user:operator"),
         decisionCommandId,
         issuedAt: "2026-10-19T00:00:00.000Z",
         expiresAt: "2099-01-01T00:00:00.000Z",
@@ -637,14 +641,18 @@ describe("P2-014 driver / dispatch / safety", () => {
         executionId,
         episodeBinding: workEpisode(workId),
         expectedEpisodeRevision: 0,
-        invocationId: "tin_currentness_test",
-        providerTurnId: "ptn_currentness_test",
+        invocationId: parse(ToolInvocationId)(
+          "tin_018f2b3c-4d5e-7abc-8def-0123456789b1",
+        ),
+        providerTurnId: parse(ProviderTurnId)(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789b1",
+        ),
         logicalStepNo: 1,
         repairAttempt: 0,
         logicalActionId: "act_currentness_test",
         actionIndex: 0,
         callRef: "call_currentness_test",
-        recoveryBindingDigest: "c".repeat(64),
+        recoveryBindingDigest: parse(Sha256)("c".repeat(64)),
       } satisfies SandboxPolicyRequirementV1;
       let requirementReads = 0;
       let decisionReads = 0;
@@ -865,10 +873,10 @@ describe("P2-014 driver / dispatch / safety", () => {
           "pgr_018f2b3c-4d5e-7abc-8def-0123456789a3",
         ),
         grantPermissionCommandId: decisionCommandId,
-        grantIssuerPrincipal: "user:operator",
+        grantIssuerPrincipal: parse(Principal)("user:operator"),
         operatorConfigRevision: 1,
         operatorConfigDigest: "3".repeat(64),
-        actorPrincipal: "user:operator",
+        actorPrincipal: parse(Principal)("user:operator"),
         decisionCommandId,
         issuedAt: "2026-10-19T00:00:00.000Z",
         expiresAt: "2099-01-01T00:00:00.000Z",
@@ -880,14 +888,18 @@ describe("P2-014 driver / dispatch / safety", () => {
         executionId,
         episodeBinding: workEpisode(workId),
         expectedEpisodeRevision: 0,
-        invocationId: "tin_currentness_os_test",
-        providerTurnId: "ptn_currentness_os_test",
+        invocationId: parse(ToolInvocationId)(
+          "tin_018f2b3c-4d5e-7abc-8def-0123456789b2",
+        ),
+        providerTurnId: parse(ProviderTurnId)(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789b2",
+        ),
         logicalStepNo: 1,
         repairAttempt: 0,
         logicalActionId: "act_currentness_os_test",
         actionIndex: 0,
         callRef: "call_currentness_os_test",
-        recoveryBindingDigest: "c".repeat(64),
+        recoveryBindingDigest: parse(Sha256)("c".repeat(64)),
       } satisfies SandboxPolicyRequirementV1;
       let requirementReads = 0;
       let decisionReads = 0;

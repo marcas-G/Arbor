@@ -25,6 +25,8 @@
 - [x] F23/P6 operator-only 离线 Inbox 重建实现、模块资格与独立复审
 - [ ] AH10 剩余控制动作的崩溃恢复闭合
 - [ ] Sandbox Policy Candidate Read Model V5-A：实施 token `AUTHORIZE_SANDBOX_POLICY_CANDIDATE_READMODEL_V5_IMPLEMENTATION` 已给出；固定计划 v2 Git blob SHA-256 为 `B99C2682F30F277AA9E3C7C135E4A8A2C5C5811C3B44C380604ABB3B6F1CC3B9`。V5-A 基础代码已并入统一候选并通过 4 文件/45 测试、build、typecheck、Biome、diff check；待独立复审后按打勾规则关闭。P5/P4/P2/P1/P10/P13、生产注入和双 daemon 资格为后续切片，不在本次 V5-A 完成声明内。
+- [x] Sandbox Policy Candidate Read Model V5-B P2 pre-dispatch gate：TrustedLocal/OsEnforced 的完整 V2 bundle 当前性于 lease/dispatch 前核对；13/13 模块测试、build/typecheck/Biome 与独立复审 B0/B1/B2=0，见 `planning/results/sandbox-policy-candidate-readmodel-v5-b-integration-review.record.md`。P4 最终 effect gate、双 daemon 与其余 V5 切片仍开放。
+- [ ] Sandbox Policy Candidate Profile Binding Digest V6：接受的 owner 设计落地已并入统一候选；每个 candidate 独有 handle-binding digest 的 DTO、P10/P11 投影和 P13 选择映射尚未实施，本次不声明 V6 实现完成。
 - [ ] Native OS sandbox 生产实现与跨平台资格：Wave D 仍 PARTIAL；待 production `sandboxProcessPolicy` wiring 与真实 SQLite 双 daemon 资格。V3/high-water V2/candidate-read V5 owner landing 的独立 post-landing review 已 PASS（B0/B1/B2 = 0），记录见统一 checkpoint 引用的 review result。首决策 V5 已人工接受并落地；T3 enforcement qualification 未开始。T2 provider reviews 有 thread-local scoped PASS 记录，正式复审证据待落盘。
 
 ## 最终集成检查
