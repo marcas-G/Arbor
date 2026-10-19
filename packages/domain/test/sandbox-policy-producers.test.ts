@@ -5,6 +5,7 @@ import {
   decodeCanonicalSandboxAuthorityAuditRecordV2,
   decodeCanonicalSandboxAuthorityBundleV2,
   decodeCanonicalSandboxAuthorityHighWaterV2,
+  decodeCanonicalSandboxEnforcementRuleSetV1,
   decodeCanonicalSandboxOperatorPolicyConfigV1,
   decodeCanonicalSandboxTargetRefV1,
   decodeNetworkBrokerControlsV1,
@@ -13,12 +14,14 @@ import {
   encodeSandboxAuthorityAuditRecordV2,
   encodeSandboxAuthorityBundleV2,
   encodeSandboxAuthorityHighWaterV2,
+  encodeSandboxEnforcementRuleSetV1,
   encodeSandboxOperatorPolicyConfigV1,
   encodeSandboxTargetRefV1,
   networkBrokerControlsV1ForMode,
   Principal,
   parse,
   resourceBoundaryDigestOfV1,
+  sandboxEnforcementRuleSetV1ForProvider,
   sandboxTargetRefOfRegionV1,
   targetRefDigestV1,
 } from "../src/index.js";
@@ -74,6 +77,54 @@ const operatorConfig: SandboxOperatorPolicyConfigV1 = {
 };
 
 describe("sandbox policy producer codecs", () => {
+  it("pins the full canonical Linux rule-set bytes and digest", () => {
+    const ruleSet = sandboxEnforcementRuleSetV1ForProvider("linux-bwrap");
+    expect(ruleSet).toBeDefined();
+    if (ruleSet === undefined) throw new Error("Linux rule set missing");
+    const bytes = encodeSandboxEnforcementRuleSetV1(ruleSet);
+    expect(bytes).toBe(
+      '{"version":1,"networkPolicyCodecVersion":1,"filesystemRuleVersion":1,"environmentRuleVersion":1,"processTreeRuleVersion":1,"resourceLimitRuleVersion":1,"brokerProtocolVersion":1,"addressClassificationSnapshotId":"iana-special-purpose-2025-10-09+sha256:86583d4bbc916863208c3fbb5a75ee3e6500dd12aa4f9bd3a72caaacb4a3da6a","pref64PolicyVersion":1,"redirectPolicyVersion":1,"platformPrimitiveSetId":"linux-bwrap-user-mount-pid-netns-cgroupv2-seccomp-v1"}',
+    );
+    expect(hash(bytes)).toBe(
+      "98f97fc2dfd5159d73f21780d526d01a07085bbfca35b50cfff3c013d319e584",
+    );
+    expect(decodeCanonicalSandboxEnforcementRuleSetV1(bytes)).toEqual(ruleSet);
+    expect(
+      decodeCanonicalSandboxEnforcementRuleSetV1(bytes.replace(",", ", ")),
+    ).toBeUndefined();
+    expect(
+      decodeCanonicalSandboxEnforcementRuleSetV1(
+        bytes.replace(
+          '"platformPrimitiveSetId":',
+          '"unknown":1,"platformPrimitiveSetId":',
+        ),
+      ),
+    ).toBeUndefined();
+    expect(
+      sandboxEnforcementRuleSetV1ForProvider("unregistered-provider"),
+    ).toBeUndefined();
+    expect(sandboxEnforcementRuleSetV1ForProvider("toString")).toBeUndefined();
+    expect(
+      [
+        "linux-bwrap",
+        "macos-seatbelt",
+        "windows-restricted-appcontainer-job",
+        "windows-mxc",
+        "windows-elevated-dedicated-user",
+      ].map(
+        (providerId) =>
+          sandboxEnforcementRuleSetV1ForProvider(providerId)
+            ?.platformPrimitiveSetId,
+      ),
+    ).toEqual([
+      "linux-bwrap-user-mount-pid-netns-cgroupv2-seccomp-v1",
+      "macos-seatbelt-denydefault-processgroup-rlimits-v1",
+      "windows-restricted-token-lowintegrity-appcontainer-job-namedpipe-v1",
+      "windows-mxc-probe-only-v1",
+      "windows-elevated-dedicated-user-probe-only-v1",
+    ]);
+  });
+
   it("uses the frozen ResourceBoundaryDigest revision-zero KAT", () => {
     const preimage = encodeResourceBoundaryDigestInputV1({
       version: 1,
