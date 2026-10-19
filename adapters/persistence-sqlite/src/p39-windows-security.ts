@@ -1,7 +1,10 @@
 import { execFileSync } from "node:child_process";
+import { lstatSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 export const P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS = 30_000;
+export const P39_WINDOWS_POWERSHELL_EXECUTABLE =
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 const atomicMoveCompleteMarker = "P39_ATOMIC_WRITE_THROUGH_MOVE_OK";
 const atomicMoveScript = [
   "$ErrorActionPreference='Stop'",
@@ -35,14 +38,19 @@ const executeProcess: P39WindowsSecurityQueryExecutor = (
   args,
   options,
 ) => {
+  if (
+    process.platform === "win32" &&
+    (command !== P39_WINDOWS_POWERSHELL_EXECUTABLE ||
+      !isP39WindowsPowerShellExecutableAvailable())
+  ) {
+    throw new Error("P39 inbox Windows PowerShell is unavailable or unsafe");
+  }
   const environment = { ...process.env };
   if (process.platform === "win32") {
-    const systemRoot =
-      environment.WINDIR ?? environment.SystemRoot ?? "C:\\Windows";
-    // Keep command resolution on inbox Windows PowerShell, not a shadow copy
-    // supplied by PowerShell Core or a test runner.
+    // Keep module discovery under the same fixed inbox installation; do not
+    // derive executable or module paths from mutable environment variables.
     environment.PSModulePath = join(
-      systemRoot,
+      "C:\\Windows",
       "System32",
       "WindowsPowerShell",
       "v1.0",
@@ -52,6 +60,58 @@ const executeProcess: P39WindowsSecurityQueryExecutor = (
   return execFileSync(command, [...args], { ...options, env: environment });
 };
 
+export interface P39WindowsExecutablePathOperations {
+  readonly lstat: (path: string) => {
+    readonly isDirectory: () => boolean;
+    readonly isFile: () => boolean;
+    readonly isSymbolicLink: () => boolean;
+  };
+  readonly realpath: (path: string) => string;
+}
+
+/** Validate the fixed inbox executable and every parent component. Windows
+ * environment variables and PATH are deliberately not consulted. The
+ * injectable filesystem seam makes missing/reparse cases testable. */
+export const isP39WindowsPowerShellPathSafe = (
+  operations: P39WindowsExecutablePathOperations = {
+    lstat: lstatSync,
+    realpath: realpathSync.native,
+  },
+): boolean => {
+  const components = [
+    "C:\\",
+    "C:\\Windows",
+    "C:\\Windows\\System32",
+    "C:\\Windows\\System32\\WindowsPowerShell",
+    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0",
+    P39_WINDOWS_POWERSHELL_EXECUTABLE,
+  ];
+  try {
+    for (let index = 0; index < components.length; index += 1) {
+      const component = components[index];
+      if (component === undefined) return false;
+      const stat = operations.lstat(component);
+      if (stat.isSymbolicLink()) return false;
+      if (
+        index === components.length - 1 ? !stat.isFile() : !stat.isDirectory()
+      ) {
+        return false;
+      }
+    }
+    return (
+      operations.realpath(P39_WINDOWS_POWERSHELL_EXECUTABLE).toLowerCase() ===
+      P39_WINDOWS_POWERSHELL_EXECUTABLE.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+};
+
+/** Validate the fixed inbox executable on Windows; other platforms do not
+ * claim to provide the Windows security probe. */
+export const isP39WindowsPowerShellExecutableAvailable = (): boolean =>
+  process.platform === "win32" && isP39WindowsPowerShellPathSafe();
+
 /** Run a bounded Windows P39 owner/ACL/filesystem probe. Errors (including
  * timeout) intentionally propagate so callers can fail closed. The injectable
  * executor keeps the timeout boundary testable without sleeping for 30s. */
@@ -60,7 +120,7 @@ export const executeP39WindowsSecurityQuery = (
   executor: P39WindowsSecurityQueryExecutor = executeProcess,
 ): string =>
   executor(
-    "powershell.exe",
+    P39_WINDOWS_POWERSHELL_EXECUTABLE,
     ["-NoProfile", "-NonInteractive", "-Command", script],
     {
       encoding: "utf8",
@@ -83,12 +143,11 @@ export const moveP39ProtectedFileAtomically = (
   const destination = resolve(destinationPath);
   if (dirname(source).toLowerCase() !== dirname(destination).toLowerCase())
     return false;
-  const systemRoot =
-    process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows";
+  if (!isP39WindowsPowerShellExecutableAvailable()) return false;
   const environment = {
     ...process.env,
     PSModulePath: join(
-      systemRoot,
+      "C:\\Windows",
       "System32",
       "WindowsPowerShell",
       "v1.0",
@@ -102,7 +161,7 @@ export const moveP39ProtectedFileAtomically = (
   };
   try {
     const output = execFileSync(
-      "powershell.exe",
+      P39_WINDOWS_POWERSHELL_EXECUTABLE,
       ["-NoProfile", "-NonInteractive", "-Command", atomicMoveScript],
       {
         encoding: "utf8",

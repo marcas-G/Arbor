@@ -5,6 +5,8 @@ import {
 } from "../../../tests/support/p39-windows-deployment-test.js";
 import {
   executeP39WindowsSecurityQuery,
+  isP39WindowsPowerShellPathSafe,
+  P39_WINDOWS_POWERSHELL_EXECUTABLE,
   P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
   type P39WindowsSecurityQueryExecutor,
   p39WindowsProtectedPathsScript,
@@ -50,7 +52,7 @@ describe("P39 Windows security query timeout", () => {
     expect(validateP39WindowsProtectedPaths(paths, executor)).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
-      command: "powershell.exe",
+      command: P39_WINDOWS_POWERSHELL_EXECUTABLE,
       args: expect.arrayContaining([
         "-NoProfile",
         "-NonInteractive",
@@ -71,6 +73,50 @@ describe("P39 Windows security query timeout", () => {
     expect(script).toContain("ReparsePoint");
     expect(script).toContain("S-1-5-18");
     expect(script).toContain("S-1-5-32-544");
+  });
+
+  it("uses the fixed inbox executable even when PATH contains a shadow powershell", () => {
+    const originalPath = process.env.PATH;
+    process.env.PATH = `C:\\attacker-shadow${originalPath ? `;${originalPath}` : ""}`;
+    let invokedCommand: string | undefined;
+    try {
+      const output = executeP39WindowsSecurityQuery("probe", (command) => {
+        invokedCommand = command;
+        return "P39_FIXED_BINARY";
+      });
+      expect(output).toBe("P39_FIXED_BINARY");
+      expect(invokedCommand).toBe(P39_WINDOWS_POWERSHELL_EXECUTABLE);
+      expect(invokedCommand).not.toBe("powershell.exe");
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+    }
+  });
+
+  it("fails closed when the fixed inbox binary is missing or any path component is a reparse point", () => {
+    const missingFixedBinary = isP39WindowsPowerShellPathSafe({
+      lstat: (path) => {
+        if (path === P39_WINDOWS_POWERSHELL_EXECUTABLE) {
+          throw new Error("fixed inbox binary missing");
+        }
+        return {
+          isDirectory: () => true,
+          isFile: () => false,
+          isSymbolicLink: () => false,
+        };
+      },
+      realpath: (path) => path,
+    });
+    const reparseAncestor = isP39WindowsPowerShellPathSafe({
+      lstat: (path) => ({
+        isDirectory: () => true,
+        isFile: () => false,
+        isSymbolicLink: () => path === "C:\\Windows\\System32",
+      }),
+      realpath: (path) => path,
+    });
+    expect(missingFixedBinary).toBe(false);
+    expect(reparseAncestor).toBe(false);
   });
 
   it("fails closed when a batched Windows security probe errors or returns an unexpected result", () => {

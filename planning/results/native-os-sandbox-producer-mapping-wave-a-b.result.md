@@ -199,3 +199,28 @@ changed-file Biome PASS; P39/native-spawn architecture 24/24 PASS; offline
 provisioning CLI/failure tests 3/3 PASS; Windows before/after high-water
 process-kill cases 2/2 PASS; `git diff --check` PASS. Full `pnpm test` remains
 unrun.
+
+## P39 fixed PowerShell executable follow-up
+
+P39 query and atomic MoveFileEx calls now invoke only the fixed inbox binary at
+`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`; module discovery
+is fixed to the corresponding inbox `Modules` directory. `WINDIR`,
+`SystemRoot`, `PATH`, and the current directory cannot select the executable.
+Before production invocation, lstat checks every fixed path component for
+symlink/reparse status and expected directory/file type, then realpath must
+equal the fixed path. Missing or redirected installations fail closed. The
+architecture guard locks the executable token and exact P39 source hash.
+
+The crash matrix now uses the production protected-file adapter and P39
+write-through move, not a test-local atomic-write imitation. After each real
+child kill, a separate process reconstructs the production file adapter and
+V2 loader and verifies Unavailable before the high-water transition or
+Available after it. The PATH-shadow unit case verifies that the selected spawn
+target remains the fixed absolute path when PATH begins with a shadow
+directory; an injected filesystem seam verifies missing binary and reparse
+ancestor fail-closed behavior.
+
+Follow-up verification: P39 query/timeout 9/9, production protected-file
+provisioning suite including real process kill + restart loader 5/5,
+architecture 24/24, build/typecheck/Biome PASS. Full `pnpm test` remains
+unrun.
