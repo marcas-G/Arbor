@@ -4,7 +4,9 @@
 **Accepted proposal SHA-256:** `5CF4E41F1940F7ABB6C61D5B963A9E9D687D967AC4C72EE7A31E18424873486A`
 **Base commit:** `8cd0a94653f1278a194cf23e63503bf154885373`
 **Branch:** `codex/native-sandbox-v21-owner-landing`
-**Post-landing review:** pending; separate and read-only.
+**Post-landing review:** PASS (B0 = 0, B1 = 0, B2 = 0), read-only; see
+`planning/results/native-os-sandbox-v21-producer-and-candidate-read-postlanding-review.result.md`,
+raw SHA-256 `E35DEC30C5CE09DD2CD0DC34B77B42025FBCA86B50CB2B1688A3854BE48B3002`.
 
 ## Owner reconciliation
 
@@ -102,12 +104,14 @@ Independent review records its own postimage verification separately.
 
 ## Verification boundary
 
-Before commit, verify `git diff --check`, owner/hash coverage, current
-references, authority/event/persistence boundaries, P9/P10 semantics,
-DTO/source literals, version consistency, and absence of conflict markers.
-Independent post-review must verify cross-references, no-P40/no-persistent-
-Attention boundaries, and absence of code/tests/migrations/DB or release
-changes. Implementation remains gated on that review.
+Before commit, `git diff --check`, owner/hash coverage, current references,
+authority/event/persistence boundaries, P9/P10 semantics, DTO/source literals,
+version consistency, and absence of conflict markers were checked. Independent
+post-review verified cross-references, no-P40/no-persistent-Attention
+boundaries, owner/preimage/postimage hash reconciliation, and absence of
+code/tests/migrations/DB or release changes; result is recorded in the linked
+read-only review artifact above. Review is design-consistency evidence only,
+not implementation/test/database/release evidence.
 
 ## Accepted V3 producer-mapping supplemental landing
 
@@ -118,7 +122,8 @@ changes. Implementation remains gated on that review.
 - **Proposal commit:** `861a7280d6bdeb4486db18ed3a1c9182187bda81`
 - **Supplemental owner preimage:** `e99e1c6e375bd92e04ec94a0bc5cdb9d4cd873e8`; main candidate `21863de2222552d2c0aeb8e93e21e86da226afc6` has byte-identical base blobs for every listed owner.
 - **Supplemental branch:** `codex/native-sandbox-v21-owner-landing`
-- **Independent review:** pending.
+- **Independent review:** PASS (B0 = 0, B1 = 0, B2 = 0); see the linked
+  combined review record above.
 
 This landing applies only the two V3 corrections over the fixed V2 producer
 package. It preserves object-valued V21 SandboxTargetRef, boundary and P4
@@ -158,7 +163,7 @@ SHA-256 values are exact file bytes after V3 landing:
 
 | Record | Raw SHA-256 |
 |---|---|
-| `planning/results/native-os-sandbox-v21-producer-mapping-closure-acceptance.record.md` | `503DC1FBE35CF2E3668438861D9F9F32DCD2CA92B8ED0EE6A8DD8590E95A107D` |
+| `planning/results/native-os-sandbox-v21-producer-mapping-closure-acceptance.record.md` | `6C062B955EDEECCC1E8EC6B3576FC7B115884E8A6CA67EDEB2835B30F18CBDB7` |
 
 No source code, tests, migration definitions/registration, database files,
 deployment, or release artifacts are present in this supplemental landing.
@@ -219,11 +224,13 @@ P10 durable state or new scenario class is introduced.
 
 | Record | Raw SHA-256 |
 |---|---|
-| `planning/results/native-os-sandbox-v21-producer-mapping-closure-acceptance.record.md` | `503DC1FBE35CF2E3668438861D9F9F32DCD2CA92B8ED0EE6A8DD8590E95A107D` |
-| `planning/results/native-os-sandbox-v21-producer-mapping-highwater-amendment-v2-acceptance.record.md` | `353C9805E038B9401B426219F773FAC7F614D5343B7DECCB9D6530CD398168BF` |
-| `planning/results/sandbox-policy-candidate-readmodel-v5-acceptance.record.md` | `A28620965BA1A1974DC81FFE387F4AC5C07AF147EBC5A74262229A8509B976F2` |
+| `planning/results/native-os-sandbox-v21-producer-mapping-closure-acceptance.record.md` | `6C062B955EDEECCC1E8EC6B3576FC7B115884E8A6CA67EDEB2835B30F18CBDB7` |
+| `planning/results/native-os-sandbox-v21-producer-mapping-highwater-amendment-v2-acceptance.record.md` | `73FC6B5E10A64016D66FF0D0B21153F3CDEFC70695710BDF21E303D4C1035D9B` |
+| `planning/results/sandbox-policy-candidate-readmodel-v5-acceptance.record.md` | `4EBE6FF5F5852753C1EEC37E8C6650FE80155502BF1C61D3886083525726462C` |
+| `planning/results/native-os-sandbox-v21-producer-and-candidate-read-postlanding-review.result.md` | `E35DEC30C5CE09DD2CD0DC34B77B42025FBCA86B50CB2B1688A3854BE48B3002` |
 
 The manifest itself is not self-hashed. Independent post-landing review is
-pending. This cumulative landing contains only design/planning records; no
-source code, tests, migration definitions/registration, database files,
-deployment, or release artifacts.
+PASS (B0 = 0, B1 = 0, B2 = 0); see the linked combined result. This cumulative
+landing contains only design/planning records; no source code, tests,
+migration definitions/registration, database files, deployment, or release
+artifacts.

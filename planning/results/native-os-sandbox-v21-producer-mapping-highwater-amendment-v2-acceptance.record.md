@@ -29,12 +29,16 @@ unavailable. V1 cannot authorize decisions after V2 adoption.
 All other V3 clauses remain unchanged, including the literal TrustedLocal
 runtime version and Pref64 control. This amendment adds no schema, migration,
 implementation-authorization token, database write, code, test, or release
-scope. The existing implementation authorization remains gated on exact
-owner landing and independent post-review.
+scope. The combined V3/HWA V2/Candidate V5 owner landing has passed
+independent post-review, satisfying its design-consistency gate; this
+amendment adds no implementation authorization.
 
 ## Landing scope and review
 
 P5/01 owns the exact old-value retention, V2 source/high-water matching and
 crash behavior. The existing `SandboxAuthorityHighWaterV2` canonical example,
 fields, key order, and digest codec are retained verbatim. Other V3 owners are
-unchanged by this amendment. Independent post-landing review is pending.
+unchanged by this amendment. Independent post-landing review is PASS (B0 =
+0, B1 = 0, B2 = 0), recorded in
+`planning/results/native-os-sandbox-v21-producer-and-candidate-read-postlanding-review.result.md`,
+raw SHA-256 `E35DEC30C5CE09DD2CD0DC34B77B42025FBCA86B50CB2B1688A3854BE48B3002`.
