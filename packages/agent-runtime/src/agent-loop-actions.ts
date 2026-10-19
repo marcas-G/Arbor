@@ -12,7 +12,11 @@ import type {
   TerminalActionDenial,
   WorkRevision,
 } from "@arbor/domain";
-import { workEpisode as exactWorkEpisode } from "@arbor/domain";
+import {
+  encodeExecutionEpisodeBinding,
+  workEpisode as exactWorkEpisode,
+  executionEpisode,
+} from "@arbor/domain";
 import {
   type ControlBasis,
   decodeTurn,
@@ -34,11 +38,17 @@ import type {
   RecoveryBindingPolicyRevisions,
   RecoveryBindingSourceIdentity,
   RuntimeSafetyObservation,
+  SandboxPolicyDecisionStoreService,
   SandboxProviderUnavailableOutcome,
+  SandboxProviderUnavailableStoreService,
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import {
+  SandboxPolicyDecisionStore,
+  SandboxProviderUnavailableStore,
+  sha256Hex,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
   MAX_TURNS,
@@ -66,6 +76,140 @@ const actionRejectionObservation = (
   }),
   truncated: false,
 });
+
+const sandboxUnavailableDisposition = (value: unknown) => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
+  const row = value as Record<string, unknown>;
+  const keys = [
+    "_tag",
+    "attentionFactId",
+    "invocationId",
+    "policyRevision",
+    "policyDigest",
+    "profile",
+    "providerId",
+    "providerVersion",
+    "capabilityRevision",
+    "probeEvidenceRef",
+    "failureCode",
+  ];
+  if (
+    Object.keys(row).length !== keys.length ||
+    keys.some((key) => !Object.hasOwn(row, key)) ||
+    row._tag !== "SandboxUnavailableV1" ||
+    typeof row.attentionFactId !== "string" ||
+    row.attentionFactId.length === 0 ||
+    typeof row.invocationId !== "string" ||
+    row.invocationId.length === 0 ||
+    !Number.isSafeInteger(row.policyRevision) ||
+    (row.policyRevision as number) < 1 ||
+    typeof row.policyDigest !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(row.policyDigest) ||
+    !["ReadOnly", "WorkspaceWrite"].includes(String(row.profile)) ||
+    typeof row.providerId !== "string" ||
+    row.providerId.length === 0 ||
+    typeof row.providerVersion !== "string" ||
+    row.providerVersion.length === 0 ||
+    typeof row.capabilityRevision !== "string" ||
+    row.capabilityRevision.length === 0 ||
+    (row.probeEvidenceRef !== null &&
+      (typeof row.probeEvidenceRef !== "string" ||
+        row.probeEvidenceRef.length === 0)) ||
+    typeof row.failureCode !== "string" ||
+    row.failureCode.length === 0
+  ) {
+    return undefined;
+  }
+  return {
+    attentionFactId: row.attentionFactId,
+    invocationId: row.invocationId,
+    policyRevision: row.policyRevision as number,
+    policyDigest: row.policyDigest,
+    profile: row.profile as "ReadOnly" | "WorkspaceWrite",
+    providerId: row.providerId,
+    providerVersion: row.providerVersion,
+    capabilityRevision: row.capabilityRevision,
+    probeEvidenceRef: row.probeEvidenceRef as string | null,
+    failureCode: row.failureCode,
+  };
+};
+
+/** A P9 SandboxUnavailableV1 action is the sole TerminalRejected shape which
+ * may close an otherwise effects-committed Step. It is resumable only after
+ * the immutable fact remains exact and a strictly higher, current P1 decision
+ * is joined to its canonical committed result for the same Episode. */
+export const verifySandboxUnavailableStepActionResume = (input: {
+  readonly execution: Execution;
+  readonly step: AgentLoopStepRecord;
+  readonly action: AgentLoopStepActionRecord;
+  readonly facts: SandboxProviderUnavailableStoreService;
+  readonly decisions: SandboxPolicyDecisionStoreService;
+  readonly now: string;
+}): Effect.Effect<boolean, unknown, import("@arbor/ports").TransactionScope> =>
+  Effect.gen(function* () {
+    const disposition = sandboxUnavailableDisposition(input.action.disposition);
+    const episode = executionEpisode(input.execution);
+    if (
+      disposition === undefined ||
+      episode === undefined ||
+      input.action.state !== "TerminalRejected" ||
+      input.action.resultRef !== disposition.attentionFactId ||
+      input.action.observationSourceRef !== undefined ||
+      input.action.actionIndex + 1 !== input.step.nextActionIndex ||
+      input.step.state !== "StepEffectsCommitted" ||
+      !Number.isFinite(Date.parse(input.now))
+    ) {
+      return false;
+    }
+    const fact = yield* input.facts.findByExecutionAndRevision(
+      input.execution.executionId,
+      disposition.policyRevision,
+    );
+    const current = yield* input.decisions.findCurrentForExecution(
+      input.execution.projectId,
+      input.execution.workspaceId,
+      input.execution.executionId,
+    );
+    if (fact === undefined || Option.isNone(current)) return false;
+    const { decision, result } = current.value;
+    const snapshot = result.effectivePolicySnapshot;
+    const episodeJson = encodeExecutionEpisodeBinding(episode);
+    return (
+      fact.attentionFactId === disposition.attentionFactId &&
+      fact.executionId === input.execution.executionId &&
+      fact.projectId === input.execution.projectId &&
+      fact.workspaceId === input.execution.workspaceId &&
+      encodeExecutionEpisodeBinding(fact.episodeBinding) ===
+        encodeExecutionEpisodeBinding(episode) &&
+      encodeExecutionEpisodeBinding(decision.episodeBinding) === episodeJson &&
+      fact.policyRevision === disposition.policyRevision &&
+      fact.policyDigest === disposition.policyDigest &&
+      fact.policyRevision < decision.policyRevision &&
+      result.projectId === input.execution.projectId &&
+      result.workspaceId === input.execution.workspaceId &&
+      result.executionId === input.execution.executionId &&
+      result.policyRevision === decision.policyRevision &&
+      result.policyDigest === decision.policyDigest &&
+      encodeExecutionEpisodeBinding(result.episodeBinding) === episodeJson &&
+      snapshot.kind === "OsEnforced" &&
+      snapshot.policyRevision === decision.policyRevision &&
+      snapshot.profile === decision.profile &&
+      snapshot.providerId === decision.providerId &&
+      snapshot.expiresAt === decision.expiresAt &&
+      snapshot.projectId === input.execution.projectId &&
+      snapshot.workspaceId === input.execution.workspaceId &&
+      snapshot.executionId === input.execution.executionId &&
+      encodeExecutionEpisodeBinding(snapshot.episodeBinding) ===
+        encodeExecutionEpisodeBinding(episode) &&
+      fact.profileId === disposition.profile &&
+      fact.providerId === disposition.providerId &&
+      fact.providerVersion === disposition.providerVersion &&
+      fact.probeEvidenceRef === disposition.probeEvidenceRef &&
+      fact.failureCode === disposition.failureCode &&
+      Date.parse(decision.expiresAt) > Date.parse(input.now)
+    );
+  });
 
 export const recoveryBindingIdentityFor = (input: {
   readonly step: AgentLoopStepRecord | undefined;
@@ -449,6 +593,12 @@ export const executeAgentLoopActions = (
   } = dependencies;
 
   return Effect.gen(function* () {
+    const sandboxUnavailableFacts = yield* Effect.serviceOption(
+      SandboxProviderUnavailableStore,
+    );
+    const sandboxPolicyDecisions = yield* Effect.serviceOption(
+      SandboxPolicyDecisionStore,
+    );
     let currentLoopStep = dependencies.currentLoopStep;
     const observations: Array<{
       readonly source: "Runtime" | "Tool";
@@ -493,7 +643,9 @@ export const executeAgentLoopActions = (
               step.decodedOutputHash !== expectedOutputHash ||
               step.decoderVersion !== "decode-turn-v1" ||
               step.modelOutputSessionSequence === undefined ||
-              step.nextActionIndex !== decodedOutput.toolInvocations.length
+              !Number.isSafeInteger(step.nextActionIndex) ||
+              step.nextActionIndex < 0 ||
+              step.nextActionIndex > decodedOutput.toolInvocations.length
             ) {
               return undefined;
             }
@@ -596,8 +748,34 @@ export const executeAgentLoopActions = (
               return undefined;
             }
             const actions = yield* loopSteps.listActions(step.identity);
+            const terminalSandboxActions = actions.filter(
+              (action) =>
+                action.state === "TerminalRejected" &&
+                typeof action.disposition === "object" &&
+                action.disposition !== null &&
+                "_tag" in action.disposition &&
+                action.disposition._tag === "SandboxUnavailableV1",
+            );
+            const hasSandboxUnavailableResume =
+              terminalSandboxActions.length === 1 &&
+              Option.isSome(sandboxUnavailableFacts) &&
+              Option.isSome(sandboxPolicyDecisions) &&
+              actions.length === step.nextActionIndex &&
+              actions.at(-1) === terminalSandboxActions[0] &&
+              step.nextActionIndex ===
+                (terminalSandboxActions[0]?.actionIndex ?? -2) + 1 &&
+              (yield* verifySandboxUnavailableStepActionResume({
+                execution: input.execution,
+                step,
+                action: terminalSandboxActions[0] as AgentLoopStepActionRecord,
+                facts: sandboxUnavailableFacts.value,
+                decisions: sandboxPolicyDecisions.value,
+                now: yield* now(),
+              }));
             if (
-              actions.length !== decodedOutput.toolInvocations.length ||
+              actions.length !== step.nextActionIndex ||
+              (!hasSandboxUnavailableResume &&
+                actions.length !== decodedOutput.toolInvocations.length) ||
               new Set(actions.map((action) => action.actionIndex)).size !==
                 actions.length
             ) {
@@ -605,7 +783,7 @@ export const executeAgentLoopActions = (
             }
             for (
               let actionIndex = 0;
-              actionIndex < decodedOutput.toolInvocations.length;
+              actionIndex < actions.length;
               actionIndex += 1
             ) {
               const invocation = decodedOutput.toolInvocations[actionIndex];
@@ -649,11 +827,13 @@ export const executeAgentLoopActions = (
                 action.routeKind !== route?.route ||
                 action.actionKind !== invocation.toolName ||
                 action.inputHash !== sha256Hex(invocation.argumentsJson) ||
-                // StepEffectsCommitted is reachable only after the action loop
-                // completed without an action-settling disposition.
-                action.state !== "Applied" ||
-                action.resultRef === undefined ||
-                action.observationSourceRef === undefined
+                (action.state === "Applied"
+                  ? action.resultRef === undefined ||
+                    action.observationSourceRef === undefined
+                  : !(
+                      hasSandboxUnavailableResume &&
+                      action === terminalSandboxActions[0]
+                    ))
               ) {
                 return undefined;
               }
