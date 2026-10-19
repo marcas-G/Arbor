@@ -50,3 +50,13 @@ Remaining implementation slices include the offline V1→V2 operator transition
 and process-kill proof, P11 complete boundary/mount/access producer, production
 preparation/materialization with exact CAS/audit refs, and P1/P4/P9 consumer
 convergence. No Supported OS provider or fallback was introduced.
+
+## B review follow-up — V1 forensic path is read-only
+
+The V1 forensic loader accepts only the narrowed
+`SandboxAuthorityForensicReadPort` (`readVerifiedSandboxAuthorityBundle` and
+`readSandboxAuthorityHighWater`). It does not accept audit or high-water commit
+capabilities, emits no audit write, and fails closed when source is ahead of
+the existing V1 high-water. The prior high-water advancement behavior is
+removed; V1→V2 transition remains offline-only. Architecture and type-directed
+tests guard this no-write boundary.

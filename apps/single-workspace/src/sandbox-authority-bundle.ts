@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import type {
-  SandboxAuthorityAuditRecordV1,
   SandboxAuthorityAuditRecordV2,
   SandboxAuthorityBundleSnapshotV1,
   SandboxAuthorityBundleSnapshotV2,
@@ -326,93 +325,42 @@ export type SandboxAuthoritySnapshotV1ForensicLoadResult =
       readonly failure: SandboxAuthorityLoadErrorV1;
     };
 
+export type SandboxAuthorityForensicReadPort = Pick<
+  TrustedHostConfigurationSourceService,
+  "readVerifiedSandboxAuthorityBundle" | "readSandboxAuthorityHighWater"
+>;
+
 export class SandboxAuthoritySnapshot extends Context.Service<
   SandboxAuthoritySnapshot,
   SandboxAuthoritySnapshotV2LoadResult
 >()("arbor/SandboxAuthoritySnapshot") {}
 
-const auditRecord = (
-  now: string,
-  outcome: SandboxAuthorityAuditRecordV1["outcome"],
-  detail: SandboxAuthorityLoadErrorV1 | null,
-  loaded?: ReturnType<typeof decodeBundle>,
-): SandboxAuthorityAuditRecordV1 => ({
-  version: 1,
-  outcome,
-  detail,
-  sourceIdentity: loaded?.bundle.sourceIdentity ?? null,
-  bundleRevision: loaded?.bundle.bundleRevision ?? null,
-  bundleDigest: loaded?.bundleDigest ?? null,
-  issuerConfigRevision: loaded?.bundle.issuerConfigRevision ?? null,
-  issuerConfigDigest: loaded?.bundle.issuerConfigDigest ?? null,
-  providerRegistryRevision: loaded?.bundle.providerRegistryRevision ?? null,
-  providerRegistryDigest: loaded?.bundle.providerRegistryDigest ?? null,
-  occurredAt: now,
-});
-
-const recordAudit = (
-  source: TrustedHostConfigurationSourceService | undefined,
-  record: SandboxAuthorityAuditRecordV1,
-): Effect.Effect<boolean> =>
-  source === undefined
-    ? Effect.succeed(false)
-    : Effect.map(
-        Effect.match(
-          source.appendSandboxAuthorityAudit(JSON.stringify(record)),
-          {
-            onFailure: () => false,
-            onSuccess: (ok) => ok,
-          },
-        ),
-        Boolean,
-      );
-
 /** V1 decoder retained solely for immutable forensic inspection/tests. It is
- * not wired to SandboxAuthoritySnapshot or any authorization consumer. */
+ * not wired to SandboxAuthoritySnapshot or any authorization consumer. The
+ * source is deliberately narrowed to a read-only port; this path never audits,
+ * advances, or commits high-water state. */
 export const loadSandboxAuthorityBundleSnapshotV1Forensic = (
-  source: TrustedHostConfigurationSourceService | undefined,
-  now: string,
+  source: SandboxAuthorityForensicReadPort | undefined,
 ): Effect.Effect<SandboxAuthoritySnapshotV1ForensicLoadResult> =>
   Effect.gen(function* () {
-    const reject = (
-      failure: SandboxAuthorityLoadErrorV1,
-      loaded?: ReturnType<typeof decodeBundle>,
-    ) =>
-      Effect.gen(function* () {
-        yield* recordAudit(
-          source,
-          auditRecord(now, "Rejected", failure, loaded),
-        );
-        return { _tag: "Unavailable" as const, failure };
-      });
+    const reject = (failure: SandboxAuthorityLoadErrorV1) =>
+      Effect.succeed({ _tag: "Unavailable" as const, failure });
     if (source === undefined) return yield* reject("SourceMissing");
-    if (
-      !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{3})?Z$/u.test(
-        now,
-      )
-    ) {
-      return yield* reject("CanonicalEncodingInvalid");
-    }
     const rawBundle = yield* Effect.match(
       source.readVerifiedSandboxAuthorityBundle(),
       {
         onFailure: (failure) => ({ _tag: "Error" as const, failure }),
-        onSuccess: (verified) => ({
-          _tag: "Value" as const,
-          verifiedSourceIdentity: verified?.sourceIdentity,
-          canonicalJson: verified?.canonicalJson,
-        }),
+        onSuccess: (verified) => ({ _tag: "Value" as const, verified }),
       },
     );
     if (rawBundle._tag === "Error") return yield* reject(rawBundle.failure);
-    if (rawBundle.canonicalJson === undefined)
-      return yield* reject("SourceMissing");
-    if (!canonicalId(rawBundle.verifiedSourceIdentity))
+    if (rawBundle.verified === undefined) return yield* reject("SourceMissing");
+    if (!canonicalId(rawBundle.verified.sourceIdentity))
       return yield* reject("SourceIdentityInvalid");
-    const loaded = decodeBundle(rawBundle.canonicalJson);
+    const loaded = decodeBundle(rawBundle.verified.canonicalJson);
     if (loaded === undefined) return yield* reject("BundleMalformed");
-    if (loaded.bundle.sourceIdentity !== rawBundle.verifiedSourceIdentity)
-      return yield* reject("SourceIdentityInvalid", loaded);
+    if (loaded.bundle.sourceIdentity !== rawBundle.verified.sourceIdentity)
+      return yield* reject("SourceIdentityInvalid");
     const rawHighWater = yield* Effect.match(
       source.readSandboxAuthorityHighWater(),
       {
@@ -424,21 +372,20 @@ export const loadSandboxAuthorityBundleSnapshotV1Forensic = (
       },
     );
     if (rawHighWater._tag === "Error")
-      return yield* reject(rawHighWater.failure, loaded);
+      return yield* reject(rawHighWater.failure);
     if (rawHighWater.canonicalJson === undefined)
-      return yield* reject("HighWaterMissing", loaded);
+      return yield* reject("HighWaterMissing");
     const highWater = decodeHighWater(rawHighWater.canonicalJson);
-    if (highWater === undefined)
-      return yield* reject("HighWaterCorrupt", loaded);
+    if (highWater === undefined) return yield* reject("HighWaterCorrupt");
     const bundle = loaded.bundle;
     if (highWater.sourceIdentity !== bundle.sourceIdentity)
-      return yield* reject("SourceReenrollmentRequired", loaded);
+      return yield* reject("SourceReenrollmentRequired");
     if (
       bundle.bundleRevision < highWater.bundleRevision ||
       bundle.issuerConfigRevision < highWater.issuerConfigRevision ||
       bundle.providerRegistryRevision < highWater.providerRegistryRevision
     )
-      return yield* reject("RevisionRollback", loaded);
+      return yield* reject("RevisionRollback");
     if (
       (bundle.bundleRevision === highWater.bundleRevision &&
         loaded.bundleDigest !== highWater.bundleDigest) ||
@@ -447,37 +394,17 @@ export const loadSandboxAuthorityBundleSnapshotV1Forensic = (
       (bundle.providerRegistryRevision === highWater.providerRegistryRevision &&
         bundle.providerRegistryDigest !== highWater.providerRegistryDigest)
     )
-      return yield* reject("RevisionReuseMismatch", loaded);
-    const advanced =
-      loaded.bundleDigest !== highWater.bundleDigest ||
-      bundle.issuerConfigDigest !== highWater.issuerConfigDigest ||
-      bundle.providerRegistryDigest !== highWater.providerRegistryDigest ||
-      bundle.bundleRevision !== highWater.bundleRevision ||
-      bundle.issuerConfigRevision !== highWater.issuerConfigRevision ||
-      bundle.providerRegistryRevision !== highWater.providerRegistryRevision;
-    if (advanced) {
-      if (bundle.bundleRevision <= highWater.bundleRevision)
-        return yield* reject("RevisionReuseMismatch", loaded);
-      const next: SandboxAuthorityHighWaterV1 = {
-        version: 1,
-        sourceIdentity: bundle.sourceIdentity,
-        bundleRevision: bundle.bundleRevision,
-        bundleDigest: loaded.bundleDigest,
-        issuerConfigRevision: bundle.issuerConfigRevision,
-        issuerConfigDigest: bundle.issuerConfigDigest,
-        providerRegistryRevision: bundle.providerRegistryRevision,
-        providerRegistryDigest: bundle.providerRegistryDigest,
-      };
-      const committed = yield* Effect.match(
-        source.commitSandboxAuthorityHighWater(highWaterJson(next)),
-        { onFailure: () => false, onSuccess: (success) => success },
-      );
-      if (!committed) return yield* reject("HighWaterCommitFailed", loaded);
-    }
+      return yield* reject("RevisionReuseMismatch");
+    if (
+      bundle.bundleRevision > highWater.bundleRevision ||
+      bundle.issuerConfigRevision > highWater.issuerConfigRevision ||
+      bundle.providerRegistryRevision > highWater.providerRegistryRevision
+    )
+      return yield* reject("HighWaterCommitFailed");
     const snapshot: SandboxAuthorityBundleSnapshotV1 = Object.freeze({
       bundle: Object.freeze(bundle),
       bundleDigest: loaded.bundleDigest,
-      canonicalJson: rawBundle.canonicalJson,
+      canonicalJson: rawBundle.verified.canonicalJson,
       issuerConfigSnapshot: Object.freeze({
         config: Object.freeze({
           ...bundle.issuerConfig,
@@ -491,12 +418,6 @@ export const loadSandboxAuthorityBundleSnapshotV1Forensic = (
         providerRegistry: Object.freeze(bundle.providerRegistry),
       }),
     });
-    const auditStored = yield* recordAudit(
-      source,
-      auditRecord(now, advanced ? "HighWaterAdvanced" : "Loaded", null, loaded),
-    );
-    if (!auditStored)
-      return { _tag: "Unavailable", failure: "SourceUnreadable" };
     return { _tag: "Available", snapshot };
   });
 
