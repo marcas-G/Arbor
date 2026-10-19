@@ -3,13 +3,13 @@ import {
   compareUtf8BytesV1,
   type Execution,
   encodeExecutionEpisodeBinding,
-  encodeNetworkBrokerControlsV1,
+  encodeSandboxEnforcementRuleSetV1,
   executionEpisode,
-  networkBrokerControlsV1ForMode,
   produceSandboxBoundaryV1,
   type SandboxAuthorityBundleSnapshotV2,
   type SandboxPolicyCandidateReadV1,
   type SandboxPolicyCurrentHostV1,
+  sandboxEnforcementRuleSetV1ForProvider,
   sandboxPolicyCandidateIdV2,
 } from "@arbor/domain";
 import {
@@ -100,16 +100,15 @@ export const buildSandboxPolicyCandidateReadV1 = (input: {
     SandboxPolicyCandidateReadV1["candidates"][number]
   >();
   for (const entry of bundle.providerRegistry.entries) {
+    const ruleSet = sandboxEnforcementRuleSetV1ForProvider(entry.providerId);
     if (
       entry.status !== "Supported" ||
       entry.osFamily !== currentHost.osFamily ||
       entry.osBuild !== currentHost.osBuild ||
       entry.tuple.networkPolicyCodecVersion !== 1 ||
-      sha256Hex(
-        encodeNetworkBrokerControlsV1(
-          networkBrokerControlsV1ForMode(entry.tuple.networkMode),
-        ),
-      ) !== entry.tuple.enforcementRuleSetDigest
+      ruleSet === undefined ||
+      sha256Hex(encodeSandboxEnforcementRuleSetV1(ruleSet)) !==
+        entry.tuple.enforcementRuleSetDigest
     )
       continue;
     const production = produceBoundary({

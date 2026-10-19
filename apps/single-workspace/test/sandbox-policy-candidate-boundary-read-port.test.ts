@@ -1,6 +1,6 @@
 import type { ProjectId, Workspace, WorkspaceId } from "@arbor/domain";
-import { canonicalRegionString } from "@arbor/domain";
-import type { WorktreeRecord } from "@arbor/ports";
+import { canonicalRegionString, EnvironmentFingerprint } from "@arbor/domain";
+import type { ResolverObservation, WorktreeRecord } from "@arbor/ports";
 import {
   EnvironmentResolverPort,
   ResourceOwnershipRepository,
@@ -31,7 +31,7 @@ const workspace = {
   },
   resourceBoundaryRevision: 2,
   revision: 9,
-} as Workspace;
+} as unknown as Workspace;
 const worktree = {
   worktreeId: "wt_primary",
   projectId,
@@ -40,12 +40,18 @@ const worktree = {
   state: "Active",
   createdAt: "2026-10-19T00:00:00.000Z",
 } satisfies WorktreeRecord;
-const observation = {
+const observation: ResolverObservation = {
   projectId,
   observedRevision: "env-1",
-  fingerprint: "fingerprint",
+  fingerprint: EnvironmentFingerprint.of("fingerprint"),
   snapshotBlobRef: `blob:sha256:${"a".repeat(64)}`,
-  entries: [{ address, resolved: primaryRegion, probe: { exists: true } }],
+  entries: [
+    {
+      address,
+      resolved: primaryRegion,
+      probe: { kind: "GitWorktree", exists: true },
+    },
+  ],
   changedRegions: [primaryRegion],
 };
 
@@ -53,8 +59,8 @@ const read = (input: {
   readonly workspace?: Workspace | null;
   readonly claims?: ReadonlyArray<unknown>;
   readonly worktrees?: ReadonlyArray<WorktreeRecord>;
-  readonly regions?: typeof observation.changedRegions;
-  readonly entries?: typeof observation.entries;
+  readonly regions?: ResolverObservation["changedRegions"];
+  readonly entries?: ResolverObservation["entries"];
 }) => {
   let observationCalls = 0;
   const deps = Layer.mergeAll(
@@ -147,14 +153,14 @@ describe("V6 complete P11 candidate boundary read", () => {
         ...workspace.resourceBoundary,
         addresses: [fileTreeAddress, address],
       },
-    } as Workspace;
+    } as unknown as Workspace;
     const result = await read({
       workspace: aliasWorkspace,
       entries: [
         {
           address: fileTreeAddress,
           resolved: fileTreeRegion,
-          probe: { exists: true },
+          probe: { kind: "FileTree", exists: true },
         },
       ],
       regions: [fileTreeRegion],
@@ -217,7 +223,7 @@ describe("V6 complete P11 candidate boundary read", () => {
               resourceSpaceId: "filesystem",
               normalizedRegion: { kind: "FileTree", path: "/other/path" },
             },
-            probe: { exists: true },
+            probe: { kind: "GitWorktree", exists: true },
           },
         ],
       },
