@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { loadSandboxAuthorityBundleSnapshot } from "../src/sandbox-authority-bundle.js";
+import { loadSandboxAuthorityBundleSnapshotV1Forensic } from "../src/sandbox-authority-bundle.js";
 
 const hash = (value: string) =>
   createHash("sha256").update(value, "utf8").digest("hex");
@@ -73,7 +73,7 @@ describe("P5 SandboxAuthorityBundleV1", () => {
     const current = fixture();
     const writes: { highWater?: string; audit: string[] } = { audit: [] };
     const result = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshot(
+      loadSandboxAuthorityBundleSnapshotV1Forensic(
         sourceFor(current.bundleJson, current.highWaterJson, writes),
         "2026-10-19T00:00:00.000Z",
       ),
@@ -104,7 +104,7 @@ describe("P5 SandboxAuthorityBundleV1", () => {
     const next = fixture(2);
     const writes: { highWater?: string; audit: string[] } = { audit: [] };
     const result = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshot(
+      loadSandboxAuthorityBundleSnapshotV1Forensic(
         sourceFor(next.bundleJson, previous.highWaterJson, writes),
         "2026-10-19T00:00:00.000Z",
       ),
@@ -124,7 +124,7 @@ describe("P5 SandboxAuthorityBundleV1", () => {
     async (highWater, failure) => {
       const current = fixture();
       const result = await Effect.runPromise(
-        loadSandboxAuthorityBundleSnapshot(
+        loadSandboxAuthorityBundleSnapshotV1Forensic(
           sourceFor(current.bundleJson, highWater),
           "2026-10-19T00:00:00.000Z",
         ),
@@ -142,7 +142,7 @@ describe("P5 SandboxAuthorityBundleV1", () => {
       '"sourceIdentity":"host-config-test","unknown":true',
     );
     const malformed = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshot(
+      loadSandboxAuthorityBundleSnapshotV1Forensic(
         sourceFor(tampered, current.highWaterJson, writes),
         "2026-10-19T00:00:00.000Z",
       ),
@@ -152,7 +152,7 @@ describe("P5 SandboxAuthorityBundleV1", () => {
       failure: "BundleMalformed",
     });
     const rollback = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshot(
+      loadSandboxAuthorityBundleSnapshotV1Forensic(
         sourceFor(prior.bundleJson, current.highWaterJson, writes),
         "2026-10-19T00:00:00.000Z",
       ),

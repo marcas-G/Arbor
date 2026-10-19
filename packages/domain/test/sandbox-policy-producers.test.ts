@@ -146,6 +146,9 @@ describe("sandbox policy producer codecs", () => {
 
   it("strictly decodes operator policy and V2 bundle/high-water canonical bytes", () => {
     const operatorBytes = encodeSandboxOperatorPolicyConfigV1(operatorConfig);
+    expect(operatorBytes).toBe(
+      '{"version":1,"revision":2,"environmentAllowlist":["PATH"],"limitsByProfile":[{"profile":"ReadOnly","limits":{"wallTimeMs":60000,"stdoutBytes":8192,"stderrBytes":8192,"processCount":8,"memoryBytes":134217728,"cpuTimeMs":30000}},{"profile":"WorkspaceWrite","limits":{"wallTimeMs":60000,"stdoutBytes":8192,"stderrBytes":8192,"processCount":8,"memoryBytes":134217728,"cpuTimeMs":30000}},{"profile":"FullAccess","limits":{"wallTimeMs":60000,"stdoutBytes":8192,"stderrBytes":8192,"processCount":8,"memoryBytes":134217728,"cpuTimeMs":30000}}],"trustedLocalRuntimeVersion":"builtin-v1"}',
+    );
     expect(
       decodeCanonicalSandboxOperatorPolicyConfigV1(operatorBytes, ["PATH"]),
     ).toEqual(operatorConfig);
@@ -185,6 +188,15 @@ describe("sandbox policy producer codecs", () => {
       providerRegistryDigest: registryDigest,
     };
     const bundleBytes = encodeSandboxAuthorityBundleV2(bundle);
+    expect(hash(operatorBytes)).toBe(
+      "aa0cf21dd011cf2940d5ad6d486530c44b5c6d94ca20fbc5ec206b1758928459",
+    );
+    expect(bundleBytes).toBe(
+      '{"version":2,"sourceIdentity":"machine:arbor","bundleRevision":3,"issuerConfigRevision":1,"issuerConfigDigest":"e334867ac506dd06d6e07ae81501e02032121be70cd1308929d6fcccf33352fa","issuerConfig":{"version":1,"revision":1,"issuers":["user:operator"]},"operatorConfigRevision":2,"operatorConfigDigest":"aa0cf21dd011cf2940d5ad6d486530c44b5c6d94ca20fbc5ec206b1758928459","operatorConfig":{"version":1,"revision":2,"environmentAllowlist":["PATH"],"limitsByProfile":[{"profile":"ReadOnly","limits":{"wallTimeMs":60000,"stdoutBytes":8192,"stderrBytes":8192,"processCount":8,"memoryBytes":134217728,"cpuTimeMs":30000}},{"profile":"WorkspaceWrite","limits":{"wallTimeMs":60000,"stdoutBytes":8192,"stderrBytes":8192,"processCount":8,"memoryBytes":134217728,"cpuTimeMs":30000}},{"profile":"FullAccess","limits":{"wallTimeMs":60000,"stdoutBytes":8192,"stderrBytes":8192,"processCount":8,"memoryBytes":134217728,"cpuTimeMs":30000}}],"trustedLocalRuntimeVersion":"builtin-v1"},"providerRegistryRevision":1,"providerRegistryDigest":"25889d79d251fd8d4e5adf6180ab31a586134fb33575d555cd716982fef6c9d2","providerRegistry":{"version":1,"revision":1,"entries":[]}}',
+    );
+    expect(hash(bundleBytes)).toBe(
+      "895cf8bc131c66c5b1e9c0fbca365b4899def5a1cc5015985b05103f89f5d8ff",
+    );
     expect(
       decodeCanonicalSandboxAuthorityBundleV2(bundleBytes, ["PATH"], hash)
         ?.bundle,
@@ -207,6 +219,13 @@ describe("sandbox policy producer codecs", () => {
         encodeSandboxAuthorityHighWaterV2(highWater),
       ),
     ).toEqual(highWater);
+    const highWaterBytes = encodeSandboxAuthorityHighWaterV2(highWater);
+    expect(highWaterBytes).toBe(
+      '{"version":2,"sourceIdentity":"machine:arbor","bundleRevision":3,"bundleDigest":"895cf8bc131c66c5b1e9c0fbca365b4899def5a1cc5015985b05103f89f5d8ff","issuerConfigRevision":1,"issuerConfigDigest":"e334867ac506dd06d6e07ae81501e02032121be70cd1308929d6fcccf33352fa","operatorConfigRevision":2,"operatorConfigDigest":"aa0cf21dd011cf2940d5ad6d486530c44b5c6d94ca20fbc5ec206b1758928459","providerRegistryRevision":1,"providerRegistryDigest":"25889d79d251fd8d4e5adf6180ab31a586134fb33575d555cd716982fef6c9d2"}',
+    );
+    expect(hash(highWaterBytes)).toBe(
+      "e3d8e9bf119ac818fccf8e0268bd02b523610e174c74b9674da4dd72131cece5",
+    );
 
     const audit = {
       version: 2 as const,
