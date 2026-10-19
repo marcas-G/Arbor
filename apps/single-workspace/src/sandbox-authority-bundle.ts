@@ -1,23 +1,38 @@
 import { createHash } from "node:crypto";
 import type {
   SandboxAuthorityAuditRecordV1,
+  SandboxAuthorityAuditRecordV2,
   SandboxAuthorityBundleSnapshotV1,
+  SandboxAuthorityBundleSnapshotV2,
   SandboxAuthorityBundleV1,
+  SandboxAuthorityBundleV2,
   SandboxAuthorityHighWaterV1,
   SandboxAuthorityLoadErrorV1,
   SandboxPolicyGrantIssuerConfigSnapshotV1,
   SandboxProviderQualificationEntryV1,
   SandboxProviderQualificationRegistryV1,
 } from "@arbor/domain";
-import { decodeSandboxPolicyGrantIssuerConfigV1 } from "@arbor/domain";
+import {
+  decodeCanonicalSandboxAuthorityBundleV2,
+  decodeCanonicalSandboxAuthorityHighWaterV2,
+  decodeSandboxPolicyGrantIssuerConfigV1,
+  encodeSandboxAuthorityAuditRecordV2,
+} from "@arbor/domain";
 import {
   Clock,
+  SANDBOX_ENV_ALLOWLIST,
   type TrustedHostConfigurationSourceService,
 } from "@arbor/ports";
 import { Context, Effect, Layer } from "effect";
 
 const digest = (value: string): string =>
   createHash("sha256").update(value, "utf8").digest("hex");
+const deepFreeze = <T>(value: T): T => {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value))
+    return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+};
 const isDigest = (value: unknown): value is string =>
   typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
 const isRevision = (value: unknown, positive = false): value is number =>
@@ -301,7 +316,7 @@ const decodeHighWater = (
   }
 };
 
-export type SandboxAuthoritySnapshotLoadResult =
+export type SandboxAuthoritySnapshotV1ForensicLoadResult =
   | {
       readonly _tag: "Available";
       readonly snapshot: SandboxAuthorityBundleSnapshotV1;
@@ -313,7 +328,7 @@ export type SandboxAuthoritySnapshotLoadResult =
 
 export class SandboxAuthoritySnapshot extends Context.Service<
   SandboxAuthoritySnapshot,
-  SandboxAuthoritySnapshotLoadResult
+  SandboxAuthoritySnapshotV2LoadResult
 >()("arbor/SandboxAuthoritySnapshot") {}
 
 const auditRecord = (
@@ -352,10 +367,12 @@ const recordAudit = (
         Boolean,
       );
 
-export const loadSandboxAuthorityBundleSnapshot = (
+/** V1 decoder retained solely for immutable forensic inspection/tests. It is
+ * not wired to SandboxAuthoritySnapshot or any authorization consumer. */
+export const loadSandboxAuthorityBundleSnapshotV1Forensic = (
   source: TrustedHostConfigurationSourceService | undefined,
   now: string,
-): Effect.Effect<SandboxAuthoritySnapshotLoadResult> =>
+): Effect.Effect<SandboxAuthoritySnapshotV1ForensicLoadResult> =>
   Effect.gen(function* () {
     const reject = (
       failure: SandboxAuthorityLoadErrorV1,
@@ -491,13 +508,235 @@ export const SandboxAuthoritySnapshotLive = (
     Effect.gen(function* () {
       const clock = yield* Clock;
       const now = yield* clock.now();
-      return yield* loadSandboxAuthorityBundleSnapshot(source, now);
+      return yield* loadSandboxAuthorityBundleSnapshotV2(
+        source,
+        now,
+        SANDBOX_ENV_ALLOWLIST,
+      );
     }),
   );
 
 export const sandboxIssuerSnapshotOf = (
-  result: SandboxAuthoritySnapshotLoadResult,
+  result: SandboxAuthoritySnapshotV2LoadResult,
 ): SandboxPolicyGrantIssuerConfigSnapshotV1 | undefined =>
   result._tag === "Available"
-    ? result.snapshot.issuerConfigSnapshot
+    ? {
+        config: result.snapshot.bundle.issuerConfig,
+        configDigest: result.snapshot.bundle.issuerConfigDigest,
+        authorityBundleRevision: result.snapshot.bundle.bundleRevision,
+        authorityBundleDigest: result.snapshot.bundleDigest,
+        providerRegistryRevision:
+          result.snapshot.bundle.providerRegistryRevision,
+        providerRegistryDigest: result.snapshot.bundle.providerRegistryDigest,
+        providerRegistry: result.snapshot.bundle.providerRegistry,
+      }
     : undefined;
+
+export type SandboxAuthoritySnapshotV2LoadResult =
+  | {
+      readonly _tag: "Available";
+      readonly snapshot: SandboxAuthorityBundleSnapshotV2;
+    }
+  | {
+      readonly _tag: "Unavailable";
+      readonly failure: SandboxAuthorityLoadErrorV1;
+    };
+
+export class SandboxAuthoritySnapshotV2 extends Context.Service<
+  SandboxAuthoritySnapshotV2,
+  SandboxAuthoritySnapshotV2LoadResult
+>()("arbor/SandboxAuthoritySnapshotV2") {}
+
+const auditRecordV2 = (
+  now: string,
+  outcome: SandboxAuthorityAuditRecordV2["outcome"],
+  detail: SandboxAuthorityLoadErrorV1 | null,
+  bundle?: SandboxAuthorityBundleV2,
+  bundleDigest?: string,
+): SandboxAuthorityAuditRecordV2 => ({
+  version: 2,
+  outcome,
+  detail,
+  sourceIdentity: bundle?.sourceIdentity ?? null,
+  bundleRevision: bundle?.bundleRevision ?? null,
+  bundleDigest: bundleDigest ?? null,
+  issuerConfigRevision: bundle?.issuerConfigRevision ?? null,
+  issuerConfigDigest: bundle?.issuerConfigDigest ?? null,
+  operatorConfigRevision: bundle?.operatorConfigRevision ?? null,
+  operatorConfigDigest: bundle?.operatorConfigDigest ?? null,
+  providerRegistryRevision: bundle?.providerRegistryRevision ?? null,
+  providerRegistryDigest: bundle?.providerRegistryDigest ?? null,
+  occurredAt: now,
+});
+
+/** Loads only the currently active V2 authority pair. This is intentionally
+ * read-only: V1→V2 provisioning/preservation is an offline operation. A V1
+ * high-water, a source-ahead pair, or any non-exact tuple is unavailable and
+ * can never cause a fallback to the V1 authority loader. */
+export const loadSandboxAuthorityBundleSnapshotV2 = (
+  source: TrustedHostConfigurationSourceService | undefined,
+  now: string,
+  allowedEnvironmentNames: ReadonlyArray<string>,
+): Effect.Effect<SandboxAuthoritySnapshotV2LoadResult> =>
+  Effect.gen(function* () {
+    const record = (
+      outcome: SandboxAuthorityAuditRecordV2["outcome"],
+      detail: SandboxAuthorityLoadErrorV1 | null,
+      bundle?: SandboxAuthorityBundleV2,
+      bundleDigest?: string,
+    ) =>
+      source === undefined
+        ? Effect.succeed(false)
+        : Effect.map(
+            Effect.match(
+              source.appendSandboxAuthorityAudit(
+                encodeSandboxAuthorityAuditRecordV2(
+                  auditRecordV2(now, outcome, detail, bundle, bundleDigest),
+                ),
+              ),
+              {
+                onFailure: () => false,
+                onSuccess: (stored) => stored,
+              },
+            ),
+            Boolean,
+          );
+    const reject = (
+      failure: SandboxAuthorityLoadErrorV1,
+      bundle?: SandboxAuthorityBundleV2,
+      bundleDigest?: string,
+    ) =>
+      Effect.gen(function* () {
+        yield* record("Rejected", failure, bundle, bundleDigest);
+        return { _tag: "Unavailable" as const, failure };
+      });
+    if (source === undefined) return yield* reject("SourceMissing");
+    if (
+      !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{3})?Z$/u.test(
+        now,
+      ) ||
+      !Number.isFinite(Date.parse(now)) ||
+      new Date(Date.parse(now)).toISOString() !== now
+    )
+      return yield* reject("CanonicalEncodingInvalid");
+    const rawSource = yield* Effect.match(
+      source.readVerifiedSandboxAuthorityBundle(),
+      {
+        onFailure: (failure) => ({ _tag: "Error" as const, failure }),
+        onSuccess: (verified) => ({ _tag: "Value" as const, verified }),
+      },
+    );
+    if (rawSource._tag === "Error") return yield* reject(rawSource.failure);
+    if (rawSource.verified === undefined) return yield* reject("SourceMissing");
+    const decoded = decodeCanonicalSandboxAuthorityBundleV2(
+      rawSource.verified.canonicalJson,
+      allowedEnvironmentNames,
+      digest,
+    );
+    if (decoded === undefined) return yield* reject("BundleMalformed");
+    const { bundle, bundleDigest } = decoded;
+    if (
+      !canonicalId(rawSource.verified.sourceIdentity) ||
+      rawSource.verified.sourceIdentity !== bundle.sourceIdentity
+    )
+      return yield* reject("SourceIdentityInvalid", bundle, bundleDigest);
+    const rawHighWater = yield* Effect.match(
+      source.readSandboxAuthorityHighWater(),
+      {
+        onFailure: (failure) => ({ _tag: "Error" as const, failure }),
+        onSuccess: (canonicalJson) => ({
+          _tag: "Value" as const,
+          canonicalJson,
+        }),
+      },
+    );
+    if (rawHighWater._tag === "Error")
+      return yield* reject(rawHighWater.failure, bundle, bundleDigest);
+    if (rawHighWater.canonicalJson === undefined)
+      return yield* reject("HighWaterMissing", bundle, bundleDigest);
+    const highWater = decodeCanonicalSandboxAuthorityHighWaterV2(
+      rawHighWater.canonicalJson,
+    );
+    if (highWater === undefined)
+      return yield* reject("HighWaterCorrupt", bundle, bundleDigest);
+    if (highWater.sourceIdentity !== bundle.sourceIdentity)
+      return yield* reject("SourceReenrollmentRequired", bundle, bundleDigest);
+    const mismatch = (
+      bundleRevision: number,
+      highWaterRevision: number,
+      bundleValue: string,
+      highWaterValue: string,
+    ): SandboxAuthorityLoadErrorV1 | undefined => {
+      if (bundleRevision < highWaterRevision) return "RevisionRollback";
+      if (
+        bundleRevision === highWaterRevision &&
+        bundleValue !== highWaterValue
+      )
+        return "RevisionReuseMismatch";
+      if (bundleRevision > highWaterRevision) return "HighWaterCommitFailed";
+      return undefined;
+    };
+    const mismatchFailure =
+      mismatch(
+        bundle.bundleRevision,
+        highWater.bundleRevision,
+        bundleDigest,
+        highWater.bundleDigest,
+      ) ??
+      mismatch(
+        bundle.issuerConfigRevision,
+        highWater.issuerConfigRevision,
+        bundle.issuerConfigDigest,
+        highWater.issuerConfigDigest,
+      ) ??
+      mismatch(
+        bundle.operatorConfigRevision,
+        highWater.operatorConfigRevision,
+        bundle.operatorConfigDigest,
+        highWater.operatorConfigDigest,
+      ) ??
+      mismatch(
+        bundle.providerRegistryRevision,
+        highWater.providerRegistryRevision,
+        bundle.providerRegistryDigest,
+        highWater.providerRegistryDigest,
+      );
+    if (
+      mismatchFailure !== undefined ||
+      highWater.bundleDigest !== bundleDigest ||
+      highWater.issuerConfigDigest !== bundle.issuerConfigDigest ||
+      highWater.operatorConfigDigest !== bundle.operatorConfigDigest ||
+      highWater.providerRegistryDigest !== bundle.providerRegistryDigest
+    )
+      return yield* reject(
+        mismatchFailure ?? "RevisionReuseMismatch",
+        bundle,
+        bundleDigest,
+      );
+    const snapshot: SandboxAuthorityBundleSnapshotV2 = Object.freeze({
+      bundle: deepFreeze(bundle),
+      bundleDigest,
+      canonicalJson: decoded.canonicalJson,
+    });
+    const audited = yield* record("Loaded", null, bundle, bundleDigest);
+    if (!audited)
+      return { _tag: "Unavailable" as const, failure: "SourceUnreadable" };
+    return { _tag: "Available" as const, snapshot };
+  });
+
+export const SandboxAuthoritySnapshotV2Live = (
+  source: TrustedHostConfigurationSourceService | undefined,
+  allowedEnvironmentNames: ReadonlyArray<string>,
+): Layer.Layer<SandboxAuthoritySnapshotV2, never, Clock> =>
+  Layer.effect(
+    SandboxAuthoritySnapshotV2,
+    Effect.gen(function* () {
+      const clock = yield* Clock;
+      const now = yield* clock.now();
+      return yield* loadSandboxAuthorityBundleSnapshotV2(
+        source,
+        now,
+        allowedEnvironmentNames,
+      );
+    }),
+  );

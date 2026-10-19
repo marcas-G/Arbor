@@ -269,6 +269,65 @@ describe("SandboxPolicyDecisionStore", () => {
     );
   });
 
+  it("does not reinterpret a legacy string targetRef in a stored receipt", async () => {
+    const base = layer({ filename: ":memory:" });
+    const app = Layer.mergeAll(
+      base,
+      Layer.provide(TransactionPortLive, base),
+      Layer.provide(SandboxPolicyDecisionStoreLive, base),
+    );
+    await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          yield* sql.unsafe(createCommands);
+          yield* sql.unsafe(createTable);
+          const transactions = yield* TransactionPortTag;
+          const store = yield* SandboxPolicyDecisionStorePort;
+          yield* transactions.transact(store.insertCommitted(decision));
+          const objectTargetRef =
+            '"targetRef":{"version":1,"kind":"RegionDigest","resourceSpace":"filesystem","regionIdentityDigest":"' +
+            "9".repeat(64) +
+            '"}';
+          const encoded =
+            encodeSandboxPolicyDecisionCommittedInternalV1(committedResult);
+          expect(encoded).toContain(objectTargetRef);
+          yield* sql.unsafe(
+            "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '1', 'Committed', ?)",
+            [
+              decisionCommandId,
+              projectId,
+              encoded.replace(objectTargetRef, '"targetRef":"workspace"'),
+            ],
+          );
+          const outcome = yield* Effect.match(
+            transactions.transact(
+              store.findCurrentForExecution(
+                projectId,
+                workspaceId,
+                executionId,
+              ),
+            ),
+            {
+              onFailure: (error) => ({ _tag: "Left" as const, error }),
+              onSuccess: (value) => ({ _tag: "Right" as const, value }),
+            },
+          );
+          if (outcome._tag === "Left") {
+            expect(outcome.error).toMatchObject({
+              _tag: "PersistenceCorruption",
+              repository: "SandboxPolicyDecisionStore",
+              operation: "find-current-for-execution",
+            });
+          } else {
+            throw new Error("legacy string targetRef unexpectedly decoded");
+          }
+        }),
+        app,
+      ),
+    );
+  });
+
   it("fails closed when the immutable row has no matching command result", async () => {
     const base = layer({ filename: ":memory:" });
     const app = Layer.mergeAll(
