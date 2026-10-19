@@ -233,9 +233,14 @@ broker fields. No nullable superset is allowed.
 Both variants use canonical ExecutionEpisodeBinding, sorted mounts with each
 entry mountId,targetRef,targetIdentityDigest,access; sorted unique environment
 names (never values); limits exactly wallTimeMs,stdoutBytes,stderrBytes,
-processCount,memoryBytes,cpuTimeMs as positive finite safe integers under
-operator/platform maxima; auditRefs are sorted unique opaque IDs, at most 32
-entries and at most 128 UTF-8 bytes per ID, internal only.
+processCount,memoryBytes,cpuTimeMs as positive finite safe integers exactly
+equal to the selected profile tuple in the trusted operator config. For
+OsEnforced, those exact six configured values must match the values bound by
+the selected provider's T3 evidence; no unspecified operator/platform
+maxima codec is inferred. TrustedLocal records the values for disclosure and
+does not claim enforcement or T3 qualification. auditRefs are sorted unique
+opaque IDs, at most 32 entries and at most 128 UTF-8 bytes per ID, internal
+only.
 The full snapshot digest is SHA-256 of its exact canonical UTF-8 bytes,
 lowercase hex. P1 stores the bounded closed internal result in existing
 commands.result_json with the snapshot and digest in the same transaction as
@@ -245,3 +250,70 @@ prune or separate result table. Public DTO/receipt expose only the safe
 variant projection and never refs, digests, paths, environment values or audit
 refs. Result over 65,536 bytes is TerminalRejected(SandboxPolicySummaryTooLarge)
 with receipt only, no decision/event and no truncation.
+
+## Accepted V3 producer-to-policy mapping
+
+The snapshot producer consumes the complete current ResourceBoundary and its
+`basisResponsibilityRevision` from P11, not a caller/tool-target subset.
+`resourceBoundaryDigest` is the V3 `ResourceBoundaryDigestV1`: lowercase
+SHA-256 of canonical compact UTF-8 JSON with exact key order
+`version,basisResponsibilityRevision,regions`; the revision is a
+nonnegative safe integer, including zero; regions are the complete
+`canonicalRegionString` set, existing filesystem aliases/exact duplicates
+collapsed, then UTF-8-byte sorted and unique. P12/09's region encoding is not
+changed. The accepted vectors and their exact hashes are in the V3 proposal
+and P11/04.
+
+Only FileTree/GitWorktree filesystem regions become logical process mounts.
+The primary managed GitWorktree is `mountId="workspace"`; each additional
+filesystem region is `mountId="resource-<regionIdentityDigest>"` using the
+full lowercase 64-hex region digest. The primary is not duplicated. Mounts
+sort by UTF-8 mountId; equal IDs for unequal target refs/source identities
+fail closed. Every `targetRef` remains the V21 closed
+`SandboxTargetRefV1` object `{version,kind:"RegionDigest",resourceSpace,
+regionIdentityDigest}`; it is never replaced with a serialized hash string.
+If an internal target-reference digest is needed, it is a separately named
+derived value and does not change the snapshot's object-valued `targetRef`.
+DatabaseNamespace and ExternalResource remain policy/admission metadata and
+do not become process mounts. A shell invocation requiring either kind uses
+the existing no-effect ResourceResolutionDenied path without invalidating
+the rest of the policy.
+
+Access is derived from exact current Workspace ownership, never from model
+input: ReadOnly makes every logical mount ReadOnly; WorkspaceWrite makes a
+mount ReadWrite only when its exact region is covered by an active current
+Workspace ResourceOwnership claim, otherwise ReadOnly. TrustedLocal FullAccess
+retains this logical mapping only for disclosure and invocation checks; it
+does not claim host isolation. Each invocation independently checks its
+pinned required access before effect admission.
+
+The current trusted operator source is SandboxAuthorityBundleV2 from P5/01.
+`operatorConfigRevision/Digest` in this snapshot must exactly equal the V2
+bundle's adjacent revision and SHA-256 of its embedded
+SandboxOperatorPolicyConfigV1 bytes. The TrustedLocal runtime identity is
+strictly `trustedRuntimeIdentity="TrustedLocal"` and
+`trustedRuntimeVersion="builtin-v1"`; no other V1 value is canonical. The
+existing V21 snapshot and basis key sets/vectors are unchanged. Network
+broker controls are the exact closed objects in P12/13; Restricted/Enabled
+use `pref64="FreshPerResolutionAndConnection"`, Disabled has no Pref64
+field, and no separate controls digest exists. Each new resolution,
+connection and redirect performs fresh Pref64 discovery; one result is used
+only within that connection's answer-validation/address-pin/connect/TLS
+handshake and is never reused across a resolution, connection or redirect.
+
+The exact derived controls are Disabled
+`{"version":1,"mode":"Disabled","directNetwork":"Denied","broker":"Disabled"}`;
+Restricted
+`{"version":1,"mode":"Restricted","brokerProtocolVersion":1,"directNetwork":"Denied","dns":"BrokerOnly","pref64":"FreshPerResolutionAndConnection","ipPinning":"AllAnswersPublicPerConnection","redirectMaxHops":5,"tlsIdentity":"ExactSniHostCertificate","rawIp":"Denied","udp":"Denied","specialUse":"Denied"}`;
+Enabled is the exact Restricted object with only `mode="Enabled"`. Runtime
+reconstructs and byte-compares these canonical controls against
+SandboxEnforcementRuleSetV1 and the exact qualification evidence. There is no
+`networkBrokerControlsDigest` or caller/provider-selectable controls variant.
+
+P4 builds `auditRefs` only from stable existing refs: the exact authority
+audit-record ref if the current audit codec/store exposes one (otherwise
+omit); the committed P1 CommandId/receipt ref; and for OsEnforced the exact
+qualification manifest blob ref (omit for TrustedLocal). Then exact-dedup,
+UTF-8 sort and enforce the existing V21 bounds. No ref is synthesized from
+time, log offset, path, provider diagnostic, caller input, or arbitrary audit
+content. All remain internal-only and are redacted by the public view.

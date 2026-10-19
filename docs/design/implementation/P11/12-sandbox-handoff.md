@@ -74,3 +74,23 @@ must recompute and compare stable basis before process admission. Target/mount/
 boundary changes use the existing ResourceBoundary revision/CAS path. P12/09
 is only a mapping cross-reference, not a changed region codec. P11/12 owns
 logical mount open/close and Worktree lifecycle, not OS isolation.
+
+## Accepted V3 boundary-to-mount producer handoff
+
+For V3 policy preparation, P11 hands P4 the complete current ResourceBoundary
+resolved for its exact Workspace and `basisResponsibilityRevision`, plus its
+canonical `ResourceBoundaryDigestV1`. The basis revision is a nonnegative
+safe integer, including zero; regions are the complete existing
+canonicalRegionString set with frozen filesystem alias and exact duplicate
+collapse, UTF-8-byte sorting and identity-collision rejection. This handoff
+does not reinterpret P11 EnvironmentRevision or content/drift facts and does
+not narrow the boundary to the requested shell/tool target.
+
+P11 supplies the existing path-free `SandboxTargetRefV1` objects and exact
+current Workspace ownership claims. P4/04 is the process-mount materializer:
+only FileTree/GitWorktree filesystem regions become mounts; the primary
+managed GitWorktree is `workspace`, and each additional filesystem region is
+`resource-<full regionIdentityDigest>`, sorted by UTF-8 mountId. Database and
+external regions remain policy-target metadata, not process mounts. P11
+continues to own logical Worktree lifecycle/open-close; the handoff conveys
+no host/process isolation, permission grant, or provider support claim.

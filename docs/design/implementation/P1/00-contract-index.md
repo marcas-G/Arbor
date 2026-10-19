@@ -89,3 +89,21 @@ linearized result/receipt/decision/event join, unchanged DDL, and restart
 matrix. `executions.episode_revision` is the already existing P2/EGP CAS
 source. P1 owns no new RecoveryBinding fact/event/table/schema; the V21
 SandboxRecoveryBindingFailure is a non-persisted P10 projection.
+
+## Accepted Native Sandbox producer mapping closure (V3)
+
+P1 `01`/`03` consume the exact P5 SandboxAuthorityBundleV2 and P11 complete
+ResourceBoundary producer, bind the existing operatorConfig revision/digest,
+and accept only bounded stable audit refs. The established
+DecideSandboxPolicy CAS, receipt-first replay, result/digest join and
+transaction boundary remain unchanged; no new payload field, fingerprint
+input, event or DDL is introduced. Details are in `01`/`03` and the V3
+acceptance record/manifest.
+
+## Accepted Sandbox Policy Candidate Read Model V5
+
+P1/01 accepts only the existing DecideSandboxPolicy payload and common full
+authority-bundle CAS for both variants; candidate IDs/list/reason are not
+command fields. OsEnforced alone retains the registry branch precondition.
+Candidate read is P10 projection data, not P1 authority or fingerprint
+input. See P1/01 and the V5 acceptance record.

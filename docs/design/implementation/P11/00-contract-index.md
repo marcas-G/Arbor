@@ -82,3 +82,13 @@ Review round 1 (independent): 4 Blocking (2 HIGH / 2 MEDIUM) + 3 LOW — all fix
 DESIGN/CONTRACT CLOSED (reviewed Blocking=0; CI-1..CI-5 all PASS).
 Implementation planning may now be generated.
 ```
+
+## Accepted Native Sandbox producer mapping closure (V3)
+
+P11/04 resolves the full current ResourceBoundary and emits the exact
+ResourceBoundaryDigestV1 (nonnegative responsibility revision, full sorted
+canonicalRegionString set) plus existing object-valued SandboxTargetRefV1
+refs. P11/12 hands those logical refs/ownership claims to P4; P4 alone
+materializes process mounts. No change is made to P11 EnvironmentRevision,
+generic resolver semantics, CanonicalResourceRegion, or P12/09 encoding.
+See P11/04/12 and the V3 acceptance record/manifest.

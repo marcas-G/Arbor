@@ -90,10 +90,14 @@ providerRegistry revision/digest and qualificationEvidenceRef. TrustedLocal
 basis binds workspace/resourceBoundary revision, mounts, allowlist, limits,
 authorityBundle revision/digest, operatorConfig revision/digest and
 trustedRuntimeVersion=builtin-v1; it omits provider registry and all OS/T3
-fields. Provider registry changes cannot stale TrustedLocal. Policy/toolchain/
-limit/allowlist changes must advance their bound trusted config or registry
-digest. P11 EnvironmentRevision, content, dirty state, mtime, outputs and
-expectedEnvironmentRevision do not participate.
+fields. Its basis digest remains variant-specific, but currentness separately
+compares the full `authorityBundleRevision/Digest` for both variants. Any
+bundle change, including a provider-registry-only change, stales TrustedLocal
+even though its basis omits provider-registry fields and it has no registry
+branch precondition. Policy/toolchain/limit/allowlist changes must advance
+their bound trusted config or registry digest. P11 EnvironmentRevision,
+content, dirty state, mtime, outputs and expectedEnvironmentRevision do not
+participate.
 
 Exact closed key orders: OsEnforcedSandboxEnvironmentBasisV1 is
 version,kind,workspaceId,resourceBoundaryRevision,mounts,environmentAllowlist,
@@ -149,6 +153,7 @@ blob:sha256:7777777777777777777777777777777777777777777777777777777777777777;
 TrustedLocal instead binds operator revision 1/digest
 5555555555555555555555555555555555555555555555555555555555555555 and
 runtime builtin-v1, with no registry fields.
+
 OS basis hashes by region kind FileTree/GitWorktree/DatabaseNamespace/
 ExternalResource are 7e6fa29652657f818493803262cefcb4baef63c7a1e6d7636f93f54851e17b7b,
 3ba6efaa93b07594e76e1b344a5b017b26c44a76a0b99406fa32792082982f24,
@@ -158,3 +163,60 @@ TrustedLocal basis hashes are 2858a860a0b2a32e2b23966d5dcafd0bc8b5034796e8abf648
 426be1fd9c1cf700b28213aeaadbdc76685d6542e791449c23dd83a6b127378d,
 91e9c977df95fb17761b06bfef7a91529baa13d05621a1003fdd2b3e0330bd9d,
 3da8b50c78724c629333a5c44c6df0bc0496ad4d486ecd666c9db1d333afa380.
+
+## Accepted V3 full-boundary producer and process-mount admission
+
+For sandbox policy preparation, P4 consumes P11's complete current
+ResourceBoundary and `ResourceBoundaryDigestV1`, not only the region named
+by the pending command or executable invocation. The digest key order is
+`version,basisResponsibilityRevision,regions`; the basis revision is a
+nonnegative safe integer, including zero; regions are the full
+canonicalRegionString set after existing FileTree/GitWorktree alias and exact
+duplicate collapse, UTF-8-byte sorted and unique. This does not alter
+CanonicalResourceRegion or the existing P12/09 stringifier.
+
+The existing closed `SandboxTargetRefV1` is object-valued with exact order
+`version,kind,resourceSpace,regionIdentityDigest`. The resourceSpace enum is
+exactly filesystem/database/external. Preserve this object as the mount's
+`targetRef`; any additional hash of these bytes has a distinct
+`targetRefDigestV1` name and is not substituted into the targetRef field.
+
+Only filesystem FileTree/GitWorktree regions are process mounts. The primary
+managed GitWorktree uses mountId `workspace`; each additional filesystem
+region uses `resource-<full-lowercase-regionIdentityDigest>`, with exact
+UTF-8 mountId order and fail-closed collision handling. DatabaseNamespace and
+ExternalResource remain admitted policy-target metadata, not mounts; a shell
+request requiring either uses ResourceResolutionDenied before effect and
+does not invalidate unrelated filesystem mounts. Exact active current
+Workspace ResourceOwnership determines WorkspaceWrite access per region;
+ReadOnly remains all-RO, and FullAccess logical permissions make no OS
+isolation claim. The tool's pinned required access is checked again on each
+invocation; policy mounting is not an authorization grant.
+
+`operatorConfigRevision/Digest` bound by the effective policy exactly matches
+P5's SandboxAuthorityBundleV2 operator member and its canonical subobject
+digest. Profile limits are the exact configured six-value tuple; OsEnforced
+qualification binds those configured values in its existing T3 evidence
+artifact, while TrustedLocal only discloses them. No separate maxima codec or
+new resource revision is introduced.
+
+## Accepted candidate-read-model V5 policy currentness
+
+For every committed policy variant, compare both the existing
+`SandboxEnvironmentBasisDigestV1` and the complete current P5 V2
+`authorityBundleRevision/Digest` to the values bound by the immutable policy
+decision. This full-bundle check applies to OsEnforced and
+TrustedLocalUnconfinedV1. A change to any V2 child, including issuer,
+operator, or provider registry, stales both variants. In particular, this
+supersedes the earlier V21 sentence that provider-registry drift cannot stale
+TrustedLocal. The TrustedLocal basis remains its existing closed variant and
+does not gain provider-registry fields; the shared full-bundle fields already
+stored in its snapshot are the currentness source.
+
+When this exact policy is required by an active Execution and the full bundle
+pair or existing policy basis is stale, preserve the existing P4
+`SandboxPolicyRequiredInterruption` path before effect admission. Do not
+create a provider-unavailable fact, change profile authority, or auto-select
+a replacement. A later human decision uses the existing common V21 bundle
+preconditions; OsEnforced alone retains the provider-registry branch
+precondition.

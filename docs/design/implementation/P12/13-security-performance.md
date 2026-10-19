@@ -310,6 +310,57 @@ operator evidence manifest. Missing controls or evidence set Unavailable; T2
 success alone does not set Supported. No host is declared Supported by this
 document.
 
+## Accepted V3 producer mapping qualification
+
+`SandboxAuthorityBundleV2` from P5/01 is the current decision-authorizing
+authority source. Its embedded `SandboxOperatorPolicyConfigV1` supplies the
+exact allowlist/limit values; effective-policy
+`operatorConfigRevision/Digest` must equal the exact V2 adjacent fields and
+canonical subobject digest. V1 source/high-water/audit bytes remain immutable
+historical records under their V1 decoders and cannot authorize new decisions
+after V2 activation.
+
+`NetworkBrokerControlsV1` is a closed derived value, not an operator/provider
+choice and not a new digest. Disabled is exactly
+`{"version":1,"mode":"Disabled","directNetwork":"Denied","broker":"Disabled"}`.
+Restricted and Enabled use the exact same ordered fields, with only `mode`
+different:
+`{"version":1,"mode":"Restricted","brokerProtocolVersion":1,"directNetwork":"Denied","dns":"BrokerOnly","pref64":"FreshPerResolutionAndConnection","ipPinning":"AllAnswersPublicPerConnection","redirectMaxHops":5,"tlsIdentity":"ExactSniHostCertificate","rawIp":"Denied","udp":"Denied","specialUse":"Denied"}`.
+Runtime reconstructs canonical controls and compares bytes against the
+versioned SandboxEnforcementRuleSetV1 and exact provider qualification
+evidence. `enforcementRuleSetDigest` plus the existing qualification-manifest
+digest are the only evidence bindings; there is no
+`networkBrokerControlsDigest`.
+
+`FreshPerResolutionAndConnection` means fresh qualified Pref64 discovery
+before every new DNS resolution and every new connection attempt. A redirect
+hop always performs new origin authorization, DNS resolution, discovery,
+address filtering/pinning, and connection; no previous hop/pool result is
+reused. A discovered set is usable only inside that single connection's
+DNS-answer → address-check → connect → TLS handshake. No cross-resolution,
+cross-connection, pool, or later handshake reuse is permitted. Unknown or
+unverifiable discovery is the existing `sandbox/pref64-unknown`; a valid
+freshly discovered different prefix is not itself a failure.
+
+The canonical Restricted policy digest vector is exact bytes
+`{"version":1,"mode":"Restricted","destinations":["https://example.com"]}`
+→ lowercase SHA-256
+`4fb2fbc43163b7085c7c2036ea962587d2be99ffc101f919cda542fef826cffc`.
+The origin has implicit port 443; an explicit `:443` is not canonical.
+
+For each Supported OsEnforced tuple, the existing T3 qualification matrix
+and its already hashed `artifactDigests` must include a structured
+qualification artifact containing the exact configured six-value profile
+limit tuple (`wallTimeMs,stdoutBytes,stderrBytes,processCount,memoryBytes,
+cpuTimeMs`), exact operatorConfig revision/digest, and exact provider/version/
+capability/OS/profile×network tuple. T3 is valid only if those values exactly
+match current operator config and the control evidence proves those exact
+limits. The existing manifest digest binds its artifact hash. Any config
+limit change requires requalification and a newly operator-issued registry
+entry/evidence; do not assume a manifest maxima field, invent an implicit
+platform maximum, or add a separate maxima codec. TrustedLocal records limits
+for transparency only and has no Supported/T3 status.
+
 
 Exact deny set pinned by addressClassificationSnapshotId
 iana-special-purpose-2025-10-09+sha256:86583d4bbc916863208c3fbb5a75ee3e6500dd12aa4f9bd3a72caaacb4a3da6a:

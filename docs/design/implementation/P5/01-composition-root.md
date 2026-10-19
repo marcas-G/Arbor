@@ -129,8 +129,12 @@ scheduler-origin under P13 `02`.
 
 ## Accepted full-chain Native Sandbox authority/configuration source (V21)
 
-P5 owns the startup-loaded closed SandboxAuthorityBundleV1 and the immutable
-snapshots injected into P1/P4. Bundle JSON is compact canonical UTF-8 (no BOM,
+The following V21 SandboxAuthorityBundleV1 codec is retained as immutable
+historical input and can be read only by its exact forensic decoder; it no
+longer authorizes new sandbox policy decisions after the accepted V3 producer
+closure. New decisions use SandboxAuthorityBundleV2 below. P5 still owns the
+startup-loaded authority source and immutable snapshots injected into P1/P4.
+Bundle JSON is compact canonical UTF-8 (no BOM,
 whitespace, trailing newline, unknown/missing/duplicate fields, alternate
 encoding, noncanonical strings or integer notation; canonical JCS string/
 number rules with the exact schema key order below):
@@ -240,3 +244,151 @@ policy-basis-stale, and all P11 environment/resource basis-changed codes.
 These are P4 no-effect outcomes materialized by existing P9 only after actual
 provider failure; authority-load and human-command rejections never enter this
 fact channel.
+
+## Accepted V3 versioned producer configuration and high-water
+
+P5's current decision-authorizing source is the closed
+`SandboxAuthorityBundleV2`. V1 remains byte-for-byte immutable and forensic;
+there is no implicit default operator config or V1-to-V2 reinterpretation.
+The exact V2 top-level key order is
+`version,sourceIdentity,bundleRevision,issuerConfigRevision,
+issuerConfigDigest,issuerConfig,operatorConfigRevision,operatorConfigDigest,
+operatorConfig,providerRegistryRevision,providerRegistryDigest,
+providerRegistry`. Its canonical compact UTF-8 preimage shape is:
+
+```json
+{"version":2,"sourceIdentity":"<canonical opaque ID>","bundleRevision":2,"issuerConfigRevision":1,"issuerConfigDigest":"<64 lowerhex>","issuerConfig":{"version":1,"revision":1,"issuers":["<canonical HumanPrincipal>"]},"operatorConfigRevision":1,"operatorConfigDigest":"<64 lowerhex>","operatorConfig":{"version":1,"revision":1,"environmentAllowlist":[],"limitsByProfile":[{"profile":"ReadOnly","limits":{"wallTimeMs":1,"stdoutBytes":1,"stderrBytes":1,"processCount":1,"memoryBytes":1,"cpuTimeMs":1}},{"profile":"WorkspaceWrite","limits":{"wallTimeMs":1,"stdoutBytes":1,"stderrBytes":1,"processCount":1,"memoryBytes":1,"cpuTimeMs":1}},{"profile":"FullAccess","limits":{"wallTimeMs":1,"stdoutBytes":1,"stderrBytes":1,"processCount":1,"memoryBytes":1,"cpuTimeMs":1}}],"trustedLocalRuntimeVersion":"builtin-v1"},"providerRegistryRevision":1,"providerRegistryDigest":"<64 lowerhex>","providerRegistry":{"version":1,"revision":1,"entries":[]}}
+```
+
+The placeholders above are documentation notation, not valid source values.
+All codecs are closed; UTF-8, no BOM/whitespace/trailing newline, exact key
+order, canonical JSON strings and safe integer spelling are required.
+Unknown/missing/duplicate fields fail closed. `bundleDigest` is SHA-256 of
+the complete exact V2 bundle bytes and is not an in-band member. Issuer,
+operator, and provider subdigests are SHA-256 of their exact embedded
+canonical subobject bytes. Each adjacent `*Revision` equals that subobject's
+revision. Changing any child config requires its own revision and a strictly
+increasing `bundleRevision`. If an issuer or provider-registry subobject is
+carried forward byte-for-byte unchanged from V1, its V1 child revision/digest
+may be retained in the V2 source and matching active V2 high-water. A changed
+child must use a strictly increasing child revision and advance the enclosing
+bundle revision. The new operator config always has its own explicit positive
+revision/digest.
+
+`SandboxOperatorPolicyConfigV1` has exact keys/order
+`version,revision,environmentAllowlist,limitsByProfile,
+trustedLocalRuntimeVersion`. Its revision is a positive safe integer.
+`environmentAllowlist` is a UTF-8-byte-sorted unique subset of names in the
+existing frozen `SANDBOX_ENV_ALLOWLIST`, with no values. `limitsByProfile`
+contains exactly one entry each, sorted `ReadOnly,WorkspaceWrite,FullAccess`;
+each entry is exactly `{profile,limits}` and `limits` has exactly ordered
+positive safe integer fields `wallTimeMs,stdoutBytes,stderrBytes,
+processCount,memoryBytes,cpuTimeMs`. No unknown profile, limit, duplicate,
+zero, overflow, or unbounded value is accepted. In V1 this config's
+`trustedLocalRuntimeVersion` MUST equal the exact literal `builtin-v1`; any
+future value requires a new accepted governance proposal and codec version.
+No caller, provider, workspace, or inherited environment supplies these
+fields.
+
+`SandboxAuthorityHighWaterV2` is the closed canonical JSON object with exact
+key order and preimage shape:
+
+```json
+{"version":2,"sourceIdentity":"<canonical-source-id>","bundleRevision":2,"bundleDigest":"<64-lowerhex>","issuerConfigRevision":1,"issuerConfigDigest":"<64-lowerhex>","operatorConfigRevision":1,"operatorConfigDigest":"<64-lowerhex>","providerRegistryRevision":1,"providerRegistryDigest":"<64-lowerhex>"}
+```
+
+The exact key order is
+`version,sourceIdentity,bundleRevision,bundleDigest,issuerConfigRevision,
+issuerConfigDigest,operatorConfigRevision,operatorConfigDigest,
+providerRegistryRevision,providerRegistryDigest`. Placeholders are notation,
+not valid values. Bytes are compact canonical UTF-8 with no BOM, whitespace,
+trailing newline, unknown/missing/duplicate fields, or alternate integer/
+string encodings. All revisions are positive safe integers and all digests
+lowercase SHA-256. It remains a protected monotone object outside replaceable
+source config and application SQLite.
+Forward skips are allowed; rollback and same-revision digest change/reuse
+are not. Any changed child digest advances that child's revision and
+`bundleRevision`. Current source and protected high-water must exactly agree
+for P5 to publish Available.
+
+V1-to-V2 provisioning is an explicit offline operator operation. Preserve
+the same V1 source identity unless the existing re-enrollment procedure
+explicitly changes it; carry all previously accepted issuer and
+provider-registry contents forward without widening them; add an explicit
+operator config; and assign `bundleRevision` strictly greater than the old
+V1 high-water's bundle revision. The old V1 source bytes remain immutable
+historical evidence and are not rewritten in place.
+
+Before replacing the active high-water representation, preserve the exact
+old V1 high-water bytes as immutable forensic evidence, separate from the
+active high-water input and outside the application database. The V1 bytes
+are never copied into the V2 active `bundleRevision` or `bundleDigest` fields
+and never authorize a decision after V2 adoption. `SandboxAuthorityHighWaterV2`
+is the sole active high-water after adoption, and its `sourceIdentity`,
+`bundleRevision`, and `bundleDigest` exactly match the complete V2 source. Its
+issuer, operator, and provider-registry revision/digest pairs each exactly
+match their embedded V2 subobjects. For issuer or provider-registry contents
+carried forward byte-for-byte unchanged, the V2 source and active V2
+high-water may retain the corresponding V1 child revision and digest. A
+changed child subobject requires its own strictly increasing child revision
+and the enclosing V2 `bundleRevision` to advance. The new operator config
+has its own explicit positive revision and exact digest. If preservation or
+exact source/high-water matching cannot be proven, authority remains
+unavailable; do not initialize fresh state or lower/reuse a revision to
+recover service.
+
+The V1-to-V2 source/high-water transition is atomic and fail-closed. First
+write and durably verify the complete V2 source, including its canonical
+bytes and child digests, at a `bundleRevision` strictly greater than the old
+V1 high-water value. Until the active V2 high-water is atomically committed,
+the old V1 high-water remains intact and the source-ahead or
+version-mismatched state disables decisions. Startup MUST NOT authorize from
+a V2 source without its exact matching active V2 high-water, or fall back to
+the V1 source. Then atomically replace the active high-water with the
+complete `SandboxAuthorityHighWaterV2` record, using the exact codec and key
+order above and values that exactly match that verified V2 source. Preserve
+the old V1 raw high-water bytes separately as immutable forensic evidence;
+after this commit, they are forensic-only. A crash before commit leaves the
+V1 high-water unchanged, the V2 source ahead, and authority unavailable. A
+crash after durable atomic commit leaves the exact verified V2
+source/high-water pair active and V1 evidence forensic-only. No V1 bundle,
+V1 bundle fields copied into a V2 active record, or defaulted config can
+authorize a decision. Rollback to V1 after V2 adoption is forbidden. If
+preservation, atomic replacement, durable verification, or exact
+source/high-water matching cannot be proven, authority remains unavailable;
+the operator MUST NOT initialize fresh state or lower/reuse a revision to
+recover service.
+
+V1 authority audit records remain immutable and use the exact V1 decoder.
+New authority audit rows use closed `SandboxAuthorityAuditRecordV2` with
+exact ordered keys
+`version,outcome,detail,sourceIdentity,bundleRevision,bundleDigest,
+issuerConfigRevision,issuerConfigDigest,operatorConfigRevision,
+operatorConfigDigest,providerRegistryRevision,providerRegistryDigest,
+occurredAt`. `version=2`; existing closed outcome/detail enums remain; refs
+and revisions are null only when not safely known. Canonical bytes are
+compact UTF-8 under the V2 key order; an optional external record digest is
+SHA-256 of those exact bytes and is never in-band. The same injected P1
+`GatewayNow` supplies `occurredAt`. No raw path, OS exception, provider
+diagnostic, user secret, network content, or environment value is audited.
+
+P1/P4 snapshot `authorityBundleRevision/Digest` exactly match the verified V2
+bundle; `operatorConfigRevision/Digest` exactly match its adjacent V2 fields
+and embedded operator subobject digest; OsEnforced provider-registry fields
+match that same V2 registry subobject. TrustedLocal continues to omit
+provider-registry and all OS/T3 fields. The V21 P4 snapshot/basis codecs and
+vectors are unchanged.
+
+## Accepted Sandbox Policy Candidate Read Model V5 source boundary
+
+P5 exposes to the read-only candidate preparation one fully validated
+immutable `SandboxAuthorityBundleV2` snapshot and the exact current-host
+Supported tuple set derived from its operator-issued registry/evidence. P5
+does not filter Workspace applicability, construct or order candidate DTOs,
+select a profile/network policy, read P3/P4 invocation state, or gate
+dispatch. P10 performs Workspace/Episode applicability and candidate
+projection; P4/06 supplies the proof-bearing pending-requirement read; P1
+remains the only human decision command boundary. Provider registry changes
+advance the full V2 bundle pair and therefore stale TrustedLocal under the
+accepted all-variant currentness rule, even though TrustedLocal has no
+provider-registry branch fields.

@@ -426,3 +426,26 @@ event. Evidence/blob/provider loss after the decision is committed is a P4
 typed provider-unavailable outcome and may only then enter the existing P9
 fact/queue path. None is converted into another class or TrustedLocal
 fallback.
+
+## Accepted V3 sandbox producer inputs at the existing linearization point
+
+On a new DecideSandboxPolicy CommandId, the existing read-only preparation
+outside `BEGIN IMMEDIATE` uses one immutable P5 SandboxAuthorityBundleV2
+snapshot and P11's complete current ResourceBoundary (not a requested-address
+subset). P4 derives ResourceBoundaryDigestV1, object-valued V21
+SandboxTargetRefV1 refs, deterministic filesystem mounts/access,
+NetworkPolicy digest/broker controls, configured profile limits, and the
+closed effective-policy variant. The selected operatorConfig revision/digest
+and full V2 bundle revision/digest are carried exactly into the internal
+snapshot; no authority config is reconstructed from a default.
+
+The final `BEGIN IMMEDIATE` receipt check and CAS remain the sole
+linearization point. It revalidates the existing caller-visible boundary,
+Workspace, Execution/Episode, policy, authority-bundle, operator-config and
+provider-registry revisions/digests against the snapshot inputs. A changed
+source is the existing `StaleSandboxPolicyInputs` receipt; it cannot commit
+a decision with a mixed producer snapshot. Same-CommandId receipt replay
+returns the persisted result before reading current boundary or operator
+configuration, per V21. P1 performs no network, Pref64, process, or filesystem
+probe inside the transaction. No additional revision, table, event, migration,
+authority field, or transaction is introduced.

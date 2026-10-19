@@ -192,3 +192,12 @@ condition. The fixed safe summary, stable canonical identity, immutable
 `intent_at` timestamp and fail-closed corruption behavior are specified in
 those owners. This does not alter the V5 provider-unavailable fact queue,
 marker, or rebuild contract.
+
+## Accepted Sandbox Policy Candidate Read Model V5
+
+P10/03 owns all-variant full authority-bundle currentness and NeedsDecision
+freshness. P10/05 owns the additive Workspace Detail candidate DTO, candidate
+identity, exact current-host tuple filtering, and same-transaction barrier
+using P4/06's read-only requirement port. The existing POST route and
+preconditions remain unchanged; no candidate persistence is introduced.
+See P10/03/05 and the V5 acceptance record.

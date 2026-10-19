@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.54\
+**Version:** 1.56\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.53\
+**Supersedes:** v1.55\
 **Date:** 2026-10-19\
 **Depends on:** `Arbor System Design Specification v1.21`
 
@@ -7898,3 +7898,47 @@ new implementation token. Implementation may resume only after this accepted
 design landing receives independent post-review. No migration is activated,
 no existing database is upgraded, and no release is authorized by this
 landing or corrigendum.
+
+## Accepted Native Sandbox producer mapping closure (DID v1.55)
+
+Accepted token `ACCEPT_NATIVE_OS_SANDBOX_V21_PRODUCER_MAPPING_CLOSURE_V3`,
+proposal raw SHA-256
+`3944B1E8BBA9A7A0EBB47988B4B67965718C94EB4EE05D9605E9711AC1FF8A8A`.
+This owner-level closure adds no new user-visible scenario and does not change
+Problem & Goals, System Design, Scenarios, authority permission, schema, or
+migration activation. It closes the producer mapping across existing owners:
+P11/04 resolves the complete current ResourceBoundary and digest; P4/04/05
+derive the existing object-valued SandboxTargetRef and deterministic logical
+filesystem mounts/access; P5/01 publishes versioned SandboxAuthorityBundleV2
+with fixed `builtin-v1` TrustedLocal identity and preserved monotone
+high-water/audit compatibility; P12/13/14 own exact broker controls and T3
+limit/evidence binding; P1/01/03 preserve existing CAS, receipt replay, and
+decision transaction. P12/09 is a cross-reference only and its region codec
+is unchanged.
+
+The exact Pref64 control literal for Restricted/Enabled is
+`FreshPerResolutionAndConnection`; each new DNS resolution, connection, and
+redirect hop performs fresh discovery. Existing V21 P4 snapshot/basis codec
+and golden vectors remain unchanged. The acceptance/landing record and
+manifest pin all owner postimages. Existing implementation authorization
+continues only after independent post-landing review; this design change
+does not activate 0049/0050, upgrade a database, or authorize release.
+
+## Accepted Sandbox Policy Candidate Read Model V5 (DID v1.56)
+
+Accepted token `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL_V5`, proposal
+raw SHA-256
+`26B4BDAA4F79DCF2A0EA7C601A1037372A9C5308AB761663A921235076CE8D13`.
+This is an owner-contract/read-model closure and adds no DID-wide vocabulary,
+domain state, new scenario class, command, route, schema, or migration. It
+closes the dependency among P4/05/06 requirement/currentness reads, P5/01's
+verified bundle/current-host tuple supply, P1/01's unchanged full-bundle CAS,
+P10/03/05 candidate projection and freshness barrier, and P13/03/06 deliberate
+human choice. All committed variants now compare the full V2 authority-bundle
+pair; registry-only bundle drift also stales TrustedLocal, which remains
+Unconfined and does not gain a provider tuple. P4 reads existing P3 Pending /
+NotAdmitted / RecoveryBinding evidence through a read-only port; P10 does not
+read P3/P4 private stores. P10 candidate IDs are presentation-only and never
+enter the existing P1 command. Scenarios 1.6 and System Design 1.21 remain
+unchanged; no provider qualification, implementation, migration activation,
+database upgrade, or release follows from this design landing.

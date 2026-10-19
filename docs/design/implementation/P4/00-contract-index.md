@@ -205,3 +205,21 @@ path-free TargetRef and basis digest; P4/06 owns same-invocation interruption,
 strict immutable RecoveryBindingV1 and no-reprobe ExpectedFailure boundaries.
 P4 RecoveryBinding remains sole proof authority; no repair/rebind is added.
 P9/P10 do not persist a replay fact for binding-proof failure.
+
+## Accepted Native Sandbox producer mapping closure (V3)
+
+P4 `04` owns deterministic full-boundary-to-process-mount materialization,
+profile/access mapping, exact broker controls and effective-snapshot producer
+rules. P4 `05` owns per-invocation resource admission over those mounts and the
+non-filesystem no-effect rejection. The source full-boundary digest remains
+P11-owned; P5 owns V2 authority/configuration; P1 owns the unchanged decision
+transaction and receipt. See `04`/`05` and the V3 acceptance record/manifest.
+
+## Accepted Sandbox Policy Candidate Read Model V5
+
+P4/06 owns the read-only `SandboxPolicyRequirementReadPort` used by P10 to
+prove the exact active P3 Pending/Executable action, NotAdmitted invocation
+and bound RecoveryBinding under the caller's transaction. It writes no
+requirement/Attention state; P10 reads no P3/P4 private store directly. P4/05
+compares the complete authority-bundle pair for both policy variants,
+including TrustedLocal. See P4/05/06 and the V5 acceptance record.

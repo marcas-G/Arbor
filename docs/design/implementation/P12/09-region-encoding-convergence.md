@@ -205,6 +205,20 @@ consumer adoption of the existing encoding; it does not change region
 encoding, resolver behavior, or this child document's DRAFT status, and does
 not reopen P12 phase closure.
 
+## Accepted V3 sandbox producer cross-reference only
+
+The accepted `ACCEPT_NATIVE_OS_SANDBOX_V21_PRODUCER_MAPPING_CLOSURE_V3`
+(`planning/proposals/native-os-sandbox-v21-producer-mapping-closure-v3.md`,
+SHA-256
+`3944B1E8BBA9A7A0EBB47988B4B67965718C94EB4EE05D9605E9711AC1FF8A8A`)
+consumes the existing `canonicalRegionString` and frozen FileTree/GitWorktree
+alias behavior for its complete ResourceBoundary digest and
+SandboxTargetRefV1 producer. It is a consumer/owner cross-reference only:
+this document's CanonicalResourceRegion fields, `resourceSpaceId` values,
+canonical string bytes, alias/dedup rules, overlap semantics and P12 closure
+remain unchanged. P11/04 owns complete-boundary resolution; P4/04 and P4/05
+own logical sandbox mount/admission mapping.
+
 ## 9. Must Not Decide
 
 - No change to the frozen encoding; no region revision algebra (P11 fence).

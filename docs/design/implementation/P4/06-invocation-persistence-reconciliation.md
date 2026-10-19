@@ -1109,3 +1109,75 @@ Current resource access denial uses existing ResourceAdmissionDenied; current
 authority/approval drift uses existing P4 denial/approval. Only actual
 provider probe/broker/OS primitive failure after policy admission follows the
 distinct ExpectedFailure→P9 SandboxProviderUnavailableFact path.
+
+## Accepted sandbox candidate-read-model V5 requirement read port
+
+P4 `06` owns the read-only `SandboxPolicyRequirementReadPort` used by P10's
+candidate read. It consumes P3-owned `agent_loop_step_actions` and
+`agent_loop_steps` under the caller's existing `TransactionScope`; it writes
+no requirement, marker, Attention, event, queue item, or P3 state and does
+not mutate/reconcile those rows. P10 MUST NOT read P3 or P4 private stores
+directly. P4 returns proof-bearing internal evidence only; no invocation or
+binding detail is included in the candidate DTO.
+
+```ts
+interface SandboxPolicyRequirementReadPortService {
+  readonly findPendingByExecution: (input: {
+    readonly projectId: ProjectId;
+    readonly workspaceId: WorkspaceId;
+    readonly executionId: ExecutionId;
+  }) => Effect.Effect<
+    Option.Option<SandboxPolicyRequirementV1>,
+    ToolObservationEvidenceStoreError,
+    TransactionScope
+  >;
+}
+
+interface SandboxPolicyRequirementV1 {
+  readonly _tag: "SandboxPolicyRequirementV1";
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly executionId: ExecutionId;
+  readonly episodeBinding: ExecutionEpisodeBinding;
+  readonly expectedEpisodeRevision: number;
+  readonly invocationId: ToolInvocationId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly logicalActionId: string;
+  readonly actionIndex: number;
+  readonly callRef: CallRef;
+  readonly recoveryBindingDigest: Sha256;
+}
+```
+
+Return a value only when the canonical Execution is exact, active, unsettled,
+and not stop-requested; the exact invocation is unsettled and
+`effect_admission_state=NotAdmitted`; its immutable RecoveryBinding is
+Bound and verifies canonical bytes, SHA-256 and exact intent/resource
+identity; exactly one P3 Action is Pending on the Executable route with exact
+action identity and matching P3 input hash; and the matching AgentLoopStep
+is ActionsInProgress at that current action cursor. The invocation must be
+policy-bearing under the existing P4 rule (`shell` or exact sandbox-profile
+binding). Where an effect attempt has profile fields, they are either all
+NULL or complete and exact against the bound proof.
+
+Valid absence, terminal/stopped/settled Execution, settled or
+MayHaveStarted invocation, non-Pending action, or non-policy-bearing tool
+returns `None`. Missing, malformed, mismatched, duplicate, or ambiguous
+RecoveryBinding/action evidence returns the existing typed P4 read/corruption
+error, never `None`. The port uses the query's existing transaction and
+opens no independent transaction. P10 combines its verified result with the
+same-read candidate/currentness barrier; it returns no partial candidate DTO
+on a typed port, authority, tuple, or barrier failure.
+
+Qualification cases: exact active Execution + Pending Executable P3 Action +
+matching ActionsInProgress cursor + NotAdmitted invocation + verified Bound
+RecoveryBinding yields exactly one proof result; duplicate actions/bindings,
+valid-JSON identity or input-hash mismatch, malformed binding, and proof
+corruption yield the existing typed error; terminal/stopped/settled,
+MayHaveStarted, non-Pending, non-Executable, non-policy-bearing or absent
+invocation yields None only when source integrity is valid. Assert that every
+branch is read-only, runs within the caller's TransactionScope, makes no
+independent connection, and creates no P3/P4/P9/P10 row, event, marker,
+Attention, or candidate state.
