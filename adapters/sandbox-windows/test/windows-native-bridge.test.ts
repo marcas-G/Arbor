@@ -1,9 +1,12 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import {
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -12,17 +15,20 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { WINDOWS_NATIVE_BRIDGE_SOURCE_SHA256 } from "../src/native-artifact.js";
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const nativeSourceDirectory = join(testDirectory, "native");
 const helperSource = join(
-  nativeSourceDirectory,
+  testDirectory,
+  "..",
+  "src",
+  "native",
   "WindowsSandboxBridgeHarness.cs",
 );
 const childSource = join(nativeSourceDirectory, "WindowsSandboxChild.cs");
 const expectedSourceDigests = {
-  "WindowsSandboxBridgeHarness.cs":
-    "1b26026d28f27ef11a1d8cb5a9b9f90e5641e13bd510bebfe7d9a7e59b29e926",
+  "WindowsSandboxBridgeHarness.cs": WINDOWS_NATIVE_BRIDGE_SOURCE_SHA256,
   "WindowsSandboxChild.cs":
     "cc7473e7b8496357f40728f67b8963bf3f70fafa6469c03acb2e47e73711b42d",
 } as const;
@@ -174,6 +180,8 @@ describe.skipIf(process.platform !== "win32")(
       writeFileSync(join(forbidden, "private.txt"), "forbidden-seed\n");
       writeFileSync(join(control, "control.db"), "control-seed\n");
       symlinkSync(forbidden, join(admitted, "escape"), "junction");
+      linkSync(join(forbidden, "private.txt"), join(admitted, "hardlink.txt"));
+      writeFileSync(join(admitted, "race.txt"), "race-seed\n");
     });
 
     afterAll(() => {
@@ -245,6 +253,81 @@ describe.skipIf(process.platform !== "win32")(
       expect(result.ACL_RESTORED).toBe("1");
       expect(result.PROFILE_DELETED).toBe("1");
       expect(result.ROOT_EXIT_CODE).toBeUndefined();
+    });
+
+    it("inspects admitted roots through held final-path handles and rejects escape aliases", () => {
+      const inspect = (relativePath: string) => {
+        const result = spawnSync(
+          bridgeExecutable,
+          ["inspect-root", resourceRoot, relativePath],
+          { encoding: "utf8", windowsHide: true, timeout: 30000 },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(0);
+        return parseOutput(result.stdout);
+      };
+      expect(inspect("admitted/root.txt")).toMatchObject({
+        INSPECT_STATUS: "AdmissibleSnapshot",
+        INSPECT_TARGET_LINK_COUNT: "1",
+      });
+      expect(inspect("admitted/escape/private.txt")).toMatchObject({
+        INSPECT_STATUS: "Rejected",
+        INSPECT_REASON: "ReparsePoint",
+      });
+      expect(inspect("admitted/hardlink.txt")).toMatchObject({
+        INSPECT_STATUS: "Rejected",
+        INSPECT_REASON: "HardLinkCount",
+      });
+      expect(inspect("forbidden/private.txt")).toMatchObject({
+        INSPECT_STATUS: "Rejected",
+        INSPECT_REASON: "OutsideAdmittedRoot",
+      });
+    });
+
+    it("detects target replacement while native inspection handles are held", async () => {
+      const original = join(resourceRoot, "admitted", "race.txt");
+      const renamed = join(resourceRoot, "admitted", "race-renamed.txt");
+      const inspector = spawn(
+        bridgeExecutable,
+        ["inspect-root", resourceRoot, "admitted/race.txt", "3000"],
+        { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const closed = once(inspector, "close");
+      let output = "";
+      await new Promise<void>((resolveMarker, rejectMarker) => {
+        const timer = setTimeout(
+          () => rejectMarker(new Error("inspector marker timeout")),
+          5000,
+        );
+        inspector.stdout.on("data", (chunk: Buffer) => {
+          output += chunk.toString("utf8");
+          if (output.includes("INSPECT_HANDLES_HELD=1")) {
+            clearTimeout(timer);
+            resolveMarker();
+          }
+        });
+        inspector.on("error", rejectMarker);
+        inspector.on("exit", () => {
+          if (!output.includes("INSPECT_HANDLES_HELD=1"))
+            rejectMarker(
+              new Error(`inspector exited before handle marker: ${output}`),
+            );
+        });
+      });
+      let renameError: NodeJS.ErrnoException | undefined;
+      try {
+        renameSync(original, renamed);
+      } catch (error) {
+        renameError = error as NodeJS.ErrnoException;
+      }
+      const [exitCode] = await closed;
+      if (renameError === undefined) renameSync(renamed, original);
+      expect(exitCode).toBe(0);
+      expect(renameError).toBeUndefined();
+      expect(output).toContain("INSPECT_STATUS=Rejected");
+      expect(output).toContain("INSPECT_REASON=PathChangedDuringInspection");
+      renameSync(original, renamed);
+      renameSync(renamed, original);
     });
 
     it("contains descendants in the Job Object, enforces process count and kills the tree on close", () => {

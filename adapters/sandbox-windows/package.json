@@ -10,7 +10,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src/native"
   ],
   "dependencies": {
     "@arbor/domain": "workspace:*",

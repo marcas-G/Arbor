@@ -141,6 +141,16 @@ describe("Windows native sandbox provider registry", () => {
         }),
         failureCode: "NativeApiBridgeUnavailable",
       },
+      {
+        providerId: WINDOWS_SANDBOX_PROVIDER_IDS.restrictedAppContainerJob,
+        host: snapshot({
+          secureBrokerAvailable: true,
+          admittedRootAclAvailable: true,
+          reparseDefenseAvailable: true,
+          jobObjectLimitsAvailable: true,
+        }),
+        failureCode: "NativeControlsUnqualified",
+      },
     ];
 
     for (const testCase of cases) {
