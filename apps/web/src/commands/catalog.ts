@@ -16,6 +16,7 @@ export const HUMAN_ACTIONABLE_COMMANDS = [
   "AcceptWorkOutcome",
   "StopExecution",
   "GrantPermission",
+  "DecideSandboxPolicy",
   "RevokePermission",
   "SubmitHumanMessage",
   "ResumeConversationResponse",

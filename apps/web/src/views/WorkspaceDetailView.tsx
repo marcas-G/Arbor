@@ -92,6 +92,20 @@ export function WorkspaceDetailView({
           )}
         </div>
       </Card>
+      {res.sandboxPolicyCandidateRead === undefined ? null : (
+        <Card title="沙箱策略候选（需人工选择）">
+          <ul className="arbor-row-list">
+            {res.sandboxPolicyCandidateRead.candidates.map((candidate) => (
+              <li key={candidate.candidateId}>
+                {candidate.kind === "TrustedLocalUnconfinedV1"
+                  ? "TrustedLocal · FullAccess · 不受 OS 隔离（高风险）"
+                  : `${candidate.providerId} ${candidate.providerVersion} · ${candidate.profile === "ReadOnly" ? "只读" : "工作区写入"} · ${candidate.networkMode}`}
+              </li>
+            ))}
+          </ul>
+          <p>选择需要在命令提交时单独确认；本列表不会自动选择或提交。</p>
+        </Card>
+      )}
       {res.currentWork == null ? null : (
         <Card title="当前工作">
           <div className="arbor-view-stack">

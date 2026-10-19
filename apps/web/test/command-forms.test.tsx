@@ -7,10 +7,13 @@
  * TerminalRejected renders CommandInlineError while allowing resubmission
  * under a NEW commandId.
  */
+
+import type { WorkspaceDetailRes } from "@arbor/api-contracts";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AcceptWorkOutcomeForm } from "../src/commands/forms/AcceptWorkOutcomeForm.js";
 import { CreateProjectForm } from "../src/commands/forms/CreateProjectForm.js";
+import { DecideSandboxPolicyForm } from "../src/commands/forms/DecideSandboxPolicyForm.js";
 import { GrantPermissionForm } from "../src/commands/forms/GrantPermissionForm.js";
 import { RecordDecisionForm } from "../src/commands/forms/RecordDecisionForm.js";
 import { RevokePermissionForm } from "../src/commands/forms/RevokePermissionForm.js";
@@ -863,5 +866,171 @@ describe("RevokePermissionForm", () => {
     expect(screen.getByText("无待撤销的授权")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "撤销" })).toBeNull();
     expect(fetchMock.mock.calls.length).toBe(0);
+  });
+});
+
+describe("DecideSandboxPolicyForm", () => {
+  type CandidateRead = NonNullable<
+    WorkspaceDetailRes["sandboxPolicyCandidateRead"]
+  >;
+  const candidateRead = {
+    reason: "InitialDecision",
+    commonPreconditions: {
+      expectedEpisodeRevision: 4,
+      latestCommittedPolicyRevision: 0,
+      episodeBinding: {
+        _tag: "WorkEpisode",
+        workId: "wrk_v6_ui",
+        targetWorkRevision: 3,
+      },
+      workspaceRevision: 9,
+      resourceBoundaryRevision: 2,
+      authorityBundleRevision: 6,
+      authorityBundleDigest: "a".repeat(64),
+      operatorConfigRevision: 3,
+      operatorConfigDigest: "b".repeat(64),
+    },
+    candidates: [
+      {
+        kind: "OsEnforced",
+        candidateId: `spc2_${"1".repeat(64)}`,
+        sandboxHandleBindingDigest: "c".repeat(64),
+        providerId: "linux-bwrap",
+        providerVersion: "bwrap-v2",
+        profile: "WorkspaceWrite",
+        networkMode: "Restricted",
+        providerRegistryRevision: 6,
+        providerRegistryDigest: "d".repeat(64),
+      },
+      {
+        kind: "TrustedLocalUnconfinedV1",
+        candidateId:
+          "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+        sandboxHandleBindingDigest: "e".repeat(64),
+      },
+    ],
+  } as unknown as CandidateRead;
+  const props = {
+    actor: "user:test",
+    projectId: "prj_1",
+    workspaceId: "ws_1",
+    executionId: "exe_1",
+    candidateRead,
+    onSubmitted: vi.fn(),
+    onStaleReceipt: vi.fn(),
+    onCandidateSelected: vi.fn(),
+  };
+
+  it("requires an explicit OS candidate selection and submits only its digest and registry tuple", async () => {
+    const fetchMock = stubFetch(() => Promise.resolve(committed()));
+    render(<DecideSandboxPolicyForm {...props} />);
+    const submit = screen.getByRole("button", { name: "明确提交此策略" });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("c".repeat(64))).toBeNull();
+    fireEvent.change(
+      screen.getByLabelText("策略过期时间（ISO 8601，需包含时区）"),
+      {
+        target: { value: "2099-10-12T08:30:00Z" },
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("radio", { name: /工作区写入隔离.*linux-bwrap/u }),
+    );
+    fireEvent.change(
+      screen.getByLabelText("Restricted 网络目的地（每行一个 HTTPS origin）"),
+      { target: { value: "https://b.example\nhttps://a.example" } },
+    );
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(submit);
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
+    const { envelope } = readCommandCall(fetchMock);
+    expect(envelope.commandType).toBe("DecideSandboxPolicy");
+    const payload = payloadOf(envelope);
+    expect(payload).toMatchObject({
+      projectId: "prj_1",
+      workspaceId: "ws_1",
+      executionId: "exe_1",
+      expectedEpisodeRevision: 4,
+      expectedPolicyRevision: 0,
+      expectedWorkspaceRevision: 9,
+      expectedResourceBoundaryRevision: 2,
+      expectedSandboxHandleBindingDigest: "c".repeat(64),
+      expectedProviderRegistryRevision: 6,
+      expectedProviderRegistryDigest: "d".repeat(64),
+      profile: "WorkspaceWrite",
+      providerId: "linux-bwrap",
+      networkPolicy: {
+        kind: "OsEnforced",
+        policy: {
+          version: 1,
+          mode: "Restricted",
+          destinations: ["https://a.example", "https://b.example"],
+        },
+      },
+    });
+    expect(payload).not.toHaveProperty("candidateId");
+    expect(props.onSubmitted).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires separate high-risk TrustedLocal confirmation and sends no registry fields", async () => {
+    const fetchMock = stubFetch(() => Promise.resolve(committed()));
+    render(<DecideSandboxPolicyForm {...props} />);
+    fireEvent.change(
+      screen.getByLabelText("策略过期时间（ISO 8601，需包含时区）"),
+      {
+        target: { value: "2099-10-12T08:30:00Z" },
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("radio", { name: /TrustedLocal：FullAccess/u }),
+    );
+    const submit = screen.getByRole("button", { name: "明确提交此策略" });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /我了解 TrustedLocal 不提供 OS 隔离/u,
+      }),
+    );
+    fireEvent.click(submit);
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
+    const payload = payloadOf(readCommandCall(fetchMock).envelope);
+    expect(payload).toMatchObject({
+      expectedSandboxHandleBindingDigest: "e".repeat(64),
+      profile: "FullAccess",
+      providerId: "TrustedLocal",
+      networkPolicy: { kind: "TrustedLocalUnconfinedV1", version: 1 },
+    });
+    expect(payload).not.toHaveProperty("expectedProviderRegistryRevision");
+    expect(payload).not.toHaveProperty("expectedProviderRegistryDigest");
+    expect(payload).not.toHaveProperty("candidateId");
+  });
+
+  it("signals a stale receipt once and never auto-retries or reuses the old candidate", async () => {
+    const onStaleReceipt = vi.fn();
+    const fetchMock = stubFetch(() =>
+      Promise.resolve(terminalRejected("StaleSandboxPolicyInputs")),
+    );
+    render(
+      <DecideSandboxPolicyForm {...props} onStaleReceipt={onStaleReceipt} />,
+    );
+    fireEvent.change(
+      screen.getByLabelText("策略过期时间（ISO 8601，需包含时区）"),
+      {
+        target: { value: "2099-10-12T08:30:00Z" },
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("radio", { name: /工作区写入隔离.*linux-bwrap/u }),
+    );
+    fireEvent.change(
+      screen.getByLabelText("Restricted 网络目的地（每行一个 HTTPS origin）"),
+      { target: { value: "https://a.example" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "明确提交此策略" }));
+    await waitFor(() => expect(onStaleReceipt).toHaveBeenCalledTimes(1));
+    expect(
+      fetchMock.mock.calls.filter(([url]) => url === "/commands"),
+    ).toHaveLength(1);
+    expect(screen.getByRole("status").textContent).toContain("正在重新读取");
   });
 });

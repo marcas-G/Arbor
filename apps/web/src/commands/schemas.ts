@@ -140,6 +140,26 @@ export const revokePermissionSchema = z.object({
   permissionGrantId: grantId,
 });
 
+/** Local deliberate-choice state only. The candidateId is used to identify an
+ * option in the refreshed read model and is never sent in the P1 command. */
+export const sandboxPolicySelectionSchema = z
+  .object({
+    candidateId: z.string().regex(/^spc2_[0-9a-f]{64}$/u),
+    decisionExpiresAt: z
+      .string()
+      .min(1, "策略过期时间必填")
+      .refine(isStrictIsoTimestamp, "请输入有效的 ISO 时间，并明确包含时区")
+      .refine(
+        (value) => Date.parse(value) > Date.now(),
+        "策略过期时间必须晚于当前时间",
+      ),
+    networkDestinations: z
+      .array(z.string().trim().min(1))
+      .max(64, "网络目的地过多"),
+    trustedLocalConfirmed: z.boolean(),
+  })
+  .strict();
+
 export const submitHumanMessageSchema = z.object({
   bodyRef: z.string().trim().min(1).max(8192),
 });
