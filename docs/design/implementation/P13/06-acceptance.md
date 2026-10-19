@@ -108,7 +108,8 @@ read, with no new route or command:
 - Initial exact active Execution with a verified pending P4/P3 requirement
   renders the coherent candidate list and common preconditions; singular
   preconditions are absent when the candidate read is present.
-- Human selection maps existing common fields and selected variant to
+- Human selection maps existing common fields, only the selected candidate's
+  profile-specific handle digest, and selected variant to
   `/commands`; `candidateId`, candidate list/reason and evidence refs are not
   submitted. OsEnforced includes its exact registry pair and matching
   NetworkPolicy mode; TrustedLocal omits registry fields and requires the
@@ -118,7 +119,9 @@ read, with no new route or command:
   a refreshed candidate read and requires an explicit human choice. Do not
   display a provider-unavailable state or imply TrustedLocal is OS-enforced.
 - A command based on the old candidate read receives the existing durable
-  stale receipt; only after invalidation/refetch can the human choose again.
+  stale receipt; only after invalidation/refetch of the whole candidate list
+  can the human choose again, including when the `candidateId` is unchanged
+  but that candidate's digest differs.
   No automatic selection, submit, polling, retry, dispatch or spawn occurs.
 - Candidate list rendering uses only safe exact provider/profile/network
   fields and candidate IDs; no paths, target refs, invocation/binding proof,
@@ -126,3 +129,11 @@ read, with no new route or command:
 
 These are contract qualification requirements, not implementation evidence;
 this design landing runs no tests and changes no database or migration.
+
+V6 additionally qualifies initial and refreshed candidate reads against the
+same complete current boundary/ownership barrier: an owned mount can yield
+distinct ReadOnly versus WorkspaceWrite/FullAccess digests; without a claim,
+ReadOnly and WorkspaceWrite may share a digest. The selected digest alone maps
+to the unchanged P1 expected field. Missing or inconsistent source projection
+returns a typed failure with no partial list. Candidate IDs, order, safe
+presentation and separate TrustedLocal confirmation remain V5.

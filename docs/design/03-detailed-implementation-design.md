@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.56\
+**Version:** 1.57\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.55\
+**Supersedes:** v1.56\
 **Date:** 2026-10-19\
 **Depends on:** `Arbor System Design Specification v1.21`
 
@@ -7942,3 +7942,28 @@ read P3/P4 private stores. P10 candidate IDs are presentation-only and never
 enter the existing P1 command. Scenarios 1.6 and System Design 1.21 remain
 unchanged; no provider qualification, implementation, migration activation,
 database upgrade, or release follows from this design landing.
+
+## Accepted Sandbox Policy Candidate Profile Binding Digest V6 (DID v1.57)
+
+Accepted token `ACCEPT_SANDBOX_POLICY_CANDIDATE_PROFILE_BINDING_DIGEST_V6`,
+proposal raw SHA-256
+`90300163BA7F2EE31314E63A028A3D67F9DD87D79895796F6DB81304D846DCB2`.
+This fixes only the V5 candidate-read placement of the existing
+`sandboxHandleBindingDigest`: P10/05 removes it from common preconditions and
+puts an exact profile-specific digest immediately after `candidateId` in each
+closed candidate variant. One coherent P11 full-boundary and exact active
+Workspace ownership snapshot feeds the unchanged P4/05 canonical producer
+for every offered profile at initial and refreshed reads. Missing or
+unprovable source projection fails the read as a whole. A shared digest is
+allowed when exact projections coincide.
+
+P13/03/06 copy only the selected digest to P1/01's unchanged
+`expectedSandboxHandleBindingDigest`; P1 continues its submitted-profile
+CAS. `candidateId` remains the V5 tuple presentation identity without the
+digest in its preimage. After the existing stale receipt, P13 discards the
+whole read and requires fresh human selection even when an ID is unchanged.
+The singular V21 `sandboxPolicyPreconditions` union, P4/P9 execution gates,
+V2 authority currentness, P5 host tuple proof, TrustedLocal safety
+presentation, P1 command/receipt/snapshot and all persistence contracts
+remain unchanged. Scenarios 1.6 and System Design 1.21 remain unchanged; this
+landing grants no implementation, migration, database or release authority.

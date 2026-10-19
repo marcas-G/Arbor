@@ -288,7 +288,7 @@ ordinary lag uses the existing generic lag behavior. Web waits for existing
 WebSocket invalidation or explicit manual refetch and performs no timer,
 polling or automatic retry.
 
-## Accepted candidate-read-model V5 Workspace Detail contract
+## Accepted candidate-read-model V5 Workspace Detail contract (V6 digest correction)
 
 Keep the existing POST `/views/workspace-detail` and request body
 `WorkspaceDetailReq={workspaceId}`. V5 adds no route, ViewId, command, wire
@@ -312,7 +312,6 @@ type SandboxPolicyCandidateReadV1 = {
     readonly episodeBinding: ExecutionEpisodeBinding;
     readonly workspaceRevision: number;
     readonly resourceBoundaryRevision: number;
-    readonly sandboxHandleBindingDigest: Sha256;
     readonly authorityBundleRevision: number;
     readonly authorityBundleDigest: Sha256;
     readonly operatorConfigRevision: number;
@@ -325,6 +324,7 @@ type SandboxPolicyCandidateV1 =
   | {
       readonly kind: "OsEnforced";
       readonly candidateId: string; // spc2_<64 lowercase SHA-256 hex>
+      readonly sandboxHandleBindingDigest: Sha256;
       readonly providerId: string;
       readonly providerVersion: string;
       readonly profile: "ReadOnly" | "WorkspaceWrite";
@@ -335,6 +335,7 @@ type SandboxPolicyCandidateV1 =
   | {
       readonly kind: "TrustedLocalUnconfinedV1";
       readonly candidateId: string;
+      readonly sandboxHandleBindingDigest: Sha256; // FullAccess projection
     };
 
 type WorkspaceDetailRes = Omit<
@@ -350,13 +351,15 @@ The common revisions use existing V21 ranges: episode, latest committed
 policy, Workspace and ResourceBoundary revisions are nonnegative safe
 integers (latest policy is zero only when no decision exists); authority-bundle
 and operator-config revisions are positive safe integers; all digests are
-lowercase 64-hex SHA-256. An OsEnforced candidate has the exact positive
+lowercase 64-hex SHA-256. Each candidate carries its own profile-specific
+`sandboxHandleBindingDigest` immediately after `candidateId` in serialized
+key order. An OsEnforced candidate has the exact positive
 registry revision/digest pair; TrustedLocal has no registry branch fields.
 The full authority-bundle pair is common and current for both variants.
 
 P5 supplies one verified immutable SandboxAuthorityBundleV2 and the exact
 current-host Supported tuple set. P10 filters those tuples for the exact
-current Workspace/Episode/boundary/handle basis; it does not requalify a
+current Workspace/Episode/boundary basis; it does not requalify a
 provider or infer a Cartesian product. Each exact applicable tuple yields one
 OsEnforced candidate and the list contains exactly one TrustedLocal
 candidate. Sort OsEnforced candidates by unsigned UTF-8 bytewise tuple
@@ -366,16 +369,33 @@ last. Exact duplicates collapse only when every tuple and registry field is
 identical; conflicting mappings fail closed. The OS candidate carries no
 destinations or qualification evidence ref; the human still supplies the
 existing NetworkPolicyV1 in the P1 command. Candidate identity is presentation
-only and is not a P1 CAS value or authority.
+only and is not a P1 CAS value or authority. The candidate digest is an opaque
+CAS value in this human-only view; it discloses no mounts, target refs, paths,
+claims, or ownership regions. Existing summary, receipt and Attention
+redaction is unchanged.
 
 P10 obtains a same-transaction proof result from P4's read-only
 `SandboxPolicyRequirementReadPort` in P4/06. The port validates the exact
 pending P3 action, active Execution, NotAdmitted invocation and immutable
 RecoveryBinding; P10 MUST NOT read P3/P4 private stores directly. P10 combines
 that result with the exact current P1 decision/result, P5 full bundle,
-Workspace/boundary/handle refs and existing freshness barrier. If the P4
-port, authority source, exact-host tuple snapshot, or barrier fails with a
-typed error, return that error/lag outcome and no partial candidate list.
+Workspace/boundary refs and existing freshness barrier. Under that same P10
+read transaction, the P11 read seam supplies the complete current
+ResourceBoundary and exact active Workspace ResourceOwnership facts. For every
+offered candidate P10 projects those same facts with its profile through the
+existing P4 `05` canonical full-boundary producer and computes the exact
+`SandboxHandleBindingDigestV1` of the derived mounts and access. ReadOnly is
+all ReadOnly; WorkspaceWrite grants ReadWrite only on exact active owned
+regions; TrustedLocal FullAccess has logical ReadWrite mounts without an OS
+isolation claim. P10 never uses the pending tool target, caller subset, stale
+committed policy, or synthetic neutral handle as the digest source, and never
+opens P11/P4 private stores or a second inconsistent snapshot. Candidate
+digests may coincide when the derived mounts and access coincide. If the P4
+port, authority source, exact-host tuple snapshot, barrier, or full-boundary/
+ownership projection is missing, corrupt, ambiguous or unprovable, return the
+typed error/lag outcome and no partial candidate list. The P4 read-only
+requirement proof and P5 authority/host tuple proof remain separate checks in
+this same coherent response.
 
 Candidate IDs are generated exactly as fixed by the accepted V5 proposal:
 `spc2_` plus lowercase SHA-256 of
@@ -389,8 +409,26 @@ providerRegistryDigest`; TrustedLocal has only the variant byte. The
 canonical TrustedLocal golden is
 `spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d`.
 IDs are display identity only: P1 rejects unknown fields and receives no
-`candidateId`; P13 maps the selected candidate's existing fields and the
-common preconditions to the existing P1 command payload.
+`candidateId`. The digest is excluded from the unchanged tuple-ID preimage;
+boundary or ownership drift may change a candidate's digest while its ID
+stays the same. Existing tuple sorting, exact duplicate collapse and
+conflicting-mapping failure do not deduplicate different IDs or reorder the
+list; TrustedLocal remains exactly once and last. P13 maps the selected
+candidate's digest, existing variant fields and common preconditions to the
+existing P1 command payload.
+
+For a stale committed policy, `NeedsDecision` still requires the exact pending
+P4 requirement. Each refreshed candidate digest derives from the current
+complete boundary and ownership snapshot, never the stale policy's stored
+handle digest. The full V2 bundle currentness and existing P4/P9 execution
+gates remain unchanged. If a CAS basis changes after this read, P1 returns
+its existing `StaleSandboxPolicyInputs` durable receipt without committing a
+policy. A selected profile's changed mount/access projection uses the existing
+`SandboxHandleBindingDigest` stale field; existing revision fields remain
+authoritative where changed. An ownership change that leaves the selected
+digest and every other CAS input equal does not alone stale the command.
+P13 discards the whole old read and requires a fresh human choice after
+invalidation or explicit refetch, even when `candidateId` is unchanged.
 
 V5 qualification matrix: an initial no-decision plus exact pending P4/P3
 requirement returns one coherent candidate read with the common preconditions
@@ -406,6 +444,7 @@ Supported tuple sets return exactly TrustedLocal; invalid bundle or
 unprovable tuple source returns a typed failure and no candidates. Missing,
 corrupt, duplicate, or mismatched P4 requirement proof is a typed failure,
 while valid closed/terminal/stopped/non-pending state returns None. Verify
-same-TransactionScope read, exact common/OS-only fields, candidate ID golden
+same-TransactionScope read, exact common/per-candidate/OS-only fields,
+candidate ID golden
 and sort order, no sensitive detail, no P3/P4 private-store access, and no
 new persisted candidate/Attention state.

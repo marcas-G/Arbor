@@ -72,4 +72,11 @@ deliberate human selection to existing P1 command fields. Candidate IDs are
 presentation-only; no candidate ID is submitted, no variant is auto-selected,
 and the existing high-risk TrustedLocal confirmation and stale-refetch
 behavior remain. See P13/03/06 and the V5 acceptance record.
+
+## Accepted candidate profile binding digest V6
+
+P13/03/06 map only the selected candidate's handle digest to P1's existing
+expected field and require whole-list refetch and deliberate reselection after
+a stale receipt, even when candidate ID is unchanged. See the V6 acceptance
+record.
 ```

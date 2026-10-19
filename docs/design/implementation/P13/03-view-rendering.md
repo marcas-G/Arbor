@@ -155,13 +155,18 @@ FullAccess/Unconfined and high risk, with the existing separate affirmative
 confirmation. Never present TrustedLocal as an OS-isolated choice or fallback.
 
 The human supplies the existing V21 P1 fields after selection: copy the exact
-common preconditions, add the OsEnforced registry pair only for that variant,
-and submit the existing NetworkPolicyV1 matching the selected networkMode.
+common preconditions and only the selected candidate's
+`sandboxHandleBindingDigest` to P1's existing
+`expectedSandboxHandleBindingDigest`. Add the OsEnforced registry pair only
+for that variant and submit the existing NetworkPolicyV1 matching the selected
+networkMode.
 Do not submit `candidateId`, candidate reason/list, evidence refs, or any
 provider diagnostics; candidate IDs are UI identity only. There is no
 automatic choice or submit. On `StaleSandboxPolicyInputs`, wait for existing
 invalidation or an explicit refetch, replace the stale candidate list, and
-require a new deliberate human choice. After any V2 bundle child changes,
+require a new deliberate human choice even if the refreshed option has the
+same `candidateId`. Discard the whole stale read; never implicitly reuse or
+resubmit it. After any V2 bundle child changes,
 including registry-only changes while a TrustedLocal decision is committed,
 show NeedsDecision and require explicit reapproval without implying an
 OS-provider dependency for TrustedLocal.
