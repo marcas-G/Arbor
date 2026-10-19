@@ -62,3 +62,4 @@ export * from "./work-plan.js";
 export * from "./work-readmission-gate.js";
 export * from "./work-wait.js";
 export * from "./workspace-resource-activation.js";
+export * from "./worktree-store.js";

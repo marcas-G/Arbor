@@ -20,14 +20,20 @@ import {
 } from "@arbor/domain";
 import {
   type EnvironmentResolverService,
+  type ExecutionRepositoryError,
   type ExecutionRepositoryService,
+  type ResourceOwnershipRepositoryError,
   type ResourceOwnershipRepositoryService,
+  type SandboxPolicyDecisionStoreError,
   type SandboxPolicyDecisionStoreService,
   sha256Hex,
   type TransactionOperationalFailure,
   type TransactionPortService,
+  type TransactionScope,
+  type WorkspaceRepositoryError,
   type WorkspaceRepositoryService,
   type WorktreeRecord,
+  type WorktreeStoreError,
   type WorktreeStoreService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -68,6 +74,24 @@ interface CapturedInputs {
   readonly worktrees: ReadonlyArray<WorktreeRecord>;
 }
 
+interface CurrentSourceRows {
+  readonly workspace: Option.Option<Workspace>;
+  readonly execution: Option.Option<Execution>;
+  readonly episodeRevision: Option.Option<number>;
+  readonly latestPolicyRevision: number;
+  readonly ownershipClaims: ReadonlyArray<
+    import("@arbor/ports").ResourceOwnershipClaimRecord
+  >;
+  readonly worktrees: ReadonlyArray<WorktreeRecord>;
+}
+
+type CurrentSourceReadError =
+  | WorkspaceRepositoryError
+  | ExecutionRepositoryError
+  | SandboxPolicyDecisionStoreError
+  | ResourceOwnershipRepositoryError
+  | WorktreeStoreError;
+
 interface PreparedInputs {
   readonly captured: CapturedInputs;
   readonly boundary: Workspace["resourceBoundary"];
@@ -88,61 +112,90 @@ const operationalFailure = (cause: string): TransactionOperationalFailure => ({
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : "sandbox policy preparation failed";
 
+const isTransactionOperationalFailure = (
+  cause: unknown,
+): cause is TransactionOperationalFailure =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "_tag" in cause &&
+  cause._tag === "TransactionOperationalFailure";
+
+const readCurrentSourceRows = (
+  dependencies: SandboxPolicyDecisionPreparationDependencies,
+  payload: DecideSandboxPolicyPayload,
+): Effect.Effect<CurrentSourceRows, CurrentSourceReadError, TransactionScope> =>
+  Effect.gen(function* () {
+    const workspace = yield* dependencies.workspaces.findById(
+      payload.workspaceId,
+    );
+    const execution = yield* dependencies.executions.findById(
+      payload.executionId,
+    );
+    const episodeRevision = yield* dependencies.executions.findEpisodeRevision(
+      payload.executionId,
+    );
+    const currentDecision =
+      yield* dependencies.decisions.findCurrentForExecution(
+        payload.projectId,
+        payload.workspaceId,
+        payload.executionId,
+      );
+    const ownershipClaims = yield* dependencies.ownership.listActiveByWorkspace(
+      payload.workspaceId,
+    );
+    const worktrees = yield* dependencies.worktrees.findByWorkspace(
+      payload.workspaceId,
+    );
+    return {
+      workspace,
+      execution,
+      episodeRevision,
+      latestPolicyRevision: Option.isSome(currentDecision)
+        ? currentDecision.value.decision.policyRevision
+        : 0,
+      ownershipClaims,
+      worktrees,
+    } satisfies CurrentSourceRows;
+  });
+
+const capturedFromRows = (
+  rows: CurrentSourceRows,
+): CapturedInputs | undefined =>
+  Option.isSome(rows.workspace) &&
+  Option.isSome(rows.execution) &&
+  Option.isSome(rows.episodeRevision)
+    ? {
+        workspace: rows.workspace.value,
+        execution: rows.execution.value,
+        episodeRevision: rows.episodeRevision.value,
+        latestPolicyRevision: rows.latestPolicyRevision,
+        ownershipClaims: rows.ownershipClaims,
+        worktrees: rows.worktrees,
+      }
+    : undefined;
+
 const capture = (
   dependencies: SandboxPolicyDecisionPreparationDependencies,
   payload: DecideSandboxPolicyPayload,
 ): Effect.Effect<CapturedInputs, TransactionOperationalFailure> =>
   dependencies.transaction
     .transact(
-      Effect.gen(function* () {
-        const workspace = yield* dependencies.workspaces.findById(
-          payload.workspaceId,
-        );
-        const execution = yield* dependencies.executions.findById(
-          payload.executionId,
-        );
-        const episodeRevision =
-          yield* dependencies.executions.findEpisodeRevision(
-            payload.executionId,
-          );
-        const currentDecision =
-          yield* dependencies.decisions.findCurrentForExecution(
-            payload.projectId,
-            payload.workspaceId,
-            payload.executionId,
-          );
-        const ownershipClaims =
-          yield* dependencies.ownership.listActiveByWorkspace(
-            payload.workspaceId,
-          );
-        const worktrees = yield* dependencies.worktrees.findByWorkspace(
-          payload.workspaceId,
-        );
-        if (
-          Option.isNone(workspace) ||
-          Option.isNone(execution) ||
-          Option.isNone(episodeRevision)
-        )
-          return yield* Effect.fail(
-            operationalFailure(
-              "required Workspace or Execution source row is missing",
-            ),
-          );
-        return {
-          workspace: workspace.value,
-          execution: execution.value,
-          episodeRevision: episodeRevision.value,
-          latestPolicyRevision: Option.isSome(currentDecision)
-            ? currentDecision.value.decision.policyRevision
-            : 0,
-          ownershipClaims,
-          worktrees,
-        } satisfies CapturedInputs;
-      }),
+      readCurrentSourceRows(dependencies, payload).pipe(
+        Effect.flatMap((rows) => {
+          const captured = capturedFromRows(rows);
+          return captured === undefined
+            ? Effect.fail(
+                operationalFailure(
+                  "required Workspace or Execution source row is missing",
+                ),
+              )
+            : Effect.succeed(captured);
+        }),
+      ),
     )
     .pipe(
       Effect.mapError((cause) =>
-        cause._tag === "TransactionOperationalFailure"
+        isTransactionOperationalFailure(cause)
           ? cause
           : operationalFailure(errorMessage(cause)),
       ),
@@ -198,27 +251,29 @@ const limitsForProfile = (
 
 const makeCurrentPreconditions = (
   payload: DecideSandboxPolicyPayload,
-  captured: CapturedInputs,
+  captured: CapturedInputs | undefined,
   prepared: PreparedInputs | undefined,
   authoritySnapshot: SandboxAuthorityBundleSnapshotV2 | undefined,
 ): SandboxPolicyPreconditionsV1 => {
   const bundle = authoritySnapshot?.bundle;
-  const forceMismatch = prepared === undefined;
+  const forceMismatch = prepared === undefined || captured === undefined;
   const differentRevision = (expected: number): number =>
     expected === Number.MAX_SAFE_INTEGER ? expected - 1 : expected + 1;
   const common = {
     expectedEpisodeRevision: forceMismatch
       ? differentRevision(payload.expectedEpisodeRevision)
       : captured.episodeRevision,
-    latestCommittedPolicyRevision: captured.latestPolicyRevision,
+    latestCommittedPolicyRevision: captured?.latestPolicyRevision ?? 0,
     episodeBinding:
-      executionEpisode(captured.execution) ?? payload.episodeBinding,
+      (captured === undefined
+        ? undefined
+        : executionEpisode(captured.execution)) ?? payload.episodeBinding,
     workspaceRevision: forceMismatch
       ? differentRevision(payload.expectedWorkspaceRevision)
-      : captured.workspace.revision,
+      : (captured?.workspace.revision ?? 0),
     resourceBoundaryRevision: forceMismatch
       ? differentRevision(payload.expectedResourceBoundaryRevision)
-      : captured.workspace.resourceBoundaryRevision,
+      : (captured?.workspace.resourceBoundaryRevision ?? 0),
     sandboxHandleBindingDigest:
       prepared?.summary.sandboxHandleBindingDigest ?? "0".repeat(64),
     authorityBundleRevision:
@@ -437,11 +492,13 @@ export const makeSandboxPolicyDecisionPreparation = (
       }),
 
     currentPreconditions: (payload) =>
-      capture(dependencies, payload).pipe(
-        Effect.map((captured) => {
+      readCurrentSourceRows(dependencies, payload).pipe(
+        Effect.map((rows) => {
+          const captured = capturedFromRows(rows);
           const prepared = preparedByPayload.get(payload);
           preparedByPayload.delete(payload);
           if (
+            captured === undefined ||
             prepared === undefined ||
             captured.workspace.lifecycle !== "Active" ||
             captured.workspace.revision !==
@@ -501,7 +558,6 @@ export const makeSandboxPolicyDecisionPreparation = (
             dependencies.authoritySnapshot,
           );
         }),
-        Effect.orDie,
       ),
   };
 };

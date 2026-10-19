@@ -9,6 +9,7 @@ import {
   type CommandHandler,
   CommandHandlerRegistryLive,
   type DecideSandboxPolicyPayload,
+  type DecideSandboxPolicyPreparation,
   FenceStopCheckInertLive,
   makeCommandGatewayLive,
   makeDecideSandboxPolicyHandler as makeDecisionHandler,
@@ -19,12 +20,20 @@ import {
   CommandId,
   ExecutionId,
   encodeNetworkPolicyV1,
+  encodeSandboxAuthorityBundleV2,
+  encodeSandboxAuthorityHighWaterV2,
+  encodeSandboxOperatorPolicyConfigV1,
+  encodeSandboxPolicyGrantIssuerConfigV1,
+  encodeSandboxProviderQualificationRegistryV1,
   networkBrokerControlsV1ForMode,
   type PermissionGrant,
   PermissionGrantId,
   Principal,
   ProjectId,
   parse,
+  produceSandboxBoundaryV1,
+  type SandboxAuthorityBundleSnapshotV2,
+  type SandboxAuthorityBundleV2,
   SemanticRequestFingerprint,
   WorkId,
   WorkspaceId,
@@ -40,24 +49,32 @@ import {
   P39_MAINTENANCE_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
+  ResourceOwnershipRepositoryLive,
   runMigrations,
   SandboxPolicyDecisionStoreLive,
   splitStatements,
   TransactionPortLive,
+  WorkspaceRepositoryLive,
+  WorktreeStoreLive,
 } from "@arbor/persistence-sqlite";
 import {
   Clock,
   CommandStore,
   DomainEventJournal,
   type DomainEventJournalService,
+  EnvironmentResolverPort,
   ExecutionRepository,
   PermissionGrantRepository,
+  ResourceOwnershipRepository,
   SandboxPolicyDecisionStore,
   TransactionPort,
+  WorkspaceRepository,
+  WorktreeStore,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { makeSandboxPolicyDecisionPreparation } from "../src/sandbox-policy-decision-preparation.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -112,6 +129,14 @@ const networkPolicy = {
 const networkPolicyDigest = createHash("sha256")
   .update(encodeNetworkPolicyV1(networkPolicy))
   .digest("hex");
+const limits = {
+  wallTimeMs: 60_000,
+  stdoutBytes: 8192,
+  stderrBytes: 8192,
+  processCount: 16,
+  memoryBytes: 268_435_456,
+  cpuTimeMs: 30_000,
+};
 const payload: DecideSandboxPolicyPayload = {
   projectId,
   workspaceId,
@@ -188,10 +213,175 @@ const snapshot = {
   operatorConfigDigest: "f".repeat(64),
 };
 
+const trustedAuthoritySnapshot: SandboxAuthorityBundleSnapshotV2 = {
+  bundle: {
+    version: 2,
+    sourceIdentity: "host:gateway-fixture",
+    bundleRevision: 4,
+    issuerConfigRevision: 1,
+    issuerConfigDigest: "1".repeat(64),
+    issuerConfig: {
+      version: 1,
+      revision: 1,
+      issuers: [String(operator)],
+    },
+    operatorConfigRevision: 4,
+    operatorConfigDigest: "f".repeat(64),
+    operatorConfig: {
+      version: 1,
+      revision: 4,
+      environmentAllowlist: ["PATH"],
+      limitsByProfile: [
+        {
+          profile: "ReadOnly",
+          limits: {
+            wallTimeMs: 60_000,
+            stdoutBytes: 8192,
+            stderrBytes: 8192,
+            processCount: 16,
+            memoryBytes: 268_435_456,
+            cpuTimeMs: 30_000,
+          },
+        },
+        {
+          profile: "WorkspaceWrite",
+          limits: {
+            wallTimeMs: 60_000,
+            stdoutBytes: 8192,
+            stderrBytes: 8192,
+            processCount: 16,
+            memoryBytes: 268_435_456,
+            cpuTimeMs: 30_000,
+          },
+        },
+        {
+          profile: "FullAccess",
+          limits: {
+            wallTimeMs: 60_000,
+            stdoutBytes: 8192,
+            stderrBytes: 8192,
+            processCount: 16,
+            memoryBytes: 268_435_456,
+            cpuTimeMs: 30_000,
+          },
+        },
+      ],
+      trustedLocalRuntimeVersion: "builtin-v1",
+    },
+    providerRegistryRevision: 3,
+    providerRegistryDigest: "2".repeat(64),
+    providerRegistry: { version: 1, revision: 3, entries: [] },
+  },
+  bundleDigest: "e".repeat(64),
+  canonicalJson: "{}",
+};
+
+const makeTrustedAuthoritySource = () => {
+  const issuerConfig = {
+    version: 1 as const,
+    revision: 1,
+    issuers: [String(operator)],
+  };
+  const operatorConfig = {
+    version: 1 as const,
+    revision: 4,
+    environmentAllowlist: ["PATH"],
+    limitsByProfile: [
+      { profile: "ReadOnly" as const, limits },
+      { profile: "WorkspaceWrite" as const, limits },
+      { profile: "FullAccess" as const, limits },
+    ],
+    trustedLocalRuntimeVersion: "builtin-v1" as const,
+  };
+  const providerRegistry = { version: 1 as const, revision: 3, entries: [] };
+  const hash = (value: string) =>
+    createHash("sha256").update(value, "utf8").digest("hex");
+  const issuerConfigDigest = hash(
+    encodeSandboxPolicyGrantIssuerConfigV1(issuerConfig),
+  );
+  const operatorConfigDigest = hash(
+    encodeSandboxOperatorPolicyConfigV1(operatorConfig),
+  );
+  const providerRegistryDigest = hash(
+    encodeSandboxProviderQualificationRegistryV1(providerRegistry),
+  );
+  const bundle: SandboxAuthorityBundleV2 = {
+    version: 2,
+    sourceIdentity: "host:gateway-test",
+    bundleRevision: 4,
+    issuerConfigRevision: issuerConfig.revision,
+    issuerConfigDigest,
+    issuerConfig,
+    operatorConfigRevision: operatorConfig.revision,
+    operatorConfigDigest,
+    operatorConfig,
+    providerRegistryRevision: providerRegistry.revision,
+    providerRegistryDigest,
+    providerRegistry,
+  };
+  const bundleJson = encodeSandboxAuthorityBundleV2(bundle);
+  const bundleDigest = hash(bundleJson);
+  const highWaterJson = encodeSandboxAuthorityHighWaterV2({
+    version: 2,
+    sourceIdentity: bundle.sourceIdentity,
+    bundleRevision: bundle.bundleRevision,
+    bundleDigest,
+    issuerConfigRevision: bundle.issuerConfigRevision,
+    issuerConfigDigest: bundle.issuerConfigDigest,
+    operatorConfigRevision: bundle.operatorConfigRevision,
+    operatorConfigDigest: bundle.operatorConfigDigest,
+    providerRegistryRevision: bundle.providerRegistryRevision,
+    providerRegistryDigest: bundle.providerRegistryDigest,
+  });
+  return {
+    bundle,
+    bundleDigest,
+    operatorConfigDigest,
+    source: {
+      readVerifiedSandboxAuthorityBundle: () =>
+        Effect.succeed({
+          sourceIdentity: bundle.sourceIdentity,
+          canonicalJson: bundleJson,
+        }),
+      readSandboxAuthorityHighWater: () => Effect.succeed(highWaterJson),
+      commitSandboxAuthorityHighWater: () => Effect.succeed(false),
+      appendSandboxAuthorityAudit: () => Effect.succeed(true),
+    },
+  };
+};
+
+const environmentResolverTestLayer = Layer.succeed(EnvironmentResolverPort, {
+  observe: (projectId, addresses) => {
+    const entries = addresses.map((address) => {
+      const resolved =
+        address._tag === "GitWorktree"
+          ? {
+              resourceSpaceId: "filesystem",
+              normalizedRegion: { kind: "GitWorktree", path: address.path },
+            }
+          : {
+              resourceSpaceId: "filesystem",
+              normalizedRegion: { kind: "FileTree", path: address.path },
+            };
+      return { address, resolved, probe: {} as never };
+    });
+    return Effect.succeed({
+      projectId,
+      observedRevision: "0",
+      fingerprint: "9".repeat(64) as never,
+      snapshotBlobRef: `blob:sha256:${"9".repeat(64)}`,
+      changedRegions: entries.map((entry) => entry.resolved),
+      entries,
+    });
+  },
+});
+
 const makeTestStack = (
   options: {
     readonly failDecisionEventOnce?: boolean;
     readonly staleWorkspaceRevision?: boolean;
+    readonly productionPreparation?: boolean;
+    readonly authoritySnapshot?: SandboxAuthorityBundleSnapshotV2;
   } = {},
   databaseFile = ":memory:",
 ) => {
@@ -238,6 +428,9 @@ const makeTestStack = (
   const commands = Layer.provide(CommandStoreLive, infra);
   const decisions = Layer.provide(SandboxPolicyDecisionStoreLive, infra);
   const projects = Layer.provide(ProjectRepositoryLive, infra);
+  const workspaces = Layer.provide(WorkspaceRepositoryLive, infra);
+  const ownership = Layer.provide(ResourceOwnershipRepositoryLive, infra);
+  const worktrees = Layer.provide(WorktreeStoreLive, infra);
   const executions = Layer.provide(ExecutionRepositoryLive, infra);
   const grantRepository = Layer.provide(PermissionGrantRepositoryLive, infra);
   const repos = Layer.mergeAll(
@@ -246,8 +439,12 @@ const makeTestStack = (
     decisions,
     journal,
     projects,
+    workspaces,
+    ownership,
+    worktrees,
     executions,
     grantRepository,
+    environmentResolverTestLayer,
   );
   const registry = Layer.provide(
     Layer.unwrap(
@@ -256,35 +453,49 @@ const makeTestStack = (
         const executionRepository = yield* ExecutionRepository;
         const decisionStore = yield* SandboxPolicyDecisionStore;
         const clock = yield* Clock;
+        let preparation: DecideSandboxPolicyPreparation = {
+          prepare: () =>
+            Effect.sync(() => {
+              preparationCalls += 1;
+              return snapshot;
+            }),
+          currentPreconditions: () =>
+            Effect.succeed({
+              kind: "OsEnforced" as const,
+              expectedEpisodeRevision: 2,
+              latestCommittedPolicyRevision: latestPolicyRevision,
+              episodeBinding,
+              workspaceRevision:
+                options.staleWorkspaceRevision === true ? 4 : 3,
+              resourceBoundaryRevision: 1,
+              sandboxHandleBindingDigest:
+                payload.expectedSandboxHandleBindingDigest,
+              authorityBundleRevision: 4,
+              authorityBundleDigest: "e".repeat(64),
+              operatorConfigRevision: 4,
+              operatorConfigDigest: "f".repeat(64),
+              providerRegistryRevision: 3,
+              providerRegistryDigest: "2".repeat(64),
+            }),
+        };
+        if (options.productionPreparation === true) {
+          preparation = makeSandboxPolicyDecisionPreparation({
+            transaction: yield* TransactionPort,
+            workspaces: yield* WorkspaceRepository,
+            executions: executionRepository,
+            decisions: decisionStore,
+            ownership: yield* ResourceOwnershipRepository,
+            worktrees: yield* WorktreeStore,
+            environmentResolver: yield* EnvironmentResolverPort,
+            authoritySnapshot:
+              options.authoritySnapshot ?? trustedAuthoritySnapshot,
+          });
+        }
         const handler = makeDecisionHandler({
           grants,
           executions: executionRepository,
           decisions: decisionStore,
-          preparation: {
-            prepare: () =>
-              Effect.sync(() => {
-                preparationCalls += 1;
-                return snapshot;
-              }),
-            currentPreconditions: () =>
-              Effect.succeed({
-                kind: "OsEnforced" as const,
-                expectedEpisodeRevision: 2,
-                latestCommittedPolicyRevision: latestPolicyRevision,
-                episodeBinding,
-                workspaceRevision:
-                  options.staleWorkspaceRevision === true ? 4 : 3,
-                resourceBoundaryRevision: 1,
-                sandboxHandleBindingDigest:
-                  payload.expectedSandboxHandleBindingDigest,
-                authorityBundleRevision: 4,
-                authorityBundleDigest: "e".repeat(64),
-                operatorConfigRevision: 4,
-                operatorConfigDigest: "f".repeat(64),
-                providerRegistryRevision: 3,
-                providerRegistryDigest: "2".repeat(64),
-              }),
-          },
+          preparation,
           clock,
         }) as unknown as CommandHandler<unknown, unknown>;
         return CommandHandlerRegistryLive([handler]);
@@ -311,13 +522,13 @@ const makeTestStack = (
   };
 };
 
-const envelope = (id = commandId) => ({
+const envelope = (id = commandId, commandPayload = payload) => ({
   commandType: "DecideSandboxPolicy",
   commandId: id,
   projectId,
   actor,
   issuedAt: "1999-01-01T00:00:00.000Z",
-  payload,
+  payload: commandPayload,
 });
 
 const seedSchema50AndGrant = Effect.gen(function* () {
@@ -573,6 +784,168 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
     });
   });
 
+  it("uses production materialization with schema-50 SQLite commit, replay, and stale policy-head CAS", async () => {
+    const trusted = makeTrustedAuthoritySource();
+    const authoritySnapshot: SandboxAuthorityBundleSnapshotV2 = {
+      bundle: trusted.bundle,
+      bundleDigest: trusted.bundleDigest,
+      canonicalJson: encodeSandboxAuthorityBundleV2(trusted.bundle),
+    };
+    const stack = makeTestStack({
+      productionPreparation: true,
+      authoritySnapshot,
+    });
+    const worktreePath = process.cwd();
+    const p11Region = {
+      resourceSpaceId: "filesystem",
+      normalizedRegion: { kind: "GitWorktree", path: worktreePath },
+    } as const;
+    const p11Boundary = {
+      basisResponsibilityRevision: 1,
+      addresses: [{ _tag: "GitWorktree" as const, path: worktreePath }],
+    } as const;
+    const boundary = produceSandboxBoundaryV1(
+      {
+        workspaceId,
+        resourceBoundaryRevision: 1,
+        responsibilityRevision: 1,
+        boundary: p11Boundary,
+        resolvedRegions: [p11Region],
+        primaryManagedGitWorktreeRegion: p11Region,
+        ownershipClaims: [],
+        policyKind: "TrustedLocalUnconfinedV1",
+        profile: "FullAccess",
+      },
+      (value) => createHash("sha256").update(value, "utf8").digest("hex"),
+    );
+    expect(boundary).toBeDefined();
+    if (boundary === undefined) return;
+    const trustedPayload: DecideSandboxPolicyPayload = {
+      projectId,
+      workspaceId,
+      executionId,
+      episodeBinding,
+      expectedEpisodeRevision: 2,
+      expectedPolicyRevision: 0,
+      expectedWorkspaceRevision: 3,
+      expectedResourceBoundaryRevision: 1,
+      expectedSandboxHandleBindingDigest: boundary.sandboxHandleBindingDigest,
+      expectedAuthorityBundleRevision: trusted.bundle.bundleRevision,
+      expectedAuthorityBundleDigest: trusted.bundleDigest,
+      expectedOperatorConfigRevision: trusted.bundle.operatorConfigRevision,
+      expectedOperatorConfigDigest: trusted.bundle.operatorConfigDigest,
+      profile: "FullAccess",
+      providerId: "TrustedLocal",
+      networkPolicy: { kind: "TrustedLocalUnconfinedV1", version: 1 },
+      decisionExpiresAt: "2099-10-19T12:00:00.000Z",
+    };
+    const v2GrantId = parse(PermissionGrantId)(
+      "pgr_018f2b3c-4d5e-7abc-8def-0123456789a3",
+    );
+    const v2GrantCommandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a3",
+    );
+    const v2Grant = { ...grant, permissionGrantId: v2GrantId };
+    const v2Provenance = {
+      ...provenance,
+      permissionGrantId: v2GrantId,
+      grantPermissionCommandId: v2GrantCommandId,
+      operatorConfigRevision: trusted.bundle.operatorConfigRevision,
+      operatorConfigDigest: trusted.bundle.operatorConfigDigest,
+    };
+    const retryCommandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a6",
+    );
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* seedSchema50AndGrant;
+          const sql = yield* SqlClient;
+          yield* seedManagedWorktree(sql, worktreePath);
+          const transactions = yield* TransactionPort;
+          const grants = yield* PermissionGrantRepository;
+          const commandStore = yield* CommandStore;
+          yield* transactions.transact(
+            Effect.gen(function* () {
+              yield* commandStore.insertCommitted(
+                v2GrantCommandId,
+                projectId,
+                parse(SemanticRequestFingerprint)("v".repeat(64)),
+                "1",
+                1,
+                JSON.stringify({
+                  permissionGrantId: v2GrantId,
+                  state: "Active",
+                }),
+              );
+              yield* grants.put(v2Grant, projectId);
+              yield* grants.insertSandboxPolicyGrantIssuerProvenance(
+                v2Provenance,
+              );
+            }),
+          );
+          const gateway = yield* CommandGateway;
+          const fingerprint = semanticRequestFingerprint({
+            commandType: "DecideSandboxPolicy",
+            projectId,
+            actor,
+            schemaVersion: "1",
+            payload: trustedPayload,
+          });
+          const authorityFor = (id: CommandId) => ({
+            ...makeAuthority(fingerprint, id),
+            permissionGrant: v2Grant,
+            issuerProvenance: v2Provenance,
+            authorityBundleRevision: trusted.bundle.bundleRevision,
+            authorityBundleDigest: trusted.bundleDigest,
+            providerRegistryRevision: trusted.bundle.providerRegistryRevision,
+            providerRegistryDigest: trusted.bundle.providerRegistryDigest,
+            operatorConfigRevision: trusted.bundle.operatorConfigRevision,
+            operatorConfigDigest: trusted.bundle.operatorConfigDigest,
+          });
+          const first = yield* gateway.execute(
+            envelope(commandId, trustedPayload),
+            { _tag: "External", principal },
+            authorityFor(commandId),
+          );
+          const replay = yield* gateway.execute(
+            envelope(commandId, trustedPayload),
+            { _tag: "External", principal },
+            authorityFor(commandId),
+          );
+          const stale = yield* gateway.execute(
+            envelope(retryCommandId, trustedPayload),
+            { _tag: "External", principal },
+            authorityFor(retryCommandId),
+          );
+          const rows = yield* sql.unsafe<{
+            decisions: number;
+            receipts: number;
+            events: number;
+          }>(
+            `SELECT
+              (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE execution_id = ?) AS decisions,
+              (SELECT COUNT(*) FROM commands WHERE command_id IN (?, ?)) AS receipts,
+              (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
+            [executionId, commandId, retryCommandId],
+          );
+          return { first, replay, stale, counts: rows[0] };
+        }),
+        stack.app,
+      ),
+    );
+    expect(result.first.resolution._tag).toBe("Committed");
+    expect(result.replay.resolution).toEqual(result.first.resolution);
+    expect(result.stale.resolution).toMatchObject({
+      _tag: "TerminalRejected",
+      error: {
+        _tag: "StaleSandboxPolicyInputs",
+        safeDetails: { field: "PolicyRevision" },
+      },
+    });
+    expect(result.counts).toEqual({ decisions: 1, receipts: 2, events: 1 });
+  });
+
   it("survives child-process kills immediately before and after the SQLite commit", async () => {
     const folder = mkdtempSync(join(tmpdir(), "arbor-sandbox-decision-crash-"));
     const childPath = fileURLToPath(
@@ -737,5 +1110,24 @@ const seed = (sql: SqlClient) =>
         session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at)
        VALUES (?, ?, 'workspace', ?, 'WorkEpisode', ?, 2, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL)`,
       [executionId, projectId, workspaceId, workId, sessionId, now],
+    );
+  });
+
+const seedManagedWorktree = (sql: SqlClient, path: string) =>
+  Effect.gen(function* () {
+    const resourceBoundary = {
+      basisResponsibilityRevision: 1,
+      addresses: [{ _tag: "GitWorktree", path }],
+    };
+    yield* sql.unsafe(
+      "UPDATE workspaces SET resource_boundary = ?, resource_boundary_revision = 1, responsibility_revision = 1 WHERE workspace_id = ?",
+      [JSON.stringify(resourceBoundary), workspaceId],
+    );
+    yield* sql.unsafe(
+      `INSERT INTO worktrees (
+        worktree_id, project_id, workspace_id, path, repository_ref, branch,
+        state, created_at, retired_at
+      ) VALUES (?, ?, ?, ?, NULL, NULL, 'Active', ?, NULL)`,
+      ["wt_sandbox_policy", projectId, workspaceId, path, now],
     );
   });
