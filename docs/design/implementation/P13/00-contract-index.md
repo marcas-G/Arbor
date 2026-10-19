@@ -64,4 +64,12 @@ safe Unavailable/Attention/503 and SandboxPolicySummaryTooLarge receipt. The
 non-persisted SandboxRecoveryBindingFailure row uses fixed safe summary and
 intent_at, with no repair/rebind control or raw evidence. Browser has no
 automatic retry or local authority; all actions route through existing P12.
+
+## Accepted Sandbox Policy Candidate Read Model V5
+
+P13/03/06 render the optional Workspace Detail candidate read and map a
+deliberate human selection to existing P1 command fields. Candidate IDs are
+presentation-only; no candidate ID is submitted, no variant is auto-selected,
+and the existing high-risk TrustedLocal confirmation and stale-refetch
+behavior remain. See P13/03/06 and the V5 acceptance record.
 ```

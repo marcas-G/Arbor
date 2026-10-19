@@ -68,7 +68,10 @@ Committed; higher policy revision, terminal/stopped Execution or changed
 Episode makes the old fact stale for active Attention only. No time-only
 freshness, P11 EnvironmentRevision, ordinary writes, dirty state, mtimes or
 filesystem lookup enters this predicate. TrustedLocal is a separate
-Unconfined variant and provider-registry drift cannot stale it.
+Unconfined variant and omits registry fields from its basis and P1 registry
+branch precondition. Its common full authority-bundle revision/digest is still
+currentness input; any bundle child change, including registry-only change,
+stales TrustedLocal just as it stales OsEnforced.
 
 SandboxPolicyDecisionRequired/NeedsDecision is separately derived from a
 current active Execution and exact pending NotAdmitted invocation whose policy
@@ -76,3 +79,24 @@ is absent/stale; it is not a provider-unavailable fact. V21
 SandboxRecoveryBindingFailure is derived from P4 invocation/binding evidence
 with its own integrity rules and must never be conflated with current source
 drift or provider-unavailable freshness.
+
+## Accepted candidate-read-model V5 full-bundle currentness
+
+For both committed policy variants, P10's status/currentness projection
+compares the exact V21 `SandboxEnvironmentBasisDigestV1` and the complete
+current P5 `SandboxAuthorityBundleV2` `authorityBundleRevision/Digest` to
+the immutable decision snapshot. Any child change makes the policy stale;
+TrustedLocal's variant continues to omit provider-registry fields, but the
+shared full-bundle pair already stored in its snapshot detects a registry-only
+bundle change. The earlier V21 registry-drift exclusion is superseded.
+
+`NeedsDecision` is derived only when the exact visible active
+Execution/Episode has a P4-proven pending policy requirement and its current
+decision is absent or stale under that full-bundle and basis comparison. P10
+does not create requirement state, Attention state, or policy selection. A
+provider registry change can pause TrustedLocal Work and require explicit
+human reconfirmation; it never adds an OS-provider dependency or changes
+TrustedLocal's unconfined meaning. Candidate read and `NeedsDecision` share
+the existing Workspace Detail freshness/read barrier; generic lag or a typed
+P4 port/authority error returns the existing error/lag behavior, never a
+partial candidate list.

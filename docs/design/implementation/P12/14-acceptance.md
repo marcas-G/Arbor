@@ -198,15 +198,64 @@ probe-only results never establish production Supported. No test may access or
 upgrade a preserved database; schema 50 remains unchanged.
 
 
-Authority/configuration acceptance covers exact SandboxAuthorityBundleV1 and
-nested issuer/registry canonical bytes/JCS key order; every unknown/missing/
-duplicate/alternate string/number/Principal encoding; sorted unique nonempty
-human issuer set; stable protected source identity, ACL/reparse/truncation and
-atomic replacement; high-water missing/corrupt/unreadable, forward jumps,
-same-revision reuse/change, rollback, source reenrollment and commit failure.
-It verifies one immutable snapshot is shared across Resolver/Gateway after
-quiesced restart, with zero hot reload/default-allow, fixed load/rejection/audit
-ADTs, safe field filtering, and all audit timestamps using injected GatewayNow.
+Authority/configuration acceptance covers immutable historical
+SandboxAuthorityBundleV1 bytes under the strict V1 decoder and current
+SandboxAuthorityBundleV2 plus nested issuer/operator/registry canonical
+bytes/key order; every unknown/missing/duplicate/alternate string/number/
+Principal encoding; sorted unique nonempty human issuer set; stable protected
+source identity, ACL/reparse/truncation and atomic replacement; V1-to-V2
+offline source/high-water preservation; high-water missing/corrupt/unreadable,
+forward jumps, same-revision reuse/change, rollback, source reenrollment and
+commit failure. It verifies one immutable snapshot is shared across
+Resolver/Gateway after quiesced restart, with zero hot reload/default-allow,
+fixed versioned load/rejection/audit ADTs, safe field filtering, and all audit
+timestamps using injected GatewayNow.
 Authority load, Decide command rejection, P4 provider-unavailable and P10
 projection-integrity failures are tested as disjoint closed outcomes; no raw
 source path, principal list, OS error, provider diagnostic or secret leaks.
+
+## Accepted V3 producer mapping acceptance cases
+
+Add these cases to the existing TDD/conformance matrix without changing the
+V21 owner vectors or adding a schema/migration:
+
+- Complete current ResourceBoundary, not caller-requested subset; canonical
+  alias and duplicate collapse, UTF-8 order, identity-collision rejection,
+  nonnegative `basisResponsibilityRevision` including zero, and exact
+  `ResourceBoundaryDigestV1` revision-0/revision-7 hashes.
+- Existing object-valued `SandboxTargetRefV1` remains `targetRef`; exact
+  `/fixture/a` and V21 `3156810…`/`a5e1c895…` vectors, plus FileTree,
+  GitWorktree, DatabaseNamespace and ExternalResource producer mappings.
+  Optional `targetRefDigestV1` is distinct and never substitutes a string
+  for the object.
+- Deterministic mount materialization: only filesystem regions mount;
+  primary managed GitWorktree ID `workspace`; extra region IDs
+  `resource-<full-lowerhex-regionIdentityDigest>`; order, duplicate, collision
+  and non-filesystem shell ResourceResolutionDenied behavior. Exercise RO,
+  WorkspaceWrite exact active ownership and FullAccess unconfined disclosure,
+  then separately enforce each tool's pinned required access.
+- Exact SandboxAuthorityBundleV2/HighWaterV2/AuthorityAuditRecordV2 key
+  order, bytes and subdigest mapping; V1 codecs stay byte-for-byte readable
+  only as historical data. V1 source cannot authorize new decisions; V1 to
+  V2 offline provision preserves issuer/provider/high-water values and fails
+  closed across source/high-water crash boundary. operatorConfig revision and
+  digest equal bundle fields/subobject hash; reject every
+  `trustedLocalRuntimeVersion` except literal `builtin-v1`.
+- Exact Restricted policy vector/hash above; exact Disabled and
+  Restricted/Enabled broker-control bytes, including
+  `FreshPerResolutionAndConnection`; no independent controls digest. Pref64
+  discovery is fresh for every DNS resolution and connection and every
+  redirect hop, usable only within that connection handshake, with no
+  cross-resolution/connection/pool/hop reuse.
+- Every Supported tuple's existing T3 artifact digest binds exact six
+  configured limit values plus operatorConfig revision/digest and provider
+  tuple; config change requires requalification. No missing maxima field or
+  implicit platform-maxima behavior is accepted.
+- Audit refs admit only existing stable authority audit ID (or omit if none),
+  exact decision CommandId/receipt ref, and exact OsEnforced qualification
+  manifest ref; deduplicate/sort/bound and redact publicly. Missing refs are
+  omitted; no synthesized IDs or caller/provider diagnostics are accepted.
+
+These cases qualify the accepted V3 producer semantics only. They do not
+claim any current host/provider Supported, activate migrations 0049/0050,
+upgrade a database, or authorize release.

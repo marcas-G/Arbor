@@ -227,3 +227,12 @@ P10's existing POST/Problem DTO, including non-persisted AttentionSource and
 exact transient 503; P12/13 owns exact T2/T3 network/provider primitives and
 evidence; P12/14 owns the per-tuple conformance matrix. No new endpoint,
 Problem category, authority permission, persistence or migration is added.
+
+## Accepted Native Sandbox producer mapping closure (V3)
+
+P12/09 is a cross-reference only and does not change canonical region
+encoding. P12/13 owns the exact
+`FreshPerResolutionAndConnection` broker-control literal and T3 evidence
+binding for configured limits; P12/14 owns the producer-mapping known-answer
+and qualification acceptance cases. See P12/09/13/14 and the V3 acceptance
+record/manifest.

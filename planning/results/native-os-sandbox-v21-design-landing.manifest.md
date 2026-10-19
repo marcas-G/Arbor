@@ -108,3 +108,122 @@ DTO/source literals, version consistency, and absence of conflict markers.
 Independent post-review must verify cross-references, no-P40/no-persistent-
 Attention boundaries, and absence of code/tests/migrations/DB or release
 changes. Implementation remains gated on that review.
+
+## Accepted V3 producer-mapping supplemental landing
+
+
+- **Accepted token:** `ACCEPT_NATIVE_OS_SANDBOX_V21_PRODUCER_MAPPING_CLOSURE_V3`
+- **Accepted proposal SHA-256:** `3944B1E8BBA9A7A0EBB47988B4B67965718C94EB4EE05D9605E9711AC1FF8A8A`
+- **Accepted proposal path:** `C:\Users\ThinkPad\.codex\worktrees\native-sandbox-governance\Arbor\planning\proposals\native-os-sandbox-v21-producer-mapping-closure-v3.md`
+- **Proposal commit:** `861a7280d6bdeb4486db18ed3a1c9182187bda81`
+- **Supplemental owner preimage:** `e99e1c6e375bd92e04ec94a0bc5cdb9d4cd873e8`; main candidate `21863de2222552d2c0aeb8e93e21e86da226afc6` has byte-identical base blobs for every listed owner.
+- **Supplemental branch:** `codex/native-sandbox-v21-owner-landing`
+- **Independent review:** pending.
+
+This landing applies only the two V3 corrections over the fixed V2 producer
+package. It preserves object-valued V21 SandboxTargetRef, boundary and P4
+snapshot/basis vectors, versioned bundle/high-water/audit compatibility,
+existing P1 CAS/replay/transaction semantics, and all prior V21 contracts.
+The DID advances to 1.55 for cross-owner dependency; System Design remains
+1.21 and Scenarios remain 1.6 because no domain semantics or new user-visible
+journey changes. P10 is unchanged. P12/09 receives only a consumer/producer
+cross-reference; CanonicalResourceRegion and canonicalRegionString are not
+modified. `native-os-sandbox-v21-producer-mapping-closure-acceptance.record.md`
+records the direct user acceptance and continued existing implementation
+authorization boundary.
+
+The supplemental owner preimages are Git blob IDs at e99e1c6. Postimage
+SHA-256 values are exact file bytes after V3 landing:
+
+| Owner file | Base blob at e99e1c6 | V3 postimage SHA-256 |
+|---|---|---|
+| `docs/design/03-detailed-implementation-design.md` | `85f613a79bad3bfe3ec26a67e2302ab91ecbfeff` | `6332D7C887CEBE0F73D24F373A42AF99B2308D99C53D35B376135F0F415A030B` |
+| `docs/design/implementation/P1/00-contract-index.md` | `e42099e178c586f141b81f307d4f6729c62e4f84` | `BD573B6C6F7E6B762243787222E3B977DEF08B357880059E28D1BC9B0512A226` |
+| `docs/design/implementation/P1/01-command-contracts.md` | `8542b7494eb5cb5f8114b2a44cb6b57b0b7ab4ee` | `8F38D7DE45CB0BA005B86F256B2E8A501BE501AC0A8014F6D4B252EADD8E45AA` |
+| `docs/design/implementation/P1/03-transaction-model.md` | `d84bccbcc85ce1eed29858bc035fd32efd382de3` | `7822D576DF17856BEDDFB60E5FC997EB5CCD1119B382604EF4A1A5B65395751C` |
+| `docs/design/implementation/P4/00-contract-index.md` | `dc97d3bb84599cd324e6512edb857755a8d288d7` | `B5A5081A4E212822A793283EC8550953CE12346E2B083F7390DFCED314D97C86` |
+| `docs/design/implementation/P4/04-sandbox.md` | `6bcb1c9b5bb584a95006ccb5848a907279cfc810` | `D502D4C42DE09C23243919ECF29A1AA97580F9A1350A8A96B524FBF21E565537` |
+| `docs/design/implementation/P4/05-resource-admission.md` | `48da76203e98d3b29301901af6698aad64114d60` | `5B0404AF8DF1ED653CB39E6A7ACD7263DB97F49FC89EABEBAAEE07F459FADC6B` |
+| `docs/design/implementation/P5/00-contract-index.md` | `fc06b1f0aa25a6ddc4d42a808912ab70bb1308fb` | `CDB9D86C7B2D10F1A9291734E2BCE752A0E8D8BE4ACA1BFE01658334901ACE29` |
+| `docs/design/implementation/P5/01-composition-root.md` | `b22b6d0583acaab8ad92057936543a8e75420c8c` | `286E8619DDF015F60BFA3C8EE2B6280929AF5F445D3E7E32B5E0EBB561291BDD` |
+| `docs/design/implementation/P11/00-contract-index.md` | `832ecb65ccd9664af232f610bbece4d15c35734f` | `8FE7756249056F74F2F396FBB4A1C1B66878C601B4E6444A4E8295F71557F050` |
+| `docs/design/implementation/P11/04-real-resolver.md` | `90df9cf4c89af468f321137f0317f4f2ce5be263` | `ADB40BB9214BADFFE55DC96A1533F68B0B6941A8D281BF615CAE58E2F1EAA602` |
+| `docs/design/implementation/P11/12-sandbox-handoff.md` | `b92046cb5635f4d4869b3ac090d18058395b75ab` | `E50A75380DCC3FAB55534B7CCCE0767E935F8E62150D8326B53D39303329D602` |
+| `docs/design/implementation/P12/00-contract-index.md` | `c24b2814800a3e414cc49bcfbafcdc9cb2980aa1` | `4F71A191D3717EA2C650123C9031E8F01AA918F26E7B5027CE1E7431BB3BF3E9` |
+| `docs/design/implementation/P12/09-region-encoding-convergence.md` | `e5cf86b9a6911e663af3d161984b3e9ca35cfb24` | `54F076503F9F655D639423DB39A2AA5AD04F0CAEE2502B0B1AA5ADD4B114E630` |
+| `docs/design/implementation/P12/13-security-performance.md` | `63858528c2abe630f49311225ba968573daeb64e` | `80C4756AC62343250CFCF0A28DDE760604E4ADF69E272B60424F52EF225961B0` |
+| `docs/design/implementation/P12/14-acceptance.md` | `2dc293fc79f6f1e75c95e7cac73c9991a465c457` | `BF877769317BE7B04377F25BEFAA6B01CF921F4CB230DB44323920C318CE1478` |
+
+## Supplemental governance record hash
+
+| Record | Raw SHA-256 |
+|---|---|
+| `planning/results/native-os-sandbox-v21-producer-mapping-closure-acceptance.record.md` | `503DC1FBE35CF2E3668438861D9F9F32DCD2CA92B8ED0EE6A8DD8590E95A107D` |
+
+No source code, tests, migration definitions/registration, database files,
+deployment, or release artifacts are present in this supplemental landing.
+
+## Final cumulative owner postimages after accepted amendments
+
+The V3-only postimage table above is a prior intermediate hash snapshot. The
+following accepted decisions supersede/extend that staged state; this
+cumulative table is authoritative for the final combined owner commit:
+
+| Accepted package | Token | Raw SHA-256 | Proposal path |
+|---|---|---|---|
+| Producer mapping closure V3 | `ACCEPT_NATIVE_OS_SANDBOX_V21_PRODUCER_MAPPING_CLOSURE_V3` | `3944B1E8BBA9A7A0EBB47988B4B67965718C94EB4EE05D9605E9711AC1FF8A8A` | `C:\Users\ThinkPad\.codex\worktrees\native-sandbox-governance\Arbor\planning\proposals\native-os-sandbox-v21-producer-mapping-closure-v3.md` |
+| High-water amendment V2 | `ACCEPT_NATIVE_OS_SANDBOX_V21_PRODUCER_MAPPING_CLOSURE_V3_HIGHWATER_AMENDMENT_V2` | `09F67CCA1DA295C08011890C96E6409990EB9A3CB45D7F555E3776925C0BA1EE` | `C:\Arbor\planning\proposals\native-os-sandbox-v21-producer-mapping-closure-v3-highwater-amendment-v2.md` |
+| Candidate read model V5 | `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL_V5` | `26B4BDAA4F79DCF2A0EA7C601A1037372A9C5308AB761663A921235076CE8D13` | `C:\Arbor\planning\proposals\sandbox-policy-candidate-readmodel-governance-v5.md` |
+
+The accepted HWA V2 preserves the exact `SandboxAuthorityHighWaterV2` codec
+while retaining old V1 high-water bytes as forensic evidence and requiring
+the active V2 source/high-water pair to match exactly. Candidate Read Model
+V5 makes the full V2 authority-bundle pair currentness input for both policy
+variants, adds the read-only P4/06 requirement port, and exposes an ephemeral
+P10 candidate read; P1 wire/CAS, P4 snapshot codecs, and V21 migrations remain
+unchanged.
+
+Owner preimages remain blobs at `e99e1c6e375bd92e04ec94a0bc5cdb9d4cd873e8`;
+the main candidate `21863de2222552d2c0aeb8e93e21e86da226afc6` has identical
+base blobs for these owners. DID is 1.56; System Design stays 1.21 and
+Scenarios stay 1.6. P10/P13 are changed only for the accepted read model; no
+P10 durable state or new scenario class is introduced.
+
+| Owner file | Base blob at e99e1c6 | Final cumulative postimage SHA-256 |
+|---|---|---|
+| `docs/design/03-detailed-implementation-design.md` | `85f613a79bad3bfe3ec26a67e2302ab91ecbfeff` | `A605E71550EBFD21164FDA950ACD6D3062097AAD84FF748022F1741EC8A4C0E7` |
+| `docs/design/implementation/P1/00-contract-index.md` | `e42099e178c586f141b81f307d4f6729c62e4f84` | `D4F20E88994B84ABD5330B76D9769558570E3ED82806EF4F4B94EF0BEE80E268` |
+| `docs/design/implementation/P1/01-command-contracts.md` | `8542b7494eb5cb5f8114b2a44cb6b57b0b7ab4ee` | `79F555787E8039AD5B3938A0F1A09B799A1D4D36D6D43DBF403D4F19E2D9386C` |
+| `docs/design/implementation/P1/03-transaction-model.md` | `d84bccbcc85ce1eed29858bc035fd32efd382de3` | `7822D576DF17856BEDDFB60E5FC997EB5CCD1119B382604EF4A1A5B65395751C` |
+| `docs/design/implementation/P4/00-contract-index.md` | `dc97d3bb84599cd324e6512edb857755a8d288d7` | `5050BD505BE4F4573AB5EB6B128EC1B8B8F7C4C1C93D39A8E2AAFC6E2C058F40` |
+| `docs/design/implementation/P4/04-sandbox.md` | `6bcb1c9b5bb584a95006ccb5848a907279cfc810` | `D502D4C42DE09C23243919ECF29A1AA97580F9A1350A8A96B524FBF21E565537` |
+| `docs/design/implementation/P4/05-resource-admission.md` | `48da76203e98d3b29301901af6698aad64114d60` | `6D7DB68A6DA26209431A2DCA066B0F6FB792CBF772232E96B1D7359B7FF871FD` |
+| `docs/design/implementation/P4/06-invocation-persistence-reconciliation.md` | `fb8104e33e0313ad43b4ba3e3bced9d3f9b142c1` | `E79F1518805E4868ED78C1E3542534D2E7094A4EFE937CF2F269AEBDBD659EC1` |
+| `docs/design/implementation/P5/00-contract-index.md` | `fc06b1f0aa25a6ddc4d42a808912ab70bb1308fb` | `ECF808578F69DC3FF20B9ADDD945B1CA5F122F52D5061B146A7847D7DFEC823B` |
+| `docs/design/implementation/P5/01-composition-root.md` | `b22b6d0583acaab8ad92057936543a8e75420c8c` | `6119E712BF1BE82DF5805CB83E0AB78BD53DF3285D8FCD879316F890C7431FC7` |
+| `docs/design/implementation/P10/00-contract-index.md` | `7d2a19bef561ed6cc4c05252821a016b341ac767` | `BAF0E182E3EA11E45FFE2FAE2641BD4CA3FDB6D6F1DF5D3E54A628AA0ACB0D4F` |
+| `docs/design/implementation/P10/03-effectivefacts-freshness.md` | `0133e51488d002aaed69a56dec40f0e95ada2c7d` | `2018BE9B04B0CE7FA4967E71049605107E68D7ABE076CF6377209384110B64DF` |
+| `docs/design/implementation/P10/05-surface-actions-transport.md` | `9345adc1c0f4e7f4bd7c8308d3f292fa62410a19` | `6E36BCFF366D5F37D46513143C383EFD3564B82B922D71CD798A51C3F7BF2BC8` |
+| `docs/design/implementation/P11/00-contract-index.md` | `832ecb65ccd9664af232f610bbece4d15c35734f` | `8FE7756249056F74F2F396FBB4A1C1B66878C601B4E6444A4E8295F71557F050` |
+| `docs/design/implementation/P11/04-real-resolver.md` | `90df9cf4c89af468f321137f0317f4f2ce5be263` | `ADB40BB9214BADFFE55DC96A1533F68B0B6941A8D281BF615CAE58E2F1EAA602` |
+| `docs/design/implementation/P11/12-sandbox-handoff.md` | `b92046cb5635f4d4869b3ac090d18058395b75ab` | `E50A75380DCC3FAB55534B7CCCE0767E935F8E62150D8326B53D39303329D602` |
+| `docs/design/implementation/P12/00-contract-index.md` | `c24b2814800a3e414cc49bcfbafcdc9cb2980aa1` | `4F71A191D3717EA2C650123C9031E8F01AA918F26E7B5027CE1E7431BB3BF3E9` |
+| `docs/design/implementation/P12/09-region-encoding-convergence.md` | `e5cf86b9a6911e663af3d161984b3e9ca35cfb24` | `54F076503F9F655D639423DB39A2AA5AD04F0CAEE2502B0B1AA5ADD4B114E630` |
+| `docs/design/implementation/P12/13-security-performance.md` | `63858528c2abe630f49311225ba968573daeb64e` | `80C4756AC62343250CFCF0A28DDE760604E4ADF69E272B60424F52EF225961B0` |
+| `docs/design/implementation/P12/14-acceptance.md` | `2dc293fc79f6f1e75c95e7cac73c9991a465c457` | `BF877769317BE7B04377F25BEFAA6B01CF921F4CB230DB44323920C318CE1478` |
+| `docs/design/implementation/P13/00-contract-index.md` | `34162b185abdc4b6a1d5caf9a77e3e85807390b8` | `9604694915CC898D70A8084C008F7A16796A9A16E2109260F529B3097D01451D` |
+| `docs/design/implementation/P13/03-view-rendering.md` | `8be8768afd1ff2fd0066b172609d2e22015a6843` | `33B78D80898DF6D96F46D89636D0F09256FB9D4510297659CCFBCFC8986EB8C9` |
+| `docs/design/implementation/P13/06-acceptance.md` | `6e05b306669f6a33176f537a04db4a164b7983fd` | `AC4F85EEBC42DDED03A83A0206AE6F8478B9031FA13BB38F979D5E8ABB18B142` |
+
+## Final governance record hashes
+
+| Record | Raw SHA-256 |
+|---|---|
+| `planning/results/native-os-sandbox-v21-producer-mapping-closure-acceptance.record.md` | `503DC1FBE35CF2E3668438861D9F9F32DCD2CA92B8ED0EE6A8DD8590E95A107D` |
+| `planning/results/native-os-sandbox-v21-producer-mapping-highwater-amendment-v2-acceptance.record.md` | `353C9805E038B9401B426219F773FAC7F614D5343B7DECCB9D6530CD398168BF` |
+| `planning/results/sandbox-policy-candidate-readmodel-v5-acceptance.record.md` | `A28620965BA1A1974DC81FFE387F4AC5C07AF147EBC5A74262229A8509B976F2` |
+
+The manifest itself is not self-hashed. Independent post-landing review is
+pending. This cumulative landing contains only design/planning records; no
+source code, tests, migration definitions/registration, database files,
+deployment, or release artifacts.

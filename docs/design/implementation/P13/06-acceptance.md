@@ -99,3 +99,30 @@ required is NeedsDecision, not provider-unavailable/503. RecoveryBinding
 failure Attention has immutable intent_at, safe summary and no repair action.
 No raw paths, target refs, hashes, env values, provider diagnostics or broker
 responses are rendered.
+
+## Accepted Sandbox Policy Candidate Read Model V5 browser qualification
+
+Add browser/process coverage for the existing Workspace Detail candidate
+read, with no new route or command:
+
+- Initial exact active Execution with a verified pending P4/P3 requirement
+  renders the coherent candidate list and common preconditions; singular
+  preconditions are absent when the candidate read is present.
+- Human selection maps existing common fields and selected variant to
+  `/commands`; `candidateId`, candidate list/reason and evidence refs are not
+  submitted. OsEnforced includes its exact registry pair and matching
+  NetworkPolicy mode; TrustedLocal omits registry fields and requires the
+  existing high-risk confirmation.
+- Commit a TrustedLocal decision, change only the provider registry within
+  the full V2 bundle, and verify Workspace Detail becomes NeedsDecision with
+  a refreshed candidate read and requires an explicit human choice. Do not
+  display a provider-unavailable state or imply TrustedLocal is OS-enforced.
+- A command based on the old candidate read receives the existing durable
+  stale receipt; only after invalidation/refetch can the human choose again.
+  No automatic selection, submit, polling, retry, dispatch or spawn occurs.
+- Candidate list rendering uses only safe exact provider/profile/network
+  fields and candidate IDs; no paths, target refs, invocation/binding proof,
+  qualification evidence refs or diagnostics are exposed.
+
+These are contract qualification requirements, not implementation evidence;
+this design landing runs no tests and changes no database or migration.

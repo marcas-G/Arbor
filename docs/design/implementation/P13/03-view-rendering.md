@@ -142,3 +142,26 @@ invalidation or explicit manual refetch. Policy-required interruption displays
 NeedsDecision without provider-unavailable label or 503. RecoveryBinding
 failure Attention has fixed safe summary and immutable intent_at, with no
 repair/rebind UI.
+
+## Accepted Sandbox Policy Candidate Read Model V5 rendering
+
+When Workspace Detail supplies `sandboxPolicyCandidateRead`, render its
+current safe choices instead of treating the omitted singular
+`sandboxPolicyPreconditions` as unavailable. The common preconditions are
+read-only CAS context; they do not select a profile or provider by themselves.
+Render each OsEnforced option from its exact providerId/version,
+profile, and networkMode; render TrustedLocal as explicit
+FullAccess/Unconfined and high risk, with the existing separate affirmative
+confirmation. Never present TrustedLocal as an OS-isolated choice or fallback.
+
+The human supplies the existing V21 P1 fields after selection: copy the exact
+common preconditions, add the OsEnforced registry pair only for that variant,
+and submit the existing NetworkPolicyV1 matching the selected networkMode.
+Do not submit `candidateId`, candidate reason/list, evidence refs, or any
+provider diagnostics; candidate IDs are UI identity only. There is no
+automatic choice or submit. On `StaleSandboxPolicyInputs`, wait for existing
+invalidation or an explicit refetch, replace the stale candidate list, and
+require a new deliberate human choice. After any V2 bundle child changes,
+including registry-only changes while a TrustedLocal decision is committed,
+show NeedsDecision and require explicit reapproval without implying an
+OS-provider dependency for TrustedLocal.

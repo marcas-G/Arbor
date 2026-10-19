@@ -287,3 +287,125 @@ authority/config rejection, stale policy and NeedsDecision are never this 503;
 ordinary lag uses the existing generic lag behavior. Web waits for existing
 WebSocket invalidation or explicit manual refetch and performs no timer,
 polling or automatic retry.
+
+## Accepted candidate-read-model V5 Workspace Detail contract
+
+Keep the existing POST `/views/workspace-detail` and request body
+`WorkspaceDetailReq={workspaceId}`. V5 adds no route, ViewId, command, wire
+precondition, event, table, or migration. The existing closed
+`sandboxPolicyPreconditions` V21 union remains unchanged and is present only
+when no candidate read is present.
+
+When an authorized human reads an exact visible active Execution/Episode
+whose P4-proven pending policy requirement needs an initial or refreshed
+choice, return `sandboxPolicyCandidateRead` and omit the singular
+`sandboxPolicyPreconditions`. Both are optional on the existing response;
+candidate and precondition fields are not returned without view authority.
+Candidate reads are read-only and ephemeral. Use this exact closed DTO:
+
+```ts
+type SandboxPolicyCandidateReadV1 = {
+  readonly reason: "InitialDecision" | "RefreshStaleCommittedPolicy";
+  readonly commonPreconditions: {
+    readonly expectedEpisodeRevision: number;
+    readonly latestCommittedPolicyRevision: number;
+    readonly episodeBinding: ExecutionEpisodeBinding;
+    readonly workspaceRevision: number;
+    readonly resourceBoundaryRevision: number;
+    readonly sandboxHandleBindingDigest: Sha256;
+    readonly authorityBundleRevision: number;
+    readonly authorityBundleDigest: Sha256;
+    readonly operatorConfigRevision: number;
+    readonly operatorConfigDigest: Sha256;
+  };
+  readonly candidates: ReadonlyArray<SandboxPolicyCandidateV1>;
+};
+
+type SandboxPolicyCandidateV1 =
+  | {
+      readonly kind: "OsEnforced";
+      readonly candidateId: string; // spc2_<64 lowercase SHA-256 hex>
+      readonly providerId: string;
+      readonly providerVersion: string;
+      readonly profile: "ReadOnly" | "WorkspaceWrite";
+      readonly networkMode: "Disabled" | "Restricted" | "Enabled";
+      readonly providerRegistryRevision: number;
+      readonly providerRegistryDigest: Sha256;
+    }
+  | {
+      readonly kind: "TrustedLocalUnconfinedV1";
+      readonly candidateId: string;
+    };
+
+type WorkspaceDetailRes = Omit<
+  ExistingWorkspaceDetailRes,
+  "sandboxPolicyPreconditions"
+> & {
+  readonly sandboxPolicyPreconditions?: SandboxPolicyPreconditionsV1;
+  readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateReadV1;
+};
+```
+
+The common revisions use existing V21 ranges: episode, latest committed
+policy, Workspace and ResourceBoundary revisions are nonnegative safe
+integers (latest policy is zero only when no decision exists); authority-bundle
+and operator-config revisions are positive safe integers; all digests are
+lowercase 64-hex SHA-256. An OsEnforced candidate has the exact positive
+registry revision/digest pair; TrustedLocal has no registry branch fields.
+The full authority-bundle pair is common and current for both variants.
+
+P5 supplies one verified immutable SandboxAuthorityBundleV2 and the exact
+current-host Supported tuple set. P10 filters those tuples for the exact
+current Workspace/Episode/boundary/handle basis; it does not requalify a
+provider or infer a Cartesian product. Each exact applicable tuple yields one
+OsEnforced candidate and the list contains exactly one TrustedLocal
+candidate. Sort OsEnforced candidates by unsigned UTF-8 bytewise tuple
+`providerId,providerVersion,profile,networkMode,providerRegistryRevision,
+providerRegistryDigest` with no Unicode normalization, then place TrustedLocal
+last. Exact duplicates collapse only when every tuple and registry field is
+identical; conflicting mappings fail closed. The OS candidate carries no
+destinations or qualification evidence ref; the human still supplies the
+existing NetworkPolicyV1 in the P1 command. Candidate identity is presentation
+only and is not a P1 CAS value or authority.
+
+P10 obtains a same-transaction proof result from P4's read-only
+`SandboxPolicyRequirementReadPort` in P4/06. The port validates the exact
+pending P3 action, active Execution, NotAdmitted invocation and immutable
+RecoveryBinding; P10 MUST NOT read P3/P4 private stores directly. P10 combines
+that result with the exact current P1 decision/result, P5 full bundle,
+Workspace/boundary/handle refs and existing freshness barrier. If the P4
+port, authority source, exact-host tuple snapshot, or barrier fails with a
+typed error, return that error/lag outcome and no partial candidate list.
+
+Candidate IDs are generated exactly as fixed by the accepted V5 proposal:
+`spc2_` plus lowercase SHA-256 of
+`UTF8("arbor:sandbox-policy-candidate:v2\0") || variantByte || ordered
+length-prefixed tuple`. `variantByte` is `0x01` for OsEnforced and `0x02` for
+TrustedLocalUnconfinedV1. Each string uses `u32be(UTF8 byte length) || UTF8
+bytes`; the positive registry revision is its canonical base-10 ASCII string
+under the same length prefix. OS tuple order is
+`providerId,providerVersion,profile,networkMode,providerRegistryRevision,
+providerRegistryDigest`; TrustedLocal has only the variant byte. The
+canonical TrustedLocal golden is
+`spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d`.
+IDs are display identity only: P1 rejects unknown fields and receives no
+`candidateId`; P13 maps the selected candidate's existing fields and the
+common preconditions to the existing P1 command payload.
+
+V5 qualification matrix: an initial no-decision plus exact pending P4/P3
+requirement returns one coherent candidate read with the common preconditions
+and no invocation/binding identity; a committed TrustedLocal decision plus
+provider-registry-only V2 bundle drift becomes NeedsDecision and returns the
+new common bundle pair; a command using the old candidate read is rejected by
+the existing P1 stale receipt, while a fresh explicit TrustedLocal selection
+omits the registry branch precondition. Issuer, operator, and provider
+registry child changes each advance the full bundle and stale both variants.
+Restart before/after reapproval preserves stale state and reconstructs the
+single new decision without automatic selection or dispatch. Empty valid
+Supported tuple sets return exactly TrustedLocal; invalid bundle or
+unprovable tuple source returns a typed failure and no candidates. Missing,
+corrupt, duplicate, or mismatched P4 requirement proof is a typed failure,
+while valid closed/terminal/stopped/non-pending state returns None. Verify
+same-TransactionScope read, exact common/OS-only fields, candidate ID golden
+and sort order, no sensitive detail, no P3/P4 private-store access, and no
+new persisted candidate/Attention state.

@@ -758,3 +758,50 @@ ProviderRegistryRevision. It exposes no old/current numeric value, digest,
 target/path or diagnosis. POST /commands
 returns HTTP 200 CommandReceiptView and same-CommandId replay returns that
 same receipt. Do not add 409 or Problem mapping.
+
+## Accepted V3 policy producer receipt bindings
+
+The committed internal snapshot is derived from P5's exact
+SandboxAuthorityBundleV2 and P11's complete current ResourceBoundary, never
+from caller/tool-target subset data. `authorityBundleRevision/Digest` and
+`operatorConfigRevision/Digest` in both snapshot variants must equal the
+verified V2 bundle and embedded operator-config subobject; OsEnforced's
+provider-registry pair must equal its embedded V2 registry. TrustedLocal
+continues to omit provider-registry fields. Configured limits and the
+environment allowlist are values from that operator config; no wire field
+overrides them. `trustedRuntimeVersion` is exactly `builtin-v1` in the
+existing TrustedLocal snapshot/basis variant.
+
+P1 accepts `auditRefs` only as the bounded internal provenance projection
+provided by the trusted producer: an existing stable authority-audit
+reference when the audit store exposes one (otherwise omitted), the exact
+committed command/receipt reference, and for OsEnforced the exact qualification
+manifest blob reference (omitted for TrustedLocal). Deduplicate exact refs,
+UTF-8 sort and enforce the existing count/length bounds before computing the
+snapshot digest. Never synthesize a ref from a timestamp, log offset, path,
+provider diagnostic, or client input. Public receipt/view projections
+continue to redact every audit ref. This adds no payload field, event, DDL,
+receipt variant, or fingerprint input beyond the already frozen V21 command.
+
+## Accepted Sandbox Policy Candidate Read Model V5 command boundary
+
+The P10 `sandboxPolicyCandidateRead` is presentation/read-model data only.
+P1 does not accept `candidateId`, candidate list, or candidate-read reason as
+payload or authority. P13 maps the human's selected existing variant and
+common preconditions to the unchanged DecideSandboxPolicy payload. Both
+OsEnforced and TrustedLocal carry the common exact
+`expectedAuthorityBundleRevision/Digest`; OsEnforced additionally carries
+the existing provider-registry pair, while TrustedLocal omits that branch
+precondition. P1 compares the full current V2 bundle for either variant, so
+registry-only bundle drift rejects an old TrustedLocal submission as the
+existing durable `StaleSandboxPolicyInputs` receipt. The candidate ID never
+changes the frozen P1 fingerprint, receipt, decision, or `policy_digest`.
+
+Qualification cases: both variants with stale common bundle revision/digest
+return the existing durable `StaleSandboxPolicyInputs` receipt before any
+decision/event; an OsEnforced-only stale registry pair is independently
+rejected; provider-registry-only full-bundle drift rejects a TrustedLocal
+command through its common authority-bundle precondition; a fresh explicit
+TrustedLocal command succeeds without registry branch fields. `candidateId`,
+candidate list/reason, and candidate-only fields are rejected as unknown wire
+fields, and identical P1 fingerprint/receipt replay semantics remain exact.
