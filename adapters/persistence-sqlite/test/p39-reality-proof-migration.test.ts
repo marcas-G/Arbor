@@ -65,7 +65,11 @@ const executorWithP39ScriptTransform =
   (command, args, options) => {
     const script = args.at(-1);
     if (script === undefined) throw new Error("P39 probe script is missing");
-    return execFileSync(command, [...args.slice(0, -1), transform(script)], {
+    const transformed = transform(script);
+    if (transformed === script) {
+      throw new Error("P39 probe script transform did not match");
+    }
+    return execFileSync(command, [...args.slice(0, -1), transformed], {
       ...options,
       env: p39WindowsTestEnvironment(),
     });
@@ -556,8 +560,8 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
         createP39PrivateTestFile(filename);
         const executor = executorWithP39ScriptTransform((script) =>
           script.replace(
-            "$a=Get-Acl -LiteralPath $p",
-            "$a=Get-Acl -LiteralPath $p;$a.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-18'))",
+            "$a=$i.GetAccessControl()",
+            "$a=$i.GetAccessControl();$a.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-18'))",
           ),
         );
         expect(validateP39WindowsProtectedPaths(paths, executor)).toBe(false);
