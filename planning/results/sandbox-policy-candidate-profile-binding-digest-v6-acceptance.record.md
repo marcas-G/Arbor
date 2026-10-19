@@ -47,5 +47,13 @@ implementation authorization is separate. No code, test, migration, database,
 deployment or release change is part of this landing.
 
 The adjacent manifest pins base blobs and raw postimage SHA-256 hashes.
-Independent post-landing consistency review is a separate gate and is not
-claimed by this acceptance record.
+Independent post-landing consistency review of
+`24307d68d8f6d080aa42cecf727101b94ec8dbdc` is complete:
+B0 = 0, B1 = 0, B2 = 0, Blocking = 0. The reviewer-reported scope and
+postimage-hash checks are archived in
+`planning/results/sandbox-policy-candidate-profile-binding-digest-v6-postlanding-review.result.md`
+(raw SHA-256
+`9CE4955D4D2CF7CBB197E622E47C69AA68E5A6B732C9E06BD690F9E3F046A0A3`).
+The independent reviewer produced no separate repository artifact; the
+linked result records the relayed outcome. The review does not authorize
+implementation.
