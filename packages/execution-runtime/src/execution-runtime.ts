@@ -207,7 +207,7 @@ const sandboxPolicyDecisionIsCurrentForRequirement = (input: {
   if (!commonCurrent) return false;
 
   if (snapshot.kind === "TrustedLocalUnconfinedV1") {
-    return (
+    const trustedMatches =
       snapshot.trustedRuntimeIdentity === "TrustedLocal" &&
       snapshot.trustedRuntimeVersion === "builtin-v1" &&
       snapshot.profile === "FullAccess" &&
@@ -215,8 +215,8 @@ const sandboxPolicyDecisionIsCurrentForRequirement = (input: {
       decision.providerId === "TrustedLocal" &&
       decision.profile === "FullAccess" &&
       decision.networkPolicy.kind === "TrustedLocalUnconfinedV1" &&
-      decision.networkPolicy.version === 1
-    );
+      decision.networkPolicy.version === 1;
+    return trustedMatches;
   }
 
   return (
@@ -410,41 +410,53 @@ export const runExecution = (
       return yield* Effect.fail({ _tag: "ExecutionNotFound" as const });
     }
     if (Option.isSome(sandboxPolicyRequirements)) {
-      const currentAuthority = Option.isSome(currentAuthoritySnapshotPort)
-        ? yield* currentAuthoritySnapshotPort.value.loadCurrentVerifiedV2()
-        : { _tag: "Unavailable" as const, failure: "SourceMissing" as const };
-      const now = yield* clock.now();
-      const policyMustWaitForHuman = yield* tx.transact(
-        Effect.gen(function* () {
-          const requirement =
-            yield* sandboxPolicyRequirements.value.findPendingByExecution({
-              projectId: execution.value.projectId,
-              workspaceId: execution.value.workspaceId,
-              executionId,
-            });
-          if (Option.isNone(requirement)) return false;
-          if (
-            currentAuthority._tag !== "Available" ||
-            Option.isNone(sandboxPolicyDecisions)
-          ) {
-            return true;
-          }
-          const current =
-            yield* sandboxPolicyDecisions.value.findCurrentForExecution(
-              execution.value.projectId,
-              execution.value.workspaceId,
-              executionId,
-            );
-          if (Option.isNone(current)) return true;
-          return !sandboxPolicyDecisionIsCurrentForRequirement({
-            execution: execution.value,
-            requirement: requirement.value,
-            committed: current.value,
-            authority: currentAuthority.snapshot,
-            now,
-          });
+      const pendingRequirement = yield* tx.transact(
+        sandboxPolicyRequirements.value.findPendingByExecution({
+          projectId: execution.value.projectId,
+          workspaceId: execution.value.workspaceId,
+          executionId,
         }),
       );
+      let policyMustWaitForHuman = false;
+      if (Option.isSome(pendingRequirement)) {
+        const currentAuthority = Option.isSome(currentAuthoritySnapshotPort)
+          ? yield* currentAuthoritySnapshotPort.value.loadCurrentVerifiedV2()
+          : { _tag: "Unavailable" as const, failure: "SourceMissing" as const };
+        const now = yield* clock.now();
+        policyMustWaitForHuman = yield* tx.transact(
+          Effect.gen(function* () {
+            // Re-read the exact proof after the effectful P5 source/high-water
+            // load. This closes a requirement change during that read window.
+            const requirement =
+              yield* sandboxPolicyRequirements.value.findPendingByExecution({
+                projectId: execution.value.projectId,
+                workspaceId: execution.value.workspaceId,
+                executionId,
+              });
+            if (Option.isNone(requirement)) return false;
+            if (
+              currentAuthority._tag !== "Available" ||
+              Option.isNone(sandboxPolicyDecisions)
+            ) {
+              return true;
+            }
+            const current =
+              yield* sandboxPolicyDecisions.value.findCurrentForExecution(
+                execution.value.projectId,
+                execution.value.workspaceId,
+                executionId,
+              );
+            if (Option.isNone(current)) return true;
+            return !sandboxPolicyDecisionIsCurrentForRequirement({
+              execution: execution.value,
+              requirement: requirement.value,
+              committed: current.value,
+              authority: currentAuthority.snapshot,
+              now,
+            });
+          }),
+        );
+      }
       if (policyMustWaitForHuman) {
         return { _tag: "RecoveryBlocked" as const };
       }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -11,6 +12,7 @@ import {
   LeaseServiceLive,
   layer,
   P12_MIGRATIONS,
+  P38_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
@@ -25,18 +27,20 @@ import {
   semanticRequestFingerprint,
   type VerifiedRuntimeCommandAuthority,
 } from "../packages/application/src/index.js";
-import type {
-  SandboxAuthorityBundleSnapshotV2,
-  SandboxPolicyDecision,
-  SandboxPolicyDecisionCommittedInternalV1,
-} from "../packages/domain/dist/index.js";
 import {
   Actor,
   CommandId,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
   ExecutionId,
+  encodeEffectivePolicySummaryV1,
+  encodeSandboxPolicyDecisionCommittedInternalV1,
+  PermissionGrantId,
   Principal,
   ProjectId,
   parse,
+  type SandboxAuthorityBundleSnapshotV2,
+  type SandboxPolicyDecision,
+  type SandboxPolicyDecisionCommittedInternalV1,
   SessionId,
   WorkId,
   WorkspaceId,
@@ -66,7 +70,7 @@ import {
   type SandboxProviderUnavailableFactV1,
   SandboxProviderUnavailableStore,
   WorkerDispatchPort,
-} from "../packages/ports/src/index.js";
+} from "../packages/ports/dist/index.js";
 import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 import {
   seedCurrentOpenWork,
@@ -540,158 +544,253 @@ describe("P2-014 driver / dispatch / safety", () => {
     expect(calls).toEqual({ dispatch: 0, drive: 0 });
   });
 
-  it("parks an unexpired TrustedLocal decision when the current V2 bundle drifted", async () => {
-    const calls = { dispatch: 0, drive: 0 };
-    const app = makeApp(yieldedSettlement, { calls });
-    const policy = {
-      projectId,
-      workspaceId,
-      executionId,
-      episodeBinding: workEpisode(workId),
-      policyRevision: 3,
-      expectedExecutionRevision: 0,
-      expectedPolicyRevision: 2,
-      profile: "FullAccess",
-      providerId: "TrustedLocal",
-      networkPolicy: { version: 1, mode: "Enabled", destinations: [] },
-      policyDigest: "a".repeat(64),
-      permissionGrantId: "pgr_currentness_test",
-      grantPermissionCommandId: "cmd_currentness_test",
-      grantIssuerPrincipal: "user:operator",
-      operatorConfigRevision: 1,
-      operatorConfigDigest: "b".repeat(64),
-      actorPrincipal: "user:operator",
-      decisionCommandId: "cmd_currentness_decision",
-      issuedAt: "2026-10-19T00:00:00.000Z",
-      expiresAt: "2099-01-01T00:00:00.000Z",
-    } as unknown as SandboxPolicyDecision;
-    const requirement = {
-      _tag: "SandboxPolicyRequirementV1",
-      projectId,
-      workspaceId,
-      executionId,
-      episodeBinding: workEpisode(workId),
-      expectedEpisodeRevision: 0,
-      invocationId: "tin_currentness_test",
-      providerTurnId: "ptn_currentness_test",
-      logicalStepNo: 1,
-      repairAttempt: 0,
-      logicalActionId: "act_currentness_test",
-      actionIndex: 0,
-      callRef: "call_currentness_test",
-      recoveryBindingDigest: "c".repeat(64),
-    } satisfies SandboxPolicyRequirementV1;
-    const requirementPort = Layer.succeed(SandboxPolicyRequirementReadPort, {
-      findPendingByExecution: () => Effect.succeed(Option.some(requirement)),
-    });
-    const committed = {
-      decision: policy,
-      result: {
-        version: 1,
-        commandId: policy.decisionCommandId,
+  it.each([
+    { bundleRevision: 2, bundleDigest: "5".repeat(64), expected: "allowed" },
+    { bundleRevision: 1, bundleDigest: "1".repeat(64), expected: "parked" },
+  ] as const)(
+    "checks a valid TrustedLocal result against the current V2 bundle ($expected)",
+    async ({ bundleRevision, bundleDigest, expected }) => {
+      const calls = { dispatch: 0, drive: 0 };
+      const app = makeApp(yieldedSettlement, { calls });
+      const digest = (value: string) =>
+        createHash("sha256").update(value, "utf8").digest("hex");
+      const decisionCommandId = parse(CommandId)(
+        "cmd_018f2b3c-4d5e-7abc-8def-0123456789a2",
+      );
+      const snapshot = {
+        version: 1 as const,
+        kind: "TrustedLocalUnconfinedV1" as const,
+        projectId,
+        workspaceId,
+        executionId,
+        episodeBinding: workEpisode(workId),
+        workspaceRevision: 1,
+        resourceBoundaryRevision: 1,
+        resourceBoundaryDigest: "d".repeat(64),
+        sandboxEnvironmentBasisDigest: "e".repeat(64),
+        policyRevision: 3,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        trustedRuntimeIdentity: "TrustedLocal" as const,
+        trustedRuntimeVersion: "builtin-v1" as const,
+        profile: "FullAccess" as const,
+        networkBoundary: "Unconfined" as const,
+        sandboxHandleBindingDigest: "f".repeat(64),
+        mounts: [
+          {
+            mountId: "mount_workspace",
+            targetRef: {
+              version: 1,
+              kind: "RegionDigest",
+              resourceSpace: "filesystem",
+              regionIdentityDigest: "6".repeat(64),
+            },
+            targetIdentityDigest: "7".repeat(64),
+            access: "ReadWrite",
+          },
+        ],
+        environmentAllowlist: [],
+        limits: {
+          wallTimeMs: 1,
+          stdoutBytes: 1,
+          stderrBytes: 1,
+          processCount: 1,
+          memoryBytes: 1,
+          cpuTimeMs: 1,
+        },
+        auditRefs: [],
+        authorityBundleRevision: bundleRevision,
+        authorityBundleDigest: bundleDigest,
+        operatorConfigRevision: 1,
+        operatorConfigDigest: "3".repeat(64),
+      };
+      const policyDigest = digest(encodeEffectivePolicySummaryV1(snapshot));
+      const policy = {
         projectId,
         workspaceId,
         executionId,
         episodeBinding: workEpisode(workId),
         policyRevision: 3,
-        policyDigest: policy.policyDigest,
-        effectivePolicySnapshot: {
-          kind: "TrustedLocalUnconfinedV1",
-          projectId,
-          workspaceId,
-          executionId,
-          episodeBinding: workEpisode(workId),
-          workspaceRevision: 1,
-          resourceBoundaryRevision: 1,
-          resourceBoundaryDigest: "d".repeat(64),
-          sandboxEnvironmentBasisDigest: "e".repeat(64),
-          policyRevision: 3,
-          expiresAt: policy.expiresAt,
-          trustedRuntimeIdentity: "TrustedLocal",
-          trustedRuntimeVersion: "builtin-v1",
-          profile: "FullAccess",
-          networkBoundary: "Unconfined",
-          sandboxHandleBindingDigest: "f".repeat(64),
-          mounts: [],
-          environmentAllowlist: [],
-          limits: {
-            wallTimeMs: 1,
-            stdoutBytes: 1,
-            stderrBytes: 1,
-            processCount: 1,
-            memoryBytes: 1,
-            cpuTimeMs: 1,
-          },
-          auditRefs: [],
-          authorityBundleRevision: 1,
-          authorityBundleDigest: "1".repeat(64),
-          operatorConfigRevision: 1,
-          operatorConfigDigest: "b".repeat(64),
-        },
-      },
-    } as SandboxPolicyDecisionCommittedInternalV1;
-    const decisions = Layer.succeed(SandboxPolicyDecisionStore, {
-      findCurrentForExecution: () => Effect.succeed(Option.some(committed)),
-    } as never);
-    const currentAuthority = {
-      bundle: {
-        version: 2,
-        sourceIdentity: "host-test",
-        bundleRevision: 2,
-        issuerConfigRevision: 1,
-        issuerConfigDigest: "2".repeat(64),
-        issuerConfig: { version: 1, revision: 1, issuers: [] },
+        expectedExecutionRevision: 0,
+        expectedPolicyRevision: 2,
+        profile: "FullAccess",
+        providerId: "TrustedLocal",
+        networkPolicy: { kind: "TrustedLocalUnconfinedV1", version: 1 },
+        policyDigest,
+        permissionGrantId: parse(PermissionGrantId)(
+          "pgr_018f2b3c-4d5e-7abc-8def-0123456789a2",
+        ),
+        grantPermissionCommandId: decisionCommandId,
+        grantIssuerPrincipal: "user:operator",
         operatorConfigRevision: 1,
         operatorConfigDigest: "3".repeat(64),
-        operatorConfig: {
-          version: 1,
-          revision: 1,
-          environmentAllowlist: [],
-          limitsByProfile: [],
-          trustedLocalRuntimeVersion: "builtin-v1",
+        actorPrincipal: "user:operator",
+        decisionCommandId,
+        issuedAt: "2026-10-19T00:00:00.000Z",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      } satisfies SandboxPolicyDecision;
+      const requirement = {
+        _tag: "SandboxPolicyRequirementV1",
+        projectId,
+        workspaceId,
+        executionId,
+        episodeBinding: workEpisode(workId),
+        expectedEpisodeRevision: 0,
+        invocationId: "tin_currentness_test",
+        providerTurnId: "ptn_currentness_test",
+        logicalStepNo: 1,
+        repairAttempt: 0,
+        logicalActionId: "act_currentness_test",
+        actionIndex: 0,
+        callRef: "call_currentness_test",
+        recoveryBindingDigest: "c".repeat(64),
+      } satisfies SandboxPolicyRequirementV1;
+      let requirementReads = 0;
+      let decisionReads = 0;
+      let authorityReads = 0;
+      const requirementPort = Layer.succeed(SandboxPolicyRequirementReadPort, {
+        findPendingByExecution: () => {
+          requirementReads += 1;
+          return Effect.succeed(Option.some(requirement));
         },
-        providerRegistryRevision: 1,
-        providerRegistryDigest: "4".repeat(64),
-        providerRegistry: { version: 1, revision: 1, entries: [] },
+      });
+      const encodedResult = encodeSandboxPolicyDecisionCommittedInternalV1({
+        version: 1,
+        commandId: decisionCommandId,
+        projectId,
+        workspaceId,
+        executionId,
+        episodeBinding: workEpisode(workId),
+        policyRevision: 3,
+        policyDigest,
+        effectivePolicySnapshot: snapshot,
+      });
+      const decodedResult =
+        decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+          encodedResult,
+          digest,
+        );
+      expect(decodedResult).toBeDefined();
+      const committed = {
+        decision: policy,
+        result: decodedResult as SandboxPolicyDecisionCommittedInternalV1,
+      };
+      const decisions = Layer.succeed(SandboxPolicyDecisionStore, {
+        findCurrentForExecution: () => {
+          decisionReads += 1;
+          return Effect.succeed(Option.some(committed));
+        },
+      } as never);
+      const currentAuthority = {
+        bundle: {
+          version: 2,
+          sourceIdentity: "host-test",
+          bundleRevision: 2,
+          issuerConfigRevision: 1,
+          issuerConfigDigest: "2".repeat(64),
+          issuerConfig: { version: 1, revision: 1, issuers: [] },
+          operatorConfigRevision: 1,
+          operatorConfigDigest: "3".repeat(64),
+          operatorConfig: {
+            version: 1,
+            revision: 1,
+            environmentAllowlist: [],
+            limitsByProfile: [],
+            trustedLocalRuntimeVersion: "builtin-v1",
+          },
+          providerRegistryRevision: 1,
+          providerRegistryDigest: "4".repeat(64),
+          providerRegistry: { version: 1, revision: 1, entries: [] },
+        },
+        bundleDigest: "5".repeat(64),
+        canonicalJson: "{}",
+      } as SandboxAuthorityBundleSnapshotV2;
+      const currentAuthorityPort = Layer.succeed(
+        CurrentSandboxAuthoritySnapshotPort,
+        {
+          loadCurrentVerifiedV2: () => {
+            authorityReads += 1;
+            return Effect.succeed({
+              _tag: "Available",
+              snapshot: currentAuthority,
+            });
+          },
+        },
+      );
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P38_MIGRATIONS);
+        yield* seed;
+        yield* admit;
+        const result = yield* runExecution(
+          executionId,
+          { _tag: "Recovery" },
+          principal,
+        );
+        const sql = yield* SqlClient;
+        const leases = yield* sql.unsafe<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM execution_leases WHERE execution_id = ?",
+          [executionId],
+        );
+        return { result, leases: leases[0]?.count ?? -1 };
+      });
+      const result = await run(
+        program,
+        Layer.mergeAll(
+          app.layer,
+          requirementPort,
+          decisions,
+          currentAuthorityPort,
+        ),
+      );
+      expect(requirementReads).toBe(2);
+      expect(decisionReads).toBe(1);
+      expect(authorityReads).toBe(1);
+      if (expected === "parked") {
+        expect(result.result._tag).toBe("RecoveryBlocked");
+        expect(result.leases).toBe(0);
+        expect(calls).toEqual({ dispatch: 0, drive: 0 });
+      } else {
+        expect(calls).toEqual({ dispatch: 1, drive: 1 });
+      }
+    },
+  );
+
+  it("does not load or audit P5 authority when there is no pending requirement", async () => {
+    const calls = { dispatch: 0, drive: 0 };
+    const app = makeApp(yieldedSettlement, { calls });
+    let requirementReads = 0;
+    let authorityReads = 0;
+    const requirementPort = Layer.succeed(SandboxPolicyRequirementReadPort, {
+      findPendingByExecution: () => {
+        requirementReads += 1;
+        return Effect.succeed(Option.none());
       },
-      bundleDigest: "5".repeat(64),
-      canonicalJson: "{}",
-    } as SandboxAuthorityBundleSnapshotV2;
+    });
     const currentAuthorityPort = Layer.succeed(
       CurrentSandboxAuthoritySnapshotPort,
       {
-        loadCurrentVerifiedV2: () =>
-          Effect.succeed({ _tag: "Available", snapshot: currentAuthority }),
+        loadCurrentVerifiedV2: () => {
+          authorityReads += 1;
+          return Effect.succeed({
+            _tag: "Unavailable",
+            failure: "SourceUnreadable",
+          });
+        },
       },
     );
     const program = Effect.gen(function* () {
       yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* admit;
-      const result = yield* runExecution(
-        executionId,
-        { _tag: "Recovery" },
-        principal,
-      );
-      const sql = yield* SqlClient;
-      const leases = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM execution_leases WHERE execution_id = ?",
-        [executionId],
-      );
-      return { result, leases: leases[0]?.count ?? -1 };
+      return yield* runExecution(executionId, { _tag: "Recovery" }, principal);
     });
-    const result = await run(
+    const outcome = await run(
       program,
-      Layer.mergeAll(
-        app.layer,
-        requirementPort,
-        decisions,
-        currentAuthorityPort,
-      ),
+      Layer.mergeAll(app.layer, requirementPort, currentAuthorityPort),
     );
-    expect(result.result._tag).toBe("RecoveryBlocked");
-    expect(result.leases).toBe(0);
-    expect(calls).toEqual({ dispatch: 0, drive: 0 });
+    expect(outcome._tag).not.toBe("RecoveryBlocked");
+    expect(requirementReads).toBe(1);
+    expect(authorityReads).toBe(0);
+    expect(calls).toEqual({ dispatch: 1, drive: 1 });
   });
 
   it("persists typed provider unavailability and blocks exact-policy reprobe after restart", async () => {
