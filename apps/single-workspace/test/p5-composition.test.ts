@@ -1,10 +1,16 @@
 import { CommandGateway } from "@arbor/application";
-import { ExecutionScheduler, RunnableWorkSource } from "@arbor/ports";
+import {
+  ExecutionScheduler,
+  RunnableWorkSource,
+  SandboxProcessPort,
+} from "@arbor/ports";
+import { nativePosixProviderIds } from "@arbor/sandbox-native-posix";
+import { WINDOWS_SANDBOX_PROVIDER_IDS } from "@arbor/sandbox-windows";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createSchema50TestDatabaseFactory as createSchema44TestDatabaseFactory,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
@@ -20,7 +26,7 @@ beforeAll(async () => {
 afterAll(() => schema44Factory?.cleanup());
 
 describe("P5 composition root", () => {
-  it("builds the full slice layer over a prestarted schema-48 DB", async () => {
+  it("builds the full slice layer over a prestarted schema-50 DB", async () => {
     const fixture = schema44Factory?.create();
     if (fixture === undefined) {
       throw new Error("Schema-44 test database factory was not prepared.");
@@ -40,9 +46,12 @@ describe("P5 composition root", () => {
             yield* CommandGateway;
             yield* ExecutionScheduler;
             yield* RunnableWorkSource;
+            const sandboxProcess = yield* SandboxProcessPort;
+            const sandboxProviders = yield* sandboxProcess.capabilities();
             return {
               version: Number(version[0]?.user_version),
               attentionTable: attentionTable[0]?.name,
+              sandboxProviders,
             };
           }),
           buildSingleWorkspaceLayer({
@@ -52,15 +61,36 @@ describe("P5 composition root", () => {
           {
             readonly version: number;
             readonly attentionTable: string | undefined;
+            readonly sandboxProviders: ReadonlyArray<{
+              readonly providerId: string;
+              readonly status: string;
+              readonly profiles: ReadonlyArray<string>;
+              readonly networkModes: ReadonlyArray<string>;
+            }>;
           },
           unknown,
           never
         >,
       );
       expect(result).toEqual({
-        version: 48,
+        version: 50,
         attentionTable: "attention_projection_rows",
+        sandboxProviders: expect.any(Array),
       });
+      expect(
+        result.sandboxProviders.map((provider) => provider.providerId),
+      ).toEqual([
+        ...nativePosixProviderIds,
+        ...Object.values(WINDOWS_SANDBOX_PROVIDER_IDS),
+      ]);
+      expect(
+        result.sandboxProviders.every(
+          (provider) =>
+            provider.status === "Experimental" &&
+            provider.profiles.length === 0 &&
+            provider.networkModes.length === 0,
+        ),
+      ).toBe(true);
     } finally {
       fixture.cleanup();
     }

@@ -13,6 +13,8 @@ import {
   P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
   P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,
   P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION,
+  P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
+  P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
   preflightVerificationEvidenceSnapshot,
   splitStatements,
 } from "../../../adapters/persistence-sqlite/src/index.js";
@@ -128,7 +130,7 @@ const readManifest = (): FunctionalSchema44Manifest => {
 };
 
 /** Copy both closed template databases into an ACL-protected case directory. */
-export const cloneFunctionalSchema48Database = (
+export const cloneFunctionalSchema50Database = (
   directory: string,
 ): { readonly databaseFile: string; readonly reportFile: string } => {
   const manifest = readManifest();
@@ -194,8 +196,17 @@ export const cloneFunctionalSchema48Database = (
       database.exec(statement);
     }
     database.exec("PRAGMA user_version = 48");
+    for (const migration of [
+      P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
+      P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
+    ]) {
+      for (const statement of splitStatements(migration.sql)) {
+        database.exec(statement);
+      }
+      database.exec(`PRAGMA user_version = ${migration.id}`);
+    }
     if (database.prepare("PRAGMA foreign_key_check").all().length > 0) {
-      throw new Error("Functional 44→48 fixture failed foreign_key_check");
+      throw new Error("Functional 44→50 fixture failed foreign_key_check");
     }
     database.exec("COMMIT");
   } catch (cause) {
@@ -211,12 +222,15 @@ export const cloneFunctionalSchema48Database = (
   return { databaseFile, reportFile };
 };
 
+/** Historical call sites use this name for the current disposable fixture. */
+export const cloneFunctionalSchema48Database = cloneFunctionalSchema50Database;
+
 /** Historical names retained for existing test call sites; fixtures track the
  * current ordinary runtime schema, while migration tests use exact versions. */
-export const cloneFunctionalSchema47Database = cloneFunctionalSchema48Database;
-export const cloneFunctionalSchema46Database = cloneFunctionalSchema48Database;
-export const cloneFunctionalSchema45Database = cloneFunctionalSchema48Database;
-export const cloneFunctionalSchema44Database = cloneFunctionalSchema48Database;
+export const cloneFunctionalSchema47Database = cloneFunctionalSchema50Database;
+export const cloneFunctionalSchema46Database = cloneFunctionalSchema50Database;
+export const cloneFunctionalSchema45Database = cloneFunctionalSchema50Database;
+export const cloneFunctionalSchema44Database = cloneFunctionalSchema50Database;
 
 export const createFunctionalFixtureDirectory = (): string => {
   const manifest = readManifest();

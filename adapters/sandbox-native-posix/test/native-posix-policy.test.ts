@@ -180,6 +180,7 @@ describe("native POSIX sandbox policy plans", () => {
     const linux = await probeLinuxBwrap({
       platform: "win32",
     });
+    const hostWithoutProbe = await probeLinuxBwrap({ platform: "linux" });
     const mac = await probeMacOSSeatbelt({
       platform: "linux",
       exists: () => false,
@@ -204,6 +205,13 @@ describe("native POSIX sandbox policy plans", () => {
       profiles: [],
       networkModes: [],
       failureCode: "RequiredPrerequisiteUnavailable",
+    });
+    expect(hostWithoutProbe).toMatchObject({
+      status: "Experimental",
+      profiles: [],
+      networkModes: [],
+      failureCode: "RequiredPrerequisiteUnavailable",
+      prerequisites: { bwrapExecutable: "Unavailable" },
     });
     expect([linux.status, mac.status]).not.toContain("Supported");
   });
@@ -335,14 +343,7 @@ describe("native POSIX sandbox policy plans", () => {
       networkPolicy: {
         version: 1 as const,
         mode: "Restricted" as const,
-        destinations: [
-          {
-            _tag: "Hostname" as const,
-            hostname: "example.com",
-            protocol: "https",
-            port: 443,
-          },
-        ],
+        destinations: ["https://example.com:443"],
       },
     };
     expect(

@@ -150,12 +150,13 @@ export const makeWindowsSandboxProcessPort = (
   run: (request: SandboxProcessRequest) =>
     Effect.sync(() => {
       const snapshot = probe.probe();
+      const capability = capabilityFor(request.policy.providerId, snapshot);
       return {
         _tag: "Unavailable" as const,
         providerId: request.policy.providerId,
-        providerVersion: "windows-t2-probe-v1",
-        probeEvidenceRef: capabilityFor(request.policy.providerId, snapshot)
-          .probeEvidenceRef,
+        providerVersion: capability.providerVersion,
+        capabilityRevision: capability.capabilityRevision,
+        probeEvidenceRef: capability.probeEvidenceRef,
         failureCode: providerFailureCode(request.policy.providerId, snapshot),
       };
     }),

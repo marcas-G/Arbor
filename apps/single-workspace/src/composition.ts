@@ -173,10 +173,10 @@ import {
   type RunnableWorkSource,
   resolvedModelBindingFingerprint,
   resolveModelBinding,
+  SandboxProcessPort,
   SecretMaterial,
   type SecretRef,
   SecretStorePort,
-  SandboxProcessPort,
   type SessionRepository,
   SkillRegistry,
   type ToolCatalogPort,
@@ -200,9 +200,7 @@ import {
   ProviderRuntimeLive,
 } from "@arbor/provider-runtime";
 import { SandboxPortLive } from "@arbor/sandbox-local";
-import {
-  makeNativePosixSandboxProcessPort,
-} from "@arbor/sandbox-native-posix";
+import { makeNativePosixSandboxProcessPort } from "@arbor/sandbox-native-posix";
 import {
   makeWindowsSandboxProcessPort,
   WINDOWS_SANDBOX_PROVIDER_IDS,
@@ -487,6 +485,7 @@ export type SingleWorkspaceServices =
   | UsageService
   | TransportBoundary
   | ProjectResourceProfilePort
+  | SandboxProcessPort
   | HumanMessageStore
   | InputPromotionService
   | WorkflowSignalConsumer
@@ -1050,6 +1049,7 @@ export const buildSingleWorkspaceLayer = (
     gateway,
     reconciliation,
     projectResourceProfilePort,
+    nativeSandboxProcessPort,
   );
 
   // --- B-7 production deployment surfaces (composition-root wiring) ---------
