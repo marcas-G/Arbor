@@ -9,6 +9,7 @@ const read = (relative: string): string =>
 const P4_PACKAGES = [
   "packages/tool-runtime",
   "adapters/sandbox-local",
+  "adapters/sandbox-native-posix",
   "adapters/blob-local",
 ];
 
@@ -28,6 +29,7 @@ describe("p4 harness wiring", () => {
     for (const ref of [
       "./packages/tool-runtime",
       "./adapters/sandbox-local",
+      "./adapters/sandbox-native-posix",
       "./adapters/blob-local",
     ]) {
       expect(root).toContain(ref);
@@ -47,6 +49,7 @@ describe("p4 harness wiring", () => {
   it("declares the P4 adapter edges in the architecture matrix", () => {
     const dag = read("tests/architecture/package-dag.ts");
     expect(dag).toContain('"sandbox-local": ["domain", "ports"]');
+    expect(dag).toContain('"sandbox-native-posix": ["domain", "ports"]');
     expect(dag).toContain('"blob-local": ["domain", "ports"]');
   });
 });

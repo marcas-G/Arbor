@@ -30,6 +30,7 @@
     "@arbor/provider-openai": "workspace:*",
     "@arbor/provider-testecho": "workspace:*",
     "@arbor/sandbox-local": "workspace:*",
+    "@arbor/sandbox-native-posix": "workspace:*",
     "@arbor/secret-env": "workspace:*",
     "@arbor/secret-file": "workspace:*",
     "@arbor/blob-local": "workspace:*",

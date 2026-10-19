@@ -71,6 +71,9 @@
       "path": "./adapters/sandbox-worktree"
     },
     {
+      "path": "./adapters/sandbox-native-posix"
+    },
+    {
       "path": "./adapters/blob-local"
     },
     {

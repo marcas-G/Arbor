@@ -199,6 +199,7 @@ import {
   ProviderRuntimeLive,
 } from "@arbor/provider-runtime";
 import { SandboxPortLive } from "@arbor/sandbox-local";
+import { NativePosixSandboxProcessPortLive } from "@arbor/sandbox-native-posix";
 import { SecretEnvLive } from "@arbor/secret-env";
 import { SecretFileLive } from "@arbor/secret-file";
 import {
@@ -833,6 +834,7 @@ export const buildSingleWorkspaceLayer = (
             ),
           ]),
       SandboxPortLive,
+      NativePosixSandboxProcessPortLive(),
       infra,
       toolAuthority,
       artifactService,
