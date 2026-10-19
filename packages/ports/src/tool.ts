@@ -213,6 +213,7 @@ export type CanonicalToolObservation =
   | {
       readonly _tag: "ExpectedFailure";
       readonly observation: BoundedObservation;
+      readonly sandboxProviderUnavailable?: import("./tool-observation-evidence.js").SandboxProviderUnavailableObservationV1;
     }
   | {
       readonly _tag: "Denied";

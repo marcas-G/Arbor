@@ -42,6 +42,52 @@ const isBoundedObservation = (value: unknown): boolean =>
     P4_TOOL_OBSERVATION_MAX_TEXT_UTF16_CODE_UNITS &&
   typeof (value as { readonly truncated?: unknown }).truncated === "boolean";
 
+const isSandboxUnavailableMetadata = (value: unknown): boolean => {
+  if (
+    !exactKeys(value, [
+      "policyRevision",
+      "policyDigest",
+      "profile",
+      "providerId",
+      "providerVersion",
+      "capabilityRevision",
+      "probeEvidenceRef",
+      "failureCode",
+      "effectDisposition",
+    ])
+  ) {
+    return false;
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  return (
+    Number.isSafeInteger(record.policyRevision) &&
+    (record.policyRevision as number) > 0 &&
+    typeof record.policyDigest === "string" &&
+    /^[0-9a-f]{64}$/u.test(record.policyDigest) &&
+    ["ReadOnly", "WorkspaceWrite", "FullAccess"].includes(
+      String(record.profile),
+    ) &&
+    typeof record.providerId === "string" &&
+    record.providerId.length > 0 &&
+    record.providerId.trim() === record.providerId &&
+    typeof record.providerVersion === "string" &&
+    record.providerVersion.length > 0 &&
+    record.providerVersion.trim() === record.providerVersion &&
+    typeof record.capabilityRevision === "string" &&
+    record.capabilityRevision.length > 0 &&
+    record.capabilityRevision.trim() === record.capabilityRevision &&
+    (record.probeEvidenceRef === null ||
+      (typeof record.probeEvidenceRef === "string" &&
+        record.probeEvidenceRef.length > 0 &&
+        record.probeEvidenceRef.trim() === record.probeEvidenceRef)) &&
+    typeof record.failureCode === "string" &&
+    record.failureCode.length > 0 &&
+    record.failureCode.trim() === record.failureCode &&
+    utf8.encode(record.failureCode).byteLength <= 128 &&
+    record.effectDisposition === "NoEffect"
+  );
+};
+
 const canonicalJson = (
   observation: ToolObservationEvidenceObservation,
 ): string => {
@@ -62,6 +108,27 @@ const canonicalJson = (
           text: observation.observation.text,
           truncated: observation.observation.truncated,
         },
+        ...(observation.sandboxProviderUnavailable === undefined
+          ? {}
+          : {
+              sandboxProviderUnavailable: {
+                policyRevision:
+                  observation.sandboxProviderUnavailable.policyRevision,
+                policyDigest:
+                  observation.sandboxProviderUnavailable.policyDigest,
+                profile: observation.sandboxProviderUnavailable.profile,
+                providerId: observation.sandboxProviderUnavailable.providerId,
+                providerVersion:
+                  observation.sandboxProviderUnavailable.providerVersion,
+                capabilityRevision:
+                  observation.sandboxProviderUnavailable.capabilityRevision,
+                probeEvidenceRef:
+                  observation.sandboxProviderUnavailable.probeEvidenceRef,
+                failureCode: observation.sandboxProviderUnavailable.failureCode,
+                effectDisposition:
+                  observation.sandboxProviderUnavailable.effectDisposition,
+              },
+            }),
       });
     case "Denied":
       return JSON.stringify({
@@ -154,8 +221,15 @@ const validateShape = (
       );
     case "ExpectedFailure":
       return (
-        exactKeys(value, ["_tag", "observation"]) &&
-        isBoundedObservation(record.observation)
+        (exactKeys(value, ["_tag", "observation"]) ||
+          exactKeys(value, [
+            "_tag",
+            "observation",
+            "sandboxProviderUnavailable",
+          ])) &&
+        isBoundedObservation(record.observation) &&
+        (record.sandboxProviderUnavailable === undefined ||
+          isSandboxUnavailableMetadata(record.sandboxProviderUnavailable))
       );
     case "Interrupted":
       return exactKeys(value, ["_tag"]);

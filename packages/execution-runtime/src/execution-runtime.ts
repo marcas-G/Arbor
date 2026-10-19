@@ -792,6 +792,22 @@ export const runExecution = (
                 "provider unavailable outcome no longer binds the active Execution",
             });
           }
+          const sourceAction = outcome.outcome.actionBinding;
+          if (
+            Option.isNone(loopSteps) ||
+            sourceAction.identity.executionId !== executionId ||
+            sourceAction.invocationId.length === 0 ||
+            sourceAction.logicalActionId.length === 0 ||
+            sourceAction.callRef.length === 0 ||
+            sourceAction.actionIndex < 0 ||
+            !Number.isSafeInteger(sourceAction.actionIndex)
+          ) {
+            return yield* Effect.fail({
+              _tag: "SandboxProviderUnavailableFactInvariantConflict" as const,
+              reason:
+                "provider-unavailable outcome is missing exact P3 action identity",
+            });
+          }
           const policy =
             yield* sandboxPolicyDecisions.value.findCurrentForExecution(
               outcome.outcome.projectId,
@@ -815,16 +831,90 @@ export const runExecution = (
                 "provider unavailable outcome does not match the exact current policy head",
             });
           }
-          yield* sandboxUnavailableStore.value.record({
+          const fence = {
+            executionId,
+            workerId: lease.workerId,
+            workerIncarnationId: lease.workerIncarnationId,
+            fencingGeneration: lease.generation,
+          };
+          const step = yield* loopSteps.value.find(sourceAction.identity);
+          if (
+            Option.isNone(step) ||
+            step.value.state !== "ActionsInProgress" ||
+            step.value.nextActionIndex !== sourceAction.actionIndex ||
+            step.value.providerTurnId !== sourceAction.providerTurnId
+          ) {
+            return yield* Effect.fail({
+              _tag: "SandboxProviderUnavailableFactInvariantConflict" as const,
+              reason:
+                "provider-unavailable outcome does not match the active P3 step",
+            });
+          }
+          const actions = yield* loopSteps.value.listActions(
+            sourceAction.identity,
+          );
+          const action = actions.find(
+            (candidate) => candidate.actionIndex === sourceAction.actionIndex,
+          );
+          if (
+            action === undefined ||
+            action.state !== "Pending" ||
+            action.routeKind !== "Executable" ||
+            action.logicalActionId !== sourceAction.logicalActionId ||
+            action.callRef !== sourceAction.callRef
+          ) {
+            return yield* Effect.fail({
+              _tag: "SandboxProviderUnavailableFactInvariantConflict" as const,
+              reason:
+                "provider-unavailable outcome does not match the exact pending P3 action",
+            });
+          }
+          const fact = yield* sandboxUnavailableStore.value.record({
             outcome: outcome.outcome,
-            fence: {
-              executionId,
-              workerId: lease.workerId,
-              workerIncarnationId: lease.workerIncarnationId,
-              fencingGeneration: lease.generation,
-            },
+            fence,
             firstDetectedAt: detectedAt,
           });
+          yield* loopSteps.value.transitionAction(
+            {
+              identity: sourceAction.identity,
+              actionIndex: sourceAction.actionIndex,
+              expectedRevision: action.revision,
+              expectedState: "Pending",
+              next: {
+                ...action,
+                state: "TerminalRejected",
+                resultRef: fact.attentionFactId,
+                disposition: {
+                  _tag: "SandboxUnavailableV1",
+                  attentionFactId: fact.attentionFactId,
+                  invocationId: sourceAction.invocationId,
+                  policyRevision: outcome.outcome.policyRevision,
+                  policyDigest: outcome.outcome.policyDigest,
+                  providerVersion: outcome.outcome.providerVersion,
+                  capabilityRevision: outcome.outcome.capabilityRevision,
+                  failureCode: outcome.outcome.failureCode,
+                },
+                revision: action.revision + 1,
+                updatedAt: detectedAt,
+              },
+            },
+            fence,
+          );
+          yield* loopSteps.value.transition(
+            {
+              identity: sourceAction.identity,
+              expectedRevision: step.value.revision,
+              expectedState: "ActionsInProgress",
+              next: {
+                ...step.value,
+                state: "StepEffectsCommitted",
+                nextActionIndex: sourceAction.actionIndex + 1,
+                revision: step.value.revision + 1,
+                updatedAt: detectedAt,
+              },
+            },
+            fence,
+          );
         }),
       );
       yield* tx

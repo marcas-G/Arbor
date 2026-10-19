@@ -6,6 +6,7 @@ import type {
   SandboxProfile,
   SandboxProviderCapability,
   SandboxProviderId,
+  ToolInvocationId,
 } from "@arbor/domain";
 import { Context, type Effect } from "effect";
 import type { SandboxHandle, SandboxMountAccess } from "./tool.js";
@@ -96,8 +97,21 @@ export interface SandboxProviderUnavailableOutcome {
   readonly profileId: SandboxProfile;
   readonly providerId: SandboxProviderId;
   readonly providerVersion: string;
+  readonly capabilityRevision: string;
   readonly probeEvidenceRef: string | null;
   readonly failureCode: string;
+  readonly actionBinding: {
+    readonly identity: {
+      readonly executionId: ExecutionId;
+      readonly logicalStepNo: number;
+      readonly repairAttempt: number;
+    };
+    readonly providerTurnId: import("@arbor/domain").ProviderTurnId;
+    readonly logicalActionId: string;
+    readonly actionIndex: number;
+    readonly callRef: string;
+    readonly invocationId: ToolInvocationId;
+  };
 }
 
 export type SandboxProcessRunnerOutcome =

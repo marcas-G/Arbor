@@ -46,6 +46,20 @@ export interface ReconciledNoEffectToolObservation {
   readonly resultRef: string;
 }
 
+/** Strict typed proof carried only by the terminal ExpectedFailure produced
+ * when a SandboxProcess provider cannot satisfy the exact pinned policy. */
+export interface SandboxProviderUnavailableObservationV1 {
+  readonly policyRevision: number;
+  readonly policyDigest: string;
+  readonly profile: import("@arbor/domain").SandboxProfile;
+  readonly providerId: import("@arbor/domain").SandboxProviderId;
+  readonly providerVersion: string;
+  readonly capabilityRevision: string;
+  readonly probeEvidenceRef: string | null;
+  readonly failureCode: string;
+  readonly effectDisposition: "NoEffect";
+}
+
 export interface ToolObservationEvidence {
   readonly formatVersion: typeof P4_TOOL_OBSERVATION_FORMAT_V1;
   readonly bytes: Uint8Array;
@@ -74,7 +88,9 @@ export type ToolObservationSettlement =
     };
 
 export type ToolObservationEvidenceObservation =
-  | CanonicalToolObservation
+  | (CanonicalToolObservation & {
+      readonly sandboxProviderUnavailable?: SandboxProviderUnavailableObservationV1;
+    })
   | ReconciledNoEffectToolObservation;
 
 export interface ToolObservationEvidenceCandidate {

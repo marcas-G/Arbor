@@ -3,17 +3,17 @@ import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { runAttentionPollOnce } from "../src/attention-poll-loop.js";
 
-const projectId = "prj_sandbox_poll" as never;
+const projectId = "prj_sandbox_poll" as import("@arbor/domain").ProjectId;
 const now = "2026-10-19T10:00:00.000Z";
 const claim = {
   projectId,
   attentionFactId: "att_sandbox_poll",
-  workspaceId: "ws_sandbox_poll" as never,
+  workspaceId: "ws_sandbox_poll" as import("@arbor/domain").WorkspaceId,
   claimId: "claim-1",
   claimExpiresAt: "2026-10-19T10:00:30.000Z",
   attemptCount: 1,
   enqueuedAt: now,
-};
+} as import("@arbor/ports").SandboxProviderUnavailableAttentionQueueClaim;
 const pollClaim = {
   projectId,
   leaseOwner: "attention-worker",
@@ -26,7 +26,7 @@ describe("P50 sandbox unavailable Attention queue polling", () => {
   it("claims separately, consumes in the poll transaction, and commits the dispatcher lease", async () => {
     const trace: Array<string> = [];
     const tx = {
-      transact: (body: Effect.Effect<unknown, unknown, TransactionScope>) =>
+      transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
         Effect.suspend(() => {
           trace.push("transaction-start");
           const result = Effect.provideService(body, TransactionScope, {
@@ -63,7 +63,10 @@ describe("P50 sandbox unavailable Attention queue polling", () => {
             advance: () => Effect.void,
           },
           deadLetters: { quarantine: () => Effect.void },
-          projectionForProject: () => ({ apply: () => Effect.void }),
+          projectionForProject: () => ({
+            apply: () => Effect.void,
+            reset: () => Effect.void,
+          }),
           pollStore: {
             tryClaim: () =>
               Effect.succeed({ _tag: "Claimed", claim: pollClaim }),
@@ -86,11 +89,7 @@ describe("P50 sandbox unavailable Attention queue polling", () => {
               trace.push("sandbox-claim");
               return Effect.succeed([claim]);
             },
-            consume: ({
-              claim: consumed,
-            }: {
-              readonly claim: typeof claim;
-            }) => {
+            consume: ({ claim: consumed }) => {
               trace.push(`sandbox-consume:${consumed.claimId}`);
               return Effect.succeed(undefined);
             },

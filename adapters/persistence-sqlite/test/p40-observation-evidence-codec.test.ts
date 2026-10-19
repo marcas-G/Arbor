@@ -54,6 +54,69 @@ describe("P40 canonical tool observation evidence codec", () => {
     expect(decoded).toEqual({ _tag: "Decoded", evidence: encoded.evidence });
   });
 
+  it("persists exact typed provider-unavailable proof only on ExpectedFailure", () => {
+    const metadata = {
+      policyRevision: 2,
+      policyDigest: "a".repeat(64),
+      profile: "WorkspaceWrite" as const,
+      providerId: "os-sandbox",
+      providerVersion: "1.4.2",
+      capabilityRevision: "cap-17",
+      probeEvidenceRef: "probe:evidence-1",
+      failureCode: "sandbox/probe-interrupted",
+      effectDisposition: "NoEffect" as const,
+    };
+    const input = {
+      settlement: { _tag: "ExpectedFailure" } as const,
+      observation: {
+        _tag: "ExpectedFailure" as const,
+        observation: {
+          text: "required sandbox capability was unavailable or could not be verified; execution did not start",
+          truncated: false,
+        },
+        sandboxProviderUnavailable: metadata,
+      },
+      resultRef: null,
+    };
+    const encoded = encodeToolObservationEvidence(input);
+    expect(encoded._tag).toBe("Encoded");
+    if (encoded._tag !== "Encoded") return;
+    expect(
+      decodeToolObservationEvidence({
+        formatVersion: encoded.evidence.formatVersion,
+        bytes: encoded.evidence.bytes,
+        sha256: encoded.evidence.sha256,
+        settlement: input.settlement,
+        resultRef: null,
+      }),
+    ).toMatchObject({
+      _tag: "Decoded",
+      evidence: { observation: input.observation },
+    });
+    expect(
+      encodeToolObservationEvidence({
+        ...input,
+        observation: {
+          ...input.observation,
+          sandboxProviderUnavailable: {
+            ...metadata,
+            effectDisposition: "Occurred" as never,
+          },
+        },
+      }),
+    ).toMatchObject({ _tag: "Failure", failureCode: "Malformed" });
+    expect(
+      encodeToolObservationEvidence({
+        settlement: { _tag: "Interrupted" },
+        observation: {
+          _tag: "Interrupted",
+          sandboxProviderUnavailable: metadata,
+        } as never,
+        resultRef: null,
+      }),
+    ).toMatchObject({ _tag: "Failure", failureCode: "Malformed" });
+  });
+
   it("keeps valid bounded observations below the 16 KiB cap and rejects oversized stored bodies", () => {
     const settlement = { _tag: "ExpectedFailure" } as const;
     const empty = encodeToolObservationEvidence({

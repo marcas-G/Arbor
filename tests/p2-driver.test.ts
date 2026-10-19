@@ -45,6 +45,7 @@ import {
   runExecution,
 } from "../packages/execution-runtime/src/index.js";
 import {
+  AgentLoopStepStore,
   type ControlApprovalRecord,
   ControlApprovalStore,
   type ExecutableApprovalRecord,
@@ -501,8 +502,17 @@ describe("P2-014 driver / dispatch / safety", () => {
         profileId: "ReadOnly" as const,
         providerId: "bwrap",
         providerVersion: "bwrap-v1",
+        capabilityRevision: "cap-v1",
         probeEvidenceRef: "probe-ref",
         failureCode: "ProviderUnavailable",
+        actionBinding: {
+          identity: { executionId, logicalStepNo: 0, repairAttempt: 0 },
+          providerTurnId: "ptn_p50_driver" as never,
+          logicalActionId: "lac_p50_driver",
+          actionIndex: 0,
+          callRef: "call_p50_driver",
+          invocationId: "tin_p50_driver" as never,
+        },
       },
     } satisfies ExecutionDriveOutcome;
     const policy = {
@@ -529,7 +539,9 @@ describe("P2-014 driver / dispatch / safety", () => {
     } as unknown as SandboxPolicyDecision;
     let persisted: SandboxProviderUnavailableFactV1 | undefined;
     const unavailableFacts = Layer.succeed(SandboxProviderUnavailableStore, {
-      record: (input) =>
+      record: (
+        input: import("../packages/ports/src/index.js").RecordSandboxProviderUnavailableInput,
+      ) =>
         Effect.sync(() => {
           persisted = {
             attentionFactId: "att_p50_driver",
@@ -547,6 +559,66 @@ describe("P2-014 driver / dispatch / safety", () => {
       findExact: () => Effect.succeed(Option.some(policy)),
       findCurrentForExecution: () => Effect.succeed(Option.some(policy)),
       insertCommitted: () => Effect.void,
+    } as never);
+    const actionBinding =
+      outcome._tag === "SandboxProviderUnavailable"
+        ? outcome.outcome.actionBinding
+        : undefined;
+    const stepRecord =
+      actionBinding === undefined
+        ? undefined
+        : {
+            identity: actionBinding.identity,
+            providerTurnId: actionBinding.providerTurnId,
+            state: "ActionsInProgress" as const,
+            nextActionIndex: actionBinding.actionIndex,
+            revision: 1,
+            updatedAt: "2026-10-19T00:00:00.000Z",
+          };
+    let persistedStep:
+      | import("../packages/ports/src/index.js").AgentLoopStepRecord
+      | undefined = stepRecord;
+    const actionRecord =
+      actionBinding === undefined
+        ? undefined
+        : {
+            identity: actionBinding.identity,
+            actionIndex: actionBinding.actionIndex,
+            logicalActionId: actionBinding.logicalActionId,
+            callRef: actionBinding.callRef,
+            routeKind: "Executable" as const,
+            actionKind: "shell",
+            inputHash: "b".repeat(64),
+            state: "Pending" as const,
+            revision: 0,
+            updatedAt: "2026-10-19T00:00:00.000Z",
+          };
+    let persistedAction:
+      | import("../packages/ports/src/index.js").AgentLoopStepActionRecord
+      | undefined = actionRecord;
+    const loopStepStore = Layer.succeed(AgentLoopStepStore, {
+      find: () =>
+        Effect.succeed(
+          persistedStep === undefined
+            ? Option.none()
+            : Option.some(persistedStep),
+        ),
+      listActions: () =>
+        Effect.succeed(persistedAction === undefined ? [] : [persistedAction]),
+      transitionAction: (input: {
+        readonly next: import("../packages/ports/src/index.js").AgentLoopStepActionRecord;
+      }) =>
+        Effect.sync(() => {
+          persistedAction = input.next;
+          return input.next;
+        }),
+      transition: (input: {
+        readonly next: import("../packages/ports/src/index.js").AgentLoopStepRecord;
+      }) =>
+        Effect.sync(() => {
+          persistedStep = input.next;
+          return input.next;
+        }),
     } as never);
     const app = makeApp(outcome, { calls });
     const program = Effect.gen(function* () {
@@ -575,12 +647,29 @@ describe("P2-014 driver / dispatch / safety", () => {
     });
     const result = await run(
       program,
-      Layer.mergeAll(app.layer, unavailableFacts, sandboxDecisions),
+      Layer.mergeAll(
+        app.layer,
+        unavailableFacts,
+        sandboxDecisions,
+        loopStepStore,
+      ),
     );
     expect(result.first._tag).toBe("RecoveryBlocked");
     expect(result.second._tag).toBe("RecoveryBlocked");
     expect(calls).toEqual({ dispatch: 1, drive: 1 });
     expect(persisted?.failureCode).toBe("ProviderUnavailable");
+    expect(persistedAction).toMatchObject({
+      state: "TerminalRejected",
+      disposition: {
+        _tag: "SandboxUnavailableV1",
+        attentionFactId: persisted?.attentionFactId,
+        invocationId: "tin_p50_driver",
+      },
+    });
+    expect(persistedStep).toMatchObject({
+      state: "StepEffectsCommitted",
+      nextActionIndex: 1,
+    });
     expect(result.execution).toEqual({
       settlement_kind: null,
       settled_at: null,

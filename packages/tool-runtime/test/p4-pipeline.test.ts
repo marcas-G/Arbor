@@ -1463,6 +1463,17 @@ const processContext = (
 ): import("@arbor/ports").ToolExecutionContext => ({
   ...context,
   executionEpisodeBinding: currentEpisode,
+  recoveryBindingIdentity: {
+    executionId,
+    providerTurnId: parse(ProviderTurnId)(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+    ),
+    logicalStepNo: 0,
+    repairAttempt: 0,
+    logicalActionId: "lac_p4_process",
+    actionIndex: 0,
+    callRef: "c",
+  },
   sandboxProcessPolicy: policy,
 });
 
@@ -1494,7 +1505,7 @@ const processExecutor: ToolExecutor = {
             _tag: "ExpectedFailure" as const,
           },
           observation: {
-            text: "sandbox provider unavailable",
+            text: "required sandbox capability was unavailable or could not be verified; execution did not start",
             truncated: false,
           },
           resultRef: null,
@@ -1705,8 +1716,21 @@ describe("P4 tool runtime pipeline", () => {
             profileId: "ReadOnly" as const,
             providerId: "bwrap",
             providerVersion: "0.8.0",
+            capabilityRevision: "capability-v1",
             probeEvidenceRef: null,
             failureCode: "ForgedUnavailability",
+            actionBinding: {
+              identity: {
+                executionId,
+                logicalStepNo: 0,
+                repairAttempt: 0,
+              },
+              providerTurnId: "ptn_forged" as never,
+              logicalActionId: "lac_forged",
+              actionIndex: 0,
+              callRef: "call-forged",
+              invocationId,
+            },
           },
         });
       },
@@ -1747,9 +1771,11 @@ describe("P4 tool runtime pipeline", () => {
       providerVersion: "0.8.0",
       policyRevision: 2,
       failureCode: "ProviderNotSupported",
+      capabilityRevision: "capability-v1",
     });
     expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
     expect(trace.settlementWrites).toBe(1);
+    expect(trace.effectAdmissions).toBe(1);
   });
 
   it("returns typed unavailability when the probed provider version differs from the durable policy", async () => {
