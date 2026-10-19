@@ -130,6 +130,8 @@ const capabilityFor = (
     providerVersion: "windows-t2-probe-v1",
     capabilityRevision: `winprobe-${providerDigest}`,
     probeEvidenceRef: `sha256:${evidenceDigest}`,
+    enforcementRuleSetDigest: null,
+    qualificationEvidenceRef: null,
     status: "Experimental",
     boundary: "OsEnforced",
     profiles: [],

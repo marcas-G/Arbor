@@ -43,6 +43,8 @@ export interface OsEnforcedSandboxProcessPolicy
   readonly providerId: SandboxProviderId;
   readonly providerVersion: string;
   readonly capabilityRevision: string;
+  readonly enforcementRuleSetDigest: string;
+  readonly qualificationEvidenceRef: string;
   readonly boundary: "OsEnforced";
   readonly networkPolicy: NetworkPolicyV1;
 }

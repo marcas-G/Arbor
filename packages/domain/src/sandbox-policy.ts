@@ -238,6 +238,8 @@ export interface SandboxProviderCapability {
   readonly providerVersion: string;
   readonly capabilityRevision: string;
   readonly probeEvidenceRef: string | null;
+  readonly enforcementRuleSetDigest: string | null;
+  readonly qualificationEvidenceRef: string | null;
   readonly status: SandboxProviderStatus;
   readonly boundary: SandboxBoundary;
   readonly profiles: ReadonlyArray<SandboxProfile>;
@@ -248,6 +250,8 @@ export interface SandboxProviderSelection {
   readonly providerId: SandboxProviderId;
   readonly expectedProviderVersion: string;
   readonly expectedCapabilityRevision: string;
+  readonly expectedEnforcementRuleSetDigest: string | null;
+  readonly expectedQualificationEvidenceRef: string | null;
   readonly profile: SandboxProfile;
   readonly networkPolicy: NetworkPolicyV1;
   readonly boundary: SandboxBoundary;
@@ -266,6 +270,8 @@ export type SandboxProviderResolution =
         | "ProviderNotSupported"
         | "ProviderVersionMismatch"
         | "CapabilityRevisionMismatch"
+        | "EnforcementRuleSetDigestMismatch"
+        | "QualificationEvidenceMismatch"
         | "BoundaryMismatch"
         | "ProfileUnsupported"
         | "NetworkModeUnsupported";
@@ -510,6 +516,35 @@ export const resolveSandboxProvider = (
       reason: "CapabilityRevisionMismatch",
       capability,
     };
+  }
+  if (selection.boundary === "OsEnforced") {
+    if (
+      selection.expectedEnforcementRuleSetDigest === null ||
+      !/^[0-9a-f]{64}$/u.test(selection.expectedEnforcementRuleSetDigest) ||
+      capability.enforcementRuleSetDigest !==
+        selection.expectedEnforcementRuleSetDigest
+    ) {
+      return {
+        _tag: "Unavailable",
+        reason: "EnforcementRuleSetDigestMismatch",
+        capability,
+      };
+    }
+    if (
+      selection.expectedQualificationEvidenceRef === null ||
+      !/^blob:sha256:[0-9a-f]{64}$/u.test(
+        selection.expectedQualificationEvidenceRef,
+      ) ||
+      capability.qualificationEvidenceRef !==
+        selection.expectedQualificationEvidenceRef ||
+      capability.probeEvidenceRef !== selection.expectedQualificationEvidenceRef
+    ) {
+      return {
+        _tag: "Unavailable",
+        reason: "QualificationEvidenceMismatch",
+        capability,
+      };
+    }
   }
   if (capability.boundary !== selection.boundary) {
     return { _tag: "Unavailable", reason: "BoundaryMismatch", capability };

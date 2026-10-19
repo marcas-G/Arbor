@@ -58,6 +58,8 @@ describe("Windows native sandbox provider registry", () => {
             providerId,
             providerVersion: "windows-t2-probe-v1",
             capabilityRevision: "winprobe-1",
+            enforcementRuleSetDigest: "b".repeat(64),
+            qualificationEvidenceRef: `blob:sha256:${"a".repeat(64)}`,
             boundary: "OsEnforced",
             networkPolicy: {
               version: 1,
@@ -161,6 +163,8 @@ describe("Windows native sandbox provider registry", () => {
             providerId: testCase.providerId,
             providerVersion: "windows-t2-probe-v1",
             capabilityRevision: "test",
+            enforcementRuleSetDigest: "b".repeat(64),
+            qualificationEvidenceRef: `blob:sha256:${"a".repeat(64)}`,
             boundary: "OsEnforced",
             networkPolicy: {
               version: 1,
