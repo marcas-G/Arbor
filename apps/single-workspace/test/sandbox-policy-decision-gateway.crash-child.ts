@@ -155,7 +155,12 @@ const snapshot = {
   mounts: [
     {
       mountId: "workspace",
-      targetRef: "target_workspace",
+      targetRef: {
+        version: 1,
+        kind: "RegionDigest",
+        resourceSpace: "filesystem",
+        regionIdentityDigest: "9".repeat(64),
+      },
       targetIdentityDigest: "d".repeat(64),
       access: "ReadOnly" as const,
     },

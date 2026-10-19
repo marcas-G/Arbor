@@ -14,6 +14,7 @@ import {
   encodeSandboxPolicyDecisionCommittedViewV1,
   encodeSandboxPolicyPreconditionsV1,
   encodeSandboxPolicyStatusViewV1,
+  networkBrokerControlsV1ForMode,
   ProjectId,
   parse,
   sandboxPolicyCommittedViewOf,
@@ -53,12 +54,7 @@ const networkPolicy = {
   destinations: [],
 };
 const controls = {
-  version: 1 as const,
-  egress: "BrokerOnly" as const,
-  dns: "BrokerResolveAndPin" as const,
-  addressPolicy: "SandboxPublicInternetDenyV1" as const,
-  redirectMaxHops: 5 as const,
-  tlsIdentity: "OriginCertificateSniHostMatch" as const,
+  ...networkBrokerControlsV1ForMode("Disabled"),
 };
 const common = {
   version: 1 as const,
@@ -76,7 +72,12 @@ const common = {
   mounts: [
     {
       mountId: "mount_workspace",
-      targetRef: "target_workspace",
+      targetRef: {
+        version: 1,
+        kind: "RegionDigest",
+        resourceSpace: "filesystem",
+        regionIdentityDigest: "9".repeat(64),
+      },
       targetIdentityDigest: "d".repeat(64),
       access: "ReadOnly" as const,
     },
