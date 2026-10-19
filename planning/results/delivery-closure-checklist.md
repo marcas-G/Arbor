@@ -24,6 +24,7 @@
 - [x] F23/P6 当前版本的 owner/parent 路由和 Inbox 重建治理结论
 - [x] F23/P6 operator-only 离线 Inbox 重建实现、模块资格与独立复审
 - [ ] AH10 剩余控制动作的崩溃恢复闭合
+- [ ] Sandbox Policy Candidate Read Model V5-A：实施 token `AUTHORIZE_SANDBOX_POLICY_CANDIDATE_READMODEL_V5_IMPLEMENTATION` 已给出；固定计划 v2 Git blob SHA-256 为 `B99C2682F30F277AA9E3C7C135E4A8A2C5C5811C3B44C380604ABB3B6F1CC3B9`。V5-A 基础代码已并入统一候选并通过 4 文件/45 测试、build、typecheck、Biome、diff check；待独立复审后按打勾规则关闭。P5/P4/P2/P1/P10/P13、生产注入和双 daemon 资格为后续切片，不在本次 V5-A 完成声明内。
 - [ ] Native OS sandbox 生产实现与跨平台资格：Wave D 仍 PARTIAL；待 production `sandboxProcessPolicy` wiring 与真实 SQLite 双 daemon 资格。V3/high-water V2/candidate-read V5 owner landing 的独立 post-landing review 已 PASS（B0/B1/B2 = 0），记录见统一 checkpoint 引用的 review result。首决策 V5 已人工接受并落地；T3 enforcement qualification 未开始。T2 provider reviews 有 thread-local scoped PASS 记录，正式复审证据待落盘。
 
 ## 最终集成检查
