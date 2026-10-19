@@ -144,12 +144,15 @@ export const DomainEventJournalLive: Layer.Layer<
     const failure = repositoryFailure("DomainEventJournal", "event-journal");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
-    const appendReturningIds = (drafts: ReadonlyArray<PendingDomainEvent>) =>
+    const appendWithIds = (
+      events: ReadonlyArray<{
+        readonly eventId: EventId;
+        readonly draft: PendingDomainEvent;
+      }>,
+    ) =>
       Effect.gen(function* () {
         yield* TransactionScope;
-        const eventIds: Array<EventId> = [];
-        for (const draft of drafts) {
-          const eventId = yield* ids.generate<EventId>("Event");
+        for (const { eventId, draft } of events) {
           const sequenceRows = yield* run(
             sql.unsafe<{ last_sequence: number }>(
               "INSERT INTO project_event_sequences (project_id, last_sequence) VALUES (?, 1) ON CONFLICT(project_id) DO UPDATE SET last_sequence = last_sequence + 1 RETURNING last_sequence",
@@ -176,14 +179,28 @@ export const DomainEventJournalLive: Layer.Layer<
               ],
             ),
           );
-          eventIds.push(eventId);
         }
-        return eventIds;
+      });
+    const appendReturningIds = (drafts: ReadonlyArray<PendingDomainEvent>) =>
+      Effect.gen(function* () {
+        const events: Array<{
+          readonly eventId: EventId;
+          readonly draft: PendingDomainEvent;
+        }> = [];
+        for (const draft of drafts) {
+          events.push({
+            eventId: yield* ids.generate<EventId>("Event"),
+            draft,
+          });
+        }
+        yield* appendWithIds(events);
+        return events.map(({ eventId }) => eventId);
       });
     return DomainEventJournal.of({
       append: (drafts: ReadonlyArray<PendingDomainEvent>) =>
         Effect.as(appendReturningIds(drafts), undefined),
       appendReturningIds,
+      appendWithIds,
       readAfter: (projectId, sequence, limit) =>
         Effect.gen(function* () {
           yield* TransactionScope;

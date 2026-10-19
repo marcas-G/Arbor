@@ -17,7 +17,7 @@ import type {
   Principal,
   WakeReason,
 } from "@arbor/domain";
-import { executionEpisode } from "@arbor/domain";
+import { encodeExecutionEpisodeBinding, executionEpisode } from "@arbor/domain";
 import {
   AgentExecutionStateStore,
   AgentLoopStepStore,
@@ -36,6 +36,8 @@ import {
   ReconciliationSource,
   RecoveryAttentionFactStore,
   RuntimeSafetyGate,
+  SandboxPolicyDecisionStore,
+  SandboxProviderUnavailableStore,
   SessionRepository,
   type TransactionOperationalFailure,
   TransactionPort,
@@ -286,6 +288,12 @@ export const runExecution = (
     const driver = yield* ExecutionDriverPort;
     const safety = yield* RuntimeSafetyGate;
     const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
+    const sandboxUnavailableStore = yield* Effect.serviceOption(
+      SandboxProviderUnavailableStore,
+    );
+    const sandboxPolicyDecisions = yield* Effect.serviceOption(
+      SandboxPolicyDecisionStore,
+    );
     const loopSteps = yield* Effect.serviceOption(AgentLoopStepStore);
     const providerTurns = yield* Effect.serviceOption(ProviderTurnStore);
     const sessions = yield* Effect.serviceOption(SessionRepository);
@@ -309,6 +317,46 @@ export const runExecution = (
       );
     if (Option.isNone(execution)) {
       return yield* Effect.fail({ _tag: "ExecutionNotFound" as const });
+    }
+    if (
+      Option.isSome(sandboxUnavailableStore) &&
+      Option.isSome(sandboxPolicyDecisions)
+    ) {
+      const currentPolicy = yield* tx.transact(
+        sandboxPolicyDecisions.value.findCurrentForExecution(
+          execution.value.projectId,
+          execution.value.workspaceId,
+          executionId,
+        ),
+      );
+      if (Option.isSome(currentPolicy)) {
+        const fact = yield* tx.transact(
+          sandboxUnavailableStore.value.findByExecutionAndRevision(
+            executionId,
+            currentPolicy.value.policyRevision,
+          ),
+        );
+        if (fact !== undefined) {
+          if (
+            fact.projectId !== currentPolicy.value.projectId ||
+            fact.workspaceId !== currentPolicy.value.workspaceId ||
+            encodeExecutionEpisodeBinding(fact.episodeBinding) !==
+              encodeExecutionEpisodeBinding(
+                currentPolicy.value.episodeBinding,
+              ) ||
+            fact.policyDigest !== currentPolicy.value.policyDigest ||
+            fact.profileId !== currentPolicy.value.profile ||
+            fact.providerId !== currentPolicy.value.providerId
+          ) {
+            return yield* Effect.fail({
+              _tag: "SandboxProviderUnavailableFactInvariantConflict" as const,
+              reason:
+                "current policy head conflicts with its immutable unavailable fact",
+            });
+          }
+          return { _tag: "RecoveryBlocked" as const };
+        }
+      }
     }
     // P2 `06` §10: Pending approval is a durable nonterminal pause. Every
     // execution entry point shares this trusted gate before dispatch or lease
@@ -706,6 +754,90 @@ export const runExecution = (
         )
         .pipe(Effect.ignore);
       return outcome;
+    }
+    if (outcome._tag === "SandboxProviderUnavailable") {
+      if (
+        Option.isNone(sandboxUnavailableStore) ||
+        Option.isNone(sandboxPolicyDecisions)
+      ) {
+        return yield* Effect.fail({
+          _tag: "PersistenceUnavailable" as const,
+          repository: "SandboxProviderUnavailableStore" as const,
+          operation: "provider-unavailable-outcome",
+          retryDisposition: "non-retryable" as const,
+          sourceTag: "P50StoreUnavailable",
+          cause: { _tag: "P50StoreUnavailable" },
+        });
+      }
+      const detectedAt = yield* clock.now();
+      yield* tx.transact(
+        Effect.gen(function* () {
+          yield* leases.renew(
+            executionId,
+            lease.workerId,
+            lease.workerIncarnationId,
+            lease.generation,
+          );
+          const current = yield* repository.findById(executionId);
+          if (
+            Option.isNone(current) ||
+            current.value.projectId !== outcome.outcome.projectId ||
+            current.value.workspaceId !== outcome.outcome.workspaceId ||
+            current.value.state.status !== "Active" ||
+            current.value.stopRequestedAt !== null
+          ) {
+            return yield* Effect.fail({
+              _tag: "SandboxProviderUnavailableFactInvariantConflict" as const,
+              reason:
+                "provider unavailable outcome no longer binds the active Execution",
+            });
+          }
+          const policy =
+            yield* sandboxPolicyDecisions.value.findCurrentForExecution(
+              outcome.outcome.projectId,
+              outcome.outcome.workspaceId,
+              outcome.outcome.executionId,
+            );
+          if (
+            Option.isNone(policy) ||
+            policy.value.executionId !== outcome.outcome.executionId ||
+            policy.value.policyRevision !== outcome.outcome.policyRevision ||
+            policy.value.policyDigest !== outcome.outcome.policyDigest ||
+            policy.value.profile !== outcome.outcome.profileId ||
+            policy.value.providerId !== outcome.outcome.providerId ||
+            encodeExecutionEpisodeBinding(policy.value.episodeBinding) !==
+              encodeExecutionEpisodeBinding(outcome.outcome.episodeBinding) ||
+            policy.value.expiresAt <= detectedAt
+          ) {
+            return yield* Effect.fail({
+              _tag: "SandboxProviderUnavailableFactInvariantConflict" as const,
+              reason:
+                "provider unavailable outcome does not match the exact current policy head",
+            });
+          }
+          yield* sandboxUnavailableStore.value.record({
+            outcome: outcome.outcome,
+            fence: {
+              executionId,
+              workerId: lease.workerId,
+              workerIncarnationId: lease.workerIncarnationId,
+              fencingGeneration: lease.generation,
+            },
+            firstDetectedAt: detectedAt,
+          });
+        }),
+      );
+      yield* tx
+        .transact(
+          leases.release(
+            executionId,
+            lease.workerId,
+            lease.workerIncarnationId,
+            lease.generation,
+          ),
+        )
+        .pipe(Effect.ignore);
+      return { _tag: "RecoveryBlocked" as const };
     }
     const settlement = outcome;
     const settledAt = yield* clock.now();

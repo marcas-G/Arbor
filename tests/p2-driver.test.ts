@@ -25,7 +25,7 @@ import {
   semanticRequestFingerprint,
   type VerifiedRuntimeCommandAuthority,
 } from "../packages/application/src/index.js";
-import type { ExecutionSettlement } from "../packages/domain/dist/index.js";
+import type { SandboxPolicyDecision } from "../packages/domain/dist/index.js";
 import {
   Actor,
   CommandId,
@@ -49,8 +49,12 @@ import {
   ControlApprovalStore,
   type ExecutableApprovalRecord,
   ExecutableApprovalStore,
+  type ExecutionDriveOutcome,
   ExecutionDriverPort,
   RuntimeSafetyGate,
+  SandboxPolicyDecisionStore,
+  type SandboxProviderUnavailableFactV1,
+  SandboxProviderUnavailableStore,
   WorkerDispatchPort,
 } from "../packages/ports/src/index.js";
 import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
@@ -74,7 +78,7 @@ const executionId = parse(ExecutionId)(
 const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 
 const makeApp = (
-  settlement: ExecutionSettlement,
+  settlement: ExecutionDriveOutcome,
   options: {
     readonly pendingApproval?: ExecutableApprovalRecord;
     readonly pendingControlApproval?: ControlApprovalRecord;
@@ -479,5 +483,107 @@ describe("P2-014 driver / dispatch / safety", () => {
     expect(result.exit._tag).toBe("Failure");
     expect(calls).toEqual({ dispatch: 0, drive: 0 });
     expect(result.leases).toBe(0);
+  });
+
+  it("persists typed provider unavailability and blocks exact-policy reprobe after restart", async () => {
+    const calls = { dispatch: 0, drive: 0 };
+    const policyDigest = "a".repeat(64);
+    const outcome = {
+      _tag: "SandboxProviderUnavailable" as const,
+      outcome: {
+        _tag: "SandboxProviderUnavailable" as const,
+        projectId,
+        workspaceId,
+        executionId,
+        episodeBinding: workEpisode(workId),
+        policyRevision: 1,
+        policyDigest,
+        profileId: "ReadOnly" as const,
+        providerId: "bwrap",
+        providerVersion: "bwrap-v1",
+        probeEvidenceRef: "probe-ref",
+        failureCode: "ProviderUnavailable",
+      },
+    } satisfies ExecutionDriveOutcome;
+    const policy = {
+      projectId,
+      workspaceId,
+      executionId,
+      episodeBinding: workEpisode(workId),
+      policyRevision: 1,
+      expectedExecutionRevision: 0,
+      expectedPolicyRevision: 0,
+      profile: "ReadOnly",
+      providerId: "bwrap",
+      networkPolicy: { version: 1, mode: "Disabled", destinations: [] },
+      policyDigest,
+      permissionGrantId: "pgr_p50_test",
+      grantPermissionCommandId: "cmd_p50_test",
+      grantIssuerPrincipal: "user:operator",
+      operatorConfigRevision: 1,
+      operatorConfigDigest: "b".repeat(64),
+      actorPrincipal: "user:operator",
+      decisionCommandId: "cmd_p50_decision",
+      issuedAt: "2026-10-19T00:00:00.000Z",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    } as unknown as SandboxPolicyDecision;
+    let persisted: SandboxProviderUnavailableFactV1 | undefined;
+    const unavailableFacts = Layer.succeed(SandboxProviderUnavailableStore, {
+      record: (input) =>
+        Effect.sync(() => {
+          persisted = {
+            attentionFactId: "att_p50_driver",
+            eventId: "evt_p50_driver" as never,
+            ...input.outcome,
+            firstDetectedAt: input.firstDetectedAt,
+          } as SandboxProviderUnavailableFactV1;
+          return persisted;
+        }),
+      findByExecutionAndRevision: () => Effect.succeed(persisted),
+      findByEventId: () => Effect.succeed(undefined),
+      list: () => Effect.succeed(persisted === undefined ? [] : [persisted]),
+    } as never);
+    const sandboxDecisions = Layer.succeed(SandboxPolicyDecisionStore, {
+      findExact: () => Effect.succeed(Option.some(policy)),
+      findCurrentForExecution: () => Effect.succeed(Option.some(policy)),
+      insertCommitted: () => Effect.void,
+    } as never);
+    const app = makeApp(outcome, { calls });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P12_MIGRATIONS);
+      yield* seed;
+      yield* admit;
+      const first = yield* runExecution(
+        executionId,
+        { _tag: "Recovery" },
+        principal,
+      );
+      const second = yield* runExecution(
+        executionId,
+        { _tag: "Recovery" },
+        principal,
+      );
+      const sql = yield* SqlClient;
+      const executionRows = yield* sql.unsafe<{
+        readonly settlement_kind: string | null;
+        readonly settled_at: string | null;
+      }>(
+        `SELECT settlement_kind, settled_at FROM executions WHERE execution_id = ?`,
+        [executionId],
+      );
+      return { first, second, execution: executionRows[0] };
+    });
+    const result = await run(
+      program,
+      Layer.mergeAll(app.layer, unavailableFacts, sandboxDecisions),
+    );
+    expect(result.first._tag).toBe("RecoveryBlocked");
+    expect(result.second._tag).toBe("RecoveryBlocked");
+    expect(calls).toEqual({ dispatch: 1, drive: 1 });
+    expect(persisted?.failureCode).toBe("ProviderUnavailable");
+    expect(result.execution).toEqual({
+      settlement_kind: null,
+      settled_at: null,
+    });
   });
 });

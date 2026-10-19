@@ -13,6 +13,8 @@ import type {
   RawJournalEventCandidate,
   RecoveryAttentionFactStoreError,
   RecoveryAttentionFactStoreService,
+  SandboxProviderUnavailableAttentionQueueService,
+  SandboxProviderUnavailableStoreError,
   TransactionPortService,
 } from "@arbor/ports";
 import { Effect, Option, Result } from "effect";
@@ -56,6 +58,8 @@ export interface AttentionPollLoopDependencies {
     AttentionProjectionStoreService,
     "putDeliverReplayFailure"
   >;
+  /** P50 level-triggered queue for sandbox provider-unavailable facts. */
+  readonly sandboxUnavailableQueue?: SandboxProviderUnavailableAttentionQueueService;
   /** Test-only boundary after the poll transaction has committed. A blocked
    * probe lets process qualification kill the daemon after the durable marker,
    * queue ACK and P1 offset are visible together. */
@@ -73,6 +77,7 @@ export type AttentionPollLoopError =
   | AttentionPollStoreError
   | AttentionProjectionStoreError
   | RecoveryAttentionFactStoreError
+  | SandboxProviderUnavailableStoreError
   | ReturnType<typeof attentionPollError>
   | ReturnType<typeof claimLost>;
 
@@ -242,6 +247,18 @@ export const runAttentionPollOnce = (
     );
     if (claimResult._tag === "NoClaim") return emptyResult();
     const projectId = claimResult.claim.projectId;
+
+    const sandboxClaims =
+      deps.sandboxUnavailableQueue === undefined
+        ? []
+        : yield* deps.tx.transact(
+            deps.sandboxUnavailableQueue.claimBatch({
+              projectId,
+              now: yield* deps.clock.now(),
+              claimTtlMs: policy.leaseTtlMs,
+              limit: policy.queueBatchSize,
+            }),
+          );
 
     let fromSequence = 0;
     let lastSequence = 0;
@@ -435,6 +452,16 @@ export const runAttentionPollOnce = (
               return yield* Effect.fail(
                 ackResult.failure as AttentionPollLoopError,
               );
+            }
+          }
+
+          if (deps.sandboxUnavailableQueue !== undefined) {
+            for (const claim of sandboxClaims) {
+              const consumedAt = yield* deps.clock.now();
+              yield* deps.sandboxUnavailableQueue.consume({
+                claim,
+                now: consumedAt,
+              });
             }
           }
 

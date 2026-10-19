@@ -89,6 +89,9 @@ import {
   type ResourceOwnershipRepository,
   RetryVerificationOriginRepository,
   type RuntimeSafetyGate,
+  type SandboxPolicyDecisionStore,
+  SandboxProviderUnavailableAttentionQueue,
+  SandboxProviderUnavailableStore,
   type SchedulerTimerStore,
   ToolObservationReplayAttentionFactStore,
   TransactionPort,
@@ -327,6 +330,9 @@ export type ProductionDaemonServices =
   | AttentionPollStore
   | AttentionProjectionStore
   | RecoveryAttentionFactStore
+  | SandboxPolicyDecisionStore
+  | SandboxProviderUnavailableStore
+  | SandboxProviderUnavailableAttentionQueue
   | ProjectionStore
   | ExecutionRepository
   | LeaseService
@@ -384,6 +390,12 @@ export const ProductionDaemonServiceLive = (
       const activationIntents = yield* WorkspaceResourceActivationStore;
       const ownershipWrite = yield* OwnershipWriteService;
       const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
+      const sandboxUnavailableQueue = yield* Effect.serviceOption(
+        SandboxProviderUnavailableAttentionQueue,
+      );
+      const sandboxUnavailableFacts = yield* Effect.serviceOption(
+        SandboxProviderUnavailableStore,
+      );
       const toolObservationReplayAttentionFacts = yield* Effect.serviceOption(
         ToolObservationReplayAttentionFactStore,
       );
@@ -613,6 +625,12 @@ export const ProductionDaemonServiceLive = (
                     Option.isSome(toolObservationReplayAttentionFacts)
                       ? toolObservationReplayAttentionFacts.value
                       : undefined,
+                    Option.isSome(sandboxUnavailableFacts)
+                      ? sandboxUnavailableFacts.value
+                      : undefined,
+                    Option.isSome(sandboxUnavailableQueue)
+                      ? sandboxUnavailableQueue.value
+                      : undefined,
                   ),
                   handlers: () => Effect.succeed([]),
                 },
@@ -746,12 +764,22 @@ export const ProductionDaemonServiceLive = (
             pollStore: attentionPoll,
             recoveryFacts: recoveryAttentionFacts,
             attentionRows: attentionProjection,
+            ...(Option.isNone(sandboxUnavailableQueue)
+              ? {}
+              : { sandboxUnavailableQueue: sandboxUnavailableQueue.value }),
             projectionForProject: (projectId) =>
               makeProjectAttentionProjectionStore(
                 projectId,
                 recoveryAttentionFacts,
                 attentionProjection,
                 activationIntents,
+                undefined,
+                Option.isSome(sandboxUnavailableFacts)
+                  ? sandboxUnavailableFacts.value
+                  : undefined,
+                Option.isSome(sandboxUnavailableQueue)
+                  ? sandboxUnavailableQueue.value
+                  : undefined,
               ),
             ...(config.attentionPollQualificationProbe === undefined
               ? {}
