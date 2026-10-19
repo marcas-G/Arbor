@@ -1,7 +1,9 @@
 # Native OS Sandbox — unified candidate checkpoint
 
-Date: 2026-10-19  
-Candidate: `28907165738d48cd3bc24226b003fc42665a3a2a`  
+Date: 2026-10-19
+
+Candidate: `28907165738d48cd3bc24226b003fc42665a3a2a`
+
 Status: **Wave C transactional closure complete; Wave D partial; T2 provider identities integrated; T3 open.**
 
 This checkpoint records the unified candidate after integrating Wave D with
