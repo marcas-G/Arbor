@@ -24,6 +24,11 @@ export interface PendingDomainEvent {
   readonly payload: unknown;
 }
 
+export interface IdentifiedPendingDomainEvent {
+  readonly eventId: EventId;
+  readonly draft: PendingDomainEvent;
+}
+
 /** P1/05 DeliverReplay preflight view. Values intentionally remain unknown so
  * source identity can be checked before any event decoding occurs. */
 export interface RawJournalEventCandidate {
@@ -69,6 +74,12 @@ export interface DomainEventJournalService {
     DomainEventJournalError,
     TransactionScope | IdGenerator
   >;
+  /** Persist caller-allocated event identities in the caller's transaction.
+   * P9 uses this to bind an immutable source fact and retained queue before
+   * appending its wake event while keeping all three writes atomic. */
+  readonly appendWithIds?: (
+    events: ReadonlyArray<IdentifiedPendingDomainEvent>,
+  ) => Effect.Effect<void, DomainEventJournalError, TransactionScope>;
   readonly readAfter: (
     projectId: ProjectId,
     sequence: number,
