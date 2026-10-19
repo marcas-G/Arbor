@@ -4,7 +4,7 @@
  * (unmapped → muted). Optional-absent fields are blank slots, never zeros.
  */
 
-import type { UsageRow } from "@arbor/api-contracts";
+import type { ExecutionSummary, UsageRow } from "@arbor/api-contracts";
 import type { ReactNode } from "react";
 import { Badge } from "../components/Badge.js";
 import { statusTone } from "../tokens.js";
@@ -35,5 +35,44 @@ export function TimeText({ at }: { readonly at: string }) {
     <time className="arbor-mono" dateTime={at} title={at}>
       {text}
     </time>
+  );
+}
+
+export function SandboxPolicySummary({
+  policy,
+}: {
+  readonly policy: NonNullable<ExecutionSummary["sandboxPolicy"]>;
+}) {
+  return (
+    <dl className="arbor-view-stack" aria-label="Sandbox policy">
+      <div>
+        <dt>Sandbox status</dt>
+        <dd>
+          <EnumBadge label={policy.status} />
+        </dd>
+      </div>
+      <div>
+        <dt>Profile</dt>
+        <dd>{policy.profile}</dd>
+      </div>
+      <div>
+        <dt>Provider</dt>
+        <dd>{policy.providerId}</dd>
+      </div>
+      <div>
+        <dt>Network mode</dt>
+        <dd>{policy.networkMode}</dd>
+      </div>
+      <div>
+        <dt>Policy revision</dt>
+        <dd>{policy.policyRevision}</dd>
+      </div>
+      <div>
+        <dt>Expires at</dt>
+        <dd>
+          <TimeText at={policy.expiresAt} />
+        </dd>
+      </div>
+    </dl>
   );
 }

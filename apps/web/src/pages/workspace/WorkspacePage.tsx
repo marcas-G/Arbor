@@ -36,7 +36,7 @@ import { useSession } from "../../session/SessionContext.js";
 import { CurrentWorkView } from "../../views/CurrentWorkView.js";
 import { DependencyView } from "../../views/DependencyView.js";
 import { InboxView } from "../../views/InboxView.js";
-import { TimeText } from "../../views/shared.js";
+import { SandboxPolicySummary, TimeText } from "../../views/shared.js";
 import { TranscriptView } from "../../views/TranscriptView.js";
 import { VerificationView } from "../../views/VerificationView.js";
 import { ConversationTab } from "./ConversationTab.js";
@@ -212,6 +212,12 @@ function OverviewTab({
                 <MonoText>{detail.data.executionSummary.executionId}</MonoText>{" "}
                 <TimeText at={detail.data.executionSummary.admittedAt} />
               </span>
+              {detail.data.executionSummary.sandboxPolicy ===
+              undefined ? null : (
+                <SandboxPolicySummary
+                  policy={detail.data.executionSummary.sandboxPolicy}
+                />
+              )}
             </Card>
           )}
         </>

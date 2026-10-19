@@ -5,7 +5,7 @@
 import type { CurrentWorkRes } from "@arbor/api-contracts";
 import { Card } from "../components/Card.js";
 import { Empty } from "../components/Empty.js";
-import { EnumBadge, Mono, TimeText } from "./shared.js";
+import { EnumBadge, Mono, SandboxPolicySummary, TimeText } from "./shared.js";
 
 export function CurrentWorkView({ work }: { readonly work: CurrentWorkRes }) {
   if (work === null) {
@@ -27,6 +27,11 @@ export function CurrentWorkView({ work }: { readonly work: CurrentWorkRes }) {
               <Mono>{work.activeExecution.executionId}</Mono>{" "}
               <TimeText at={work.activeExecution.admittedAt} />
             </span>
+            {work.activeExecution.sandboxPolicy === undefined ? null : (
+              <SandboxPolicySummary
+                policy={work.activeExecution.sandboxPolicy}
+              />
+            )}
           </div>
         )}
       </div>
