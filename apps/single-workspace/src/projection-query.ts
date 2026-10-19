@@ -6,6 +6,7 @@ import type {
   Workspace,
 } from "@arbor/domain";
 import {
+  encodeExecutionEpisodeBinding,
   executionEpisode,
   type ProjectId,
   settlementFingerprint,
@@ -17,6 +18,7 @@ import {
   AcceptanceRepository,
   AgentLoopStepStore,
   AttentionProjectionStore,
+  Clock,
   DependencyRepository,
   DomainEventJournal,
   EvidenceRepository,
@@ -28,6 +30,8 @@ import {
   RecoveryAttentionFactStore,
   RetryVerificationOriginRepository,
   RunnableWorkSource,
+  SandboxPolicyDecisionStore,
+  SandboxProviderUnavailableStore,
   sha256Hex,
   ToolCatalogPort,
   TransactionPort,
@@ -136,6 +140,7 @@ const responseStatusOf = (
 
 export type ProjectionQueryWiringServices =
   | SqlClient
+  | Clock
   | TransactionPort
   | WorkspaceRepository
   | WorkRepository
@@ -148,6 +153,8 @@ export type ProjectionQueryWiringServices =
   | AcceptanceRepository
   | DomainEventJournal
   | RecoveryAttentionFactStore
+  | SandboxPolicyDecisionStore
+  | SandboxProviderUnavailableStore
   | AttentionProjectionStore
   | MessageStore
   | RunnableWorkSource
@@ -215,6 +222,7 @@ export const approvedToolHashFromManifest = (input: {
 const projectionQueryService = (catalogProjectId?: ProjectId) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
+    const clock = yield* Clock;
     const tx = yield* TransactionPort;
     const workspaces = yield* WorkspaceRepository;
     const works = yield* WorkRepository;
@@ -232,6 +240,12 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
     const journal = yield* DomainEventJournal;
     const bindingAttention = yield* RecoveryAttentionFactStore;
     const attentionProjection = yield* AttentionProjectionStore;
+    const sandboxPolicyStore = yield* Effect.serviceOption(
+      SandboxPolicyDecisionStore,
+    );
+    const sandboxUnavailableStore = yield* Effect.serviceOption(
+      SandboxProviderUnavailableStore,
+    );
     const messages = yield* MessageStore;
     const source = yield* RunnableWorkSource;
     const executableApprovals = yield* ExecutableApprovalStore;
@@ -615,6 +629,29 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
           : inTx(
               attentionProjection.listToolObservationReplayFailures(projectId),
             ),
+      listProjectedSandboxProviderUnavailableFailures: (projectId) =>
+        attentionProjection.listProjectedSandboxProviderUnavailableFailures ===
+        undefined
+          ? Effect.succeed([])
+          : inTx(
+              Effect.gen(function* () {
+                return yield* attentionProjection.listProjectedSandboxProviderUnavailableFailures?.(
+                  projectId,
+                  yield* clock.now(),
+                ) ?? Effect.succeed([]);
+              }),
+            ),
+      listSandboxRecoveryBindingFailures: (projectId) =>
+        attentionProjection.listSandboxRecoveryBindingFailures === undefined
+          ? Effect.succeed([])
+          : inTx(
+              Effect.gen(function* () {
+                return yield* attentionProjection.listSandboxRecoveryBindingFailures?.(
+                  projectId,
+                  yield* clock.now(),
+                ) ?? Effect.succeed([]);
+              }),
+            ),
     };
 
     const tree: TreeViewDeps = {
@@ -656,6 +693,67 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
         inTx(works.listByWorkspace(workspaceId)),
       findActiveMainExecution: (workspaceId) =>
         inTx(executions.findActiveMainByWorkspace(workspaceId)),
+      sandboxPolicyForExecution: (execution) =>
+        inTx(
+          Effect.gen(function* () {
+            if (
+              Option.isNone(sandboxPolicyStore) ||
+              Option.isNone(sandboxUnavailableStore)
+            ) {
+              return undefined;
+            }
+            const episode = executionEpisode(execution);
+            if (episode === undefined) return undefined;
+            const decision =
+              yield* sandboxPolicyStore.value.findCurrentForExecution(
+                execution.projectId,
+                execution.workspaceId,
+                execution.executionId,
+              );
+            if (
+              Option.isNone(decision) ||
+              encodeExecutionEpisodeBinding(decision.value.episodeBinding) !==
+                encodeExecutionEpisodeBinding(episode)
+            ) {
+              return undefined;
+            }
+            const unavailable =
+              yield* sandboxUnavailableStore.value.findByExecutionAndRevision(
+                execution.executionId,
+                decision.value.policyRevision,
+              );
+            const exactUnavailable =
+              unavailable !== undefined &&
+              unavailable.projectId === execution.projectId &&
+              unavailable.workspaceId === execution.workspaceId &&
+              encodeExecutionEpisodeBinding(unavailable.episodeBinding) ===
+                encodeExecutionEpisodeBinding(decision.value.episodeBinding) &&
+              unavailable.policyDigest === decision.value.policyDigest &&
+              unavailable.profileId === decision.value.profile &&
+              unavailable.providerId === decision.value.providerId;
+            if (unavailable !== undefined && !exactUnavailable) {
+              return yield* Effect.fail(
+                projectionReadError({
+                  _tag: "SandboxProviderUnavailableDecisionMismatch",
+                }),
+              );
+            }
+            const now = yield* clock.now();
+            if (!exactUnavailable && decision.value.expiresAt <= now) {
+              return undefined;
+            }
+            return {
+              policyRevision: decision.value.policyRevision,
+              profile: decision.value.profile,
+              providerId: decision.value.providerId,
+              networkMode: decision.value.networkPolicy.mode,
+              status: exactUnavailable
+                ? ("Unavailable" as const)
+                : ("Configured" as const),
+              expiresAt: decision.value.expiresAt,
+            };
+          }),
+        ),
       listDependenciesByWorkspace,
       listUnconsumedInbox: (workspaceId) =>
         inTx(

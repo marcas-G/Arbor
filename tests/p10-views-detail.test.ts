@@ -288,6 +288,33 @@ const seedDetail = seedCanonical(
 );
 
 describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
+  it("projects the exact current sandbox policy onto the active Execution summary", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        const sandboxPolicy = {
+          policyRevision: 3,
+          profile: "WorkspaceWrite" as const,
+          providerId: "bwrap",
+          networkMode: "Restricted" as const,
+          status: "Unavailable" as const,
+          expiresAt: "2026-10-19T12:00:00.000Z",
+        };
+        const detail = yield* deriveWorkspaceDetail(p10Root, {
+          ...deps.workspaceDetail,
+          sandboxPolicyForExecution: () => Effect.succeed(sandboxPolicy),
+        });
+        expect(detail.executionSummary?.sandboxPolicy).toEqual(sandboxPolicy);
+        expect(detail.currentWork?.activeExecution?.sandboxPolicy).toEqual(
+          sandboxPolicy,
+        );
+      }),
+      makeP10App(),
+    );
+  });
+
   it("derives every frozen core section from canonical tables + journal, zero mutation", async () => {
     await runP10(
       Effect.gen(function* () {

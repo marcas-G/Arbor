@@ -670,6 +670,66 @@ const seedAttention = seedCanonical(
 );
 
 describe("P10-004 Attention read-model over canonical rows (live join, zero mutation)", () => {
+  it("renders the V5 and V21 sandbox sources with fixed safe summaries and no persistence", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedAttention;
+        const deps = yield* makeP10Deps();
+        const before = yield* snapshotDatabase();
+        const rows = yield* deriveProjectAttention(p10Project, {
+          ...deps.attention,
+          listProjectedSandboxProviderUnavailableFailures: () =>
+            Effect.succeed([
+              {
+                projectId: p10Project,
+                attentionFactId: "att_sandbox_unavailable",
+                workspaceId: p10Leaf,
+                executionId: "exe_sandbox_unavailable",
+                policyRevision: 3,
+                firstDetectedAt: "2026-10-19T10:00:00.000Z",
+              },
+            ]),
+          listSandboxRecoveryBindingFailures: () =>
+            Effect.succeed([
+              {
+                projectId: p10Project,
+                executionId: "exe_sandbox_recovery",
+                invocationId: "tin_sandbox_recovery",
+                workspaceId: p10Child,
+                attentionFactId: "a".repeat(64),
+                intentAt: "2026-10-19T10:00:01.000Z",
+              },
+            ]),
+        });
+        expect(rowsOf("SandboxProviderUnavailable", rows)).toEqual([
+          {
+            source: "SandboxProviderUnavailable",
+            severity: "ActionRequired",
+            targetWorkspaceId: p10Leaf,
+            dedupKey: "att_sandbox_unavailable",
+            summary:
+              "Required sandbox capabilities are unavailable; execution did not start.",
+            occurredAt: "2026-10-19T10:00:00.000Z",
+          },
+        ]);
+        expect(rowsOf("SandboxRecoveryBindingFailure", rows)).toEqual([
+          {
+            source: "SandboxRecoveryBindingFailure",
+            severity: "ActionRequired",
+            targetWorkspaceId: p10Child,
+            dedupKey: "a".repeat(64),
+            summary:
+              "Sandbox recovery binding evidence is missing or invalid; execution is paused.",
+            occurredAt: "2026-10-19T10:00:01.000Z",
+          },
+        ]);
+        expect(yield* snapshotDatabase()).toEqual(before);
+      }),
+      makeP10App(),
+    );
+  });
+
   it("deriveProjectAttention renders all six sources with severity/target/dedupKey; GAP-01 retired negative; canonical snapshot unchanged", async () => {
     await runP10(
       Effect.gen(function* () {

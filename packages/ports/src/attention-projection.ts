@@ -101,6 +101,26 @@ export interface LegacyAdoptionAttentionProjectionRow {
   readonly sourceExecutionId: string;
 }
 
+export interface SandboxProviderUnavailableAttentionProjectionRow {
+  readonly projectId: ProjectId;
+  readonly attentionFactId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly executionId: string;
+  readonly policyRevision: number;
+  readonly firstDetectedAt: string;
+}
+
+/** Strict P10 query result derived from the immutable P4 invocation and
+ * RecoveryBinding rows. This is never persisted. */
+export interface SandboxRecoveryBindingFailureProjectionRow {
+  readonly projectId: ProjectId;
+  readonly executionId: string;
+  readonly invocationId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly attentionFactId: string;
+  readonly intentAt: string;
+}
+
 export type AttentionProjectionStoreError =
   RepositoryFailure<"AttentionProjectionStore">;
 
@@ -163,6 +183,22 @@ export interface AttentionProjectionStoreService {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<LegacyAdoptionAttentionProjectionRow>,
+    AttentionProjectionStoreError,
+    TransactionScope
+  >;
+  readonly listProjectedSandboxProviderUnavailableFailures?: (
+    projectId: ProjectId,
+    now: string,
+  ) => Effect.Effect<
+    ReadonlyArray<SandboxProviderUnavailableAttentionProjectionRow>,
+    AttentionProjectionStoreError,
+    TransactionScope
+  >;
+  readonly listSandboxRecoveryBindingFailures?: (
+    projectId: ProjectId,
+    now: string,
+  ) => Effect.Effect<
+    ReadonlyArray<SandboxRecoveryBindingFailureProjectionRow>,
     AttentionProjectionStoreError,
     TransactionScope
   >;
