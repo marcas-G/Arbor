@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   decodeCanonicalExecutionEpisodeBinding,
   decodeCanonicalNetworkPolicyV1,
+  decodeCanonicalSandboxNetworkPolicySelectionV1,
   decodeCanonicalSandboxPolicyGrantIssuerConfigV1,
   decodeExecutionEpisodeBinding,
   decodeNetworkPolicyV1,
+  decodeSandboxNetworkPolicySelectionV1,
   decodeSandboxPolicyGrantIssuerConfigV1,
   decodeSandboxProviderId,
   encodeExecutionEpisodeBinding,
   encodeNetworkPolicyV1,
+  encodeSandboxNetworkPolicySelectionV1,
   encodeSandboxPolicyGrantIssuerConfigV1,
   type NetworkPolicyV1,
   resolveSandboxProvider,
@@ -140,20 +143,7 @@ describe("sandbox policy provider selection", () => {
     const policy: NetworkPolicyV1 = {
       version: 1,
       mode: "Restricted",
-      destinations: [
-        {
-          _tag: "Hostname",
-          hostname: "api.example.test",
-          protocol: "https",
-          port: 443,
-        },
-        {
-          _tag: "IpLiteral",
-          address: "192.0.2.10",
-          protocol: "tcp",
-          port: 8443,
-        },
-      ],
+      destinations: ["https://api.example.test", "https://cdn.example.test"],
     };
     const encoded = encodeNetworkPolicyV1(policy);
     expect(decodeCanonicalNetworkPolicyV1(encoded)).toEqual(policy);
@@ -161,12 +151,8 @@ describe("sandbox policy provider selection", () => {
       decodeNetworkPolicyV1({ ...policy, untrusted: true }),
     ).toBeUndefined();
     expect(
-      decodeNetworkPolicyV1({
-        version: 1,
-        mode: "Disabled",
-        destinations: policy.destinations,
-      }),
-    ).toBeUndefined();
+      decodeNetworkPolicyV1({ version: 1, mode: "Disabled", destinations: [] }),
+    ).toMatchObject({ mode: "Disabled", destinations: [] });
     expect(
       decodeCanonicalNetworkPolicyV1(
         encoded.replace('{"version":1', '{"version": 1'),
@@ -174,8 +160,60 @@ describe("sandbox policy provider selection", () => {
     ).toBeUndefined();
     expect(
       decodeCanonicalNetworkPolicyV1(
-        encoded.replace('"port":443', '"port":443,"extra":true'),
+        '{"version":1,"mode":"Restricted","destinations":["https://example.test:443"]}',
       ),
+    ).toBeUndefined();
+    expect(
+      decodeNetworkPolicyV1({
+        version: 1,
+        mode: "Restricted",
+        destinations: ["https://192.0.2.10"],
+      }),
+    ).toBeUndefined();
+    expect(
+      decodeNetworkPolicyV1({
+        version: 1,
+        mode: "Restricted",
+        destinations: ["https://example.test/path"],
+      }),
+    ).toBeUndefined();
+    expect(
+      decodeNetworkPolicyV1({
+        version: 1,
+        mode: "Restricted",
+        destinations: [],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("decodes the exact persisted OsEnforced and TrustedLocal policy union", () => {
+    const osEnforced = {
+      kind: "OsEnforced" as const,
+      policy: {
+        version: 1 as const,
+        mode: "Restricted" as const,
+        destinations: ["https://api.example.test"],
+      },
+    };
+    const trustedLocal = {
+      kind: "TrustedLocalUnconfinedV1" as const,
+      version: 1 as const,
+    };
+    expect(
+      decodeCanonicalSandboxNetworkPolicySelectionV1(
+        encodeSandboxNetworkPolicySelectionV1(osEnforced),
+      ),
+    ).toEqual(osEnforced);
+    expect(
+      decodeCanonicalSandboxNetworkPolicySelectionV1(
+        encodeSandboxNetworkPolicySelectionV1(trustedLocal),
+      ),
+    ).toEqual(trustedLocal);
+    expect(
+      decodeSandboxNetworkPolicySelectionV1({
+        ...trustedLocal,
+        providerId: "fallback",
+      }),
     ).toBeUndefined();
   });
 
@@ -221,15 +259,15 @@ describe("SandboxPolicyGrantIssuerConfigV1", () => {
     const config = decodeSandboxPolicyGrantIssuerConfigV1({
       version: 1,
       revision: 3,
-      operators: ["user:admin-a", "user:admin-b"],
+      issuers: ["user:admin-a", "user:admin-b"],
     });
     expect(config).toEqual({
       version: 1,
       revision: 3,
-      operators: ["user:admin-a", "user:admin-b"],
+      issuers: ["user:admin-a", "user:admin-b"],
     });
     const canonical =
-      '{"operators":["user:admin-a","user:admin-b"],"revision":3,"version":1}';
+      '{"version":1,"revision":3,"issuers":["user:admin-a","user:admin-b"]}';
     expect(config && encodeSandboxPolicyGrantIssuerConfigV1(config)).toBe(
       canonical,
     );
@@ -239,12 +277,12 @@ describe("SandboxPolicyGrantIssuerConfigV1", () => {
   });
 
   it.each([
-    { version: 1, revision: 0, operators: [] },
-    { version: 1, revision: 1.5, operators: [] },
-    { version: 1, revision: 1, operators: ["user:b", "user:a"] },
-    { version: 1, revision: 1, operators: ["user:a", "user:a"] },
-    { version: 1, revision: 1, operators: ["runtime:system"] },
-    { version: 1, revision: 1, operators: [], unexpected: true },
+    { version: 1, revision: 0, issuers: ["user:a"] },
+    { version: 1, revision: 1.5, issuers: ["user:a"] },
+    { version: 1, revision: 1, issuers: ["user:b", "user:a"] },
+    { version: 1, revision: 1, issuers: ["user:a", "user:a"] },
+    { version: 1, revision: 1, issuers: ["runtime:system"] },
+    { version: 1, revision: 1, issuers: ["user:a"], unexpected: true },
   ])("rejects invalid config %#", (input) => {
     expect(decodeSandboxPolicyGrantIssuerConfigV1(input)).toBeUndefined();
   });
@@ -252,7 +290,7 @@ describe("SandboxPolicyGrantIssuerConfigV1", () => {
   it("rejects non-canonical JSON bytes even when their values decode", () => {
     expect(
       decodeCanonicalSandboxPolicyGrantIssuerConfigV1(
-        '{"version":1,"revision":3,"operators":["user:admin-a"]}',
+        '{"issuers":["user:admin-a"],"version":1,"revision":3}',
       ),
     ).toBeUndefined();
   });

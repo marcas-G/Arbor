@@ -19,6 +19,7 @@ export * from "./projection.js";
 export * from "./resources.js";
 export * from "./result.js";
 export * from "./sandbox-policy.js";
+export * from "./sandbox-policy-result.js";
 export * from "./scheduler.js";
 export * from "./session.js";
 export * from "./snapshot-identity.js";
