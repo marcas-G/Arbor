@@ -2,15 +2,25 @@ import { createHash } from "node:crypto";
 import type {
   Execution,
   SandboxAuthorityBundleSnapshotV2,
-  SandboxPolicyRequirementV1,
+  SandboxPolicyCurrentHostV1,
   SandboxProviderQualificationEntryV1,
   Workspace,
 } from "@arbor/domain";
 import {
   encodeNetworkBrokerControlsV1,
+  encodeSandboxEnforcementRuleSetV1,
   networkBrokerControlsV1ForMode,
+  ProviderTurnId,
+  parse,
+  ResourceBoundaryRevision,
+  Sha256,
+  sandboxEnforcementRuleSetV1ForProvider,
+  ToolInvocationId,
 } from "@arbor/domain";
-import type { SandboxPolicyCandidateBoundarySnapshotV1 } from "@arbor/ports";
+import type {
+  SandboxPolicyCandidateBoundarySnapshotV1,
+  SandboxPolicyRequirementV1,
+} from "@arbor/ports";
 import { describe, expect, it } from "vitest";
 import { buildSandboxPolicyCandidateReadV1 } from "../src/sandbox-policy-candidate-read.js";
 
@@ -18,11 +28,17 @@ const projectId = "prj_v6_candidate" as never;
 const workspaceId = "ws_v16_fixture" as never;
 const executionId = "exe_v6_candidate" as never;
 const workId = "wrk_v6_candidate" as never;
-const disabledRuleDigest = createHash("sha256")
+const resourceBoundaryRevision = parse(ResourceBoundaryRevision)(2);
+const brokerOnlyDigest = createHash("sha256")
   .update(
     encodeNetworkBrokerControlsV1(networkBrokerControlsV1ForMode("Disabled")),
     "utf8",
   )
+  .digest("hex");
+const fullRuleSet = sandboxEnforcementRuleSetV1ForProvider("linux-bwrap");
+if (fullRuleSet === undefined) throw new Error("linux-bwrap rule set missing");
+const enforcementRuleSetDigest = createHash("sha256")
+  .update(encodeSandboxEnforcementRuleSetV1(fullRuleSet), "utf8")
   .digest("hex");
 const episodeBinding = {
   _tag: "WorkEpisode" as const,
@@ -51,13 +67,13 @@ const workspace = {
   },
   resourceBoundaryRevision: 2,
   revision: 9,
-} as Workspace;
+} as unknown as Workspace;
 const execution = {
   executionId,
   projectId,
   workspaceId,
   binding: { _tag: "WorkspaceExecution", workspaceId, episode: episodeBinding },
-} as Execution;
+} as unknown as Execution;
 const requirement = {
   _tag: "SandboxPolicyRequirementV1",
   projectId,
@@ -65,17 +81,21 @@ const requirement = {
   executionId,
   episodeBinding,
   expectedEpisodeRevision: 0,
-  invocationId: "tin_v6_candidate",
-  providerTurnId: "ptn_v6_candidate",
+  invocationId: parse(ToolInvocationId)(
+    "tin_018f2b3c-4d5e-7abc-8def-0123456789c1",
+  ),
+  providerTurnId: parse(ProviderTurnId)(
+    "ptn_018f2b3c-4d5e-7abc-8def-0123456789c1",
+  ),
   logicalStepNo: 1,
   repairAttempt: 0,
   logicalActionId: "act_v6_candidate",
   actionIndex: 0,
   callRef: "call_v6_candidate",
-  recoveryBindingDigest: "a".repeat(64),
+  recoveryBindingDigest: parse(Sha256)("a".repeat(64)),
 } satisfies SandboxPolicyRequirementV1;
 const providerEntry = {
-  providerId: "bwrap",
+  providerId: "linux-bwrap",
   providerVersion: "1.2.0",
   capabilityRevision: 1,
   osFamily: "Linux",
@@ -84,7 +104,7 @@ const providerEntry = {
     profile: "ReadOnly",
     networkMode: "Disabled",
     networkPolicyCodecVersion: 1,
-    enforcementRuleSetDigest: disabledRuleDigest,
+    enforcementRuleSetDigest,
   },
   status: "Supported",
   qualificationEvidenceRef: `blob:sha256:${"c".repeat(64)}`,
@@ -123,7 +143,10 @@ const authority = {
 } as SandboxAuthorityBundleSnapshotV2;
 const read = (
   claims: SandboxPolicyCandidateBoundarySnapshotV1["ownershipClaims"],
-  currentHost = { osFamily: "Linux" as const, osBuild: "qualified-build" },
+  currentHost: SandboxPolicyCurrentHostV1 = {
+    osFamily: "Linux",
+    osBuild: "qualified-build",
+  },
   authoritySnapshot = authority,
 ) =>
   buildSandboxPolicyCandidateReadV1({
@@ -160,7 +183,7 @@ describe("V6 per-candidate P4 binding digest projection", () => {
         workspaceId,
         region: primary,
         sourceAddressSnapshot: address,
-        resourceBoundaryRevision: 2,
+        resourceBoundaryRevision,
         resolvedAtEnvironmentRevision: "env-1",
         createdAt: "t1",
         releasedAt: null,
@@ -229,7 +252,7 @@ describe("V6 per-candidate P4 binding digest projection", () => {
         workspaceId,
         region: primary,
         sourceAddressSnapshot: address,
-        resourceBoundaryRevision: 2,
+        resourceBoundaryRevision,
         resolvedAtEnvironmentRevision: "env-1",
         createdAt: "t1",
         releasedAt: null,
@@ -265,7 +288,7 @@ describe("V6 per-candidate P4 binding digest projection", () => {
           normalizedRegion: { kind: "FileTree", path: "/outside" },
         },
         sourceAddressSnapshot: { _tag: "FileTree", path: "/outside" },
-        resourceBoundaryRevision: 2,
+        resourceBoundaryRevision,
         resolvedAtEnvironmentRevision: "env-1",
         createdAt: "t1",
         releasedAt: null,
@@ -303,6 +326,31 @@ describe("V6 per-candidate P4 binding digest projection", () => {
     if (unsupported._tag === "Ready")
       expect(
         unsupported.value.candidates.map((candidate) => candidate.kind),
+      ).toEqual(["TrustedLocalUnconfinedV1"]);
+
+    const brokerOnlyAuthority = {
+      ...authority,
+      bundle: {
+        ...authority.bundle,
+        providerRegistry: {
+          ...authority.bundle.providerRegistry,
+          entries: [
+            {
+              ...providerEntry,
+              tuple: {
+                ...providerEntry.tuple,
+                enforcementRuleSetDigest: brokerOnlyDigest,
+              },
+            },
+          ],
+        },
+      },
+    } as SandboxAuthorityBundleSnapshotV2;
+    const brokerOnly = read([], undefined, brokerOnlyAuthority);
+    expect(brokerOnly._tag).toBe("Ready");
+    if (brokerOnly._tag === "Ready")
+      expect(
+        brokerOnly.value.candidates.map((candidate) => candidate.kind),
       ).toEqual(["TrustedLocalUnconfinedV1"]);
   });
 });
