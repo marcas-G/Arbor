@@ -1,0 +1,463 @@
+import {
+  ExecutionId,
+  ProjectId,
+  parse,
+  SessionId,
+  WorkspaceId,
+  workspaceEpisodeExecution,
+} from "@arbor/domain";
+import {
+  SandboxPolicyDecisionStore,
+  SandboxProviderUnavailableStore,
+  sha256Hex,
+  TransactionScope,
+} from "@arbor/ports";
+import { Effect, Option } from "effect";
+import { describe, expect, it } from "vitest";
+import {
+  executeAgentLoopActions,
+  verifySandboxUnavailableStepActionResume,
+} from "../src/agent-loop-actions.js";
+import { completeAgentLoopStep } from "../src/agent-loop-step-completion.js";
+
+const executionId = parse(ExecutionId)(
+  "exe_00000000-0000-7000-8000-000000000081",
+);
+const projectId = parse(ProjectId)("prj_00000000-0000-7000-8000-000000000081");
+const workspaceId = parse(WorkspaceId)(
+  "ws_00000000-0000-7000-8000-000000000081",
+);
+const sessionId = parse(SessionId)("ses_00000000-0000-7000-8000-000000000081");
+const episode = {
+  _tag: "WorkEpisode" as const,
+  workId: "wrk_00000000-0000-7000-8000-000000000081" as never,
+  targetWorkRevision: 4 as never,
+};
+const execution = {
+  executionId,
+  projectId,
+  workspaceId,
+  sessionId,
+  binding: workspaceEpisodeExecution(workspaceId, episode),
+} as never;
+const oldPolicyDigest = "a".repeat(64);
+const actionIdentity = { executionId, logicalStepNo: 0, repairAttempt: 0 };
+const step = {
+  identity: actionIdentity,
+  providerTurnId: "ptn_00000000-0000-7000-8000-000000000081" as never,
+  manifestId: "manifest_old-policy",
+  state: "StepEffectsCommitted" as const,
+  decodedOutputHash: "b".repeat(64),
+  decoderVersion: "decode-turn-v1" as const,
+  modelOutputSessionSequence: 2,
+  nextActionIndex: 1,
+  revision: 3,
+  updatedAt: "2026-10-18T10:00:00.000Z",
+};
+const disposition = {
+  _tag: "SandboxUnavailableV1" as const,
+  attentionFactId: "sbf_00000000-0000-7000-8000-000000000081",
+  invocationId: "tin_00000000-0000-7000-8000-000000000081",
+  policyRevision: 7,
+  policyDigest: oldPolicyDigest,
+  profile: "WorkspaceWrite" as const,
+  providerId: "native-test-provider",
+  providerVersion: "1.0.0",
+  capabilityRevision: "cap-7",
+  probeEvidenceRef: "probe-evidence-7",
+  failureCode: "ProviderUnavailable",
+};
+const action = {
+  identity: actionIdentity,
+  actionIndex: 0,
+  logicalActionId: "lac_old-policy-action",
+  callRef: "call_old-policy",
+  routeKind: "Executable" as const,
+  actionKind: "write_file",
+  inputHash: "c".repeat(64),
+  state: "TerminalRejected" as const,
+  resultRef: disposition.attentionFactId,
+  disposition,
+  revision: 2,
+  updatedAt: "2026-10-18T10:00:00.000Z",
+};
+const fact = {
+  attentionFactId: disposition.attentionFactId,
+  eventId: "evt_00000000-0000-7000-8000-000000000081",
+  projectId,
+  executionId,
+  workspaceId,
+  episodeBinding: episode,
+  policyRevision: disposition.policyRevision,
+  policyDigest: oldPolicyDigest,
+  profileId: disposition.profile,
+  providerId: disposition.providerId,
+  providerVersion: disposition.providerVersion,
+  probeEvidenceRef: disposition.probeEvidenceRef,
+  failureCode: disposition.failureCode,
+  firstDetectedAt: "2026-10-18T09:59:00.000Z",
+};
+const decision = {
+  projectId,
+  workspaceId,
+  executionId,
+  episodeBinding: episode,
+  policyRevision: 8,
+  expectedExecutionRevision: 1,
+  expectedPolicyRevision: 7,
+  profile: "WorkspaceWrite",
+  providerId: "native-test-provider",
+  policyDigest: "d".repeat(64),
+  expiresAt: "2026-10-19T00:00:00.000Z",
+};
+const result = {
+  version: 1,
+  commandId: "cmd_00000000-0000-7000-8000-000000000081",
+  projectId,
+  workspaceId,
+  executionId,
+  episodeBinding: episode,
+  policyRevision: 8,
+  policyDigest: decision.policyDigest,
+  effectivePolicySnapshot: {
+    kind: "OsEnforced",
+    policyRevision: 8,
+    profile: "WorkspaceWrite",
+    providerId: "native-test-provider",
+    projectId,
+    workspaceId,
+    executionId,
+    episodeBinding: episode,
+    capabilityRevision: 8,
+    expiresAt: decision.expiresAt,
+  },
+};
+const decodedOutput = {
+  text: "continuing after policy revision 8",
+  finishReason: "ToolCalls",
+  toolInvocations: [
+    {
+      providerTurnId: step.providerTurnId,
+      outputPosition: 0,
+      callRef: "call_old-policy",
+      toolName: "write_file",
+      argumentsJson: '{"path":"old.txt"}',
+    },
+    {
+      providerTurnId: step.providerTurnId,
+      outputPosition: 1,
+      callRef: "call_not-yet-admitted",
+      toolName: "read_file",
+      argumentsJson: '{"path":"next.txt"}',
+    },
+  ],
+};
+const toolRoutes = [
+  { name: "write_file", route: "Executable" as const },
+  { name: "read_file", route: "Executable" as const },
+];
+const modelRef = "model-p9-test";
+const outputContractRef = "plain-text-v1";
+const manifestJson = JSON.stringify({
+  providerTurnId: step.providerTurnId,
+  executionId,
+  sessionId,
+  contextEpoch: 0,
+  modelRef,
+  outputContractRef,
+  logicalStepNo: 0,
+  repairAttempt: 0,
+  toolRoutes,
+});
+const persistedStep = {
+  ...step,
+  decodedOutputHash: sha256Hex(
+    JSON.stringify({
+      providerTurnId: step.providerTurnId,
+      outputContractRef,
+      decoderVersion: "decode-turn-v1",
+      ...decodedOutput,
+    }),
+  ),
+};
+const terminalAction = {
+  ...action,
+  logicalActionId: `lac_${sha256Hex(
+    JSON.stringify({
+      executionId,
+      providerTurnId: step.providerTurnId,
+      callRef: decodedOutput.toolInvocations[0]?.callRef,
+      routeKind: "Executable",
+      actionKind: "write_file",
+    }),
+  )}`,
+  inputHash: sha256Hex(decodedOutput.toolInvocations[0]?.argumentsJson ?? ""),
+};
+
+describe("P9 SandboxUnavailableV1 successor recovery", () => {
+  it("restarts from the immutable terminal action and advances to one successor under a newer policy", async () => {
+    // These rows represent the committed SQLite state after the old process
+    // stopped: the P9 fact and terminal action are durable, and the old Step
+    // cursor is already past the unavailable action. Recreate the read ports
+    // as the new process would; no executable handler is present on recovery.
+    const durable = {
+      step: persistedStep,
+      actions: [terminalAction],
+      fact,
+      decision,
+      result,
+    };
+    const facts = {
+      findByExecutionAndRevision: () => Effect.succeed(durable.fact),
+    };
+    const decisions = {
+      findCurrentForExecution: () =>
+        Effect.succeed(
+          Option.some({
+            decision: durable.decision,
+            result: durable.result,
+          }),
+        ),
+    };
+    const sandboxResume = await Effect.runPromise(
+      Effect.provideService(
+        verifySandboxUnavailableStepActionResume({
+          execution,
+          step: durable.step as never,
+          action: durable.actions[0] as never,
+          facts: facts as never,
+          decisions: decisions as never,
+          now: "2026-10-18T10:01:00.000Z",
+        }),
+        TransactionScope,
+        { session: { id: "p9-sandbox-successor-restart" } },
+      ),
+    );
+    expect(sandboxResume).toBe(true);
+    const providerTurns = {
+      findSettledResult: () =>
+        Effect.succeed({
+          _tag: "SettledSuccess",
+          evidenceVersion: "provider-success-v1",
+          manifestId: durable.step.manifestId,
+          manifestJson,
+          turn: {
+            providerTurnId: durable.step.providerTurnId,
+            executionId,
+            sessionId,
+            contextEpoch: 0,
+            modelRef,
+            outputContractRef,
+          },
+          finishReason: decodedOutput.finishReason,
+          canonicalEvents: [
+            {
+              _tag: "TurnStarted",
+              providerTurnId: durable.step.providerTurnId,
+              attemptNo: 0,
+              modelRef,
+            },
+            { _tag: "TextDelta", text: decodedOutput.text },
+            {
+              _tag: "ToolCallProposed",
+              callRef: "call_old-policy",
+              toolName: "write_file",
+              argumentsJson: '{"path":"old.txt"}',
+            },
+            {
+              _tag: "ToolCallProposed",
+              callRef: "call_not-yet-admitted",
+              toolName: "read_file",
+              argumentsJson: '{"path":"next.txt"}',
+            },
+            { _tag: "TurnCompleted", finishReason: "ToolCalls" },
+          ],
+        }),
+      findManifestByTurn: () =>
+        Effect.succeed({ manifestId: durable.step.manifestId, manifestJson }),
+    };
+    const sessions = {
+      listEntries: () =>
+        Effect.succeed([
+          {
+            entryKind: "ModelOutput",
+            sequence: durable.step.modelOutputSessionSequence,
+            source: {
+              kind: "ProviderTurn",
+              ref: `${durable.step.providerTurnId}:assistant`,
+            },
+            payload: {
+              providerTurnId: durable.step.providerTurnId,
+              outputContractRef,
+              decoderVersion: "decode-turn-v1",
+              text: decodedOutput.text,
+              finishReason: decodedOutput.finishReason,
+              toolInvocations: decodedOutput.toolInvocations,
+            },
+          },
+        ]),
+    };
+    let executableHandlerCalls = 0;
+    const replay = executeAgentLoopActions({
+      input: { execution, context: {} as never },
+      preparedTurn: {
+        manifest: {
+          providerTurnId: durable.step.providerTurnId,
+          contextEpoch: 0,
+          modelRef,
+          outputContractRef,
+          controlBasis: {},
+          toolRoutes,
+        },
+        toolRoutes,
+      } as never,
+      decodedOutput: decodedOutput as never,
+      turn: 0,
+      currentLoopStep: durable.step as never,
+      loopSteps: {
+        find: () => Effect.succeed(Option.some(durable.step)),
+        listActions: () => Effect.succeed(durable.actions),
+      } as never,
+      loopStepFence: {
+        executionId,
+        workerId: "worker-restarted",
+        workerIncarnationId: "incarnation-restarted",
+        fencingGeneration: 1,
+      } as never,
+      tx: {
+        transact: (body: Effect.Effect<unknown, unknown, never>) =>
+          Effect.provideService(body, TransactionScope, {
+            session: { id: "p9-sandbox-successor-restart" },
+          }),
+      } as never,
+      sessions: sessions as never,
+      providerTurns: providerTurns as never,
+      controlRegistry: {} as never,
+      executableInvocationHandler: {
+        handle: () => {
+          executableHandlerCalls += 1;
+          return Effect.die("committed unavailable action must not replay");
+        },
+      } as never,
+      currentControlBasis: () => Effect.succeed({} as never),
+      admit: () => Effect.succeed("Continue"),
+      failure: (cause) => cause as never,
+      now: () => Effect.succeed("2026-10-18T10:01:00.000Z"),
+    } as never);
+    const recovered = await Effect.runPromise(
+      Effect.provideService(
+        Effect.provideService(
+          Effect.provideService(
+            replay,
+            SandboxProviderUnavailableStore,
+            facts as never,
+          ),
+          SandboxPolicyDecisionStore,
+          decisions as never,
+        ),
+        TransactionScope,
+        { session: { id: "p9-sandbox-successor-restart" } },
+      ),
+    );
+    expect(recovered._tag).toBe("Completed");
+    expect(executableHandlerCalls).toBe(0);
+
+    const transitioned: { predecessor?: unknown; successor?: unknown } = {};
+    const loopSteps = {
+      transition: (input: { readonly next: unknown }) =>
+        Effect.sync(() => {
+          transitioned.predecessor = input.next;
+          return input.next;
+        }),
+      ensureSuccessor: (_predecessor: unknown, successor: unknown) =>
+        Effect.sync(() => {
+          transitioned.successor = successor;
+          return successor;
+        }),
+    };
+    const tx = {
+      transact: (body: Effect.Effect<unknown, unknown, never>) =>
+        Effect.provideService(body, TransactionScope, {
+          session: { id: "p9-sandbox-successor-restart" },
+        }),
+    };
+    const completion = await Effect.runPromise(
+      completeAgentLoopStep({
+        input: { execution, context: {} as never },
+        decodedOutput: decodedOutput as never,
+        observations: [],
+        conversation: false,
+        turn: 0,
+        currentLoopStep: durable.step as never,
+        loopSteps: loopSteps as never,
+        loopStepFence: {
+          executionId,
+          workerId: "w",
+          workerIncarnationId: "i",
+          fencingGeneration: 1,
+        } as never,
+        tx: tx as never,
+        sessions: {} as never,
+        failure: (cause) => cause as never,
+        now: () => Effect.succeed("2026-10-18T10:01:01.000Z"),
+      }),
+    );
+
+    expect(completion).toEqual({ _tag: "Continue" });
+    expect(transitioned.predecessor).toMatchObject({
+      state: "NextStepReady",
+      nextActionIndex: 1,
+      successor: {
+        executionId,
+        logicalStepNo: 1,
+        repairAttempt: 0,
+      },
+    });
+    expect(transitioned.successor).toMatchObject({
+      identity: { executionId, logicalStepNo: 1, repairAttempt: 0 },
+      predecessor: actionIdentity,
+      state: "Prepared",
+    });
+    expect(durable.actions).toEqual([terminalAction]);
+  });
+
+  it("does not resume on the same policy revision", async () => {
+    const sameRevision = {
+      ...decision,
+      policyRevision: disposition.policyRevision,
+    };
+    const resultAtSameRevision = {
+      ...result,
+      policyRevision: disposition.policyRevision,
+      effectivePolicySnapshot: {
+        ...result.effectivePolicySnapshot,
+        policyRevision: disposition.policyRevision,
+      },
+    };
+    const resumed = await Effect.runPromise(
+      Effect.provideService(
+        verifySandboxUnavailableStepActionResume({
+          execution,
+          step: step as never,
+          action: terminalAction as never,
+          facts: {
+            findByExecutionAndRevision: () => Effect.succeed(fact),
+          } as never,
+          decisions: {
+            findCurrentForExecution: () =>
+              Effect.succeed(
+                Option.some({
+                  decision: sameRevision,
+                  result: resultAtSameRevision,
+                }),
+              ),
+          } as never,
+          now: "2026-10-18T10:01:00.000Z",
+        }),
+        TransactionScope,
+        { session: { id: "p9-sandbox-successor-same-revision" } },
+      ),
+    );
+    expect(resumed).toBe(false);
+  });
+});
