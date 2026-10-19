@@ -4,10 +4,7 @@ import { win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type WindowsQualificationProfileV1 = "ReadOnly" | "WorkspaceWrite";
-export type WindowsQualificationNetworkModeV1 =
-  | "Disabled"
-  | "Restricted"
-  | "Enabled";
+export type WindowsQualificationNetworkModeV1 = "Disabled";
 
 export interface WindowsNativeQualificationTupleV1 {
   readonly profile: WindowsQualificationProfileV1;
@@ -79,8 +76,6 @@ const networkModeOrder: Readonly<
   Record<WindowsQualificationNetworkModeV1, number>
 > = {
   Disabled: 0,
-  Restricted: 1,
-  Enabled: 2,
 };
 
 const compare = (left: string, right: string): number =>
@@ -161,9 +156,7 @@ const decodeTuple = (
       "enforcementRuleSetDigest",
     ]) ||
     (value.profile !== "ReadOnly" && value.profile !== "WorkspaceWrite") ||
-    (value.networkMode !== "Disabled" &&
-      value.networkMode !== "Restricted" &&
-      value.networkMode !== "Enabled") ||
+    value.networkMode !== "Disabled" ||
     value.networkPolicyCodecVersion !== 1 ||
     !digest(value.enforcementRuleSetDigest)
   )

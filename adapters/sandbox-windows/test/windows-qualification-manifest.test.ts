@@ -225,6 +225,32 @@ describe("strict Windows native qualification manifest V1", () => {
     ).toBeUndefined();
   });
 
+  it.each(["Restricted", "Enabled"] as const)(
+    "rejects %s rows at the D1 checkpoint",
+    (networkMode) => {
+      const altered = manifestBytes
+        .toString("utf8")
+        .replace('"networkMode":"Disabled"', `"networkMode":"${networkMode}"`);
+      expect(
+        decodeCanonicalWindowsNativeArtifactManifestV1(altered),
+      ).toBeUndefined();
+      const bytes = Buffer.from(altered, "utf8");
+      const result = inspectWindowsNativeQualificationPaths(
+        paths,
+        {
+          ...expected,
+          qualificationEvidenceRef: `blob:sha256:${hash(bytes)}`,
+        },
+        verify,
+        makeIo({ manifest: bytes }),
+      );
+      expect(result).toEqual({
+        _tag: "Unavailable",
+        reason: "ManifestCanonicalCodecInvalid",
+      });
+    },
+  );
+
   it("validates fixed artifact bytes, exact tuple/config/limits, digest reference and supplied provenance", () => {
     const inspection = inspectWindowsNativeQualificationPaths(
       paths,

@@ -40,14 +40,35 @@ source remains external/unimplemented, so the installed fixed inspector fails
 closed by default. The production helper package artifacts are not present in
 this checkpoint; their absence is also typed Unavailable.
 
+### Review follow-up: Disabled-only D1 boundary
+
+The D1 manifest codec accepts only `ReadOnly|WorkspaceWrite × Disabled` rows;
+Restricted and Enabled are rejected by both decoder and inspector. The record
+verifier enforces canonical structure, file hashes, exact expected bindings,
+and Pass for every matrix/control record that is present. It does not yet
+establish that the signed manifest contains the complete P12 control and
+adversarial matrix, nor that recorded host controls match the live host. Those
+completeness/current-host checks remain explicit D2/D6 gates;
+`ManifestVerified` is not a qualification or Supported result.
+
+This D1 scope does not assume a complete matrix from arbitrary manifest IDs;
+the full accepted control/adversarial ID inventory and live-host binding are
+explicitly left to D2/D6.
+
 ## Verification
 
 - `pnpm build`: PASS.
 - `pnpm typecheck`: PASS.
-- Windows adapter suites: 46/46 across 4 files, including 27 manifest tests.
+- Windows adapter suites with `--testTimeout=10000`: 48/48 across 4 files,
+  including 29 manifest tests; manifest-only default-timeout run 29/29.
 - Sandbox process architecture boundary: 24/24.
 - Changed-file Biome and `git diff --check`: PASS.
 - Full `pnpm check` and full repository tests were not run.
+
+The unchanged `windows-native-bridge.test.ts` Job Object memory/CPU case
+repeatedly exceeded its default 5-second per-test limit (observed roughly
+5.3–6.8 seconds) on this host; it passed in the package run with a 10-second
+command-line timeout. No unrelated test or timeout was edited.
 
 All Windows identities remain Experimental with empty capability tuples. No
 helper was built, launched, or installed, and no provider was marked Supported.
