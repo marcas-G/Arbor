@@ -255,6 +255,9 @@ describe("executable tool invocation identity scope", () => {
     let observedContext:
       | import("@arbor/ports").ToolExecutionContext
       | undefined;
+    let observedResolution:
+      | import("@arbor/ports").SandboxProcessPolicyResolution
+      | undefined;
     const episode = {
       _tag: "WorkEpisode" as const,
       workId: "wrk_identity-test" as never,
@@ -327,14 +330,22 @@ describe("executable tool invocation identity scope", () => {
     ];
     const handler = makeExecutableToolHandler(
       {
-        invoke: (_toolIntent, toolContext) => {
-          observedContext = toolContext;
-          return Effect.succeed({
-            _tag: "Success" as const,
-            observation: { text: "ok", truncated: false },
-            resultRef: null,
-          });
-        },
+        invoke: (_toolIntent, toolContext) =>
+          Effect.gen(function* () {
+            observedContext = toolContext;
+            if (toolContext.resolveSandboxProcessPolicy === undefined)
+              throw new Error("lazy policy resolver was not provided");
+            observedResolution = yield* toolContext.resolveSandboxProcessPolicy(
+              {
+                now: "2026-10-19T00:00:00.000Z",
+              },
+            );
+            return {
+              _tag: "Success" as const,
+              observation: { text: "ok", truncated: false },
+              resultRef: null,
+            };
+          }),
       },
       { now: () => Effect.succeed("2026-10-19T00:00:00.000Z") },
       {
@@ -356,20 +367,20 @@ describe("executable tool invocation identity scope", () => {
       } as never),
     );
     expect(observedContext?.executionEpisodeBinding).toEqual(episode);
-    expect(observedContext?.sandboxProcessPolicy).toBe(policy);
-    expect(observedContext?.sandboxProcessMountBindings).toBe(mounts);
+    expect(observedContext?.sandboxProcessPolicy).toBeUndefined();
+    expect(observedContext?.sandboxProcessMountBindings).toBeUndefined();
+    expect(observedResolution?.policy).toBe(policy);
+    expect(observedResolution?.mounts).toBe(mounts);
   });
 
-  it("parks shell before ToolRuntime when the exact committed policy is unavailable", async () => {
+  it("hands missing shell policy to ToolRuntime instead of parking before durable intent", async () => {
     let invocationCalls = 0;
     const handler = makeExecutableToolHandler(
       {
         invoke: () => {
           invocationCalls += 1;
           return Effect.succeed({
-            _tag: "Success" as const,
-            observation: { text: "must not run", truncated: false },
-            resultRef: null,
+            _tag: "SandboxPolicyRequiredInterruption" as const,
           });
         },
       },
@@ -398,7 +409,7 @@ describe("executable tool invocation identity scope", () => {
       } as never),
     );
     expect(result._tag).toBe("SandboxPolicyRequiredInterruption");
-    expect(invocationCalls).toBe(0);
+    expect(invocationCalls).toBe(1);
   });
 
   it("fails closed before ToolRuntime when an active ExecutionOrigin lacks the lease holder triple", async () => {

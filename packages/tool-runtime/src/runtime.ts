@@ -3798,6 +3798,7 @@ export const ToolRuntimeLive = (
           // approval, or admission path: those checks govern a new attempt
           // and can only overwrite or obscure the authenticated P39/P40
           // terminal selection below.
+          let processExecutionContext = context;
           if (recoveredToolOutcome === undefined) {
             const effectGateNow = yield* clock.now();
             const effectAuthority = Option.isSome(authorityResolver)
@@ -3906,27 +3907,56 @@ export const ToolRuntimeLive = (
             }
             if (
               executor.processCapability === "SandboxProcess" &&
-              (context.sandboxProcessPolicy === undefined ||
-                (context.sandboxProcessPolicy.expiresAt !== undefined &&
-                  Number.isFinite(
-                    Date.parse(context.sandboxProcessPolicy.expiresAt),
-                  ) &&
-                  new Date(
-                    Date.parse(context.sandboxProcessPolicy.expiresAt),
-                  ).toISOString() === context.sandboxProcessPolicy.expiresAt &&
-                  Date.parse(context.sandboxProcessPolicy.expiresAt) <=
-                    Date.parse(effectGateNow))) &&
               p39BindingEnabled &&
               Option.isSome(p39Recovery) &&
               recoveredToolOutcome === undefined &&
               (Option.isNone(prior) ||
                 prior.value.effectAdmissionState === "NotAdmitted")
             ) {
-              // P4 has already durably claimed the exact P3 action and bound
-              // its immutable recovery proof above. Policy absence parks that
-              // same action before effect admission; it is neither a denial
-              // nor a terminal ExpectedFailure/Observation.
-              return { _tag: "SandboxPolicyRequiredInterruption" as const };
+              const isPolicyExpired = (
+                policy: ToolExecutionContext["sandboxProcessPolicy"],
+                now: string,
+              ) =>
+                policy?.expiresAt !== undefined &&
+                Number.isFinite(Date.parse(policy.expiresAt)) &&
+                new Date(Date.parse(policy.expiresAt)).toISOString() ===
+                  policy.expiresAt &&
+                Date.parse(policy.expiresAt) <= Date.parse(now);
+              let processPolicy = context.sandboxProcessPolicy;
+              let policyNow = effectGateNow;
+              if (
+                (processPolicy === undefined ||
+                  isPolicyExpired(processPolicy, policyNow)) &&
+                context.resolveSandboxProcessPolicy !== undefined
+              ) {
+                // This resolver may read the current durable decision,
+                // authority bundle and P11 paths. It is intentionally run
+                // after the exact NotAdmitted intent/RecoveryBinding commit,
+                // after the existing authority/approval gate, and outside
+                // every TransactionPort scope.
+                policyNow = yield* clock.now();
+                const materialized = yield* context
+                  .resolveSandboxProcessPolicy({ now: policyNow })
+                  .pipe(Effect.catch(() => Effect.succeed(undefined)));
+                if (materialized !== undefined) {
+                  processPolicy = materialized.policy;
+                  processExecutionContext = {
+                    ...context,
+                    sandboxProcessPolicy: materialized.policy,
+                    sandboxProcessMountBindings: materialized.mounts,
+                  };
+                }
+              }
+              if (
+                processPolicy === undefined ||
+                isPolicyExpired(processPolicy, policyNow)
+              ) {
+                // P4 has already durably claimed the exact P3 action and bound
+                // its immutable recovery proof above. Policy absence parks that
+                // same action before effect admission; it is neither a denial
+                // nor a terminal ExpectedFailure/Observation.
+                return { _tag: "SandboxPolicyRequiredInterruption" as const };
+              }
             }
             if (options.qualificationProbe !== undefined) {
               yield* Effect.promise(
@@ -4101,11 +4131,13 @@ export const ToolRuntimeLive = (
                   const handle = yield* sandbox
                     .open(
                       executor.processCapability === "SandboxProcess" &&
-                        context.sandboxProcessMountBindings !== undefined
+                        processExecutionContext.sandboxProcessMountBindings !==
+                          undefined
                         ? {
                             executionId: context.executionId,
                             workspaceId: context.workspaceId,
-                            mounts: context.sandboxProcessMountBindings,
+                            mounts:
+                              processExecutionContext.sandboxProcessMountBindings,
                           }
                         : address === undefined || region === undefined
                           ? {
@@ -4140,11 +4172,17 @@ export const ToolRuntimeLive = (
                     executor.execute({
                       intent,
                       definition,
-                      context,
+                      context: processExecutionContext,
                       sandbox: handle,
                       regions,
                       ...(executor.processCapability === "SandboxProcess"
-                        ? { runProcess: runProcessFor(context, handle, intent) }
+                        ? {
+                            runProcess: runProcessFor(
+                              processExecutionContext,
+                              handle,
+                              intent,
+                            ),
+                          }
                         : {}),
                     }),
                     {

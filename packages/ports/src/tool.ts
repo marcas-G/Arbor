@@ -128,6 +128,12 @@ export interface ToolExecutionContext {
   /** Process-local full-boundary mounts materialized from the same current
    * P1 decision. Never persisted, decoded from model input, or projected. */
   readonly sandboxProcessMountBindings?: ReadonlyArray<SandboxMountBinding>;
+  /** Production executable routes provide a lazy current-policy resolver.
+   * P4 invokes it only after the exact intent/RecoveryBinding commit and
+   * outside TransactionPort, immediately before effect admission. */
+  readonly resolveSandboxProcessPolicy?: (input: {
+    readonly now: string;
+  }) => Effect.Effect<SandboxProcessPolicyResolution | undefined>;
   readonly workspaceId: WorkspaceId;
   readonly sessionId: SessionId;
   readonly projectId: ProjectId;
@@ -312,6 +318,11 @@ export interface SandboxMountBinding {
   >;
   readonly region: CanonicalResourceRegion;
   readonly access: SandboxMountAccess;
+}
+
+export interface SandboxProcessPolicyResolution {
+  readonly policy: SandboxProcessPolicy;
+  readonly mounts: ReadonlyArray<SandboxMountBinding>;
 }
 
 export interface SandboxOpenedMount {
