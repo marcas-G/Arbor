@@ -15,10 +15,12 @@ import { Effect, Layer } from "effect";
 export {
   fixedWindowsNativeArtifactPaths,
   inspectFixedWindowsNativeArtifact,
+  inspectWindowsNativeArtifactPaths,
   inspectWindowsNativeArtifactEvidence,
   WINDOWS_NATIVE_BRIDGE_SOURCE_SHA256,
   WINDOWS_NATIVE_COMPILER_ARGUMENTS,
   type WindowsNativeArtifactDigests,
+  type WindowsNativeArtifactIo,
   type WindowsNativeArtifactInspection,
   type WindowsNativeOperatorBuildBindingV1,
 } from "./native-artifact.js";

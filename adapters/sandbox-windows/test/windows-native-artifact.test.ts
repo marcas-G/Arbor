@@ -5,8 +5,10 @@ import {
   fixedWindowsNativeArtifactPaths,
   inspectFixedWindowsNativeArtifact,
   inspectWindowsNativeArtifactEvidence,
+  inspectWindowsNativeArtifactPaths,
   WINDOWS_NATIVE_BRIDGE_SOURCE_SHA256,
   WINDOWS_NATIVE_COMPILER_ARGUMENTS,
+  type WindowsNativeArtifactIo,
   type WindowsNativeOperatorBuildBindingV1,
 } from "../src/native-artifact.js";
 
@@ -46,6 +48,26 @@ const binding = {
   operatorSignatureRef: "test-only-unverified-signature",
   ...observed,
 } as const satisfies WindowsNativeOperatorBuildBindingV1;
+
+const fixturePaths = {
+  source: "source",
+  compiler: "compiler",
+  binary: "binary",
+};
+
+const digestFor = (name: string) =>
+  name === "source"
+    ? WINDOWS_NATIVE_BRIDGE_SOURCE_SHA256
+    : name === "compiler"
+      ? observed.compilerSha256
+      : observed.binarySha256;
+
+const fixtureIo: WindowsNativeArtifactIo = {
+  lstat: () => ({ isFile: () => true, isSymbolicLink: () => false }),
+  realpath: (path) => path,
+  read: (path) => Buffer.from(path),
+  hash: (bytes) => digestFor(bytes.toString("utf8")),
+};
 
 describe("Windows fixed native artifact contract", () => {
   it("pins adapter-owned source and exact compiler/binary locations", () => {
@@ -110,5 +132,83 @@ describe("Windows fixed native artifact contract", () => {
     expect(
       inspectFixedWindowsNativeArtifact(process.env.WINDIR)?._tag,
     ).not.toBe("Qualified");
+  });
+
+  it("turns deletion and unreadability races at every file I/O step into typed Unavailable", () => {
+    const secretPath = "C:\\private\\token.txt";
+    for (const [file, label] of [
+      ["source", "NativeSource"],
+      ["compiler", "NativeCompiler"],
+      ["binary", "NativeBinary"],
+    ] as const) {
+      for (const operation of ["lstat", "realpath", "read", "hash"] as const) {
+        for (const code of ["ENOENT", "EACCES"] as const) {
+          const failure = Object.assign(
+            new Error(`cannot read ${secretPath}`),
+            {
+              code,
+              path: secretPath,
+            },
+          );
+          const io: WindowsNativeArtifactIo = {
+            lstat: (path) => {
+              if (file === path && operation === "lstat") throw failure;
+              return fixtureIo.lstat(path);
+            },
+            realpath: (path) => {
+              if (file === path && operation === "realpath") throw failure;
+              return fixtureIo.realpath(path);
+            },
+            read: (path) => {
+              if (file === path && operation === "read") throw failure;
+              return fixtureIo.read(path);
+            },
+            hash: (bytes) => {
+              if (file === bytes.toString("utf8") && operation === "hash")
+                throw failure;
+              return fixtureIo.hash(bytes);
+            },
+          };
+          const result = inspectWindowsNativeArtifactPaths(
+            fixturePaths,
+            binding,
+            io,
+          );
+          expect(result).toEqual({
+            _tag: "Unavailable",
+            reason: `${label}${code === "ENOENT" ? "Missing" : "Unreadable"}`,
+          });
+          expect(JSON.stringify(result)).not.toContain(secretPath);
+          expect(JSON.stringify(result)).not.toContain("cannot read");
+        }
+      }
+    }
+  });
+
+  it("rejects symlinks and non-files without reading them", () => {
+    for (const [symbolicLink, regularFile] of [
+      [true, true],
+      [false, false],
+    ] as const) {
+      let readCalled = false;
+      const io: WindowsNativeArtifactIo = {
+        ...fixtureIo,
+        lstat: () => ({
+          isFile: () => regularFile,
+          isSymbolicLink: () => symbolicLink,
+        }),
+        read: (path) => {
+          readCalled = true;
+          return fixtureIo.read(path);
+        },
+      };
+      expect(
+        inspectWindowsNativeArtifactPaths(fixturePaths, binding, io),
+      ).toEqual({
+        _tag: "Unavailable",
+        reason: "NativeSourceNotRegularFile",
+      });
+      expect(readCalled).toBe(false);
+    }
   });
 });
