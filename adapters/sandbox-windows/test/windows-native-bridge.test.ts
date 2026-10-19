@@ -1,8 +1,15 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -15,13 +22,27 @@ const helperSource = join(
 const childSource = join(nativeSourceDirectory, "WindowsSandboxChild.cs");
 const expectedSourceDigests = {
   "WindowsSandboxBridgeHarness.cs":
-    "aefa0bed85c3a8b4ae11af92f29ad2e20cb3006b8424b1ebf89c5c2ccb96c709",
+    "1b26026d28f27ef11a1d8cb5a9b9f90e5641e13bd510bebfe7d9a7e59b29e926",
   "WindowsSandboxChild.cs":
-    "ae4e8d60e18206407938013e7005c79ef813054bdd512b16204a84ca7d3231b1",
+    "cc7473e7b8496357f40728f67b8963bf3f70fafa6469c03acb2e47e73711b42d",
 } as const;
 
 const sha256 = (value: Buffer | string): string =>
   createHash("sha256").update(value).digest("hex");
+
+const removeDisposableFixture = (path: string, prefix: string): void => {
+  if (path.length === 0) return;
+  const absolute = resolve(path);
+  if (
+    dirname(absolute) !== resolve(tmpdir()) ||
+    !basename(absolute).startsWith(prefix)
+  ) {
+    throw new Error(
+      "refusing to remove a path outside the disposable fixture root",
+    );
+  }
+  rmSync(absolute, { recursive: true, force: true });
+};
 
 const parseOutput = (value: string): Readonly<Record<string, string>> => {
   const entries = value.split(/\r?\n/u).map((line) => {
@@ -34,11 +55,12 @@ const parseOutput = (value: string): Readonly<Record<string, string>> => {
 };
 
 describe.skipIf(process.platform !== "win32")(
-  "Windows native bridge T3-A checkpoint",
+  "Windows native bridge T3-A/B checkpoints",
   () => {
     let buildDirectory = "";
     let bridgeExecutable = "";
     let childExecutable = "";
+    let resourceRoot = "";
 
     const run = (
       mode: string,
@@ -63,6 +85,9 @@ describe.skipIf(process.platform !== "win32")(
             String(options.stderrBytes ?? 8192),
             String(options.processCount ?? 4),
             String(options.memoryBytes ?? 256 * 1024 * 1024),
+            ...((mode === "filesystem" || mode === "reparse") && resourceRoot
+              ? [resourceRoot]
+              : []),
           ],
           {
             encoding: "utf8",
@@ -138,18 +163,29 @@ describe.skipIf(process.platform !== "win32")(
         [...common, "/target:exe", `/out:${bridgeExecutable}`, helperSource],
         { windowsHide: true, timeout: 30000, maxBuffer: 64 * 1024 },
       );
+      resourceRoot = mkdtempSync(join(tmpdir(), "arbor-sandbox-t3b-"));
+      const admitted = join(resourceRoot, "admitted");
+      const forbidden = join(resourceRoot, "forbidden");
+      const control = join(resourceRoot, "control");
+      mkdirSync(admitted);
+      mkdirSync(forbidden);
+      mkdirSync(control);
+      writeFileSync(join(admitted, "root.txt"), "admitted-seed\n");
+      writeFileSync(join(forbidden, "private.txt"), "forbidden-seed\n");
+      writeFileSync(join(control, "control.db"), "control-seed\n");
+      symlinkSync(forbidden, join(admitted, "escape"), "junction");
     });
 
     afterAll(() => {
-      if (buildDirectory.length > 0) {
-        rmSync(buildDirectory, { recursive: true, force: true });
-      }
+      removeDisposableFixture(resourceRoot, "arbor-sandbox-t3b-");
+      removeDisposableFixture(buildDirectory, "arbor-sandbox-t3a-");
     });
 
     it("runs a same-user low-integrity AppContainer with explicit handles and projected environment", () => {
       const result = run("identity");
       const output = childStdout(result);
       expect(output).toContain("APPCONTAINER=1");
+      expect(output).toContain("CAPABILITY_COUNT=0");
       expect(output).toMatch(/ENABLED_PRIVILEGE_COUNT=[01]/u);
       expect(output).toContain("LOW_INTEGRITY=1");
       expect(output).toContain("IN_JOB=1");
@@ -164,9 +200,51 @@ describe.skipIf(process.platform !== "win32")(
       expect(output).toContain("STDIN_INVALID=1");
       expect(output).toContain("STDOUT_PRESENT=1");
       expect(output).toContain("STDERR_PRESENT=1");
+      expect(output).toContain("STDOUT_HANDLE_VALID=1");
+      expect(output).toContain("STDERR_HANDLE_VALID=1");
+      expect(output).toMatch(/PARENT_SENTINEL_WAIT=(SEHException|4294967295)/u);
       expect(result.HANDLE_LIST_COUNT).toBe("2");
+      expect(result.PARENT_SENTINEL_INHERITABLE).toBe("1");
+      expect(result.ACL_SNAPSHOTS_RESTORED).toBe("2");
+      expect(result.ACL_RESTORED).toBe("1");
       expect(result.ROOT_EXIT_CODE).toBe("0");
       expect(result.PROFILE_CREATED).toBe("1");
+    });
+
+    it("distinguishes a listed inheritable sentinel from the default two-handle list", () => {
+      const result = run("handle-positive");
+      expect(childStdout(result)).toContain("PARENT_SENTINEL_WAIT=258");
+      expect(result.HANDLE_LIST_COUNT).toBe("3");
+      expect(result.PARENT_SENTINEL_INHERITABLE).toBe("1");
+      expect(result.ACL_RESTORED).toBe("1");
+      expect(result.ROOT_EXIT_CODE).toBe("0");
+    });
+
+    it("restores every temporary ACL and deletes the profile after a pre-spawn failure", () => {
+      const failure = spawnSync(
+        bridgeExecutable,
+        [
+          "launch",
+          childExecutable,
+          "fail-after-acl",
+          "10000",
+          "8192",
+          "8192",
+          "4",
+          String(256 * 1024 * 1024),
+        ],
+        { encoding: "utf8", windowsHide: true, timeout: 30000 },
+      );
+      expect(failure.error).toBeUndefined();
+      expect(failure.status).toBe(3);
+      const result = parseOutput(failure.stdout);
+      expect(result.HARNESS_ERROR).toContain(
+        "injected failure after ACL grants",
+      );
+      expect(result.ACL_SNAPSHOTS_RESTORED).toBe("2");
+      expect(result.ACL_RESTORED).toBe("1");
+      expect(result.PROFILE_DELETED).toBe("1");
+      expect(result.ROOT_EXIT_CODE).toBeUndefined();
     });
 
     it("contains descendants in the Job Object, enforces process count and kills the tree on close", () => {
@@ -224,6 +302,54 @@ describe.skipIf(process.platform !== "win32")(
       expect(cpu.JOB_TOTAL_TERMINATED_PROCESSES).toBe("1");
       expect(Number(cpu.JOB_TOTAL_USER_TIME_MS)).toBeGreaterThanOrEqual(500);
       expect(cpu.WALLTIME_EXPIRED).toBe("0");
+    });
+
+    it("admits one resource root and denies forbidden, control-DB, and junction targets", () => {
+      const preflight = run("reparse");
+      expect(preflight.REPARSE_REJECTED).toBe("1");
+      expect(preflight.ROOT_EXIT_CODE).toBeUndefined();
+
+      const result = run("filesystem");
+      const output = childStdout(result);
+      expect(output).toContain("ADMITTED_READ=1");
+      expect(output).toContain("ADMITTED_WRITE=1");
+      for (const label of ["FORBIDDEN", "CONTROL_DB", "JUNCTION_ESCAPE"]) {
+        expect(output).toContain(`${label}_READ=0`);
+        expect(output).toContain(
+          `${label}_READ_ERROR=UnauthorizedAccessException`,
+        );
+        expect(output).toContain(`${label}_WRITE=0`);
+        expect(output).toContain(
+          `${label}_WRITE_ERROR=UnauthorizedAccessException`,
+        );
+      }
+      expect(
+        readFileSync(join(resourceRoot, "admitted", "root.txt"), "utf8"),
+      ).toBe("admitted-seed\nchild-write\n");
+      expect(
+        readFileSync(join(resourceRoot, "forbidden", "private.txt"), "utf8"),
+      ).toBe("forbidden-seed\n");
+      expect(
+        readFileSync(join(resourceRoot, "control", "control.db"), "utf8"),
+      ).toBe("control-seed\n");
+      expect(result.ACL_SNAPSHOTS_RESTORED).toBe("5");
+      expect(result.ACL_RESTORED).toBe("1");
+      expect(result.ROOT_EXIT_CODE).toBe("0");
+    });
+
+    it("blocks direct loopback completion and denies private and reserved-public sockets", () => {
+      const result = run("network");
+      const output = childStdout(result);
+      expect(output).toContain("CAPABILITY_COUNT=0");
+      expect(output).toContain("LOOPBACK_CONNECTED=0");
+      expect(output).toMatch(/LOOPBACK_SOCKET_ERROR=(TIMEOUT|10013)/u);
+      for (const label of ["PRIVATE", "PUBLIC_RESERVED"]) {
+        expect(output).toContain(`${label}_CONNECTED=0`);
+        expect(output).toContain(`${label}_SOCKET_ERROR=10013`);
+      }
+      expect(result.LOCAL_LISTENER_PENDING).toBe("0");
+      expect(result.ACL_RESTORED).toBe("1");
+      expect(result.ROOT_EXIT_CODE).toBe("0");
     });
   },
 );
