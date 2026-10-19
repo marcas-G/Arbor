@@ -25,20 +25,22 @@ const EXPERIMENTAL_VERSION = "experimental-v1";
 
 export { SANDBOX_ENV_ALLOWLIST, sandboxEnvironment };
 
+export type PrerequisiteStatus = "PrerequisiteDetected" | "Unavailable";
+
 export interface NativePosixProbe {
   readonly platform: string;
-  readonly bwrap: boolean;
-  readonly userNamespace: boolean;
-  readonly mountNamespace: boolean;
-  readonly pidNamespace: boolean;
-  readonly networkNamespace: boolean;
-  readonly cgroupV2: boolean;
-  readonly cgroupPids: boolean;
-  readonly cgroupMemory: boolean;
-  readonly cgroupCpu: boolean;
-  readonly seccomp: boolean;
-  readonly brokerChannel: boolean;
-  readonly processTreeCleanup: boolean;
+  readonly bwrapExecutable: PrerequisiteStatus;
+  readonly userNamespaceProbe: PrerequisiteStatus;
+  readonly mountNamespaceProbe: PrerequisiteStatus;
+  readonly pidNamespaceProbe: PrerequisiteStatus;
+  readonly networkNamespaceProbe: PrerequisiteStatus;
+  readonly cgroupV2Hierarchy: PrerequisiteStatus;
+  readonly cgroupPidsController: PrerequisiteStatus;
+  readonly cgroupMemoryController: PrerequisiteStatus;
+  readonly cgroupCpuController: PrerequisiteStatus;
+  readonly seccompInterface: PrerequisiteStatus;
+  readonly networkBrokerChannel: PrerequisiteStatus;
+  readonly processKillApi: PrerequisiteStatus;
 }
 
 export interface LinuxProbeInput {
@@ -58,7 +60,7 @@ export interface SeatbeltProbeInput {
 
 export interface NativePosixCapability extends SandboxProviderCapability {
   readonly failureCode: string | null;
-  readonly primitives: Readonly<Record<string, unknown>>;
+  readonly prerequisites: Readonly<Record<string, PrerequisiteStatus>>;
 }
 
 export type PolicyPlan =
@@ -67,7 +69,7 @@ export type PolicyPlan =
       readonly argv: ReadonlyArray<string>;
       readonly cwd: string;
       readonly env: NodeJS.ProcessEnv;
-      readonly limits: SandboxProcessPolicy["limits"];
+      readonly requestedLimits: SandboxProcessPolicy["limits"];
     }
   | { readonly _tag: "Unavailable"; readonly failureCode: string };
 
@@ -75,7 +77,7 @@ export type SeatbeltProfile =
   | {
       readonly _tag: "Ready";
       readonly source: string;
-      readonly limits: SandboxProcessPolicy["limits"];
+      readonly requestedLimits: SandboxProcessPolicy["limits"];
     }
   | { readonly _tag: "Unavailable"; readonly failureCode: string };
 
@@ -305,7 +307,7 @@ export const buildBwrapPlan = (input: PlanInput): PolicyPlan => {
     argv,
     cwd: "/",
     env: validated.env,
-    limits: input.policy.limits,
+    requestedLimits: input.policy.limits,
   };
 };
 
@@ -366,41 +368,50 @@ export const buildSeatbeltProfile = (input: {
   return {
     _tag: "Ready",
     source: `${lines.join("\n")}\n`,
-    limits: policy.limits,
+    requestedLimits: policy.limits,
   };
 };
 
-const evidenceRef = (probe: unknown): string =>
-  `sha256:${createHash("sha256").update(JSON.stringify(probe)).digest("hex")}`;
+const prerequisiteDetectionRef = (prerequisites: unknown): string =>
+  `sha256:${createHash("sha256").update(JSON.stringify(prerequisites)).digest("hex")}`;
 
-const linuxBaseControls = (probe: NativePosixProbe) => ({
-  bwrap: probe.bwrap,
-  userNamespace: probe.userNamespace,
-  mountNamespace: probe.mountNamespace,
-  pidNamespace: probe.pidNamespace,
-  networkNamespace: probe.networkNamespace,
-  cgroupV2: probe.cgroupV2,
-  cgroupPids: probe.cgroupPids,
-  cgroupMemory: probe.cgroupMemory,
-  cgroupCpu: probe.cgroupCpu,
-  processTreeCleanup: probe.processTreeCleanup,
+const linuxRequiredPrerequisites = (probe: NativePosixProbe) => ({
+  bwrapExecutable: probe.bwrapExecutable,
+  userNamespaceProbe: probe.userNamespaceProbe,
+  mountNamespaceProbe: probe.mountNamespaceProbe,
+  pidNamespaceProbe: probe.pidNamespaceProbe,
+  networkNamespaceProbe: probe.networkNamespaceProbe,
+  cgroupV2Hierarchy: probe.cgroupV2Hierarchy,
+  cgroupPidsController: probe.cgroupPidsController,
+  cgroupMemoryController: probe.cgroupMemoryController,
+  cgroupCpuController: probe.cgroupCpuController,
+  processKillApi: probe.processKillApi,
+});
+
+const linuxPrerequisiteStatuses = (probe: NativePosixProbe) => ({
+  ...linuxRequiredPrerequisites(probe),
+  seccompInterface: probe.seccompInterface,
+  networkBrokerChannel: probe.networkBrokerChannel,
 });
 
 const unavailableLinuxProbe = (platform: string): NativePosixProbe => ({
   platform,
-  bwrap: false,
-  userNamespace: false,
-  mountNamespace: false,
-  pidNamespace: false,
-  networkNamespace: false,
-  cgroupV2: false,
-  cgroupPids: false,
-  cgroupMemory: false,
-  cgroupCpu: false,
-  seccomp: false,
-  brokerChannel: false,
-  processTreeCleanup: false,
+  bwrapExecutable: "Unavailable",
+  userNamespaceProbe: "Unavailable",
+  mountNamespaceProbe: "Unavailable",
+  pidNamespaceProbe: "Unavailable",
+  networkNamespaceProbe: "Unavailable",
+  cgroupV2Hierarchy: "Unavailable",
+  cgroupPidsController: "Unavailable",
+  cgroupMemoryController: "Unavailable",
+  cgroupCpuController: "Unavailable",
+  seccompInterface: "Unavailable",
+  networkBrokerChannel: "Unavailable",
+  processKillApi: "Unavailable",
 });
+
+const prerequisiteStatus = (available: boolean): PrerequisiteStatus =>
+  available ? "PrerequisiteDetected" : "Unavailable";
 
 const hostReadFile = async (path: string) => {
   try {
@@ -421,7 +432,7 @@ const hostRun = async (command: string, args: ReadonlyArray<string>) => {
     : undefined;
 };
 
-/** Probe Linux primitives without creating cgroups or installing system packages. */
+/** Detect Linux prerequisites without creating cgroups or installing packages. */
 export const probeLinuxBwrap = async (
   input: LinuxProbeInput,
 ): Promise<NativePosixCapability> => {
@@ -447,51 +458,71 @@ export const probeLinuxBwrap = async (
       ])) !== undefined;
     probe = {
       platform: input.platform,
-      bwrap: version !== undefined && help !== undefined,
-      userNamespace: await namespace(["--unshare-user"]),
-      mountNamespace: await namespace(["--unshare-user"]),
-      pidNamespace: await namespace(["--unshare-user", "--unshare-pid"]),
-      networkNamespace: await namespace(["--unshare-user", "--unshare-net"]),
-      cgroupV2: controllers !== undefined,
-      cgroupPids: controllers?.split(/\s+/u).includes("pids") ?? false,
-      cgroupMemory: controllers?.split(/\s+/u).includes("memory") ?? false,
-      cgroupCpu: controllers?.split(/\s+/u).includes("cpu") ?? false,
-      seccomp: seccomp !== undefined && help?.includes("--seccomp") === true,
-      brokerChannel: false,
-      processTreeCleanup:
+      bwrapExecutable: prerequisiteStatus(
+        version !== undefined && help !== undefined,
+      ),
+      userNamespaceProbe: prerequisiteStatus(
+        await namespace(["--unshare-user"]),
+      ),
+      mountNamespaceProbe: prerequisiteStatus(
+        await namespace(["--unshare-user"]),
+      ),
+      pidNamespaceProbe: prerequisiteStatus(
+        await namespace(["--unshare-user", "--unshare-pid"]),
+      ),
+      networkNamespaceProbe: prerequisiteStatus(
+        await namespace(["--unshare-user", "--unshare-net"]),
+      ),
+      cgroupV2Hierarchy: prerequisiteStatus(controllers !== undefined),
+      cgroupPidsController: prerequisiteStatus(
+        controllers?.split(/\s+/u).includes("pids") ?? false,
+      ),
+      cgroupMemoryController: prerequisiteStatus(
+        controllers?.split(/\s+/u).includes("memory") ?? false,
+      ),
+      cgroupCpuController: prerequisiteStatus(
+        controllers?.split(/\s+/u).includes("cpu") ?? false,
+      ),
+      seccompInterface: prerequisiteStatus(
+        seccomp !== undefined && help?.includes("--seccomp") === true,
+      ),
+      networkBrokerChannel: "Unavailable",
+      processKillApi: prerequisiteStatus(
         process.platform === "linux" && typeof process.kill === "function",
+      ),
     };
   }
   probe ??= unavailableLinuxProbe(input.platform);
-  const controls = linuxBaseControls(probe);
-  const ready =
-    input.platform === "linux" && Object.values(controls).every(Boolean);
+  const prerequisites = linuxRequiredPrerequisites(probe);
+  const allDetected = Object.values(prerequisites).every(
+    (status) => status === "PrerequisiteDetected",
+  );
   const failureCode =
     input.platform !== "linux"
       ? "UnsupportedPlatform"
-      : ready
+      : allDetected
         ? null
-        : "RequiredPrimitiveUnavailable";
+        : "RequiredPrerequisiteUnavailable";
   return {
     providerId: LINUX_BWRAP_PROVIDER_ID,
     providerVersion: EXPERIMENTAL_VERSION,
     capabilityRevision: "linux-bwrap-probe-v1",
-    probeEvidenceRef: evidenceRef(probe),
-    status: ready ? "Experimental" : "Unavailable",
+    probeEvidenceRef: prerequisiteDetectionRef(probe),
+    status: "Experimental",
     boundary: "OsEnforced",
-    profiles: ready ? ["ReadOnly", "WorkspaceWrite", "FullAccess"] : [],
-    networkModes: ready ? ["Disabled"] : [],
+    profiles: [],
+    networkModes: [],
     failureCode,
-    primitives: { ...probe, brokerChannel: probe.brokerChannel },
+    prerequisites: linuxPrerequisiteStatuses(probe),
   };
 };
 
 export interface SeatbeltProbe {
   readonly platform: string;
-  readonly sandboxExec: boolean;
-  readonly processGroupCleanup: boolean;
-  readonly rlimitWrapper: boolean;
-  readonly brokerChannel: boolean;
+  readonly sandboxExecFile: PrerequisiteStatus;
+  readonly processKillApi: PrerequisiteStatus;
+  readonly rlimitHelperFile: PrerequisiteStatus;
+  readonly networkBrokerChannel: PrerequisiteStatus;
 }
 
 export const probeMacOSSeatbelt = async (
@@ -500,34 +531,44 @@ export const probeMacOSSeatbelt = async (
   const exists = input.exists ?? existsSync;
   const probe: SeatbeltProbe = {
     platform: input.platform,
-    sandboxExec: input.platform === "darwin" && exists("/usr/bin/sandbox-exec"),
-    processGroupCleanup:
+    sandboxExecFile: prerequisiteStatus(
+      input.platform === "darwin" && exists("/usr/bin/sandbox-exec"),
+    ),
+    processKillApi: prerequisiteStatus(
       input.platform === "darwin" && typeof process.kill === "function",
-    rlimitWrapper: input.platform === "darwin" && exists("/usr/bin/prlimit"),
-    brokerChannel: false,
+    ),
+    rlimitHelperFile: prerequisiteStatus(
+      input.platform === "darwin" && exists("/usr/bin/prlimit"),
+    ),
+    networkBrokerChannel: "Unavailable",
   };
-  const ready =
+  const allDetected =
     input.platform === "darwin" &&
-    probe.sandboxExec &&
-    probe.processGroupCleanup &&
-    probe.rlimitWrapper;
+    probe.sandboxExecFile === "PrerequisiteDetected" &&
+    probe.processKillApi === "PrerequisiteDetected" &&
+    probe.rlimitHelperFile === "PrerequisiteDetected";
   const failureCode =
     input.platform !== "darwin"
       ? "UnsupportedPlatform"
-      : ready
+      : allDetected
         ? null
-        : "RequiredPrimitiveUnavailable";
+        : "RequiredPrerequisiteUnavailable";
   return {
     providerId: MACOS_SEATBELT_PROVIDER_ID,
     providerVersion: EXPERIMENTAL_VERSION,
     capabilityRevision: "macos-seatbelt-probe-v1",
-    probeEvidenceRef: evidenceRef(probe),
-    status: ready ? "Experimental" : "Unavailable",
+    probeEvidenceRef: prerequisiteDetectionRef(probe),
+    status: "Experimental",
     boundary: "OsEnforced",
-    profiles: ready ? ["ReadOnly", "WorkspaceWrite", "FullAccess"] : [],
-    networkModes: ready ? ["Disabled"] : [],
+    profiles: [],
+    networkModes: [],
     failureCode,
-    primitives: { ...probe },
+    prerequisites: {
+      sandboxExecFile: probe.sandboxExecFile,
+      processKillApi: probe.processKillApi,
+      rlimitHelperFile: probe.rlimitHelperFile,
+      networkBrokerChannel: probe.networkBrokerChannel,
+    },
   };
 };
 
@@ -572,10 +613,10 @@ export const NativePosixSandboxProcessPortLive = (
           if (probe === undefined)
             return unavailable(request.policy, "ProviderNotFound", null);
           const capability = await probe();
-          if (capability.status === "Unavailable")
+          if (capability.failureCode !== null)
             return unavailable(
               request.policy,
-              capability.failureCode ?? "RequiredPrimitiveUnavailable",
+              capability.failureCode,
               capability.probeEvidenceRef,
             );
           return unavailable(
@@ -602,12 +643,12 @@ const unavailableCapability = (
   providerVersion: EXPERIMENTAL_VERSION,
   capabilityRevision: "probe-failed-v1",
   probeEvidenceRef: null,
-  status: "Unavailable",
+  status: "Experimental",
   boundary: "OsEnforced",
   profiles: [],
   networkModes: [],
   failureCode,
-  primitives: {},
+  prerequisites: { capabilityProbe: "Unavailable" },
 });
 
 const unavailable = (

@@ -104,7 +104,7 @@ describe("native POSIX sandbox policy plans", () => {
     expect(plan.argv).toContain("--bind");
     expect(plan.argv).not.toContain("--share-net");
     expect(plan.env).toEqual({ PATH: "/host/bin", LANG: "C" });
-    expect(plan.limits).toEqual(policy.limits);
+    expect(plan.requestedLimits).toEqual(policy.limits);
     expect(
       plan.argv.slice(
         plan.argv.indexOf("--chdir"),
@@ -186,35 +186,43 @@ describe("native POSIX sandbox policy plans", () => {
     });
     expect(linux).toMatchObject({
       providerId: "linux-bwrap",
-      status: "Unavailable",
+      status: "Experimental",
+      profiles: [],
+      networkModes: [],
+      failureCode: "UnsupportedPlatform",
     });
     expect(mac).toMatchObject({
       providerId: "macos-seatbelt",
-      status: "Unavailable",
+      status: "Experimental",
+      profiles: [],
+      networkModes: [],
+      failureCode: "UnsupportedPlatform",
     });
     expect(missingBwrap).toMatchObject({
       providerId: "linux-bwrap",
-      status: "Unavailable",
-      failureCode: "RequiredPrimitiveUnavailable",
+      status: "Experimental",
+      profiles: [],
+      networkModes: [],
+      failureCode: "RequiredPrerequisiteUnavailable",
     });
     expect([linux.status, mac.status]).not.toContain("Supported");
   });
 
-  it("keeps Seatbelt unavailable until sandbox-exec, process-group cleanup and rlimit support are present", async () => {
+  it("records Seatbelt executable and API prerequisites without claiming controls", async () => {
     const unavailable = await probeMacOSSeatbelt({
       platform: "darwin",
       exists: (path) => path === "/usr/bin/sandbox-exec",
     });
     expect(unavailable).toMatchObject({
-      status: "Unavailable",
-      failureCode: "RequiredPrimitiveUnavailable",
+      status: "Experimental",
+      failureCode: "RequiredPrerequisiteUnavailable",
       profiles: [],
       networkModes: [],
-      primitives: {
-        sandboxExec: true,
-        processGroupCleanup: true,
-        rlimitWrapper: false,
-        brokerChannel: false,
+      prerequisites: {
+        sandboxExecFile: "PrerequisiteDetected",
+        processKillApi: "PrerequisiteDetected",
+        rlimitHelperFile: "Unavailable",
+        networkBrokerChannel: "Unavailable",
       },
     });
     const experimental = await probeMacOSSeatbelt({
@@ -223,41 +231,50 @@ describe("native POSIX sandbox policy plans", () => {
     });
     expect(experimental).toMatchObject({
       status: "Experimental",
-      profiles: ["ReadOnly", "WorkspaceWrite", "FullAccess"],
-      networkModes: ["Disabled"],
+      profiles: [],
+      networkModes: [],
+      failureCode: null,
     });
   });
 
-  it("requires every Linux primitive and broker channel before enabling a network mode", async () => {
+  it("records Linux prerequisite presence without publishing profile or network tuples", async () => {
     const evidence: NativePosixProbe = {
       platform: "linux",
-      bwrap: true,
-      userNamespace: true,
-      mountNamespace: true,
-      pidNamespace: true,
-      networkNamespace: true,
-      cgroupV2: true,
-      cgroupPids: true,
-      cgroupMemory: true,
-      cgroupCpu: true,
-      seccomp: true,
-      brokerChannel: false,
-      processTreeCleanup: true,
+      bwrapExecutable: "PrerequisiteDetected",
+      userNamespaceProbe: "PrerequisiteDetected",
+      mountNamespaceProbe: "PrerequisiteDetected",
+      pidNamespaceProbe: "PrerequisiteDetected",
+      networkNamespaceProbe: "PrerequisiteDetected",
+      cgroupV2Hierarchy: "PrerequisiteDetected",
+      cgroupPidsController: "PrerequisiteDetected",
+      cgroupMemoryController: "PrerequisiteDetected",
+      cgroupCpuController: "PrerequisiteDetected",
+      seccompInterface: "PrerequisiteDetected",
+      networkBrokerChannel: "Unavailable",
+      processKillApi: "PrerequisiteDetected",
     };
     const result = await probeLinuxBwrap({
       platform: "linux",
       probe: evidence,
     });
     expect(result.status).toBe("Experimental");
-    expect(result.networkModes).toEqual(["Disabled"]);
+    expect(result.profiles).toEqual([]);
+    expect(result.networkModes).toEqual([]);
+    expect(result.prerequisites).toMatchObject({
+      cgroupPidsController: "PrerequisiteDetected",
+      cgroupMemoryController: "PrerequisiteDetected",
+      cgroupCpuController: "PrerequisiteDetected",
+      processKillApi: "PrerequisiteDetected",
+      networkBrokerChannel: "Unavailable",
+    });
     expect(result.probeEvidenceRef).toMatch(/^sha256:[0-9a-f]{64}$/u);
     const missingCpu = await probeLinuxBwrap({
       platform: "linux",
-      probe: { ...evidence, cgroupCpu: false },
+      probe: { ...evidence, cgroupCpuController: "Unavailable" },
     });
     expect(missingCpu).toMatchObject({
-      status: "Unavailable",
-      failureCode: "RequiredPrimitiveUnavailable",
+      status: "Experimental",
+      failureCode: "RequiredPrerequisiteUnavailable",
       profiles: [],
       networkModes: [],
     });
@@ -291,18 +308,23 @@ describe("native POSIX sandbox policy plans", () => {
     expect(namespaceCalls.some((args) => args.includes("--unshare-net"))).toBe(
       true,
     );
-    expect(result.primitives).toMatchObject({
-      userNamespace: true,
-      mountNamespace: true,
-      pidNamespace: true,
-      networkNamespace: true,
-      cgroupPids: true,
-      cgroupMemory: true,
-      cgroupCpu: true,
-      seccomp: true,
-      brokerChannel: false,
+    expect(result.prerequisites).toMatchObject({
+      userNamespaceProbe: "PrerequisiteDetected",
+      mountNamespaceProbe: "PrerequisiteDetected",
+      pidNamespaceProbe: "PrerequisiteDetected",
+      networkNamespaceProbe: "PrerequisiteDetected",
+      cgroupPidsController: "PrerequisiteDetected",
+      cgroupMemoryController: "PrerequisiteDetected",
+      cgroupCpuController: "PrerequisiteDetected",
+      seccompInterface: "PrerequisiteDetected",
+      networkBrokerChannel: "Unavailable",
+      processKillApi: "Unavailable",
     });
-    expect(result.status).not.toBe("Supported");
+    expect(result).toMatchObject({
+      status: "Experimental",
+      profiles: [],
+      networkModes: [],
+    });
   });
 
   it("rejects Restricted networking without an installed broker", () => {
@@ -361,7 +383,7 @@ describe("native POSIX sandbox policy plans", () => {
       expect(plan.env).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
   });
 
-  it("keeps an Experimental provider fail-closed at run and returns its probe evidence", async () => {
+  it("keeps an Experimental provider tuple-free and returns Unavailable from run", async () => {
     const root = makeRoot();
     writeFileSync(join(root, "bin", "tool"), "#!/bin/sh\nexit 0\n");
     const provider = NativePosixSandboxProcessPortLive({
@@ -373,15 +395,15 @@ describe("native POSIX sandbox policy plans", () => {
         probeEvidenceRef: "sha256:test",
         status: "Experimental",
         boundary: "OsEnforced",
-        profiles: ["ReadOnly", "WorkspaceWrite", "FullAccess"],
-        networkModes: ["Disabled"],
+        profiles: [],
+        networkModes: [],
         failureCode: null,
-        primitives: {
-          bwrap: true,
-          cgroupPids: true,
-          cgroupMemory: true,
-          cgroupCpu: true,
-          processTreeCleanup: true,
+        prerequisites: {
+          bwrapExecutable: "PrerequisiteDetected",
+          cgroupPidsController: "PrerequisiteDetected",
+          cgroupMemoryController: "PrerequisiteDetected",
+          cgroupCpuController: "PrerequisiteDetected",
+          processKillApi: "PrerequisiteDetected",
         },
       }),
       seatbeltProbe: async () => ({
@@ -389,12 +411,12 @@ describe("native POSIX sandbox policy plans", () => {
         providerVersion: "experimental-v1",
         capabilityRevision: "probe-test",
         probeEvidenceRef: "sha256:test-mac",
-        status: "Unavailable",
+        status: "Experimental",
         boundary: "OsEnforced",
         profiles: [],
         networkModes: [],
         failureCode: "UnsupportedPlatform",
-        primitives: {},
+        prerequisites: { platform: "Unavailable" },
       }),
     });
     const request: SandboxProcessRequest = {
@@ -417,8 +439,13 @@ describe("native POSIX sandbox policy plans", () => {
     expect(
       result.capabilities.find(
         (capability) => capability.providerId === "linux-bwrap",
-      )?.status,
-    ).toBe("Experimental");
+      ),
+    ).toMatchObject({
+      status: "Experimental",
+      profiles: [],
+      networkModes: [],
+      prerequisites: { bwrapExecutable: "PrerequisiteDetected" },
+    });
     expect(result.outcome).toMatchObject({
       _tag: "Unavailable",
       failureCode: "ExperimentalProviderExecutionDisabled",
