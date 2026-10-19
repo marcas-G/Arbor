@@ -25,6 +25,24 @@ export {
   type WindowsNativeOperatorBuildBindingV1,
 } from "./native-artifact.js";
 
+export {
+  decodeCanonicalWindowsNativeArtifactManifestV1,
+  decodeWindowsNativeArtifactManifestV1,
+  encodeWindowsNativeArtifactManifestV1,
+  fixedWindowsNativeProductionArtifactPaths,
+  inspectFixedWindowsNativeQualificationManifest,
+  WINDOWS_NATIVE_PROCESS_HOST_COMPILER_ARGUMENTS_V1,
+  type WindowsNativeArtifactHashV1,
+  type WindowsNativeArtifactManifestV1,
+  type WindowsNativeQualificationExpectationV1,
+  type WindowsNativeQualificationHostControlV1,
+  type WindowsNativeQualificationInspection,
+  type WindowsNativeQualificationLimitsV1,
+  type WindowsNativeQualificationMatrixResultV1,
+  type WindowsNativeQualificationProvenanceVerifier,
+  type WindowsNativeQualificationTupleV1,
+} from "./qualification-manifest.js";
+
 export const WINDOWS_SANDBOX_PROVIDER_IDS = {
   mxc: "windows-mxc",
   elevatedDedicatedUser: "windows-elevated-dedicated-user",
