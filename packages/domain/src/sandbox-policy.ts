@@ -23,12 +23,112 @@ export type SandboxProviderId = string;
 export interface SandboxPolicyGrantIssuerConfigV1 {
   readonly version: 1;
   readonly revision: number;
-  readonly operators: ReadonlyArray<PrincipalType>;
+  readonly issuers: ReadonlyArray<PrincipalType>;
 }
 
 export interface SandboxPolicyGrantIssuerConfigSnapshotV1 {
   readonly config: SandboxPolicyGrantIssuerConfigV1;
   readonly configDigest: string;
+  readonly authorityBundleRevision: number;
+  readonly authorityBundleDigest: string;
+  readonly providerRegistryRevision: number;
+  readonly providerRegistryDigest: string;
+  readonly providerRegistry: SandboxProviderQualificationRegistryV1;
+}
+
+export type SandboxAuthorityLoadErrorV1 =
+  | "SourceMissing"
+  | "SourceUnreadable"
+  | "SourceAclInvalid"
+  | "SourceIdentityInvalid"
+  | "SourceReparseDetected"
+  | "BundleMalformed"
+  | "IssuerConfigMalformed"
+  | "ProviderRegistryMalformed"
+  | "CanonicalEncodingInvalid"
+  | "DigestMismatch"
+  | "HighWaterMissing"
+  | "HighWaterUnreadable"
+  | "HighWaterCorrupt"
+  | "RevisionRollback"
+  | "RevisionReuseMismatch"
+  | "SourceReenrollmentRequired"
+  | "HighWaterCommitFailed";
+
+export type SandboxAuthorityAuditOutcomeV1 =
+  | "Loaded"
+  | "Rejected"
+  | "HighWaterAdvanced"
+  | "ReenrollmentRequired"
+  | "QualificationAccepted"
+  | "QualificationRejected";
+
+export interface SandboxProviderQualificationTupleV1 {
+  readonly profile: "ReadOnly" | "WorkspaceWrite";
+  readonly networkMode: SandboxNetworkMode;
+  readonly networkPolicyCodecVersion: 1;
+  readonly enforcementRuleSetDigest: string;
+}
+
+export interface SandboxProviderQualificationEntryV1 {
+  readonly providerId: string;
+  readonly providerVersion: string;
+  readonly capabilityRevision: number;
+  readonly osFamily: "Linux" | "macOS" | "Windows";
+  readonly osBuild: string;
+  readonly tuple: SandboxProviderQualificationTupleV1;
+  readonly status: "Experimental" | "Unavailable" | "Supported";
+  readonly qualificationEvidenceRef: string | null;
+}
+
+export interface SandboxProviderQualificationRegistryV1 {
+  readonly version: 1;
+  readonly revision: number;
+  readonly entries: ReadonlyArray<SandboxProviderQualificationEntryV1>;
+}
+
+export interface SandboxAuthorityBundleV1 {
+  readonly version: 1;
+  readonly sourceIdentity: string;
+  readonly bundleRevision: number;
+  readonly issuerConfigRevision: number;
+  readonly issuerConfigDigest: string;
+  readonly issuerConfig: SandboxPolicyGrantIssuerConfigV1;
+  readonly providerRegistryRevision: number;
+  readonly providerRegistryDigest: string;
+  readonly providerRegistry: SandboxProviderQualificationRegistryV1;
+}
+
+export interface SandboxAuthorityHighWaterV1 {
+  readonly version: 1;
+  readonly sourceIdentity: string;
+  readonly bundleRevision: number;
+  readonly bundleDigest: string;
+  readonly issuerConfigRevision: number;
+  readonly issuerConfigDigest: string;
+  readonly providerRegistryRevision: number;
+  readonly providerRegistryDigest: string;
+}
+
+export interface SandboxAuthorityAuditRecordV1 {
+  readonly version: 1;
+  readonly outcome: SandboxAuthorityAuditOutcomeV1;
+  readonly detail: SandboxAuthorityLoadErrorV1 | null;
+  readonly sourceIdentity: string | null;
+  readonly bundleRevision: number | null;
+  readonly bundleDigest: string | null;
+  readonly issuerConfigRevision: number | null;
+  readonly issuerConfigDigest: string | null;
+  readonly providerRegistryRevision: number | null;
+  readonly providerRegistryDigest: string | null;
+  readonly occurredAt: string;
+}
+
+export interface SandboxAuthorityBundleSnapshotV1 {
+  readonly bundle: SandboxAuthorityBundleV1;
+  readonly bundleDigest: string;
+  readonly canonicalJson: string;
+  readonly issuerConfigSnapshot: SandboxPolicyGrantIssuerConfigSnapshotV1;
 }
 
 const compareUtf8Ordinal = (left: string, right: string): number => {
@@ -57,16 +157,17 @@ export const decodeSandboxPolicyGrantIssuerConfigV1 = (
   }
   const value = input as Record<string, unknown>;
   if (
-    !exactKeys(value, ["version", "revision", "operators"]) ||
+    !exactKeys(value, ["version", "revision", "issuers"]) ||
     value.version !== 1 ||
     !Number.isSafeInteger(value.revision) ||
     (value.revision as number) < 1 ||
-    !Array.isArray(value.operators)
+    !Array.isArray(value.issuers) ||
+    value.issuers.length === 0
   ) {
     return undefined;
   }
-  const operators: PrincipalType[] = [];
-  for (const candidate of value.operators) {
+  const issuers: PrincipalType[] = [];
+  for (const candidate of value.issuers) {
     if (
       typeof candidate !== "string" ||
       !candidate.startsWith("user:") ||
@@ -77,15 +178,14 @@ export const decodeSandboxPolicyGrantIssuerConfigV1 = (
       return undefined;
     }
     try {
-      operators.push(parse(Principal)(candidate));
+      issuers.push(parse(Principal)(candidate));
     } catch {
       return undefined;
     }
   }
-  for (let index = 1; index < operators.length; index += 1) {
+  for (let index = 1; index < issuers.length; index += 1) {
     if (
-      compareUtf8Ordinal(operators[index - 1] ?? "", operators[index] ?? "") >=
-      0
+      compareUtf8Ordinal(issuers[index - 1] ?? "", issuers[index] ?? "") >= 0
     ) {
       return undefined;
     }
@@ -93,16 +193,16 @@ export const decodeSandboxPolicyGrantIssuerConfigV1 = (
   return {
     version: 1,
     revision: value.revision as number,
-    operators,
+    issuers,
   };
 };
 
 /** Canonical RFC 8785 JSON bytes for the closed config shape. Object keys use
- * JCS ordinal order; the codec requires already-sorted operator principals. */
+ * order; the issuer array is strictly UTF-8 sorted and non-empty. */
 export const encodeSandboxPolicyGrantIssuerConfigV1 = (
   config: SandboxPolicyGrantIssuerConfigV1,
 ): string =>
-  `{"operators":${JSON.stringify(config.operators)},"revision":${config.revision},"version":1}`;
+  `{"version":1,"revision":${config.revision},"issuers":${JSON.stringify(config.issuers)}}`;
 
 export const decodeCanonicalSandboxPolicyGrantIssuerConfigV1 = (
   json: string,
@@ -118,25 +218,20 @@ export const decodeCanonicalSandboxPolicyGrantIssuerConfigV1 = (
   }
 };
 
-export type NetworkDestinationV1 =
-  | {
-      readonly _tag: "Hostname";
-      readonly hostname: string;
-      readonly protocol: string;
-      readonly port: number;
-    }
-  | {
-      readonly _tag: "IpLiteral";
-      readonly address: string;
-      readonly protocol: string;
-      readonly port: number;
-    };
+export type NetworkDestinationV1 = string;
 
 export interface NetworkPolicyV1 {
   readonly version: 1;
   readonly mode: SandboxNetworkMode;
   readonly destinations: ReadonlyArray<NetworkDestinationV1>;
 }
+
+export type SandboxNetworkPolicySelectionV1 =
+  | {
+      readonly kind: "OsEnforced";
+      readonly policy: NetworkPolicyV1;
+    }
+  | { readonly kind: "TrustedLocalUnconfinedV1"; readonly version: 1 };
 
 export interface SandboxProviderCapability {
   readonly providerId: SandboxProviderId;
@@ -192,15 +287,39 @@ const exactKeys = (value: Record<string, unknown>, expected: string[]) => {
   );
 };
 
-const normalizedUrlHostname = (url: string): string | undefined => {
+const normalizedUrl = (
+  url: string,
+):
+  | {
+      readonly origin: string;
+      readonly protocol: string;
+      readonly hostname: string;
+      readonly username: string;
+      readonly password: string;
+      readonly pathname: string;
+      readonly search: string;
+      readonly hash: string;
+    }
+  | undefined => {
   const Url = (
     globalThis as unknown as {
-      readonly URL?: new (value: string) => { readonly hostname: string };
+      readonly URL?: new (
+        value: string,
+      ) => {
+        readonly origin: string;
+        readonly protocol: string;
+        readonly hostname: string;
+        readonly username: string;
+        readonly password: string;
+        readonly pathname: string;
+        readonly search: string;
+        readonly hash: string;
+      };
     }
   ).URL;
   if (Url === undefined) return undefined;
   try {
-    return new Url(url).hostname;
+    return new Url(url);
   } catch {
     return undefined;
   }
@@ -228,93 +347,33 @@ const canonicalHostname = (value: unknown): value is string => {
   ) {
     return false;
   }
-  return normalizedUrlHostname(`http://${value}/`) === value;
+  return normalizedUrl(`http://${value}/`)?.hostname === value;
 };
 
-const canonicalIpv4 = (value: string): boolean => {
-  const parts = value.split(".");
+const canonicalHttpsOrigin = (value: unknown): value is string => {
+  if (typeof value !== "string" || value.length > 320) return false;
+  const url = normalizedUrl(value);
   return (
-    parts.length === 4 &&
-    parts.every(
-      (part) => /^(?:0|[1-9][0-9]{0,2})$/u.test(part) && Number(part) <= 255,
-    ) &&
-    normalizedUrlHostname(`http://${value}/`) === value
+    url !== undefined &&
+    url.protocol === "https:" &&
+    url.username.length === 0 &&
+    url.password.length === 0 &&
+    url.pathname === "/" &&
+    url.search.length === 0 &&
+    url.hash.length === 0 &&
+    url.origin === value &&
+    !/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/u.test(url.hostname) &&
+    canonicalHostname(url.hostname)
   );
 };
-
-const canonicalIpv6String = (value: string): string | undefined => {
-  if (value.includes("%") || value !== value.toLowerCase()) return undefined;
-  const split = value.split("::");
-  if (split.length > 2) return undefined;
-  const leftText = split[0] ?? "";
-  const rightText = split.length === 2 ? (split[1] ?? "") : "";
-  const left = leftText.length === 0 ? [] : leftText.split(":");
-  const right = rightText.length === 0 ? [] : rightText.split(":");
-  const groups = [...left, ...right];
-  if (groups.some((group) => !/^(?:0|[1-9a-f][0-9a-f]{0,3})$/u.test(group))) {
-    return undefined;
-  }
-  if (split.length === 1 && groups.length !== 8) return undefined;
-  if (split.length === 2 && groups.length >= 8) return undefined;
-  const expanded =
-    split.length === 1
-      ? groups
-      : [
-          ...left,
-          ...Array.from({ length: 8 - groups.length }, () => "0"),
-          ...right,
-        ];
-  let bestStart = -1;
-  let bestLength = 1;
-  for (let index = 0; index < expanded.length; ) {
-    if (expanded[index] !== "0") {
-      index += 1;
-      continue;
-    }
-    let end = index + 1;
-    while (expanded[end] === "0") end += 1;
-    if (end - index > bestLength) {
-      bestStart = index;
-      bestLength = end - index;
-    }
-    index = end;
-  }
-  if (bestStart < 0) return expanded.join(":");
-  const leftCanonical = expanded.slice(0, bestStart).join(":");
-  const rightCanonical = expanded.slice(bestStart + bestLength).join(":");
-  if (leftCanonical.length === 0 && rightCanonical.length === 0) return "::";
-  if (leftCanonical.length === 0) return `::${rightCanonical}`;
-  if (rightCanonical.length === 0) return `${leftCanonical}::`;
-  return `${leftCanonical}::${rightCanonical}`;
-};
-
-const canonicalIpv6 = (value: string): boolean => {
-  return (
-    value.includes(":") &&
-    canonicalIpv6String(value) === value &&
-    normalizedUrlHostname(`http://[${value}]/`) === `[${value}]`
-  );
-};
-
-const destinationKey = (destination: NetworkDestinationV1): string =>
-  destination._tag === "Hostname"
-    ? `hostname\0${destination.hostname}\0${destination.protocol}\0${destination.port}`
-    : `ip\0${destination.address}\0${destination.protocol}\0${destination.port}`;
 
 const compareCodeUnits = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
 
-const encodeDestination = (destination: NetworkDestinationV1): string =>
-  destination._tag === "Hostname"
-    ? `{"_tag":"Hostname","hostname":${JSON.stringify(destination.hostname)},"protocol":${JSON.stringify(destination.protocol)},"port":${destination.port}}`
-    : `{"_tag":"IpLiteral","address":${JSON.stringify(destination.address)},"protocol":${JSON.stringify(destination.protocol)},"port":${destination.port}}`;
-
 /** Canonical, closed-field NetworkPolicy JSON v1 codec. */
 export const encodeNetworkPolicyV1 = (policy: NetworkPolicyV1): string => {
-  const destinations = [...policy.destinations].sort((left, right) =>
-    compareCodeUnits(destinationKey(left), destinationKey(right)),
-  );
-  return `{"version":1,"mode":${JSON.stringify(policy.mode)},"destinations":[${destinations.map(encodeDestination).join(",")}]}`;
+  const destinations = [...policy.destinations].sort(compareCodeUnits);
+  return `{"version":1,"mode":${JSON.stringify(policy.mode)},"destinations":[${destinations.map((origin) => JSON.stringify(origin)).join(",")}]}`;
 };
 
 export const decodeNetworkPolicyV1 = (
@@ -334,80 +393,67 @@ export const decodeNetworkPolicyV1 = (
     return undefined;
   }
 
-  const destinations: NetworkDestinationV1[] = [];
+  const destinations: string[] = [];
   for (const candidate of value.destinations) {
-    if (
-      typeof candidate !== "object" ||
-      candidate === null ||
-      Array.isArray(candidate)
-    ) {
-      return undefined;
-    }
-    const row = candidate as Record<string, unknown>;
-    const hostname = row._tag === "Hostname";
-    const ipLiteral = row._tag === "IpLiteral";
-    const expectedKeys = hostname
-      ? ["_tag", "hostname", "protocol", "port"]
-      : ipLiteral
-        ? ["_tag", "address", "protocol", "port"]
-        : [];
-    if (
-      expectedKeys.length === 0 ||
-      !exactKeys(row, expectedKeys) ||
-      typeof row.protocol !== "string" ||
-      !/^[a-z][a-z0-9+.-]{0,31}$/u.test(row.protocol) ||
-      !Number.isInteger(row.port) ||
-      (row.port as number) < 1 ||
-      (row.port as number) > 65_535
-    ) {
-      return undefined;
-    }
-    if (hostname && canonicalHostname(row.hostname)) {
-      destinations.push({
-        _tag: "Hostname",
-        hostname: row.hostname,
-        protocol: row.protocol,
-        port: row.port as number,
-      });
-      continue;
-    }
-    if (
-      ipLiteral &&
-      typeof row.address === "string" &&
-      (canonicalIpv4(row.address) || canonicalIpv6(row.address))
-    ) {
-      destinations.push({
-        _tag: "IpLiteral",
-        address: row.address,
-        protocol: row.protocol,
-        port: row.port as number,
-      });
-      continue;
-    }
-    return undefined;
+    if (!canonicalHttpsOrigin(candidate)) return undefined;
+    destinations.push(candidate);
   }
 
-  if (value.mode !== "Restricted" && destinations.length > 0) {
-    return undefined;
-  }
-  const sorted = [...destinations].sort((left, right) =>
-    compareCodeUnits(destinationKey(left), destinationKey(right)),
-  );
   if (
-    sorted.some(
-      (destination, index) =>
-        index > 0 &&
-        destinationKey(sorted[index - 1] as NetworkDestinationV1) ===
-          destinationKey(destination),
-    )
+    (value.mode === "Restricted" && destinations.length === 0) ||
+    (value.mode !== "Restricted" && destinations.length > 0)
   ) {
     return undefined;
   }
+  const sorted = [...destinations].sort(compareCodeUnits);
+  if (sorted.some((origin, index) => index > 0 && sorted[index - 1] === origin))
+    return undefined;
+  if (destinations.some((origin, index) => origin !== sorted[index]))
+    return undefined;
   return {
     version: 1,
     mode: value.mode as SandboxNetworkMode,
     destinations: sorted,
   };
+};
+
+export const encodeSandboxNetworkPolicySelectionV1 = (
+  selection: SandboxNetworkPolicySelectionV1,
+): string =>
+  selection.kind === "OsEnforced"
+    ? `{"kind":"OsEnforced","policy":${encodeNetworkPolicyV1(selection.policy)}}`
+    : `{"kind":"TrustedLocalUnconfinedV1","version":1}`;
+
+export const decodeSandboxNetworkPolicySelectionV1 = (
+  input: unknown,
+): SandboxNetworkPolicySelectionV1 | undefined => {
+  if (typeof input !== "object" || input === null || Array.isArray(input))
+    return undefined;
+  const value = input as Record<string, unknown>;
+  if (value.kind === "OsEnforced") {
+    if (!exactKeys(value, ["kind", "policy"])) return undefined;
+    const policy = decodeNetworkPolicyV1(value.policy);
+    return policy === undefined ? undefined : { kind: "OsEnforced", policy };
+  }
+  return exactKeys(value, ["kind", "version"]) &&
+    value.kind === "TrustedLocalUnconfinedV1" &&
+    value.version === 1
+    ? { kind: "TrustedLocalUnconfinedV1", version: 1 }
+    : undefined;
+};
+
+export const decodeCanonicalSandboxNetworkPolicySelectionV1 = (
+  json: string,
+): SandboxNetworkPolicySelectionV1 | undefined => {
+  try {
+    const selection = decodeSandboxNetworkPolicySelectionV1(JSON.parse(json));
+    return selection !== undefined &&
+      encodeSandboxNetworkPolicySelectionV1(selection) === json
+      ? selection
+      : undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 export const decodeCanonicalNetworkPolicyV1 = (
@@ -501,7 +547,7 @@ export interface SandboxPolicyDecision {
   readonly expectedPolicyRevision: number;
   readonly profile: SandboxProfile;
   readonly providerId: SandboxProviderId;
-  readonly networkPolicy: NetworkPolicyV1;
+  readonly networkPolicy: SandboxNetworkPolicySelectionV1;
   readonly policyDigest: string;
   readonly permissionGrantId: PermissionGrantId;
   readonly grantPermissionCommandId: CommandId;
