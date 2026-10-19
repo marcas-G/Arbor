@@ -82,9 +82,9 @@ const summary = {
     {
       mountId: "workspace",
       targetRef: {
-        version: 1,
-        kind: "RegionDigest",
-        resourceSpace: "filesystem",
+        version: 1 as const,
+        kind: "RegionDigest" as const,
+        resourceSpace: "filesystem" as const,
         regionIdentityDigest: "9".repeat(64),
       },
       targetIdentityDigest: "e".repeat(64),

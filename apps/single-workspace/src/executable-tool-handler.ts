@@ -8,17 +8,22 @@ import {
   AuthorityResolverPort,
   issueExecutableApproval,
 } from "@arbor/application";
-import { parse, ToolInvocationId } from "@arbor/domain";
+import { executionEpisode, parse, ToolInvocationId } from "@arbor/domain";
+import type { TrustedHostConfigurationSourceService } from "@arbor/ports";
 import {
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
+  EnvironmentResolverPort,
   type ExecutableApprovalBinding,
   ExecutableApprovalStore,
   type ExecutableApprovalStoreService,
+  ExecutionRepository,
   executableApprovalBindingMatches,
   type InvocationAuthority,
   PermissionGrantRepository,
+  ResourceOwnershipRepository,
+  SandboxPolicyDecisionStore,
   sha256Hex,
   ToolCatalogPort,
   type ToolCatalogPortService,
@@ -30,8 +35,13 @@ import {
   ToolRuntimePort,
   TransactionPort,
   WorkspaceRepository,
+  WorktreeStore,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
+import {
+  type MaterializedSandboxProcessPolicy,
+  materializeCurrentSandboxProcessPolicy,
+} from "./sandbox-process-policy-materializer.js";
 
 export class ExecutableToolHandler extends Context.Service<
   ExecutableToolHandler,
@@ -217,6 +227,12 @@ export const makeExecutableToolHandler = (
     >;
   },
   qualificationProbe?: ExecutableToolHandlerQualificationProbe,
+  materializeSandboxProcessPolicy?: (input: {
+    readonly projectId: import("@arbor/domain").ProjectId;
+    readonly workspaceId: import("@arbor/domain").WorkspaceId;
+    readonly executionId: import("@arbor/domain").ExecutionId;
+    readonly now: string;
+  }) => Effect.Effect<MaterializedSandboxProcessPolicy | undefined>,
 ): ExecutableInvocationHandler => ({
   handle: ({
     invocation,
@@ -342,9 +358,33 @@ export const makeExecutableToolHandler = (
         // lookup; no model-facing argument can set it.
         intent = { ...intent, approvalId: currentApproval.approvalId };
       }
+      let materializedSandboxPolicy:
+        | MaterializedSandboxProcessPolicy
+        | undefined;
+      if (invocation.toolName === "shell") {
+        const currentEpisode = executionEpisode(execution);
+        if (currentEpisode === undefined) {
+          return { _tag: "SandboxPolicyRequiredInterruption" as const };
+        }
+        if (materializeSandboxProcessPolicy !== undefined) {
+          materializedSandboxPolicy = yield* materializeSandboxProcessPolicy({
+            projectId: execution.projectId,
+            workspaceId: execution.workspaceId,
+            executionId: execution.executionId,
+            now: requestedAt,
+          });
+        }
+        if (materializedSandboxPolicy === undefined) {
+          return { _tag: "SandboxPolicyRequiredInterruption" as const };
+        }
+      }
       const controlBasisDigest = sha256Hex(JSON.stringify(controlBasis));
+      const currentEpisode = executionEpisode(execution);
       const toolContext: ToolExecutionContext = {
         executionId: execution.executionId,
+        ...(currentEpisode === undefined
+          ? {}
+          : { executionEpisodeBinding: currentEpisode }),
         workspaceId: execution.workspaceId,
         sessionId: execution.sessionId,
         projectId: execution.projectId,
@@ -363,6 +403,12 @@ export const makeExecutableToolHandler = (
         delegationDepth:
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,
+        ...(materializedSandboxPolicy === undefined
+          ? {}
+          : {
+              sandboxProcessPolicy: materializedSandboxPolicy.policy,
+              sandboxProcessMountBindings: materializedSandboxPolicy.mounts,
+            }),
         ...(currentApproval === undefined
           ? {}
           : {
@@ -596,6 +642,7 @@ export const ExecutableToolHandlerLive = (
     directParentOf: [],
   },
   qualificationProbe?: ExecutableToolHandlerQualificationProbe,
+  sandboxAuthoritySource?: TrustedHostConfigurationSourceService,
 ): Layer.Layer<
   ExecutableToolHandler,
   never,
@@ -608,6 +655,11 @@ export const ExecutableToolHandlerLive = (
   | AuthorityResolverPort
   | PermissionGrantRepository
   | WorkspaceRepository
+  | SandboxPolicyDecisionStore
+  | ExecutionRepository
+  | ResourceOwnershipRepository
+  | WorktreeStore
+  | EnvironmentResolverPort
 > =>
   Layer.effect(
     ExecutableToolHandler,
@@ -621,6 +673,32 @@ export const ExecutableToolHandlerLive = (
       const authorityResolver = yield* AuthorityResolverPort;
       const grants = yield* PermissionGrantRepository;
       const workspaces = yield* WorkspaceRepository;
+      const executions = yield* ExecutionRepository;
+      const decisions = yield* SandboxPolicyDecisionStore;
+      const ownership = yield* ResourceOwnershipRepository;
+      const worktrees = yield* WorktreeStore;
+      const environmentResolver = yield* EnvironmentResolverPort;
+      const materialize = (input: {
+        readonly projectId: import("@arbor/domain").ProjectId;
+        readonly workspaceId: import("@arbor/domain").WorkspaceId;
+        readonly executionId: import("@arbor/domain").ExecutionId;
+        readonly now: string;
+      }) =>
+        Effect.provide(
+          materializeCurrentSandboxProcessPolicy({
+            ...input,
+            source: sandboxAuthoritySource,
+          }),
+          Layer.mergeAll(
+            Layer.succeed(TransactionPort, tx),
+            Layer.succeed(WorkspaceRepository, workspaces),
+            Layer.succeed(ExecutionRepository, executions),
+            Layer.succeed(SandboxPolicyDecisionStore, decisions),
+            Layer.succeed(ResourceOwnershipRepository, ownership),
+            Layer.succeed(WorktreeStore, worktrees),
+            Layer.succeed(EnvironmentResolverPort, environmentResolver),
+          ),
+        );
       return ExecutableToolHandler.of(
         makeExecutableToolHandler(
           tools,
@@ -686,6 +764,7 @@ export const ExecutableToolHandlerLive = (
               }),
           },
           qualificationProbe,
+          materialize,
         ),
       );
     }),

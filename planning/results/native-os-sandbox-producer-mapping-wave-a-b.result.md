@@ -108,3 +108,46 @@ FileTree-first alias, relative/dot-segment path, observation consistency,
 claims/access, source-boundary, Worktree selection, commit/replay/stale CAS and
 no-fallback cases. SQLite WorktreeStore adapter tests 3/3. `pnpm build`, focused
 Biome and `git diff --check` pass.
+
+## Wave E — P4 current-policy consumer and P9/crash qualification
+
+The production executable handler materializes a shell runtime policy only
+from the joined current immutable P1 decision/result. Before invoking
+ToolRuntime it reloads the active V2 authority/high-water pair, re-reads the
+exact current Execution/Episode, Workspace, policy head, ownership claims and
+managed Worktree, and re-runs the exact full P11 boundary resolver. It compares
+the full V2 bundle/operator/provider snapshot, Workspace/boundary revisions,
+ResourceBoundary digest, handle-binding digest, targetRefs/mounts/access and
+policy basis. Host paths exist only in process-local runtime mounts; no path is
+written to a receipt, event or public view. Any missing/stale/ambiguous source
+returns `SandboxPolicyRequiredInterruption` before ToolRuntime invocation.
+
+P4 opens the exact complete process mount set from those runtime bindings and
+checks the actual SandboxHandle roots/access against the policy before effect
+execution. The internal request is a closed union: OsEnforced uses only the
+existing `SandboxProcessPort` capability resolution (Experimental OS providers
+remain unavailable and never fall back); explicit TrustedLocalUnconfinedV1
+uses a separate `TrustedLocalProcessPort` adapter and never enters provider
+selection or `SandboxProcessPort`. TrustedLocal literals, current decision,
+episode, bundle, handle and all mounts must match exactly. It is explicitly an
+unconfined local process, not OS enforcement; limits are disclosure/best-effort
+and no OS/resource-enforcement claim is made. The one trusted-local
+`child_process.execFile` adapter is protected by exact import/callsite
+architecture audit and a fixed source SHA-256.
+
+The schema-50 child-process crash fixture now uses production
+`makeSandboxPolicyDecisionPreparation` (real SQLite repositories/TransactionPort
+and P11 WorktreeStore; P11 resolver is the deterministic fixture port). It
+proves decision/result/receipt/event rollback when killed at the Gateway
+pre-commit marker, atomic persistence when killed after commit, and exact
+restart receipt replay without duplication. No online database is opened.
+P9 tests cover durable unavailable fact/successor replay and strict V3 object
+TargetRef decoding; the formerly string-shaped test fixture was updated to the
+closed object codec.
+
+Verification: `pnpm build` and `pnpm typecheck` PASS. Focused suites PASS:
+ToolRuntime P4 76/76; TrustedLocal adapter 2/2; P9 successor recovery 3/3;
+single-workspace handler + schema-50 Gateway 13/13; sandbox process boundary
+architecture 23/23; V2/P11 fixture migration suites 60/60 (Persistence 10,
+single-workspace 9, Application 28, Domain 6, command-result codec 7). Biome
+on changed files and `git diff --check` PASS. Full `pnpm test` was not run.

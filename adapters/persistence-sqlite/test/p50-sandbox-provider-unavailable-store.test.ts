@@ -7,6 +7,7 @@ import {
   encodeEffectivePolicySummaryV1,
   encodeNetworkPolicyV1,
   encodeSandboxPolicyDecisionCommittedInternalV1,
+  networkBrokerControlsV1ForMode,
 } from "@arbor/domain";
 import {
   AttentionProjectionStore as AttentionProjectionStorePort,
@@ -86,21 +87,19 @@ const resultFor = (
         destinations: [],
       }),
     ),
-    networkBrokerControls: {
-      version: 1,
-      egress: "BrokerOnly",
-      dns: "BrokerResolveAndPin",
-      addressPolicy: "SandboxPublicInternetDenyV1",
-      redirectMaxHops: 5,
-      tlsIdentity: "OriginCertificateSniHostMatch",
-    },
+    networkBrokerControls: networkBrokerControlsV1ForMode("Disabled"),
     providerRegistryRevision: 5,
     providerRegistryDigest: "1".repeat(64),
     sandboxHandleBindingDigest: "2".repeat(64),
     mounts: [
       {
         mountId: "mount_workspace",
-        targetRef: "target_workspace",
+        targetRef: {
+          version: 1 as const,
+          kind: "RegionDigest" as const,
+          resourceSpace: "filesystem" as const,
+          regionIdentityDigest: "9".repeat(64),
+        },
         targetIdentityDigest: "d".repeat(64),
         access: "ReadOnly" as const,
       },

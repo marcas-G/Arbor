@@ -17,6 +17,7 @@ import { Effect, Layer } from "effect";
 /** DID v1.25 EWB: trusted-local binding. It binds admitted filesystem roots
  * directly and is deliberately not an OS process-isolation boundary. */
 
+export { TrustedLocalProcessPortLive } from "./trusted-local-process.js";
 /** P4 `04` §4 (debt repaid per P11 `12` §2; shared mechanism per P12 `03` §3):
  * a sandboxed subprocess runs with an allow-listed projection of the ambient
  * environment — secrets and other ambient variables never reach it. The

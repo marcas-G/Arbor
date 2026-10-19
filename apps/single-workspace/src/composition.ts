@@ -203,7 +203,10 @@ import {
   type ProviderRuntimeConfig,
   ProviderRuntimeLive,
 } from "@arbor/provider-runtime";
-import { SandboxPortLive } from "@arbor/sandbox-local";
+import {
+  SandboxPortLive,
+  TrustedLocalProcessPortLive,
+} from "@arbor/sandbox-local";
 import { makeNativePosixSandboxProcessPort } from "@arbor/sandbox-native-posix";
 import {
   makeWindowsSandboxProcessPort,
@@ -863,6 +866,7 @@ export const buildSingleWorkspaceLayer = (
             ),
           ]),
       SandboxPortLive,
+      TrustedLocalProcessPortLive,
       nativeSandboxProcessPort,
       infra,
       toolAuthority,
@@ -952,8 +956,16 @@ export const buildSingleWorkspaceLayer = (
     ExecutableToolHandlerLive(
       governance,
       config.executableToolQualificationProbe,
+      config.trustedHostConfigurationSource,
     ),
-    Layer.mergeAll(toolRuntime, infra, toolCatalog, repos, authorityResolver),
+    Layer.mergeAll(
+      toolRuntime,
+      infra,
+      toolCatalog,
+      repos,
+      authorityResolver,
+      environmentResolver,
+    ),
   );
   const turnProfiles = Layer.provide(
     TurnProfileResolverLive,

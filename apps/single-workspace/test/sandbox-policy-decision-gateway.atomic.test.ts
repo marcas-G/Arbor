@@ -188,9 +188,9 @@ const snapshot = {
     {
       mountId: "workspace",
       targetRef: {
-        version: 1,
-        kind: "RegionDigest",
-        resourceSpace: "filesystem",
+        version: 1 as const,
+        kind: "RegionDigest" as const,
+        resourceSpace: "filesystem" as const,
         regionIdentityDigest: "9".repeat(64),
       },
       targetIdentityDigest: "d".repeat(64),
@@ -223,7 +223,7 @@ const trustedAuthoritySnapshot: SandboxAuthorityBundleSnapshotV2 = {
     issuerConfig: {
       version: 1,
       revision: 1,
-      issuers: [String(operator)],
+      issuers: [operator],
     },
     operatorConfigRevision: 4,
     operatorConfigDigest: "f".repeat(64),
@@ -280,7 +280,7 @@ const makeTrustedAuthoritySource = () => {
   const issuerConfig = {
     version: 1 as const,
     revision: 1,
-    issuers: [String(operator)],
+    issuers: [operator],
   };
   const operatorConfig = {
     version: 1 as const,
@@ -353,6 +353,8 @@ const makeTrustedAuthoritySource = () => {
 const environmentResolverTestLayer = Layer.succeed(EnvironmentResolverPort, {
   observe: (projectId, addresses) => {
     const entries = addresses.map((address) => {
+      if (address._tag !== "GitWorktree" && address._tag !== "FileTree")
+        throw new Error("test P11 resolver only supports filesystem addresses");
       const resolved =
         address._tag === "GitWorktree"
           ? {
@@ -801,14 +803,14 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
       normalizedRegion: { kind: "GitWorktree", path: worktreePath },
     } as const;
     const p11Boundary = {
-      basisResponsibilityRevision: 1,
+      basisResponsibilityRevision: 1 as never,
       addresses: [{ _tag: "GitWorktree" as const, path: worktreePath }],
     } as const;
     const boundary = produceSandboxBoundaryV1(
       {
         workspaceId,
         resourceBoundaryRevision: 1,
-        responsibilityRevision: 1,
+        responsibilityRevision: 1 as never,
         boundary: p11Boundary,
         resolvedRegions: [p11Region],
         primaryManagedGitWorktreeRegion: p11Region,
@@ -954,10 +956,46 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
         import.meta.url,
       ),
     );
+    const worktreePath = process.cwd();
+    const crashBoundary = produceSandboxBoundaryV1(
+      {
+        workspaceId,
+        resourceBoundaryRevision: 1,
+        responsibilityRevision: 1 as never,
+        boundary: {
+          basisResponsibilityRevision: 1 as never,
+          addresses: [{ _tag: "GitWorktree", path: worktreePath }],
+        },
+        resolvedRegions: [
+          {
+            resourceSpaceId: "filesystem",
+            normalizedRegion: { kind: "GitWorktree", path: worktreePath },
+          },
+        ],
+        primaryManagedGitWorktreeRegion: {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { kind: "GitWorktree", path: worktreePath },
+        },
+        ownershipClaims: [],
+        policyKind: "TrustedLocalUnconfinedV1",
+        profile: "FullAccess",
+      },
+      (value) => createHash("sha256").update(value, "utf8").digest("hex"),
+    );
+    expect(crashBoundary).toBeDefined();
+    if (crashBoundary === undefined) return;
     const launch = (databaseFile: string, stage: string, nonce: string) =>
       spawnSync(
         process.execPath,
-        ["--experimental-strip-types", childPath, databaseFile, stage, nonce],
+        [
+          "--experimental-strip-types",
+          childPath,
+          databaseFile,
+          stage,
+          nonce,
+          worktreePath,
+          crashBoundary.sandboxHandleBindingDigest,
+        ],
         { encoding: "utf8", timeout: 30_000 },
       );
     const expectChildHandshake = (
@@ -1002,7 +1040,14 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
       const beforeDb = join(folder, "before.db");
       const beforeStack = makeTestStack({}, beforeDb);
       await Effect.runPromise(
-        Effect.provide(seedSchema50AndGrant, beforeStack.app),
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* seedSchema50AndGrant;
+            const sql = yield* SqlClient;
+            yield* seedManagedWorktree(sql, worktreePath);
+          }),
+          beforeStack.app,
+        ),
       );
       const beforeNonce = randomUUID();
       const before = launch(beforeDb, "before-commit", beforeNonce);
@@ -1015,7 +1060,14 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
       const afterDb = join(folder, "after.db");
       const afterStack = makeTestStack({}, afterDb);
       await Effect.runPromise(
-        Effect.provide(seedSchema50AndGrant, afterStack.app),
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* seedSchema50AndGrant;
+            const sql = yield* SqlClient;
+            yield* seedManagedWorktree(sql, worktreePath);
+          }),
+          afterStack.app,
+        ),
       );
       const afterNonce = randomUUID();
       const after = launch(afterDb, "after-commit", afterNonce);
@@ -1036,7 +1088,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 const makeAuthority = (

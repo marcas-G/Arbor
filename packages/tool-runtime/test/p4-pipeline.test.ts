@@ -57,6 +57,8 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
+  TrustedLocalProcessPort,
+  type TrustedLocalProcessPortService,
   targetResourceIdentityDigestV1,
   toolDefinitionIdentityDigestV1,
   verifyRecoveryBindingV1,
@@ -545,6 +547,8 @@ interface PipelineTrace {
   p39BindingCalls?: number;
   p39SelectedReads?: number;
   authorityResolutionCalls?: number;
+  sandboxOpenedMountRefs?: ReadonlyArray<string>;
+  trustedLocalProcessRuns?: number;
   readonly reconciliationRetry?: {
     readonly profile: ToolReconciliationProfile;
     readonly registryProfileOverride?: ToolReconciliationProfile;
@@ -673,16 +677,18 @@ const app = (
     tx,
     ToolDefinitionStoreLive,
     Layer.succeed(SandboxPort, {
-      open: () =>
+      open: (input) =>
         faults.sandboxOpen === true
           ? Effect.fail({
               _tag: "SandboxError" as const,
               cause: "sandbox-open-failure",
             })
-          : Effect.succeed({
-              handleId: "s",
-              rootPath: "/tmp/s",
-              mounts: [
+          : Effect.sync(() => {
+              const openedMounts = input.mounts?.map((mount) => ({
+                ...mount,
+                rootPath:
+                  mount.ref === "workspace" ? "/tmp/s" : `/tmp/${mount.ref}`,
+              })) ?? [
                 {
                   ref: "workspace",
                   rootPath: "/tmp/s",
@@ -692,8 +698,19 @@ const app = (
                   },
                   access: "ReadOnly" as const,
                 },
-              ],
-              writableRegions: [],
+              ];
+              if (trace !== undefined)
+                trace.sandboxOpenedMountRefs = openedMounts.map(
+                  (mount) => mount.ref,
+                );
+              return {
+                handleId: "s",
+                rootPath: "/tmp/s",
+                mounts: openedMounts,
+                writableRegions: openedMounts
+                  .filter((mount) => mount.access === "ReadWrite")
+                  .map((mount) => mount.region),
+              };
             }),
       close: () =>
         faults.sandboxClose === true
@@ -723,6 +740,22 @@ const app = (
           };
         }),
     } satisfies SandboxProcessPortService),
+    Layer.succeed(TrustedLocalProcessPort, {
+      run: () =>
+        Effect.sync(() => {
+          if (trace !== undefined)
+            trace.trustedLocalProcessRuns =
+              (trace.trustedLocalProcessRuns ?? 0) + 1;
+          return {
+            _tag: "Completed" as const,
+            exitCode: 0,
+            stdout: "trusted local process succeeded",
+            stderr: "",
+            timedOut: false,
+            truncated: false,
+          };
+        }),
+    } satisfies TrustedLocalProcessPortService),
     Layer.succeed(ResourceAdmission, {
       admit: (input: {
         readonly regions: ReadonlyArray<
@@ -1431,6 +1464,7 @@ const processPolicy = (
   providerId = "bwrap",
   providerVersion = "0.8.0",
 ): SandboxProcessPolicy => ({
+  kind: "OsEnforcedProcessPolicy",
   executionId,
   episodeBinding,
   sandboxHandleId: "s",
@@ -1439,7 +1473,7 @@ const processPolicy = (
   providerId,
   providerVersion,
   capabilityRevision: "capability-v1",
-  boundary: providerId === "TrustedLocal" ? "TrustedLocal" : "OsEnforced",
+  boundary: "OsEnforced",
   networkPolicy: { version: 1, mode: "Disabled", destinations: [] },
   policyDigest: "a".repeat(64),
   admittedMounts: [
@@ -1650,6 +1684,62 @@ describe("P4 tool runtime pipeline", () => {
     },
   );
 
+  it("opens the full committed process mount set instead of the executor's single target", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
+    };
+    const policy = processPolicy(processEpisode);
+    const processMounts = [
+      {
+        ref: "workspace",
+        address: { _tag: "GitWorktree" as const, path: "/tmp/s" },
+        region: {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { kind: "GitWorktree", path: "/tmp/s" },
+        },
+        access: "ReadOnly" as const,
+      },
+      {
+        ref: "resource-123",
+        address: { _tag: "FileTree" as const, path: "/tmp/secondary" },
+        region: {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { kind: "FileTree", path: "/tmp/secondary" },
+        },
+        access: "ReadOnly" as const,
+      },
+    ];
+    const fullBoundaryPolicy: SandboxProcessPolicy = {
+      ...policy,
+      admittedMounts: [
+        { ref: "workspace", rootPath: "/tmp/s", access: "ReadOnly" },
+        {
+          ref: "resource-123",
+          rootPath: "/tmp/resource-123",
+          access: "ReadOnly",
+        },
+      ],
+    };
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      {
+        ...processContext(fullBoundaryPolicy),
+        sandboxProcessMountBindings: processMounts,
+      },
+    );
+    expect(result._tag).toBe("Success");
+    expect(trace.sandboxOpenedMountRefs).toEqual(["workspace", "resource-123"]);
+    expect(trace.sandboxProcessPortRuns).toBe(1);
+  });
+
   it("rejects an invalid requested process timeout before provider execution", async () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],
@@ -1796,8 +1886,42 @@ describe("P4 tool runtime pipeline", () => {
       capabilityRevision: "capability-v1",
     });
     expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+    expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
     expect(trace.settlementWrites).toBe(1);
     expect(trace.effectAdmissions).toBe(1);
+  });
+
+  it("runs only the exact explicit TrustedLocalUnconfinedV1 runtime branch", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [],
+    };
+    const policy: SandboxProcessPolicy = {
+      ...processPolicy(processEpisode),
+      kind: "TrustedLocalUnconfinedRuntimePolicy",
+      profile: "FullAccess",
+      providerId: "TrustedLocal",
+      providerVersion: "builtin-v1",
+      capabilityRevision: "builtin-v1",
+      boundary: "TrustedLocal",
+      trustedRuntimeIdentity: "TrustedLocal",
+      trustedRuntimeVersion: "builtin-v1",
+      networkBoundary: "Unconfined",
+    };
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(policy),
+    );
+    expect(result._tag).toBe("Success");
+    expect(trace.trustedLocalProcessRuns).toBe(1);
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
   });
 
   it("returns typed unavailability when the probed provider version differs from the durable policy", async () => {

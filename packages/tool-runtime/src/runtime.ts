@@ -60,6 +60,7 @@ import {
   type ToolRuntimeError,
   ToolRuntimePort,
   TransactionPort,
+  TrustedLocalProcessPort,
   targetResourceIdentityDigestV1,
   toolDefinitionIdentityDigestV1,
   validateToolReconciliationResult,
@@ -602,6 +603,9 @@ export const ToolRuntimeLive = (
       const definitions = yield* ToolDefinitionStore;
       const sandbox = yield* SandboxPort;
       const sandboxProcess = yield* Effect.serviceOption(SandboxProcessPort);
+      const trustedLocalProcess = yield* Effect.serviceOption(
+        TrustedLocalProcessPort,
+      );
       const admission = yield* ResourceAdmission;
       const store = yield* ToolInvocationStore;
       const executableApprovals = yield* Effect.serviceOption(
@@ -747,18 +751,31 @@ export const ToolRuntimeLive = (
               };
             }
 
-            const networkPolicy = decodeNetworkPolicyV1(policy.networkPolicy);
+            const isOsPolicy = policy.kind === "OsEnforcedProcessPolicy";
+            const networkPolicy = isOsPolicy
+              ? decodeNetworkPolicyV1(policy.networkPolicy)
+              : undefined;
             if (
               !Number.isSafeInteger(policy.policyRevision) ||
               policy.policyRevision < 1 ||
               !/^[0-9a-f]{64}$/u.test(policy.policyDigest) ||
-              decodeSandboxProviderId(policy.providerId) !==
-                policy.providerId ||
-              policy.providerVersion.trim().length === 0 ||
-              policy.capabilityRevision.trim().length === 0 ||
-              networkPolicy === undefined ||
-              encodeNetworkPolicyV1(networkPolicy) !==
-                encodeNetworkPolicyV1(policy.networkPolicy) ||
+              (isOsPolicy &&
+                (decodeSandboxProviderId(policy.providerId) !==
+                  policy.providerId ||
+                  policy.providerVersion.trim().length === 0 ||
+                  policy.capabilityRevision.trim().length === 0 ||
+                  networkPolicy === undefined ||
+                  encodeNetworkPolicyV1(networkPolicy) !==
+                    encodeNetworkPolicyV1(policy.networkPolicy))) ||
+              (!isOsPolicy &&
+                (policy.trustedRuntimeIdentity !== "TrustedLocal" ||
+                  policy.trustedRuntimeVersion !== "builtin-v1" ||
+                  policy.boundary !== "TrustedLocal" ||
+                  policy.profile !== "FullAccess" ||
+                  policy.providerId !== "TrustedLocal" ||
+                  policy.providerVersion !== "builtin-v1" ||
+                  policy.capabilityRevision !== "builtin-v1" ||
+                  policy.networkBoundary !== "Unconfined")) ||
               !Object.values(policy.limits).every(
                 (value) => Number.isSafeInteger(value) && value > 0,
               ) ||
@@ -811,6 +828,28 @@ export const ToolRuntimeLive = (
               requestedTimeoutMs ?? policy.limits.wallTimeMs,
               policy.limits.wallTimeMs,
             );
+
+            if (policy.kind === "TrustedLocalUnconfinedRuntimePolicy") {
+              if (!Option.isSome(trustedLocalProcess)) {
+                return {
+                  _tag: "Rejected" as const,
+                  failureCode: "ProcessCapabilityNotBound",
+                };
+              }
+              return yield* trustedLocalProcess.value.run({
+                ...invocation,
+                timeoutMs,
+                policy,
+                handle,
+              });
+            }
+
+            if (networkPolicy === undefined) {
+              return {
+                _tag: "Rejected" as const,
+                failureCode: "PolicyMissing",
+              };
+            }
 
             if (!Option.isSome(sandboxProcess)) {
               return unavailable("SandboxProcessPortUnavailable");
@@ -4053,26 +4092,33 @@ export const ToolRuntimeLive = (
               : yield* Effect.gen(function* () {
                   const handle = yield* sandbox
                     .open(
-                      address === undefined || region === undefined
+                      executor.processCapability === "SandboxProcess" &&
+                        context.sandboxProcessMountBindings !== undefined
                         ? {
                             executionId: context.executionId,
                             workspaceId: context.workspaceId,
-                            regions,
+                            mounts: context.sandboxProcessMountBindings,
                           }
-                        : {
-                            executionId: context.executionId,
-                            workspaceId: context.workspaceId,
-                            mounts: [
-                              {
-                                ref: "workspace",
-                                address,
-                                region,
-                                access: executor.write
-                                  ? "ReadWrite"
-                                  : "ReadOnly",
-                              },
-                            ],
-                          },
+                        : address === undefined || region === undefined
+                          ? {
+                              executionId: context.executionId,
+                              workspaceId: context.workspaceId,
+                              regions,
+                            }
+                          : {
+                              executionId: context.executionId,
+                              workspaceId: context.workspaceId,
+                              mounts: [
+                                {
+                                  ref: "workspace",
+                                  address,
+                                  region,
+                                  access: executor.write
+                                    ? "ReadWrite"
+                                    : "ReadOnly",
+                                },
+                              ],
+                            },
                     )
                     .pipe(
                       Effect.mapError(

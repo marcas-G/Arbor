@@ -6,10 +6,10 @@ import type {
   SandboxProviderId,
 } from "@arbor/domain";
 import {
+  type OsEnforcedSandboxProcessPolicy,
   projectSandboxEnvironment,
   SANDBOX_ENV_ALLOWLIST,
   type SandboxHandle,
-  type SandboxProcessPolicy,
   SandboxProcessPort,
   type SandboxProcessPortService,
   type SandboxProcessProviderOutcome,
@@ -68,7 +68,7 @@ export type PolicyPlan =
       readonly argv: ReadonlyArray<string>;
       readonly cwd: string;
       readonly env: NodeJS.ProcessEnv;
-      readonly requestedLimits: SandboxProcessPolicy["limits"];
+      readonly requestedLimits: OsEnforcedSandboxProcessPolicy["limits"];
     }
   | { readonly _tag: "Unavailable"; readonly failureCode: string };
 
@@ -76,12 +76,12 @@ export type SeatbeltProfile =
   | {
       readonly _tag: "Ready";
       readonly source: string;
-      readonly requestedLimits: SandboxProcessPolicy["limits"];
+      readonly requestedLimits: OsEnforcedSandboxProcessPolicy["limits"];
     }
   | { readonly _tag: "Unavailable"; readonly failureCode: string };
 
 interface PlanInput {
-  readonly policy: SandboxProcessPolicy;
+  readonly policy: OsEnforcedSandboxProcessPolicy;
   readonly handle: SandboxHandle;
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
@@ -101,7 +101,7 @@ const within = (root: string, candidate: string): boolean => {
 };
 
 const canonicalRoots = (
-  policy: SandboxProcessPolicy,
+  policy: OsEnforcedSandboxProcessPolicy,
   handle: SandboxHandle,
 ):
   | ReadonlyArray<{
@@ -318,7 +318,7 @@ const seatbeltQuote = (value: string): string | undefined => {
 
 /** Generate a deny-default macOS Seatbelt profile for the exact admitted roots. */
 export const buildSeatbeltProfile = (input: {
-  readonly policy: SandboxProcessPolicy;
+  readonly policy: OsEnforcedSandboxProcessPolicy;
   readonly handle: SandboxHandle;
   readonly executable: string;
 }): SeatbeltProfile => {
@@ -651,7 +651,7 @@ const unavailableCapability = (
 });
 
 const unavailable = (
-  policy: SandboxProcessPolicy,
+  policy: OsEnforcedSandboxProcessPolicy,
   failureCode: string,
   probeEvidenceRef: string | null,
   capabilityRevision: string = policy.capabilityRevision,

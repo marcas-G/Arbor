@@ -10,6 +10,7 @@ import type {
 import {
   CommandId,
   ExecutionId,
+  Principal,
   ProjectId,
   parse,
   WorkspaceId,
@@ -45,7 +46,7 @@ const primaryAddress: ResourceAddress = {
   path: "/repo/workspace",
 };
 const boundary = {
-  basisResponsibilityRevision: 0,
+  basisResponsibilityRevision: 0 as never,
   addresses: [primaryAddress],
 } as ResourceBoundary;
 const workspace = {
@@ -105,7 +106,7 @@ const authorityBundleSnapshot = {
     issuerConfig: {
       version: 1 as const,
       revision: 1,
-      issuers: ["user:operator"],
+      issuers: [parse(Principal)("user:operator")],
     },
     operatorConfigRevision: operatorConfig.revision,
     operatorConfigDigest: "2".repeat(64),
@@ -204,13 +205,17 @@ const fixture = (
   };
   let transactionActive = false;
   const transaction: TransactionPortService = {
-    transact: (body) =>
-      Effect.suspend(() => {
+    transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) => {
+      const run = Effect.suspend(() => {
         if (transactionActive)
           return Effect.fail({
             _tag: "TransactionOperationalFailure",
             cause: "nested transaction rejected by test sentinel",
-          } satisfies TransactionOperationalFailure);
+          } satisfies TransactionOperationalFailure) as Effect.Effect<
+            A,
+            E | TransactionOperationalFailure,
+            Exclude<R, TransactionScope>
+          >;
         transactionActive = true;
         return Effect.ensuring(
           Effect.provideService(body, TransactionScope, {
@@ -220,7 +225,13 @@ const fixture = (
             transactionActive = false;
           }),
         );
-      }),
+      });
+      return run as Effect.Effect<
+        A,
+        E | TransactionOperationalFailure,
+        Exclude<R, TransactionScope>
+      >;
+    },
   };
   const dependencies: SandboxPolicyDecisionPreparationDependencies = {
     transaction,

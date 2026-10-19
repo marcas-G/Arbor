@@ -2,7 +2,6 @@ import type {
   ExecutionEpisodeBinding,
   ExecutionId,
   NetworkPolicyV1,
-  SandboxBoundary,
   SandboxProfile,
   SandboxProviderCapability,
   SandboxProviderId,
@@ -20,18 +19,12 @@ export interface SandboxProcessLimits {
   readonly cpuTimeMs: number;
 }
 
-export interface SandboxProcessPolicy {
+interface SandboxProcessPolicyCommon {
   readonly executionId: ExecutionId;
   readonly episodeBinding: ExecutionEpisodeBinding;
   readonly sandboxHandleId: string;
   readonly policyRevision: number;
   readonly expiresAt?: string;
-  readonly profile: SandboxProfile;
-  readonly providerId: SandboxProviderId;
-  readonly providerVersion: string;
-  readonly capabilityRevision: string;
-  readonly boundary: SandboxBoundary;
-  readonly networkPolicy: NetworkPolicyV1;
   readonly policyDigest: string;
   readonly admittedMounts: ReadonlyArray<{
     readonly ref: string;
@@ -43,8 +36,39 @@ export interface SandboxProcessPolicy {
   readonly auditRefs: ReadonlyArray<string>;
 }
 
+export interface OsEnforcedSandboxProcessPolicy
+  extends SandboxProcessPolicyCommon {
+  readonly kind: "OsEnforcedProcessPolicy";
+  readonly profile: Exclude<SandboxProfile, "FullAccess">;
+  readonly providerId: SandboxProviderId;
+  readonly providerVersion: string;
+  readonly capabilityRevision: string;
+  readonly boundary: "OsEnforced";
+  readonly networkPolicy: NetworkPolicyV1;
+}
+
+/** Internal runtime-only policy for the explicit V21 TrustedLocal choice. It
+ * is deliberately not a SandboxProcessPort/provider capability and asserts
+ * no OS isolation or resource-limit enforcement. */
+export interface TrustedLocalUnconfinedRuntimePolicy
+  extends SandboxProcessPolicyCommon {
+  readonly kind: "TrustedLocalUnconfinedRuntimePolicy";
+  readonly profile: "FullAccess";
+  readonly providerId: "TrustedLocal";
+  readonly providerVersion: "builtin-v1";
+  readonly capabilityRevision: "builtin-v1";
+  readonly boundary: "TrustedLocal";
+  readonly trustedRuntimeIdentity: "TrustedLocal";
+  readonly trustedRuntimeVersion: "builtin-v1";
+  readonly networkBoundary: "Unconfined";
+}
+
+export type SandboxProcessPolicy =
+  | OsEnforcedSandboxProcessPolicy
+  | TrustedLocalUnconfinedRuntimePolicy;
+
 export interface SandboxProcessRequest {
-  readonly policy: SandboxProcessPolicy;
+  readonly policy: OsEnforcedSandboxProcessPolicy;
   readonly handle: SandboxHandle;
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
@@ -57,6 +81,13 @@ export type SandboxProcessInvocation = Omit<
   SandboxProcessRequest,
   "policy" | "handle" | "timeoutMs"
 > & { readonly requestedTimeoutMs?: number };
+
+export interface TrustedLocalProcessRequest
+  extends Omit<SandboxProcessInvocation, "policy" | "handle"> {
+  readonly policy: TrustedLocalUnconfinedRuntimePolicy;
+  readonly handle: SandboxHandle;
+  readonly timeoutMs: number;
+}
 
 export type SandboxProcessOutcome =
   | {
@@ -150,3 +181,17 @@ export class SandboxProcessPort extends Context.Service<
   SandboxProcessPort,
   SandboxProcessPortService
 >()("arbor/SandboxProcessPort") {}
+
+export interface TrustedLocalProcessPortService {
+  readonly run: (
+    request: TrustedLocalProcessRequest,
+  ) => Effect.Effect<
+    | Extract<SandboxProcessOutcome, { readonly _tag: "Completed" }>
+    | Extract<SandboxProcessOutcome, { readonly _tag: "Rejected" }>
+  >;
+}
+
+export class TrustedLocalProcessPort extends Context.Service<
+  TrustedLocalProcessPort,
+  TrustedLocalProcessPortService
+>()("arbor/TrustedLocalProcessPort") {}

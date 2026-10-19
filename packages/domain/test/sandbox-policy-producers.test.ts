@@ -16,6 +16,8 @@ import {
   encodeSandboxOperatorPolicyConfigV1,
   encodeSandboxTargetRefV1,
   networkBrokerControlsV1ForMode,
+  Principal,
+  parse,
   resourceBoundaryDigestOfV1,
   sandboxTargetRefOfRegionV1,
   targetRefDigestV1,
@@ -162,7 +164,7 @@ describe("sandbox policy producer codecs", () => {
     const issuerConfig = {
       version: 1 as const,
       revision: 1,
-      issuers: ["user:operator"],
+      issuers: [parse(Principal)("user:operator")],
     };
     const providerRegistry = { version: 1 as const, revision: 1, entries: [] };
     const bundleBase = {
