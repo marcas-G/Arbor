@@ -175,6 +175,16 @@ export const verifySandboxUnavailableStepActionResume = (input: {
     const { decision, result } = current.value;
     const snapshot = result.effectivePolicySnapshot;
     const episodeJson = encodeExecutionEpisodeBinding(episode);
+    const effectivePolicyIsAllowed =
+      snapshot.kind === "OsEnforced"
+        ? snapshot.profile === decision.profile &&
+          snapshot.providerId === decision.providerId
+        : snapshot.kind === "TrustedLocalUnconfinedV1" &&
+          snapshot.trustedRuntimeIdentity === "TrustedLocal" &&
+          snapshot.trustedRuntimeVersion === "builtin-v1" &&
+          snapshot.profile === "FullAccess" &&
+          snapshot.networkBoundary === "Unconfined" &&
+          decision.profile === "FullAccess";
     return (
       fact.attentionFactId === disposition.attentionFactId &&
       fact.executionId === input.execution.executionId &&
@@ -192,10 +202,8 @@ export const verifySandboxUnavailableStepActionResume = (input: {
       result.policyRevision === decision.policyRevision &&
       result.policyDigest === decision.policyDigest &&
       encodeExecutionEpisodeBinding(result.episodeBinding) === episodeJson &&
-      snapshot.kind === "OsEnforced" &&
+      effectivePolicyIsAllowed &&
       snapshot.policyRevision === decision.policyRevision &&
-      snapshot.profile === decision.profile &&
-      snapshot.providerId === decision.providerId &&
       snapshot.expiresAt === decision.expiresAt &&
       snapshot.projectId === input.execution.projectId &&
       snapshot.workspaceId === input.execution.workspaceId &&

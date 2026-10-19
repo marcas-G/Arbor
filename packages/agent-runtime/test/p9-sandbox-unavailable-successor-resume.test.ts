@@ -12,7 +12,7 @@ import {
   sha256Hex,
   TransactionScope,
 } from "@arbor/ports";
-import { Effect, Option } from "effect";
+import { Effect, Exit, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   executeAgentLoopActions,
@@ -50,7 +50,7 @@ const step = {
   decodedOutputHash: "b".repeat(64),
   decoderVersion: "decode-turn-v1" as const,
   modelOutputSessionSequence: 2,
-  nextActionIndex: 1,
+  nextActionIndex: 2,
   revision: 3,
   updatedAt: "2026-10-18T10:00:00.000Z",
 };
@@ -69,7 +69,7 @@ const disposition = {
 };
 const action = {
   identity: actionIdentity,
-  actionIndex: 0,
+  actionIndex: 1,
   logicalActionId: "lac_old-policy-action",
   callRef: "call_old-policy",
   routeKind: "Executable" as const,
@@ -139,13 +139,20 @@ const decodedOutput = {
     {
       providerTurnId: step.providerTurnId,
       outputPosition: 0,
-      callRef: "call_old-policy",
+      callRef: "call_prior-applied",
       toolName: "write_file",
-      argumentsJson: '{"path":"old.txt"}',
+      argumentsJson: '{"path":"prior.txt"}',
     },
     {
       providerTurnId: step.providerTurnId,
       outputPosition: 1,
+      callRef: "call_old-policy",
+      toolName: "read_file",
+      argumentsJson: '{"path":"old.txt"}',
+    },
+    {
+      providerTurnId: step.providerTurnId,
+      outputPosition: 2,
       callRef: "call_not-yet-admitted",
       toolName: "read_file",
       argumentsJson: '{"path":"next.txt"}',
@@ -182,6 +189,22 @@ const persistedStep = {
 };
 const terminalAction = {
   ...action,
+  callRef: decodedOutput.toolInvocations[1]?.callRef,
+  actionKind: "read_file",
+  logicalActionId: `lac_${sha256Hex(
+    JSON.stringify({
+      executionId,
+      providerTurnId: step.providerTurnId,
+      callRef: decodedOutput.toolInvocations[1]?.callRef,
+      routeKind: "Executable",
+      actionKind: "read_file",
+    }),
+  )}`,
+  inputHash: sha256Hex(decodedOutput.toolInvocations[1]?.argumentsJson ?? ""),
+};
+const priorAppliedAction = {
+  identity: actionIdentity,
+  actionIndex: 0,
   logicalActionId: `lac_${sha256Hex(
     JSON.stringify({
       executionId,
@@ -191,7 +214,15 @@ const terminalAction = {
       actionKind: "write_file",
     }),
   )}`,
+  callRef: decodedOutput.toolInvocations[0]?.callRef,
+  routeKind: "Executable" as const,
+  actionKind: "write_file",
   inputHash: sha256Hex(decodedOutput.toolInvocations[0]?.argumentsJson ?? ""),
+  state: "Applied" as const,
+  resultRef: "artifact_prior-applied",
+  observationSourceRef: "obs_prior-applied",
+  revision: 1,
+  updatedAt: "2026-10-18T09:58:00.000Z",
 };
 
 describe("P9 SandboxUnavailableV1 successor recovery", () => {
@@ -202,7 +233,10 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
     // as the new process would; no executable handler is present on recovery.
     const durable = {
       step: persistedStep,
-      actions: [terminalAction],
+      actions: [
+        priorAppliedAction as Record<string, unknown>,
+        terminalAction as Record<string, unknown>,
+      ],
       fact,
       decision,
       result,
@@ -224,7 +258,7 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
         verifySandboxUnavailableStepActionResume({
           execution,
           step: durable.step as never,
-          action: durable.actions[0] as never,
+          action: durable.actions[1] as never,
           facts: facts as never,
           decisions: decisions as never,
           now: "2026-10-18T10:01:00.000Z",
@@ -260,8 +294,14 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
             { _tag: "TextDelta", text: decodedOutput.text },
             {
               _tag: "ToolCallProposed",
-              callRef: "call_old-policy",
+              callRef: "call_prior-applied",
               toolName: "write_file",
+              argumentsJson: '{"path":"prior.txt"}',
+            },
+            {
+              _tag: "ToolCallProposed",
+              callRef: "call_old-policy",
+              toolName: "read_file",
               argumentsJson: '{"path":"old.txt"}',
             },
             {
@@ -341,26 +381,52 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
       } as never,
       currentControlBasis: () => Effect.succeed({} as never),
       admit: () => Effect.succeed("Continue"),
-      failure: (cause) => cause as never,
+      failure: (cause: unknown) => cause as never,
       now: () => Effect.succeed("2026-10-18T10:01:00.000Z"),
     } as never);
-    const recovered = await Effect.runPromise(
-      Effect.provideService(
+    const runReplay = () =>
+      Effect.runPromiseExit(
         Effect.provideService(
           Effect.provideService(
-            replay,
-            SandboxProviderUnavailableStore,
-            facts as never,
+            Effect.provideService(
+              replay,
+              SandboxProviderUnavailableStore,
+              facts as never,
+            ),
+            SandboxPolicyDecisionStore,
+            decisions as never,
           ),
-          SandboxPolicyDecisionStore,
-          decisions as never,
+          TransactionScope,
+          { session: { id: "p9-sandbox-successor-restart" } },
         ),
-        TransactionScope,
-        { session: { id: "p9-sandbox-successor-restart" } },
-      ),
-    );
-    expect(recovered._tag).toBe("Completed");
+      );
+    const recoveredExit = await runReplay();
+    expect(Exit.isSuccess(recoveredExit)).toBe(true);
+    if (Exit.isFailure(recoveredExit)) throw new Error("resume failed");
+    expect(recoveredExit.value._tag).toBe("Completed");
     expect(executableHandlerCalls).toBe(0);
+
+    durable.actions = [
+      { ...priorAppliedAction, state: "Pending" },
+      terminalAction,
+    ];
+    expect(Exit.isFailure(await runReplay())).toBe(true);
+    durable.actions = [
+      {
+        ...priorAppliedAction,
+        state: "TerminalRejected",
+        disposition: { _tag: "ExecutionSettlement:Failed" },
+      },
+      terminalAction,
+    ];
+    expect(Exit.isFailure(await runReplay())).toBe(true);
+    durable.actions = [
+      priorAppliedAction,
+      terminalAction,
+      { ...terminalAction, actionIndex: 2 },
+    ];
+    expect(Exit.isFailure(await runReplay())).toBe(true);
+    durable.actions = [priorAppliedAction, terminalAction];
 
     const transitioned: { predecessor?: unknown; successor?: unknown } = {};
     const loopSteps = {
@@ -406,7 +472,7 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
     expect(completion).toEqual({ _tag: "Continue" });
     expect(transitioned.predecessor).toMatchObject({
       state: "NextStepReady",
-      nextActionIndex: 1,
+      nextActionIndex: 2,
       successor: {
         executionId,
         logicalStepNo: 1,
@@ -418,7 +484,7 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
       predecessor: actionIdentity,
       state: "Prepared",
     });
-    expect(durable.actions).toEqual([terminalAction]);
+    expect(durable.actions).toEqual([priorAppliedAction, terminalAction]);
   });
 
   it("does not resume on the same policy revision", async () => {
@@ -459,5 +525,87 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
       ),
     );
     expect(resumed).toBe(false);
+  });
+
+  it("accepts the exact TrustedLocalUnconfinedV1 runtime literals from a joined, current result", async () => {
+    const trustedDecision = {
+      ...decision,
+      profile: "FullAccess",
+      providerId: "trusted-local",
+    };
+    const trustedResult = {
+      ...result,
+      effectivePolicySnapshot: {
+        kind: "TrustedLocalUnconfinedV1",
+        policyRevision: decision.policyRevision,
+        profile: "FullAccess",
+        networkBoundary: "Unconfined",
+        trustedRuntimeIdentity: "TrustedLocal",
+        trustedRuntimeVersion: "builtin-v1",
+        projectId,
+        workspaceId,
+        executionId,
+        episodeBinding: episode,
+        expiresAt: decision.expiresAt,
+      },
+    };
+    const resumed = await Effect.runPromise(
+      Effect.provideService(
+        verifySandboxUnavailableStepActionResume({
+          execution,
+          step: step as never,
+          action: terminalAction as never,
+          facts: {
+            findByExecutionAndRevision: () => Effect.succeed(fact),
+          } as never,
+          decisions: {
+            findCurrentForExecution: () =>
+              Effect.succeed(
+                Option.some({
+                  decision: trustedDecision,
+                  result: trustedResult,
+                }),
+              ),
+          } as never,
+          now: "2026-10-18T10:01:00.000Z",
+        }),
+        TransactionScope,
+        { session: { id: "p9-sandbox-successor-trusted-local" } },
+      ),
+    );
+    expect(resumed).toBe(true);
+
+    const wrongRuntime = {
+      ...trustedResult,
+      effectivePolicySnapshot: {
+        ...trustedResult.effectivePolicySnapshot,
+        trustedRuntimeVersion: "unverified-v1",
+      },
+    };
+    const rejected = await Effect.runPromise(
+      Effect.provideService(
+        verifySandboxUnavailableStepActionResume({
+          execution,
+          step: step as never,
+          action: terminalAction as never,
+          facts: {
+            findByExecutionAndRevision: () => Effect.succeed(fact),
+          } as never,
+          decisions: {
+            findCurrentForExecution: () =>
+              Effect.succeed(
+                Option.some({
+                  decision: trustedDecision,
+                  result: wrongRuntime,
+                }),
+              ),
+          } as never,
+          now: "2026-10-18T10:01:00.000Z",
+        }),
+        TransactionScope,
+        { session: { id: "p9-sandbox-successor-wrong-runtime" } },
+      ),
+    );
+    expect(rejected).toBe(false);
   });
 });
