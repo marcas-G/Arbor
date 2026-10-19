@@ -686,6 +686,7 @@ export const ToolRuntimeLive = (
               failureCode: string,
               probeEvidenceRef: string | null = null,
               providerVersion = policy.providerVersion,
+              capabilityRevision = policy.capabilityRevision,
             ): SandboxProviderUnavailableOutcome => ({
               _tag: "SandboxProviderUnavailable",
               projectId: context.projectId,
@@ -697,7 +698,7 @@ export const ToolRuntimeLive = (
               profileId: policy.profile,
               providerId: policy.providerId,
               providerVersion,
-              capabilityRevision: policy.capabilityRevision,
+              capabilityRevision,
               probeEvidenceRef,
               failureCode,
               actionBinding: {
@@ -832,6 +833,10 @@ export const ToolRuntimeLive = (
                 resolved.reason,
                 resolved.capability?.probeEvidenceRef ?? null,
                 resolved.capability?.providerVersion ?? policy.providerVersion,
+                String(
+                  resolved.capability?.capabilityRevision ??
+                    policy.capabilityRevision,
+                ),
               );
             }
 
@@ -845,6 +850,7 @@ export const ToolRuntimeLive = (
               if (
                 result.providerId !== policy.providerId ||
                 result.providerVersion !== policy.providerVersion ||
+                result.capabilityRevision !== policy.capabilityRevision ||
                 result.failureCode.trim() !== result.failureCode ||
                 result.failureCode.length === 0 ||
                 new TextEncoder().encode(result.failureCode).byteLength > 128
@@ -858,6 +864,7 @@ export const ToolRuntimeLive = (
                 result.failureCode,
                 result.probeEvidenceRef,
                 result.providerVersion,
+                result.capabilityRevision,
               );
             }
             return result;
@@ -3849,6 +3856,30 @@ export const ToolRuntimeLive = (
                     : approvalDenialCode(matched.reason),
                 );
               }
+            }
+            if (
+              executor.processCapability === "SandboxProcess" &&
+              (context.sandboxProcessPolicy === undefined ||
+                (context.sandboxProcessPolicy.expiresAt !== undefined &&
+                  Number.isFinite(
+                    Date.parse(context.sandboxProcessPolicy.expiresAt),
+                  ) &&
+                  new Date(
+                    Date.parse(context.sandboxProcessPolicy.expiresAt),
+                  ).toISOString() === context.sandboxProcessPolicy.expiresAt &&
+                  Date.parse(context.sandboxProcessPolicy.expiresAt) <=
+                    Date.parse(effectGateNow))) &&
+              p39BindingEnabled &&
+              Option.isSome(p39Recovery) &&
+              recoveredToolOutcome === undefined &&
+              (Option.isNone(prior) ||
+                prior.value.effectAdmissionState === "NotAdmitted")
+            ) {
+              // P4 has already durably claimed the exact P3 action and bound
+              // its immutable recovery proof above. Policy absence parks that
+              // same action before effect admission; it is neither a denial
+              // nor a terminal ExpectedFailure/Observation.
+              return { _tag: "SandboxPolicyRequiredInterruption" as const };
             }
             if (options.qualificationProbe !== undefined) {
               yield* Effect.promise(

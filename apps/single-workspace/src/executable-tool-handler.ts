@@ -149,6 +149,8 @@ export const toExecutableOutcome = (
         _tag: "SandboxProviderUnavailable",
         outcome: result,
       };
+    case "SandboxPolicyRequiredInterruption":
+      return { _tag: "SandboxPolicyRequiredInterruption" };
     case "ReconciledNoEffect": {
       const status =
         result.reasonCode === "StopRequested"

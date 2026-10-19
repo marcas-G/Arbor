@@ -27,6 +27,7 @@ export type AttentionSource =
   | "WorkspaceResourceActivationPending"
   | "SandboxProviderUnavailable"
   | "SandboxRecoveryBindingFailure"
+  | "SandboxPolicyDecisionRequired"
   | "WorkEpisodeBlocked"
   | "VerifierOrphan"
   | "WaitingOnVacantProducer";

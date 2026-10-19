@@ -338,7 +338,8 @@ export type ExecutableInvocationOutcome =
   | {
       readonly _tag: "SandboxProviderUnavailable";
       readonly outcome: SandboxProviderUnavailableOutcome;
-    };
+    }
+  | { readonly _tag: "SandboxPolicyRequiredInterruption" };
 
 export interface ExecutableInvocationInput {
   readonly invocation: ToolInvocation;

@@ -145,6 +145,9 @@ const canonicalJson = (
       // Nonterminal process-policy results never create tool-observation
       // evidence; P9 consumes the typed outcome directly.
       return "";
+    case "SandboxPolicyRequiredInterruption":
+      // A required human policy is a nonterminal park, never P40 evidence.
+      return "";
     case "Interrupted":
       return JSON.stringify({ _tag: observation._tag });
     case "OutcomeUnknown":

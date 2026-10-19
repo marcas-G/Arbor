@@ -295,20 +295,45 @@ describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
         yield* seedDetail;
         const deps = yield* makeP10Deps();
         const sandboxPolicy = {
+          kind: "OsEnforced" as const,
           policyRevision: 3,
           profile: "WorkspaceWrite" as const,
           providerId: "bwrap",
+          providerVersion: "0.8.0",
           networkMode: "Restricted" as const,
           status: "Unavailable" as const,
           expiresAt: "2026-10-19T12:00:00.000Z",
         };
+        const sandboxPolicyPreconditions = {
+          kind: "OsEnforced" as const,
+          expectedEpisodeRevision: 2,
+          latestCommittedPolicyRevision: 3,
+          episodeBinding: {
+            _tag: "WorkEpisode" as const,
+            workId: W_ROOT,
+            targetWorkRevision: 7 as never,
+          },
+          workspaceRevision: 4,
+          resourceBoundaryRevision: 2,
+          sandboxHandleBindingDigest: "a".repeat(64),
+          authorityBundleRevision: 3,
+          authorityBundleDigest: "b".repeat(64),
+          operatorConfigRevision: 2,
+          operatorConfigDigest: "c".repeat(64),
+          providerRegistryRevision: 5,
+          providerRegistryDigest: "d".repeat(64),
+        };
         const detail = yield* deriveWorkspaceDetail(p10Root, {
           ...deps.workspaceDetail,
-          sandboxPolicyForExecution: () => Effect.succeed(sandboxPolicy),
+          sandboxPolicyForExecution: () =>
+            Effect.succeed({ sandboxPolicy, sandboxPolicyPreconditions }),
         });
         expect(detail.executionSummary?.sandboxPolicy).toEqual(sandboxPolicy);
         expect(detail.currentWork?.activeExecution?.sandboxPolicy).toEqual(
           sandboxPolicy,
+        );
+        expect(detail.sandboxPolicyPreconditions).toEqual(
+          sandboxPolicyPreconditions,
         );
       }),
       makeP10App(),

@@ -2,10 +2,18 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
+  decodeEffectivePolicySummaryV1,
+  encodeEffectivePolicySummaryV1,
+  encodeNetworkPolicyV1,
+  encodeSandboxPolicyDecisionCommittedInternalV1,
+} from "@arbor/domain";
+import {
   AttentionProjectionStore as AttentionProjectionStorePort,
   DomainEventJournal,
   SandboxProviderUnavailableAttentionQueue as SandboxQueuePort,
   SandboxProviderUnavailableStore as SandboxStorePort,
+  sha256Hex,
   TransactionPort,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
@@ -44,7 +52,109 @@ const episodeBinding2 = {
   targetWorkRevision: 1 as never,
 };
 const episodeJson2 = JSON.stringify(episodeBinding2);
-const policyDigest = "a".repeat(64);
+const resultFor = (
+  commandId: string,
+  execution: string,
+  workspace: string,
+  episode: typeof episodeBinding,
+): string => {
+  const effectivePolicySnapshot = {
+    version: 1,
+    kind: "OsEnforced",
+    projectId,
+    workspaceId: workspace as never,
+    executionId: execution as never,
+    episodeBinding: episode,
+    workspaceRevision: 4,
+    resourceBoundaryRevision: 2,
+    resourceBoundaryDigest: "c".repeat(64),
+    sandboxEnvironmentBasisDigest: "d".repeat(64),
+    policyRevision: 1,
+    expiresAt: "2026-10-20T00:00:00.000Z",
+    profile: "ReadOnly",
+    providerId: "bwrap",
+    providerVersion: "0.8.0",
+    capabilityRevision: 1,
+    osFamily: "Linux",
+    osBuild: "linux-6.8",
+    qualificationEvidenceRef: `blob:sha256:${"e".repeat(64)}`,
+    networkPolicy: { version: 1, mode: "Disabled", destinations: [] },
+    networkPolicyDigest: sha256Hex(
+      encodeNetworkPolicyV1({
+        version: 1,
+        mode: "Disabled",
+        destinations: [],
+      }),
+    ),
+    networkBrokerControls: {
+      version: 1,
+      egress: "BrokerOnly",
+      dns: "BrokerResolveAndPin",
+      addressPolicy: "SandboxPublicInternetDenyV1",
+      redirectMaxHops: 5,
+      tlsIdentity: "OriginCertificateSniHostMatch",
+    },
+    providerRegistryRevision: 5,
+    providerRegistryDigest: "1".repeat(64),
+    sandboxHandleBindingDigest: "2".repeat(64),
+    mounts: [
+      {
+        mountId: "mount_workspace",
+        targetRef: "target_workspace",
+        targetIdentityDigest: "d".repeat(64),
+        access: "ReadOnly" as const,
+      },
+    ],
+    environmentAllowlist: ["HOME", "PATH"],
+    limits: {
+      wallTimeMs: 60_000,
+      stdoutBytes: 1024,
+      stderrBytes: 1024,
+      processCount: 8,
+      memoryBytes: 64 * 1024 * 1024,
+      cpuTimeMs: 30_000,
+    },
+    auditRefs: ["audit:decision"],
+    authorityBundleRevision: 1,
+    authorityBundleDigest: "3".repeat(64),
+    operatorConfigRevision: 1,
+    operatorConfigDigest: "b".repeat(64),
+  } as const;
+  return encodeSandboxPolicyDecisionCommittedInternalV1({
+    version: 1,
+    commandId: commandId as never,
+    projectId,
+    workspaceId: workspace as never,
+    executionId: execution as never,
+    episodeBinding: episode,
+    policyRevision: 1,
+    policyDigest: sha256Hex(
+      encodeEffectivePolicySummaryV1(effectivePolicySnapshot),
+    ),
+    effectivePolicySnapshot,
+  });
+};
+
+const policyDigest = (
+  JSON.parse(
+    resultFor(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      executionId,
+      workspaceId,
+      episodeBinding,
+    ),
+  ) as { readonly policyDigest: string }
+).policyDigest;
+const policyDigest2 = (
+  JSON.parse(
+    resultFor(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a2",
+      executionId2,
+      workspaceId2,
+      episodeBinding2,
+    ),
+  ) as { readonly policyDigest: string }
+).policyDigest;
 
 const setupSql = `
 CREATE TABLE executions (
@@ -75,9 +185,13 @@ CREATE TABLE sandbox_policy_decisions (
   project_id TEXT NOT NULL, workspace_id TEXT NOT NULL, execution_id TEXT NOT NULL,
   episode_binding_json TEXT NOT NULL, policy_revision INTEGER NOT NULL,
   policy_digest TEXT NOT NULL, profile_id TEXT NOT NULL, provider_id TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL, decision_command_id TEXT NOT NULL,
   PRIMARY KEY(project_id, workspace_id, execution_id, episode_binding_json, policy_revision),
   UNIQUE(execution_id, policy_revision)
+);
+CREATE TABLE commands (
+  command_id TEXT NOT NULL, resolution TEXT NOT NULL, schema_version TEXT NOT NULL,
+  result_json TEXT NOT NULL, project_id TEXT NOT NULL
 );
 CREATE TABLE project_event_sequences (project_id TEXT PRIMARY KEY, last_sequence INTEGER NOT NULL);
 CREATE TABLE domain_events (
@@ -163,10 +277,23 @@ const seed = Effect.gen(function* () {
     executionId,
     episodeJson,
   ]);
+  const policyCommandId = "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1";
   yield* sql.unsafe(
-    `INSERT INTO sandbox_policy_decisions VALUES (?, ?, ?, ?, 1, ?, 'ReadOnly', 'bwrap', '2099-01-01T00:00:00.000Z')`,
-    [projectId, workspaceId, executionId, episodeJson, policyDigest],
+    `INSERT INTO sandbox_policy_decisions VALUES (?, ?, ?, ?, 1, ?, 'ReadOnly', 'bwrap', '2099-01-01T00:00:00.000Z', ?)`,
+    [
+      projectId,
+      workspaceId,
+      executionId,
+      episodeJson,
+      policyDigest,
+      policyCommandId,
+    ],
   );
+  yield* sql.unsafe(`INSERT INTO commands VALUES (?, 'Committed', '1', ?, ?)`, [
+    policyCommandId,
+    resultFor(policyCommandId, executionId, workspaceId, episodeBinding),
+    projectId,
+  ]);
   yield* sql.unsafe(`INSERT INTO executions VALUES (?, ?, ?, NULL, NULL)`, [
     executionId2,
     projectId,
@@ -180,10 +307,23 @@ const seed = Effect.gen(function* () {
     executionId2,
     episodeJson2,
   ]);
+  const policyCommandId2 = "cmd_018f2b3c-4d5e-7abc-8def-0123456789a2";
   yield* sql.unsafe(
-    `INSERT INTO sandbox_policy_decisions VALUES (?, ?, ?, ?, 1, ?, 'ReadOnly', 'bwrap', '2099-01-01T00:00:00.000Z')`,
-    [projectId, workspaceId2, executionId2, episodeJson2, policyDigest],
+    `INSERT INTO sandbox_policy_decisions VALUES (?, ?, ?, ?, 1, ?, 'ReadOnly', 'bwrap', '2099-01-01T00:00:00.000Z', ?)`,
+    [
+      projectId,
+      workspaceId2,
+      executionId2,
+      episodeJson2,
+      policyDigest2,
+      policyCommandId2,
+    ],
   );
+  yield* sql.unsafe(`INSERT INTO commands VALUES (?, 'Committed', '1', ?, ?)`, [
+    policyCommandId2,
+    resultFor(policyCommandId2, executionId2, workspaceId2, episodeBinding2),
+    projectId,
+  ]);
   yield* tx.transact(Effect.void);
 });
 
@@ -198,9 +338,18 @@ const factInput = (failureCode = "ProviderUnavailable") => ({
     policyDigest,
     profileId: "ReadOnly" as const,
     providerId: "bwrap",
-    providerVersion: "bwrap-v1",
+    providerVersion: "0.8.0",
+    capabilityRevision: "1",
     probeEvidenceRef: `probe:sha256:${"b".repeat(64)}`,
     failureCode,
+    actionBinding: {
+      identity: { executionId, logicalStepNo: 0, repairAttempt: 0 },
+      providerTurnId: "ptn_p50_test" as never,
+      logicalActionId: "lac_p50_test",
+      actionIndex: 0,
+      callRef: "call_p50_test",
+      invocationId: "tin_p50_test" as never,
+    },
   },
   fence: {
     executionId,
@@ -218,12 +367,54 @@ const factInput2 = () => ({
     executionId: executionId2,
     workspaceId: workspaceId2,
     episodeBinding: episodeBinding2,
+    policyDigest: policyDigest2,
+    actionBinding: {
+      ...factInput().outcome.actionBinding,
+      identity: {
+        executionId: executionId2,
+        logicalStepNo: 0,
+        repairAttempt: 0,
+      },
+    },
   },
   fence: { ...factInput().fence, executionId: executionId2 },
 });
 
 describe("P50 sandbox provider-unavailable fact and Attention queue", () => {
   it("commits one fenced fact, queue row and wake event; exact retry reuses them", async () => {
+    const rawResult = JSON.parse(
+      resultFor(
+        "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
+        executionId,
+        workspaceId,
+        episodeBinding,
+      ),
+    ) as {
+      readonly effectivePolicySnapshot: unknown;
+      readonly policyDigest: string;
+    };
+    expect(JSON.stringify(rawResult.effectivePolicySnapshot)).toBe(
+      encodeEffectivePolicySummaryV1(
+        rawResult.effectivePolicySnapshot as never,
+      ),
+    );
+    expect(
+      decodeEffectivePolicySummaryV1(
+        rawResult.effectivePolicySnapshot,
+        sha256Hex,
+      ),
+    ).toBeDefined();
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+        resultFor(
+          "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          executionId,
+          workspaceId,
+          episodeBinding,
+        ),
+        sha256Hex,
+      ),
+    ).toBeDefined();
     await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -474,6 +665,12 @@ describe("P50 sandbox provider-unavailable fact and Attention queue", () => {
                 attentionFactId: fact.attentionFactId,
                 policyRevision: fact.policyRevision,
                 policyDigest: fact.policyDigest,
+                profile: fact.profileId,
+                providerId: fact.providerId,
+                providerVersion: fact.providerVersion,
+                capabilityRevision: "1",
+                probeEvidenceRef: fact.probeEvidenceRef,
+                failureCode: fact.failureCode,
               }),
             ],
           );
@@ -519,9 +716,7 @@ describe("P50 sandbox provider-unavailable fact and Attention queue", () => {
             ),
           ).toBeUndefined();
           expect(
-            yield* tx.transact(
-              listUnavailable(projectId, now),
-            ),
+            yield* tx.transact(listUnavailable(projectId, now)),
           ).toMatchObject([
             {
               projectId,

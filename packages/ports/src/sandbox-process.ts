@@ -25,6 +25,7 @@ export interface SandboxProcessPolicy {
   readonly episodeBinding: ExecutionEpisodeBinding;
   readonly sandboxHandleId: string;
   readonly policyRevision: number;
+  readonly expiresAt?: string;
   readonly profile: SandboxProfile;
   readonly providerId: SandboxProviderId;
   readonly providerVersion: string;
@@ -70,6 +71,7 @@ export type SandboxProcessOutcome =
       readonly _tag: "Unavailable";
       readonly providerId: SandboxProviderId;
       readonly providerVersion: string;
+      readonly capabilityRevision: string;
       readonly probeEvidenceRef: string | null;
       readonly failureCode: string;
     }
@@ -112,6 +114,12 @@ export interface SandboxProviderUnavailableOutcome {
     readonly callRef: string;
     readonly invocationId: ToolInvocationId;
   };
+}
+
+/** Internal P4 handoff after a durable exact intent/binding but before effect
+ * admission. It is never a ToolObservation or persisted P40 settlement. */
+export interface SandboxPolicyRequiredInterruption {
+  readonly _tag: "SandboxPolicyRequiredInterruption";
 }
 
 export type SandboxProcessRunnerOutcome =

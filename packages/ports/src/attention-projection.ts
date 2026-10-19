@@ -121,6 +121,15 @@ export interface SandboxRecoveryBindingFailureProjectionRow {
   readonly intentAt: string;
 }
 
+export interface SandboxPolicyDecisionRequiredProjectionRow {
+  readonly projectId: ProjectId;
+  readonly executionId: string;
+  readonly invocationId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly attentionFactId: string;
+  readonly intentAt: string;
+}
+
 export type AttentionProjectionStoreError =
   RepositoryFailure<"AttentionProjectionStore">;
 
@@ -199,6 +208,14 @@ export interface AttentionProjectionStoreService {
     now: string,
   ) => Effect.Effect<
     ReadonlyArray<SandboxRecoveryBindingFailureProjectionRow>,
+    AttentionProjectionStoreError,
+    TransactionScope
+  >;
+  readonly listSandboxPolicyDecisionRequired?: (
+    projectId: ProjectId,
+    now: string,
+  ) => Effect.Effect<
+    ReadonlyArray<SandboxPolicyDecisionRequiredProjectionRow>,
     AttentionProjectionStoreError,
     TransactionScope
   >;

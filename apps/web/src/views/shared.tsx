@@ -56,13 +56,25 @@ export function SandboxPolicySummary({
         <dd>{policy.profile}</dd>
       </div>
       <div>
-        <dt>Provider</dt>
-        <dd>{policy.providerId}</dd>
+        <dt>Boundary</dt>
+        <dd>
+          {policy.kind === "OsEnforced"
+            ? "OS enforced"
+            : "Trusted local / unconfined"}
+        </dd>
       </div>
       <div>
-        <dt>Network mode</dt>
-        <dd>{policy.networkMode}</dd>
+        <dt>Provider</dt>
+        <dd>
+          {policy.kind === "OsEnforced" ? policy.providerId : "Trusted local"}
+        </dd>
       </div>
+      {policy.kind === "OsEnforced" ? (
+        <div>
+          <dt>Network mode</dt>
+          <dd>{policy.networkMode}</dd>
+        </div>
+      ) : null}
       <div>
         <dt>Policy revision</dt>
         <dd>{policy.policyRevision}</dd>

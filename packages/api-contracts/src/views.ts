@@ -13,6 +13,8 @@ import type {
   ProjectId,
   ResourceBoundary,
   ResponsibilityDefinition,
+  SandboxPolicyPreconditionsV1,
+  SandboxPolicyStatusViewV1,
   SessionId,
   Sha256,
   TerminalActionDenial,
@@ -31,14 +33,7 @@ import type {
 export interface ExecutionSummary {
   readonly executionId: ExecutionId;
   readonly admittedAt: string;
-  readonly sandboxPolicy?: {
-    readonly policyRevision: number;
-    readonly profile: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
-    readonly providerId: string;
-    readonly networkMode: "Disabled" | "Restricted" | "Enabled";
-    readonly status: "Configured" | "Unavailable";
-    readonly expiresAt: string;
-  };
+  readonly sandboxPolicy?: SandboxPolicyStatusViewV1;
 }
 
 export interface CurrentWorkSummary {
@@ -77,6 +72,7 @@ export type AttentionSource =
   | "LegacyAdoptionEvidenceInsufficient"
   | "SandboxProviderUnavailable"
   | "SandboxRecoveryBindingFailure"
+  | "SandboxPolicyDecisionRequired"
   | "VerifierOrphan"
   | "VacantProducer";
 
@@ -91,6 +87,7 @@ export const ATTENTION_SOURCES: ReadonlyArray<AttentionSource> = [
   "LegacyAdoptionEvidenceInsufficient",
   "SandboxProviderUnavailable",
   "SandboxRecoveryBindingFailure",
+  "SandboxPolicyDecisionRequired",
   "VerifierOrphan",
   "VacantProducer",
 ];
@@ -236,6 +233,7 @@ export interface WorkspaceDetailRes {
   readonly inboxUnconsumed: ReadonlyArray<InboxUnconsumedEntry>;
   readonly verification?: VerificationView | undefined;
   readonly auditTimeline: ReadonlyArray<AuditTimelineEntry>;
+  readonly sandboxPolicyPreconditions?: SandboxPolicyPreconditionsV1;
 }
 
 export interface AcceptedWorkResult {

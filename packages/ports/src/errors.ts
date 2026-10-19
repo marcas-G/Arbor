@@ -344,9 +344,24 @@ export interface ProjectionIntegrityFailure {
   readonly safeDetails: Readonly<Record<string, unknown>>;
 }
 
+export interface SandboxProviderUnavailableProjection {
+  readonly _tag: "SandboxProviderUnavailableProjection";
+  readonly code: "sandbox/provider-unavailable";
+  readonly category: "unavailable";
+  readonly correlationId: null;
+  readonly retryDisposition: "retryable";
+  readonly message: "required sandbox capability was unavailable or could not be verified; execution did not start";
+  readonly safeDetails: {
+    readonly executionId: string;
+    readonly workspaceId: string;
+    readonly policyRevision: number;
+  };
+}
+
 export type ProjectionQueryError =
   | ProjectionStale
   | ProjectionUnavailable
   | ProjectionInvalidRequest
   | ProjectionNotFound
-  | ProjectionIntegrityFailure;
+  | ProjectionIntegrityFailure
+  | SandboxProviderUnavailableProjection;

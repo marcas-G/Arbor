@@ -77,10 +77,13 @@ export const makeProblem = (
 export const problemFromProjectionError = (
   error: ProjectionQueryError,
 ): Problem => ({
+  correlationId: error.correlationId,
   code: error.code,
   category: error.category,
-  message: error.code,
-  correlationId: error.correlationId,
+  message:
+    "message" in error && typeof error.message === "string"
+      ? error.message
+      : error.code,
   retryDisposition: error.retryDisposition,
   safeDetails: error.safeDetails,
 });

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  failureResponse,
   makeProblem,
   problemFromCommandFailure,
+  problemFromProjectionError,
   problemFromUnknownFailure,
 } from "../src/transport/errors.js";
 
@@ -67,6 +69,56 @@ describe("typed Problem presentation", () => {
       category: "stale",
       retryDisposition: "non-retryable",
     });
+  });
+
+  it("maps exact transient sandbox provider outcome to the required safe 503 Problem", () => {
+    const response = failureResponse(
+      problemFromProjectionError({
+        _tag: "SandboxProviderUnavailableProjection",
+        code: "sandbox/provider-unavailable",
+        category: "unavailable",
+        correlationId: null,
+        retryDisposition: "retryable",
+        message:
+          "required sandbox capability was unavailable or could not be verified; execution did not start",
+        safeDetails: {
+          executionId: "exe_public",
+          workspaceId: "ws_public",
+          policyRevision: 1,
+        },
+      }),
+    );
+    if (response.ok) throw new Error("expected unavailable Problem response");
+    expect(response).toEqual({
+      ok: false,
+      status: 503,
+      problem: {
+        correlationId: null,
+        code: "sandbox/provider-unavailable",
+        category: "unavailable",
+        message:
+          "required sandbox capability was unavailable or could not be verified; execution did not start",
+        retryDisposition: "retryable",
+        safeDetails: {
+          executionId: "exe_public",
+          workspaceId: "ws_public",
+          policyRevision: 1,
+        },
+      },
+    });
+    expect(Object.keys(response.problem)).toEqual([
+      "correlationId",
+      "code",
+      "category",
+      "message",
+      "retryDisposition",
+      "safeDetails",
+    ]);
+    expect(Object.keys(response.problem.safeDetails)).toEqual([
+      "executionId",
+      "workspaceId",
+      "policyRevision",
+    ]);
   });
 
   it("reduces unknown post-commit failure to its safe tag", () => {

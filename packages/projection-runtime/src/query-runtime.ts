@@ -420,7 +420,8 @@ const isProjectionQueryError = (
     error._tag === "ProjectionUnavailable" ||
     error._tag === "ProjectionInvalidRequest" ||
     error._tag === "ProjectionNotFound" ||
-    error._tag === "ProjectionIntegrityFailure"
+    error._tag === "ProjectionIntegrityFailure" ||
+    error._tag === "SandboxProviderUnavailableProjection"
   );
 };
 

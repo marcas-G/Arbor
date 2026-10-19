@@ -21,6 +21,7 @@ import { encodeExecutionEpisodeBinding, executionEpisode } from "@arbor/domain";
 import {
   AgentExecutionStateStore,
   AgentLoopStepStore,
+  AttentionProjectionStore,
   Clock,
   ControlApprovalStore,
   DecisionRequestStore,
@@ -32,6 +33,7 @@ import {
   type LeaseFencingRejected,
   type LeaseRecord,
   LeaseService,
+  P39RecoveryEvidenceStore,
   ProviderTurnStore,
   ReconciliationSource,
   RecoveryAttentionFactStore,
@@ -295,6 +297,12 @@ export const runExecution = (
       SandboxPolicyDecisionStore,
     );
     const loopSteps = yield* Effect.serviceOption(AgentLoopStepStore);
+    const attentionProjection = yield* Effect.serviceOption(
+      AttentionProjectionStore,
+    );
+    const p39RecoveryEvidence = yield* Effect.serviceOption(
+      P39RecoveryEvidenceStore,
+    );
     const providerTurns = yield* Effect.serviceOption(ProviderTurnStore);
     const sessions = yield* Effect.serviceOption(SessionRepository);
     const decisions = yield* Effect.serviceOption(DecisionRequestStore);
@@ -319,6 +327,22 @@ export const runExecution = (
       return yield* Effect.fail({ _tag: "ExecutionNotFound" as const });
     }
     if (
+      Option.isSome(attentionProjection) &&
+      Option.isSome(p39RecoveryEvidence) &&
+      attentionProjection.value.listSandboxPolicyDecisionRequired !== undefined
+    ) {
+      const now = yield* clock.now();
+      const required = yield* tx.transact(
+        attentionProjection.value.listSandboxPolicyDecisionRequired(
+          execution.value.projectId,
+          now,
+        ),
+      );
+      if (required.some((item) => item.executionId === executionId)) {
+        return { _tag: "RecoveryBlocked" as const };
+      }
+    }
+    if (
       Option.isSome(sandboxUnavailableStore) &&
       Option.isSome(sandboxPolicyDecisions)
     ) {
@@ -330,23 +354,25 @@ export const runExecution = (
         ),
       );
       if (Option.isSome(currentPolicy)) {
+        const decision = currentPolicy.value.decision;
+        const snapshot = currentPolicy.value.result.effectivePolicySnapshot;
         const fact = yield* tx.transact(
           sandboxUnavailableStore.value.findByExecutionAndRevision(
             executionId,
-            currentPolicy.value.policyRevision,
+            decision.policyRevision,
           ),
         );
         if (fact !== undefined) {
           if (
-            fact.projectId !== currentPolicy.value.projectId ||
-            fact.workspaceId !== currentPolicy.value.workspaceId ||
+            snapshot.kind !== "OsEnforced" ||
+            fact.projectId !== decision.projectId ||
+            fact.workspaceId !== decision.workspaceId ||
             encodeExecutionEpisodeBinding(fact.episodeBinding) !==
-              encodeExecutionEpisodeBinding(
-                currentPolicy.value.episodeBinding,
-              ) ||
-            fact.policyDigest !== currentPolicy.value.policyDigest ||
-            fact.profileId !== currentPolicy.value.profile ||
-            fact.providerId !== currentPolicy.value.providerId
+              encodeExecutionEpisodeBinding(decision.episodeBinding) ||
+            fact.policyDigest !== decision.policyDigest ||
+            fact.profileId !== snapshot.profile ||
+            fact.providerId !== snapshot.providerId ||
+            fact.providerVersion !== snapshot.providerVersion
           ) {
             return yield* Effect.fail({
               _tag: "SandboxProviderUnavailableFactInvariantConflict" as const,
@@ -741,7 +767,8 @@ export const runExecution = (
     }
     if (
       outcome._tag === "ApprovalRequired" ||
-      outcome._tag === "RecoveryBlocked"
+      outcome._tag === "RecoveryBlocked" ||
+      outcome._tag === "SandboxPolicyRequiredInterruption"
     ) {
       yield* tx
         .transact(
@@ -814,16 +841,26 @@ export const runExecution = (
               outcome.outcome.workspaceId,
               outcome.outcome.executionId,
             );
+          const decision = Option.isSome(policy)
+            ? policy.value.decision
+            : undefined;
+          const snapshot = Option.isSome(policy)
+            ? policy.value.result.effectivePolicySnapshot
+            : undefined;
           if (
-            Option.isNone(policy) ||
-            policy.value.executionId !== outcome.outcome.executionId ||
-            policy.value.policyRevision !== outcome.outcome.policyRevision ||
-            policy.value.policyDigest !== outcome.outcome.policyDigest ||
-            policy.value.profile !== outcome.outcome.profileId ||
-            policy.value.providerId !== outcome.outcome.providerId ||
-            encodeExecutionEpisodeBinding(policy.value.episodeBinding) !==
+            decision === undefined ||
+            snapshot?.kind !== "OsEnforced" ||
+            decision.executionId !== outcome.outcome.executionId ||
+            decision.policyRevision !== outcome.outcome.policyRevision ||
+            decision.policyDigest !== outcome.outcome.policyDigest ||
+            snapshot.profile !== outcome.outcome.profileId ||
+            snapshot.providerId !== outcome.outcome.providerId ||
+            snapshot.providerVersion !== outcome.outcome.providerVersion ||
+            String(snapshot.capabilityRevision) !==
+              outcome.outcome.capabilityRevision ||
+            encodeExecutionEpisodeBinding(decision.episodeBinding) !==
               encodeExecutionEpisodeBinding(outcome.outcome.episodeBinding) ||
-            policy.value.expiresAt <= detectedAt
+            decision.expiresAt <= detectedAt
           ) {
             return yield* Effect.fail({
               _tag: "SandboxProviderUnavailableFactInvariantConflict" as const,
@@ -890,8 +927,11 @@ export const runExecution = (
                   invocationId: sourceAction.invocationId,
                   policyRevision: outcome.outcome.policyRevision,
                   policyDigest: outcome.outcome.policyDigest,
+                  profile: outcome.outcome.profileId,
+                  providerId: outcome.outcome.providerId,
                   providerVersion: outcome.outcome.providerVersion,
                   capabilityRevision: outcome.outcome.capabilityRevision,
+                  probeEvidenceRef: outcome.outcome.probeEvidenceRef,
                   failureCode: outcome.outcome.failureCode,
                 },
                 revision: action.revision + 1,

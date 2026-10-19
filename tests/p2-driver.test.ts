@@ -46,12 +46,14 @@ import {
 } from "../packages/execution-runtime/src/index.js";
 import {
   AgentLoopStepStore,
+  AttentionProjectionStore,
   type ControlApprovalRecord,
   ControlApprovalStore,
   type ExecutableApprovalRecord,
   ExecutableApprovalStore,
   type ExecutionDriveOutcome,
   ExecutionDriverPort,
+  P39RecoveryEvidenceStore,
   RuntimeSafetyGate,
   SandboxPolicyDecisionStore,
   type SandboxProviderUnavailableFactV1,
@@ -486,6 +488,51 @@ describe("P2-014 driver / dispatch / safety", () => {
     expect(result.leases).toBe(0);
   });
 
+  it("startup-scans exact pending sandbox policy work before dispatch or lease", async () => {
+    const calls = { dispatch: 0, drive: 0 };
+    const app = makeApp(yieldedSettlement, { calls });
+    const attention = Layer.succeed(AttentionProjectionStore, {
+      listSandboxPolicyDecisionRequired: () =>
+        Effect.succeed([
+          {
+            projectId,
+            executionId,
+            invocationId: "tin_pending_policy",
+            workspaceId,
+            attentionFactId: "sandbox-policy-decision-required:pending",
+            intentAt: "2026-10-19T00:00:00.000Z",
+          },
+        ]),
+    } as never);
+    const recoveryEvidence = Layer.succeed(
+      P39RecoveryEvidenceStore,
+      {} as never,
+    );
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P12_MIGRATIONS);
+      yield* seed;
+      yield* admit;
+      const result = yield* runExecution(
+        executionId,
+        { _tag: "Recovery" },
+        principal,
+      );
+      const sql = yield* SqlClient;
+      const leases = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM execution_leases WHERE execution_id = ?",
+        [executionId],
+      );
+      return { result, leases: leases[0]?.count ?? -1 };
+    });
+    const result = await run(
+      program,
+      Layer.mergeAll(app.layer, attention, recoveryEvidence),
+    );
+    expect(result.result._tag).toBe("RecoveryBlocked");
+    expect(result.leases).toBe(0);
+    expect(calls).toEqual({ dispatch: 0, drive: 0 });
+  });
+
   it("persists typed provider unavailability and blocks exact-policy reprobe after restart", async () => {
     const calls = { dispatch: 0, drive: 0 };
     const policyDigest = "a".repeat(64);
@@ -502,7 +549,7 @@ describe("P2-014 driver / dispatch / safety", () => {
         profileId: "ReadOnly" as const,
         providerId: "bwrap",
         providerVersion: "bwrap-v1",
-        capabilityRevision: "cap-v1",
+        capabilityRevision: "1",
         probeEvidenceRef: "probe-ref",
         failureCode: "ProviderUnavailable",
         actionBinding: {
@@ -556,8 +603,128 @@ describe("P2-014 driver / dispatch / safety", () => {
       list: () => Effect.succeed(persisted === undefined ? [] : [persisted]),
     } as never);
     const sandboxDecisions = Layer.succeed(SandboxPolicyDecisionStore, {
-      findExact: () => Effect.succeed(Option.some(policy)),
-      findCurrentForExecution: () => Effect.succeed(Option.some(policy)),
+      findExact: () =>
+        Effect.succeed(
+          Option.some({
+            decision: policy,
+            result: {
+              effectivePolicySnapshot: {
+                kind: "OsEnforced",
+                projectId,
+                workspaceId,
+                executionId,
+                episodeBinding: workEpisode(workId),
+                workspaceRevision: 1,
+                resourceBoundaryRevision: 1,
+                resourceBoundaryDigest: "c".repeat(64),
+                sandboxEnvironmentBasisDigest: "d".repeat(64),
+                policyRevision: 1,
+                expiresAt: policy.expiresAt,
+                profile: "ReadOnly",
+                providerId: "bwrap",
+                providerVersion: "bwrap-v1",
+                capabilityRevision: 1,
+                osFamily: "Linux",
+                osBuild: "test-build",
+                qualificationEvidenceRef: `blob:sha256:${"e".repeat(64)}`,
+                networkPolicy: {
+                  version: 1,
+                  mode: "Disabled",
+                  destinations: [],
+                },
+                networkPolicyDigest: "f".repeat(64),
+                networkBrokerControls: {
+                  version: 1,
+                  egress: "BrokerOnly",
+                  dns: "BrokerResolveAndPin",
+                  addressPolicy: "SandboxPublicInternetDenyV1",
+                  redirectMaxHops: 5,
+                  tlsIdentity: "OriginCertificateSniHostMatch",
+                },
+                providerRegistryRevision: 1,
+                providerRegistryDigest: "1".repeat(64),
+                sandboxHandleBindingDigest: "2".repeat(64),
+                mounts: [],
+                environmentAllowlist: [],
+                limits: {
+                  wallTimeMs: 1,
+                  stdoutBytes: 1,
+                  stderrBytes: 1,
+                  processCount: 1,
+                  memoryBytes: 1,
+                  cpuTimeMs: 1,
+                },
+                auditRefs: [],
+                authorityBundleRevision: 1,
+                authorityBundleDigest: "3".repeat(64),
+                operatorConfigRevision: 1,
+                operatorConfigDigest: "b".repeat(64),
+                version: 1,
+              },
+            },
+          } as never),
+        ),
+      findCurrentForExecution: () =>
+        Effect.succeed(
+          Option.some({
+            decision: policy,
+            result: {
+              effectivePolicySnapshot: {
+                kind: "OsEnforced",
+                projectId,
+                workspaceId,
+                executionId,
+                episodeBinding: workEpisode(workId),
+                workspaceRevision: 1,
+                resourceBoundaryRevision: 1,
+                resourceBoundaryDigest: "c".repeat(64),
+                sandboxEnvironmentBasisDigest: "d".repeat(64),
+                policyRevision: 1,
+                expiresAt: policy.expiresAt,
+                profile: "ReadOnly",
+                providerId: "bwrap",
+                providerVersion: "bwrap-v1",
+                capabilityRevision: 1,
+                osFamily: "Linux",
+                osBuild: "test-build",
+                qualificationEvidenceRef: `blob:sha256:${"e".repeat(64)}`,
+                networkPolicy: {
+                  version: 1,
+                  mode: "Disabled",
+                  destinations: [],
+                },
+                networkPolicyDigest: "f".repeat(64),
+                networkBrokerControls: {
+                  version: 1,
+                  egress: "BrokerOnly",
+                  dns: "BrokerResolveAndPin",
+                  addressPolicy: "SandboxPublicInternetDenyV1",
+                  redirectMaxHops: 5,
+                  tlsIdentity: "OriginCertificateSniHostMatch",
+                },
+                providerRegistryRevision: 1,
+                providerRegistryDigest: "1".repeat(64),
+                sandboxHandleBindingDigest: "2".repeat(64),
+                mounts: [],
+                environmentAllowlist: [],
+                limits: {
+                  wallTimeMs: 1,
+                  stdoutBytes: 1,
+                  stderrBytes: 1,
+                  processCount: 1,
+                  memoryBytes: 1,
+                  cpuTimeMs: 1,
+                },
+                auditRefs: [],
+                authorityBundleRevision: 1,
+                authorityBundleDigest: "3".repeat(64),
+                operatorConfigRevision: 1,
+                operatorConfigDigest: "b".repeat(64),
+                version: 1,
+              },
+            },
+          } as never),
+        ),
       insertCommitted: () => Effect.void,
     } as never);
     const actionBinding =
