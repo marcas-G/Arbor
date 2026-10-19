@@ -12,6 +12,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
+// Fixed adapter-owned qualification bridge source. The production provider does not launch it.
 internal static class WindowsSandboxBridgeHarness
 {
     private const uint TokenAssignPrimary = 0x0001;
@@ -37,6 +38,14 @@ internal static class WindowsSandboxBridgeHarness
     private const uint SeGroupIntegrity = 0x00000020;
     private const uint FileMapRead = 0x0004;
     private const uint FileMapWrite = 0x0002;
+    private const uint FileReadAttributes = 0x00000080;
+    private const uint FileShareRead = 0x00000001;
+    private const uint FileShareWrite = 0x00000002;
+    private const uint OpenExisting = 3;
+    private const uint FileFlagOpenReparsePoint = 0x00200000;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+    private const uint FileAttributeReparsePoint = 0x00000400;
+    private const uint FileAttributeDirectory = 0x00000010;
 
     private static readonly IntPtr InvalidHandle = new IntPtr(-1);
 
@@ -283,6 +292,28 @@ internal static class WindowsSandboxBridgeHarness
         public uint TotalTerminatedProcesses;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileTime
+    {
+        public uint LowDateTime;
+        public uint HighDateTime;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation
+    {
+        public uint FileAttributes;
+        public FileTime CreationTime;
+        public FileTime LastAccessTime;
+        public FileTime LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
     private sealed class JobLimitSnapshot
     {
         public ExtendedLimitInformation Extended;
@@ -367,8 +398,32 @@ internal static class WindowsSandboxBridgeHarness
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateFile(string path, uint access, uint share, IntPtr securityAttributes, uint creationDisposition, uint flags, IntPtr templateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(IntPtr handle, out ByHandleFileInformation information);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(IntPtr handle, StringBuilder path, uint capacity, uint flags);
+
     public static int Main(string[] args)
     {
+        if (args.Length >= 3 && args[0] == "inspect-root")
+        {
+            try
+            {
+                int holdMs = args.Length == 4 ? (int)ParseBounded(args[3], 1, 5000, "hold-ms") : 0;
+                if (args.Length != 3 && args.Length != 4) throw new ArgumentException("invalid inspector arguments");
+                return InspectRoot(args[1], args[2], holdMs);
+            }
+            catch (Exception exception)
+            {
+                Print("INSPECT_STATUS", "Rejected");
+                Print("INSPECT_REASON", exception.GetType().Name);
+                return 4;
+            }
+        }
         bool resourceMode = args.Length > 2 && (args[2] == "filesystem" || args[2] == "reparse");
         if (args.Length == 0 || args[0] != "launch" || args.Length != (resourceMode ? 9 : 8))
         {
@@ -427,6 +482,119 @@ internal static class WindowsSandboxBridgeHarness
             !Directory.Exists(Path.Combine(root, "admitted")))
             throw new ArgumentException("resource root must be a disposable T3-B fixture under TEMP");
         return root;
+    }
+
+    private static int InspectRoot(string fixtureValue, string targetRelativePath, int holdMs)
+    {
+        string fixture = ValidateDisposableResourceRoot(fixtureValue);
+        string admitted = Path.GetFullPath(Path.Combine(fixture, "admitted")).TrimEnd(Path.DirectorySeparatorChar);
+        string target = Path.GetFullPath(Path.Combine(fixture, targetRelativePath)).TrimEnd(Path.DirectorySeparatorChar);
+        if (!target.Equals(admitted, StringComparison.OrdinalIgnoreCase) &&
+            !target.StartsWith(admitted + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            return RejectInspection("OutsideAdmittedRoot");
+
+        List<IntPtr> held = new List<IntPtr>();
+        List<string> heldPaths = new List<string>();
+        List<ByHandleFileInformation> heldInformation = new List<ByHandleFileInformation>();
+        try
+        {
+            string volumeRoot = Path.GetPathRoot(target);
+            string[] components = target.Substring(volumeRoot.Length)
+                .Split(new[] { Path.DirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+            string current = volumeRoot;
+            string admittedFinal = null;
+            string targetFinal = null;
+            ByHandleFileInformation targetInformation = new ByHandleFileInformation();
+            for (int index = -1; index < components.Length; index++)
+            {
+                if (index >= 0) current = Path.Combine(current, components[index]);
+                IntPtr handle = CreateFile(current, FileReadAttributes, FileShareRead | FileShareWrite,
+                    IntPtr.Zero, OpenExisting, FileFlagOpenReparsePoint | FileFlagBackupSemantics, IntPtr.Zero);
+                if (handle == InvalidHandle) throw new InvalidOperationException("open component failed (" + Marshal.GetLastWin32Error() + ")");
+                held.Add(handle);
+                heldPaths.Add(current);
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                    throw new InvalidOperationException("component information failed (" + Marshal.GetLastWin32Error() + ")");
+                heldInformation.Add(information);
+                if ((information.FileAttributes & FileAttributeReparsePoint) != 0)
+                    return RejectInspection("ReparsePoint");
+                if (current.Equals(admitted, StringComparison.OrdinalIgnoreCase))
+                    admittedFinal = FinalPath(handle);
+                if (current.Equals(target, StringComparison.OrdinalIgnoreCase))
+                {
+                    targetFinal = FinalPath(handle);
+                    targetInformation = information;
+                }
+            }
+
+            if (admittedFinal == null || targetFinal == null) return RejectInspection("MissingHandleIdentity");
+            admittedFinal = admittedFinal.TrimEnd(Path.DirectorySeparatorChar);
+            if (!targetFinal.Equals(admittedFinal, StringComparison.OrdinalIgnoreCase) &&
+                !targetFinal.StartsWith(admittedFinal + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                return RejectInspection("FinalPathOutsideRoot");
+            if ((targetInformation.FileAttributes & FileAttributeDirectory) == 0 && targetInformation.NumberOfLinks != 1)
+                return RejectInspection("HardLinkCount");
+
+            if (holdMs > 0)
+            {
+                Print("INSPECT_HANDLES_HELD", "1");
+                Console.Out.Flush();
+                Thread.Sleep(holdMs);
+            }
+            if (!PathIdentitiesStillMatch(heldPaths, heldInformation)) return RejectInspection("PathChangedDuringInspection");
+            Print("INSPECT_STATUS", "AdmissibleSnapshot");
+            Print("INSPECT_COMPONENTS_HELD", held.Count.ToString());
+            Print("INSPECT_TARGET_LINK_COUNT", targetInformation.NumberOfLinks.ToString());
+            Print("INSPECT_TARGET_VOLUME_SERIAL", targetInformation.VolumeSerialNumber.ToString("X8"));
+            Print("INSPECT_TARGET_FILE_ID", targetInformation.FileIndexHigh.ToString("X8") + targetInformation.FileIndexLow.ToString("X8"));
+            return 0;
+        }
+        finally
+        {
+            for (int index = held.Count - 1; index >= 0; index--) CloseHandle(held[index]);
+        }
+    }
+
+    private static bool PathIdentitiesStillMatch(List<string> paths, List<ByHandleFileInformation> original)
+    {
+        for (int index = 0; index < paths.Count; index++)
+        {
+            IntPtr reopened = CreateFile(paths[index], FileReadAttributes, FileShareRead | FileShareWrite,
+                IntPtr.Zero, OpenExisting, FileFlagOpenReparsePoint | FileFlagBackupSemantics, IntPtr.Zero);
+            if (reopened == InvalidHandle) return false;
+            try
+            {
+                ByHandleFileInformation current;
+                if (!GetFileInformationByHandle(reopened, out current)) return false;
+                if ((current.FileAttributes & FileAttributeReparsePoint) != 0 ||
+                    current.VolumeSerialNumber != original[index].VolumeSerialNumber ||
+                    current.FileIndexHigh != original[index].FileIndexHigh ||
+                    current.FileIndexLow != original[index].FileIndexLow)
+                    return false;
+                if (index == paths.Count - 1 &&
+                    (current.FileAttributes & FileAttributeDirectory) == 0 && current.NumberOfLinks != 1)
+                    return false;
+            }
+            finally { CloseHandle(reopened); }
+        }
+        return true;
+    }
+
+    private static string FinalPath(IntPtr handle)
+    {
+        StringBuilder path = new StringBuilder(1024);
+        uint length = GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, 0);
+        if (length == 0 || length >= path.Capacity)
+            throw new InvalidOperationException("final handle path unavailable (" + Marshal.GetLastWin32Error() + ")");
+        return path.ToString();
+    }
+
+    private static int RejectInspection(string reason)
+    {
+        Print("INSPECT_STATUS", "Rejected");
+        Print("INSPECT_REASON", reason);
+        return 0;
     }
 
     private static bool ContainsReparsePoint(string root)

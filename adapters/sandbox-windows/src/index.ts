@@ -12,6 +12,17 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 
+export {
+  fixedWindowsNativeArtifactPaths,
+  inspectFixedWindowsNativeArtifact,
+  inspectWindowsNativeArtifactEvidence,
+  WINDOWS_NATIVE_BRIDGE_SOURCE_SHA256,
+  WINDOWS_NATIVE_COMPILER_ARGUMENTS,
+  type WindowsNativeArtifactDigests,
+  type WindowsNativeArtifactInspection,
+  type WindowsNativeOperatorBuildBindingV1,
+} from "./native-artifact.js";
+
 export const WINDOWS_SANDBOX_PROVIDER_IDS = {
   mxc: "windows-mxc",
   elevatedDedicatedUser: "windows-elevated-dedicated-user",
@@ -63,8 +74,8 @@ export const probeWindowsSandboxHost = (): WindowsSandboxProbeSnapshot => {
       existsSync(`${sdkRoot}\\Windows Kits\\10\\Include`),
     compilerAvailable:
       frameworkRoot !== undefined && existsSync(`${frameworkRoot}\\csc.exe`),
-    // Presence of Win32 exports was externally probed on the current host,
-    // but the shipped adapter has no reviewed FFI/native helper to apply them.
+    // Fixed source is packaged for qualification, but no signed helper, T3
+    // evidence verifier, or production launch path exists.
     nativeApiBridgeAvailable: false,
     secureBrokerAvailable: false,
     admittedRootAclAvailable: false,
