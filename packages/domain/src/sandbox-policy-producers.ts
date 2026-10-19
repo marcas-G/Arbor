@@ -43,6 +43,142 @@ export type SandboxNetworkBrokerControlsV1 =
       readonly specialUse: "Denied";
     };
 
+export type SandboxPlatformPrimitiveSetIdV1 =
+  | "linux-bwrap-user-mount-pid-netns-cgroupv2-seccomp-v1"
+  | "macos-seatbelt-denydefault-processgroup-rlimits-v1"
+  | "windows-restricted-token-lowintegrity-appcontainer-job-namedpipe-v1"
+  | "windows-mxc-probe-only-v1"
+  | "windows-elevated-dedicated-user-probe-only-v1";
+
+export interface SandboxEnforcementRuleSetV1 {
+  readonly version: 1;
+  readonly networkPolicyCodecVersion: 1;
+  readonly filesystemRuleVersion: 1;
+  readonly environmentRuleVersion: 1;
+  readonly processTreeRuleVersion: 1;
+  readonly resourceLimitRuleVersion: 1;
+  readonly brokerProtocolVersion: 1;
+  readonly addressClassificationSnapshotId: string;
+  readonly pref64PolicyVersion: 1;
+  readonly redirectPolicyVersion: 1;
+  readonly platformPrimitiveSetId: SandboxPlatformPrimitiveSetIdV1;
+}
+
+export const SANDBOX_ADDRESS_CLASSIFICATION_SNAPSHOT_ID_V1 =
+  "iana-special-purpose-2025-10-09+sha256:86583d4bbc916863208c3fbb5a75ee3e6500dd12aa4f9bd3a72caaacb4a3da6a";
+
+const platformPrimitiveSetByProviderId: Readonly<
+  Record<string, SandboxPlatformPrimitiveSetIdV1>
+> = {
+  "linux-bwrap": "linux-bwrap-user-mount-pid-netns-cgroupv2-seccomp-v1",
+  "macos-seatbelt": "macos-seatbelt-denydefault-processgroup-rlimits-v1",
+  "windows-restricted-appcontainer-job":
+    "windows-restricted-token-lowintegrity-appcontainer-job-namedpipe-v1",
+  "windows-mxc": "windows-mxc-probe-only-v1",
+  "windows-elevated-dedicated-user":
+    "windows-elevated-dedicated-user-probe-only-v1",
+};
+
+export const sandboxEnforcementRuleSetV1ForProvider = (
+  providerId: string,
+): SandboxEnforcementRuleSetV1 | undefined => {
+  if (!Object.hasOwn(platformPrimitiveSetByProviderId, providerId))
+    return undefined;
+  const platformPrimitiveSetId = platformPrimitiveSetByProviderId[providerId];
+  if (platformPrimitiveSetId === undefined) return undefined;
+  return {
+    version: 1,
+    networkPolicyCodecVersion: 1,
+    filesystemRuleVersion: 1,
+    environmentRuleVersion: 1,
+    processTreeRuleVersion: 1,
+    resourceLimitRuleVersion: 1,
+    brokerProtocolVersion: 1,
+    addressClassificationSnapshotId:
+      SANDBOX_ADDRESS_CLASSIFICATION_SNAPSHOT_ID_V1,
+    pref64PolicyVersion: 1,
+    redirectPolicyVersion: 1,
+    platformPrimitiveSetId,
+  };
+};
+
+const platformPrimitiveSetIds = new Set<string>(
+  Object.values(platformPrimitiveSetByProviderId),
+);
+
+const enforcementRuleSetKeys = [
+  "version",
+  "networkPolicyCodecVersion",
+  "filesystemRuleVersion",
+  "environmentRuleVersion",
+  "processTreeRuleVersion",
+  "resourceLimitRuleVersion",
+  "brokerProtocolVersion",
+  "addressClassificationSnapshotId",
+  "pref64PolicyVersion",
+  "redirectPolicyVersion",
+  "platformPrimitiveSetId",
+] as const;
+
+export const encodeSandboxEnforcementRuleSetV1 = (
+  ruleSet: SandboxEnforcementRuleSetV1,
+): string =>
+  `{"version":1,"networkPolicyCodecVersion":1,"filesystemRuleVersion":1,"environmentRuleVersion":1,"processTreeRuleVersion":1,"resourceLimitRuleVersion":1,"brokerProtocolVersion":1,"addressClassificationSnapshotId":${JSON.stringify(ruleSet.addressClassificationSnapshotId)},"pref64PolicyVersion":1,"redirectPolicyVersion":1,"platformPrimitiveSetId":${JSON.stringify(ruleSet.platformPrimitiveSetId)}}`;
+
+export const decodeSandboxEnforcementRuleSetV1 = (
+  input: unknown,
+): SandboxEnforcementRuleSetV1 | undefined => {
+  if (typeof input !== "object" || input === null || Array.isArray(input))
+    return undefined;
+  const value = input as Record<string, unknown>;
+  if (
+    !exactKeys(value, enforcementRuleSetKeys) ||
+    value.version !== 1 ||
+    value.networkPolicyCodecVersion !== 1 ||
+    value.filesystemRuleVersion !== 1 ||
+    value.environmentRuleVersion !== 1 ||
+    value.processTreeRuleVersion !== 1 ||
+    value.resourceLimitRuleVersion !== 1 ||
+    value.brokerProtocolVersion !== 1 ||
+    value.addressClassificationSnapshotId !==
+      SANDBOX_ADDRESS_CLASSIFICATION_SNAPSHOT_ID_V1 ||
+    value.pref64PolicyVersion !== 1 ||
+    value.redirectPolicyVersion !== 1 ||
+    typeof value.platformPrimitiveSetId !== "string" ||
+    !platformPrimitiveSetIds.has(value.platformPrimitiveSetId)
+  )
+    return undefined;
+  return {
+    version: 1,
+    networkPolicyCodecVersion: 1,
+    filesystemRuleVersion: 1,
+    environmentRuleVersion: 1,
+    processTreeRuleVersion: 1,
+    resourceLimitRuleVersion: 1,
+    brokerProtocolVersion: 1,
+    addressClassificationSnapshotId:
+      SANDBOX_ADDRESS_CLASSIFICATION_SNAPSHOT_ID_V1,
+    pref64PolicyVersion: 1,
+    redirectPolicyVersion: 1,
+    platformPrimitiveSetId:
+      value.platformPrimitiveSetId as SandboxPlatformPrimitiveSetIdV1,
+  };
+};
+
+export const decodeCanonicalSandboxEnforcementRuleSetV1 = (
+  json: string,
+): SandboxEnforcementRuleSetV1 | undefined => {
+  try {
+    const decoded = decodeSandboxEnforcementRuleSetV1(JSON.parse(json));
+    return decoded !== undefined &&
+      encodeSandboxEnforcementRuleSetV1(decoded) === json
+      ? decoded
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export type SandboxNetworkModeV1 = "Disabled" | "Restricted" | "Enabled";
 
 export interface ResourceBoundaryDigestInputV1 {

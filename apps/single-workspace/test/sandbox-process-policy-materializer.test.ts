@@ -11,6 +11,8 @@ import { exactSupportedOsProviderEntry } from "../src/sandbox-process-policy-mat
 const sha256Hex = (value: string) =>
   createHash("sha256").update(value, "utf8").digest("hex");
 const controls = networkBrokerControlsV1ForMode("Disabled");
+const linuxRuleSetJson =
+  '{"version":1,"networkPolicyCodecVersion":1,"filesystemRuleVersion":1,"environmentRuleVersion":1,"processTreeRuleVersion":1,"resourceLimitRuleVersion":1,"brokerProtocolVersion":1,"addressClassificationSnapshotId":"iana-special-purpose-2025-10-09+sha256:86583d4bbc916863208c3fbb5a75ee3e6500dd12aa4f9bd3a72caaacb4a3da6a","pref64PolicyVersion":1,"redirectPolicyVersion":1,"platformPrimitiveSetId":"linux-bwrap-user-mount-pid-netns-cgroupv2-seccomp-v1"}';
 const summary: Pick<
   OsEnforcedPolicySummaryV1,
   | "providerId"
@@ -23,7 +25,7 @@ const summary: Pick<
   | "networkPolicy"
   | "networkBrokerControls"
 > = {
-  providerId: "native-test-provider",
+  providerId: "linux-bwrap",
   providerVersion: "1.2.3",
   capabilityRevision: 7,
   osFamily: "Linux",
@@ -46,9 +48,7 @@ const entry = (
     profile: summary.profile,
     networkMode: summary.networkPolicy.mode,
     networkPolicyCodecVersion: 1,
-    enforcementRuleSetDigest: sha256Hex(
-      encodeNetworkBrokerControlsV1(summary.networkBrokerControls),
-    ),
+    enforcementRuleSetDigest: sha256Hex(linuxRuleSetJson),
   },
   status,
   qualificationEvidenceRef: summary.qualificationEvidenceRef,
@@ -66,10 +66,43 @@ describe("current OS sandbox provider materialization gate", () => {
 
   it("returns only the exact Supported tuple", () => {
     const supported = entry("Supported");
-    expect(exactSupportedOsProviderEntry([supported], summary)).toBe(supported);
+    const fullRuleSetEntry = {
+      ...supported,
+      tuple: {
+        ...supported.tuple,
+        enforcementRuleSetDigest: sha256Hex(linuxRuleSetJson),
+      },
+    };
+    expect(exactSupportedOsProviderEntry([fullRuleSetEntry], summary)).toEqual(
+      fullRuleSetEntry,
+    );
+    const wrongControlsOnlyDigest = {
+      ...supported,
+      tuple: {
+        ...supported.tuple,
+        enforcementRuleSetDigest: sha256Hex(
+          encodeNetworkBrokerControlsV1(summary.networkBrokerControls),
+        ),
+      },
+    };
+    expect(
+      exactSupportedOsProviderEntry([wrongControlsOnlyDigest], summary),
+    ).toBeUndefined();
+    const brokerControlsOnly = {
+      ...wrongControlsOnlyDigest,
+    };
+    expect(
+      exactSupportedOsProviderEntry([brokerControlsOnly], summary),
+    ).toBeUndefined();
     expect(
       exactSupportedOsProviderEntry(
-        [{ ...supported, providerVersion: "different-version" }],
+        [fullRuleSetEntry, fullRuleSetEntry],
+        summary,
+      ),
+    ).toBeUndefined();
+    expect(
+      exactSupportedOsProviderEntry(
+        [{ ...fullRuleSetEntry, providerVersion: "different-version" }],
         summary,
       ),
     ).toBeUndefined();

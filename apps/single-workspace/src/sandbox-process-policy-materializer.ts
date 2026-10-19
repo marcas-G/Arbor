@@ -3,13 +3,14 @@ import {
   canonicalRegionString,
   compareUtf8BytesV1,
   encodeExecutionEpisodeBinding,
-  encodeNetworkBrokerControlsV1,
   encodeNetworkPolicyV1,
+  encodeSandboxEnforcementRuleSetV1,
   executionEpisode,
   type OsEnforcedPolicySummaryV1,
   produceSandboxBoundaryV1,
   type SandboxPolicyDecisionCommittedInternalV1,
   type SandboxProviderQualificationEntryV1,
+  sandboxEnforcementRuleSetV1ForProvider,
   sandboxEnvironmentBasisDigestOfV1,
   sandboxTargetRefOfRegionV1,
 } from "@arbor/domain";
@@ -45,6 +46,11 @@ export const exactSupportedOsProviderEntry = (
     | "networkBrokerControls"
   >,
 ): SandboxProviderQualificationEntryV1 | undefined => {
+  const ruleSet = sandboxEnforcementRuleSetV1ForProvider(summary.providerId);
+  if (ruleSet === undefined) return undefined;
+  const expectedRuleSetDigest = sha256Hex(
+    encodeSandboxEnforcementRuleSetV1(ruleSet),
+  );
   const exact = entries.filter(
     (entry) =>
       entry.status === "Supported" &&
@@ -56,10 +62,7 @@ export const exactSupportedOsProviderEntry = (
       entry.qualificationEvidenceRef === summary.qualificationEvidenceRef &&
       entry.tuple.profile === summary.profile &&
       entry.tuple.networkMode === summary.networkPolicy.mode &&
-      entry.tuple.enforcementRuleSetDigest ===
-        sha256Hex(
-          encodeNetworkBrokerControlsV1(summary.networkBrokerControls),
-        ) &&
+      entry.tuple.enforcementRuleSetDigest === expectedRuleSetDigest &&
       entry.tuple.networkPolicyCodecVersion === 1,
   );
   return exact.length === 1 ? exact[0] : undefined;
@@ -182,6 +185,9 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
     )
       return undefined;
 
+    let supportedOsProviderEntry:
+      | SandboxProviderQualificationEntryV1
+      | undefined;
     if (summary.kind === "OsEnforced") {
       const supportedEntry = exactSupportedOsProviderEntry(
         bundle.providerRegistry.entries,
@@ -197,9 +203,11 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
         JSON.stringify(committed.decision.networkPolicy.policy) !==
           JSON.stringify(summary.networkPolicy) ||
         summary.networkPolicyDigest !==
-          sha256Hex(encodeNetworkPolicyV1(summary.networkPolicy))
+          sha256Hex(encodeNetworkPolicyV1(summary.networkPolicy)) ||
+        supportedEntry.qualificationEvidenceRef === null
       )
         return undefined;
+      supportedOsProviderEntry = supportedEntry;
     } else if (
       summary.trustedRuntimeIdentity !== "TrustedLocal" ||
       summary.trustedRuntimeVersion !== "builtin-v1" ||
@@ -367,6 +375,19 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
           );
     if (expectedBasis !== summary.sandboxEnvironmentBasisDigest)
       return undefined;
+    const osProviderBinding =
+      summary.kind === "OsEnforced" &&
+      supportedOsProviderEntry !== undefined &&
+      supportedOsProviderEntry.qualificationEvidenceRef !== null
+        ? {
+            enforcementRuleSetDigest:
+              supportedOsProviderEntry.tuple.enforcementRuleSetDigest,
+            qualificationEvidenceRef:
+              supportedOsProviderEntry.qualificationEvidenceRef,
+          }
+        : undefined;
+    if (summary.kind === "OsEnforced" && osProviderBinding === undefined)
+      return undefined;
     const commonPolicy = {
       executionId: input.executionId,
       episodeBinding: currentEpisode,
@@ -379,18 +400,21 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
       limits: summary.limits,
       auditRefs: summary.auditRefs,
     };
-    const policy: SandboxProcessPolicy =
+    const policy: SandboxProcessPolicy | undefined =
       summary.kind === "OsEnforced"
-        ? {
-            ...commonPolicy,
-            kind: "OsEnforcedProcessPolicy",
-            profile: summary.profile,
-            providerId: summary.providerId,
-            providerVersion: summary.providerVersion,
-            capabilityRevision: String(summary.capabilityRevision),
-            boundary: "OsEnforced",
-            networkPolicy: summary.networkPolicy,
-          }
+        ? osProviderBinding === undefined
+          ? undefined
+          : {
+              ...commonPolicy,
+              ...osProviderBinding,
+              kind: "OsEnforcedProcessPolicy",
+              profile: summary.profile,
+              providerId: summary.providerId,
+              providerVersion: summary.providerVersion,
+              capabilityRevision: String(summary.capabilityRevision),
+              boundary: "OsEnforced",
+              networkPolicy: summary.networkPolicy,
+            }
         : {
             ...commonPolicy,
             kind: "TrustedLocalUnconfinedRuntimePolicy",
@@ -403,6 +427,7 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
             trustedRuntimeVersion: "builtin-v1",
             networkBoundary: "Unconfined",
           };
+    if (policy === undefined) return undefined;
     return {
       policy,
       mounts,
