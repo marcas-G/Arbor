@@ -722,6 +722,7 @@ describe("P2-014 driver / dispatch / safety", () => {
             return Effect.succeed({
               _tag: "Available",
               snapshot: currentAuthority,
+              currentHost: { osFamily: "Linux", osBuild: "test-build" },
             });
           },
         },
@@ -973,6 +974,7 @@ describe("P2-014 driver / dispatch / safety", () => {
             return Effect.succeed({
               _tag: "Available",
               snapshot: currentAuthority,
+              currentHost: { osFamily: "Linux", osBuild: "test-build" },
             });
           },
         },

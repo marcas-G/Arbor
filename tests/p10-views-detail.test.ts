@@ -306,7 +306,6 @@ describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
             },
             workspaceRevision: 4,
             resourceBoundaryRevision: 2,
-            sandboxHandleBindingDigest: "a".repeat(64) as never,
             authorityBundleRevision: 3,
             authorityBundleDigest: "b".repeat(64) as never,
             operatorConfigRevision: 2,
@@ -317,6 +316,7 @@ describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
               kind: "TrustedLocalUnconfinedV1" as const,
               candidateId:
                 "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+              sandboxHandleBindingDigest: "a".repeat(64) as never,
             },
           ],
         };
@@ -374,7 +374,6 @@ describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
                     },
                     workspaceRevision: 4,
                     resourceBoundaryRevision: 2,
-                    sandboxHandleBindingDigest: "a".repeat(64) as never,
                     authorityBundleRevision: 3,
                     authorityBundleDigest: "b".repeat(64) as never,
                     operatorConfigRevision: 2,
@@ -385,6 +384,7 @@ describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
                       kind: "TrustedLocalUnconfinedV1" as const,
                       candidateId:
                         "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+                      sandboxHandleBindingDigest: "a".repeat(64) as never,
                     },
                   ],
                 },

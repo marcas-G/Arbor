@@ -177,6 +177,7 @@ import {
   type RunnableWorkSource,
   resolvedModelBindingFingerprint,
   resolveModelBinding,
+  type SandboxPolicyCandidateBoundaryReadPort,
   SandboxPolicyDecisionStore,
   type SandboxPolicyRequirementReadPort,
   SandboxProcessPort,
@@ -275,6 +276,7 @@ import {
   SandboxAuthoritySnapshotLive,
   sandboxIssuerSnapshotOf,
 } from "./sandbox-authority-bundle.js";
+import { SandboxPolicyCandidateBoundaryReadPortLive } from "./sandbox-policy-candidate-boundary-read-port.js";
 import { makeSandboxPolicyDecisionPreparation } from "./sandbox-policy-decision-preparation.js";
 import { ToolAuthorityResolverLive } from "./tool-authority-resolver.js";
 import {
@@ -501,6 +503,7 @@ export type SingleWorkspaceServices =
   | SandboxProcessPort
   | SandboxPolicyRequirementReadPort
   | CurrentSandboxAuthoritySnapshotPort
+  | SandboxPolicyCandidateBoundaryReadPort
   | HumanMessageStore
   | InputPromotionService
   | WorkflowSignalConsumer
@@ -562,6 +565,25 @@ export const buildSingleWorkspaceLayer = (
   // `environment-local` adapter). `ProjectEnvironmentPort` — consumed by
   // ownership writes and tool admission — is the resolver projection.
   const environmentResolver = Layer.provide(EnvironmentResolverLocalLive, base);
+  const workspaceRepositoryLayer = Layer.provide(
+    WorkspaceRepositoryLive,
+    infra,
+  );
+  const ownershipRepositoryLayer = Layer.provide(
+    ResourceOwnershipRepositoryLive,
+    infra,
+  );
+  const worktreeStoreLayer = Layer.provide(WorktreeStoreLive, infra);
+  const candidateBoundarySources = Layer.mergeAll(
+    workspaceRepositoryLayer,
+    ownershipRepositoryLayer,
+    worktreeStoreLayer,
+    environmentResolver,
+  );
+  const candidateBoundaryReadPortLayer = Layer.provide(
+    SandboxPolicyCandidateBoundaryReadPortLive,
+    candidateBoundarySources,
+  );
   const projectEnvironment = Layer.provide(
     ProjectEnvironmentPortFromResolverLive,
     environmentResolver,
@@ -746,7 +768,7 @@ export const buildSingleWorkspaceLayer = (
     domainEventJournal,
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(ProjectDirectoryLive, infra),
-    Layer.provide(WorkspaceRepositoryLive, infra),
+    workspaceRepositoryLayer,
     Layer.provide(WorkspaceResourceActivationStoreLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(WorkReadmissionGateStoreLive, infra),
@@ -768,8 +790,8 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(ArtifactMetadataRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(SchedulerTimerStoreLive, infra),
-    Layer.provide(ResourceOwnershipRepositoryLive, infra),
-    Layer.provide(WorktreeStoreLive, infra),
+    ownershipRepositoryLayer,
+    worktreeStoreLayer,
     Layer.provide(EnvironmentRevisionStoreLive, infra),
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(FormationFulfillmentStoreLive, infra),
@@ -786,6 +808,8 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(PermissionGrantRepositoryLive, infra),
     Layer.provide(SandboxPolicyDecisionStoreLive, infra),
     Layer.provide(SandboxPolicyRequirementReadPortLive, infra),
+    candidateBoundarySources,
+    candidateBoundaryReadPortLayer,
     Layer.provide(HumanMessageStoreLive, infra),
     Layer.provide(ConversationResponseJobStoreLive, infra),
     Layer.provide(ConversationCheckpointStoreLive, infra),

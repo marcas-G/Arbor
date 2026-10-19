@@ -419,6 +419,32 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
           at: "2026-09-22T00:00:00.000Z",
         },
       ],
+      sandboxPolicyCandidateRead: {
+        reason: "InitialDecision",
+        commonPreconditions: {
+          expectedEpisodeRevision: 0,
+          latestCommittedPolicyRevision: 0,
+          episodeBinding: {
+            _tag: "WorkEpisode",
+            workId,
+            targetWorkRevision: workRevision,
+          },
+          workspaceRevision: 1,
+          resourceBoundaryRevision: 0,
+          authorityBundleRevision: 1,
+          authorityBundleDigest: "a".repeat(64) as never,
+          operatorConfigRevision: 1,
+          operatorConfigDigest: "b".repeat(64) as never,
+        },
+        candidates: [
+          {
+            kind: "TrustedLocalUnconfinedV1",
+            candidateId:
+              "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+            sandboxHandleBindingDigest: "c".repeat(64) as never,
+          },
+        ],
+      },
     };
     expect(keys(res)).toEqual([
       "auditTimeline",
@@ -427,6 +453,25 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
       "inboxUnconsumed",
       "pendingWorks",
       "responsibility",
+      "sandboxPolicyCandidateRead",
+    ]);
+    expect(
+      keys(res.sandboxPolicyCandidateRead?.commonPreconditions ?? {}),
+    ).toEqual([
+      "authorityBundleDigest",
+      "authorityBundleRevision",
+      "episodeBinding",
+      "expectedEpisodeRevision",
+      "latestCommittedPolicyRevision",
+      "operatorConfigDigest",
+      "operatorConfigRevision",
+      "resourceBoundaryRevision",
+      "workspaceRevision",
+    ]);
+    expect(keys(res.sandboxPolicyCandidateRead?.candidates[0] ?? {})).toEqual([
+      "candidateId",
+      "kind",
+      "sandboxHandleBindingDigest",
     ]);
     const roundTrip = JSON.parse(JSON.stringify(res)) as WorkspaceDetailRes;
     expect(roundTrip).toEqual(res);
