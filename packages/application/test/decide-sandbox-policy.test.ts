@@ -15,7 +15,7 @@ import {
 import { TransactionScope } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
-import type { SandboxPolicyDecisionAuthority } from "../src/authority.js";
+import type { CommandAuthorityFact } from "../src/authority.js";
 import {
   type DecideSandboxPolicyPayload,
   makeDecideSandboxPolicyHandler,
@@ -40,6 +40,10 @@ const episodeBinding = {
   entryKey: "inbox:one",
   inputKind: "HumanMessage",
 };
+const osNetworkSelection = {
+  kind: "OsEnforced" as const,
+  policy: { version: 1 as const, mode: "Disabled" as const, destinations: [] },
+};
 const payload: DecideSandboxPolicyPayload = {
   projectId,
   workspaceId,
@@ -58,10 +62,7 @@ const payload: DecideSandboxPolicyPayload = {
   expectedProviderRegistryDigest: "2".repeat(64),
   profile: "ReadOnly",
   providerId: "bwrap",
-  networkPolicy: {
-    kind: "OsEnforced",
-    policy: { version: 1, mode: "Disabled", destinations: [] },
-  },
+  networkPolicy: osNetworkSelection,
   decisionExpiresAt: "2026-10-19T12:00:00.000Z",
 };
 const grant: PermissionGrant = {
@@ -86,7 +87,10 @@ const provenance = {
   operatorConfigRevision: 4,
   operatorConfigDigest: "f".repeat(64),
 };
-const authority: SandboxPolicyDecisionAuthority = {
+const authority: Extract<
+  CommandAuthorityFact,
+  { readonly _tag: "SandboxPolicyDecisionAuthority" }
+> = {
   _tag: "SandboxPolicyDecisionAuthority",
   principal: subject,
   commandId,
@@ -133,9 +137,9 @@ const snapshot = {
   osFamily: "Linux" as const,
   osBuild: "linux-6.8",
   qualificationEvidenceRef: `blob:sha256:${"1".repeat(64)}`,
-  networkPolicy: payload.networkPolicy.policy,
+  networkPolicy: osNetworkSelection.policy,
   networkPolicyDigest: createHash("sha256")
-    .update(encodeNetworkPolicyV1(payload.networkPolicy.policy))
+    .update(encodeNetworkPolicyV1(osNetworkSelection.policy))
     .digest("hex"),
   networkBrokerControls: {
     version: 1 as const,

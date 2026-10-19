@@ -157,6 +157,7 @@ export interface CommandHandler<C, R> {
   readonly prepare?: (
     envelope: GatewayEnvelope<C>,
     context: CommandSubmissionContext,
+    authority: CommandAuthorityFact,
   ) => Effect.Effect<
     unknown,
     CommandHandlerError | TransactionOperationalFailure
