@@ -15,8 +15,8 @@ import {
   sha256Hex,
 } from "@arbor/ports";
 import { Effect } from "effect";
-import { makeSandboxAuthorityProvisioningFileStore } from "./sandbox-authority-provisioning-file-store.js";
-import { runSandboxAuthorityProvisioningCli } from "./sandbox-authority-v1-v2-provisioning.js";
+import { makeSandboxAuthorityProvisioningFileStore } from "../sandbox-authority-provisioning-file-store.js";
+import { runSandboxAuthorityProvisioningCli } from "../sandbox-authority-v1-v2-provisioning.js";
 
 interface CliArguments {
   readonly protectedRoot: string;
