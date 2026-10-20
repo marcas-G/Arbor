@@ -1914,6 +1914,149 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
   });
 
+  it("replays durable sandbox unavailability through the memoized current lazy policy", async () => {
+    const policy = processPolicy(processEpisode);
+    const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
+    const observation = {
+      _tag: "ExpectedFailure" as const,
+      observation: {
+        text: "required sandbox capability was unavailable or could not be verified; execution did not start",
+        truncated: false,
+      },
+      sandboxProviderUnavailable: {
+        policyRevision: policy.policyRevision,
+        policyDigest: policy.policyDigest,
+        profile: policy.profile,
+        providerId: policy.providerId,
+        providerVersion: policy.providerVersion,
+        capabilityRevision: policy.capabilityRevision,
+        probeEvidenceRef:
+          policy.kind === "OsEnforcedProcessPolicy"
+            ? policy.qualificationEvidenceRef
+            : null,
+        failureCode: "ProviderNotSupported",
+        effectDisposition: "NoEffect" as const,
+      },
+    };
+    const evidence: ToolObservationEvidence = {
+      formatVersion: "p4-canonical-tool-observation-v1",
+      bytes: new TextEncoder().encode(JSON.stringify(observation)),
+      sha256: "e".repeat(64),
+      observation,
+    };
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [
+        sandboxCapability("bwrap", "Experimental", "0.8.0"),
+      ],
+      persistSandboxInvocations: true,
+      p40WinnerEvidence: evidence,
+      persistedSandboxInvocation: {
+        invocationId,
+        executionId,
+        workspaceId,
+        toolName: "read",
+        toolVersion: "2",
+        sideEffectSemantics: "ReadOnly",
+        argumentsJson,
+        resolvedRegions: [
+          {
+            resourceSpaceId: "filesystem",
+            normalizedRegion: { _tag: "GitWorktree", path: "/repo/a" },
+          },
+        ],
+        approvalId: null,
+        effectAdmissionState: "MayHaveStarted",
+        intentAt: "2026-01-01T00:00:00.000Z",
+        settledAt: "2026-01-01T00:00:01.000Z",
+        settlement: { _tag: "ExpectedFailure" },
+        resultRef: null,
+      },
+    };
+    let resolutions = 0;
+    const { sandboxProcessPolicy: _policy, ...lazyContext } =
+      processContext(policy);
+    void _policy;
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      argumentsJson,
+      null,
+      {
+        ...lazyContext,
+        resolveSandboxProcessPolicy: ({ now }) =>
+          Effect.sync(() => {
+            resolutions += 1;
+            expect(now).toBe("2026-01-01T00:00:00.000Z");
+            expect(trace.transactionDepth ?? 0).toBe(0);
+            return {
+              policy,
+              mounts: [
+                {
+                  ref: "workspace",
+                  address: { _tag: "GitWorktree", path: "/tmp/s" },
+                  region: {
+                    resourceSpaceId: "filesystem",
+                    normalizedRegion: {
+                      kind: "GitWorktree",
+                      path: "/tmp/s",
+                    },
+                  },
+                  access: "ReadOnly",
+                },
+              ],
+            };
+          }),
+      },
+    );
+
+    expect(result).toMatchObject({
+      _tag: "SandboxProviderUnavailable",
+      policyRevision: policy.policyRevision,
+      policyDigest: policy.policyDigest,
+      failureCode: "ProviderNotSupported",
+    });
+    expect(resolutions).toBe(1);
+    expect(trace.p40ReadInvocations).toHaveLength(1);
+    expect(trace.intentWrites).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(trace.settlementWrites ?? 0).toBe(0);
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+    expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
+
+    const staleResult = run(
+      app(false, processExecutor, {}, trace),
+      argumentsJson,
+      null,
+      {
+        ...lazyContext,
+        resolveSandboxProcessPolicy: () =>
+          Effect.succeed({
+            policy: { ...policy, policyRevision: policy.policyRevision + 1 },
+            mounts: [],
+          }),
+      },
+    );
+    await expect(staleResult).rejects.toMatchObject({
+      cause: { _tag: "SandboxUnavailableObservationPolicyMismatch" },
+    });
+    await expect(
+      run(app(false, processExecutor, {}, trace), argumentsJson, null, {
+        ...lazyContext,
+        sandboxProcessPolicy: policy,
+        resolveSandboxProcessPolicy: () => Effect.succeed(undefined),
+      }),
+    ).rejects.toMatchObject({
+      cause: { _tag: "SandboxUnavailableObservationPolicyMismatch" },
+    });
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+    expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
+  });
+
   it.each(["handle", "mount"] as const)(
     "rejects a %s-mismatched policy before provider execution",
     async (mismatch) => {
