@@ -1,6 +1,7 @@
 # Sandbox Policy Candidate Readmodel V6-E2 — Registry Drift Restart
 
-Status: **First V6-E production process case passes; V6-E remains open.**
+Status: **Original fixture process case passes but is not accepted E2 evidence;
+real P3/P4 E2 remains open.**
 
 ## Implemented
 
@@ -54,3 +55,22 @@ Status: **First V6-E production process case passes; V6-E remains open.**
   provider run is claimed.
 - V6-F broader gates, two-daemon successor convergence, and overall V5/V6
   closure remain open.
+
+## Real public-flow RED diagnostic (2026-10-20)
+
+The earlier process case used the manually seeded Pending Action/invocation
+fixture. It is retained as a narrow store/process diagnostic, but it does not
+qualify E2's production P3→P4 path. The replacement journey uses public
+CreateProject/GrantPermission/Work admission and a deterministic provider
+`shell` ToolCall with the same platform-specific `printf` / `Add-Content`
+command used by the existing P4 live-lease process qualification. It then
+pauses at `AH7AfterToolIntentCommit`.
+
+Current RED: the real run durably produces an `ActionsInProgress` AgentLoopStep
+and one Pending executable `shell` Action, but there is no matching
+`ToolInvocation`, no `AH7AfterToolIntentCommit` probe, and the daemon reports no
+stderr failure. This isolates the runtime ordering issue: the policy gate
+interrupts before P4 can persist its intent/recovery binding. The test now
+prints this exact state on failure. It must remain RED until the accepted P4
+intent-before-policy gate-order correction is integrated; it is not evidence
+for a P4 settlement or V6-E process case.

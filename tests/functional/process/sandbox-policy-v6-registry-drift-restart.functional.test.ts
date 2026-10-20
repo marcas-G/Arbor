@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ import {
   SandboxPolicyCandidateBoundaryReadPort,
   TransactionPort,
 } from "../../../packages/ports/src/index.js";
+import { durableSnapshot } from "../support/ah-durable-snapshot.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -25,9 +26,10 @@ import {
   createFunctionalProject,
   functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
-import { seedSandboxPolicyPendingAction } from "../support/sandbox-policy-pending-action-fixture.js";
 import {
   sandboxPolicyV2TestPair,
   writeSandboxPolicyV2TestPair,
@@ -62,6 +64,7 @@ interface WorkspaceDetailForSandbox {
 const child = resolve(
   "tests/functional/support/sandbox-policy-v2-daemon-child.mjs",
 );
+const ahCrashChild = resolve("tests/functional/support/ah-crash-child.mjs");
 const fixtures: ProductionFixture[] = [];
 
 const durableSandboxRead = (databaseFile: string, executionId: string) => {
@@ -225,45 +228,217 @@ afterEach(async () => {
 });
 
 describe("V6-E V2 registry-only drift across daemon restart", () => {
-  it("parks a previously approved TrustedLocal action before reapproval and rejects the old candidate CAS", async () => {
+  it("records the real P3/P4 pre-intent RED before V6 restart qualification", async () => {
     let sourceFilename: string | undefined;
     const daemonEnvironment: Record<string, string> = {};
     daemonEnvironment.ARBOR_AUTH_TOKENS =
       "local=user:local,operator=user:operator";
+    const marker = `V6-E-${crypto.randomUUID().slice(0, 8)}`;
+    const probeLines: Record<string, unknown>[] = [];
+    const stdoutLines: string[] = [];
+    let probeArmed = false;
+    let sourceDirectory: string | undefined;
     let providerCalls = 0;
     const fixture = await startProductionFixture({
-      firstDaemonEntry: child,
+      admitWorkspaceDirectory: true,
       daemonEnvironment,
-      reply: () => {
-        providerCalls += 1;
-        return { _tag: "Text", text: "unexpected provider call" };
+      reply: (call) => {
+        const context = JSON.stringify(call.messages);
+        const available = new Set(
+          call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        );
+        const targetWorkTurn = available.has("shell");
+        if (
+          context.includes(marker) &&
+          available.has("assign_work") &&
+          !targetWorkTurn &&
+          !context.includes("WorkAssigned(")
+        ) {
+          return {
+            _tag: "ToolCall",
+            name: "assign_work",
+            arguments: {
+              objective: `Append ${effectMarker} exactly once with the allowlisted shell command.`,
+              why: "qualify V6 P4 policy recovery with a real AgentLoop action",
+              constraints: [],
+              completionExpectation: `${effectFile} contains ${effectMarker} exactly once`,
+              verificationMission: {
+                goal: `Verify the sandbox command for ${marker}`,
+                criteria: [
+                  {
+                    criterionId: "sandbox-command",
+                    requirement: `${effectFile} contains ${effectMarker} exactly once`,
+                    required: true,
+                  },
+                ],
+                riskRequirements: [],
+              },
+              reason: "V6 E2 functional qualification",
+            },
+          };
+        }
+        if (context.includes(marker) && available.has("shell")) {
+          if (!probeArmed) return { _tag: "HttpError", status: 503 };
+          providerCalls += 1;
+          return {
+            _tag: "ToolCall",
+            name: "shell",
+            arguments: {
+              command,
+              cwd: { mount: "workspace", path: "." },
+              timeoutMs: 5_000,
+            },
+          };
+        }
+        return { _tag: "Text", text: `Waiting for ${marker}` };
+      },
+      onDaemonStdout: (line) => {
+        stdoutLines.push(line);
+        try {
+          const value = JSON.parse(line) as Record<string, unknown>;
+          if (value.tag === "AH_PROBE") probeLines.push(value);
+        } catch {
+          // ProductionFixture also forwards normal readiness output.
+        }
       },
       setupProbe: async (event) => {
         if (event.stage !== "after-clone") return;
-        const sourceDir = resolve(event.directory, "sandbox-policy-v2-source");
-        sourceFilename = writeSandboxPolicyV2TestPair(
-          sourceDir,
-          sandboxPolicyV2TestPair({ bundleRevision: 1, registryRevision: 1 }),
-        );
-        daemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE = sourceFilename;
+        sourceDirectory = resolve(event.directory, "sandbox-policy-v2-source");
       },
     });
     fixtures.push(fixture);
-    if (sourceFilename === undefined)
-      throw new Error("schema-50 V2 source fixture setup was incomplete");
     const client = makePublicClient(fixture.baseUrl);
     const project = await createFunctionalProject(
       client,
       fixture.workspaceDirectory,
       "V6 E registry drift",
+      { resourceSelection: "Profile" },
     );
-    const seeded = await seedSandboxPolicyPendingAction({
-      databaseFilename: fixture.databaseFile,
-      primaryWorktreePath: fixture.workspaceDirectory,
-      projectId: project.projectId,
-      workspaceId: project.rootWorkspaceId,
-      sessionId: project.rootSessionId,
+    const effectMarker = `V6_E2_EFFECT_${marker}`;
+    const effectFile = join(
+      fixture.workspaceDirectory,
+      `v6-${marker}-effect.txt`,
+    );
+    const command =
+      process.platform === "win32"
+        ? `Add-Content -LiteralPath '${effectFile}' -Value '${effectMarker}'`
+        : `printf '%s\\n' '${effectMarker}' >> '${effectFile}'`;
+    await client.command(project.projectId, "GrantPermission", {
+      permissionGrantId: functionalId("pgr"),
+      issuer: "user:local",
+      subject: { _tag: "WorkspaceAgent", workspaceId: project.rootWorkspaceId },
+      capability: "shell:exec",
+      target: project.rootWorkspaceId,
+      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
     });
+    await submitHumanMessage(
+      client,
+      project,
+      `请为 ${marker} 创建一个工作并运行一次 sandbox shell 命令。`,
+    );
+    const approval = await waitForApproval(client, project, marker);
+    await client.command(project.projectId, "ResolveControlApproval", {
+      approvalId: approval.approvalId,
+      expectedRevision: approval.revision,
+      decision: "Approve",
+      reason: "V6 E2 public Work admission",
+    });
+    await waitForPublic(
+      () =>
+        client.view<{
+          readonly workId?: string;
+          readonly status: string;
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (work) => work?.workId !== undefined,
+    ).catch((error: unknown) => {
+      throw new Error(
+        `V6 E2 Work admission absent: ${String(error)}; provider=${JSON.stringify(fixture.providerCalls)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        { cause: error },
+      );
+    });
+    await fixture.crash();
+    probeArmed = true;
+    await fixture.restart({
+      entry: ahCrashChild,
+      daemonEnvironment: { ARBOR_AH_BOUNDARY: "AH7AfterToolIntentCommit" },
+    });
+    const probe = await waitForPublic(
+      async () =>
+        probeLines.find(
+          (value) => value.boundary === "AH7AfterToolIntentCommit",
+        ),
+      (value) => value !== undefined,
+      15_000,
+    ).catch((error: unknown) => {
+      const durable = durableSnapshot(fixture.databaseFile);
+      const pendingShellActions = durable.actions.filter(
+        (row) => row.action_kind === "shell" && row.state === "Pending",
+      );
+      const pendingExecutions = new Set(
+        pendingShellActions.map((row) => row.execution_id),
+      );
+      const actionInvocations = durable.toolInvocations.filter((row) =>
+        pendingExecutions.has(row.execution_id),
+      );
+      const providerSummary = fixture.providerCalls.map((call) => ({
+        roles: call.messages.map((message) => message.role),
+        user: call.messages.find((message) => message.role === "user")?.content,
+        tools: call.tools.map((tool) => tool.function?.name),
+        priorToolResult: call.messages
+          .filter((message) => message.role === "tool")
+          .map((message) => message.content),
+      }));
+      throw new Error(
+        `RED: P2 policy gate precedes P4 intent; pendingShellActions=${JSON.stringify(pendingShellActions)}; matchingToolInvocations=${JSON.stringify(actionInvocations)}; AH7ProbeCount=${probeLines.length}; providerCalls=${providerCalls}; modelRequests=${JSON.stringify(providerSummary)}; loop=${JSON.stringify({ steps: durable.steps, actions: durable.actions, invocations: durable.toolInvocations })}; stdout=${stdoutLines.slice(-20).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}; wait=${String(error)}`,
+        { cause: error },
+      );
+    });
+    if (probe === undefined)
+      throw new Error("AH7 P4 intent probe was not captured");
+    const executionId = String(probe.executionId ?? "");
+    if (!executionId.startsWith("exe_"))
+      throw new Error(
+        `AH7 probe omitted execution identity: ${JSON.stringify(probe)}`,
+      );
+    const pendingState = durableSandboxRead(fixture.databaseFile, executionId);
+    const actionRow = pendingState.actions[0] as
+      | { readonly logical_action_id?: string; readonly state?: string }
+      | undefined;
+    const invocationRow = pendingState.invocation as
+      | {
+          readonly invocation_id?: string;
+          readonly effect_admission_state?: string;
+        }
+      | undefined;
+    if (
+      actionRow?.logical_action_id === undefined ||
+      invocationRow?.invocation_id === undefined
+    )
+      throw new Error(
+        `production AH7 route omitted pending action/invocation: ${JSON.stringify(pendingState)}`,
+      );
+    if (sourceDirectory === undefined)
+      throw new Error("schema-50 V2 source directory fixture was incomplete");
+    await fixture.crash();
+    sourceFilename = writeSandboxPolicyV2TestPair(
+      sourceDirectory,
+      sandboxPolicyV2TestPair({ bundleRevision: 1, registryRevision: 1 }),
+    );
+    daemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE = sourceFilename;
+    await fixture.restart({ entry: child });
+    const seeded = {
+      workspace: project.rootWorkspaceId,
+      execution: executionId,
+      logicalActionId: actionRow.logical_action_id,
+      invocation: invocationRow.invocation_id,
+    };
+    expect(actionRow.state).toBe("Pending");
+    expect(invocationRow.effect_admission_state).toBe("NotAdmitted");
+    expect(fixture.daemonErrors).toEqual([]);
+    const providerCallsAtPending = providerCalls;
+    const modelRequestsAtPending = fixture.providerCalls.length;
     try {
       await readProductionBoundary(fixture.databaseFile, {
         projectId: project.projectId,
@@ -406,8 +581,8 @@ describe("V6-E V2 registry-only drift across daemon restart", () => {
     expect(parkedState.actions).toEqual(beforeGrant.actions);
     expect(parkedState.step).toEqual(beforeGrant.step);
     expect(parkedState.invocation).toEqual(beforeGrant.invocation);
-    expect(providerCalls).toBe(0);
-    expect(fixture.providerCalls).toHaveLength(0);
+    expect(providerCalls).toBe(providerCallsAtPending);
+    expect(fixture.providerCalls).toHaveLength(modelRequestsAtPending);
 
     const stale = await operatorCommand(
       fixture.baseUrl,
@@ -428,6 +603,6 @@ describe("V6-E V2 registry-only drift across daemon restart", () => {
     expect(afterStale.decisions).toEqual(approvedState.decisions);
     expect(afterStale.decisionEvents).toEqual(approvedState.decisionEvents);
     expect(afterStale.lease).toBeUndefined();
-    expect(providerCalls).toBe(0);
+    expect(providerCalls).toBe(providerCallsAtPending);
   }, 180_000);
 });
