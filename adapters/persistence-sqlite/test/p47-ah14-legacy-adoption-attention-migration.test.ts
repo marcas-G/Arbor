@@ -1,9 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createSchema44TestDatabase,
-  createSchema46TestDatabase,
+  createSchema44TestDatabaseFactory,
+  type Schema44TestDatabase,
+  type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import {
   CURRENT_MIGRATIONS,
@@ -34,6 +35,44 @@ const columns = (db: DatabaseSync, table: string) =>
     db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
   ).map((row) => row.name);
 
+let schema44Factory: Schema44TestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  schema44Factory = await createSchema44TestDatabaseFactory({
+    prefix: ".p47-ah14-migration-schema44-template-",
+  });
+}, 120_000);
+
+const createSchema44Clone = (): Schema44TestDatabase => {
+  if (schema44Factory === undefined)
+    throw new Error("Schema-44 migration template is not ready.");
+  return schema44Factory.create();
+};
+
+const createSchema46Clone = async (): Promise<Schema44TestDatabase> => {
+  const fixture = createSchema44Clone();
+  try {
+    const applied = await run(fixture.databaseFilename, [
+      P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
+      P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
+    ]);
+    if (applied !== 2) {
+      throw new Error(
+        `Schema-46 clone applied ${applied} migrations; expected 2.`,
+      );
+    }
+    return fixture;
+  } catch (cause) {
+    fixture.cleanup();
+    throw cause;
+  }
+};
+
+afterAll(() => {
+  schema44Factory?.cleanup();
+  schema44Factory = undefined;
+}, 120_000);
+
 describe("P47 AH14 legacy-adoption evidence Attention migration", () => {
   it("registers exact 0047 predecessor and supports both disposable upgrade prefixes", async () => {
     expect(P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION).toMatchObject({
@@ -46,8 +85,8 @@ describe("P47 AH14 legacy-adoption evidence Attention migration", () => {
       47, 48, 49, 50,
     ]);
 
-    const from46 = await createSchema46TestDatabase();
-    const from44 = await createSchema44TestDatabase();
+    const from46 = await createSchema46Clone();
+    const from44 = createSchema44Clone();
     try {
       expect(await run(from46.databaseFilename)).toBe(1);
       expect(await run(from46.databaseFilename)).toBe(0);
@@ -83,7 +122,7 @@ describe("P47 AH14 legacy-adoption evidence Attention migration", () => {
   });
 
   it("creates permanent immutable P9 facts and the exact rebuildable P10 marker", async () => {
-    const fixture = await createSchema46TestDatabase();
+    const fixture = await createSchema46Clone();
     try {
       await run(fixture.databaseFilename);
       const db = new DatabaseSync(fixture.databaseFilename, { readOnly: true });
