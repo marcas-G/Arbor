@@ -629,17 +629,17 @@ describe("I0 executable/control vertical slice", () => {
             commandType: "DecideSandboxPolicy",
             projectId,
             actor: sandboxDecisionActor,
-            schemaVersion: "1",
+            schemaVersion: "2",
             payload: policyPayload,
           });
           const policyReceipt = yield* gateway.execute(
             {
-              commandType: "DecideSandboxPolicy",
-              commandId: policyCommandId,
-              projectId,
+              ...envelope(
+                "DecideSandboxPolicy",
+                policyPayload,
+                policyCommandId,
+              ),
               actor: sandboxDecisionActor,
-              issuedAt: "t",
-              payload: policyPayload,
             },
             { _tag: "External", principal: sandboxDecisionPrincipal },
             {
