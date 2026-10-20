@@ -36,6 +36,14 @@ export interface SandboxPolicyGrantIssuerConfigSnapshotV1 {
   readonly providerRegistry: SandboxProviderQualificationRegistryV1;
 }
 
+/** Validated V2 authority facts for both consumers. Issuer configuration
+ * identity remains separate from operator configuration identity. */
+export interface SandboxPolicyAuthoritySnapshotV2
+  extends SandboxPolicyGrantIssuerConfigSnapshotV1 {
+  readonly operatorConfigRevision: number;
+  readonly operatorConfigDigest: string;
+}
+
 export type SandboxAuthorityLoadErrorV1 =
   | "SourceMissing"
   | "SourceUnreadable"

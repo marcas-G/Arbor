@@ -36,7 +36,7 @@ import type {
   ProjectId,
   ProjectPolicy,
   QueryResult,
-  SandboxPolicyGrantIssuerConfigSnapshotV1,
+  SandboxPolicyAuthoritySnapshotV2,
   SandboxPolicyGrantIssuerProvenanceV1,
   VerificationId,
   ViewId,
@@ -105,7 +105,7 @@ export interface AuthorityInputs {
   readonly grants: ReadonlyArray<PermissionGrant>;
   readonly governance: ParentUserGovernanceFacts;
   readonly policy: ProjectPolicy | WorkspacePolicy;
-  readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1;
+  readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyAuthoritySnapshotV2;
   readonly sandboxPolicyAuthorityNow?: string;
   readonly sandboxPolicyGrantIssuerProvenance?: SandboxPolicyGrantIssuerProvenanceV1;
 }
@@ -408,7 +408,7 @@ export type AuthorityInputsServices =
  * snapshots only; the loader lives at the composition root. */
 export const makeRepositoryInputsLoader = (
   governance: ParentUserGovernanceFacts,
-  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
+  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyAuthoritySnapshotV2,
 ): Effect.Effect<
   (
     envelope: DecodedExternalCommandEnvelope,
@@ -900,7 +900,7 @@ export const makeExternalSubmission = (
 export const makeExternalSubmissionFromServices = (
   governance: ParentUserGovernanceFacts,
   postCommitBeforeActivationProbe?: CreateProjectPostCommitBeforeActivationQualificationProbe,
-  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
+  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyAuthoritySnapshotV2,
 ): Effect.Effect<
   ExternalSubmissionPort,
   never,

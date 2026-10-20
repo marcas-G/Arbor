@@ -179,8 +179,7 @@ export const makeDecideSandboxPolicyHandler = (
       authority.projectId === payload.projectId &&
       authority.workspaceId === payload.workspaceId &&
       authority.executionId === payload.executionId &&
-      sameEpisode(authority.episodeBinding, payload.episodeBinding) &&
-      authority.episodeRevision === payload.expectedEpisodeRevision,
+      sameEpisode(authority.episodeBinding, payload.episodeBinding),
   },
   stopAdmission: { _tag: "Unclassified" },
   prepare: (envelope, _context, resolvedAuthority) => {
@@ -385,8 +384,8 @@ export const makeDecideSandboxPolicyHandler = (
         permissionGrantId: grant.value.permissionGrantId,
         grantPermissionCommandId: provenance.value.grantPermissionCommandId,
         grantIssuerPrincipal: provenance.value.issuerPrincipal,
-        operatorConfigRevision: provenance.value.operatorConfigRevision,
-        operatorConfigDigest: provenance.value.operatorConfigDigest,
+        operatorConfigRevision: snapshot.operatorConfigRevision,
+        operatorConfigDigest: snapshot.operatorConfigDigest,
         actorPrincipal: authority.principal,
         decisionCommandId: envelope.commandId,
         issuedAt: currentNow,
@@ -406,8 +405,8 @@ export const makeDecideSandboxPolicyHandler = (
           episodeBinding: payload.episodeBinding,
           policyRevision: snapshot.policyRevision,
           permissionGrantId: grant.value.permissionGrantId,
-          operatorConfigRevision: provenance.value.operatorConfigRevision,
-          operatorConfigDigest: provenance.value.operatorConfigDigest,
+          operatorConfigRevision: snapshot.operatorConfigRevision,
+          operatorConfigDigest: snapshot.operatorConfigDigest,
         },
       };
       return commandOk({ result, events: [event] });
