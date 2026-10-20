@@ -26,7 +26,7 @@ and this manifest.
 | P5 index | `docs/design/implementation/P5/00-contract-index.md` | `7b254c833030dd6426b6828d0fc534c4883ad62e834c5277a5f883e08a4f76ad` |
 | P5 V2 authority registry source | `docs/design/implementation/P5/01-composition-root.md` | `098bda73c6bcad9e52c2b479723c2278d073bcf6e797698d7063bb5cdc9d8abd` |
 | P10 index | `docs/design/implementation/P10/00-contract-index.md` | `623cfaeaa457bb7c92ccf38887e0a8bcb4360375d912eb89f6c781415eb15f57` |
-| P10 candidate DTO, ordering and identity | `docs/design/implementation/P10/05-surface-actions-transport.md` | `8fc12f01ad2fa26d21dc079e24c4a5d1d615df60736a0f40803fffe24e85a086` |
+| P10 candidate DTO, ordering and identity | `docs/design/implementation/P10/05-surface-actions-transport.md` | `d817497fb261843f2aa5d13d4cb6c0c32c50047ccae15cc8b5458b9e441e4717` |
 | P10 candidate qualification | `docs/design/implementation/P10/07-acceptance.md` | `2d203a4d35696d0f6a503eeaeb29cc3e56a3d76555964c32f361c42c5b71e9a2` |
 | P12 transport boundary | `docs/design/implementation/P12/10-transport-shells.md` | `460a64d98f038e2e8e2d64b8a9c81a01b1f2bd3504a436d25077e96a9e26de28` |
 | P13 index | `docs/design/implementation/P13/00-contract-index.md` | `5981e66625f13cfe053bee5e4d4d73bb540c162508a8dacccd44e842de90d8b0` |

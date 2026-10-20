@@ -529,7 +529,7 @@ strings in exact order `sandbox.provider.test,1.0.0,7,ReadOnly,Disabled,3,
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, each
 encoded as `u32be(UTF8 byte length) || UTF8 bytes`, prefixed by
 `UTF8("arbor:sandbox-policy-candidate:v2\0")`. Its exact ID is
-`spc2_dcb3b078b00ced54449a7df8caf7180a204eb370f769684723a992e84924c325`.
+`spc2_fe70c74f7f7674ad4b09b636e21dabc47ae99af2080a6a7a68d15960a8603094`.
 This vector adds the capability revision `7` after providerVersion `1.0.0`;
 the existing TrustedLocal golden remains unchanged.
 
