@@ -7,7 +7,7 @@ type ExecutionEpisodeBinding =
   CandidateRead["commonPreconditions"]["episodeBinding"];
 type SandboxProfile = "ReadOnly" | "WorkspaceWrite" | "FullAccess";
 
-export interface DecideSandboxPolicyPayloadV1 {
+interface DecideSandboxPolicyPayloadV2Base {
   readonly projectId: string;
   readonly workspaceId: string;
   readonly executionId: string;
@@ -23,20 +23,34 @@ export interface DecideSandboxPolicyPayloadV1 {
   readonly expectedOperatorConfigDigest: string;
   readonly expectedProviderRegistryRevision?: number;
   readonly expectedProviderRegistryDigest?: string;
-  readonly profile: SandboxProfile;
-  readonly providerId: string;
-  readonly networkPolicy:
-    | {
-        readonly kind: "OsEnforced";
-        readonly policy: {
-          readonly version: 1;
-          readonly mode: "Disabled" | "Restricted" | "Enabled";
-          readonly destinations: ReadonlyArray<string>;
-        };
-      }
-    | { readonly kind: "TrustedLocalUnconfinedV1"; readonly version: 1 };
   readonly decisionExpiresAt: string;
 }
+
+type OsNetworkPolicySelection = {
+  readonly kind: "OsEnforced";
+  readonly policy: {
+    readonly version: 1;
+    readonly mode: "Disabled" | "Restricted" | "Enabled";
+    readonly destinations: ReadonlyArray<string>;
+  };
+};
+
+export type DecideSandboxPolicyPayloadV2 =
+  | (DecideSandboxPolicyPayloadV2Base & {
+      readonly profile: Exclude<SandboxProfile, "FullAccess">;
+      readonly providerId: string;
+      readonly providerVersion: string;
+      readonly capabilityRevision: number;
+      readonly networkPolicy: OsNetworkPolicySelection;
+    })
+  | (DecideSandboxPolicyPayloadV2Base & {
+      readonly profile: "FullAccess";
+      readonly providerId: "TrustedLocal";
+      readonly networkPolicy: {
+        readonly kind: "TrustedLocalUnconfinedV1";
+        readonly version: 1;
+      };
+    });
 
 export type SandboxPolicySelectionFailure =
   | "CandidateNotInCurrentRead"
@@ -44,7 +58,7 @@ export type SandboxPolicySelectionFailure =
   | "NetworkDestinationsInvalid";
 
 export type SandboxPolicySelectionResult =
-  | { readonly _tag: "Ready"; readonly payload: DecideSandboxPolicyPayloadV1 }
+  | { readonly _tag: "Ready"; readonly payload: DecideSandboxPolicyPayloadV2 }
   | {
       readonly _tag: "Invalid";
       readonly reason: SandboxPolicySelectionFailure;
@@ -138,6 +152,8 @@ export const decideSandboxPolicyPayloadFromCandidate = (input: {
       expectedProviderRegistryDigest: candidate.providerRegistryDigest,
       profile: candidate.profile,
       providerId: candidate.providerId,
+      providerVersion: candidate.providerVersion,
+      capabilityRevision: candidate.capabilityRevision,
       networkPolicy: {
         kind: "OsEnforced",
         policy: {

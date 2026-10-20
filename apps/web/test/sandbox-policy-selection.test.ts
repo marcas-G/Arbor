@@ -32,6 +32,7 @@ const baseRead = {
       sandboxHandleBindingDigest: "c".repeat(64),
       providerId: "linux-bwrap",
       providerVersion: "bwrap-v2",
+      capabilityRevision: 7,
       profile: "WorkspaceWrite",
       networkMode: "Restricted",
       providerRegistryRevision: 6,
@@ -77,6 +78,8 @@ describe("V6 selected sandbox candidate → existing P1 command mapping", () => 
       expectedProviderRegistryDigest: "d".repeat(64),
       profile: "WorkspaceWrite",
       providerId: "linux-bwrap",
+      providerVersion: "bwrap-v2",
+      capabilityRevision: 7,
       networkPolicy: {
         kind: "OsEnforced",
         policy: {
@@ -148,5 +151,31 @@ describe("V6 selected sandbox candidate → existing P1 command mapping", () => 
       "f".repeat(64),
     );
     expect(Object.hasOwn(mapped.payload, "candidateId")).toBe(false);
+  });
+
+  it("maps the explicitly selected capability revision when otherwise-identical candidates coexist", () => {
+    const secondId = `spc2_${"2".repeat(64)}`;
+    const competingRead = {
+      ...baseRead,
+      candidates: baseRead.candidates.map((candidate) =>
+        candidate.kind === "OsEnforced"
+          ? { ...candidate, capabilityRevision: 8, candidateId: secondId }
+          : candidate,
+      ),
+    } as CandidateRead;
+    const mapped = decideSandboxPolicyPayloadFromCandidate({
+      ...commandContext,
+      read: competingRead,
+      candidateId: secondId,
+      trustedLocalConfirmed: false,
+    });
+    expect(mapped._tag).toBe("Ready");
+    if (mapped._tag !== "Ready") return;
+    expect(mapped.payload).toMatchObject({
+      providerId: "linux-bwrap",
+      providerVersion: "bwrap-v2",
+      capabilityRevision: 8,
+    });
+    expect(mapped.payload).not.toHaveProperty("candidateId");
   });
 });
