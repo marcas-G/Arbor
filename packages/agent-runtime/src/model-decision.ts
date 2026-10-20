@@ -84,7 +84,12 @@ import {
   runtimeSafetyFragment,
   safetyStop,
 } from "./agent-loop-policy.js";
-import { decodeExhaustedRepairDisposition } from "./agent-loop-step-recovery.js";
+import {
+  decodeExhaustedRepairDisposition,
+  hasValidCompiledInferenceRequestHash,
+  isP20OverflowReplacementManifestBound,
+  resolveP20OverflowReplacementChain,
+} from "./agent-loop-step-recovery.js";
 import {
   commitRecoveredNativeCompaction,
   commitRecoveredSummaryCompaction,
@@ -315,36 +320,6 @@ const nativeCompactionProviderTurnId = (
   )
     ? (value as ProviderTurnId)
     : null;
-
-const fnv1aHash = (input: string): string => {
-  let value = 0x811c9dc5;
-  for (let index = 0; index < input.length; index += 1) {
-    value ^= input.charCodeAt(index);
-    value = Math.imul(value, 0x01000193) >>> 0;
-  }
-  return value.toString(16).padStart(8, "0");
-};
-
-const hasValidCompiledInferenceRequestHash = (
-  manifest: Record<string, unknown>,
-  portableRequestJson: string,
-): boolean => {
-  if (
-    typeof manifest.compiledRequestHash !== "string" ||
-    !Array.isArray(manifest.toolRoutes)
-  ) {
-    return false;
-  }
-  try {
-    const request = JSON.parse(portableRequestJson) as unknown;
-    return (
-      manifest.compiledRequestHash ===
-      fnv1aHash(JSON.stringify({ request, toolRoutes: manifest.toolRoutes }))
-    );
-  } catch {
-    return false;
-  }
-};
 
 interface NativePortableFrontier {
   readonly manifest: Record<string, unknown>;
@@ -2790,6 +2765,164 @@ export const runModelDecision = (
         }
         conversationMessages.push({ role: "user", text: claimed.bodyRef });
         conversationContextRefs.push(`human-input:${claimed.messageId}`);
+        if (
+          loopStep?.state === "StepEffectsCommitted" &&
+          loopStep.successor === undefined &&
+          loopStepFence !== undefined &&
+          loopSteps !== undefined &&
+          providerTurns !== undefined &&
+          conversationCurrentJob.state._tag === "Running" &&
+          conversationCurrentJob.state.executionId ===
+            input.execution.executionId &&
+          conversationCurrentJob.messageId === exactConversation.messageId
+        ) {
+          if (loopStep === undefined) {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
+          const pinnedStep = loopStep;
+          const p20Links = yield* tx
+            .transact(loopSteps.listProviderTurnLinks(pinnedStep.identity))
+            .pipe(Effect.mapError(failure));
+          const p20Chain = resolveP20OverflowReplacementChain(
+            p20Links,
+            pinnedStep.identity,
+            String(pinnedStep.providerTurnId),
+          );
+          if (p20Chain !== undefined) {
+            const [replacementManifest, replacementReceipt] = yield* Effect.all(
+              [
+                tx.transact(
+                  providerTurns.findManifestByTurn(
+                    p20Chain.replacement.providerTurnId,
+                  ),
+                ),
+                tx.transact(
+                  providerTurns.findSettledResult(
+                    p20Chain.replacement.providerTurnId,
+                  ),
+                ),
+              ],
+              { concurrency: 1 },
+            ).pipe(Effect.mapError(failure));
+            if (
+              !isP20OverflowReplacementManifestBound({
+                step: pinnedStep,
+                sessionId: String(input.execution.sessionId),
+                chain: p20Chain,
+                manifest: replacementManifest,
+                settled: replacementReceipt,
+              }) ||
+              replacementReceipt._tag !== "SettledSuccess"
+            ) {
+              return yield* Effect.fail(
+                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+              );
+            }
+            const timeline = yield* tx
+              .transact(readExecutionTimeline())
+              .pipe(Effect.mapError(failure));
+            const outputRows = timeline.filter(
+              (entry) =>
+                entry.sequence === pinnedStep.modelOutputSessionSequence &&
+                belongsToConversationExecution(
+                  entry,
+                  String(input.execution.executionId),
+                ),
+            );
+            const outputEntry = outputRows[0];
+            const outputPayload =
+              typeof outputEntry?.payload === "object" &&
+              outputEntry.payload !== null
+                ? (outputEntry.payload as Record<string, unknown>)
+                : undefined;
+            if (
+              pinnedStep.modelOutputSessionSequence === undefined ||
+              pinnedStep.decodedOutputHash === undefined ||
+              pinnedStep.nextActionIndex !== 0 ||
+              outputRows.length !== 1 ||
+              outputEntry?.entryKind !== "ModelOutput" ||
+              outputEntry.source?.kind !== "ProviderTurn" ||
+              outputEntry.source.ref !==
+                `${p20Chain.replacement.providerTurnId}:assistant` ||
+              outputPayload?._tag !== "AssistantMessage" ||
+              outputPayload.providerTurnId !==
+                p20Chain.replacement.providerTurnId ||
+              outputPayload.contentRef !==
+                `provider:${p20Chain.replacement.providerTurnId}:assistant` ||
+              typeof outputPayload.text !== "string" ||
+              typeof outputPayload.finishReason !== "string"
+            ) {
+              return yield* Effect.fail(
+                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+              );
+            }
+            const decodedOutput = decodeTurn(
+              replacementReceipt.canonicalEvents,
+            );
+            if (
+              !decodedOutput.ok ||
+              decodedOutput.output.toolInvocations.length !== 0 ||
+              decodedOutput.output.text !== outputPayload.text ||
+              decodedOutput.output.finishReason !==
+                outputPayload.finishReason ||
+              sha256Hex(
+                JSON.stringify({
+                  providerTurnId: p20Chain.replacement.providerTurnId,
+                  outputContractRef: replacementReceipt.turn.outputContractRef,
+                  decoderVersion: "decode-turn-v1",
+                  text: decodedOutput.output.text,
+                  finishReason: decodedOutput.output.finishReason,
+                  toolInvocations: decodedOutput.output.toolInvocations,
+                }),
+              ) !== pinnedStep.decodedOutputHash
+            ) {
+              return yield* Effect.fail(
+                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+              );
+            }
+            const settlement: ExecutionSettlement = {
+              _tag: "Completed",
+              result: {
+                _tag: "ConversationResponseProduced",
+                messageId: exactConversation.messageId,
+              },
+            };
+            const terminalStep = pinnedStep;
+            yield* tx
+              .transact(
+                loopSteps.transition(
+                  {
+                    identity: terminalStep.identity,
+                    expectedRevision: terminalStep.revision,
+                    expectedState: "StepEffectsCommitted",
+                    next: {
+                      ...terminalStep,
+                      state: "SettlementProposed",
+                      settlement,
+                      revision: terminalStep.revision + 1,
+                      updatedAt: yield* now(),
+                    },
+                  },
+                  loopStepFence,
+                ),
+              )
+              .pipe(Effect.mapError(failure));
+            if (options.qualificationProbe !== undefined) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH19NativeCheckpointRecovery",
+                    stage: `P48TerminalSettledFromPinnedReplacement:step=${terminalStep.identity.logicalStepNo}:providerTurn=${p20Chain.replacement.providerTurnId}`,
+                    executionId: String(input.execution.executionId),
+                    providerTurnId: String(p20Chain.replacement.providerTurnId),
+                  }) ?? Promise.resolve(),
+              );
+            }
+            return { _tag: "Settle", settlement };
+          }
+        }
       }
       // A Human Conversation has its own durable history above. The primary
       // Workspace Session is the execution timeline for non-conversation episodes and
