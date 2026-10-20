@@ -9,6 +9,8 @@ import { executionEpisode } from "@arbor/domain";
 import {
   ModelContext,
   makeTurnProfileResolver,
+  projectSessionTimeline,
+  SESSION_TIMELINE_ENTRY_LIMIT,
   type TurnProfileResolverService,
 } from "@arbor/model-context";
 import {
@@ -40,6 +42,7 @@ import {
   type RuntimeSafetyObservation,
   type SecretRef,
   SessionRepository,
+  sha256Hex,
   TransactionPort,
   WorkRepository,
   WorkspaceKnowledgePort,
@@ -56,6 +59,9 @@ import {
 import { completeAgentLoopStep } from "./agent-loop-step-completion.js";
 import {
   decodeExhaustedRepairDisposition,
+  isP20OverflowReplacementManifestBound,
+  p20OverflowReplacementManifestBindingFailures,
+  resolveP20OverflowReplacementChain,
   retryDispositionMatchesSuccessor,
 } from "./agent-loop-step-recovery.js";
 import {
@@ -424,17 +430,318 @@ export const AgentLoopDriverLive = (
                   providerTurns.findManifestByTurn(current.providerTurnId),
                 )
                 .pipe(Effect.mapError(failure));
+              let manifestBound = isAgentLoopStepManifestBound(
+                current,
+                input.execution.executionId,
+                input.execution.sessionId,
+                priorManifest,
+              );
+              let p20ReplacementGateStage = "primary-manifest-bound";
+              if (
+                !manifestBound &&
+                current.manifestId !== undefined &&
+                priorManifest?.manifestId !== current.manifestId
+              ) {
+                const providerLinks = yield* tx
+                  .transact(loopSteps.listProviderTurnLinks(current.identity))
+                  .pipe(Effect.mapError(failure));
+                const chain = resolveP20OverflowReplacementChain(
+                  providerLinks,
+                  current.identity,
+                  String(current.providerTurnId),
+                );
+                p20ReplacementGateStage = `chain=${chain !== undefined}`;
+                if (chain !== undefined) {
+                  const [
+                    sourceInferenceReceipt,
+                    replacementManifest,
+                    replacementReceipt,
+                    compactionManifest,
+                    compactionReceipt,
+                  ] = yield* Effect.all(
+                    [
+                      tx.transact(
+                        providerTurns.findSettledResult(
+                          chain.inference.providerTurnId,
+                        ),
+                      ),
+                      tx.transact(
+                        providerTurns.findManifestByTurn(
+                          chain.replacement.providerTurnId,
+                        ),
+                      ),
+                      tx.transact(
+                        providerTurns.findSettledResult(
+                          chain.replacement.providerTurnId,
+                        ),
+                      ),
+                      tx.transact(
+                        providerTurns.findManifestByTurn(
+                          chain.compaction.providerTurnId,
+                        ),
+                      ),
+                      tx.transact(
+                        providerTurns.findSettledResult(
+                          chain.compaction.providerTurnId,
+                        ),
+                      ),
+                    ],
+                    { concurrency: 1 },
+                  ).pipe(Effect.mapError(failure));
+                  const replacementManifestBound =
+                    isP20OverflowReplacementManifestBound({
+                      step: current,
+                      sessionId: String(input.execution.sessionId),
+                      chain,
+                      manifest: replacementManifest,
+                      settled: replacementReceipt,
+                    });
+                  const replacementManifestFailures =
+                    p20OverflowReplacementManifestBindingFailures({
+                      step: current,
+                      sessionId: String(input.execution.sessionId),
+                      chain,
+                      manifest: replacementManifest,
+                      settled: replacementReceipt,
+                    });
+                  p20ReplacementGateStage += `;replacement=${replacementManifestBound}:${replacementManifestFailures.join(",")}`;
+                  const parseManifest = (value: string | null) => {
+                    try {
+                      const parsed: unknown = JSON.parse(value ?? "null");
+                      return typeof parsed === "object" &&
+                        parsed !== null &&
+                        !Array.isArray(parsed)
+                        ? (parsed as Record<string, unknown>)
+                        : undefined;
+                    } catch {
+                      return undefined;
+                    }
+                  };
+                  const nativeManifest = parseManifest(
+                    compactionManifest?.manifestJson ?? null,
+                  );
+                  const nativeSourceStep = parseManifest(
+                    JSON.stringify(
+                      nativeManifest?.sourceAgentLoopStep ?? null,
+                    ) ?? null,
+                  );
+                  const nativeRequest = parseManifest(
+                    compactionManifest?.portableRequestJson ?? null,
+                  );
+                  const nativeSuccess =
+                    sourceInferenceReceipt._tag === "SettledFailure" &&
+                    sourceInferenceReceipt.failureKind ===
+                      "ContextLimitExceeded" &&
+                    sourceInferenceReceipt.turn.providerTurnId ===
+                      chain.inference.providerTurnId &&
+                    sourceInferenceReceipt.turn.executionId ===
+                      input.execution.executionId &&
+                    sourceInferenceReceipt.turn.sessionId ===
+                      input.execution.sessionId &&
+                    sourceInferenceReceipt.turn.contextEpoch ===
+                      chain.inference.contextEpoch &&
+                    compactionManifest !== null &&
+                    compactionReceipt._tag === "SettledSuccess" &&
+                    compactionReceipt.evidenceVersion ===
+                      "provider-success-v1" &&
+                    compactionReceipt.finishReason === "Stop" &&
+                    compactionReceipt.manifestId ===
+                      compactionManifest.manifestId &&
+                    compactionReceipt.manifestJson ===
+                      compactionManifest.manifestJson &&
+                    compactionReceipt.turn.providerTurnId ===
+                      chain.compaction.providerTurnId &&
+                    compactionReceipt.turn.executionId ===
+                      input.execution.executionId &&
+                    compactionReceipt.turn.sessionId ===
+                      input.execution.sessionId &&
+                    compactionReceipt.turn.contextEpoch ===
+                      chain.compaction.contextEpoch &&
+                    compactionReceipt.turn.outputContractRef ===
+                      "provider-native-compaction-v1" &&
+                    nativeManifest !== undefined &&
+                    nativeRequest !== undefined &&
+                    nativeManifest?.providerTurnId ===
+                      chain.compaction.providerTurnId &&
+                    nativeManifest.executionId ===
+                      input.execution.executionId &&
+                    nativeManifest.sessionId === input.execution.sessionId &&
+                    nativeManifest.logicalStepNo ===
+                      current.identity.logicalStepNo &&
+                    nativeManifest.contextEpoch ===
+                      chain.compaction.contextEpoch &&
+                    nativeManifest.operationKind === "CompactionNative" &&
+                    nativeManifest.outputContractRef ===
+                      "provider-native-compaction-v1" &&
+                    typeof nativeManifest.resolvedModelBindingFingerprint ===
+                      "string" &&
+                    nativeManifest.compiledRequestHash ===
+                      sha256Hex(compactionManifest.portableRequestJson) &&
+                    nativeRequest?.operationKind === "CompactionNative" &&
+                    nativeRequest.outputContractRef ===
+                      "provider-native-compaction-v1" &&
+                    nativeRequest.modelRef === nativeManifest.modelRef &&
+                    compactionReceipt.canonicalEvents.filter(
+                      (event) =>
+                        event._tag === "ContinuationState" &&
+                        event.stateRef.length > 0,
+                    ).length === 1;
+                  let checkpointOwnerCurrent = false;
+                  if (
+                    replacementManifestBound &&
+                    nativeSuccess &&
+                    nativeManifest !== undefined &&
+                    compactionReceipt._tag === "SettledSuccess"
+                  ) {
+                    const episode = executionEpisode(input.execution);
+                    const nativeStateRef =
+                      compactionReceipt.canonicalEvents.find(
+                        (event) => event._tag === "ContinuationState",
+                      );
+                    const nativeStateRefValue =
+                      nativeStateRef?._tag === "ContinuationState"
+                        ? nativeStateRef.stateRef
+                        : undefined;
+                    if (
+                      episode?._tag === "ConversationResponseEpisode" &&
+                      Option.isSome(conversationCheckpointOption)
+                    ) {
+                      const ownerOption = yield* tx
+                        .transact(
+                          conversationCheckpointOption.value.findOwner(
+                            input.execution.workspaceId,
+                          ),
+                        )
+                        .pipe(Effect.mapError(failure));
+                      if (Option.isSome(ownerOption)) {
+                        const owner = ownerOption.value;
+                        const ownerSource = parseManifest(
+                          owner.sourceManifestJson,
+                        );
+                        const nested = parseManifest(
+                          JSON.stringify(nativeManifest.conversationCheckpoint),
+                        );
+                        checkpointOwnerCurrent =
+                          owner.contextEpoch ===
+                            chain.replacement.contextEpoch &&
+                          owner.checkpointKind === "ProviderNative" &&
+                          owner.producerExecutionId ===
+                            input.execution.executionId &&
+                          owner.producerProviderTurnId ===
+                            chain.compaction.providerTurnId &&
+                          typeof owner.bindingFingerprint === "string" &&
+                          owner.bindingFingerprint ===
+                            nativeManifest.resolvedModelBindingFingerprint &&
+                          owner.checkpointRef !== null &&
+                          nativeStateRef?._tag === "ContinuationState" &&
+                          owner.checkpointRef === nativeStateRef.stateRef &&
+                          ownerSource !== undefined &&
+                          ownerSource.rootWorkspaceId ===
+                            input.execution.workspaceId &&
+                          ownerSource.fromEpoch ===
+                            chain.compaction.contextEpoch &&
+                          ownerSource.toEpoch === owner.contextEpoch &&
+                          ownerSource.currentMessageId === episode.messageId &&
+                          ownerSource.producerExecutionId ===
+                            input.execution.executionId &&
+                          ownerSource.producerProviderTurnId ===
+                            chain.compaction.providerTurnId &&
+                          nested !== undefined &&
+                          nested.rootWorkspaceId ===
+                            ownerSource.rootWorkspaceId &&
+                          nested.fromEpoch === ownerSource.fromEpoch &&
+                          nested.toEpoch === ownerSource.toEpoch &&
+                          nested.currentMessageId ===
+                            ownerSource.currentMessageId &&
+                          JSON.stringify(nested.coveredSources) ===
+                            JSON.stringify(ownerSource.coveredSources) &&
+                          JSON.stringify(nested.coveredThrough) ===
+                            JSON.stringify(ownerSource.coveredThrough) &&
+                          JSON.stringify(nested.fromFrontier) ===
+                            JSON.stringify(ownerSource.fromFrontier) &&
+                          nested.currentRunningJobRevision ===
+                            ownerSource.currentRunningJobRevision &&
+                          nested.currentRunningAttemptNo ===
+                            ownerSource.currentRunningAttemptNo &&
+                          nested.currentAdmissionJobRevision ===
+                            ownerSource.currentAdmissionJobRevision;
+                      }
+                    } else {
+                      const nativeSourceStepMatches =
+                        nativeSourceStep !== undefined &&
+                        nativeSourceStep.executionId ===
+                          current.identity.executionId &&
+                        nativeSourceStep.logicalStepNo ===
+                          current.identity.logicalStepNo &&
+                        nativeSourceStep.repairAttempt ===
+                          current.identity.repairAttempt &&
+                        nativeSourceStep.providerTurnId ===
+                          current.providerTurnId;
+                      const sessionOption = yield* tx
+                        .transact(sessions.findById(input.execution.sessionId))
+                        .pipe(Effect.mapError(failure));
+                      if (Option.isSome(sessionOption)) {
+                        const timeline = yield* tx
+                          .transact(
+                            sessions.listRecentEntries(
+                              input.execution.sessionId,
+                              SESSION_TIMELINE_ENTRY_LIMIT,
+                            ),
+                          )
+                          .pipe(Effect.mapError(failure));
+                        const projection = projectSessionTimeline(
+                          timeline,
+                          String(
+                            nativeManifest.resolvedModelBindingFingerprint,
+                          ),
+                          true,
+                        );
+                        const checkpoint = projection.nativeCheckpoint;
+                        checkpointOwnerCurrent =
+                          Number(sessionOption.value.contextEpoch) ===
+                            Number(chain.replacement.contextEpoch) &&
+                          nativeSourceStepMatches &&
+                          checkpoint !== undefined &&
+                          checkpoint.providerTurnId ===
+                            chain.compaction.providerTurnId &&
+                          checkpoint.fromEpoch ===
+                            Number(chain.compaction.contextEpoch) &&
+                          checkpoint.toEpoch ===
+                            Number(chain.replacement.contextEpoch) &&
+                          checkpoint.bindingMatches &&
+                          checkpoint.bindingFingerprint ===
+                            nativeManifest.resolvedModelBindingFingerprint &&
+                          checkpoint.opaqueItemRef === nativeStateRefValue;
+                      }
+                    }
+                  }
+                  manifestBound =
+                    replacementManifestBound &&
+                    nativeSuccess &&
+                    checkpointOwnerCurrent;
+                  p20ReplacementGateStage += `;native=${nativeSuccess};owner=${checkpointOwnerCurrent};bound=${manifestBound}`;
+                }
+              }
+              if (
+                p20ReplacementGateStage !== "primary-manifest-bound" &&
+                options.qualificationProbe !== undefined
+              ) {
+                yield* Effect.promise(
+                  () =>
+                    options.qualificationProbe?.({
+                      boundary: "AH19NativeCheckpointRecovery",
+                      stage: `P20ReplacementStepManifestGate:${p20ReplacementGateStage}`,
+                      executionId: String(input.execution.executionId),
+                      providerTurnId: String(current.providerTurnId),
+                    }) ?? Promise.resolve(),
+                );
+              }
               if (
                 !isPreparedStepAwaitingInitialManifest(
                   current,
                   priorManifest,
                 ) &&
-                !isAgentLoopStepManifestBound(
-                  current,
-                  input.execution.executionId,
-                  input.execution.sessionId,
-                  priorManifest,
-                )
+                !manifestBound
               ) {
                 return yield* Effect.fail(
                   failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
