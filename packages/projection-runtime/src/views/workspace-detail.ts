@@ -71,7 +71,7 @@ export type WorkspaceDetailView = WorkspaceDetailViewCore &
       }
     | {
         readonly sandboxPolicyPreconditions?: never;
-        readonly sandboxPolicyCandidateRead?: import("@arbor/domain").SandboxPolicyCandidateReadV1;
+        readonly sandboxPolicyCandidateRead?: import("@arbor/domain").SandboxPolicyCandidateReadV2;
       }
   );
 
@@ -84,7 +84,7 @@ export type WorkspaceDetailSandboxPolicyProjection = {
     }
   | {
       readonly sandboxPolicyPreconditions?: never;
-      readonly sandboxPolicyCandidateRead?: import("@arbor/domain").SandboxPolicyCandidateReadV1;
+      readonly sandboxPolicyCandidateRead?: import("@arbor/domain").SandboxPolicyCandidateReadV2;
     }
 );
 
@@ -246,7 +246,7 @@ export const deriveWorkspaceDetail = (
       | import("@arbor/domain").SandboxPolicyPreconditionsV1
       | undefined;
     let sandboxPolicyCandidateRead:
-      | import("@arbor/domain").SandboxPolicyCandidateReadV1
+      | import("@arbor/domain").SandboxPolicyCandidateReadV2
       | undefined;
     if (Option.isSome(activeMain)) {
       const sandboxPolicyProjection = yield* deps.sandboxPolicyForExecution?.(
