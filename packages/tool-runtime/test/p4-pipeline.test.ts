@@ -2053,6 +2053,18 @@ describe("P4 tool runtime pipeline", () => {
     ).rejects.toMatchObject({
       cause: { _tag: "SandboxUnavailableObservationPolicyMismatch" },
     });
+    const eagerOnlyReplay = await run(
+      app(false, processExecutor, {}, trace),
+      argumentsJson,
+      null,
+      processContext(policy),
+    );
+    expect(eagerOnlyReplay).toMatchObject({
+      _tag: "SandboxProviderUnavailable",
+      policyRevision: policy.policyRevision,
+      policyDigest: policy.policyDigest,
+      failureCode: "ProviderNotSupported",
+    });
     expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
     expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
   });
