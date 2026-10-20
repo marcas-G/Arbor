@@ -8,7 +8,11 @@ import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
-import { parse, WorkspaceId } from "../../../packages/domain/dist/index.js";
+import {
+  Principal,
+  parse,
+  WorkspaceId,
+} from "../../../packages/domain/dist/index.js";
 import {
   createAh19StartupDiagnosticProbe,
   createFunctionalDaemonListenReporter,
@@ -44,6 +48,33 @@ const onWebTransportListening = createFunctionalDaemonListenReporter();
 const startupDiagnosticProbe = createAh19StartupDiagnosticProbe(
   process.env.ARBOR_AH19_STARTUP_TRACE === "1",
 );
+const targetAhBoundary = process.env.ARBOR_AH_BOUNDARY;
+const pauseAtAhBoundary = async (event) => {
+  if (event.boundary !== targetAhBoundary) return;
+  process.stdout.write(`${JSON.stringify({ tag: "AH_PROBE", ...event })}\n`);
+  await new Promise(() => {});
+};
+const toolQualificationProbe =
+  targetAhBoundary === "AH7AfterToolIntentCommit"
+    ? pauseAtAhBoundary
+    : undefined;
+const executableToolQualificationProbe = async (event) => {
+  process.stdout.write(
+    `${JSON.stringify({ tag: "P4_EXECUTABLE_PROBE", ...event })}\n`,
+  );
+};
+const sandboxPolicyDecisionPreparationQualificationProbe = async (event) => {
+  process.stdout.write(
+    `${JSON.stringify({ tag: "P1_SANDBOX_PREPARATION_PROBE", ...event })}\n`,
+  );
+};
+const governance = {
+  authenticatedHumans: [
+    parse(Principal)("user:local"),
+    parse(Principal)("user:operator"),
+  ],
+  directParentOf: [],
+};
 const projectResourceProfiles = makeProjectResourceProfilePort(
   projectResourceProfilesFromEnvironment(),
 );
@@ -67,7 +98,10 @@ const config = {
     : {}),
   // The process test commits an initially current policy, then changes the
   // protected V2 pair and kills this daemon before another scheduler tick.
-  tickIntervalMs: 60_000,
+  tickIntervalMs: Number(process.env.ARBOR_TICK_INTERVAL_MS ?? "60000"),
+  ...(targetAhBoundary === "AH7AfterToolIntentCommit"
+    ? { toolQualificationProbe: pauseAtAhBoundary }
+    : {}),
 };
 const daemonProgram = runDaemonForever(config);
 await Effect.runPromise(
@@ -77,6 +111,12 @@ await Effect.runPromise(
       projectResourceProfiles,
       trustedHostConfigurationSource,
       startupDiagnosticProbe,
+      governance,
+      executableToolQualificationProbe,
+      sandboxPolicyDecisionPreparationQualificationProbe,
+      ...(toolQualificationProbe === undefined
+        ? {}
+        : { toolQualificationProbe }),
     }),
   ),
 );

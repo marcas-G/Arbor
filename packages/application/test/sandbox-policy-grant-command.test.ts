@@ -30,6 +30,8 @@ const commandId = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const configSnapshot = {
   config: { version: 1 as const, revision: 4, issuers: [operator] },
   configDigest: "a".repeat(64),
+  operatorConfigRevision: 9,
+  operatorConfigDigest: "f".repeat(64),
   authorityBundleRevision: 4,
   authorityBundleDigest: "b".repeat(64),
   providerRegistryRevision: 3,
@@ -49,8 +51,8 @@ const setup = () => {
     permissionGrantId: grantId,
     sandboxPolicyIssuerBinding: {
       executionId,
-      operatorConfigRevision: 4,
-      operatorConfigDigest: configSnapshot.configDigest,
+      operatorConfigRevision: configSnapshot.operatorConfigRevision,
+      operatorConfigDigest: configSnapshot.operatorConfigDigest,
       authorityBundleRevision: configSnapshot.authorityBundleRevision,
       authorityBundleDigest: configSnapshot.authorityBundleDigest,
       providerRegistryRevision: configSnapshot.providerRegistryRevision,
@@ -156,8 +158,8 @@ describe("GrantPermission sandbox issuer provenance", () => {
         permissionGrantId: grantId,
         grantPermissionCommandId: commandId,
         issuerPrincipal: operator,
-        operatorConfigRevision: 4,
-        operatorConfigDigest: configSnapshot.configDigest,
+        operatorConfigRevision: configSnapshot.operatorConfigRevision,
+        operatorConfigDigest: configSnapshot.operatorConfigDigest,
       },
     });
     if (!result.ok) throw new Error("grant command unexpectedly rejected");
@@ -169,8 +171,8 @@ describe("GrantPermission sandbox issuer provenance", () => {
       permissionGrantId: grantId,
       grantPermissionCommandId: commandId,
       executionId,
-      operatorConfigRevision: 4,
-      operatorConfigDigest: configSnapshot.configDigest,
+      operatorConfigRevision: configSnapshot.operatorConfigRevision,
+      operatorConfigDigest: configSnapshot.operatorConfigDigest,
     });
   });
 

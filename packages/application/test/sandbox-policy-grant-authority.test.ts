@@ -38,6 +38,8 @@ const now = "2026-10-19T00:00:00.000Z";
 const configSnapshot = {
   config: { version: 1 as const, revision: 4, issuers: [principal] },
   configDigest: "a".repeat(64),
+  operatorConfigRevision: 9,
+  operatorConfigDigest: "f".repeat(64),
   authorityBundleRevision: 4,
   authorityBundleDigest: "b".repeat(64),
   providerRegistryRevision: 3,
@@ -98,13 +100,16 @@ const resolve = (value: AuthorityDecisionInput) =>
 
 describe("P12 sandbox GrantPermission issuer authority", () => {
   it("authorizes only the exact configured human issuer for an active exact Execution", async () => {
+    expect(configSnapshot.configDigest).not.toBe(
+      configSnapshot.operatorConfigDigest,
+    );
     await expect(resolve(input())).resolves.toMatchObject({
       _tag: "GrantPermissionAuthority",
       permissionGrantId,
       sandboxPolicyIssuerBinding: {
         executionId,
-        operatorConfigRevision: 4,
-        operatorConfigDigest: "a".repeat(64),
+        operatorConfigRevision: 9,
+        operatorConfigDigest: "f".repeat(64),
         authorityBundleRevision: 4,
         authorityBundleDigest: "b".repeat(64),
         providerRegistryRevision: 3,
@@ -138,6 +143,21 @@ describe("P12 sandbox GrantPermission issuer authority", () => {
       _tag: "NoApplicableGrant",
     });
   });
+
+  it("denies a valid authenticated issuer removed from the current issuer allowlist while operator F remains valid", async () => {
+    await expect(
+      resolve({
+        ...input(),
+        sandboxPolicyGrantIssuerConfigSnapshot: {
+          ...configSnapshot,
+          config: { ...configSnapshot.config, issuers: [] },
+        },
+      }),
+    ).rejects.toMatchObject({
+      _tag: "NoApplicableGrant",
+      commandType: "GrantPermission",
+    });
+  });
 });
 
 describe("P12 DecideSandboxPolicy CAPA preflight", () => {
@@ -158,8 +178,8 @@ describe("P12 DecideSandboxPolicy CAPA preflight", () => {
       expectedSandboxHandleBindingDigest: "d".repeat(64),
       expectedAuthorityBundleRevision: 4,
       expectedAuthorityBundleDigest: "b".repeat(64),
-      expectedOperatorConfigRevision: 4,
-      expectedOperatorConfigDigest: "a".repeat(64),
+      expectedOperatorConfigRevision: 9,
+      expectedOperatorConfigDigest: "f".repeat(64),
       expectedProviderRegistryRevision: 3,
       expectedProviderRegistryDigest: "c".repeat(64),
       profile: "ReadOnly",
@@ -222,8 +242,8 @@ describe("P12 DecideSandboxPolicy CAPA preflight", () => {
         permissionGrantId,
         grantPermissionCommandId: commandId,
         issuerPrincipal: principal,
-        operatorConfigRevision: 4,
-        operatorConfigDigest: "a".repeat(64),
+        operatorConfigRevision: 9,
+        operatorConfigDigest: "f".repeat(64),
       },
     } as AuthorityDecisionInput;
   };
@@ -238,18 +258,46 @@ describe("P12 DecideSandboxPolicy CAPA preflight", () => {
       permissionGrant: { permissionGrantId, revision: 3, state: "Active" },
       issuerProvenance: {
         issuerPrincipal: principal,
-        operatorConfigRevision: 4,
+        operatorConfigRevision: 9,
+        operatorConfigDigest: "f".repeat(64),
       },
+      operatorConfigRevision: 9,
+      operatorConfigDigest: "f".repeat(64),
     });
   });
 
-  it.each([
-    { expectedEpisodeRevision: 1 },
-    { executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789a2" },
-  ])("denies stale or foreign execution identity %#", async (override) => {
-    await expect(resolve(decisionInput(override))).rejects.toMatchObject({
+  it("denies old operator-F provenance after operator config rotates while issuer A remains valid", async () => {
+    await expect(
+      resolve({
+        ...decisionInput(),
+        sandboxPolicyGrantIssuerConfigSnapshot: {
+          ...configSnapshot,
+          operatorConfigRevision: 10,
+          operatorConfigDigest: "e".repeat(64),
+        },
+      }),
+    ).rejects.toMatchObject({
       _tag: "NoApplicableGrant",
       commandType: "DecideSandboxPolicy",
+    });
+  });
+
+  it.each([{ executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789a2" }])(
+    "denies a foreign execution identity %#",
+    async (override) => {
+      await expect(resolve(decisionInput(override))).rejects.toMatchObject({
+        _tag: "NoApplicableGrant",
+        commandType: "DecideSandboxPolicy",
+      });
+    },
+  );
+
+  it("leaves caller expected episode revision to the P1 transaction CAS", async () => {
+    await expect(
+      resolve(decisionInput({ expectedEpisodeRevision: 1 })),
+    ).resolves.toMatchObject({
+      _tag: "SandboxPolicyDecisionAuthority",
+      episodeRevision: 2,
     });
   });
 });
