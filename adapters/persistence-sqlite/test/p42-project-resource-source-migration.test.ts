@@ -3,11 +3,13 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   CURRENT_SCHEMA45_SUFFIX_IDS,
+  expectedCurrentSchemaSuffixIds,
   HISTORICAL_SCHEMA42_SUFFIX_IDS,
 } from "../../../tests/support/schema-prefix-contract.js";
 import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
 import {
   CURRENT_MIGRATIONS,
+  CURRENT_SCHEMA_VERSION,
   layer,
   P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
   runMigrations,
@@ -75,7 +77,7 @@ const seedP38Project = (filename: string) =>
   );
 
 describe("FT-DG-01 ProjectResourceSource migration descriptor", () => {
-  it("pins migration 0042 in the historical schema-42 prefix and current schema-44 chain", () => {
+  it("pins migration 0042 in the historical schema-42 prefix and current catalog", () => {
     expect(P42_PROJECT_RESOURCE_SOURCE_MIGRATION).toMatchObject({
       id: 42,
       name: "project_resource_source_attribution",
@@ -84,12 +86,10 @@ describe("FT-DG-01 ProjectResourceSource migration descriptor", () => {
     const currentSuffixIds = CURRENT_MIGRATIONS.map(({ id }) => id).filter(
       (id) => id >= 40,
     );
-    expect(currentSuffixIds).toEqual([
-      ...CURRENT_SCHEMA45_SUFFIX_IDS,
-      46,
-      47,
-      48,
-    ]);
+    expect(currentSuffixIds).toEqual(
+      expectedCurrentSchemaSuffixIds(CURRENT_SCHEMA_VERSION),
+    );
+    expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(CURRENT_SCHEMA_VERSION);
     expect(
       CURRENT_SCHEMA45_SUFFIX_IDS.slice(
         0,
