@@ -64,6 +64,7 @@ const variant = process.env.ARBOR_AH19_BINDING_VARIANT ?? "A";
 const endpoint = `test://native-binding-${variant.toLowerCase()}`;
 const reportUrl = process.env.ARBOR_AH19_REPORT_URL;
 const targetBoundary = process.env.ARBOR_AH19_BOUNDARY;
+const secondaryBoundary = process.env.ARBOR_AH19_SECONDARY_BOUNDARY;
 const gateTurnSuffix = process.env.ARBOR_AH19_GATE_TURN_SUFFIX;
 const nestedNativeMode = process.env.ARBOR_AH19_NESTED_NATIVE === "1";
 const terminalConversationMode =
@@ -71,6 +72,10 @@ const terminalConversationMode =
 const conversationSeedMode = process.env.ARBOR_AH19_CONVERSATION_SEED === "1";
 const ordinaryWorkMode = process.env.ARBOR_AH19_ORDINARY_WORK === "1";
 const frontierTextOnlyMode = process.env.ARBOR_AH19_FRONTIER_TEXT_ONLY === "1";
+const nativeSourceActionTurnId =
+  process.env.ARBOR_AH19_NATIVE_SOURCE_ACTION_TURN_ID;
+const nativeSourceActionCheckpointRef =
+  process.env.ARBOR_AH19_NATIVE_SOURCE_ACTION_CHECKPOINT_REF;
 const rootWorkSeedJson = process.env.ARBOR_AH19_ROOT_WORK_SEED_JSON;
 let rootWorkAssignmentEmitted =
   process.env.ARBOR_AH19_ROOT_WORK_ALREADY_ASSIGNED === "1";
@@ -272,6 +277,49 @@ const nativeAdapter = {
                         mode: "Any",
                         conditions: [{ _tag: "Manual" }],
                       },
+                    }),
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "ToolCalls",
+                  },
+                },
+              ]),
+            );
+          }
+          const nativeSourceCheckpoint = request.inputItems.find(
+            (item) =>
+              item._tag === "CompactionCheckpoint" &&
+              item.implementation === "ProviderNative",
+          );
+          if (
+            operationKind === "Inference" &&
+            nativeSourceActionTurnId === providerTurnId &&
+            nativeSourceActionCheckpointRef !== undefined &&
+            nativeSourceCheckpoint?.opaqueItemRef ===
+              nativeSourceActionCheckpointRef
+          ) {
+            const callRef = `call_ah19_native_source_${providerTurnId.replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "ToolCallProposed",
+                    callRef,
+                    toolName: "update_plan",
+                    argumentsJson: JSON.stringify({
+                      items: [
+                        {
+                          itemId: "native-source-recovery-applied",
+                          text: "Apply the exact recovered Native source action.",
+                          status: "Pending",
+                        },
+                      ],
                     }),
                   },
                 },
@@ -602,12 +650,53 @@ const config = {
       );
       return;
     }
-    if (targetBoundary === "none" || event.boundary !== targetBoundary) {
+    const primaryBoundary =
+      targetBoundary !== "none" && event.boundary === targetBoundary;
+    const secondaryBoundaryMatch =
+      secondaryBoundary !== undefined && event.boundary === secondaryBoundary;
+    if (!primaryBoundary && !secondaryBoundaryMatch) {
       return;
     }
-    const stepEffectsBoundary = targetBoundary === "AH11AfterStepEffectsCommit";
+    const stepEffectsBoundary = event.boundary === "AH11AfterStepEffectsCommit";
+    if (
+      primaryBoundary &&
+      process.env.ARBOR_AH19_PRIMARY_BOUNDARY_COUNT_ONLY === "1"
+    ) {
+      process.stdout.write(
+        `${JSON.stringify({ tag: "AH19_PROBE", ...event })}\n`,
+      );
+      return;
+    }
     if (stepEffectsBoundary) {
+      const expectedNativeSourceTurnId =
+        process.env.ARBOR_AH19_AH11_COUNT_ONLY_PROVIDER_TURN_ID;
+      if (
+        expectedNativeSourceTurnId !== undefined &&
+        expectedNativeSourceTurnId !== String(event.providerTurnId)
+      ) {
+        return;
+      }
+      if (
+        process.env.ARBOR_AH19_AH11_SUFFIX_SCOPED_COUNT === "1" &&
+        gateTurnSuffix !== undefined &&
+        !String(event.providerTurnId).endsWith(gateTurnSuffix)
+      ) {
+        return;
+      }
       ah11AfterEffectsCount += 1;
+      if (process.env.ARBOR_AH19_AH11_COUNT_ONLY === "1") {
+        process.stdout.write(
+          `${JSON.stringify({
+            tag: "AH19_AH11_COUNT",
+            count: ah11AfterEffectsCount,
+            providerTurnId: event.providerTurnId,
+          })}\n`,
+        );
+        if (process.env.ARBOR_AH19_AH11_COUNT_ONLY_HOLD === "1") {
+          await new Promise(() => {});
+        }
+        return;
+      }
       const gateMatchIndex = Number(
         process.env.ARBOR_AH19_AH11_MATCH_INDEX ?? "2",
       );
