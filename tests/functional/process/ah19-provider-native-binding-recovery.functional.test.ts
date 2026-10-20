@@ -4848,7 +4848,7 @@ describe("AH19 restart binding qualification", () => {
 
   it("rebases ordinary Native recovery from binding A to B through its portable frontier", async () => {
     const scenario = await startOrdinaryNativeAtCheckpointBoundary(
-      "AH17BeforeCheckpointEpochCommit",
+      "AH17AfterCheckpointEpochCommit",
     );
     const { fixture, project, workId, native, probe, reportUrl, childOutput } =
       scenario;
