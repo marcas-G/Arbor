@@ -156,9 +156,14 @@ describe("Windows D2 operator-only V2 to V3 source-first cutover", () => {
     expect(
       fixture.state.forensic.get(result.preservedV2HighWaterEvidenceId),
     ).toBe(fixture.originalHighWater);
-    expect(fixture.state.forensic.get(result.preservedV2AuditEvidenceId)).toBe(
-      fixture.originalAudit,
+    const preservedAudit = fixture.state.forensic.get(
+      result.preservedV2AuditEvidenceId,
     );
+    if (preservedAudit === undefined)
+      throw new Error("audit was not preserved");
+    expect(fixture.state.audit.startsWith(preservedAudit)).toBe(true);
+    expect(preservedAudit).toContain('"outcome":"Loaded"');
+    expect(preservedAudit).not.toContain("HighWaterCorrupt");
     const current = await Effect.runPromise(
       loadSandboxAuthorityBundleSnapshotCurrent(
         fixture.store,
@@ -187,6 +192,29 @@ describe("Windows D2 operator-only V2 to V3 source-first cutover", () => {
     expect(result).toBe("V2AuditUnavailable");
     expect(fixture.state.source).toBe(fixture.originalSource);
     expect(fixture.state.highWater).toBe(fixture.originalHighWater);
+  });
+
+  it("refuses an audit append racing forensic preservation and source write", async () => {
+    const fixture = makeStore();
+    let reads = 0;
+    const driftingStore: SandboxAuthorityProvisioningStoreService = {
+      ...fixture.store,
+      readSandboxAuthorityAuditForensic: () =>
+        Effect.sync(() =>
+          ++reads === 1 ? fixture.state.audit : `${fixture.state.audit}late\n`,
+        ),
+    };
+    const result = await Effect.runPromise(
+      provisionSandboxAuthorityV2ToV3({ trustSetCanonicalJson: trust }).pipe(
+        Effect.provideService(SandboxAuthorityProvisioningStore, driftingStore),
+        Effect.match({
+          onFailure: (reason) => reason,
+          onSuccess: () => "Succeeded",
+        }),
+      ),
+    );
+    expect(result).toBe("V2PairDrifted");
+    expect(fixture.state.source).toBe(fixture.originalSource);
   });
 
   it("cannot carry a V2 Windows Supported row into V3", async () => {
@@ -297,5 +325,59 @@ describe("Windows D2 operator-only V2 to V3 source-first cutover", () => {
       ),
     );
     expect(stale).toEqual({ _tag: "Unavailable", failure: "RevisionRollback" });
+  });
+
+  it("requires capability revision advance even when rotation changes the tuple", async () => {
+    const row: SandboxProviderQualificationEntryV1 = {
+      providerId: "windows-restricted-appcontainer-job",
+      providerVersion: "t3d-v1",
+      capabilityRevision: 1,
+      osFamily: "Windows",
+      osBuild: "10.0.19045",
+      tuple: {
+        profile: "ReadOnly",
+        networkMode: "Disabled",
+        networkPolicyCodecVersion: 1,
+        enforcementRuleSetDigest: "a".repeat(64),
+      },
+      status: "Experimental",
+      qualificationEvidenceRef: null,
+    };
+    const fixture = makeStore([row]);
+    const first = await Effect.runPromise(
+      provisionSandboxAuthorityV2ToV3({ trustSetCanonicalJson: trust }).pipe(
+        Effect.provideService(SandboxAuthorityProvisioningStore, fixture.store),
+      ),
+    );
+    const trustV2 = encodeWindowsNativeOperatorTrustSetV1({
+      ...first.bundle.windowsOperatorTrustSet,
+      revision: 2,
+      revokedKeyIds: ["operator-2026-a"],
+    });
+    const changedTupleSameRevision =
+      encodeSandboxProviderQualificationRegistryV1({
+        version: 1,
+        revision: 2,
+        entries: [
+          {
+            ...row,
+            tuple: { ...row.tuple, enforcementRuleSetDigest: "b".repeat(64) },
+          },
+        ],
+      });
+    const rejected = await Effect.runPromise(
+      rotateSandboxAuthorityV3Trust({
+        trustSetCanonicalJson: trustV2,
+        providerRegistryCanonicalJson: changedTupleSameRevision,
+      }).pipe(
+        Effect.provideService(SandboxAuthorityProvisioningStore, fixture.store),
+        Effect.match({
+          onFailure: (reason) => reason,
+          onSuccess: () => "Succeeded",
+        }),
+      ),
+    );
+    expect(rejected).toBe("CapabilityRevisionInvalid");
+    expect(fixture.state.source).toBe(first.bundleCanonicalJson);
   });
 });

@@ -174,12 +174,17 @@ describe("Windows D2 V3 protected file source process-crash cutover", () => {
               "utf8",
             ),
           ).toBe(old.highWater);
-          expect(
-            readFileSync(
-              join(root, "forensic", `v2-audit-${hash(old.audit)}.raw`),
-              "utf8",
-            ),
-          ).toBe(old.audit);
+          const auditEvidence = evidence.filter((name) =>
+            name.startsWith("v2-audit-"),
+          );
+          expect(auditEvidence).toHaveLength(1);
+          const auditBytes = readFileSync(
+            join(root, "forensic", auditEvidence[0] ?? ""),
+            "utf8",
+          );
+          expect(auditBytes.startsWith(old.audit)).toBe(true);
+          expect(auditBytes).toContain('"outcome":"Loaded"');
+          expect(auditEvidence[0]).toBe(`v2-audit-${hash(auditBytes)}.raw`);
           if (stage === "before-high-water") {
             expect(highWater).toBe(old.highWater);
             expect(observation).toMatchObject({ _tag: "Unavailable" });

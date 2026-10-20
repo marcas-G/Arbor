@@ -96,14 +96,6 @@ export const provisionSandboxAuthorityV2ToV3 = (input: {
     const before = yield* stableRead(store);
     if (before.source === undefined || before.highWater === undefined)
       return yield* fail("V2SourceUnavailable");
-    const auditBefore = yield* Effect.match(
-      store.readSandboxAuthorityAuditForensic(),
-      {
-        onFailure: () => undefined,
-        onSuccess: (value) => value,
-      },
-    );
-    if (auditBefore === undefined) return yield* fail("V2AuditUnavailable");
     const loaded = yield* loadSandboxAuthorityBundleSnapshotV2(
       store,
       new Date().toISOString(),
@@ -117,6 +109,13 @@ export const provisionSandboxAuthorityV2ToV3 = (input: {
       after.highWater !== before.highWater
     )
       return yield* fail("V2PairDrifted");
+    // The verification load appends its own V2 audit. Preserve that exact
+    // final pre-replacement state, not a stale pre-load prefix.
+    const auditBefore = yield* Effect.match(
+      store.readSandboxAuthorityAuditForensic(),
+      { onFailure: () => undefined, onSuccess: (value) => value },
+    );
+    if (auditBefore === undefined) return yield* fail("V2AuditUnavailable");
     const oldHighWater = decodeCanonicalSandboxAuthorityHighWaterV2(
       before.highWater,
     );
@@ -209,6 +208,11 @@ export const provisionSandboxAuthorityV2ToV3 = (input: {
       if (readback !== item.bytes)
         return yield* fail("ForensicPreservationFailed");
     }
+    const auditAtWrite = yield* Effect.match(
+      store.readSandboxAuthorityAuditForensic(),
+      { onFailure: () => undefined, onSuccess: (value) => value },
+    );
+    if (auditAtWrite !== auditBefore) return yield* fail("V2PairDrifted");
     const written = yield* Effect.match(
       store.writeSandboxAuthorityBundleAtomically(bundleCanonicalJson),
       { onFailure: () => false, onSuccess: Boolean },
