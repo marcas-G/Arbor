@@ -20,7 +20,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
@@ -36,27 +36,28 @@ const proposalId = parse(FormationProposalId)(
 const principal = parse(Principal)("user:mac-p2-governor");
 const actor = parse(Actor)("user:mac-p2-governor");
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema44TestDatabaseFactory({
-    prefix: ".mac-p2-formation-schema44-",
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".mac-p2-formation-current-schema-",
   });
 }, 120_000);
 
 beforeEach(() => {
   if (fixtureFactory === undefined)
-    throw new Error("Schema 42 factory is missing");
+    throw new Error("Current schema factory is missing");
   fixture = fixtureFactory.create();
 });
 
 describe("MAC-P2 formation fulfillment", () => {
   it("separates Approved from asynchronously Applied and replays without duplicates", async () => {
-    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
+    if (fixture === undefined)
+      throw new Error("Current schema fixture is missing");
     const app = buildSingleWorkspaceLayer({
       databaseFile: fixture.databaseFilename,
       projectId,

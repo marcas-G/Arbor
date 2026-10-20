@@ -27,11 +27,11 @@ import {
   runP10,
   seedCanonical,
 } from "./support/p10-fixture.js";
-import { createSchema48TestDatabase } from "./support/schema44-database.js";
+import { createCurrentSchemaTestDatabase } from "./support/schema44-database.js";
 
 describe("P41 P10 Attention rebuild after SQLite reopen", () => {
   it("rebuilds one row from the retained event and production P9 fact store", async () => {
-    const fixture = await createSchema48TestDatabase();
+    const fixture = await createCurrentSchemaTestDatabase();
     const filename = fixture.databaseFilename;
     const projectId = "prj_01900000-0000-7000-8000-000000000010" as ProjectId;
     const workspaceId =

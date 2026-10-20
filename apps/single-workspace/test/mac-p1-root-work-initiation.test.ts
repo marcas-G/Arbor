@@ -21,7 +21,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
@@ -37,21 +37,21 @@ const human = parse(Principal)("user:mac-p1-approver");
 const humanActor = parse(Actor)("user:mac-p1-approver");
 
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema44TestDatabaseFactory({
-    prefix: ".mac-p1-root-schema44-",
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".mac-p1-root-current-schema-",
   });
 }, 120_000);
 
 beforeEach(() => {
   if (fixtureFactory === undefined)
-    throw new Error("Schema 42 factory is missing");
+    throw new Error("Current schema factory is missing");
   fixture = fixtureFactory.create();
 });
 
@@ -174,7 +174,8 @@ const seed = Effect.gen(function* () {
 });
 
 const scenario = (decision: "Approve" | "Reject") => {
-  if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
+  if (fixture === undefined)
+    throw new Error("Current schema fixture is missing");
   const app = buildSingleWorkspaceLayer({
     databaseFile: fixture.databaseFilename,
     projectId,

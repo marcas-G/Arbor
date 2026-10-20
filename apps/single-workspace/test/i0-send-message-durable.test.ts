@@ -24,7 +24,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { admitExecution, buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
@@ -52,21 +52,21 @@ const principal = parse(Principal)("worker:i0");
 const body = "The requested analysis is complete.";
 const invalidRootReportBody = "root-report-must-fail-closed-i0-20260927";
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema44TestDatabaseFactory({
-    prefix: ".i0-send-message-schema44-",
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".i0-send-message-current-schema-",
   });
 }, 120_000);
 
 beforeEach(() => {
   if (fixtureFactory === undefined)
-    throw new Error("Schema 42 factory is missing");
+    throw new Error("Current schema factory is missing");
   fixture = fixtureFactory.create();
 });
 
@@ -164,7 +164,8 @@ const rootRecoveryWaitTurn: ReadonlyArray<CanonicalProviderEvent> = [
 
 describe("I0 SendMessage durable integration", () => {
   it("persists valid SendMessage and returns an invalid root Report to the agent as useful feedback", async () => {
-    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
+    if (fixture === undefined)
+      throw new Error("Current schema fixture is missing");
     const app = buildSingleWorkspaceLayer({
       databaseFile: fixture.databaseFilename,
       providerTurns: [

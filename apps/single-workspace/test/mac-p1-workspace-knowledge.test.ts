@@ -11,7 +11,7 @@ import {
   expect,
   it,
 } from "vitest";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789f1");
@@ -19,21 +19,21 @@ const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789f1",
 );
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema44TestDatabaseFactory({
-    prefix: ".mac-p1-knowledge-schema44-",
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".mac-p1-knowledge-current-schema-",
   });
 }, 120_000);
 
 beforeEach(() => {
   if (fixtureFactory === undefined)
-    throw new Error("Schema 42 factory is missing");
+    throw new Error("Current schema factory is missing");
   fixture = fixtureFactory.create();
 });
 
@@ -106,7 +106,8 @@ const seedWork = (
 
 describe("MAC-P1 WorkspaceKnowledgeView", () => {
   it("includes only accepted PASS outcomes and rebuilds deterministically", async () => {
-    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
+    if (fixture === undefined)
+      throw new Error("Current schema fixture is missing");
     const app = buildSingleWorkspaceLayer({
       databaseFile: fixture.databaseFilename,
       projectId,
