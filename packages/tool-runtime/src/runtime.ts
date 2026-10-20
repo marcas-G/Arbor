@@ -880,11 +880,6 @@ export const ToolRuntimeLive = (
               return unavailable(
                 resolved.reason,
                 resolved.capability?.probeEvidenceRef ?? null,
-                resolved.capability?.providerVersion ?? policy.providerVersion,
-                String(
-                  resolved.capability?.capabilityRevision ??
-                    policy.capabilityRevision,
-                ),
               );
             }
 
