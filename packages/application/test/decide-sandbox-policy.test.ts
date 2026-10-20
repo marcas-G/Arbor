@@ -63,6 +63,8 @@ const payload: DecideSandboxPolicyPayload = {
   expectedProviderRegistryDigest: "2".repeat(64),
   profile: "ReadOnly",
   providerId: "bwrap",
+  providerVersion: "0.8.0",
+  capabilityRevision: 1,
   networkPolicy: osNetworkSelection,
   decisionExpiresAt: "2026-10-19T12:00:00.000Z",
 };
@@ -229,6 +231,12 @@ const makeHandler = (staleField?: "workspaceRevision") => {
 };
 
 describe("DecideSandboxPolicy command", () => {
+  it("uses schema 2 and allows schema 1 only for prior receipt replay", () => {
+    const { handler } = makeHandler();
+    expect(handler.schemaVersion).toBe("2");
+    expect(handler.priorReceiptSchemaVersions).toEqual(["1"]);
+  });
+
   it("commits a full internal result and minimal event only after exact CAS checks", async () => {
     const { handler, inserted } = makeHandler();
     const result = await Effect.runPromise(
@@ -244,7 +252,7 @@ describe("DecideSandboxPolicy command", () => {
             resolvedAuthority: authority,
           },
           { _tag: "External", principal: subject },
-          snapshot,
+          { _tag: "Ready", summary: snapshot },
         ),
         TransactionScope,
         { session: { id: "sandbox-decision-test" } },
@@ -286,7 +294,7 @@ describe("DecideSandboxPolicy command", () => {
             resolvedAuthority: authority,
           },
           { _tag: "External", principal: subject },
-          snapshot,
+          { _tag: "Ready", summary: snapshot },
         ),
         TransactionScope,
         { session: { id: "sandbox-decision-test" } },

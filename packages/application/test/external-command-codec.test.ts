@@ -220,6 +220,8 @@ describe("external wire-v1 command payload codec", () => {
       expectedProviderRegistryDigest: "d".repeat(64),
       profile: "ReadOnly",
       providerId: "bwrap",
+      providerVersion: "1.2.0",
+      capabilityRevision: 7,
       networkPolicy: {
         kind: "OsEnforced",
         policy: { version: 1, mode: "Disabled", destinations: [] },
@@ -235,6 +237,29 @@ describe("external wire-v1 command payload codec", () => {
       payload,
     };
     expect(decodeExternalCommand(envelope).ok).toBe(true);
+    const legacyPayload: Record<string, unknown> = { ...payload };
+    delete legacyPayload.providerVersion;
+    delete legacyPayload.capabilityRevision;
+    expect(
+      decodeExternalCommand({ ...envelope, payload: legacyPayload }).ok,
+    ).toBe(true);
+    expect(
+      decodeExternalCommand({
+        ...envelope,
+        payload: { ...payload, capabilityRevision: 0 },
+      }).ok,
+    ).toBe(false);
+    expect(
+      decodeExternalCommand({
+        ...envelope,
+        payload: { ...payload, capabilityRevision: 1.5 },
+      }).ok,
+    ).toBe(false);
+    const partialSelector: Record<string, unknown> = { ...payload };
+    delete partialSelector.providerVersion;
+    expect(
+      decodeExternalCommand({ ...envelope, payload: partialSelector }).ok,
+    ).toBe(false);
     expect(
       decodeExternalCommand({
         ...envelope,
@@ -248,6 +273,24 @@ describe("external wire-v1 command payload codec", () => {
       decodeExternalCommand({
         ...envelope,
         payload: { ...payload, extra: "operator-ref" },
+      }).ok,
+    ).toBe(false);
+
+    const trustedPayload: Record<string, unknown> = {
+      ...legacyPayload,
+      profile: "FullAccess",
+      providerId: "TrustedLocal",
+      networkPolicy: { kind: "TrustedLocalUnconfinedV1", version: 1 },
+    };
+    delete trustedPayload.expectedProviderRegistryRevision;
+    delete trustedPayload.expectedProviderRegistryDigest;
+    expect(
+      decodeExternalCommand({ ...envelope, payload: trustedPayload }).ok,
+    ).toBe(true);
+    expect(
+      decodeExternalCommand({
+        ...envelope,
+        payload: { ...trustedPayload, capabilityRevision: 7 },
       }).ok,
     ).toBe(false);
   });

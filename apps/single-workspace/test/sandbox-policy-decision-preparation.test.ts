@@ -119,9 +119,18 @@ const authorityBundleSnapshot = {
   canonicalJson: "{}",
 };
 
+type TrustedLocalDecisionPayload = Extract<
+  DecideSandboxPolicyPayload,
+  { readonly networkPolicy: { readonly kind: "TrustedLocalUnconfinedV1" } }
+>;
+type OsEnforcedDecisionPayload = Extract<
+  DecideSandboxPolicyPayload,
+  { readonly networkPolicy: { readonly kind: "OsEnforced" } }
+>;
+
 const payload = (
-  overrides: Partial<DecideSandboxPolicyPayload> = {},
-): DecideSandboxPolicyPayload => ({
+  overrides: Partial<TrustedLocalDecisionPayload> = {},
+): TrustedLocalDecisionPayload => ({
   projectId,
   workspaceId,
   executionId,
@@ -140,6 +149,20 @@ const payload = (
   networkPolicy: { kind: "TrustedLocalUnconfinedV1", version: 1 },
   decisionExpiresAt: "2026-10-19T12:00:00.000Z",
   ...overrides,
+});
+
+const osPayload = (): OsEnforcedDecisionPayload => ({
+  ...payload(),
+  expectedProviderRegistryRevision: 3,
+  expectedProviderRegistryDigest: "3".repeat(64),
+  profile: "ReadOnly",
+  providerId: "bwrap",
+  providerVersion: "0.8.0",
+  capabilityRevision: 1,
+  networkPolicy: {
+    kind: "OsEnforced",
+    policy: { version: 1, mode: "Disabled", destinations: [] },
+  },
 });
 
 const authority = {
@@ -323,23 +346,10 @@ describe("production sandbox decision materializer", () => {
   it("never downgrades an OsEnforced request to TrustedLocal", async () => {
     const { preparation } = fixture();
     const outcome = await Effect.runPromise(
-      Effect.match(
-        preparation.prepare(
-          payload({
-            providerId: "bwrap",
-            profile: "ReadOnly",
-            networkPolicy: {
-              kind: "OsEnforced",
-              policy: { version: 1, mode: "Disabled", destinations: [] },
-            },
-          }),
-          authority,
-        ),
-        {
-          onFailure: (error) => ({ _tag: "Left" as const, error }),
-          onSuccess: (value) => ({ _tag: "Right" as const, value }),
-        },
-      ),
+      Effect.match(preparation.prepare(osPayload(), authority), {
+        onFailure: (error) => ({ _tag: "Left" as const, error }),
+        onSuccess: (value) => ({ _tag: "Right" as const, value }),
+      }),
     );
     expect(outcome).toMatchObject({
       _tag: "Left",

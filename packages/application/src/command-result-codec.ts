@@ -634,6 +634,18 @@ const resultDecoders: ResultDecoderRegistry = {
         return false;
       }
     },
+    "2": (value) => {
+      try {
+        return (
+          decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+            JSON.stringify(value),
+            sha256Hex,
+          ) !== undefined
+        );
+      } catch {
+        return false;
+      }
+    },
   },
   RevokePermission: {
     "1": (value) =>

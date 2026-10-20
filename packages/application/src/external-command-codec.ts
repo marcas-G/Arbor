@@ -217,6 +217,8 @@ type Rule =
   | { readonly kind: "opaque-identifier" }
   | { readonly kind: "boolean" }
   | { readonly kind: "integer" }
+  | { readonly kind: "positive-safe-integer" }
+  | { readonly kind: "canonical-identifier" }
   | { readonly kind: "id"; readonly idType: IdTypeName }
   | { readonly kind: "actor" }
   | { readonly kind: "literal"; readonly value: string | number | boolean }
@@ -243,6 +245,8 @@ const boundedString = (minLength: number, maxLength: number): Rule => ({
 const opaqueIdentifier: Rule = { kind: "opaque-identifier" };
 const boolean: Rule = { kind: "boolean" };
 const integer: Rule = { kind: "integer" };
+const positiveSafeInteger: Rule = { kind: "positive-safe-integer" };
+const canonicalIdentifier: Rule = { kind: "canonical-identifier" };
 const record: Rule = { kind: "record" };
 const id = (idType: IdTypeName): Rule => ({ kind: "id", idType });
 const actor: Rule = { kind: "actor" };
@@ -833,6 +837,8 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
     expectedProviderRegistryDigest: optional(string),
     profile: enumRule("ReadOnly", "WorkspaceWrite", "FullAccess"),
     providerId: nonEmptyString,
+    providerVersion: optional(canonicalIdentifier),
+    capabilityRevision: optional(positiveSafeInteger),
     networkPolicy: sandboxPolicySelection,
     decisionExpiresAt: isoTimestamp,
   }),
@@ -1119,6 +1125,25 @@ const decodeValue = (
         return INVALID;
       }
       return input;
+    case "positive-safe-integer":
+      if (typeof input !== "number" || !Number.isFinite(input)) {
+        addIssue(issues, path, "type");
+        return INVALID;
+      }
+      if (!Number.isSafeInteger(input) || input < 1) {
+        addIssue(issues, path, "range");
+        return INVALID;
+      }
+      return input;
+    case "canonical-identifier":
+      if (
+        typeof input === "string" &&
+        /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(input)
+      ) {
+        return input;
+      }
+      addIssue(issues, path, typeof input === "string" ? "format" : "type");
+      return INVALID;
     case "id":
       try {
         return Schema.decodeUnknownSync(ID_SCHEMAS[rule.idType])(input);
@@ -1275,17 +1300,24 @@ const decodeEnvelopeWithRegistry = (
       payload,
       "expectedProviderRegistryDigest",
     );
+    const hasProviderVersion = Object.hasOwn(payload, "providerVersion");
+    const hasCapabilityRevision = Object.hasOwn(payload, "capabilityRevision");
+    const providerSelectorShapeMatches =
+      hasProviderVersion === hasCapabilityRevision;
     const variantMatches =
       selection?.kind === "OsEnforced"
         ? payload.profile !== "FullAccess" &&
           payload.providerId !== "TrustedLocal" &&
           hasRegistryRevision &&
-          hasRegistryDigest
+          hasRegistryDigest &&
+          providerSelectorShapeMatches
         : selection?.kind === "TrustedLocalUnconfinedV1" &&
           payload.profile === "FullAccess" &&
           payload.providerId === "TrustedLocal" &&
           !hasRegistryRevision &&
-          !hasRegistryDigest;
+          !hasRegistryDigest &&
+          !hasProviderVersion &&
+          !hasCapabilityRevision;
     if (!variantMatches) {
       return {
         ok: false,
