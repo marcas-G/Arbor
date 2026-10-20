@@ -410,3 +410,151 @@ registry schema, ordering/uniqueness key, high-water, evidence format,
 operator provisioning and P5 authority snapshot are unchanged; P5 does not
 infer, sort-select or downgrade a candidate. No migration or P5 runtime
 implementation authorization follows from this amendment.
+## Accepted Windows T3-D D2 operator trust V1 — V3 protected source
+
+Manual governance accepted `T3D-DG-01` under
+`ACCEPT_NATIVE_OS_SANDBOX_WINDOWS_OPERATOR_TRUST_V1`; proposal SHA-256
+`EAA9430B87462658D7B475C3D469425C5DB2BE0069A4D51634FD9C7FC3BA2039`.
+This amendment owns only Windows native-helper operator trust, its protected
+source and its monotone migration; the V1/V2 canonical codecs above are not
+reinterpreted.
+
+Introduce a versioned `WindowsNativeOperatorTrustSetV1` as one closed child of
+`SandboxAuthorityBundleV3` and a matching protected `SandboxAuthorityHighWaterV3`.
+The trust set is the sole source of Windows operator verification keys. It is
+operator-provisioned under the existing P5 OS owner/ACL protection and source
+identity; no request, Workspace, Worktree, model output, inherited environment
+or package manifest supplies a key. A V3 bundle without its exact protected
+V3 high-water is unavailable. V2 source/high-water bytes remain immutable
+historical evidence and no V2 decoder accepts the new trust field. The
+V2→V3 transition is an operator-only offline atomic source/high-water
+replacement that preserves exact old bytes as forensic evidence; interruption,
+rollback, source mismatch or absent trust set fails closed with no V2 fallback.
+
+The trust set is closed canonical UTF-8 with a positive revision. It binds
+`sourceIdentity`, the exact Windows provider ID, sorted unique `keyId` entries
+and a sorted unique revoked-key set. Each entry binds `algorithm=Ed25519`,
+canonical base64 DER SPKI public-key bytes and their lowercase SHA-256, a UTC
+validity interval, and `Active|Retiring` status. Exactly one Active key may
+sign new evidence. A retained Retiring key verifies only existing signatures
+until its bounded expiry; a revoked key never verifies regardless of interval.
+`keyId` selects a candidate but does not authorize it. The trust-set revision
+and digest are included in V3 high-water with the other source components.
+
+Before the offline V2→V3 transition commits, the current V2 contract above
+continues for its existing authority uses but cannot qualify Windows; its
+Windows capability remains Experimental/empty/Unavailable. After the exact
+V3 source/high-water pair becomes current, V2 is forensic-only and consumers
+that cannot prove the V3 source boundary fail closed rather than silently
+using an earlier V2 snapshot.
+
+The operator advances trust-set and bundle/high-water revisions atomically on
+rotation or revocation and reissues the exact provider registry entry with a
+new registry and capability revision after review. Replacing a detached
+signature does not change the canonical manifest digest by itself; old
+committed policy revisions do not silently inherit the new authorization.
+Emergency revocation makes affected rows immediately Unavailable. Manual
+reenrollment/requalification preserves forensic V2/V3 bytes. Missing trust
+source has no inferred grace period. P5 supplies only the current verified
+trust snapshot to the Windows adapter; it is revalidated against the current
+installed artifacts at capability probe and before effect admission, with no
+caller-selected verifier or prior-green fallback.
+
+### Accepted Windows D2 V3 physical source, codec and consumer boundary
+
+The manual governor accepted
+`ACCEPT_WINDOWS_T3D_D2_V3_PHYSICAL_CONTRACT_V1` for the exact fixed draft
+SHA-256
+`2D77149B4C8757C6DC307A1A8C6F0873057E96908E6D77D499BDBBA081254A6F`.
+This clause fixes the physical V3 bytes without changing V1/V2 decoders.
+`SandboxAuthorityBundleV3` has exact top-level key order
+`version,sourceIdentity,bundleRevision,issuerConfigRevision,issuerConfigDigest,issuerConfig,operatorConfigRevision,operatorConfigDigest,operatorConfig,providerRegistryRevision,providerRegistryDigest,providerRegistry,windowsOperatorTrustSetRevision,windowsOperatorTrustSetDigest,windowsOperatorTrustSet`.
+`version=3`; the issuer/operator/registry children retain their exact V2
+codecs and key order. `bundleDigest` is SHA-256 lowerhex of the complete
+canonical V3 UTF-8 bytes, never embedded. Adjacent child revisions/digests
+equal their embedded children; `sourceIdentity` equals the OS-protected source
+and trust-child identity. Revisions are positive safe integers; a changed
+child advances its own revision and the enclosing bundle revision. An
+unchanged V2 issuer/operator/registry child may carry its revision/digest
+byte-for-byte only if the V2 registry has no Windows Supported entry. If one
+exists, the operator must issue a strictly newer V3 registry revision making
+every such row Experimental or Unavailable before cutover; old V2 bytes are
+forensic. D2 never creates a new Supported Windows row.
+
+`WindowsNativeOperatorTrustSetV1` has exact key order
+`version,revision,sourceIdentity,providerId,keys,revokedKeyIds`.
+`version=1`; providerId is exactly `windows-restricted-appcontainer-job`.
+`keys` is nonempty, sorted strictly by unsigned UTF-8 `keyId`, with no
+duplicate key IDs or DER SPKI hashes. Each key object has exact order
+`keyId,algorithm,publicKeySpkiDerBase64,publicKeySpkiSha256,validFrom,validUntil,status`.
+`keyId` matches `^[a-z][a-z0-9._-]{0,95}$`; algorithm is exactly Ed25519.
+SPKI is canonical RFC 8410 DER with absent parameters and a 32-byte public
+key, encoded as padded RFC 4648 base64 with decode/re-encode identity; its
+lowercase SHA-256 hashes the DER bytes. `validFrom` and `validUntil` are exact
+UTC `YYYY-MM-DDTHH:mm:ss.sssZ`, parse to real instants and satisfy
+`validFrom < validUntil`. Status is `Active|Retiring`.
+`revokedKeyIds` is sorted unique by unsigned UTF-8 bytes and each ID names a
+key. Revocation overrides status/time. At most one nonrevoked Active key is
+usable for new signatures; zero makes Windows unavailable. The D2 V1
+verifier rejects **every Retiring signature**: the accepted three-field
+sidecar cannot prove signing before retirement, and file mtime/unsigned text
+cannot supply that proof. This conservative physical rule supersedes the
+earlier optional Retiring verification path; historical Retiring acceptance
+requires separately accepted protected prior-evidence semantics.
+
+`SandboxAuthorityHighWaterV3` has exact key order
+`version,sourceIdentity,bundleRevision,bundleDigest,issuerConfigRevision,issuerConfigDigest,operatorConfigRevision,operatorConfigDigest,providerRegistryRevision,providerRegistryDigest,windowsOperatorTrustSetRevision,windowsOperatorTrustSetDigest`.
+`version=3`; every value exactly matches the current verified V3 source or
+child. It remains a separate OS-protected monotone record outside application
+SQLite. V3 bundle, trust set and high-water are closed canonical UTF-8 under
+the existing P5 JCS string/safe-integer discipline: no BOM, whitespace,
+final newline, unknown/missing/duplicate fields, alternate key order,
+escaping, number, base64 or time encoding; decoders re-encode and byte-compare.
+
+The fixed KAT trust-set preimage is
+`{"version":1,"revision":1,"sourceIdentity":"host:test","providerId":"windows-restricted-appcontainer-job","keys":[{"keyId":"operator-2026-a","algorithm":"Ed25519","publicKeySpkiDerBase64":"MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=","publicKeySpkiSha256":"06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9","validFrom":"2026-10-20T00:00:00.000Z","validUntil":"2027-10-20T00:00:00.000Z","status":"Active"}],"revokedKeyIds":[]}`
+with SHA-256
+`be159a9cfea6d65bf27b6645f94bbe12efa65b7d7ffe513d53477ed48241ea4d`.
+The full V3 bundle KAT uses `sourceIdentity=host:test`, `bundleRevision=3`,
+issuer `{"version":1,"revision":1,"issuers":["user:operator"]}`,
+the exact V2 operator child with empty allowlist and six limits equal to 1
+for each of ReadOnly, WorkspaceWrite and FullAccess, an empty version-1
+provider registry, and the trust-set bytes above. Its issuer/operator/
+registry/trust subdigests are respectively
+`e334867ac506dd06d6e07ae81501e02032121be70cd1308929d6fcccf33352fa`,
+`948aa1b3e0e732a00f0fd25a843ab02242b9098d6cb456320cb14a39a590f836`,
+`25889d79d251fd8d4e5adf6180ab31a586134fb33575d555cd716982fef6c9d2`
+and the trust digest above. Exact complete bundle SHA-256 is
+`5971402bc958c5f99cd1cdeeca95f364e161821945fb05dc0f8ea642d2399954`.
+The matching HighWaterV3 under the exact key order above has the same child
+pairs and bundle digest, with SHA-256
+`deb5867f939177d2a077c780d245aee91e6d4f8b9b9ba71c7b5a0b364fb2f27e`.
+The accepted physical proposal contains their complete canonical one-line
+JSON preimages; KAT tests assert both bytes and digests.
+
+P5's `TrustedHostConfigurationSourceService` retains its OS-protected source,
+high-water and audit read/commit methods. Version dispatch strictly decodes
+V2 or V3; a malformed V3 or V3 high-water never falls back to V2. The
+operator-only provisioning store preserves exact V2 source/high-water/audit
+bytes as immutable forensic evidence before writing and durably verifying
+the V3 source with a strictly greater bundle revision. V3 source ahead of
+active V2 high-water is unavailable. Atomic replacement and durable
+verification of exact HighWaterV3 is the cutover; interruption before it
+leaves authority unavailable, after it recovers the V3 pair. No fresh
+revision initialization repairs a failed transition.
+
+P5 publishes one immutable current versioned snapshot to P1 Resolver/Gateway,
+P4 materializer/ToolRuntime and P10 candidate read. They project the
+unchanged issuer/operator/registry children from V3 without synthesizing a
+V2 shadow. Existing `authorityBundleRevision/Digest` preconditions bind the
+whole current V3 bytes; active V2 decisions/candidates become stale at V3
+cutover, while their old bytes remain audit-only. P4's exact registry→summary→
+process-policy→capability evidence comparison remains. No new public DTO,
+P1 command field, P4 observation field or fallback is created. The adapter's
+production verifier is constructed only from the current trusted V3 snapshot;
+the D1 injected callback remains test-only. Versioned sanitized V3 failure
+reasons add `TrustSetMalformed`, `TrustSetDigestMismatch`,
+`TrustKeyUnavailable`, `TrustKeyRevoked`, `TrustKeyExpired`,
+`SignatureInvalid` and `TrustCurrentnessMismatch`; V1/V2 error/audit codecs
+remain unchanged. V3 audit/probe evidence carries only safe trust revision/
+digest/source identity, never SPKI, signature, path or raw exception.

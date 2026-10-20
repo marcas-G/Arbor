@@ -330,3 +330,57 @@ profile, network-mode, codec and ruleset match. P4 continues to materialize
 and validate the existing `OsEnforcedPolicySnapshotV1`; that snapshot
 already contains both values in its fixed key order. The snapshot codec,
 runtime policy, provider capability and handle contracts do not change.
+
+## Accepted Windows T3-D D2 operator trust V1
+
+Manual governance accepted `T3D-DG-01` under
+`ACCEPT_NATIVE_OS_SANDBOX_WINDOWS_OPERATOR_TRUST_V1`, proposal SHA-256
+`EAA9430B87462658D7B475C3D469425C5DB2BE0069A4D51634FD9C7FC3BA2039`),
+Windows `windows-restricted-appcontainer-job` capability may rely only on the
+current P5-protected V3 operator trust set and its exact high-water, the
+Ed25519-verified canonical manifest/sidecar, and the matching current
+operator-issued registry row. The adapter cannot self-issue a key or evidence
+ref, accept an injected test callback as production authority, use caller or
+environment paths, or fall back to OS-wide certificate trust, digest-only
+checks, TrustedLocal or a prior-green probe. The actual source/compiler/PE
+and evidence artifacts, OS build, provider/version/capability revision,
+profile×network tuple, rule-set digest and configured limits must match the
+signed manifest and registry exactly. Key revocation, expiry, rotation drift
+or missing V3 source/high-water makes affected rows Unavailable before spawn.
+
+The adapter rechecks current trust and installed bytes at capability probe
+and before effect admission. Signature verification proves provenance only;
+all existing T3 AppContainer, Job, filesystem, Disabled-network, broker and
+Stop controls remain independently required for Supported. No V2 deployment,
+T2 Experimental probe, test harness or D2-only result advertises a Supported
+tuple or starts a production helper.
+
+### Accepted Windows D2 V3 process-policy and admission mapping
+
+The exact accepted physical contract is
+`ACCEPT_WINDOWS_T3D_D2_V3_PHYSICAL_CONTRACT_V1`, draft SHA-256
+`2D77149B4C8757C6DC307A1A8C6F0873057E96908E6D77D499BDBBA081254A6F`.
+P5 supplies one immutable current `SandboxAuthorityBundleV2|V3` snapshot;
+after a verified V3 cutover P1 Resolver/Gateway, P4 policy materializer and
+ToolRuntime, and P10 candidate read project its unchanged issuer/operator/
+registry children without synthesizing a V2 shadow. Existing
+`authorityBundleRevision/Digest` preconditions bind the **whole current V3**
+bytes. Committed V2 policy/candidate revisions become stale after the V3
+cutover and remain historical audit evidence only. P4 retains the exact
+registry→committed summary→internal OsEnforced policy→capability
+`qualificationEvidenceRef` and full enforcement-rule-set digest comparison;
+no new public DTO, P1 command field, P4 observation field or fallback is
+introduced.
+
+The Windows adapter constructs a production verifier only from the current
+P5-protected V3 trust snapshot. The D1 arbitrary verifier injection remains
+test-only. Probe and pre-effect admission re-read the current V3 trust-set
+revision/digest, source/high-water pair, signer status and installed
+source/compiler/PE/manifest/sidecar/test-control bytes. Any drift or missing
+component is typed Unavailable before spawn, even if an earlier probe was
+green. A V2 registry Windows Supported row cannot be byte-carried into V3;
+an operator must advance the registry revision and remove its Supported
+status before cutover, and D2 cannot create a new Supported row. The physical
+signature/identity result alone leaves all Windows provider capabilities
+Experimental with empty tuples and `SandboxProcessPort.run` Unavailable.
+D4–D6 enforcement qualification remains necessary.
