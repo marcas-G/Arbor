@@ -1,29 +1,24 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
-import { EnvironmentResolverLocalLive } from "../../../adapters/environment-resolver-local/src/index.js";
 import {
   ClockLive,
-  ExecutionRepositoryLive,
-  ResourceOwnershipRepositoryLive,
-  SandboxPolicyDecisionStoreLive,
   layer as sqliteLayer,
   TransactionPortLive,
   WorkspaceRepositoryLive,
   WorktreeStoreLive,
 } from "../../../adapters/persistence-sqlite/src/index.js";
-import { SandboxPolicyCandidateBoundaryReadPortLive } from "../../../apps/single-workspace/src/sandbox-policy-candidate-boundary-read-port.js";
-import { makeSandboxPolicyDecisionPreparation } from "../../../apps/single-workspace/src/sandbox-policy-decision-preparation.js";
 import {
-  Clock,
-  EnvironmentResolverPort,
-  ExecutionRepository,
-  ResourceOwnershipRepository,
-  SandboxPolicyCandidateBoundaryReadPort,
-  SandboxPolicyDecisionStore,
+  fixedWindowsNativeProductionArtifactPaths,
+  inspectWindowsNativeQualificationForRegistryEntryV3,
+} from "../../../adapters/sandbox-windows/dist/index.js";
+import { sandboxPolicyCurrentHostV1 } from "../../../apps/single-workspace/src/current-sandbox-authority-snapshot-port.js";
+import { loadSandboxAuthorityBundleSnapshotCurrent } from "../../../apps/single-workspace/src/sandbox-authority-bundle.js";
+import {
+  SANDBOX_ENV_ALLOWLIST,
   TransactionPort,
   WorkspaceRepository,
   WorktreeStore,
@@ -39,18 +34,27 @@ import {
   makePublicClient,
   submitHumanMessage,
   waitForApproval,
-  waitForExecutableApproval,
   waitForPublic,
 } from "../support/public-client.js";
 import {
-  sandboxPolicyV2TestPair,
-  writeSandboxPolicyV2TestPair,
-} from "../support/sandbox-policy-v2-source.js";
+  commitSandboxPolicyV3HighWater,
+  installSandboxPolicyV3SyntheticArtifacts,
+  sandboxPolicyV3TestPair,
+  writeSandboxPolicyV3SourceFirst,
+  writeSandboxPolicyV3TestPair,
+} from "../support/sandbox-policy-v3-source.js";
 
 interface SandboxCandidate {
   readonly kind: string;
   readonly candidateId: string;
   readonly sandboxHandleBindingDigest: string;
+  readonly providerId?: string;
+  readonly providerVersion?: string;
+  readonly capabilityRevision?: number;
+  readonly profile?: string;
+  readonly networkMode?: string;
+  readonly providerRegistryRevision?: number;
+  readonly providerRegistryDigest?: string;
 }
 
 interface CandidateRead {
@@ -77,8 +81,13 @@ const child = resolve(
   "tests/functional/support/sandbox-policy-v2-daemon-child.mjs",
 );
 const fixtures: ProductionFixture[] = [];
+const artifactFixtureCleanups: Array<() => void> = [];
 
-const durableSandboxRead = (databaseFile: string, executionId: string) => {
+const durableSandboxRead = (
+  databaseFile: string,
+  executionId: string,
+  invocationId?: string,
+) => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
     db.exec("BEGIN");
@@ -91,7 +100,8 @@ const durableSandboxRead = (databaseFile: string, executionId: string) => {
       actions: db
         .prepare(
           `SELECT logical_action_id, state, action_index, logical_step_no,
-                  repair_attempt, revision
+                  repair_attempt, disposition_json, result_ref, settlement_ref,
+                  observation_source_ref, revision
              FROM agent_loop_step_actions WHERE execution_id = ? ORDER BY action_index`,
         )
         .all(executionId),
@@ -104,10 +114,13 @@ const durableSandboxRead = (databaseFile: string, executionId: string) => {
       invocation: db
         .prepare(
           `SELECT invocation_id, effect_admission_state, recovery_binding_state,
-                  recovery_binding_sha256, settled_at, settlement_kind
-             FROM tool_invocations WHERE execution_id = ?`,
+                  recovery_binding_sha256, settled_at, settlement_kind,
+                  observation_json
+             FROM tool_invocations
+            WHERE execution_id = ? AND (? IS NULL OR invocation_id = ?)
+            ORDER BY intent_at DESC LIMIT 1`,
         )
-        .get(executionId),
+        .get(executionId, invocationId ?? null, invocationId ?? null),
       decisions: db
         .prepare(
           `SELECT COUNT(*) AS count FROM sandbox_policy_decisions
@@ -132,38 +145,21 @@ const durableSandboxRead = (databaseFile: string, executionId: string) => {
   }
 };
 
-const readProductionBoundary = (
-  databaseFile: string,
-  input: { readonly projectId: string; readonly workspaceId: string },
-) => {
-  const infra = Layer.mergeAll(
-    sqliteLayer({ filename: databaseFile }),
-    ClockLive,
-  );
-  const resolver = Layer.provideMerge(EnvironmentResolverLocalLive, infra);
-  const sources = Layer.mergeAll(
-    Layer.provide(WorkspaceRepositoryLive, infra),
-    Layer.provide(ResourceOwnershipRepositoryLive, infra),
-    Layer.provide(WorktreeStoreLive, infra),
-    resolver,
-  );
-  const app = Layer.mergeAll(
-    infra,
-    Layer.provide(TransactionPortLive, infra),
-    Layer.provide(SandboxPolicyCandidateBoundaryReadPortLive, sources),
-  );
-  return Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const tx = yield* TransactionPort;
-        const boundary = yield* SandboxPolicyCandidateBoundaryReadPort;
-        return yield* tx.transact(
-          boundary.readCurrentForWorkspace(input as never),
-        );
-      }),
-      app,
-    ),
-  );
+const sandboxDecisionDebug = (databaseFile: string, executionId: string) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        `SELECT d.policy_revision, d.policy_digest, d.profile_id, d.provider_id,
+                d.expires_at, d.episode_binding_json, c.result_json
+           FROM sandbox_policy_decisions d
+           JOIN commands c ON c.command_id = d.decision_command_id
+          WHERE d.execution_id = ? ORDER BY d.policy_revision DESC LIMIT 1`,
+      )
+      .get(executionId);
+  } finally {
+    db.close();
+  }
 };
 
 const insertProductionPrimaryWorktree = (input: {
@@ -225,113 +221,6 @@ const insertProductionPrimaryWorktree = (input: {
   );
 };
 
-const sandboxPreparationDiagnostic = async (input: {
-  readonly databaseFile: string;
-  readonly payload: unknown;
-  readonly pair: ReturnType<typeof sandboxPolicyV2TestPair>;
-}) => {
-  const infra = Layer.mergeAll(
-    sqliteLayer({ filename: input.databaseFile }),
-    ClockLive,
-  );
-  const resolver = Layer.provideMerge(EnvironmentResolverLocalLive, infra);
-  const app = Layer.mergeAll(
-    infra,
-    Layer.provide(TransactionPortLive, infra),
-    Layer.provide(WorkspaceRepositoryLive, infra),
-    Layer.provide(ResourceOwnershipRepositoryLive, infra),
-    Layer.provide(WorktreeStoreLive, infra),
-    Layer.provide(ExecutionRepositoryLive, infra),
-    Layer.provide(SandboxPolicyDecisionStoreLive, infra),
-    resolver,
-  );
-  const diagnostic = Effect.provide(
-    Effect.gen(function* () {
-      const tx = yield* TransactionPort;
-      const clock = yield* Clock;
-      const preparation = makeSandboxPolicyDecisionPreparation({
-        transaction: tx,
-        workspaces: yield* WorkspaceRepository,
-        executions: yield* ExecutionRepository,
-        decisions: yield* SandboxPolicyDecisionStore,
-        ownership: yield* ResourceOwnershipRepository,
-        worktrees: yield* WorktreeStore,
-        environmentResolver: yield* EnvironmentResolverPort,
-        clock,
-        authoritySnapshot: {
-          bundle: input.pair.bundle,
-          bundleDigest: input.pair.bundleDigest,
-          canonicalJson: input.pair.bundleCanonicalJson,
-        },
-      });
-      const authority = {
-        _tag: "SandboxPolicyDecisionAuthority",
-        authorityBundleRevision: input.pair.bundle.bundleRevision,
-        authorityBundleDigest: input.pair.bundleDigest,
-        operatorConfigRevision: input.pair.bundle.operatorConfigRevision,
-        operatorConfigDigest: input.pair.bundle.operatorConfigDigest,
-      } as never;
-      const prepared = yield* Effect.match(
-        preparation.prepare(input.payload as never, authority),
-        {
-          onFailure: (error) => ({ _tag: "Left" as const, error }),
-          onSuccess: (value) => ({ _tag: "Right" as const, value }),
-        },
-      );
-      if (prepared._tag === "Left") {
-        const cause =
-          typeof prepared.error.cause === "string"
-            ? prepared.error.cause
-            : "non-string";
-        const knownCause = new Set([
-          "sandbox authority or active Execution is stale",
-          "network policy is invalid",
-          "no qualified Supported OS provider is available; no fallback is permitted",
-          "TrustedLocal requires the exact FullAccess selection",
-          "exactly one active managed P11 Worktree is required",
-          "P11 observation entries and normalized region set differ",
-          "primary managed Worktree did not resolve exactly once",
-          "primary P11 observation entries and normalized set differ",
-          "P11 boundary or operator policy materialization failed",
-        ]);
-        return {
-          stage: "Prepare" as const,
-          errorTag: prepared.error._tag,
-          cause: knownCause.has(cause) ? cause : "unclassified",
-        };
-      }
-      const current = yield* Effect.match(
-        tx.transact(preparation.currentPreconditions(input.payload as never)),
-        {
-          onFailure: (error) => ({ _tag: "Left" as const, error }),
-          onSuccess: (value) => ({ _tag: "Right" as const, value }),
-        },
-      );
-      return current._tag === "Left"
-        ? {
-            prepareResult: "PrepareSuccess" as const,
-            stage: "CurrentPreconditions" as const,
-            errorTag: current.error._tag,
-            cause:
-              typeof current.error === "object" &&
-              current.error !== null &&
-              "cause" in current.error
-                ? "transaction-operational-failure"
-                : "non-string",
-          }
-        : {
-            prepareResult: "PrepareSuccess" as const,
-            stage: "CurrentPreconditions" as const,
-            resultKind: current.value.kind,
-          };
-    }),
-    app,
-  );
-  return Effect.runPromise(
-    diagnostic as Effect.Effect<unknown, unknown, never>,
-  );
-};
-
 const policyPayload = (input: {
   readonly read: CandidateRead;
   readonly projectId: string;
@@ -339,10 +228,21 @@ const policyPayload = (input: {
   readonly executionId: string;
   readonly expiresAt: string;
 }) => {
-  const trusted = input.read.candidates.find(
-    (candidate) => candidate.kind === "TrustedLocalUnconfinedV1",
+  const osCandidate = input.read.candidates.find(
+    (candidate) =>
+      candidate.kind === "OsEnforced" &&
+      candidate.providerId === "windows-restricted-appcontainer-job" &&
+      candidate.profile === "ReadOnly" &&
+      candidate.networkMode === "Disabled",
   );
-  if (trusted === undefined) throw new Error("TrustedLocal candidate missing");
+  if (
+    osCandidate === undefined ||
+    osCandidate.providerVersion === undefined ||
+    osCandidate.capabilityRevision === undefined ||
+    osCandidate.providerRegistryRevision === undefined ||
+    osCandidate.providerRegistryDigest === undefined
+  )
+    throw new Error("exact Supported Windows candidate missing");
   return {
     projectId: input.projectId,
     workspaceId: input.workspaceId,
@@ -355,7 +255,7 @@ const policyPayload = (input: {
     expectedWorkspaceRevision: input.read.commonPreconditions.workspaceRevision,
     expectedResourceBoundaryRevision:
       input.read.commonPreconditions.resourceBoundaryRevision,
-    expectedSandboxHandleBindingDigest: trusted.sandboxHandleBindingDigest,
+    expectedSandboxHandleBindingDigest: osCandidate.sandboxHandleBindingDigest,
     expectedAuthorityBundleRevision:
       input.read.commonPreconditions.authorityBundleRevision,
     expectedAuthorityBundleDigest:
@@ -364,9 +264,16 @@ const policyPayload = (input: {
       input.read.commonPreconditions.operatorConfigRevision,
     expectedOperatorConfigDigest:
       input.read.commonPreconditions.operatorConfigDigest,
-    profile: "FullAccess",
-    providerId: "TrustedLocal",
-    networkPolicy: { kind: "TrustedLocalUnconfinedV1", version: 1 },
+    expectedProviderRegistryRevision: osCandidate.providerRegistryRevision,
+    expectedProviderRegistryDigest: osCandidate.providerRegistryDigest,
+    profile: osCandidate.profile,
+    providerId: osCandidate.providerId,
+    providerVersion: osCandidate.providerVersion,
+    capabilityRevision: osCandidate.capabilityRevision,
+    networkPolicy: {
+      kind: "OsEnforced",
+      policy: { version: 1, mode: "Disabled", destinations: [] },
+    },
     decisionExpiresAt: input.expiresAt,
   };
 };
@@ -376,6 +283,7 @@ const operatorCommand = async (
   projectId: string,
   commandType: string,
   payload: unknown,
+  commandId = functionalId("cmd"),
 ) => {
   const response = await fetch(`${baseUrl}/commands`, {
     method: "POST",
@@ -385,7 +293,7 @@ const operatorCommand = async (
     },
     body: JSON.stringify({
       commandType,
-      commandId: functionalId("cmd"),
+      commandId,
       projectId,
       actor: "user:operator",
       issuedAt: new Date().toISOString(),
@@ -402,547 +310,800 @@ const operatorCommand = async (
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
+  for (const cleanup of artifactFixtureCleanups.splice(0).reverse()) cleanup();
 });
 
-describe("V6-E V2 registry-only drift across daemon restart", () => {
-  it("parks a real pending sandbox action on registry-only bundle drift after restart", async () => {
-    let sourceFilename: string | undefined;
-    let sourcePair: ReturnType<typeof sandboxPolicyV2TestPair> | undefined;
-    const daemonEnvironment: Record<string, string> = {};
-    daemonEnvironment.ARBOR_AUTH_TOKENS =
-      "local=user:local,operator=user:operator";
-    daemonEnvironment.ARBOR_TICK_INTERVAL_MS = "25";
-    daemonEnvironment.ARBOR_AH_BOUNDARY = "AH7AfterToolIntentCommit";
-    const marker = `V6-E-${crypto.randomUUID().slice(0, 8)}`;
-    const probeLines: Record<string, unknown>[] = [];
-    const executableProbeLines: Record<string, unknown>[] = [];
-    const preparationProbeLines: Record<string, unknown>[] = [];
-    const stdoutLines: string[] = [];
-    let providerCalls = 0;
-    const fixture = await startProductionFixture({
-      firstDaemonEntry: child,
-      admitWorkspaceDirectory: true,
-      daemonEnvironment,
-      reply: (call) => {
-        const context = JSON.stringify(call.messages);
-        const available = new Set(
-          call.tools
-            .map((tool) => tool.function?.name)
-            .filter((name): name is string => name !== undefined),
-        );
-        const targetWorkTurn = available.has("shell");
-        if (
-          context.includes(marker) &&
-          available.has("assign_work") &&
-          !targetWorkTurn &&
-          !context.includes("WorkAssigned(")
-        ) {
-          return {
-            _tag: "ToolCall",
-            name: "assign_work",
-            arguments: {
-              objective: `Append ${effectMarker} exactly once with the allowlisted shell command.`,
-              why: "qualify V6 P4 policy recovery with a real AgentLoop action",
-              constraints: [],
-              completionExpectation: `${effectFile} contains ${effectMarker} exactly once`,
-              verificationMission: {
-                goal: `Verify the sandbox command for ${marker}`,
-                criteria: [
-                  {
-                    criterionId: "sandbox-command",
-                    requirement: `${effectFile} contains ${effectMarker} exactly once`,
-                    required: true,
-                  },
-                ],
-                riskRequirements: [],
+describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
+  it.skipIf(process.platform !== "win32")(
+    "publicly bootstraps the first P1 candidate, then preserves P9 terminal semantics",
+    async () => {
+      let sourceFilename: string | undefined;
+      const daemonEnvironment: Record<string, string> = {};
+      daemonEnvironment.ARBOR_AUTH_TOKENS =
+        "local=user:local,operator=user:operator";
+      daemonEnvironment.ARBOR_TICK_INTERVAL_MS = "25";
+      daemonEnvironment.ARBOR_AH_BOUNDARY = "AH7AfterToolIntentCommit";
+      const marker = `V6-E-${crypto.randomUUID().slice(0, 8)}`;
+      const probeLines: Record<string, unknown>[] = [];
+      const executableProbeLines: Record<string, unknown>[] = [];
+      const preparationProbeLines: Record<string, unknown>[] = [];
+      const schedulerProbeLines: Record<string, unknown>[] = [];
+      const stdoutLines: string[] = [];
+      let providerCalls = 0;
+      let shellResponseRelease!: () => void;
+      let shellRequestResolve!: (value: Record<string, unknown>) => void;
+      const shellResponseGate = new Promise<void>((resolveGate) => {
+        shellResponseRelease = resolveGate;
+      });
+      const shellRequestObserved = new Promise<Record<string, unknown>>(
+        (resolveObserved) => {
+          shellRequestResolve = resolveObserved;
+        },
+      );
+      const fixture = await startProductionFixture({
+        firstDaemonEntry: child,
+        admitWorkspaceDirectory: true,
+        daemonEnvironment,
+        reply: (call) => {
+          const context = JSON.stringify(call.messages);
+          const available = new Set(
+            call.tools
+              .map((tool) => tool.function?.name)
+              .filter((name): name is string => name !== undefined),
+          );
+          const targetWorkTurn = available.has("shell");
+          if (
+            context.includes(marker) &&
+            available.has("assign_work") &&
+            !targetWorkTurn &&
+            !context.includes("WorkAssigned(")
+          ) {
+            return {
+              _tag: "ToolCall",
+              name: "assign_work",
+              arguments: {
+                objective: `Report the current repository status for ${marker} using the allowlisted read-only shell command.`,
+                why: "qualify V6 P4 policy recovery with a real AgentLoop action",
+                constraints: [],
+                completionExpectation: `Return the current git status for ${marker}`,
+                verificationMission: {
+                  goal: `Verify the read-only sandbox status command for ${marker}`,
+                  criteria: [
+                    {
+                      criterionId: "sandbox-command",
+                      requirement: `The shell call returns the current git status for ${marker}`,
+                      required: true,
+                    },
+                  ],
+                  riskRequirements: [],
+                },
+                reason: "V6 E2 functional qualification",
               },
-              reason: "V6 E2 functional qualification",
-            },
-          };
-        }
-        if (context.includes(marker) && available.has("shell")) {
-          providerCalls += 1;
-          return {
-            _tag: "ToolCall",
-            name: "shell",
-            arguments: {
-              command,
-              cwd: { mount: "workspace", path: "." },
-              timeoutMs: 5_000,
-            },
-          };
-        }
-        return { _tag: "Text", text: `Waiting for ${marker}` };
-      },
-      onDaemonStdout: (line) => {
-        stdoutLines.push(line);
-        try {
-          const value = JSON.parse(line) as Record<string, unknown>;
-          if (value.tag === "AH_PROBE") probeLines.push(value);
-          if (value.tag === "P4_EXECUTABLE_PROBE")
-            executableProbeLines.push(value);
-          if (value.tag === "P1_SANDBOX_PREPARATION_PROBE")
-            preparationProbeLines.push(value);
-        } catch {
-          // ProductionFixture also forwards normal readiness output.
-        }
-      },
-      setupProbe: async (event) => {
-        if (event.stage !== "after-clone") return;
-        const sourceDir = resolve(event.directory, "sandbox-policy-v2-source");
-        sourcePair = sandboxPolicyV2TestPair({
-          bundleRevision: 1,
-          registryRevision: 1,
-        });
-        sourceFilename = writeSandboxPolicyV2TestPair(sourceDir, sourcePair);
-        daemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE = sourceFilename;
-      },
-    });
-    fixtures.push(fixture);
-    if (sourceFilename === undefined)
-      throw new Error("schema-50 V2 source fixture setup was incomplete");
-    const client = makePublicClient(fixture.baseUrl);
-    const project = await createFunctionalProject(
-      client,
-      fixture.workspaceDirectory,
-      "V6 E registry drift",
-      { resourceSelection: "Profile" },
-    );
-    execFileSync("git", ["init", "--quiet"], {
-      cwd: fixture.workspaceDirectory,
-      stdio: "ignore",
-    });
-    execFileSync("git", ["config", "user.name", "Arbor Test"], {
-      cwd: fixture.workspaceDirectory,
-      stdio: "ignore",
-    });
-    execFileSync(
-      "git",
-      ["config", "user.email", "arbor-test@example.invalid"],
-      {
+            };
+          }
+          if (context.includes(marker) && available.has("shell")) {
+            providerCalls += 1;
+            return {
+              _tag: "ToolCall",
+              name: "shell",
+              arguments: {
+                command,
+                cwd: { mount: "workspace", path: "." },
+                timeoutMs: 5_000,
+              },
+            };
+          }
+          return { _tag: "Text", text: `Waiting for ${marker}` };
+        },
+        onDaemonStdout: (line) => {
+          stdoutLines.push(line);
+          try {
+            const value = JSON.parse(line) as Record<string, unknown>;
+            if (value.tag === "AH_PROBE") probeLines.push(value);
+            if (value.tag === "P4_EXECUTABLE_PROBE")
+              executableProbeLines.push(value);
+            if (value.tag === "P1_SANDBOX_PREPARATION_PROBE")
+              preparationProbeLines.push(value);
+            if (value.tag === "SCHEDULER_PROBE")
+              schedulerProbeLines.push(value);
+          } catch {
+            // ProductionFixture also forwards normal readiness output.
+          }
+        },
+        beforeResponse: async (call) => {
+          const tools = new Set(
+            call.tools
+              .map((tool) => tool.function?.name)
+              .filter((name): name is string => name !== undefined),
+          );
+          if (tools.has("shell")) {
+            shellRequestResolve(call as unknown as Record<string, unknown>);
+            await shellResponseGate;
+          }
+          return "respond";
+        },
+        setupProbe: async (event) => {
+          if (event.stage !== "after-clone") return;
+          const sourceDir = resolve(
+            event.directory,
+            "sandbox-policy-v3-source",
+          );
+          const sourcePair = sandboxPolicyV3TestPair({
+            bundleRevision: 1,
+            registryRevision: 1,
+          });
+          artifactFixtureCleanups.push(
+            installSandboxPolicyV3SyntheticArtifacts(sourcePair),
+          );
+          sourceFilename = writeSandboxPolicyV3TestPair(sourceDir, sourcePair);
+          const loaded = await Effect.runPromise(
+            loadSandboxAuthorityBundleSnapshotCurrent(
+              {
+                readVerifiedSandboxAuthorityBundle: () =>
+                  Effect.succeed({
+                    sourceIdentity: sourcePair.sourceIdentity,
+                    canonicalJson: sourcePair.bundleCanonicalJson,
+                  }),
+                readSandboxAuthorityHighWater: () =>
+                  Effect.succeed(sourcePair.highWaterCanonicalJson),
+                commitSandboxAuthorityHighWater: () => Effect.succeed(false),
+                appendSandboxAuthorityAudit: () => Effect.succeed(true),
+              },
+              new Date().toISOString(),
+              SANDBOX_ENV_ALLOWLIST,
+            ),
+          );
+          if (
+            loaded._tag !== "Available" ||
+            loaded.snapshot.bundle.version !== 3
+          )
+            throw new Error(
+              `synthetic P5 V3 pair rejected: ${JSON.stringify(loaded)}`,
+            );
+          const currentHost = sandboxPolicyCurrentHostV1();
+          const supportedRow = sourcePair.bundle.providerRegistry.entries[0];
+          if (currentHost === undefined || supportedRow === undefined)
+            throw new Error(
+              "synthetic D2 evidence omitted current host or row",
+            );
+          const inspection =
+            inspectWindowsNativeQualificationForRegistryEntryV3(
+              fixedWindowsNativeProductionArtifactPaths(),
+              supportedRow,
+              loaded.snapshot,
+              currentHost,
+              new Date().toISOString(),
+            );
+          if (inspection._tag !== "ManifestVerified")
+            throw new Error(
+              `synthetic D2 evidence rejected: ${inspection.reason}`,
+            );
+          daemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE =
+            sourceFilename;
+        },
+      });
+      fixtures.push(fixture);
+      if (sourceFilename === undefined)
+        throw new Error("schema-50 V3 source fixture setup was incomplete");
+      const client = makePublicClient(fixture.baseUrl);
+      const project = await createFunctionalProject(
+        client,
+        fixture.workspaceDirectory,
+        "V6 E registry drift",
+        { resourceSelection: "Profile" },
+      );
+      execFileSync("git", ["init", "--quiet"], {
         cwd: fixture.workspaceDirectory,
         stdio: "ignore",
-      },
-    );
-    execFileSync("git", ["add", "proof.txt"], {
-      cwd: fixture.workspaceDirectory,
-      stdio: "ignore",
-    });
-    execFileSync("git", ["commit", "--quiet", "-m", "sandbox fixture"], {
-      cwd: fixture.workspaceDirectory,
-      stdio: "ignore",
-    });
-    const effectMarker = `V6_E2_EFFECT_${marker}`;
-    const effectFile = join(
-      fixture.workspaceDirectory,
-      `v6-${marker}-effect.txt`,
-    );
-    const command =
-      process.platform === "win32"
-        ? `Add-Content -LiteralPath '${effectFile}' -Value '${effectMarker}'`
-        : `printf '%s\\n' '${effectMarker}' >> '${effectFile}'`;
-    await insertProductionPrimaryWorktree({
-      databaseFile: fixture.databaseFile,
-      projectId: project.projectId,
-      workspaceId: project.rootWorkspaceId,
-      path: fixture.workspaceDirectory,
-    });
-    await client.command(project.projectId, "GrantPermission", {
-      permissionGrantId: functionalId("pgr"),
-      issuer: "user:local",
-      subject: { _tag: "WorkspaceAgent", workspaceId: project.rootWorkspaceId },
-      capability: "shell:exec",
-      target: project.rootWorkspaceId,
-      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
-    });
-    await submitHumanMessage(
-      client,
-      project,
-      `请为 ${marker} 创建一个工作并运行一次 sandbox shell 命令。`,
-    );
-    const approval = await waitForApproval(client, project, marker);
-    await client.command(project.projectId, "ResolveControlApproval", {
-      approvalId: approval.approvalId,
-      expectedRevision: approval.revision,
-      decision: "Approve",
-      reason: "V6 E2 public Work admission",
-    });
-    const admittedWork = await waitForPublic(
-      () =>
-        client.view<{
-          readonly workId?: string;
-          readonly status: string;
-          readonly activeExecution?: { readonly executionId: string };
-        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
-      (work) =>
-        work?.workId !== undefined &&
-        work.activeExecution?.executionId !== undefined,
-    ).catch((error: unknown) => {
-      throw new Error(
-        `V6 E2 Work admission absent: ${String(error)}; provider=${JSON.stringify(fixture.providerCalls)}; daemon=${fixture.daemonErrors.join(" | ")}`,
-        { cause: error },
+      });
+      execFileSync("git", ["config", "user.name", "Arbor Test"], {
+        cwd: fixture.workspaceDirectory,
+        stdio: "ignore",
+      });
+      execFileSync(
+        "git",
+        ["config", "user.email", "arbor-test@example.invalid"],
+        {
+          cwd: fixture.workspaceDirectory,
+          stdio: "ignore",
+        },
       );
-    });
-    if (admittedWork === null)
-      throw new Error("public Current Work omitted its admitted Work");
-    const pregrantedExecutionId = admittedWork.activeExecution?.executionId;
-    if (pregrantedExecutionId === undefined)
-      throw new Error("public Current Work omitted its active Execution");
-    const executableApproval = await waitForExecutableApproval(
-      client,
-      project.rootWorkspaceId,
-      marker,
-    ).catch((error: unknown) => {
-      throw new Error(
-        `V6 E2 executable approval absent: ${String(error)}; providerCalls=${providerCalls}; AH7Probe=${JSON.stringify(probeLines)}; executableProbe=${JSON.stringify(executableProbeLines)}; preparationProbe=${JSON.stringify(preparationProbeLines)}; daemon=${fixture.daemonErrors.join(" | ")}; stdout=${stdoutLines.slice(-30).join(" | ")}`,
-        { cause: error },
-      );
-    });
-    const preGrantState = durableSandboxRead(
-      fixture.databaseFile,
-      pregrantedExecutionId,
-    );
-    expect(preGrantState.actions).toMatchObject([{ state: "Pending" }]);
-    expect(preGrantState.invocation).toBeUndefined();
-    const grantId = functionalId("pgr");
-    const grantExpiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
-    await client
-      .command(project.projectId, "GrantPermission", {
-        permissionGrantId: grantId,
+      execFileSync("git", ["add", "proof.txt"], {
+        cwd: fixture.workspaceDirectory,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["commit", "--quiet", "-m", "sandbox fixture"], {
+        cwd: fixture.workspaceDirectory,
+        stdio: "ignore",
+      });
+      const command = "git status --short";
+      await insertProductionPrimaryWorktree({
+        databaseFile: fixture.databaseFile,
+        projectId: project.projectId,
+        workspaceId: project.rootWorkspaceId,
+        path: fixture.workspaceDirectory,
+      });
+      await client.command(project.projectId, "GrantPermission", {
+        permissionGrantId: functionalId("pgr"),
         issuer: "user:local",
         subject: {
-          _tag: "HumanPrincipal",
-          principal: "user:operator",
+          _tag: "WorkspaceAgent",
+          workspaceId: project.rootWorkspaceId,
         },
-        capability: "DecideSandboxPolicy",
-        target: pregrantedExecutionId,
-        expiresAt: grantExpiresAt,
-      })
-      .catch((error: unknown) => {
-        const db = new DatabaseSync(fixture.databaseFile, { readOnly: true });
-        let execution: unknown;
-        try {
-          execution = db
-            .prepare(
-              `SELECT execution_id, project_id, workspace_id, episode_kind,
-                      episode_revision, settlement_kind, settled_at
-                 FROM executions WHERE execution_id = ?`,
-            )
-            .get(pregrantedExecutionId);
-        } finally {
-          db.close();
-        }
+        capability: "shell:exec",
+        target: project.rootWorkspaceId,
+        expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      });
+      await submitHumanMessage(
+        client,
+        project,
+        `请为 ${marker} 创建一个工作并运行一次 sandbox shell 命令。`,
+      );
+      const approval = await waitForApproval(client, project, marker);
+      await client.command(project.projectId, "ResolveControlApproval", {
+        approvalId: approval.approvalId,
+        expectedRevision: approval.revision,
+        decision: "Approve",
+        reason: "V6 E2 public Work admission",
+      });
+      const admittedWork = await waitForPublic(
+        () =>
+          client.view<{
+            readonly workId?: string;
+            readonly status: string;
+            readonly activeExecution?: { readonly executionId: string };
+          } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+        (work) =>
+          work?.workId !== undefined &&
+          work.activeExecution?.executionId !== undefined,
+      ).catch((error: unknown) => {
         throw new Error(
-          `pre-intent DecideSandboxPolicy Grant failed: ${String(error)}; currentWork=${JSON.stringify(admittedWork)}; execution=${JSON.stringify(execution)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+          `V6 E2 Work admission absent: ${String(error)}; provider=${JSON.stringify(fixture.providerCalls)}; daemon=${fixture.daemonErrors.join(" | ")}`,
           { cause: error },
         );
       });
-    const executableResolution = await client.command(
-      project.projectId,
-      "ResolveExecutableApproval",
-      {
-        approvalId: executableApproval.approvalId,
-        expectedRevision: executableApproval.revision,
-        decision: "Approve",
-        reason: "V6 E2 exact shell executable approval",
-      },
-    );
-    expect(executableResolution).toMatchObject({
-      body: { resolution: "Committed" },
-    });
-    const probe = await waitForPublic(
-      async () =>
-        probeLines.find(
-          (value) => value.boundary === "AH7AfterToolIntentCommit",
-        ),
-      (value) => value !== undefined,
-      15_000,
-    ).catch((error: unknown) => {
-      const durable = durableSnapshot(fixture.databaseFile);
-      const pendingShellActions = durable.actions.filter(
-        (row) => row.action_kind === "shell" && row.state === "Pending",
+      if (admittedWork === null)
+        throw new Error("public Current Work omitted its admitted Work");
+      const pregrantedExecutionId = admittedWork.activeExecution?.executionId;
+      if (pregrantedExecutionId === undefined)
+        throw new Error("public Current Work omitted its active Execution");
+      await shellRequestObserved;
+      const grantId = functionalId("pgr");
+      const grantExpiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+      await client.command(project.projectId, "GrantPermission", {
+        permissionGrantId: grantId,
+        issuer: "user:local",
+        subject: { _tag: "HumanPrincipal", principal: "user:operator" },
+        capability: "DecideSandboxPolicy",
+        target: pregrantedExecutionId,
+        expiresAt: grantExpiresAt,
+      });
+      shellResponseRelease();
+      const firstProbe = await waitForPublic(
+        async () =>
+          probeLines.find(
+            (value) => value.boundary === "AH7AfterToolIntentCommit",
+          ),
+        (value) => value !== undefined,
+        15_000,
+      ).catch((error: unknown) => {
+        const durable = durableSnapshot(fixture.databaseFile);
+        const pendingShellActions = durable.actions.filter(
+          (row) => row.action_kind === "shell" && row.state === "Pending",
+        );
+        const pendingExecutions = new Set(
+          pendingShellActions.map((row) => row.execution_id),
+        );
+        const actionInvocations = durable.toolInvocations.filter((row) =>
+          pendingExecutions.has(row.execution_id),
+        );
+        const providerSummary = fixture.providerCalls.map((call) => ({
+          messages: call.messages.map((message) => ({
+            role: message.role,
+            content: message.content?.slice(0, 800),
+          })),
+          user: call.messages.find((message) => message.role === "user")
+            ?.content,
+          tools: call.tools.map((tool) => tool.function?.name),
+          priorToolResult: call.messages
+            .filter((message) => message.role === "tool")
+            .map((message) => message.content),
+        }));
+        throw new Error(
+          `RED: executable action has not reached the P4 intent boundary; pendingShellActions=${JSON.stringify(pendingShellActions)}; matchingToolInvocations=${JSON.stringify(actionInvocations)}; AH7ProbeCount=${probeLines.length}; executableProbe=${JSON.stringify(executableProbeLines)}; providerCalls=${providerCalls}; modelRequests=${JSON.stringify(providerSummary)}; loop=${JSON.stringify({ steps: durable.steps, actions: durable.actions, invocations: durable.toolInvocations })}; stdout=${stdoutLines.slice(-20).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}; wait=${String(error)}`,
+          { cause: error },
+        );
+      });
+      if (firstProbe === undefined)
+        throw new Error("AH7 P4 intent probe was not captured");
+      const executionId = String(firstProbe.executionId ?? "");
+      if (!executionId.startsWith("exe_"))
+        throw new Error(
+          `AH7 probe omitted execution identity: ${JSON.stringify(firstProbe)}`,
+        );
+      expect(executionId).toBe(pregrantedExecutionId);
+      const firstInvocationId = String(firstProbe.invocationId ?? "");
+      if (!firstInvocationId.startsWith("tin_"))
+        throw new Error(
+          `first AH7 probe omitted invocation identity: ${JSON.stringify(firstProbe)}`,
+        );
+      const firstPendingState = durableSandboxRead(
+        fixture.databaseFile,
+        executionId,
+        firstInvocationId,
       );
-      const pendingExecutions = new Set(
-        pendingShellActions.map((row) => row.execution_id),
+      expect(firstPendingState.invocation).toMatchObject({
+        invocation_id: firstInvocationId,
+        effect_admission_state: "NotAdmitted",
+        recovery_binding_state: "Bound",
+        settled_at: null,
+        observation_json: null,
+      });
+      const initialDetail = await client.view<WorkspaceDetailForSandbox>(
+        "workspace-detail",
+        { workspaceId: project.rootWorkspaceId },
       );
-      const actionInvocations = durable.toolInvocations.filter((row) =>
-        pendingExecutions.has(row.execution_id),
-      );
-      const providerSummary = fixture.providerCalls.map((call) => ({
-        messages: call.messages.map((message) => ({
-          role: message.role,
-          content: message.content?.slice(0, 800),
-        })),
-        user: call.messages.find((message) => message.role === "user")?.content,
-        tools: call.tools.map((tool) => tool.function?.name),
-        priorToolResult: call.messages
-          .filter((message) => message.role === "tool")
-          .map((message) => message.content),
-      }));
-      throw new Error(
-        `RED: executable action has not reached the P4 intent boundary; pendingShellActions=${JSON.stringify(pendingShellActions)}; matchingToolInvocations=${JSON.stringify(actionInvocations)}; AH7ProbeCount=${probeLines.length}; executableProbe=${JSON.stringify(executableProbeLines)}; providerCalls=${providerCalls}; modelRequests=${JSON.stringify(providerSummary)}; loop=${JSON.stringify({ steps: durable.steps, actions: durable.actions, invocations: durable.toolInvocations })}; stdout=${stdoutLines.slice(-20).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}; wait=${String(error)}`,
-        { cause: error },
-      );
-    });
-    if (probe === undefined)
-      throw new Error("AH7 P4 intent probe was not captured");
-    const executionId = String(probe.executionId ?? "");
-    if (!executionId.startsWith("exe_"))
-      throw new Error(
-        `AH7 probe omitted execution identity: ${JSON.stringify(probe)}`,
-      );
-    expect(executionId).toBe(pregrantedExecutionId);
-    const pendingState = durableSandboxRead(fixture.databaseFile, executionId);
-    const actionRow = pendingState.actions[0] as
-      | { readonly logical_action_id?: string; readonly state?: string }
-      | undefined;
-    const invocationRow = pendingState.invocation as
-      | {
-          readonly invocation_id?: string;
-          readonly effect_admission_state?: string;
-        }
-      | undefined;
-    if (
-      actionRow?.logical_action_id === undefined ||
-      invocationRow?.invocation_id === undefined
-    )
-      throw new Error(
-        `production AH7 route omitted pending action/invocation: ${JSON.stringify(pendingState)}`,
-      );
-    await fixture.crash();
-    await fixture.restart({
-      entry: child,
-      daemonEnvironment: {
-        ARBOR_AH_BOUNDARY: "disabled",
-        ARBOR_TICK_INTERVAL_MS: "60000",
-      },
-    });
-    const seeded = {
-      workspace: project.rootWorkspaceId,
-      execution: executionId,
-      logicalActionId: actionRow.logical_action_id,
-      invocation: invocationRow.invocation_id,
-    };
-    expect(actionRow.state).toBe("Pending");
-    expect(invocationRow.effect_admission_state).toBe("NotAdmitted");
-    expect(fixture.daemonErrors).toEqual([]);
-    const providerCallsAtPending = providerCalls;
-    const modelRequestsAtPending = fixture.providerCalls.length;
-    try {
-      await readProductionBoundary(fixture.databaseFile, {
+      const initialRead = initialDetail.sandboxPolicyCandidateRead;
+      if (initialRead === undefined)
+        throw new Error(
+          `P10 candidate read missing after first P4 intent: ${JSON.stringify(initialDetail)}`,
+        );
+      const oldPayload = policyPayload({
+        read: initialRead,
         projectId: project.projectId,
         workspaceId: project.rootWorkspaceId,
+        executionId,
+        expiresAt: grantExpiresAt,
       });
-    } catch (error) {
-      throw new Error(`P11 candidate boundary read failed: ${String(error)}`, {
-        cause: error,
+      const initialPolicyCommandId = functionalId("cmd");
+      let firstDecision: Record<string, unknown>;
+      try {
+        firstDecision = await operatorCommand(
+          fixture.baseUrl,
+          project.projectId,
+          "DecideSandboxPolicy",
+          oldPayload,
+          initialPolicyCommandId,
+        );
+      } catch (error) {
+        throw new Error(
+          `first exact OS P1 decision failed: ${String(error)}; preparation=${JSON.stringify(preparationProbeLines)}; daemon=${fixture.daemonErrors.join(" | ")}; stdout=${stdoutLines.slice(-25).join(" | ")}`,
+          { cause: error },
+        );
+      }
+      expect(firstDecision).toMatchObject({
+        body: { resolution: "Committed" },
       });
-    }
-    let initialDetail: WorkspaceDetailForSandbox;
-    try {
-      initialDetail = await client.view<WorkspaceDetailForSandbox>(
-        "workspace-detail",
-        { workspaceId: seeded.workspace },
+      const policyState = durableSandboxRead(
+        fixture.databaseFile,
+        executionId,
+        firstInvocationId,
       );
-    } catch (error) {
-      const audit = readFileSync(`${sourceFilename}.audit`, "utf8");
-      throw new Error(`${String(error)}; V2 audit=${audit}`, { cause: error });
-    }
-    const initialRead = initialDetail.sandboxPolicyCandidateRead;
-    if (initialRead === undefined)
-      throw new Error(
-        `initial candidate read missing: ${JSON.stringify(initialDetail)}`,
-      );
-    const beforeGrant = durableSandboxRead(
-      fixture.databaseFile,
-      seeded.execution,
-    );
-    expect(pendingState.lease).toBeDefined();
-    expect(beforeGrant.lease).toEqual(pendingState.lease);
-    expect(beforeGrant.actions).toMatchObject([
-      {
-        logical_action_id: seeded.logicalActionId,
-        state: "Pending",
-        action_index: 0,
-      },
-    ]);
-    expect(beforeGrant.invocation).toMatchObject({
-      invocation_id: seeded.invocation,
-      effect_admission_state: "NotAdmitted",
-      recovery_binding_state: "Bound",
-      settled_at: null,
-    });
+      expect(policyState.decisions).toEqual({ count: 1 });
+      expect(policyState.decisionEvents).toEqual({ count: 1 });
 
-    const oldPayload = policyPayload({
-      read: initialRead,
-      projectId: project.projectId,
-      workspaceId: seeded.workspace,
-      executionId: seeded.execution,
-      expiresAt: grantExpiresAt,
-    });
-    let approved: Record<string, unknown>;
-    try {
-      approved = await operatorCommand(
+      await fixture.crash();
+      await fixture.restart({
+        entry: child,
+        daemonEnvironment: {
+          ARBOR_AH_BOUNDARY: "AH7AfterToolIntentCommit",
+          ARBOR_TICK_INTERVAL_MS: "25",
+          ARBOR_AH_BOUNDARY_SKIP_COUNT: "1",
+          ARBOR_SCHEDULER_PROBE: "1",
+        },
+      });
+      const firstSettled = await waitForPublic(
+        async () =>
+          durableSandboxRead(
+            fixture.databaseFile,
+            executionId,
+            firstInvocationId,
+          ),
+        (state) =>
+          state.invocation?.settled_at !== null &&
+          state.invocation !== undefined,
+        45_000,
+      ).catch((error: unknown) => {
+        const durable = durableSnapshot(fixture.databaseFile);
+        throw new Error(
+          `first unavailable action did not settle after live lease expiry; state=${JSON.stringify(durableSandboxRead(fixture.databaseFile, executionId, firstInvocationId))}; scheduler=${JSON.stringify(schedulerProbeLines.slice(-20))}; executable=${JSON.stringify(executableProbeLines.slice(-20))}; actions=${JSON.stringify(durable.actions)}; invocations=${JSON.stringify(durable.toolInvocations)}; stdout=${stdoutLines.slice(-30).join(" | ")}; wait=${String(error)}`,
+          { cause: error },
+        );
+      });
+      expect(firstSettled.invocation?.observation_json).not.toBeNull();
+      expect(
+        executableProbeLines.find(
+          (event) =>
+            event.boundary === "P4ExecutableToolRuntimeOutcome" &&
+            event.invocationId === firstInvocationId,
+        ),
+      ).toMatchObject({ outcomeTag: "ExpectedFailure" });
+      const p9Terminal =
+        Array.isArray(firstSettled.actions) &&
+        firstSettled.actions[0]?.state === "TerminalRejected" &&
+        firstSettled.step?.state === "StepEffectsCommitted";
+      if (p9Terminal) {
+        expect(firstSettled.actions).toMatchObject([
+          { state: "TerminalRejected", action_index: 0, logical_step_no: 0 },
+        ]);
+        expect(firstSettled.step).toMatchObject({
+          state: "StepEffectsCommitted",
+          next_action_index: 1,
+        });
+        const p9Store = new DatabaseSync(fixture.databaseFile, {
+          readOnly: true,
+        });
+        try {
+          const unavailableEvidence = p9Store
+            .prepare(
+              `SELECT f.provider_id, f.provider_version, f.probe_evidence_ref,
+                    f.failure_code, q.state AS queue_state
+               FROM sandbox_provider_unavailable_facts f
+               JOIN sandbox_provider_unavailable_attention_queue q
+                 ON q.attention_fact_id = f.attention_fact_id
+                AND q.project_id = f.project_id
+              WHERE f.execution_id = ? AND f.policy_revision = 1`,
+            )
+            .get(executionId) as
+            | {
+                readonly provider_id?: string;
+                readonly provider_version?: string;
+                readonly probe_evidence_ref?: string | null;
+                readonly failure_code?: string;
+                readonly queue_state?: string;
+              }
+            | undefined;
+          expect(unavailableEvidence).toMatchObject({
+            provider_id: "windows-restricted-appcontainer-job",
+            provider_version: "t3d-v1",
+            failure_code: "ProviderVersionMismatch",
+          });
+          expect(unavailableEvidence?.probe_evidence_ref).toMatch(
+            /^sha256:[0-9a-f]{64}$/u,
+          );
+          expect(unavailableEvidence?.queue_state).toMatch(
+            /^(Pending|Claimed|Consumed)$/u,
+          );
+        } finally {
+          p9Store.close();
+        }
+        const committedProbeCount = probeLines.filter(
+          (value) => value.boundary === "AH7AfterToolIntentCommit",
+        ).length;
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+        expect(
+          probeLines.filter(
+            (value) => value.boundary === "AH7AfterToolIntentCommit",
+          ),
+        ).toHaveLength(committedProbeCount);
+        expect(providerCalls).toBe(1);
+        // DID P4/06 makes P9 terminal for this Step. The drift-after-second-
+        // intent qualification cannot proceed until governance supplies a
+        // pre-intent candidate source; do not fake a second ProviderTurn.
+        return;
+      }
+
+      const probesBeforeSecond = probeLines.length;
+      const secondProbe = await waitForPublic(
+        async () =>
+          probeLines
+            .slice(probesBeforeSecond)
+            .find((value) => value.boundary === "AH7AfterToolIntentCommit"),
+        (value) => value !== undefined,
+        30_000,
+      ).catch((error: unknown) => {
+        const durable = durableSnapshot(fixture.databaseFile);
+        throw new Error(
+          `second shell action did not reach P4 intent; providerCalls=${providerCalls}; decision=${JSON.stringify(sandboxDecisionDebug(fixture.databaseFile, executionId))}; probes=${JSON.stringify(probeLines)}; loop=${JSON.stringify({ steps: durable.steps, actions: durable.actions, invocations: durable.toolInvocations })}; stdout=${stdoutLines.slice(-30).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}; wait=${String(error)}`,
+          { cause: error },
+        );
+      });
+      if (secondProbe === undefined)
+        throw new Error("second AH7 P4 intent probe was not captured");
+      const secondExecutionId = String(secondProbe.executionId ?? "");
+      const secondInvocationId = String(secondProbe.invocationId ?? "");
+      expect(secondExecutionId).toBe(executionId);
+      expect(secondInvocationId).toMatch(/^tin_/u);
+      expect(secondInvocationId).not.toBe(firstInvocationId);
+      const decisionIntentOrder = new DatabaseSync(fixture.databaseFile, {
+        readOnly: true,
+      });
+      try {
+        const order = decisionIntentOrder
+          .prepare(
+            `SELECT d.issued_at AS decisionIssuedAt,
+                    i.intent_at AS invocationIntentAt
+               FROM sandbox_policy_decisions d
+               JOIN tool_invocations i ON i.execution_id = d.execution_id
+              WHERE d.execution_id = ? AND i.invocation_id = ?
+              ORDER BY d.policy_revision DESC LIMIT 1`,
+          )
+          .get(executionId, secondInvocationId) as
+          | {
+              readonly decisionIssuedAt?: string;
+              readonly invocationIntentAt?: string;
+            }
+          | undefined;
+        expect(order?.decisionIssuedAt).toBeDefined();
+        expect(order?.invocationIntentAt).toBeDefined();
+        expect(Date.parse(order?.decisionIssuedAt ?? "")).toBeLessThan(
+          Date.parse(order?.invocationIntentAt ?? ""),
+        );
+      } finally {
+        decisionIntentOrder.close();
+      }
+      const pendingState = durableSandboxRead(
+        fixture.databaseFile,
+        executionId,
+        secondInvocationId,
+      );
+      const actionRows = pendingState.actions as ReadonlyArray<{
+        readonly logical_action_id?: string;
+        readonly state?: string;
+        readonly action_index?: number;
+        readonly logical_step_no?: number;
+        readonly disposition_json?: string | null;
+      }>;
+      const bootstrapAction = actionRows.find(
+        (row) => row.logical_step_no === 0 && row.action_index === 0,
+      );
+      expect(bootstrapAction).toMatchObject({ state: "Applied" });
+      expect(
+        JSON.parse(String(bootstrapAction?.disposition_json ?? "{}")),
+      ).toMatchObject({ _tag: "Applied", status: "Failed" });
+      const unavailable = new DatabaseSync(fixture.databaseFile, {
+        readOnly: true,
+      });
+      try {
+        const unavailableEvidence = unavailable
+          .prepare(
+            `SELECT f.provider_id, f.provider_version, f.probe_evidence_ref,
+                    f.failure_code, q.state AS queue_state
+               FROM sandbox_provider_unavailable_facts f
+               JOIN sandbox_provider_unavailable_attention_queue q
+                 ON q.attention_fact_id = f.attention_fact_id
+                AND q.project_id = f.project_id
+              WHERE f.execution_id = ? AND f.policy_revision = 1`,
+          )
+          .get(executionId) as
+          | {
+              readonly provider_id?: string;
+              readonly provider_version?: string;
+              readonly probe_evidence_ref?: string | null;
+              readonly failure_code?: string;
+              readonly queue_state?: string;
+            }
+          | undefined;
+        expect(
+          unavailableEvidence?.provider_id,
+          JSON.stringify({
+            unavailableEvidence,
+            firstSettled,
+            firstP4Outcomes: executableProbeLines.filter(
+              (event) => event.invocationId === firstInvocationId,
+            ),
+          }),
+        ).toBe("windows-restricted-appcontainer-job");
+        expect(unavailableEvidence?.provider_version).toBe("t3d-v1");
+        expect(unavailableEvidence?.probe_evidence_ref).toMatch(
+          /^blob:sha256:[0-9a-f]{64}$/u,
+        );
+        expect(unavailableEvidence?.failure_code?.length).toBeGreaterThan(0);
+        expect(unavailableEvidence?.queue_state).toMatch(
+          /^(Pending|Claimed|Consumed)$/u,
+        );
+      } finally {
+        unavailable.close();
+      }
+      const pendingActionRows = actionRows.filter(
+        (row) => row.state === "Pending",
+      );
+      const actionRow = pendingActionRows[0];
+      const invocationRow = pendingState.invocation as
+        | {
+            readonly invocation_id?: string;
+            readonly effect_admission_state?: string;
+            readonly recovery_binding_state?: string;
+            readonly settled_at?: string | null;
+            readonly observation_json?: Buffer | null;
+          }
+        | undefined;
+      if (
+        pendingActionRows.length !== 1 ||
+        actionRow?.logical_action_id === undefined ||
+        invocationRow?.invocation_id === undefined
+      )
+        throw new Error(
+          `second AH7 route omitted pending action/invocation: ${JSON.stringify(pendingState)}`,
+        );
+      expect(actionRow.state).toBe("Pending");
+      expect(invocationRow).toMatchObject({
+        invocation_id: secondInvocationId,
+        effect_admission_state: "NotAdmitted",
+        recovery_binding_state: "Bound",
+        settled_at: null,
+        observation_json: null,
+      });
+      expect(fixture.daemonErrors).toEqual([]);
+      const seeded = {
+        workspace: project.rootWorkspaceId,
+        execution: executionId,
+        logicalActionId: actionRow.logical_action_id,
+        invocation: secondInvocationId,
+      };
+      const providerCallsAtPending = providerCalls;
+      const modelRequestsAtPending = fixture.providerCalls.length;
+      const approvedState = pendingState;
+      expect(approvedState).toMatchObject({
+        decisions: { count: 1 },
+        decisionEvents: { count: 1 },
+      });
+      const schedulerEventsBeforeRestart = schedulerProbeLines.length;
+      const executableProbesAtPending = executableProbeLines.length;
+      const oldPid = fixture.daemonProcessSnapshot()?.pid;
+      await fixture.crash();
+      if (sourceFilename === undefined)
+        throw new Error("schema-50 V3 source path disappeared");
+      const driftedPair = sandboxPolicyV3TestPair({
+        bundleRevision: 2,
+        registryRevision: 2,
+        includeRegistryDrift: true,
+      });
+      writeSandboxPolicyV3SourceFirst(sourceFilename, driftedPair);
+      const sourceFirstPair = JSON.parse(
+        readFileSync(sourceFilename, "utf8"),
+      ) as {
+        readonly sourceIdentity: string;
+        readonly bundleCanonicalJson: string;
+        readonly highWaterCanonicalJson: string;
+      };
+      const sourceFirst = await Effect.runPromise(
+        loadSandboxAuthorityBundleSnapshotCurrent(
+          {
+            readVerifiedSandboxAuthorityBundle: () =>
+              Effect.succeed({
+                sourceIdentity: sourceFirstPair.sourceIdentity,
+                canonicalJson: sourceFirstPair.bundleCanonicalJson,
+              }),
+            readSandboxAuthorityHighWater: () =>
+              Effect.succeed(sourceFirstPair.highWaterCanonicalJson),
+            commitSandboxAuthorityHighWater: () => Effect.succeed(false),
+            appendSandboxAuthorityAudit: () => Effect.succeed(true),
+          },
+          new Date().toISOString(),
+          SANDBOX_ENV_ALLOWLIST,
+        ),
+      );
+      expect(sourceFirst).toMatchObject({ _tag: "Unavailable" });
+      commitSandboxPolicyV3HighWater(sourceFilename, driftedPair);
+      await fixture.restart({
+        entry: child,
+        daemonEnvironment: {
+          ARBOR_AH_BOUNDARY: "disabled",
+          ARBOR_TICK_INTERVAL_MS: "60000",
+          ARBOR_SCHEDULER_PROBE: "1",
+        },
+      });
+      expect(fixture.daemonProcessSnapshot()?.pid).not.toBe(oldPid);
+
+      const dispatchGate = await waitForPublic(
+        async () =>
+          schedulerProbeLines
+            .slice(schedulerEventsBeforeRestart)
+            .find(
+              (event) =>
+                event.boundary === "PreDispatchLeaseCheck" &&
+                event.executionId === seeded.execution &&
+                event.dispatchable === false,
+            ),
+        (event) => event !== undefined,
+        20_000,
+      );
+      expect(dispatchGate).toMatchObject({
+        boundary: "PreDispatchLeaseCheck",
+        executionId: seeded.execution,
+        dispatchable: false,
+      });
+
+      const parkedDetail = await waitForPublic(
+        () =>
+          client.view<WorkspaceDetailForSandbox>("workspace-detail", {
+            workspaceId: seeded.workspace,
+          }),
+        (detail) => detail.sandboxPolicyCandidateRead !== undefined,
+      );
+      const refreshedRead = parkedDetail.sandboxPolicyCandidateRead;
+      if (refreshedRead === undefined)
+        throw new Error("refreshed candidate read missing");
+      expect(refreshedRead.commonPreconditions.authorityBundleRevision).toBe(2);
+      expect(refreshedRead.commonPreconditions.authorityBundleDigest).not.toBe(
+        initialRead.commonPreconditions.authorityBundleDigest,
+      );
+      const refreshedOsCandidate = refreshedRead.candidates.find(
+        (candidate) =>
+          candidate.kind === "OsEnforced" &&
+          candidate.providerId === "windows-restricted-appcontainer-job" &&
+          candidate.profile === "ReadOnly" &&
+          candidate.networkMode === "Disabled",
+      );
+      expect(refreshedOsCandidate).toBeDefined();
+      expect(
+        refreshedOsCandidate?.kind === "OsEnforced"
+          ? refreshedOsCandidate.providerRegistryRevision
+          : undefined,
+      ).toBe(2);
+      const parkedState = durableSandboxRead(
+        fixture.databaseFile,
+        seeded.execution,
+        seeded.invocation,
+      );
+      expect(parkedState.lease).toEqual(approvedState.lease);
+      expect(parkedState.actions).toEqual(approvedState.actions);
+      expect(parkedState.step).toEqual(approvedState.step);
+      expect(parkedState.invocation).toEqual(approvedState.invocation);
+      expect(parkedState.invocation).toMatchObject({
+        invocation_id: seeded.invocation,
+        effect_admission_state: "NotAdmitted",
+        recovery_binding_state: "Bound",
+        settled_at: null,
+        observation_json: null,
+      });
+      expect(providerCalls).toBe(providerCallsAtPending);
+      expect(fixture.providerCalls).toHaveLength(modelRequestsAtPending);
+      expect(executableProbeLines).toHaveLength(executableProbesAtPending);
+
+      const staleCommandId = functionalId("cmd");
+      const stale = await operatorCommand(
         fixture.baseUrl,
         project.projectId,
         "DecideSandboxPolicy",
         oldPayload,
+        staleCommandId,
       );
-    } catch (error) {
-      let preparationDiagnostic: unknown;
+      expect(stale).toMatchObject({
+        body: {
+          resolution: "TerminalRejected",
+          rejection: "StaleSandboxPolicyInputs",
+        },
+      });
+      const afterStale = durableSandboxRead(
+        fixture.databaseFile,
+        seeded.execution,
+        seeded.invocation,
+      );
+      expect(afterStale.decisions).toEqual(approvedState.decisions);
+      expect(afterStale.decisionEvents).toEqual(approvedState.decisionEvents);
+      expect(afterStale.lease).toEqual(approvedState.lease);
+      expect(afterStale.actions).toEqual(approvedState.actions);
+      expect(afterStale.invocation).toEqual(approvedState.invocation);
+      expect(providerCalls).toBe(providerCallsAtPending);
+      expect(fixture.providerCalls).toHaveLength(modelRequestsAtPending);
+      const staleReceipt = new DatabaseSync(fixture.databaseFile, {
+        readOnly: true,
+      });
       try {
-        preparationDiagnostic =
-          sourcePair === undefined
-            ? { stage: "Snapshot", errorTag: "MissingFixturePair" }
-            : await sandboxPreparationDiagnostic({
-                databaseFile: fixture.databaseFile,
-                payload: oldPayload,
-                pair: sourcePair,
-              });
-      } catch (diagnosticError) {
-        const record =
-          typeof diagnosticError === "object" && diagnosticError !== null
-            ? (diagnosticError as Record<string, unknown>)
-            : undefined;
-        const nested =
-          typeof record?.cause === "object" && record.cause !== null
-            ? (record.cause as Record<string, unknown>)
-            : undefined;
-        const message =
-          diagnosticError instanceof Error ? diagnosticError.message : "";
-        preparationDiagnostic = {
-          stage: "ProbeInfrastructure",
-          errorName:
-            diagnosticError instanceof Error
-              ? diagnosticError.name
-              : typeof diagnosticError,
-          errorTag:
-            (typeof record?._tag === "string" ? record._tag : undefined) ??
-            (typeof nested?._tag === "string" ? nested._tag : undefined) ??
-            "Unknown",
-          repository:
-            (typeof record?.repository === "string"
-              ? record.repository
-              : undefined) ??
-            (typeof nested?.repository === "string"
-              ? nested.repository
-              : undefined),
-          operation:
-            (typeof record?.operation === "string"
-              ? record.operation
-              : undefined) ??
-            (typeof nested?.operation === "string"
-              ? nested.operation
-              : undefined),
-          messageClass: message.includes("TransactionScope")
-            ? "TransactionScope"
-            : message.includes("SQLITE")
-              ? "SQLite"
-              : message.includes("Layer")
-                ? "Layer"
-                : "Other",
-        };
-      }
-      const db = new DatabaseSync(fixture.databaseFile, { readOnly: true });
-      let commandDiagnostic: unknown;
-      try {
-        commandDiagnostic = {
-          commands: db
-            .prepare(
-              `SELECT command_id, resolution, result_json,
-                      terminal_error_json FROM commands ORDER BY created_at DESC LIMIT 4`,
-            )
-            .all(),
-          attempts: db
-            .prepare(
-              `SELECT command_id, attempt_no, outcome, failure_kind,
-                      metadata_json FROM command_attempts ORDER BY started_at DESC LIMIT 6`,
-            )
-            .all(),
-        };
+        const command = staleReceipt
+          .prepare(
+            `SELECT command_id, resolution, result_json, terminal_error_json
+             FROM commands WHERE command_id = ?`,
+          )
+          .get(staleCommandId) as
+          | {
+              readonly command_id?: string;
+              readonly resolution?: string;
+              readonly result_json?: string | null;
+              readonly terminal_error_json?: string | null;
+            }
+          | undefined;
+        expect(command?.command_id).toBe(staleCommandId);
+        expect(command?.resolution).toBe("TerminalRejected");
+        expect(
+          JSON.stringify(command).includes("StaleSandboxPolicyInputs"),
+        ).toBe(true);
       } finally {
-        db.close();
+        staleReceipt.close();
       }
-      throw new Error(
-        `initial P1 decision failed: ${String(error)}; preparationProbe=${JSON.stringify(preparationProbeLines)}; preparationDiagnostic=${JSON.stringify(preparationDiagnostic)}; daemonErrors=${JSON.stringify(fixture.daemonErrors)}; commands=${JSON.stringify(commandDiagnostic)}`,
-        { cause: error },
-      );
-    }
-    if (
-      (approved.body as { readonly resolution?: string } | undefined)
-        ?.resolution !== "Committed"
-    )
-      throw new Error(
-        `initial P1 receipt was not committed: ${JSON.stringify(approved)}`,
-      );
-    const approvedState = durableSandboxRead(
-      fixture.databaseFile,
-      seeded.execution,
-    );
-    expect(approvedState).toMatchObject({
-      decisions: { count: 1 },
-      decisionEvents: { count: 1 },
-    });
-
-    const oldPid = fixture.daemonProcessSnapshot()?.pid;
-    writeSandboxPolicyV2TestPair(
-      resolve(fixture.directory, "sandbox-policy-v2-source"),
-      sandboxPolicyV2TestPair({ bundleRevision: 2, registryRevision: 2 }),
-    );
-    await fixture.crash();
-    await fixture.restart({
-      entry: child,
-      daemonEnvironment: {
-        ARBOR_AH_BOUNDARY: "disabled",
-        ARBOR_TICK_INTERVAL_MS: "60000",
-      },
-    });
-    expect(fixture.daemonProcessSnapshot()?.pid).not.toBe(oldPid);
-
-    const parkedDetail = await waitForPublic(
-      () =>
-        client.view<WorkspaceDetailForSandbox>("workspace-detail", {
-          workspaceId: seeded.workspace,
-        }),
-      (detail) => detail.sandboxPolicyCandidateRead !== undefined,
-    );
-    const refreshedRead = parkedDetail.sandboxPolicyCandidateRead;
-    if (refreshedRead === undefined)
-      throw new Error("refreshed candidate read missing");
-    expect(refreshedRead.commonPreconditions.authorityBundleRevision).toBe(2);
-    expect(refreshedRead.commonPreconditions.authorityBundleDigest).not.toBe(
-      initialRead.commonPreconditions.authorityBundleDigest,
-    );
-    const parkedState = durableSandboxRead(
-      fixture.databaseFile,
-      seeded.execution,
-    );
-    expect(parkedState.lease).toEqual(approvedState.lease);
-    expect(parkedState.actions).toEqual(beforeGrant.actions);
-    expect(parkedState.step).toEqual(beforeGrant.step);
-    expect(parkedState.invocation).toEqual(beforeGrant.invocation);
-    expect(providerCalls).toBe(providerCallsAtPending);
-    expect(fixture.providerCalls).toHaveLength(modelRequestsAtPending);
-
-    const stale = await operatorCommand(
-      fixture.baseUrl,
-      project.projectId,
-      "DecideSandboxPolicy",
-      oldPayload,
-    );
-    expect(stale).toMatchObject({
-      body: {
-        resolution: "TerminalRejected",
-        rejection: "StaleSandboxPolicyInputs",
-      },
-    });
-    const afterStale = durableSandboxRead(
-      fixture.databaseFile,
-      seeded.execution,
-    );
-    expect(afterStale.decisions).toEqual(approvedState.decisions);
-    expect(afterStale.decisionEvents).toEqual(approvedState.decisionEvents);
-    expect(afterStale.lease).toEqual(approvedState.lease);
-    expect(providerCalls).toBe(providerCallsAtPending);
-  }, 180_000);
+    },
+    180_000,
+  );
 });
