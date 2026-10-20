@@ -858,6 +858,15 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
     const retryCommandId = parse(CommandId)(
       "cmd_018f2b3c-4d5e-7abc-8def-0123456789a6",
     );
+    const reusedIssuerDigestCommandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789aa",
+    );
+    const staleBundleCommandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789ab",
+    );
+    const staleEpisodeCommandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789ac",
+    );
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -887,15 +896,20 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             }),
           );
           const gateway = yield* CommandGateway;
-          const fingerprint = semanticRequestFingerprint({
-            commandType: "DecideSandboxPolicy",
-            projectId,
-            actor,
-            schemaVersion: "1",
-            payload: trustedPayload,
-          });
-          const authorityFor = (id: CommandId) => ({
-            ...makeAuthority(fingerprint, id),
+          const authorityFor = (
+            id: CommandId,
+            candidate: DecideSandboxPolicyPayload = trustedPayload,
+          ) => ({
+            ...makeAuthority(
+              semanticRequestFingerprint({
+                commandType: "DecideSandboxPolicy",
+                projectId,
+                actor,
+                schemaVersion: "1",
+                payload: candidate,
+              }),
+              id,
+            ),
             permissionGrant: v2Grant,
             issuerProvenance: v2Provenance,
             authorityBundleRevision: trusted.bundle.bundleRevision,
@@ -905,6 +919,41 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             operatorConfigRevision: trusted.bundle.operatorConfigRevision,
             operatorConfigDigest: trusted.bundle.operatorConfigDigest,
           });
+          const reusedIssuerDigestPayload: DecideSandboxPolicyPayload = {
+            ...trustedPayload,
+            expectedOperatorConfigDigest: trusted.bundle.issuerConfigDigest,
+          };
+          const staleBundlePayload: DecideSandboxPolicyPayload = {
+            ...trustedPayload,
+            expectedAuthorityBundleDigest: "0".repeat(64),
+          };
+          const staleEpisodePayload: DecideSandboxPolicyPayload = {
+            ...trustedPayload,
+            expectedEpisodeRevision: 1,
+          };
+          const reusedIssuerDigest = yield* gateway.execute(
+            envelope(reusedIssuerDigestCommandId, reusedIssuerDigestPayload),
+            { _tag: "External", principal },
+            authorityFor(
+              reusedIssuerDigestCommandId,
+              reusedIssuerDigestPayload,
+            ),
+          );
+          const staleBundle = yield* gateway.execute(
+            envelope(staleBundleCommandId, staleBundlePayload),
+            { _tag: "External", principal },
+            authorityFor(staleBundleCommandId, staleBundlePayload),
+          );
+          const staleEpisode = yield* gateway.execute(
+            envelope(staleEpisodeCommandId, staleEpisodePayload),
+            { _tag: "External", principal },
+            authorityFor(staleEpisodeCommandId, staleEpisodePayload),
+          );
+          const staleEpisodeReplay = yield* gateway.execute(
+            envelope(staleEpisodeCommandId, staleEpisodePayload),
+            { _tag: "External", principal },
+            authorityFor(staleEpisodeCommandId, staleEpisodePayload),
+          );
           const first = yield* gateway.execute(
             envelope(commandId, trustedPayload),
             { _tag: "External", principal },
@@ -924,14 +973,36 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             decisions: number;
             receipts: number;
             events: number;
+            operatorConfigRevision: number;
+            operatorConfigDigest: string;
           }>(
             `SELECT
               (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE execution_id = ?) AS decisions,
-              (SELECT COUNT(*) FROM commands WHERE command_id IN (?, ?)) AS receipts,
-              (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
-            [executionId, commandId, retryCommandId],
+              (SELECT COUNT(*) FROM commands WHERE command_id IN (?, ?, ?, ?, ?)) AS receipts,
+              (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events,
+              (SELECT operator_config_revision FROM sandbox_policy_decisions WHERE execution_id = ? LIMIT 1) AS operatorConfigRevision,
+              (SELECT operator_config_digest FROM sandbox_policy_decisions WHERE execution_id = ? LIMIT 1) AS operatorConfigDigest`,
+            [
+              executionId,
+              commandId,
+              retryCommandId,
+              reusedIssuerDigestCommandId,
+              staleBundleCommandId,
+              staleEpisodeCommandId,
+              executionId,
+              executionId,
+            ],
           );
-          return { first, replay, stale, counts: rows[0] };
+          return {
+            first,
+            replay,
+            stale,
+            reusedIssuerDigest,
+            staleBundle,
+            staleEpisode,
+            staleEpisodeReplay,
+            counts: rows[0],
+          };
         }),
         stack.app,
       ),
@@ -945,7 +1016,37 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
         safeDetails: { field: "PolicyRevision" },
       },
     });
-    expect(result.counts).toEqual({ decisions: 1, receipts: 2, events: 1 });
+    expect(result.reusedIssuerDigest.resolution).toMatchObject({
+      _tag: "TerminalRejected",
+      error: {
+        _tag: "StaleSandboxPolicyInputs",
+        safeDetails: { field: "OperatorConfigRevision" },
+      },
+    });
+    expect(result.staleBundle.resolution).toMatchObject({
+      _tag: "TerminalRejected",
+      error: {
+        _tag: "StaleSandboxPolicyInputs",
+        safeDetails: { field: "AuthorityBundleRevision" },
+      },
+    });
+    expect(result.staleEpisode.resolution).toMatchObject({
+      _tag: "TerminalRejected",
+      error: {
+        _tag: "StaleSandboxPolicyInputs",
+        safeDetails: { field: "EpisodeRevision" },
+      },
+    });
+    expect(result.staleEpisodeReplay.resolution).toEqual(
+      result.staleEpisode.resolution,
+    );
+    expect(result.counts).toEqual({
+      decisions: 1,
+      receipts: 5,
+      events: 1,
+      operatorConfigRevision: trusted.bundle.operatorConfigRevision,
+      operatorConfigDigest: trusted.bundle.operatorConfigDigest,
+    });
   });
 
   it("survives child-process kills immediately before and after the SQLite commit", async () => {

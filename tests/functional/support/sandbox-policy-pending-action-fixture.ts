@@ -11,6 +11,13 @@ import {
   TransactionPortLive,
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import {
+  ExecutionId,
+  LeaseGeneration,
+  ProviderTurnId,
+  parse,
+} from "../../../packages/domain/dist/index.js";
+import {
+  type AgentLoopStepRecord,
   AgentLoopStepStore,
   canonicalArgumentsDigestV1,
   P39RecoveryEvidenceStore,
@@ -20,7 +27,7 @@ import {
   ToolInvocationStore,
   TransactionPort,
   targetResourceIdentityDigestV1,
-} from "../../../packages/ports/src/index.js";
+} from "../../../packages/ports/dist/index.js";
 
 const ids = {
   project: "prj_018f2b3c-4d5e-7abc-8def-0123456789d1",
@@ -33,6 +40,8 @@ const ids = {
 } as const;
 
 const now = "2026-10-19T00:00:00.000Z";
+const executionId = parse(ExecutionId)(ids.execution);
+const providerTurnId = parse(ProviderTurnId)(ids.turn);
 const workerId = "worker:sandbox-policy-fixture";
 const workerIncarnationId = "incarnation:sandbox-policy-fixture";
 const logicalActionId = "lac_018f2b3c-4d5e-7abc-8def-0123456789d1";
@@ -185,12 +194,13 @@ export const seedSandboxPolicyPendingAction = async (input: {
     ClockLive,
   );
   const stores = Layer.mergeAll(
-    Layer.provide(TransactionPortLive, infra),
-    Layer.provide(AgentLoopStepStoreLive, infra),
-    Layer.provide(ToolInvocationStoreLive, infra),
-    Layer.provide(P39RecoveryEvidenceStoreLive, infra),
-    Layer.provide(SandboxPolicyRequirementReadPortLive, infra),
+    TransactionPortLive,
+    AgentLoopStepStoreLive,
+    ToolInvocationStoreLive,
+    P39RecoveryEvidenceStoreLive,
+    SandboxPolicyRequirementReadPortLive,
   );
+  const app = Layer.provideMerge(stores, infra);
   const result = await Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
@@ -200,13 +210,13 @@ export const seedSandboxPolicyPendingAction = async (input: {
         const recovery = yield* P39RecoveryEvidenceStore;
         const requirements = yield* SandboxPolicyRequirementReadPort;
         const fence = {
-          executionId: ids.execution,
+          executionId,
           workerId,
           workerIncarnationId,
-          fencingGeneration: 0,
+          fencingGeneration: parse(LeaseGeneration)(0),
         } as const;
         const identity = {
-          executionId: ids.execution,
+          executionId,
           logicalStepNo: 0,
           repairAttempt: 0,
         } as const;
@@ -214,7 +224,7 @@ export const seedSandboxPolicyPendingAction = async (input: {
         const outputHash = sha256("fixture-provider-output");
         const prepared = {
           identity,
-          providerTurnId: ids.turn,
+          providerTurnId,
           state: "Prepared" as const,
           nextActionIndex: 0,
           revision: 0,
@@ -228,7 +238,7 @@ export const seedSandboxPolicyPendingAction = async (input: {
                 identity,
                 overflowOrdinal: 0,
                 role: "Inference",
-                providerTurnId: ids.turn,
+                providerTurnId,
                 contextEpoch: 0 as never,
                 state: "SettledSuccess",
                 createdAt: now,
@@ -259,9 +269,9 @@ export const seedSandboxPolicyPendingAction = async (input: {
                 additions: {},
               },
             ];
-            let prior = prepared;
+            let prior: AgentLoopStepRecord = prepared;
             for (const transition of transitions) {
-              const next = {
+              const next: AgentLoopStepRecord = {
                 ...prior,
                 ...transition.additions,
                 state: transition.to,
@@ -298,7 +308,7 @@ export const seedSandboxPolicyPendingAction = async (input: {
             yield* invocations.recordIntent(
               {
                 invocationId: ids.invocation as never,
-                executionId: ids.execution as never,
+                executionId,
                 workspaceId: ids.workspace as never,
                 toolName,
                 toolVersion,
@@ -314,9 +324,9 @@ export const seedSandboxPolicyPendingAction = async (input: {
             const binding: RecoveryBindingV1 = {
               bindingVersion: 1,
               digestAlgorithm: "SHA-256",
-              executionId: ids.execution as never,
+              executionId,
               invocationId: ids.invocation as never,
-              providerTurnId: ids.turn as never,
+              providerTurnId,
               logicalStepNo: 0,
               repairAttempt: 0,
               logicalActionId,
@@ -379,7 +389,7 @@ export const seedSandboxPolicyPendingAction = async (input: {
           : [];
         return { requirement, record, binding, step, actions };
       }),
-      stores,
+      app,
     ),
   );
   if (
