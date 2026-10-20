@@ -8,14 +8,16 @@ import {
 } from "@arbor/ports";
 import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
-import { createSchema47TestDatabase } from "../../../tests/support/schema44-database.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  type CurrentSchemaTestDatabase,
+  type CurrentSchemaTestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
+} from "../../../tests/support/schema44-database.js";
 import {
   ConversationCheckpointStoreLive,
   HumanMessageStoreLive,
   layer,
-  P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION,
-  runMigrations,
   TransactionPortLive,
 } from "../src/index.js";
 
@@ -48,17 +50,24 @@ const fence = (generation = 3) => ({
   fencingGeneration: generation as never,
 });
 
-const upgrade = (filename: string) =>
-  Effect.runPromise(
-    Effect.scoped(
-      Effect.provide(
-        runMigrations([P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION], {
-          allowOfflineOnly: true,
-        }),
-        layer({ filename }),
-      ),
-    ),
-  );
+let currentSchemaFactory: CurrentSchemaTestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  currentSchemaFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".p48-ah19-store-current-schema-template-",
+  });
+}, 120_000);
+
+afterAll(() => {
+  currentSchemaFactory?.cleanup();
+  currentSchemaFactory = undefined;
+}, 120_000);
+
+const createCurrentSchemaCase = (): CurrentSchemaTestDatabase => {
+  if (currentSchemaFactory === undefined)
+    throw new Error("The current-schema AH19 store template is not ready.");
+  return currentSchemaFactory.create();
+};
 
 const makeApp = (filename: string) => {
   const sqlite = layer({ filename });
@@ -347,9 +356,8 @@ const commitInput = (overrides: Record<string, unknown> = {}) => ({
 
 describe("P48 ConversationCheckpointStore owner CAS", () => {
   it("initializes exactly one RootWorkspace owner and commits an inclusive Answered prefix by epoch/frontier CAS", async () => {
-    const fixture = await createSchema47TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       const committed = await runStore(
         fixture.databaseFilename,
@@ -413,9 +421,8 @@ describe("P48 ConversationCheckpointStore owner CAS", () => {
   });
 
   it("refuses a gap-crossing frontier, stale CAS, invalid Native binding, and expired lease without overwriting the owner", async () => {
-    const fixture = await createSchema47TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       const results = await runStore(
         fixture.databaseFilename,
@@ -566,9 +573,8 @@ describe("P48 ConversationCheckpointStore owner CAS", () => {
   });
 
   it("serializes competing owner-frontier commits so exactly one epoch CAS wins", async () => {
-    const fixture = await createSchema47TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       await runStore(
         fixture.databaseFilename,
@@ -618,9 +624,8 @@ describe("P48 ConversationCheckpointStore owner CAS", () => {
   });
 
   it("fails closed when a persisted owner checkpoint kind is corrupt", async () => {
-    const fixture = await createSchema47TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       await runStore(
         fixture.databaseFilename,
