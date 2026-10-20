@@ -1239,6 +1239,30 @@ const validateDescriptorPin = (version: number): void => {
     );
 };
 
+export interface SchemaUpgradeDescriptorPinKat {
+  readonly version: number;
+  readonly requiresUserVersion: number;
+  readonly sha256: string;
+}
+
+/**
+ * Fast, side-effect-free qualification for every descriptor in the supported
+ * offline chain. The exhaustive process/crash suite proves physical resume
+ * behavior; the default suite calls this KAT so every SQL/source fingerprint
+ * and every predecessor edge remains covered without rebuilding SQLite for
+ * each crash boundary.
+ */
+export const schemaUpgradeDescriptorPinKats =
+  (): ReadonlyArray<SchemaUpgradeDescriptorPinKat> =>
+    Array.from({ length: 14 }, (_, index) => index + 37).map((version) => {
+      validateDescriptorPin(version);
+      return {
+        version,
+        requiresUserVersion: version - 1,
+        sha256: pinnedDescriptorHash(version),
+      };
+    });
+
 interface PreviewPrefix {
   readonly digest: string;
   readonly signature: string;

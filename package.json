@@ -27,6 +27,7 @@
     "test:release": "node scripts/testing/run-suite.mjs release",
     "test:all": "node scripts/testing/run-suite.mjs all",
     "test:manifest": "node --test scripts/testing/manifest.test.mjs scripts/testing/runner-utils.test.mjs scripts/testing/runner-startup.test.mjs scripts/testing/run-core-tests.test.mjs && node scripts/testing/check-manifest.mjs",
+    "test:schema-upgrade:exhaustive": "node scripts/testing/run-schema-upgrade-exhaustive.mjs",
     "check:release": "pnpm check && pnpm test:functional",
     "test:capability": "node scripts/testing/run-capability.mjs gray-box",
     "test:capability:real": "node scripts/testing/run-capability.mjs real-provider",
