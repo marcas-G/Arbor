@@ -19,7 +19,7 @@ import {
   isP39PathQualificationEnabled,
   p39WindowsAclQualificationAvailable,
 } from "../../../tests/support/p39-windows-deployment-test.js";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { runDaemonOnce } from "../src/main.js";
 
@@ -33,21 +33,21 @@ const childWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789a2";
 const childSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789a2";
 const childWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789a2";
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema44TestDatabaseFactory({
-    prefix: ".blocked-workepisode-schema44-",
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".blocked-workepisode-current-schema-",
   });
 }, 120_000);
 
 beforeEach(() => {
   if (fixtureFactory === undefined)
-    throw new Error("Schema 42 factory is missing");
+    throw new Error("Current schema factory is missing");
   fixture = fixtureFactory.create();
 });
 
@@ -67,7 +67,8 @@ afterAll(() => {
 });
 
 const databaseFile = () => {
-  if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
+  if (fixture === undefined)
+    throw new Error("Current schema fixture is missing");
   return fixture.databaseFilename;
 };
 

@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Cause, Effect, Exit, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
+  CURRENT_SCHEMA_VERSION,
   P32_MIGRATIONS,
   P38_MIGRATIONS,
   P43_MIGRATION,
@@ -86,6 +87,12 @@ export type Schema48TestDatabaseFactory = Schema42TestDatabaseFactory;
 export type Schema50TestDatabase = Schema42TestDatabase;
 export type Schema50TestDatabaseOptions = Schema42TestDatabaseOptions;
 export type Schema50TestDatabaseFactory = Schema42TestDatabaseFactory;
+export type CurrentSchemaTestDatabase = Schema42TestDatabase;
+export type CurrentSchemaTestDatabaseOptions = Omit<
+  Schema42TestDatabaseOptions,
+  "targetSchemaVersion"
+>;
+export type CurrentSchemaTestDatabaseFactory = Schema42TestDatabaseFactory;
 
 const upgradeSchema44Suffix = async (
   databaseFilename: string,
@@ -778,6 +785,20 @@ export const createSchema50TestDatabase = (
   createSchema42TestDatabase({ ...options, targetSchemaVersion: 50 });
 
 /**
+ * Creates a disposable database at the production composition's current
+ * schema. Ordinary runtime tests should use this instead of pinning a
+ * historical schema number; historical upgrade/replay tests must continue to
+ * request their exact source version explicitly.
+ */
+export const createCurrentSchemaTestDatabase = (
+  options: CurrentSchemaTestDatabaseOptions = {},
+): Promise<CurrentSchemaTestDatabase> =>
+  createSchema42TestDatabase({
+    ...options,
+    targetSchemaVersion: CURRENT_SCHEMA_VERSION,
+  });
+
+/**
  * Builds the trusted schema-42/P39 template once for a test suite. Each case
  * gets a separate real SQLite file and P39 report sidecar copied only after
  * the template connections have closed. This avoids repeating privileged P39
@@ -888,6 +909,15 @@ export const createSchema50TestDatabaseFactory = (
   options: Schema50TestDatabaseOptions = {},
 ): Promise<Schema50TestDatabaseFactory> =>
   createSchema42TestDatabaseFactory({ ...options, targetSchemaVersion: 50 });
+
+/** Clone factory counterpart of {@link createCurrentSchemaTestDatabase}. */
+export const createCurrentSchemaTestDatabaseFactory = (
+  options: CurrentSchemaTestDatabaseOptions = {},
+): Promise<CurrentSchemaTestDatabaseFactory> =>
+  createSchema42TestDatabaseFactory({
+    ...options,
+    targetSchemaVersion: CURRENT_SCHEMA_VERSION,
+  });
 
 /** Runs one test case with its own cloned database and always removes it. */
 export const withSchema44TestDatabase = async <A>(
