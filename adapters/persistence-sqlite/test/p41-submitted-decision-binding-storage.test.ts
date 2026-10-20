@@ -9,6 +9,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   CURRENT_SCHEMA45_SUFFIX_IDS,
+  expectedCurrentSchemaSuffixIds,
   HISTORICAL_SCHEMA42_SUFFIX_IDS,
 } from "../../../tests/support/schema-prefix-contract.js";
 import {
@@ -18,6 +19,7 @@ import {
 import {
   AttentionProjectionStoreLive,
   CURRENT_MIGRATIONS,
+  CURRENT_SCHEMA_VERSION,
   DomainEventJournalLive,
   IdGeneratorLive,
   layer,
@@ -236,12 +238,10 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
     const currentSuffixIds = CURRENT_MIGRATIONS.map(({ id }) => id).filter(
       (id) => id >= 40,
     );
-    expect(currentSuffixIds).toEqual([
-      ...CURRENT_SCHEMA45_SUFFIX_IDS,
-      46,
-      47,
-      48,
-    ]);
+    expect(currentSuffixIds).toEqual(
+      expectedCurrentSchemaSuffixIds(CURRENT_SCHEMA_VERSION),
+    );
+    expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(CURRENT_SCHEMA_VERSION);
     expect(
       CURRENT_SCHEMA45_SUFFIX_IDS.slice(
         0,
