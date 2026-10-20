@@ -110,6 +110,7 @@
       "tests/functional/process/provider-success-ah1-ah3.functional.test.ts",
       "tests/functional/process/rai-readmission-hold.functional.test.ts",
       "tests/functional/process/recovery-verdicts.functional.test.ts",
+      "tests/functional/process/sandbox-policy-v6-registry-drift-restart.functional.test.ts",
       "tests/functional/package/clean-checkout.functional.test.ts"
     ],
     "functionalUi": [
