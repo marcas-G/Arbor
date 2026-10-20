@@ -1,7 +1,9 @@
 # Full delivery convergence matrix
 
-Date: 2026-10-20  
-Audited code baseline: `e94a204a7988417eead9bc0fc6a301140d2f7ca9`  
+Date: 2026-10-20
+
+Audited code baseline: `e94a204a7988417eead9bc0fc6a301140d2f7ca9`
+
 Audit scope: read-only review of frozen design, current source/test inventory, and committed qualification records. No tests were run for this audit.
 
 ## Decision rules
