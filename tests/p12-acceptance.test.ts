@@ -39,6 +39,7 @@ import {
   ProjectToolRegistryLive,
   ResourceOwnershipRepositoryLive,
   runMigrations,
+  SandboxPolicyDecisionStoreLive,
   SessionRepositoryLive,
   TransactionPortLive,
   VerificationRepositoryLive,
@@ -2187,6 +2188,7 @@ const transportApp = (
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
+    Layer.provide(SandboxPolicyDecisionStoreLive, infra),
     // P14: the registry also wires SubmitHumanMessage (human chat-turn).
     Layer.provide(HumanMessageStoreLive, infra),
     Layer.provide(ConversationResponseJobStoreLive, infra),
