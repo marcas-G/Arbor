@@ -7,7 +7,7 @@ import {
   type PermissionSubject,
   type Principal,
   parse,
-  type SandboxPolicyGrantIssuerConfigSnapshotV1,
+  type SandboxPolicyAuthoritySnapshotV2,
 } from "@arbor/domain";
 import type {
   ClockService,
@@ -45,7 +45,7 @@ export interface GrantPermissionDependencies {
   readonly grants: PermissionGrantRepositoryService;
   readonly executions?: Pick<ExecutionRepositoryService, "findById">;
   readonly clock?: Pick<ClockService, "now">;
-  readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1;
+  readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyAuthoritySnapshotV2;
 }
 
 export const makeGrantPermissionHandler = (
@@ -109,8 +109,10 @@ export const makeGrantPermissionHandler = (
         }
         const issuerBinding = authority.sandboxPolicyIssuerBinding;
         if (
-          issuerBinding.operatorConfigRevision !== snapshot.config.revision ||
-          issuerBinding.operatorConfigDigest !== snapshot.configDigest ||
+          issuerBinding.operatorConfigRevision !==
+            snapshot.operatorConfigRevision ||
+          issuerBinding.operatorConfigDigest !==
+            snapshot.operatorConfigDigest ||
           issuerBinding.authorityBundleRevision !==
             snapshot.authorityBundleRevision ||
           issuerBinding.authorityBundleDigest !==

@@ -43,6 +43,37 @@ type DecisionAuthority = Extract<
   { readonly _tag: "SandboxPolicyDecisionAuthority" }
 >;
 
+export type SandboxPolicyPreparationReasonCode =
+  | "AuthoritySnapshotUnavailable"
+  | "WorkspaceProjectMismatch"
+  | "WorkspaceInactive"
+  | "ExecutionProjectMismatch"
+  | "ExecutionWorkspaceMismatch"
+  | "ExecutionInactive"
+  | "EpisodeMissingOrMismatch"
+  | "AuthorityBundleRevisionMismatch"
+  | "AuthorityBundleDigestMismatch"
+  | "AuthorityOperatorRevisionMismatch"
+  | "AuthorityOperatorDigestMismatch";
+
+export type SandboxPolicyDecisionPreparationQualificationProbe = (event: {
+  readonly stage:
+    | "Capture"
+    | "Authority"
+    | "Selection"
+    | "PrimaryWorktree"
+    | "CompleteBoundary"
+    | "PrimaryWorktreeObservation"
+    | "BoundaryMaterialization"
+    | "Limits"
+    | "CurrentPreconditions";
+  readonly result: "Pass" | "Failure";
+  readonly errorTag?: string;
+  readonly repository?: string;
+  readonly operation?: string;
+  readonly reasonCode?: SandboxPolicyPreparationReasonCode;
+}) => Promise<void>;
+
 export interface SandboxPolicyDecisionPreparationDependencies {
   readonly transaction: TransactionPortService;
   readonly workspaces: Pick<WorkspaceRepositoryService, "findById">;
@@ -61,6 +92,9 @@ export interface SandboxPolicyDecisionPreparationDependencies {
   readonly worktrees: Pick<WorktreeStoreService, "findByWorkspace">;
   readonly environmentResolver: Pick<EnvironmentResolverService, "observe">;
   readonly authoritySnapshot: SandboxAuthorityBundleSnapshotV2 | undefined;
+  /** Process-local qualification observer. It is absent in production and
+   * never participates in a decision, persistence, or wire contract. */
+  readonly qualificationProbe?: SandboxPolicyDecisionPreparationQualificationProbe;
 }
 
 interface CapturedInputs {
@@ -306,74 +340,178 @@ export const makeSandboxPolicyDecisionPreparation = (
   dependencies: SandboxPolicyDecisionPreparationDependencies,
 ): DecideSandboxPolicyPreparation => {
   const preparedByPayload = new WeakMap<object, PreparedInputs>();
+  const probe = (
+    stage: Parameters<SandboxPolicyDecisionPreparationQualificationProbe>[0]["stage"],
+    result: "Pass" | "Failure",
+    error?: unknown,
+    reasonCode?: SandboxPolicyPreparationReasonCode,
+  ): Effect.Effect<void> =>
+    dependencies.qualificationProbe === undefined
+      ? Effect.void
+      : Effect.promise(async () => {
+          const record =
+            typeof error === "object" && error !== null
+              ? (error as Record<string, unknown>)
+              : undefined;
+          const nested =
+            typeof record?.cause === "object" && record.cause !== null
+              ? (record.cause as Record<string, unknown>)
+              : undefined;
+          const safeIdentifier = (value: unknown): string | undefined =>
+            typeof value === "string" &&
+            /^[A-Za-z][A-Za-z0-9_.:-]{0,95}$/u.test(value)
+              ? value
+              : undefined;
+          const errorTag =
+            safeIdentifier(record?._tag) ?? safeIdentifier(nested?._tag);
+          const repository =
+            safeIdentifier(record?.repository) ??
+            safeIdentifier(nested?.repository);
+          const operation =
+            safeIdentifier(record?.operation) ??
+            safeIdentifier(nested?.operation);
+          try {
+            await dependencies.qualificationProbe?.({
+              stage,
+              result,
+              ...(errorTag === undefined ? {} : { errorTag }),
+              ...(repository === undefined ? {} : { repository }),
+              ...(operation === undefined ? {} : { operation }),
+              ...(reasonCode === undefined ? {} : { reasonCode }),
+            });
+          } catch {
+            // Qualification observers never change policy preparation.
+          }
+        });
 
   return {
     prepare: (payload, authority: DecisionAuthority) =>
       Effect.gen(function* () {
-        const captured = yield* capture(dependencies, payload);
+        const captured = yield* capture(dependencies, payload).pipe(
+          Effect.tapError((error) => probe("Capture", "Failure", error)),
+          Effect.tap(() => probe("Capture", "Pass")),
+        );
         const workspace = captured.workspace;
         const execution = captured.execution;
         const authoritySnapshot = dependencies.authoritySnapshot;
         const bundle = authoritySnapshot?.bundle;
         const episode = executionEpisode(execution);
-        if (
-          bundle === undefined ||
-          authoritySnapshot === undefined ||
-          workspace.projectId !== payload.projectId ||
-          workspace.lifecycle !== "Active" ||
-          execution.projectId !== payload.projectId ||
-          execution.workspaceId !== payload.workspaceId ||
-          execution.state.status !== "Active" ||
-          episode === undefined ||
-          encodeExecutionEpisodeBinding(episode) !==
-            encodeExecutionEpisodeBinding(payload.episodeBinding) ||
-          captured.episodeRevision !== payload.expectedEpisodeRevision ||
-          authority.authorityBundleRevision !== bundle.bundleRevision ||
-          authority.authorityBundleDigest !== authoritySnapshot.bundleDigest ||
-          authority.operatorConfigRevision !== bundle.operatorConfigRevision ||
-          authority.operatorConfigDigest !== bundle.operatorConfigDigest ||
-          payload.expectedAuthorityBundleRevision !== bundle.bundleRevision ||
-          payload.expectedAuthorityBundleDigest !==
-            authoritySnapshot.bundleDigest ||
-          payload.expectedOperatorConfigRevision !==
-            bundle.operatorConfigRevision ||
-          payload.expectedOperatorConfigDigest !== bundle.operatorConfigDigest
-        )
+        const authorityFailureReason:
+          | SandboxPolicyPreparationReasonCode
+          | undefined =
+          bundle === undefined || authoritySnapshot === undefined
+            ? "AuthoritySnapshotUnavailable"
+            : workspace.projectId !== payload.projectId
+              ? "WorkspaceProjectMismatch"
+              : workspace.lifecycle !== "Active"
+                ? "WorkspaceInactive"
+                : execution.projectId !== payload.projectId
+                  ? "ExecutionProjectMismatch"
+                  : execution.workspaceId !== payload.workspaceId
+                    ? "ExecutionWorkspaceMismatch"
+                    : execution.state.status !== "Active"
+                      ? "ExecutionInactive"
+                      : episode === undefined ||
+                          encodeExecutionEpisodeBinding(episode) !==
+                            encodeExecutionEpisodeBinding(
+                              payload.episodeBinding,
+                            )
+                        ? "EpisodeMissingOrMismatch"
+                        : authority.authorityBundleRevision !==
+                            bundle.bundleRevision
+                          ? "AuthorityBundleRevisionMismatch"
+                          : authority.authorityBundleDigest !==
+                              authoritySnapshot.bundleDigest
+                            ? "AuthorityBundleDigestMismatch"
+                            : authority.operatorConfigRevision !==
+                                bundle.operatorConfigRevision
+                              ? "AuthorityOperatorRevisionMismatch"
+                              : authority.operatorConfigDigest !==
+                                  bundle.operatorConfigDigest
+                                ? "AuthorityOperatorDigestMismatch"
+                                : undefined;
+        if (authorityFailureReason !== undefined) {
+          yield* probe(
+            "Authority",
+            "Failure",
+            operationalFailure(
+              "sandbox authority or active Execution is stale",
+            ),
+            authorityFailureReason,
+          );
           return yield* Effect.fail(
             operationalFailure(
               "sandbox authority or active Execution is stale",
             ),
           );
+        }
+        if (bundle === undefined || authoritySnapshot === undefined)
+          return yield* Effect.fail(
+            operationalFailure("sandbox authority snapshot is unavailable"),
+          );
+        yield* probe("Authority", "Pass");
 
         const selection = decodeSandboxNetworkPolicySelectionV1(
           payload.networkPolicy,
         );
-        if (selection === undefined)
+        if (selection === undefined) {
+          yield* probe(
+            "Selection",
+            "Failure",
+            operationalFailure("network policy is invalid"),
+          );
           return yield* Effect.fail(
             operationalFailure("network policy is invalid"),
           );
-        if (selection.kind !== "TrustedLocalUnconfinedV1")
+        }
+        if (selection.kind !== "TrustedLocalUnconfinedV1") {
+          yield* probe(
+            "Selection",
+            "Failure",
+            operationalFailure(
+              "no qualified Supported OS provider is available; no fallback is permitted",
+            ),
+          );
           return yield* Effect.fail(
             operationalFailure(
               "no qualified Supported OS provider is available; no fallback is permitted",
             ),
           );
+        }
         if (
           payload.profile !== "FullAccess" ||
           payload.providerId !== "TrustedLocal"
-        )
+        ) {
+          yield* probe(
+            "Selection",
+            "Failure",
+            operationalFailure(
+              "TrustedLocal requires the exact FullAccess selection",
+            ),
+          );
           return yield* Effect.fail(
             operationalFailure(
               "TrustedLocal requires the exact FullAccess selection",
             ),
           );
+        }
+        yield* probe("Selection", "Pass");
         const primaryWorktree = exactActiveWorktree(captured.worktrees);
-        if (primaryWorktree === undefined)
+        if (primaryWorktree === undefined) {
+          yield* probe(
+            "PrimaryWorktree",
+            "Failure",
+            operationalFailure(
+              "exactly one active managed P11 Worktree is required",
+            ),
+          );
           return yield* Effect.fail(
             operationalFailure(
               "exactly one active managed P11 Worktree is required",
             ),
           );
+        }
+        yield* probe("PrimaryWorktree", "Pass");
         const resolved = yield* dependencies.environmentResolver
           .observe(workspace.projectId, workspace.resourceBoundary.addresses)
           .pipe(
@@ -383,13 +521,25 @@ export const makeSandboxPolicyDecisionPreparation = (
                   errorMessage(cause),
               ),
             ),
+            Effect.tapError((error) =>
+              probe("CompleteBoundary", "Failure", error),
+            ),
+            Effect.tap(() => probe("CompleteBoundary", "Pass")),
           );
-        if (!resolvedObservationIsConsistent(resolved))
+        if (!resolvedObservationIsConsistent(resolved)) {
+          yield* probe(
+            "CompleteBoundary",
+            "Failure",
+            operationalFailure(
+              "P11 observation entries and normalized region set differ",
+            ),
+          );
           return yield* Effect.fail(
             operationalFailure(
               "P11 observation entries and normalized region set differ",
             ),
           );
+        }
         const primary = yield* dependencies.environmentResolver
           .observe(workspace.projectId, [primaryWorktree.address])
           .pipe(
@@ -399,19 +549,39 @@ export const makeSandboxPolicyDecisionPreparation = (
                   errorMessage(cause),
               ),
             ),
+            Effect.tapError((error) =>
+              probe("PrimaryWorktreeObservation", "Failure", error),
+            ),
+            Effect.tap(() => probe("PrimaryWorktreeObservation", "Pass")),
           );
-        if (primary.entries.length !== 1 || primary.entries[0] === undefined)
+        if (primary.entries.length !== 1 || primary.entries[0] === undefined) {
+          yield* probe(
+            "PrimaryWorktreeObservation",
+            "Failure",
+            operationalFailure(
+              "primary managed Worktree did not resolve exactly once",
+            ),
+          );
           return yield* Effect.fail(
             operationalFailure(
               "primary managed Worktree did not resolve exactly once",
             ),
           );
-        if (!resolvedObservationIsConsistent(primary))
+        }
+        if (!resolvedObservationIsConsistent(primary)) {
+          yield* probe(
+            "PrimaryWorktreeObservation",
+            "Failure",
+            operationalFailure(
+              "primary P11 observation entries and normalized set differ",
+            ),
+          );
           return yield* Effect.fail(
             operationalFailure(
               "primary P11 observation entries and normalized set differ",
             ),
           );
+        }
         const primaryRegion = primary.entries[0].resolved;
         const boundary = produceSandboxBoundaryV1(
           {
@@ -428,12 +598,32 @@ export const makeSandboxPolicyDecisionPreparation = (
           sha256Hex,
         );
         const limits = limitsForProfile(authoritySnapshot, "FullAccess");
-        if (boundary === undefined || limits === undefined)
+        if (boundary === undefined) {
+          yield* probe(
+            "BoundaryMaterialization",
+            "Failure",
+            operationalFailure("P11 boundary materialization failed"),
+          );
           return yield* Effect.fail(
             operationalFailure(
               "P11 boundary or operator policy materialization failed",
             ),
           );
+        }
+        yield* probe("BoundaryMaterialization", "Pass");
+        if (limits === undefined) {
+          yield* probe(
+            "Limits",
+            "Failure",
+            operationalFailure("operator profile limits are missing"),
+          );
+          return yield* Effect.fail(
+            operationalFailure(
+              "P11 boundary or operator policy materialization failed",
+            ),
+          );
+        }
+        yield* probe("Limits", "Pass");
         const sandboxEnvironmentBasisDigest = sandboxEnvironmentBasisDigestOfV1(
           {
             version: 1,
@@ -493,6 +683,9 @@ export const makeSandboxPolicyDecisionPreparation = (
 
     currentPreconditions: (payload) =>
       readCurrentSourceRows(dependencies, payload).pipe(
+        Effect.tapError((error) =>
+          probe("CurrentPreconditions", "Failure", error),
+        ),
         Effect.map((rows) => {
           const captured = capturedFromRows(rows);
           const prepared = preparedByPayload.get(payload);
@@ -558,6 +751,7 @@ export const makeSandboxPolicyDecisionPreparation = (
             dependencies.authoritySnapshot,
           );
         }),
+        Effect.tap(() => probe("CurrentPreconditions", "Pass")),
       ),
   };
 };

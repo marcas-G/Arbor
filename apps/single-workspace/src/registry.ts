@@ -30,7 +30,7 @@ import {
 } from "@arbor/application";
 import type {
   ProjectId,
-  SandboxPolicyGrantIssuerConfigSnapshotV1,
+  SandboxPolicyAuthoritySnapshotV2,
 } from "@arbor/domain";
 import { makeP2CommandHandlers } from "@arbor/execution-runtime";
 import { repositoryFailure } from "@arbor/persistence-sqlite";
@@ -110,7 +110,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
     authenticatedHumans: [],
     directParentOf: [],
   },
-  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
+  sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyAuthoritySnapshotV2,
   sandboxPolicyDecisionPreparation?: DecideSandboxPolicyPreparation,
 ): Layer.Layer<
   CommandHandlerRegistry,

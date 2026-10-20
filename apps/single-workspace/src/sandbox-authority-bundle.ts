@@ -7,7 +7,7 @@ import type {
   SandboxAuthorityBundleV2,
   SandboxAuthorityHighWaterV1,
   SandboxAuthorityLoadErrorV1,
-  SandboxPolicyGrantIssuerConfigSnapshotV1,
+  SandboxPolicyAuthoritySnapshotV2,
   SandboxProviderQualificationEntryV1,
   SandboxProviderQualificationRegistryV1,
 } from "@arbor/domain";
@@ -439,11 +439,13 @@ export const SandboxAuthoritySnapshotLive = (
 
 export const sandboxIssuerSnapshotOf = (
   result: SandboxAuthoritySnapshotV2LoadResult,
-): SandboxPolicyGrantIssuerConfigSnapshotV1 | undefined =>
+): SandboxPolicyAuthoritySnapshotV2 | undefined =>
   result._tag === "Available"
     ? {
         config: result.snapshot.bundle.issuerConfig,
         configDigest: result.snapshot.bundle.issuerConfigDigest,
+        operatorConfigRevision: result.snapshot.bundle.operatorConfigRevision,
+        operatorConfigDigest: result.snapshot.bundle.operatorConfigDigest,
         authorityBundleRevision: result.snapshot.bundle.bundleRevision,
         authorityBundleDigest: result.snapshot.bundleDigest,
         providerRegistryRevision:

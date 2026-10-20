@@ -277,7 +277,10 @@ import {
   sandboxIssuerSnapshotOf,
 } from "./sandbox-authority-bundle.js";
 import { SandboxPolicyCandidateBoundaryReadPortLive } from "./sandbox-policy-candidate-boundary-read-port.js";
-import { makeSandboxPolicyDecisionPreparation } from "./sandbox-policy-decision-preparation.js";
+import {
+  makeSandboxPolicyDecisionPreparation,
+  type SandboxPolicyDecisionPreparationQualificationProbe,
+} from "./sandbox-policy-decision-preparation.js";
 import { ToolAuthorityResolverLive } from "./tool-authority-resolver.js";
 import {
   type AuthenticatorService,
@@ -443,6 +446,8 @@ export interface SingleWorkspaceConfig {
   readonly executableToolQualificationProbe?: ExecutableToolHandlerQualificationProbe;
   /** Test-only P39 claim branch trace; ordinary startup leaves absent. */
   readonly p39RecoveryBindingQualificationProbe?: P39RecoveryBindingQualificationProbe;
+  /** Test-only process-local observation of P1 sandbox preparation stages. */
+  readonly sandboxPolicyDecisionPreparationQualificationProbe?: SandboxPolicyDecisionPreparationQualificationProbe;
   readonly providerQualificationProbe?: ProviderRuntimeConfig["qualificationProbe"];
 }
 
@@ -933,6 +938,13 @@ export const buildSingleWorkspaceLayer = (
               authoritySnapshot._tag === "Available"
                 ? authoritySnapshot.snapshot
                 : undefined,
+            ...(config.sandboxPolicyDecisionPreparationQualificationProbe ===
+            undefined
+              ? {}
+              : {
+                  qualificationProbe:
+                    config.sandboxPolicyDecisionPreparationQualificationProbe,
+                }),
           });
         return makeSingleWorkspaceCommandHandlerRegistryLive(
           governance,

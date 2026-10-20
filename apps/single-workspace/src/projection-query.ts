@@ -2,7 +2,7 @@ import type { ConversationResponseStatus } from "@arbor/api-contracts";
 import type {
   DomainEvent,
   ExecutionSettlement,
-  SandboxPolicyGrantIssuerConfigSnapshotV1,
+  SandboxPolicyAuthoritySnapshotV2,
   Verification,
   Workspace,
 } from "@arbor/domain";
@@ -251,7 +251,7 @@ export const approvedToolHashFromManifest = (input: {
 
 const projectionQueryService = (
   catalogProjectId?: ProjectId,
-  sandboxAuthoritySnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
+  sandboxAuthoritySnapshot?: SandboxPolicyAuthoritySnapshotV2,
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
@@ -1051,8 +1051,10 @@ const projectionQueryService = (
                         authoritySnapshot.authorityBundleRevision,
                       authorityBundleDigest:
                         authoritySnapshot.authorityBundleDigest,
-                      operatorConfigRevision: authoritySnapshot.config.revision,
-                      operatorConfigDigest: authoritySnapshot.configDigest,
+                      operatorConfigRevision:
+                        authoritySnapshot.operatorConfigRevision,
+                      operatorConfigDigest:
+                        authoritySnapshot.operatorConfigDigest,
                       ...(snapshot.kind === "OsEnforced"
                         ? {
                             providerRegistryRevision:
@@ -1072,9 +1074,9 @@ const projectionQueryService = (
                 snapshot.authorityBundleDigest ===
                   authoritySnapshot.authorityBundleDigest &&
                 snapshot.operatorConfigRevision ===
-                  authoritySnapshot.config.revision &&
+                  authoritySnapshot.operatorConfigRevision &&
                 snapshot.operatorConfigDigest ===
-                  authoritySnapshot.configDigest &&
+                  authoritySnapshot.operatorConfigDigest &&
                 (snapshot.kind !== "OsEnforced" ||
                   (snapshot.providerRegistryRevision ===
                     authoritySnapshot.providerRegistryRevision &&
@@ -1642,7 +1644,7 @@ const projectionQueryService = (
 
 export const ProjectionQueryPortLive = (
   catalogProjectId?: ProjectId,
-  sandboxAuthoritySnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1,
+  sandboxAuthoritySnapshot?: SandboxPolicyAuthoritySnapshotV2,
 ): Layer.Layer<ProjectionQueryPort, never, ProjectionQueryWiringServices> =>
   Layer.effect(
     ProjectionQueryPort,

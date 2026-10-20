@@ -11,7 +11,7 @@ import type {
   Principal,
   ProjectId,
   ProjectPolicy,
-  SandboxPolicyGrantIssuerConfigSnapshotV1,
+  SandboxPolicyAuthoritySnapshotV2,
   SandboxPolicyGrantIssuerProvenanceV1,
   SemanticRequestFingerprint,
   VerificationId,
@@ -136,7 +136,7 @@ export interface AuthorityDecisionInput {
   readonly policy: ProjectPolicy | WorkspacePolicy;
   /** P5 startup-only snapshot from the OS-protected trusted host source.
    * Missing means sandbox issuer authority is unavailable. */
-  readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyGrantIssuerConfigSnapshotV1;
+  readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyAuthoritySnapshotV2;
   /** Composition/Resolver trusted instant. Sandbox-specific CAPA checks never
    * use caller-controlled CommandEnvelope.issuedAt. */
   readonly sandboxPolicyAuthorityNow?: string;
@@ -947,6 +947,9 @@ const governanceCommandFact = (
           !Number.isSafeInteger(snapshot.providerRegistryRevision) ||
           snapshot.providerRegistryRevision < 1 ||
           !/^[0-9a-f]{64}$/u.test(snapshot.providerRegistryDigest) ||
+          !Number.isSafeInteger(snapshot.operatorConfigRevision) ||
+          snapshot.operatorConfigRevision < 1 ||
+          !/^[0-9a-f]{64}$/u.test(snapshot.operatorConfigDigest) ||
           !snapshot.config.issuers.includes(principal) ||
           execution === undefined ||
           execution.executionId !== targetExecutionId ||
@@ -964,8 +967,8 @@ const governanceCommandFact = (
           permissionGrantId,
           sandboxPolicyIssuerBinding: {
             executionId: execution.executionId,
-            operatorConfigRevision: snapshot.config.revision,
-            operatorConfigDigest: snapshot.configDigest,
+            operatorConfigRevision: snapshot.operatorConfigRevision,
+            operatorConfigDigest: snapshot.operatorConfigDigest,
             authorityBundleRevision: snapshot.authorityBundleRevision,
             authorityBundleDigest: snapshot.authorityBundleDigest,
             providerRegistryRevision: snapshot.providerRegistryRevision,
@@ -993,10 +996,6 @@ const governanceCommandFact = (
       const targetWorkspaceId = payloadString(payload, "workspaceId");
       const payloadEpisode = decodeExecutionEpisodeBinding(
         payloadRecord(payload).episodeBinding,
-      );
-      const expectedEpisodeRevision = payloadNumber(
-        payload,
-        "expectedEpisodeRevision",
       );
       const episode = input.canonicalFacts.execution;
       const snapshot = input.sandboxPolicyGrantIssuerConfigSnapshot;
@@ -1033,7 +1032,6 @@ const governanceCommandFact = (
         episode.episodeRevision === undefined ||
         episode.episodeRevision < 0 ||
         episode.episodeBinding === undefined ||
-        expectedEpisodeRevision !== episode.episodeRevision ||
         payloadEpisode === undefined ||
         encodeExecutionEpisodeBinding(payloadEpisode) !==
           encodeExecutionEpisodeBinding(episode.episodeBinding) ||
@@ -1048,8 +1046,8 @@ const governanceCommandFact = (
         grant.issuer !== provenance.issuerPrincipal ||
         provenance.permissionGrantId !== grant.permissionGrantId ||
         !snapshot.config.issuers.includes(provenance.issuerPrincipal) ||
-        provenance.operatorConfigRevision !== snapshot.config.revision ||
-        provenance.operatorConfigDigest !== snapshot.configDigest ||
+        provenance.operatorConfigRevision !== snapshot.operatorConfigRevision ||
+        provenance.operatorConfigDigest !== snapshot.operatorConfigDigest ||
         grant.issuer === principal
       ) {
         return Effect.fail(denyCommand(input, "DecideSandboxPolicy", "Denied"));
@@ -1070,8 +1068,8 @@ const governanceCommandFact = (
         authorityBundleDigest: snapshot.authorityBundleDigest,
         providerRegistryRevision: snapshot.providerRegistryRevision,
         providerRegistryDigest: snapshot.providerRegistryDigest,
-        operatorConfigRevision: snapshot.config.revision,
-        operatorConfigDigest: snapshot.configDigest,
+        operatorConfigRevision: snapshot.operatorConfigRevision,
+        operatorConfigDigest: snapshot.operatorConfigDigest,
       });
     }
     case "RevokePermission": {
