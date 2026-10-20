@@ -30,8 +30,8 @@ import {
 } from "../packages/ports/src/index.js";
 import { deriveProjectAttention } from "../packages/projection-runtime/src/attention-loader.js";
 import {
-  createSchema48TestDatabaseFactory,
-  type Schema48TestDatabase,
+  type CurrentSchemaTestDatabase,
+  createCurrentSchemaTestDatabaseFactory,
 } from "./support/schema44-database.js";
 
 const projectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789b1";
@@ -47,13 +47,13 @@ const incarnationId = "incarnation:p40-p9-p10";
 const consumerId = "p10:attention:p40-test";
 const now = "2026-10-12T00:00:01.000Z";
 const failureCode = "Missing" as const;
-const databases: Schema48TestDatabase[] = [];
+const databases: CurrentSchemaTestDatabase[] = [];
 let schema48Factory:
-  | Awaited<ReturnType<typeof createSchema48TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 
 beforeAll(async () => {
-  schema48Factory = await createSchema48TestDatabaseFactory({
+  schema48Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: ".p40-p9-p10-production-recovery-schema48-",
   });
 }, 300_000);

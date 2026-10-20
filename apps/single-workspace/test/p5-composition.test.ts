@@ -10,7 +10,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createSchema50TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
@@ -18,7 +18,7 @@ import { buildSingleWorkspaceLayer } from "../src/index.js";
 let schema44Factory: Schema44TestDatabaseFactory | undefined;
 
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: ".p5-composition-template-",
   });
 }, 120_000);

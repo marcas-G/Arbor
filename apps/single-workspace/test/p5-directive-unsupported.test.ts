@@ -20,7 +20,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
-  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
@@ -29,7 +29,7 @@ let schema44Factory: Schema44TestDatabaseFactory | undefined;
 const schema44Cleanups: Array<() => void> = [];
 
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: ".p5-directive-unsupported-template-",
   });
 }, 120_000);

@@ -28,7 +28,7 @@ import {
   type SecretRef,
 } from "../../../packages/ports/dist/provider.js";
 import {
-  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   type Schema44TestDatabase,
   type Schema44TestDatabaseFactory,
 } from "../../support/schema44-database.js";
@@ -37,7 +37,7 @@ const publicConversationDatabases = new Map<string, Schema44TestDatabase>();
 let publicConversationFactory: Schema44TestDatabaseFactory;
 
 beforeAll(async () => {
-  publicConversationFactory = await createSchema44TestDatabaseFactory({
+  publicConversationFactory = await createCurrentSchemaTestDatabaseFactory({
     prefix: "public-conversation-template-",
   });
 }, 120_000);

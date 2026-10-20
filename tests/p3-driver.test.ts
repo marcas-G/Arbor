@@ -76,7 +76,7 @@ import {
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
-import { createSchema48TestDatabase } from "./support/schema44-database.js";
+import { createCurrentSchemaTestDatabase } from "./support/schema44-database.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -621,7 +621,7 @@ const seedCurrentConversation = (input: {
 const withCurrentSchema48 = async <A>(
   body: (databaseFilename: string) => Promise<A>,
 ): Promise<A> => {
-  const fixture = await createSchema48TestDatabase();
+  const fixture = await createCurrentSchemaTestDatabase();
   try {
     return await body(fixture.databaseFilename);
   } finally {

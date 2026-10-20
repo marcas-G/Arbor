@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,8 +16,12 @@ import {
   type CommandSubmissionContext,
   ContextEpochNumber,
   ExecutionId,
+  encodeSandboxAuthorityBundleV2,
+  encodeSandboxAuthorityHighWaterV2,
+  encodeSandboxOperatorPolicyConfigV1,
   makeProjectPolicy,
   makeWorkspacePolicy,
+  PermissionGrantId,
   Principal,
   ProjectId,
   parse,
@@ -24,6 +29,7 @@ import {
   ResponsibilityRevision,
   Revision,
   responsibilityBound,
+  type SandboxPolicyCandidateReadV1,
   SessionId,
   WorkId,
   WorkRevision,
@@ -32,6 +38,8 @@ import {
 import { runExecution } from "@arbor/execution-runtime";
 import {
   ExecutionScheduler,
+  PermissionGrantRepository,
+  ProjectionQueryPort,
   ResourceOwnershipRepository,
   TransactionPort,
   WorkWaitStore,
@@ -41,7 +49,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
-  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import {
@@ -69,12 +77,97 @@ const context: CommandSubmissionContext = {
   principal,
   causationRef: "c",
 };
+const sandboxDecisionPrincipal = parse(Principal)("user:sandbox-decider");
+const sandboxDecisionActor = parse(Actor)(String(sandboxDecisionPrincipal));
+const sandboxGrantId = parse(PermissionGrantId)(
+  "pgr_018f2b3c-4d5e-7abc-8def-0123456789a1",
+);
+const shellGrantId = parse(PermissionGrantId)(
+  "pgr_018f2b3c-4d5e-7abc-8def-0123456789a2",
+);
+
+const sha256 = (value: string) =>
+  createHash("sha256").update(value, "utf8").digest("hex");
+
+const sandboxAuthorityFixture = (() => {
+  const issuerConfig = {
+    version: 1 as const,
+    revision: 1,
+    issuers: [principal],
+  };
+  const issuerConfigJson = JSON.stringify(issuerConfig);
+  const operatorConfig = {
+    version: 1 as const,
+    revision: 1,
+    environmentAllowlist: ["PATH"],
+    limitsByProfile: (
+      ["ReadOnly", "WorkspaceWrite", "FullAccess"] as const
+    ).map((profile) => ({
+      profile,
+      limits: {
+        wallTimeMs: 60_000,
+        stdoutBytes: 8192,
+        stderrBytes: 8192,
+        processCount: 8,
+        memoryBytes: 134_217_728,
+        cpuTimeMs: 30_000,
+      },
+    })),
+    trustedLocalRuntimeVersion: "builtin-v1" as const,
+  };
+  const operatorConfigJson =
+    encodeSandboxOperatorPolicyConfigV1(operatorConfig);
+  const providerRegistry = { version: 1 as const, revision: 1, entries: [] };
+  const providerRegistryJson = JSON.stringify(providerRegistry);
+  const bundle = {
+    version: 2 as const,
+    sourceIdentity: "host:p5-slice-current-schema",
+    bundleRevision: 1,
+    issuerConfigRevision: issuerConfig.revision,
+    issuerConfigDigest: sha256(issuerConfigJson),
+    issuerConfig,
+    operatorConfigRevision: operatorConfig.revision,
+    operatorConfigDigest: sha256(operatorConfigJson),
+    operatorConfig,
+    providerRegistryRevision: providerRegistry.revision,
+    providerRegistryDigest: sha256(providerRegistryJson),
+    providerRegistry,
+  };
+  const canonicalJson = encodeSandboxAuthorityBundleV2(bundle);
+  const bundleDigest = sha256(canonicalJson);
+  const highWaterJson = encodeSandboxAuthorityHighWaterV2({
+    version: 2,
+    sourceIdentity: bundle.sourceIdentity,
+    bundleRevision: bundle.bundleRevision,
+    bundleDigest,
+    issuerConfigRevision: bundle.issuerConfigRevision,
+    issuerConfigDigest: bundle.issuerConfigDigest,
+    operatorConfigRevision: bundle.operatorConfigRevision,
+    operatorConfigDigest: bundle.operatorConfigDigest,
+    providerRegistryRevision: bundle.providerRegistryRevision,
+    providerRegistryDigest: bundle.providerRegistryDigest,
+  });
+  return {
+    bundle,
+    bundleDigest,
+    source: {
+      readVerifiedSandboxAuthorityBundle: () =>
+        Effect.succeed({
+          sourceIdentity: bundle.sourceIdentity,
+          canonicalJson,
+        }),
+      readSandboxAuthorityHighWater: () => Effect.succeed(highWaterJson),
+      commitSandboxAuthorityHighWater: () => Effect.succeed(false),
+      appendSandboxAuthorityAudit: () => Effect.succeed(true),
+    },
+  };
+})();
 let schema44Factory: Schema44TestDatabaseFactory | undefined;
 const schema44Cleanups: Array<() => void> = [];
 const scratchDirectories: string[] = [];
 
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: ".p5-slice-acceptance-template-",
   });
 }, 120_000);
@@ -250,6 +343,7 @@ describe("I0 executable/control vertical slice", () => {
       databaseFile: fixture.databaseFilename,
       providerTurns: turns,
       projectResourceProfiles,
+      trustedHostConfigurationSource: sandboxAuthorityFixture.source,
     });
 
     const result = await Effect.runPromise(
@@ -274,6 +368,77 @@ describe("I0 executable/control vertical slice", () => {
             context,
             p1Authority("AssignWorkAuthority", workPayload, commandId("2")),
           );
+          const shellGrantPayload = {
+            permissionGrantId: shellGrantId,
+            issuer: principal,
+            subject: { _tag: "WorkspaceAgent" as const, workspaceId },
+            capability: "shell:exec",
+            target: workspaceId,
+            expiresAt: "2099-12-31T00:00:00.000Z",
+          };
+          const shellGrantCommandId = commandId("5");
+          const shellGrantReceipt = yield* gateway.execute(
+            {
+              commandType: "GrantPermission",
+              commandId: shellGrantCommandId,
+              projectId,
+              actor,
+              issuedAt: "2026-10-20T00:00:00.000Z",
+              payload: shellGrantPayload,
+            },
+            { _tag: "External", principal },
+            {
+              _tag: "GrantPermissionAuthority",
+              principal,
+              commandId: shellGrantCommandId,
+              semanticRequestFingerprint: semanticRequestFingerprint({
+                commandType: "GrantPermission",
+                projectId,
+                actor,
+                schemaVersion: "1",
+                payload: shellGrantPayload,
+              }),
+              projectId,
+              permissionGrantId: shellGrantId,
+            },
+          );
+          if (shellGrantReceipt.resolution._tag !== "Committed") {
+            return yield* Effect.die({
+              _tag: "P5ShellGrantFailed",
+              receipt: shellGrantReceipt,
+            });
+          }
+
+          // Current P11/V6 sandbox policy candidates bind an exact managed
+          // Git worktree, not the historical FileTree-only P5 fixture. Keep
+          // the P1 creation path above, then model the host-owned activation
+          // facts that exist before an executable Work action is admitted.
+          const managedWorktreeRoot = realpathSync(process.cwd());
+          yield* sql.unsafe(
+            `UPDATE workspaces
+                SET responsibility_revision = 1,
+                    resource_boundary = ?,
+                    resource_boundary_revision = 1,
+                    revision = revision + 1,
+                    updated_at = 't'
+              WHERE workspace_id = ? AND project_id = ? AND lifecycle = 'Active'`,
+            [
+              JSON.stringify({
+                basisResponsibilityRevision: 1,
+                addresses: [{ _tag: "GitWorktree", path: managedWorktreeRoot }],
+              }),
+              workspaceId,
+              projectId,
+            ],
+          );
+          yield* sql.unsafe(
+            `INSERT INTO worktrees (
+               worktree_id, project_id, workspace_id, path,
+               repository_ref, branch, state, created_at, retired_at
+             ) VALUES ('wt_p5_slice_current', ?, ?, ?, NULL, NULL,
+                       'Active', 't', NULL)`,
+            [projectId, workspaceId, managedWorktreeRoot],
+          );
 
           // Story precondition (out of P1–P4 slice scope): the Workspace already
           // holds the resource-ownership claim for its boundary region. No
@@ -289,13 +454,16 @@ describe("I0 executable/control vertical slice", () => {
                 // P12 `09`: the production resolver emits the frozen object
                 // encoding with an ABSOLUTE normalized path (P1 `04` §3.3);
                 // the claim fixture must match it.
-                normalizedRegion: { kind: "FileTree", path: canonicalRoot },
+                normalizedRegion: {
+                  kind: "GitWorktree",
+                  path: managedWorktreeRoot,
+                },
               },
               sourceAddressSnapshot: {
-                _tag: "FileTree",
-                path: canonicalRoot,
+                _tag: "GitWorktree",
+                path: managedWorktreeRoot,
               },
-              resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+              resourceBoundaryRevision: parse(ResourceBoundaryRevision)(1),
               resolvedAtEnvironmentRevision: "local",
               createdAt: "t",
               releasedAt: null,
@@ -319,6 +487,194 @@ describe("I0 executable/control vertical slice", () => {
             { _tag: "Work", workId },
             principal,
           );
+
+          // The decision capability is a standing, exact grant before P4
+          // captures the action's immutable authority-source revision. The
+          // later human policy choice must not manufacture or widen tool
+          // authority while that action is pending.
+          const grantExpiresAt = "2099-12-31T00:00:00.000Z";
+          const grantPayload = {
+            permissionGrantId: sandboxGrantId,
+            issuer: principal,
+            subject: {
+              _tag: "HumanPrincipal" as const,
+              principal: sandboxDecisionPrincipal,
+            },
+            capability: "DecideSandboxPolicy",
+            target: exe1,
+            expiresAt: grantExpiresAt,
+          };
+          const grantCommandId = commandId("3");
+          const grantFingerprint = semanticRequestFingerprint({
+            commandType: "GrantPermission",
+            projectId,
+            actor,
+            schemaVersion: "1",
+            payload: grantPayload,
+          });
+          const grantReceipt = yield* gateway.execute(
+            envelope("GrantPermission", grantPayload, grantCommandId),
+            { _tag: "External", principal },
+            {
+              _tag: "GrantPermissionAuthority",
+              principal,
+              commandId: grantCommandId,
+              semanticRequestFingerprint: grantFingerprint,
+              projectId,
+              permissionGrantId: sandboxGrantId,
+              sandboxPolicyIssuerBinding: {
+                executionId: exe1,
+                operatorConfigRevision:
+                  sandboxAuthorityFixture.bundle.issuerConfigRevision,
+                operatorConfigDigest:
+                  sandboxAuthorityFixture.bundle.issuerConfigDigest,
+                authorityBundleRevision:
+                  sandboxAuthorityFixture.bundle.bundleRevision,
+                authorityBundleDigest: sandboxAuthorityFixture.bundleDigest,
+                providerRegistryRevision:
+                  sandboxAuthorityFixture.bundle.providerRegistryRevision,
+                providerRegistryDigest:
+                  sandboxAuthorityFixture.bundle.providerRegistryDigest,
+              },
+            },
+          );
+          if (grantReceipt.resolution._tag !== "Committed") {
+            return yield* Effect.die({
+              _tag: "P5SandboxPolicyGrantFailed",
+              receipt: grantReceipt,
+            });
+          }
+
+          const policyInterruption = yield* runExecution(
+            exe1,
+            { _tag: "WorkSelected" },
+            principal,
+          );
+          if (policyInterruption._tag !== "SandboxPolicyRequiredInterruption") {
+            return yield* Effect.die({
+              _tag: "P5ExpectedSandboxPolicyInterruption",
+              actual: policyInterruption._tag,
+            });
+          }
+
+          const projection = yield* ProjectionQueryPort;
+          const detail = yield* projection.query<
+            { readonly workspaceId: WorkspaceId },
+            {
+              readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateReadV1;
+            }
+          >("workspace-detail", { workspaceId });
+          const candidateRead = detail.value.sandboxPolicyCandidateRead;
+          const trustedCandidate = candidateRead?.candidates.find(
+            (candidate) => candidate.kind === "TrustedLocalUnconfinedV1",
+          );
+          if (candidateRead === undefined || trustedCandidate === undefined) {
+            return yield* Effect.die({
+              _tag: "P5SandboxPolicyCandidateMissing",
+              detail: detail.value,
+            });
+          }
+
+          const grants = yield* PermissionGrantRepository;
+          const persistedGrant = yield* tx0.transact(
+            grants.findById(sandboxGrantId),
+          );
+          const persistedProvenance = yield* tx0.transact(
+            grants.findSandboxPolicyGrantIssuerProvenanceByGrantId(
+              sandboxGrantId,
+            ),
+          );
+          if (
+            Option.isNone(persistedGrant) ||
+            Option.isNone(persistedProvenance)
+          ) {
+            return yield* Effect.die({
+              _tag: "P5SandboxPolicyGrantEvidenceMissing",
+            });
+          }
+
+          const policyPayload = {
+            projectId,
+            workspaceId,
+            executionId: exe1,
+            episodeBinding: candidateRead.commonPreconditions.episodeBinding,
+            expectedEpisodeRevision:
+              candidateRead.commonPreconditions.expectedEpisodeRevision,
+            expectedPolicyRevision:
+              candidateRead.commonPreconditions.latestCommittedPolicyRevision,
+            expectedWorkspaceRevision:
+              candidateRead.commonPreconditions.workspaceRevision,
+            expectedResourceBoundaryRevision:
+              candidateRead.commonPreconditions.resourceBoundaryRevision,
+            expectedSandboxHandleBindingDigest:
+              trustedCandidate.sandboxHandleBindingDigest,
+            expectedAuthorityBundleRevision:
+              candidateRead.commonPreconditions.authorityBundleRevision,
+            expectedAuthorityBundleDigest:
+              candidateRead.commonPreconditions.authorityBundleDigest,
+            expectedOperatorConfigRevision:
+              candidateRead.commonPreconditions.operatorConfigRevision,
+            expectedOperatorConfigDigest:
+              candidateRead.commonPreconditions.operatorConfigDigest,
+            profile: "FullAccess" as const,
+            providerId: "TrustedLocal",
+            networkPolicy: {
+              kind: "TrustedLocalUnconfinedV1" as const,
+              version: 1 as const,
+            },
+            decisionExpiresAt: "2099-12-30T00:00:00.000Z",
+          };
+          const policyCommandId = commandId("4");
+          const policyFingerprint = semanticRequestFingerprint({
+            commandType: "DecideSandboxPolicy",
+            projectId,
+            actor: sandboxDecisionActor,
+            schemaVersion: "1",
+            payload: policyPayload,
+          });
+          const policyReceipt = yield* gateway.execute(
+            {
+              commandType: "DecideSandboxPolicy",
+              commandId: policyCommandId,
+              projectId,
+              actor: sandboxDecisionActor,
+              issuedAt: "t",
+              payload: policyPayload,
+            },
+            { _tag: "External", principal: sandboxDecisionPrincipal },
+            {
+              _tag: "SandboxPolicyDecisionAuthority",
+              principal: sandboxDecisionPrincipal,
+              commandId: policyCommandId,
+              semanticRequestFingerprint: policyFingerprint,
+              projectId,
+              workspaceId,
+              executionId: exe1,
+              episodeBinding: candidateRead.commonPreconditions.episodeBinding,
+              episodeRevision:
+                candidateRead.commonPreconditions.expectedEpisodeRevision,
+              permissionGrant: persistedGrant.value,
+              issuerProvenance: persistedProvenance.value,
+              authorityBundleRevision:
+                candidateRead.commonPreconditions.authorityBundleRevision,
+              authorityBundleDigest:
+                candidateRead.commonPreconditions.authorityBundleDigest,
+              providerRegistryRevision:
+                sandboxAuthorityFixture.bundle.providerRegistryRevision,
+              providerRegistryDigest:
+                sandboxAuthorityFixture.bundle.providerRegistryDigest,
+              operatorConfigRevision:
+                candidateRead.commonPreconditions.operatorConfigRevision,
+              operatorConfigDigest:
+                candidateRead.commonPreconditions.operatorConfigDigest,
+            },
+          );
+          if (policyReceipt.resolution._tag !== "Committed") {
+            return yield* Effect.die({
+              _tag: "P5SandboxPolicyDecisionFailed",
+              receipt: policyReceipt,
+            });
+          }
 
           const firstSettlement = yield* runExecution(
             exe1,
@@ -373,6 +729,35 @@ describe("I0 executable/control vertical slice", () => {
                FROM tool_invocations WHERE execution_id = ? ORDER BY invocation_id`,
             [exe1],
           );
+          const sandboxDiagnostic = yield* sql.unsafe<{
+            stop_requested_at: string | null;
+            action_state: string | null;
+            action_disposition: string | null;
+            policy_result_json: string | null;
+            pending_requirement_count: number;
+            unavailable_fact_count: number;
+          }>(
+            `SELECT e.stop_requested_at,
+                    a.state AS action_state,
+                    a.disposition_json AS action_disposition,
+                    (SELECT c.result_json
+                       FROM sandbox_policy_decisions AS d
+                       JOIN commands AS c
+                         ON c.command_id = d.decision_command_id
+                      WHERE d.execution_id = e.execution_id
+                      ORDER BY d.policy_revision DESC LIMIT 1) AS policy_result_json,
+                    (SELECT COUNT(*) FROM tool_invocations
+                      WHERE execution_id = e.execution_id
+                        AND effect_admission_state = 'NotAdmitted'
+                        AND settled_at IS NULL) AS pending_requirement_count,
+                    (SELECT COUNT(*) FROM sandbox_provider_unavailable_facts
+                      WHERE execution_id = e.execution_id) AS unavailable_fact_count
+               FROM executions AS e
+               LEFT JOIN agent_loop_step_actions AS a
+                 ON a.execution_id = e.execution_id AND a.action_index = 0
+              WHERE e.execution_id = ?`,
+            [exe1],
+          );
           const readmissionDiagnostic = {
             firstSettlement: {
               tag: firstSettlement._tag,
@@ -383,6 +768,7 @@ describe("I0 executable/control vertical slice", () => {
             },
             executionSettlement: settlementRows[0] ?? null,
             toolInvocations: toolEvidenceRows,
+            sandbox: sandboxDiagnostic[0] ?? null,
           };
           if (
             firstSettlement._tag !== "Completed" ||

@@ -9,7 +9,7 @@ import {
 import { PermissionGrantRepository, TransactionPort } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
-import { createSchema48TestDatabase } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabase } from "../../../tests/support/schema44-database.js";
 import {
   layer,
   P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
@@ -29,7 +29,7 @@ const grantCommandId = parse(CommandId)(
 
 describe("PermissionGrantRepository sandbox issuer provenance", () => {
   it("round-trips the exact immutable provenance in a disposable schema-50 database", async () => {
-    const fixture = await createSchema48TestDatabase();
+    const fixture = await createCurrentSchemaTestDatabase();
     try {
       const seed = new DatabaseSync(fixture.databaseFilename);
       try {

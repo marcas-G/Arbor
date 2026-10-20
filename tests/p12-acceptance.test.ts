@@ -263,7 +263,7 @@ import {
   ToolRuntimeLive,
 } from "../packages/tool-runtime/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "./support/schema44-database.js";
 
 // P12-013 acceptance: the `14` §1 end-to-end story across contracts `01`–`10`,
 // `12`, `13`. Mechanical evidence only; the per-contract suites carry the
@@ -277,10 +277,10 @@ const readRepoFile = (relative: string): string =>
 const suiteTmp = mkdtempSync(join(tmpdir(), "p12-acceptance-"));
 const schema44Cleanups: Array<() => void> = [];
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: "p12-acceptance-template-",
   });
 }, 120_000);

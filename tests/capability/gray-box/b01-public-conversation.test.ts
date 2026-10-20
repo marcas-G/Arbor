@@ -18,7 +18,7 @@ import {
 } from "../../../packages/domain/src/index.js";
 import type { ModelCatalog } from "../../../packages/model-context/src/index.js";
 import {
-  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   withSchema44TestDatabase,
 } from "../../support/schema44-database.js";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
@@ -54,10 +54,10 @@ const modelCatalog: ModelCatalog = {
 
 const directories: string[] = [];
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: "b01-public-conversation-template-",
   });
 }, 120_000);
