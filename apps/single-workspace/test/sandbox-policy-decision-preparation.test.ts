@@ -4,7 +4,7 @@ import type {
   Execution,
   ResourceAddress,
   ResourceBoundary,
-  SandboxAuthorityBundleSnapshotV2,
+  SandboxAuthorityBundleSnapshotCurrent,
   Workspace,
 } from "@arbor/domain";
 import {
@@ -218,7 +218,7 @@ const fixture = (
     latestPolicyRevision: number;
   }) => void,
   environmentResolver: EnvironmentResolverService = resolver,
-  authoritySnapshotOverride: SandboxAuthorityBundleSnapshotV2 | null = authorityBundleSnapshot,
+  authoritySnapshotOverride: SandboxAuthorityBundleSnapshotCurrent | null = authorityBundleSnapshot,
 ) => {
   const state = {
     workspace,
@@ -294,6 +294,57 @@ const fixture = (
 };
 
 describe("production sandbox decision materializer", () => {
+  it("binds P1 preparation to complete current V3 bundle revision/digest", async () => {
+    const v3 = {
+      ...authorityBundleSnapshot,
+      bundle: {
+        ...authorityBundleSnapshot.bundle,
+        version: 3 as const,
+        bundleRevision: 6,
+        windowsOperatorTrustSetRevision: 1,
+        windowsOperatorTrustSetDigest: "6".repeat(64),
+        windowsOperatorTrustSet: {
+          version: 1 as const,
+          revision: 1,
+          sourceIdentity: "host:test",
+          providerId: "windows-restricted-appcontainer-job" as const,
+          keys: [
+            {
+              keyId: "operator-2026-a",
+              algorithm: "Ed25519" as const,
+              publicKeySpkiDerBase64:
+                "MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+              publicKeySpkiSha256:
+                "06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9",
+              validFrom: "2026-10-20T00:00:00.000Z",
+              validUntil: "2027-10-20T00:00:00.000Z",
+              status: "Active" as const,
+            },
+          ],
+          revokedKeyIds: [],
+        },
+      },
+      bundleDigest: "7".repeat(64),
+    } satisfies SandboxAuthorityBundleSnapshotCurrent;
+    const { preparation } = fixture(undefined, resolver, v3);
+    const v3Payload = payload({
+      expectedAuthorityBundleRevision: 6,
+      expectedAuthorityBundleDigest: "7".repeat(64),
+    });
+    const v3Authority = {
+      ...(authority as object),
+      authorityBundleRevision: 6,
+      authorityBundleDigest: "7".repeat(64),
+    } as never;
+    const prepared = await Effect.runPromise(
+      preparation.prepare(v3Payload, v3Authority),
+    );
+    expect(prepared).toMatchObject({
+      authorityBundleRevision: 6,
+      authorityBundleDigest: "7".repeat(64),
+    });
+  });
+
   it("materializes TrustedLocal from one V2 bundle and complete P11 boundary", async () => {
     const { preparation, transaction } = fixture();
     const request = payload();

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   Execution,
-  SandboxAuthorityBundleSnapshotV2,
+  SandboxAuthorityBundleSnapshotCurrent,
   SandboxPolicyCurrentHostV1,
   SandboxProviderQualificationEntryV1,
   Workspace,
@@ -140,7 +140,7 @@ const authority = {
   },
   bundleDigest: "1".repeat(64),
   canonicalJson: "{}",
-} as SandboxAuthorityBundleSnapshotV2;
+} as SandboxAuthorityBundleSnapshotCurrent;
 const read = (
   claims: SandboxPolicyCandidateBoundarySnapshotV1["ownershipClaims"],
   currentHost: SandboxPolicyCurrentHostV1 = {
@@ -194,7 +194,7 @@ describe("V6 per-candidate P4 binding digest projection", () => {
           ],
         },
       },
-    } as SandboxAuthorityBundleSnapshotV2;
+    } as SandboxAuthorityBundleSnapshotCurrent;
     const result = read([], undefined, authorityWithCapabilityVariants);
     expect(result._tag).toBe("Ready");
     if (result._tag !== "Ready") return;
@@ -213,6 +213,51 @@ describe("V6 per-candidate P4 binding digest projection", () => {
       new Set(readOnlyCandidates.map((candidate) => candidate.candidateId))
         .size,
     ).toBe(2);
+  });
+
+  it("projects P10 common preconditions from complete current V3 bundle", () => {
+    const v3 = {
+      ...authority,
+      bundle: {
+        ...authority.bundle,
+        version: 3 as const,
+        bundleRevision: 4,
+        windowsOperatorTrustSetRevision: 1,
+        windowsOperatorTrustSetDigest: "a".repeat(64),
+        windowsOperatorTrustSet: {
+          version: 1 as const,
+          revision: 1,
+          sourceIdentity: "v6-test",
+          providerId: "windows-restricted-appcontainer-job" as const,
+          keys: [
+            {
+              keyId: "operator-2026-a",
+              algorithm: "Ed25519" as const,
+              publicKeySpkiDerBase64:
+                "MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+              publicKeySpkiSha256:
+                "06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9",
+              validFrom: "2026-10-20T00:00:00.000Z",
+              validUntil: "2027-10-20T00:00:00.000Z",
+              status: "Active" as const,
+            },
+          ],
+          revokedKeyIds: [],
+        },
+      },
+      bundleDigest: "b".repeat(64),
+    } as SandboxAuthorityBundleSnapshotCurrent;
+    const result = read(
+      [],
+      { osFamily: "Linux", osBuild: "qualified-build" },
+      v3,
+    );
+    expect(result._tag).toBe("Ready");
+    if (result._tag !== "Ready") return;
+    expect(result.value.commonPreconditions).toMatchObject({
+      authorityBundleRevision: 4,
+      authorityBundleDigest: "b".repeat(64),
+    });
   });
 
   it("derives independent RO, owned RW and TrustedLocal digests from one pinned P11 snapshot", () => {
@@ -359,7 +404,7 @@ describe("V6 per-candidate P4 binding digest projection", () => {
           ],
         },
       },
-    } as SandboxAuthorityBundleSnapshotV2;
+    } as SandboxAuthorityBundleSnapshotCurrent;
     const unsupported = read([], undefined, unsupportedAuthority);
     expect(unsupported._tag).toBe("Ready");
     if (unsupported._tag === "Ready")
@@ -384,7 +429,7 @@ describe("V6 per-candidate P4 binding digest projection", () => {
           ],
         },
       },
-    } as SandboxAuthorityBundleSnapshotV2;
+    } as SandboxAuthorityBundleSnapshotCurrent;
     const brokerOnly = read([], undefined, brokerOnlyAuthority);
     expect(brokerOnly._tag).toBe("Ready");
     if (brokerOnly._tag === "Ready")
