@@ -36,6 +36,7 @@ import {
   recoveryBindingV1Digest,
   type SandboxHandle,
   SandboxPort,
+  type SandboxProcessPolicyResolution,
   SandboxProcessPort,
   type SandboxProcessRunner,
   type SandboxProviderUnavailableOutcome,
@@ -1009,6 +1010,9 @@ export const ToolRuntimeLive = (
           readonly profile: ToolReconciliationProfile;
           readonly effectKey: string;
         },
+        resolveSandboxPolicy?: (
+          now: string,
+        ) => Effect.Effect<SandboxProcessPolicyResolution | undefined>,
       ): Effect.Effect<
         CanonicalToolObservation | NotP39Receipt,
         ToolRuntimeError
@@ -1248,7 +1252,14 @@ export const ToolRuntimeLive = (
             observation.sandboxProviderUnavailable !== undefined
           ) {
             const unavailable = observation.sandboxProviderUnavailable;
-            const policy = context.sandboxProcessPolicy;
+            const policyResolution =
+              resolveSandboxPolicy === undefined
+                ? undefined
+                : yield* resolveSandboxPolicy(yield* clock.now());
+            const policy =
+              resolveSandboxPolicy === undefined
+                ? context.sandboxProcessPolicy
+                : policyResolution?.policy;
             const sourceAction = context.recoveryBindingIdentity;
             const currentEpisode =
               context.executionEpisodeBinding === undefined
@@ -1314,8 +1325,17 @@ export const ToolRuntimeLive = (
         intent: ToolIntent,
         context: ToolExecutionContext,
         recorded: Parameters<typeof decodeRecordedEvidenceResult>[2],
+        resolveSandboxPolicy?: Parameters<
+          typeof decodeRecordedEvidenceResult
+        >[4],
       ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
-        decodeRecordedEvidenceResult(intent, context, recorded).pipe(
+        decodeRecordedEvidenceResult(
+          intent,
+          context,
+          recorded,
+          undefined,
+          resolveSandboxPolicy,
+        ).pipe(
           Effect.flatMap((result) =>
             result._tag === "NotP39Receipt"
               ? Effect.fail<ToolRuntimeError>(
@@ -1374,6 +1394,32 @@ export const ToolRuntimeLive = (
         staleRefreshCount = 0,
       ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
         Effect.gen(function* () {
+          let sandboxPolicyResolutionLoaded = false;
+          let sandboxPolicyResolution:
+            | SandboxProcessPolicyResolution
+            | undefined;
+          const resolveSandboxPolicyOnce = (
+            now: string,
+          ): Effect.Effect<SandboxProcessPolicyResolution | undefined> =>
+            Effect.suspend(() => {
+              if (sandboxPolicyResolutionLoaded) {
+                return Effect.succeed(sandboxPolicyResolution);
+              }
+              const resolver = context.resolveSandboxProcessPolicy;
+              if (resolver === undefined) {
+                sandboxPolicyResolutionLoaded = true;
+                return Effect.succeed(undefined);
+              }
+              return resolver({ now }).pipe(
+                Effect.catch(() => Effect.succeed(undefined)),
+                Effect.tap((resolved) =>
+                  Effect.sync(() => {
+                    sandboxPolicyResolution = resolved;
+                    sandboxPolicyResolutionLoaded = true;
+                  }),
+                ),
+              );
+            });
           const probeReconciliation = (
             boundary:
               | "AH7BeforeReconciliationFactCommit"
@@ -1595,6 +1641,7 @@ export const ToolRuntimeLive = (
                         intent,
                         context,
                         currentRecord,
+                        resolveSandboxPolicyOnce,
                       )
                     : { _tag: "Interrupted" as const };
                 }
@@ -1603,6 +1650,7 @@ export const ToolRuntimeLive = (
                     intent,
                     context,
                     currentRecord,
+                    resolveSandboxPolicyOnce,
                   );
                 }
                 return {
@@ -1653,6 +1701,7 @@ export const ToolRuntimeLive = (
                       intent,
                       context,
                       committed.value,
+                      resolveSandboxPolicyOnce,
                     );
                   }
                 }
@@ -1697,6 +1746,7 @@ export const ToolRuntimeLive = (
                   intent,
                   context,
                   winner.value,
+                  resolveSandboxPolicyOnce,
                 );
               }
               if (winner.value.effectAdmissionState !== "NotAdmitted") {
@@ -1746,6 +1796,7 @@ export const ToolRuntimeLive = (
                       intent,
                       context,
                       record,
+                      resolveSandboxPolicyOnce,
                     );
                   }
                   if (
@@ -1905,6 +1956,7 @@ export const ToolRuntimeLive = (
                 profile: trustedProfile,
                 effectKey: trustedEffectKey as string,
               },
+              resolveSandboxPolicyOnce,
             );
             if (receipt._tag !== "NotP39Receipt") return receipt;
           }
@@ -3391,7 +3443,12 @@ export const ToolRuntimeLive = (
                 return { _tag: "Interrupted" as const };
               }
               if (Option.isSome(observationEvidence)) {
-                return yield* decodeRecordedEvidence(intent, context, recorded);
+                return yield* decodeRecordedEvidence(
+                  intent,
+                  context,
+                  recorded,
+                  resolveSandboxPolicyOnce,
+                );
               }
               if (
                 recorded.settlement._tag === "Success" &&
@@ -3935,9 +3992,7 @@ export const ToolRuntimeLive = (
                 // after the existing authority/approval gate, and outside
                 // every TransactionPort scope.
                 policyNow = yield* clock.now();
-                const materialized = yield* context
-                  .resolveSandboxProcessPolicy({ now: policyNow })
-                  .pipe(Effect.catch(() => Effect.succeed(undefined)));
+                const materialized = yield* resolveSandboxPolicyOnce(policyNow);
                 if (materialized !== undefined) {
                   processPolicy = materialized.policy;
                   processExecutionContext = {

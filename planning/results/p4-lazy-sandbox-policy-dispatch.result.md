@@ -29,7 +29,20 @@ it does not exercise the full AgentLoopStep persistence adapter or an online
 database. The handler identity test also confirms the handler exposes a lazy
 resolver rather than eagerly attaching policy fields.
 
-Verification: `pnpm build`, `pnpm typecheck`; ToolRuntime P4 pipeline 81/81;
-Executable handler identity 7/7; sandbox process architecture 24/24; changed
-file Biome and `git diff --check` PASS. Full `pnpm check` and full repository
-tests were not run. No V6 candidate, P10, Web, schema, or design files changed.
+The follow-up durable ExpectedFailure replay regression closes the replay
+path as well: ToolRuntime now shares one per-invocation memoized lazy policy
+resolution between persisted `SandboxProviderUnavailable` observation
+decoding and the pre-effect gate. A persisted unavailable observation is
+replayed only after re-reading the exact current policy outside transaction
+scope and matching its execution, episode, policy revision/digest, profile,
+provider/version, capability revision, and action binding. Missing or drifted
+policy remains a typed `SandboxUnavailableObservationPolicyMismatch`; replay
+does not add an intent, settle again, admit an effect, call a provider, or
+fallback to TrustedLocal. This regression seeds the settled invocation and
+canonical observation evidence in the existing in-memory P4 fixture; it does
+not claim SQLite restart qualification.
+
+Verification: `pnpm build`, `pnpm typecheck`; ToolRuntime P4 pipeline 82/82;
+Executable handler identity 7/7; architecture 192/192; changed-file Biome and
+`git diff --check` PASS. Full `pnpm check` and full repository tests were not
+run. No V6 candidate, P10, Web, schema, or design files changed.
