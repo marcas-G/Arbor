@@ -50,7 +50,7 @@ recommends an action-bound pre-intent requirement producer and compares
 proactive Workspace candidates and changing P9 continuation semantics. It is
 not accepted and authorizes no implementation.
 Canonical LF SHA-256 of the proposal at this checkpoint:
-`77B7DDF7026D5CE81653CF2510E8F5A073394F50F2EB2D2899976A6F82B51164`.
+`009A965AE81F64E051625E8AC33DD499D0A6EEB35B3D3055941F96A207F00A6C`.
 
 ## Verification
 
