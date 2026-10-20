@@ -375,3 +375,84 @@ IPv6: ::/128, ::1/128, 64:ff9b::/96, 64:ff9b:1::/48, 100::/64,
 ff00::/8. IPv4-mapped IPv6 is excluded from the IPv6 list; normalize it to
 IPv4 before the IPv4 checks. Preserve this deny set even if IANA marks an
 individual special-purpose range globally reachable.
+
+### Accepted Windows T3-D D2 manifest signature and currentness
+
+Manual governance accepted `T3D-DG-01` under
+`ACCEPT_NATIVE_OS_SANDBOX_WINDOWS_OPERATOR_TRUST_V1`, proposal SHA-256
+`EAA9430B87462658D7B475C3D469425C5DB2BE0069A4D51634FD9C7FC3BA2039`.
+The Windows production-helper manifest remains an artifact under the existing
+operator-issued T3 evidence, not a second provider registry. It contains no
+self digest, signer key, signature or `qualificationEvidenceRef`.
+`qualification-manifest-v1.sig` is a closed canonical UTF-8 detached sidecar
+with `version=1`, `keyId` and one canonical base64 Ed25519 signature. The
+signed message is the exact ASCII bytes
+`Arbor.WindowsNativeQualificationManifestV1\0` followed by the canonical
+manifest UTF-8 bytes. The key is selected only from the current P5-protected
+`WindowsNativeOperatorTrustSetV1`, never from the manifest or sidecar.
+
+Verification checks canonical sidecar bytes, the selected DER SPKI SHA-256,
+key status and UTC validity, the 64-byte signature and Ed25519 result. It
+then checks the manifest SHA-256 against the exact current registry
+`qualificationEvidenceRef=blob:sha256:<manifestDigest>`, actual source,
+compiler, shipped PE and test/control artifact hashes, exact provider/version/
+capability/OS build/profile×network tuple/rule set/configured limits, and the
+complete accepted T3 matrix. A valid signature is necessary but does not
+alone make a provider Supported. The trust-set revision and current installed
+artifact bytes are reloaded/revalidated at capability probe and before effect
+admission. Missing, unreadable, ambiguous, expired or revoked keys; signature
+or source/high-water drift; wrong OS/build; and key reuse return typed
+Unavailable without raw key, path or exception. There is no fallback to an
+OS-wide CA store, unsigned hash match or a previous successful probe.
+
+The D1 injected verifier remains a qualification-test seam only. Production
+obtains a verifier solely from the current protected V3 trusted source. V2
+deployments have no accepted Windows trust anchor and cannot be retroactively
+promoted from unsigned evidence. D4 helper execution, D5 filesystem/network/
+Stop and D6 independent full T3 review remain separate gates.
+
+### Accepted Windows D2 V3 detached-signature physical codec
+
+Under `ACCEPT_WINDOWS_T3D_D2_V3_PHYSICAL_CONTRACT_V1` (fixed draft SHA-256
+`2D77149B4C8757C6DC307A1A8C6F0873057E96908E6D77D499BDBBA081254A6F`),
+the sidecar has exact canonical UTF-8 JSON key order
+`version,keyId,signatureBase64`. `version=1`; `keyId` matches the P5 trust-set
+grammar; `signatureBase64` is strict padded RFC 4648 base64 that decodes and
+re-encodes identically to exactly 64 signature bytes. The signed message is
+the exact ASCII domain separator
+`Arbor.WindowsNativeQualificationManifestV1\0` followed by the D1 canonical
+manifest UTF-8 bytes. The verifier selects only the current P5 V3-protected
+Ed25519 DER SPKI key and checks its SHA-256 before verifying. It obtains
+current UTC validity from the trusted host clock; missing or invalid current
+time is typed `TrustCurrentnessMismatch`. Provider/caller time, unsigned
+`signedAt` and file mtime are never signing-time authority.
+
+The D2 V1 physical contract conservatively rejects **every** signature under
+a Retiring key, even one that may predate rotation: the accepted sidecar has
+no protected signing-time or prior-evidence proof. This explicitly narrows
+the earlier permitted Retiring path; a future historical-verification path
+requires a separately accepted protected proof. Revoked, expired, future,
+unknown and duplicate-key/SPKI cases also fail closed. Key rotation and
+revocation advance the protected trust set, V3 bundle/high-water and exact
+provider registry/capability revisions after review. Old policy revisions,
+sidecars or cached-green capability results cannot inherit a new signature;
+current source, signer status and installed artifact bytes are rechecked at
+both capability probe and P4 effect admission. No signature check alone
+creates Supported or starts the production helper.
+
+The cryptographic primitive KAT uses RFC 8032 test key 1 only in tests. Its
+canonical Ed25519 DER SPKI hex is
+`302a300506032b6570032100d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a`
+and SPKI SHA-256 is
+`06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9`.
+For the domain separator followed by UTF-8 `{}` (a crypto-only fixture,
+**not** a valid T3 manifest), signature base64 is
+`hTMSP5sS7dGBuJiY/okX6bv5JiEURnebjrIiBX6snDnc55i85SZWuWCMnMdYM8f2PsWf3Vlefmy9GfzrDUiKBg==`.
+The exact canonical sidecar preimage is
+`{"version":1,"keyId":"operator-2026-a","signatureBase64":"hTMSP5sS7dGBuJiY/okX6bv5JiEURnebjrIiBX6snDnc55i85SZWuWCMnMdYM8f2PsWf3Vlefmy9GfzrDUiKBg=="}`
+with SHA-256
+`b705caabef17937aa3606ea4fbaa14be3e8670bb3c9955337e57cd6817fe6977`.
+ The test private seed is never a production anchor. The existing D1
+canonical manifest KAT SHA-256
+`e502199edae3e7b74c9fe6bd9681d727f537585b99d1b5983bbf9b013b4af234`
+remains separate and requires a non-test operator key in an actual T3 run.

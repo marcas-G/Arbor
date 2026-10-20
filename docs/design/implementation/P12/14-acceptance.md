@@ -259,3 +259,79 @@ V21 owner vectors or adding a schema/migration:
 These cases qualify the accepted V3 producer semantics only. They do not
 claim any current host/provider Supported, activate migrations 0049/0050,
 upgrade a database, or authorize release.
+
+## Accepted Windows T3-D D2 operator-trust qualification cases
+
+The accepted `T3D-DG-01` proposal
+(`ACCEPT_NATIVE_OS_SANDBOX_WINDOWS_OPERATOR_TRUST_V1`, SHA-256
+`EAA9430B87462658D7B475C3D469425C5DB2BE0069A4D51634FD9C7FC3BA2039`)
+adds these evidence cases to the existing per-tuple T3 matrix. They do not
+substitute for any filesystem, network, Job, Stop or broker case above.
+
+- Verify the closed V3 trust-set/HighWaterV3 canonical source under P5 owner,
+  ACL, source identity and monotone revision. Operator-only V2→V3 offline
+  migration preserves exact V2 source/high-water forensic bytes; interrupt
+  before/after atomic commit, missing high-water, rollback, same-revision
+  reuse and source replacement all fail closed with no V2 fallback.
+- Verify detached sidecar canonical bytes and the exact domain-separated
+  Ed25519 message over canonical manifest bytes. Missing, malformed, wrong-
+  key, wrong SPKI hash, empty/tampered signature, unknown `keyId`, expired,
+  Retiring-for-new-evidence and revoked keys all reject. A manifest- or
+  caller-supplied key and a digest-only test callback cannot establish
+  operator provenance.
+- Verify current source, compiler, actual shipped PE and separate test/control
+  artifact hashes, complete T3 matrix, exact registry manifest ref, provider/
+  version/capability/Windows build/profile×network/rule-set/configured limits,
+  and current trust-set revision at both probe and effect admission. A key
+  rotation/revocation advances the protected source/high-water and registry/
+  capability revisions; stale policy or cached-green capability cannot launch.
+- Verify missing/unreadable/ambiguous trust source, source/high-water drift,
+  wrong build and failed reenrollment yield typed Unavailable without key,
+  path or exception disclosure. Legacy V2 deployments stay Experimental/empty
+  for Windows; no unsigned historical row is retroactively promoted.
+
+D2 signature/source qualification alone does not authorize Supported, a
+production helper launch, Restricted/Enabled broker behavior or release.
+Independent D4–D6 evidence remains required.
+
+## Accepted Windows T3-D D2 V3 physical qualification cases
+
+`ACCEPT_WINDOWS_T3D_D2_V3_PHYSICAL_CONTRACT_V1` accepts the exact physical
+contract in `planning/proposals/native-os-sandbox-windows-t3d-d2-v3-physical-contract-draft.md`
+(SHA-256 `2D77149B4C8757C6DC307A1A8C6F0873057E96908E6D77D499BDBBA081254A6F`).
+The following cases qualify that contract, in addition to the operator-trust
+cases above:
+
+- Assert the *full canonical bytes* and SHA-256 of the TrustSetV1
+  (`be159a9cfea6d65bf27b6645f94bbe12efa65b7d7ffe513d53477ed48241ea4d`),
+  AuthorityBundleV3 (`5971402bc958c5f99cd1cdeeca95f364e161821945fb05dc0f8ea642d2399954`),
+  HighWaterV3 (`deb5867f939177d2a077c780d245aee91e6d4f8b9b9ba71c7b5a0b364fb2f27e`)
+  and detached sidecar (`b705caabef17937aa3606ea4fbaa14be3e8670bb3c9955337e57cd6817fe6977`).
+  Keep the D1 canonical manifest KAT
+  `e502199edae3e7b74c9fe6bd9681d727f537585b99d1b5983bbf9b013b4af234`
+  separate. Reject noncanonical key order, whitespace, duplicates, variants,
+  wrong identity/provider, invalid SPKI, invalid key cardinality and revoked
+  key inconsistencies.
+- Verify the exact domain-separated Ed25519 message and key-selection rules.
+  Missing or invalid host time, unknown, future, expired, Retiring or revoked
+  key, wrong SPKI hash, altered bytes and invalid signature all fail closed as
+  typed Unavailable without raw key, signature, path or exception disclosure.
+  The injected digest-only test verifier is never production provenance.
+- Prove V2→V3 operator cutover at both sides of source write and high-water
+  commit with independent-process reads and kill/restart. Preserve exact V2
+  forensic bytes; V3-source/V2-high-water mismatch has no V2 fallback.
+  A V2 Windows Supported registry row cannot carry into V3: a newer registry
+  must remove that status before cutover. Reject rollback, replay, missing
+  high-water and same-revision changed bytes.
+- Prove rotation/revocation with source, bundle, registry and capability
+  revision advances; stale signature, policy or cached-green capability cannot
+  authorize effect. Re-read current protected source, sidecar and PE at probe
+  and admission, rejecting a change between them. The same immutable current
+  V2|V3 authority snapshot reaches P1, P4 and P10; V3 complete-bundle
+  revision/digest, not a V2 shadow, bind active decisions.
+
+Record the OS build, source identity, KAT bytes/hashes, crash points and real
+process counts in the D2 result. Full `pnpm check` and clean install/package
+smoke are required for D2 closure. D2 does not prove D4–D6 helper execution,
+filesystem lifetime, Disabled network, Stop or broker gates; Windows remains
+Experimental/empty/Unavailable and no Supported tuple is created.
