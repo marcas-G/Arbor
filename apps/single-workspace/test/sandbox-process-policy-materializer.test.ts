@@ -55,6 +55,32 @@ const entry = (
 });
 
 describe("current OS sandbox provider materialization gate", () => {
+  it("keeps the Windows D2 identity-only tuple unavailable for P4 materialization", () => {
+    const windowsSummary = {
+      ...summary,
+      providerId: "windows-restricted-appcontainer-job",
+      osFamily: "Windows" as const,
+      osBuild: "10.0.19045",
+      qualificationEvidenceRef: `blob:sha256:${"c".repeat(64)}`,
+    };
+    const windowsRow: SandboxProviderQualificationEntryV1 = {
+      ...entry("Experimental"),
+      providerId: windowsSummary.providerId,
+      osFamily: "Windows",
+      osBuild: windowsSummary.osBuild,
+      qualificationEvidenceRef: windowsSummary.qualificationEvidenceRef,
+    };
+    expect(
+      exactSupportedOsProviderEntry([windowsRow], windowsSummary),
+    ).toBeUndefined();
+    expect(
+      exactSupportedOsProviderEntry(
+        [{ ...windowsRow, status: "Unavailable" }],
+        windowsSummary,
+      ),
+    ).toBeUndefined();
+  });
+
   it.each(["Experimental", "Unavailable"] as const)(
     "fails closed for an exact but %s registry entry",
     (status) => {
