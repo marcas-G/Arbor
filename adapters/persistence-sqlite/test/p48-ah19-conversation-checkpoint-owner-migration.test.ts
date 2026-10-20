@@ -1,9 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createSchema44TestDatabase,
-  createSchema47TestDatabase,
+  createSchema44TestDatabaseFactory,
+  type Schema44TestDatabase,
+  type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import {
   CURRENT_MIGRATIONS,
@@ -35,6 +36,45 @@ const columns = (db: DatabaseSync, table: string) =>
     db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
   ).map(({ name }) => name);
 
+let schema44Factory: Schema44TestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  schema44Factory = await createSchema44TestDatabaseFactory({
+    prefix: ".p48-ah19-migration-schema44-template-",
+  });
+}, 120_000);
+
+const createSchema44Clone = (): Schema44TestDatabase => {
+  if (schema44Factory === undefined)
+    throw new Error("Schema-44 migration template is not ready.");
+  return schema44Factory.create();
+};
+
+const createSchema47Clone = async (): Promise<Schema44TestDatabase> => {
+  const fixture = createSchema44Clone();
+  try {
+    const applied = await run(fixture.databaseFilename, [
+      P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
+      P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
+      P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,
+    ]);
+    if (applied !== 3) {
+      throw new Error(
+        `Schema-47 clone applied ${applied} migrations; expected 3.`,
+      );
+    }
+    return fixture;
+  } catch (cause) {
+    fixture.cleanup();
+    throw cause;
+  }
+};
+
+afterAll(() => {
+  schema44Factory?.cleanup();
+  schema44Factory = undefined;
+}, 120_000);
+
 describe("P48 AH19 Root Workspace Conversation checkpoint owner migration", () => {
   it("requires exact schema 47 and appends after the F23/VCS/AH14 prefixes", async () => {
     expect(P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION).toMatchObject({
@@ -47,8 +87,8 @@ describe("P48 AH19 Root Workspace Conversation checkpoint owner migration", () =
       47, 48, 49, 50,
     ]);
 
-    const from47 = await createSchema47TestDatabase();
-    const from44 = await createSchema44TestDatabase();
+    const from47 = await createSchema47Clone();
+    const from44 = createSchema44Clone();
     try {
       expect(await run(from47.databaseFilename)).toBe(1);
       expect(await run(from47.databaseFilename)).toBe(0);
@@ -82,10 +122,10 @@ describe("P48 AH19 Root Workspace Conversation checkpoint owner migration", () =
       from47.cleanup();
       from44.cleanup();
     }
-  }, 120_000);
+  });
 
   it("creates the exact separate owner table and ordered message index without backfill", async () => {
-    const fixture = await createSchema47TestDatabase();
+    const fixture = await createSchema47Clone();
     try {
       const before = new DatabaseSync(fixture.databaseFilename);
       try {
