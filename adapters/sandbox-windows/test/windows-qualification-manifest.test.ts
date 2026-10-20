@@ -6,7 +6,10 @@ import {
   type SandboxAuthorityBundleSnapshotV3,
 } from "@arbor/domain";
 import { describe, expect, it } from "vitest";
-import { inspectWindowsNativeQualificationWithAuthorityV3 } from "../src/operator-qualification.js";
+import {
+  inspectWindowsNativeQualificationForRegistryEntryV3,
+  inspectWindowsNativeQualificationWithAuthorityV3,
+} from "../src/operator-qualification.js";
 import {
   decodeCanonicalWindowsNativeArtifactManifestV1,
   encodeWindowsNativeArtifactManifestV1,
@@ -195,6 +198,17 @@ describe("strict Windows native qualification manifest V1", () => {
         version: 3,
         operatorConfigRevision: expected.operatorConfigRevision,
         operatorConfigDigest: expected.operatorConfigDigest,
+        operatorConfig: {
+          version: 1,
+          revision: expected.operatorConfigRevision,
+          environmentAllowlist: [],
+          limitsByProfile: [
+            { profile: "ReadOnly", limits: expected.limits },
+            { profile: "WorkspaceWrite", limits: expected.limits },
+            { profile: "FullAccess", limits: expected.limits },
+          ],
+          trustedLocalRuntimeVersion: "builtin-v1",
+        },
         windowsOperatorTrustSet: trust,
         providerRegistry: {
           entries: [
@@ -230,6 +244,32 @@ describe("strict Windows native qualification manifest V1", () => {
     expect(inspect()).toMatchObject({
       _tag: "ManifestVerified",
       qualificationEvidenceRef: qualified.qualificationEvidenceRef,
+    });
+    const row = snapshot.bundle.providerRegistry.entries[0];
+    if (row === undefined) throw new Error("test registry row missing");
+    const inspectFromRow = (currentIo: WindowsNativeQualificationIo) =>
+      inspectWindowsNativeQualificationForRegistryEntryV3(
+        paths,
+        row,
+        snapshot,
+        { osFamily: "Windows", osBuild: expected.osBuild },
+        "2026-10-20T00:00:00.000Z",
+        currentIo,
+      );
+    expect(inspectFromRow(io)._tag).toBe("ManifestVerified");
+    const badSidecarIo = makeIo({
+      files: new Map([[paths.signature, Buffer.from("bad sidecar")]]),
+    });
+    expect(inspectFromRow(badSidecarIo)._tag).toBe("Unavailable");
+    const badBinaryIo = makeIo({
+      files: new Map([
+        [paths.signature, sidecar],
+        [paths.binary, Buffer.from("tampered shipped PE")],
+      ]),
+    });
+    expect(inspectFromRow(badBinaryIo)).toEqual({
+      _tag: "Unavailable",
+      reason: "ArtifactHashMismatch-binary",
     });
     expect(
       inspect({

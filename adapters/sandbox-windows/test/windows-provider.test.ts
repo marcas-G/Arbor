@@ -1,3 +1,4 @@
+import type { SandboxAuthorityBundleSnapshotV3 } from "@arbor/domain";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import {
@@ -21,6 +22,134 @@ const snapshot = (
 });
 
 describe("Windows native sandbox provider registry", () => {
+  it("re-reads current V3 authority at both capability probe and run boundary without promotion", async () => {
+    let reads = 0;
+    let clockReads = 0;
+    const evidenceRef = `blob:sha256:${"a".repeat(64)}`;
+    const current = {
+      _tag: "Available" as const,
+      currentHost: { osFamily: "Windows" as const, osBuild: "10.0.19044" },
+      snapshot: {
+        bundle: {
+          version: 3,
+          providerRegistry: {
+            entries: [
+              {
+                providerId:
+                  WINDOWS_SANDBOX_PROVIDER_IDS.restrictedAppContainerJob,
+                providerVersion: "windows-t2-probe-v1",
+                capabilityRevision: 1,
+                osFamily: "Windows",
+                osBuild: "10.0.19044",
+                tuple: {
+                  profile: "ReadOnly",
+                  networkMode: "Disabled",
+                  networkPolicyCodecVersion: 1,
+                  enforcementRuleSetDigest: "b".repeat(64),
+                },
+                status: "Experimental",
+                qualificationEvidenceRef: evidenceRef,
+              },
+            ],
+          },
+          operatorConfig: {
+            limitsByProfile: [
+              {
+                profile: "ReadOnly",
+                limits: {
+                  wallTimeMs: 1,
+                  stdoutBytes: 1,
+                  stderrBytes: 1,
+                  processCount: 1,
+                  memoryBytes: 1,
+                  cpuTimeMs: 1,
+                },
+              },
+            ],
+          },
+        },
+      } as unknown as SandboxAuthorityBundleSnapshotV3,
+    };
+    const provider = makeWindowsSandboxProcessPort(
+      { probe: () => snapshot() },
+      {
+        currentAuthority: {
+          loadCurrentVerifiedV2: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return current;
+            }),
+        },
+        clock: {
+          now: () =>
+            Effect.sync(() => {
+              clockReads += 1;
+              return "2026-10-20T00:00:00.000Z";
+            }),
+        },
+      },
+    );
+    const capabilities = await Effect.runPromise(provider.capabilities());
+    expect(reads).toBe(1);
+    expect(clockReads).toBe(1);
+    expect(
+      capabilities.every(
+        (capability) =>
+          capability.status === "Experimental" &&
+          capability.profiles.length === 0,
+      ),
+    ).toBe(true);
+    const outcome = await Effect.runPromise(
+      provider.run({
+        policy: {
+          kind: "OsEnforcedProcessPolicy",
+          executionId: "exe_1" as never,
+          episodeBinding: {
+            _tag: "WorkEpisode",
+            workId: "wrk_1" as never,
+            targetWorkRevision: 1 as never,
+          },
+          sandboxHandleId: "sbx_1",
+          policyRevision: 1,
+          profile: "ReadOnly",
+          providerId: WINDOWS_SANDBOX_PROVIDER_IDS.restrictedAppContainerJob,
+          providerVersion: "windows-t2-probe-v1",
+          capabilityRevision: "1",
+          enforcementRuleSetDigest: "b".repeat(64),
+          qualificationEvidenceRef: evidenceRef,
+          boundary: "OsEnforced",
+          networkPolicy: { version: 1, mode: "Disabled", destinations: [] },
+          policyDigest: "0".repeat(64),
+          admittedMounts: [],
+          environmentAllowlist: [],
+          limits: {
+            wallTimeMs: 1,
+            stdoutBytes: 1,
+            stderrBytes: 1,
+            processCount: 1,
+            memoryBytes: 1,
+            cpuTimeMs: 1,
+          },
+          auditRefs: [],
+        },
+        handle: {
+          handleId: "sbx_1",
+          rootPath: "C:\\temp",
+          mounts: [],
+          writableRegions: [],
+        },
+        executable: "must-not-run.exe",
+        args: [],
+        cwd: { mount: "workspace", path: "." },
+        timeoutMs: 1,
+        ambientEnvironment: {},
+      }),
+    );
+    expect(reads).toBe(2);
+    expect(clockReads).toBe(2);
+    expect(outcome._tag).toBe("Unavailable");
+  });
+
   it("registers three distinct experimental identities without claiming support", async () => {
     const provider = makeWindowsSandboxProcessPort({ probe: () => snapshot() });
     const capabilities = await Effect.runPromise(provider.capabilities());

@@ -243,7 +243,10 @@ import {
   SingleWorkspaceControlActionHandlersLive,
   SingleWorkspaceControlActionHandlersWithQualificationProbes,
 } from "./control-actions.js";
-import { CurrentSandboxAuthoritySnapshotPortLive } from "./current-sandbox-authority-snapshot-port.js";
+import {
+  CurrentSandboxAuthoritySnapshotPortLive,
+  makeCurrentSandboxAuthoritySnapshotPortService,
+} from "./current-sandbox-authority-snapshot-port.js";
 import {
   ExecutableToolHandler,
   ExecutableToolHandlerLive,
@@ -594,7 +597,16 @@ export const buildSingleWorkspaceLayer = (
     environmentResolver,
   );
   const nativePosixSandbox = makeNativePosixSandboxProcessPort();
-  const windowsSandbox = makeWindowsSandboxProcessPort();
+  const windowsQualificationClock = {
+    now: () => Effect.sync(() => new Date().toISOString()),
+  };
+  const windowsSandbox = makeWindowsSandboxProcessPort(undefined, {
+    currentAuthority: makeCurrentSandboxAuthoritySnapshotPortService(
+      config.trustedHostConfigurationSource,
+      windowsQualificationClock,
+    ),
+    clock: windowsQualificationClock,
+  });
   const windowsSandboxProviderIds = new Set<string>(
     Object.values(WINDOWS_SANDBOX_PROVIDER_IDS),
   );

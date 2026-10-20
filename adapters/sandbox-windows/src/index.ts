@@ -6,11 +6,15 @@ import type {
   SandboxProviderId,
 } from "@arbor/domain";
 import {
+  type ClockService,
+  type CurrentSandboxAuthoritySnapshotPortService,
   SandboxProcessPort,
   type SandboxProcessPortService,
   type SandboxProcessRequest,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
+import { inspectWindowsNativeQualificationForRegistryEntryV3 } from "./operator-qualification.js";
+import { fixedWindowsNativeProductionArtifactPaths } from "./qualification-manifest.js";
 
 export {
   fixedWindowsNativeArtifactPaths,
@@ -31,6 +35,7 @@ export {
 
 export {
   inspectCurrentWindowsNativeQualificationManifest,
+  inspectWindowsNativeQualificationForRegistryEntryV3,
   inspectWindowsNativeQualificationWithAuthorityV3,
 } from "./operator-qualification.js";
 export {
@@ -45,6 +50,7 @@ export {
   type WindowsNativeQualificationExpectationV1,
   type WindowsNativeQualificationHostControlV1,
   type WindowsNativeQualificationInspection,
+  type WindowsNativeQualificationIo,
   type WindowsNativeQualificationLimitsV1,
   type WindowsNativeQualificationMatrixResultV1,
   type WindowsNativeQualificationProvenanceVerifier,
@@ -180,17 +186,76 @@ const capabilityFor = (
 
 export const makeWindowsSandboxProcessPort = (
   probe: WindowsSandboxProbe = { probe: probeWindowsSandboxHost },
+  qualification?: {
+    readonly currentAuthority: CurrentSandboxAuthoritySnapshotPortService;
+    readonly clock: ClockService;
+  },
 ): SandboxProcessPortService => ({
   capabilities: () =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const snapshot = probe.probe();
+      if (qualification !== undefined && snapshot.platform === "win32") {
+        const current =
+          yield* qualification.currentAuthority.loadCurrentVerifiedV2();
+        if (
+          current._tag === "Available" &&
+          current.snapshot.bundle.version === 3
+        ) {
+          const now = yield* qualification.clock.now();
+          for (const row of current.snapshot.bundle.providerRegistry.entries) {
+            if (
+              row.providerId ===
+              WINDOWS_SANDBOX_PROVIDER_IDS.restrictedAppContainerJob
+            )
+              inspectWindowsNativeQualificationForRegistryEntryV3(
+                fixedWindowsNativeProductionArtifactPaths(),
+                row,
+                current.snapshot,
+                current.currentHost,
+                now,
+              );
+          }
+        }
+      }
       return Object.values(WINDOWS_SANDBOX_PROVIDER_IDS).map((providerId) =>
         capabilityFor(providerId, snapshot),
       );
     }),
   run: (request: SandboxProcessRequest) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const snapshot = probe.probe();
+      if (qualification !== undefined && snapshot.platform === "win32") {
+        const current =
+          yield* qualification.currentAuthority.loadCurrentVerifiedV2();
+        if (
+          current._tag === "Available" &&
+          current.snapshot.bundle.version === 3
+        ) {
+          const row = current.snapshot.bundle.providerRegistry.entries.find(
+            (entry) =>
+              entry.providerId === request.policy.providerId &&
+              entry.providerVersion === request.policy.providerVersion &&
+              String(entry.capabilityRevision) ===
+                request.policy.capabilityRevision &&
+              entry.tuple.profile === request.policy.profile &&
+              entry.tuple.networkMode === request.policy.networkPolicy.mode &&
+              entry.tuple.enforcementRuleSetDigest ===
+                request.policy.enforcementRuleSetDigest &&
+              entry.qualificationEvidenceRef ===
+                request.policy.qualificationEvidenceRef,
+          );
+          if (row !== undefined) {
+            const now = yield* qualification.clock.now();
+            inspectWindowsNativeQualificationForRegistryEntryV3(
+              fixedWindowsNativeProductionArtifactPaths(),
+              row,
+              current.snapshot,
+              current.currentHost,
+              now,
+            );
+          }
+        }
+      }
       const capability = capabilityFor(request.policy.providerId, snapshot);
       return {
         _tag: "Unavailable" as const,

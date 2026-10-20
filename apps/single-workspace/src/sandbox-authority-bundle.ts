@@ -680,15 +680,27 @@ export const loadSandboxAuthorityBundleSnapshotCurrent = (
         now,
         allowedEnvironmentNames,
       );
+    const rejectUnclassified = (failure: SandboxAuthorityLoadErrorV1) =>
+      Effect.gen(function* () {
+        // No source version is yet authenticated. Record only the existing
+        // sanitized V2-shaped rejection, with every identity field null;
+        // never guess V3 trust revision/key details from malformed bytes.
+        yield* Effect.match(
+          source.appendSandboxAuthorityAudit(
+            encodeSandboxAuthorityAuditRecordV2(
+              auditRecordV2(now, "Rejected", failure),
+            ),
+          ),
+          { onFailure: () => false, onSuccess: Boolean },
+        );
+        return { _tag: "Unavailable" as const, failure };
+      });
     const initial = yield* Effect.match(
       source.readVerifiedSandboxAuthorityBundle(),
       { onFailure: () => undefined, onSuccess: (value) => value },
     );
     if (initial === undefined)
-      return {
-        _tag: "Unavailable" as const,
-        failure: "SourceUnreadable" as const,
-      };
+      return yield* rejectUnclassified("SourceUnreadable");
     let version: unknown;
     try {
       const parsed: unknown = JSON.parse(initial.canonicalJson);
@@ -697,10 +709,7 @@ export const loadSandboxAuthorityBundleSnapshotCurrent = (
           ? (parsed as Record<string, unknown>).version
           : undefined;
     } catch {
-      return {
-        _tag: "Unavailable" as const,
-        failure: "BundleMalformed" as const,
-      };
+      return yield* rejectUnclassified("BundleMalformed");
     }
     if (version === 3)
       return yield* loadSandboxAuthorityBundleSnapshotV3(
@@ -715,8 +724,5 @@ export const loadSandboxAuthorityBundleSnapshotCurrent = (
         now,
         allowedEnvironmentNames,
       );
-    return {
-      _tag: "Unavailable" as const,
-      failure: "BundleMalformed" as const,
-    };
+    return yield* rejectUnclassified("BundleMalformed");
   });
