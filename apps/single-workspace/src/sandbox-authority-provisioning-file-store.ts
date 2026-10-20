@@ -303,6 +303,18 @@ export const makeSandboxAuthorityProvisioningFileStore = (
             flushDirectory(forensic);
             return true;
           }, "SourceUnreadable"),
+        readSandboxAuthorityAuditForensic: () =>
+          result(() => {
+            if (
+              !hasNoReparsePath(forensic, "directory") ||
+              !validateP39ProtectedDirectory(forensic) ||
+              !hasNoReparsePath(auditFile, "file") ||
+              !validateP39ProtectedFile(auditFile) ||
+              !exactPosixMode(auditFile, 0o600)
+            )
+              throw new Error("audit protection changed");
+            return readFileSync(auditFile, "utf8");
+          }, "SourceUnreadable"),
         writeSandboxAuthorityBundleAtomically: (canonicalJson) =>
           result(
             () => atomicReplace(source, canonicalJson),
