@@ -117,3 +117,17 @@ are owned by `07`; AgentLoopStep state recovery is P9 `07`.
 | Policy result exceeds 65,536 UTF-8 bytes | Commit only durable `TerminalRejected(SandboxPolicySummaryTooLarge)` receipt; no decision/event and no truncation. | Same CommandId replays the same rejection. |
 | Missing/corrupt/mismatched RecoveryBindingV1 proof | No P9/P40 fact/event/marker, lease, P4/Provider call, effect, observation or settlement; invocation remains NotAdmitted/Pending and Step ActionsInProgress. | P10 derives safe Attention by query from existing P4 rows; Stop or invocation terminality clears it. No automatic/manual repair or rebind. |
 | Malformed non-NULL binding SHA format or missing/invalid immutable `intent_at` | P10 projection fails closed as Persistence/ProjectionIntegrityFailure, emits no derived row and does not fabricate an identity/timestamp. | Existing corruption Problem/operational handling applies; no persistent Attention marker is created. |
+
+## Accepted Option A receipt compatibility
+
+For the accepted provider-tuple selector (proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`),
+DecideSandboxPolicy schema-1 receipts and result bytes remain immutable and
+replay only through the current handler's explicitly allowed prior-receipt
+path with the exact old fingerprint tuple and schema-1 result validator. A
+legacy OsEnforced payload with no matching stored receipt is not written
+under schema 1; it receives the current schema-2 durable
+`SandboxAuthorityUnavailable` rejection with no decision/event. New
+OsEnforced receipts use the explicit version/capability selector under schema
+2. No recovery rewrite, backfill, migration or old receipt re-interpretation
+is permitted.

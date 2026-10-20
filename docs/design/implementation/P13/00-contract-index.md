@@ -79,4 +79,12 @@ P13/03/06 map only the selected candidate's handle digest to P1's existing
 expected field and require whole-list refetch and deliberate reselection after
 a stale receipt, even when candidate ID is unchanged. See the V6 acceptance
 record.
+
+## Accepted Option A provider-tuple selector (2026-10-20)
+
+P13/02/03/06 render and submit the selected OsEnforced providerId,
+providerVersion and capabilityRevision from the P10 candidate V2 DTO; no
+candidate ID or inferred tuple reaches P1. Existing human-only exposure,
+confirmation, and stale/refetch behavior remain. Accepted proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
 ```

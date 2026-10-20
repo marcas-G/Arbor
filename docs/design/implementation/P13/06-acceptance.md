@@ -137,3 +137,19 @@ ReadOnly and WorkspaceWrite may share a digest. The selected digest alone maps
 to the unchanged P1 expected field. Missing or inconsistent source projection
 returns a typed failure with no partial list. Candidate IDs, order, safe
 presentation and separate TrustedLocal confirmation remain V5.
+
+## Accepted Option A selector qualification (2026-10-20)
+
+For each OsEnforced V2 candidate, verify the displayed
+`providerId/providerVersion/capabilityRevision` is exact and the human's
+selection maps all three values to the closed P1 OsEnforced request. Two
+candidates that differ only by `capabilityRevision` remain distinct and
+selectable; neither `candidateId` nor list order is submitted or used to infer
+the selector. The P1 semantic fingerprint/receipt uses handler schema 2 for
+new requests. An exact previously stored schema-1 receipt replays unchanged;
+a legacy-shaped request without such a receipt receives the current-schema
+durable `SandboxAuthorityUnavailable` rejection and creates no decision/event.
+Stale registry/bundle refs retain the existing stable stale receipt. No
+browser auto-selection, fallback or provider execution is part of this UI
+qualification. This design landing does not run browser tests or authorize
+implementation.

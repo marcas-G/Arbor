@@ -1109,3 +1109,14 @@ candidate, P43 and P44 are registered migrations in the ordered
 are part of the exact 001–0048 baseline and remain unchanged through 0049 and
 0050. Neither migration is duplicated, moved, renumbered, or treated as a
 dormant draft. No separate non-current P43 draft is a preflight condition.
+
+## Accepted Option A decision-schema compatibility (2026-10-20)
+
+The accepted OsEnforced providerVersion/capabilityRevision selector is part
+of the existing `DecideSandboxPolicy` command payload and existing canonical
+`commands.result_json`; the committed internal result already contains both
+values. It advances the command handler receipt schema to 2 but changes no
+SQLite table, column, FK, trigger, migration descriptor, schema version, or
+historical row. Schema-1 receipts remain immutable and are only replayed by
+the exact prior-receipt compatibility path. Accepted proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.

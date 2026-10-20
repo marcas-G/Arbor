@@ -90,3 +90,11 @@ snapshot and exact current-host Supported tuples only. It does not filter
 Workspace applicability, choose a policy, expose provider evidence refs, or
 gate dispatch. P10 owns the candidate read; P4 owns requirement proof and P1
 owns command CAS. See the V5 acceptance record.
+
+## Accepted Option A exact provider selector (2026-10-20)
+
+P5/01's existing V2 Supported tuple/evidence is the sole source for P1's
+exact providerVersion/capabilityRevision match. Current host remains trusted
+process-local input; registry codecs, uniqueness, high-water and migration
+contracts are unchanged. Accepted proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.

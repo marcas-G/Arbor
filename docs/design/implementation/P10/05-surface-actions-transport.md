@@ -448,3 +448,97 @@ same-TransactionScope read, exact common/per-candidate/OS-only fields,
 candidate ID golden
 and sort order, no sensitive detail, no P3/P4 private-store access, and no
 new persisted candidate/Attention state.
+
+## Accepted Option A provider-tuple selector (2026-10-20)
+
+Accepted under `ACCEPT_P10_P1_OS_PROVIDER_TUPLE_SELECTION_OPTION_A`, fixed
+proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
+This section supersedes the V5 candidate DTO and candidate-sort/identity
+preimage clauses only where they omit `capabilityRevision`; it retains the
+same route, property, common preconditions, same-snapshot barrier, candidate
+visibility, full-boundary digest, and no-auto-selection rules.
+
+The existing `sandboxPolicyCandidateRead` response property now carries the
+closed `SandboxPolicyCandidateReadV2` DTO; its `commonPreconditions` are
+unchanged. The closed `SandboxPolicyCandidateV2` OsEnforced variant has exact
+key order `kind,candidateId,sandboxHandleBindingDigest,providerId,
+providerVersion,capabilityRevision,profile,networkMode,
+providerRegistryRevision,providerRegistryDigest`. `capabilityRevision` is a
+positive safe integer copied from exactly one current-host Supported P5 V2
+row. The TrustedLocalUnconfinedV1 candidate is unchanged and has no provider
+tuple fields. No path, evidence ref, destination or host fact is exposed.
+
+The exact V2 DTO closure is:
+
+```ts
+type SandboxPolicyCandidateReadV2 = {
+  readonly reason: "InitialDecision" | "RefreshStaleCommittedPolicy";
+  readonly commonPreconditions: {
+    readonly expectedEpisodeRevision: number;
+    readonly latestCommittedPolicyRevision: number;
+    readonly episodeBinding: ExecutionEpisodeBinding;
+    readonly workspaceRevision: number;
+    readonly resourceBoundaryRevision: number;
+    readonly authorityBundleRevision: number;
+    readonly authorityBundleDigest: Sha256;
+    readonly operatorConfigRevision: number;
+    readonly operatorConfigDigest: Sha256;
+  };
+  readonly candidates: ReadonlyArray<SandboxPolicyCandidateV2>;
+};
+
+type SandboxPolicyCandidateV2 =
+  | {
+      readonly kind: "OsEnforced";
+      readonly candidateId: string; // spc2_<64 lowercase SHA-256 hex>
+      readonly sandboxHandleBindingDigest: Sha256;
+      readonly providerId: string;
+      readonly providerVersion: string;
+      readonly capabilityRevision: number;
+      readonly profile: "ReadOnly" | "WorkspaceWrite";
+      readonly networkMode: "Disabled" | "Restricted" | "Enabled";
+      readonly providerRegistryRevision: number;
+      readonly providerRegistryDigest: Sha256;
+    }
+  | {
+      readonly kind: "TrustedLocalUnconfinedV1";
+      readonly candidateId: string;
+      readonly sandboxHandleBindingDigest: Sha256;
+    };
+```
+
+The common-precondition ranges, exact Workspace Detail route/property, and
+response redaction remain the V1/V5/V6 contract; only the candidate DTO
+revision and its OsEnforced tuple field are changed here.
+
+P10 sorts OsEnforced candidates by unsigned UTF-8 bytewise tuple
+`providerId,providerVersion,capabilityRevision,profile,networkMode,
+providerRegistryRevision,providerRegistryDigest`, then places the sole
+TrustedLocal candidate last. Exact duplicate collapse requires every tuple
+field, including `capabilityRevision`, and registry pair to match; conflicting
+mappings fail closed. Candidate identity remains presentation-only. For an
+OsEnforced candidate, the existing `spc2_` SHA-256 candidate-ID preimage
+domain is extended by the canonical decimal `capabilityRevision` string
+immediately after `providerVersion` in the ordered length-prefixed tuple;
+the TrustedLocal preimage is unchanged. Recompute and freeze the resulting
+candidate-ID known-answer vectors. P1 never accepts the ID.
+
+The Option A OsEnforced KAT is fixed as follows: variant byte `0x01`, tuple
+strings in exact order `sandbox.provider.test,1.0.0,7,ReadOnly,Disabled,3,
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, each
+encoded as `u32be(UTF8 byte length) || UTF8 bytes`, prefixed by
+`UTF8("arbor:sandbox-policy-candidate:v2\0")`. Its exact ID is
+`spc2_dcb3b078b00ced54449a7df8caf7180a204eb370f769684723a992e84924c325`.
+This vector adds the capability revision `7` after providerVersion `1.0.0`;
+the existing TrustedLocal golden remains unchanged.
+
+P5/P10 exact tuple matching includes providerId, providerVersion,
+capabilityRevision, trusted currentHost osFamily/osBuild, profile,
+networkMode, codec version 1 and canonical enforcementRuleSetDigest. P10
+still does not probe or qualify a provider and emits candidates only from the
+verified Supported set. P13 maps the human-selected providerVersion and
+capabilityRevision into the P1 OsEnforced payload alongside the existing
+providerId and other selection/precondition fields. This is a DTO/preimage
+revision only: no new route, ViewId, command, candidate persistence or
+candidate authority is introduced.

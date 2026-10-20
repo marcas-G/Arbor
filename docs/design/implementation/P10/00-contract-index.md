@@ -208,3 +208,11 @@ P10/05 places `sandboxHandleBindingDigest` on each closed candidate variant,
 derived from its profile and the same complete current P11 boundary/ownership
 read barrier. The singular legacy V21 preconditions remain unchanged.
 See P10/05 and the V6 acceptance record.
+
+## Accepted Option A provider-tuple selector (2026-10-20)
+
+P10/05 carries `capabilityRevision` in the V2 candidate DTO and in the
+OsEnforced candidate-ID preimage, preserving the existing read route and
+common preconditions. P10 still emits only exact current-host Supported rows;
+candidate IDs remain presentation-only. Accepted proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
