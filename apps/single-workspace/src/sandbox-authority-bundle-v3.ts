@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   decodeCanonicalSandboxAuthorityBundleV3,
   decodeCanonicalSandboxAuthorityHighWaterV3,
+  decodeCanonicalWindowsNativeOperatorTrustSetV1,
   type SandboxAuthorityBundleSnapshotV3,
   type SandboxAuthorityLoadErrorV1,
 } from "@arbor/domain";
@@ -89,7 +90,32 @@ export const loadSandboxAuthorityBundleSnapshotV3 = (
       sha256,
       sha256Bytes,
     );
-    if (decoded === undefined) return yield* reject("BundleMalformed");
+    if (decoded === undefined) {
+      // Classify only the accepted V3 trust child; every branch remains
+      // unavailable and exposes no raw key, path or decoder exception.
+      try {
+        const parsed: unknown = JSON.parse(rawSource.canonicalJson);
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          !Array.isArray(parsed)
+        ) {
+          const row = parsed as Record<string, unknown>;
+          const trustJson = JSON.stringify(row.windowsOperatorTrustSet);
+          const trust = decodeCanonicalWindowsNativeOperatorTrustSetV1(
+            trustJson,
+            sha256Bytes,
+          );
+          if (trust === undefined) return yield* reject("TrustSetMalformed");
+          if (sha256(trustJson) !== row.windowsOperatorTrustSetDigest)
+            return yield* reject("TrustSetDigestMismatch");
+        }
+      } catch {
+        // The closed V3 bundle decoder remains the authority, not this
+        // best-effort sanitized failure classifier.
+      }
+      return yield* reject("BundleMalformed");
+    }
     const { bundle, bundleDigest } = decoded;
     if (rawSource.sourceIdentity !== bundle.sourceIdentity)
       return yield* reject("SourceIdentityInvalid");

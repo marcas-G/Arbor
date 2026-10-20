@@ -188,4 +188,43 @@ describe("P5 Windows D2 V3 current protected authority", () => {
       failure: "HighWaterCorrupt",
     });
   });
+
+  it("classifies malformed trust and digest mismatch without exposing bytes", async () => {
+    const current = fixture();
+    const load = (canonicalJson: string) =>
+      Effect.runPromise(
+        loadSandboxAuthorityBundleSnapshotCurrent(
+          {
+            readVerifiedSandboxAuthorityBundle: () =>
+              Effect.succeed({
+                sourceIdentity: "host:test",
+                canonicalJson,
+              }),
+            readSandboxAuthorityHighWater: () =>
+              Effect.succeed(current.highWaterJson),
+            commitSandboxAuthorityHighWater: () => Effect.succeed(false),
+            appendSandboxAuthorityAudit: () => Effect.succeed(true),
+          },
+          "2026-10-20T00:00:00.000Z",
+          SANDBOX_ENV_ALLOWLIST,
+        ),
+      );
+    const malformed = await load(
+      current.bundleJson.replace('"algorithm":"Ed25519"', '"algorithm":"RSA"'),
+    );
+    expect(malformed).toEqual({
+      _tag: "Unavailable",
+      failure: "TrustSetMalformed",
+    });
+    const wrongDigest = await load(
+      current.bundleJson.replace(
+        /(?<="windowsOperatorTrustSetDigest":")[0-9a-f]{64}/u,
+        "f".repeat(64),
+      ),
+    );
+    expect(wrongDigest).toEqual({
+      _tag: "Unavailable",
+      failure: "TrustSetDigestMismatch",
+    });
+  });
 });
