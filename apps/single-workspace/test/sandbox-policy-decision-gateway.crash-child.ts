@@ -400,7 +400,7 @@ const program = Effect.gen(function* () {
       commandType: "DecideSandboxPolicy",
       projectId,
       actor,
-      schemaVersion: "1",
+      schemaVersion: "2",
       payload,
     });
     const replayed = yield* gatewayService.execute(
@@ -423,7 +423,7 @@ const program = Effect.gen(function* () {
     commandType: "DecideSandboxPolicy",
     projectId,
     actor,
-    schemaVersion: "1",
+    schemaVersion: "2",
     payload,
   });
   const receipt = yield* gatewayService.execute(

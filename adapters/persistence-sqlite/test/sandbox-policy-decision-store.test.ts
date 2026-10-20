@@ -185,7 +185,7 @@ describe("SandboxPolicyDecisionStore", () => {
           const store = yield* SandboxPolicyDecisionStorePort;
           yield* transactions.transact(store.insertCommitted(decision));
           yield* sql.unsafe(
-            "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '1', 'Committed', ?)",
+            "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '2', 'Committed', ?)",
             [
               decisionCommandId,
               projectId,

@@ -144,7 +144,8 @@ const decodeCommitted = (
   if (
     decision === undefined ||
     row.command_resolution !== "Committed" ||
-    row.command_schema_version !== "1" ||
+    (row.command_schema_version !== "1" &&
+      row.command_schema_version !== "2") ||
     row.command_project_id !== row.project_id ||
     typeof row.command_result_json !== "string"
   )

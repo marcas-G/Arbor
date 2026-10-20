@@ -45,7 +45,7 @@ describe("registered command receipt decoders", () => {
     );
 
     expect(external.filter((descriptor) => descriptor.required)).toHaveLength(
-      30,
+      31,
     );
     expect(external.filter((descriptor) => !descriptor.required)).toEqual([
       expect.objectContaining({

@@ -41,7 +41,7 @@ import type { CommandRejection } from "../rejection.js";
 
 /** Exact human-authored V21 request. Trusted authority, provenance, host
  * evidence, clocks and environment snapshots are deliberately not wire data. */
-export interface DecideSandboxPolicyPayload {
+interface DecideSandboxPolicyPayloadBase {
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
   readonly executionId: ExecutionId;
@@ -59,9 +59,39 @@ export interface DecideSandboxPolicyPayload {
   readonly expectedProviderRegistryDigest?: string;
   readonly profile: SandboxProfile;
   readonly providerId: string;
-  readonly networkPolicy: SandboxNetworkPolicySelectionV1;
   readonly decisionExpiresAt: string;
 }
+
+type OsEnforcedNetworkPolicySelection = Extract<
+  SandboxNetworkPolicySelectionV1,
+  { readonly kind: "OsEnforced" }
+>;
+type TrustedLocalNetworkPolicySelection = Extract<
+  SandboxNetworkPolicySelectionV1,
+  { readonly kind: "TrustedLocalUnconfinedV1" }
+>;
+
+/** Schema 2 requires an exact selector for new OsEnforced commands. The
+ * fieldless OsEnforced branch exists only to replay old receipts or commit the
+ * accepted current-schema SandboxAuthorityUnavailable rejection. */
+export type DecideSandboxPolicyPayload = DecideSandboxPolicyPayloadBase &
+  (
+    | {
+        readonly networkPolicy: OsEnforcedNetworkPolicySelection;
+        readonly providerVersion: string;
+        readonly capabilityRevision: number;
+      }
+    | {
+        readonly networkPolicy: OsEnforcedNetworkPolicySelection;
+        readonly providerVersion?: never;
+        readonly capabilityRevision?: never;
+      }
+    | {
+        readonly networkPolicy: TrustedLocalNetworkPolicySelection;
+        readonly providerVersion?: never;
+        readonly capabilityRevision?: never;
+      }
+  );
 
 export interface DecideSandboxPolicyPreparation {
   readonly prepare: (
@@ -85,6 +115,56 @@ export interface DecideSandboxPolicyPreparation {
     TransactionScope
   >;
 }
+
+type PreparedSandboxPolicyDecision =
+  | {
+      readonly _tag: "Ready";
+      readonly summary: EffectivePolicySummaryV1;
+    }
+  | {
+      readonly _tag: "Rejected";
+      readonly rejection: Extract<
+        CommandRejection,
+        { readonly _tag: "SandboxAuthorityUnavailable" }
+      >;
+    };
+
+const decodePreparedSandboxPolicyDecision = (
+  value: unknown,
+): PreparedSandboxPolicyDecision | undefined => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
+  const record = value as Record<string, unknown>;
+  if (record._tag === "Rejected") {
+    return Object.keys(record).length === 2 &&
+      Object.hasOwn(record, "rejection") &&
+      typeof record.rejection === "object" &&
+      record.rejection !== null &&
+      !Array.isArray(record.rejection) &&
+      Object.keys(record.rejection).length === 1 &&
+      (record.rejection as Record<string, unknown>)._tag ===
+        "SandboxAuthorityUnavailable"
+      ? {
+          _tag: "Rejected",
+          rejection: { _tag: "SandboxAuthorityUnavailable" },
+        }
+      : undefined;
+  }
+  if (
+    record._tag === "Ready" &&
+    Object.keys(record).length === 2 &&
+    Object.hasOwn(record, "summary") &&
+    typeof record.summary === "object" &&
+    record.summary !== null &&
+    !Array.isArray(record.summary)
+  ) {
+    return {
+      _tag: "Ready",
+      summary: record.summary as EffectivePolicySummaryV1,
+    };
+  }
+  return undefined;
+};
 
 export interface DecideSandboxPolicyDependencies {
   readonly grants: Pick<
@@ -171,7 +251,8 @@ export const makeDecideSandboxPolicyHandler = (
   dependencies: DecideSandboxPolicyDependencies,
 ): CommandHandler<DecideSandboxPolicyPayload, unknown> => ({
   commandType: "DecideSandboxPolicy",
-  schemaVersion: "1",
+  schemaVersion: "2",
+  priorReceiptSchemaVersions: ["1"],
   authority: {
     tag: "SandboxPolicyDecisionAuthority",
     targetMatches: (authority, payload) =>
@@ -190,19 +271,38 @@ export const makeDecideSandboxPolicyHandler = (
         cause: "sandbox decision preparation requires resolved authority",
       });
     }
-    return dependencies.preparation.prepare(envelope.payload, authority);
+    if (
+      envelope.payload.networkPolicy.kind === "OsEnforced" &&
+      envelope.payload.providerVersion === undefined &&
+      envelope.payload.capabilityRevision === undefined
+    ) {
+      return Effect.succeed({
+        _tag: "Rejected",
+        rejection: { _tag: "SandboxAuthorityUnavailable" },
+      } satisfies PreparedSandboxPolicyDecision);
+    }
+    return dependencies.preparation.prepare(envelope.payload, authority).pipe(
+      Effect.map(
+        (summary) =>
+          ({
+            _tag: "Ready",
+            summary,
+          }) satisfies PreparedSandboxPolicyDecision,
+      ),
+    );
   },
   execute: (envelope, _context, prepared) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
       const authority = envelope.resolvedAuthority;
+      const preparedDecision = decodePreparedSandboxPolicyDecision(prepared);
       if (authority?._tag !== "SandboxPolicyDecisionAuthority") {
         return commandErr({
           _tag: "AuthorityDenied",
           reason: "sandbox decision authority missing",
         });
       }
-      if (typeof prepared !== "object" || prepared === null) {
+      if (preparedDecision === undefined) {
         return commandErr({ _tag: "SandboxAuthorityUnavailable" });
       }
       const currentNow = yield* dependencies.clock.now();
@@ -291,6 +391,9 @@ export const makeDecideSandboxPolicyHandler = (
         current.expectedEpisodeRevision !== payload.expectedEpisodeRevision
       )
         return commandErr(stale("EpisodeRevision"));
+
+      if (preparedDecision._tag === "Rejected")
+        return commandErr(preparedDecision.rejection);
       if (
         !isIsoTimestamp(payload.decisionExpiresAt) ||
         Date.parse(payload.decisionExpiresAt) <= Date.parse(currentNow) ||
@@ -302,7 +405,10 @@ export const makeDecideSandboxPolicyHandler = (
       const decodedSelection = decodeSandboxNetworkPolicySelectionV1(
         payload.networkPolicy,
       );
-      const snapshot = decodeEffectivePolicySummaryV1(prepared, sha256Hex);
+      const snapshot = decodeEffectivePolicySummaryV1(
+        preparedDecision.summary,
+        sha256Hex,
+      );
       if (
         decodedSelection === undefined ||
         snapshot === undefined ||
@@ -316,6 +422,10 @@ export const makeDecideSandboxPolicyHandler = (
           ? decodedSelection.kind !== "OsEnforced" ||
             snapshot.profile !== payload.profile ||
             snapshot.providerId !== payload.providerId ||
+            payload.providerVersion === undefined ||
+            payload.capabilityRevision === undefined ||
+            snapshot.providerVersion !== payload.providerVersion ||
+            snapshot.capabilityRevision !== payload.capabilityRevision ||
             encodeNetworkPolicyV1(snapshot.networkPolicy) !==
               encodeNetworkPolicyV1(decodedSelection.policy)
           : decodedSelection.kind !== "TrustedLocalUnconfinedV1" ||

@@ -19,10 +19,12 @@ import {
   Actor,
   CommandId,
   ExecutionId,
+  encodeEffectivePolicySummaryV1,
   encodeNetworkPolicyV1,
   encodeSandboxAuthorityBundleV2,
   encodeSandboxAuthorityHighWaterV2,
   encodeSandboxOperatorPolicyConfigV1,
+  encodeSandboxPolicyDecisionCommittedInternalV1,
   encodeSandboxPolicyGrantIssuerConfigV1,
   encodeSandboxProviderQualificationRegistryV1,
   networkBrokerControlsV1ForMode,
@@ -155,6 +157,8 @@ const payload: DecideSandboxPolicyPayload = {
   expectedProviderRegistryDigest: "2".repeat(64),
   profile: "ReadOnly",
   providerId: "bwrap",
+  providerVersion: "0.8.0",
+  capabilityRevision: 1,
   networkPolicy: { kind: "OsEnforced", policy: networkPolicy },
   decisionExpiresAt: "2099-10-19T12:00:00.000Z",
 };
@@ -211,6 +215,22 @@ const snapshot = {
   authorityBundleDigest: "e".repeat(64),
   operatorConfigRevision: 4,
   operatorConfigDigest: "f".repeat(64),
+};
+const committedResultJson = (id: CommandId = commandId) => {
+  const policyDigest = createHash("sha256")
+    .update(encodeEffectivePolicySummaryV1(snapshot), "utf8")
+    .digest("hex");
+  return encodeSandboxPolicyDecisionCommittedInternalV1({
+    version: 1,
+    commandId: id,
+    projectId,
+    workspaceId,
+    executionId,
+    episodeBinding,
+    policyRevision: snapshot.policyRevision,
+    policyDigest,
+    effectivePolicySnapshot: snapshot,
+  });
 };
 
 const trustedAuthoritySnapshot: SandboxAuthorityBundleSnapshotV2 = {
@@ -382,6 +402,7 @@ const makeTestStack = (
   options: {
     readonly failDecisionEventOnce?: boolean;
     readonly staleWorkspaceRevision?: boolean;
+    readonly staleHandleBindingDigest?: boolean;
     readonly productionPreparation?: boolean;
     readonly authoritySnapshot?: SandboxAuthorityBundleSnapshotV2;
   } = {},
@@ -471,7 +492,9 @@ const makeTestStack = (
                 options.staleWorkspaceRevision === true ? 4 : 3,
               resourceBoundaryRevision: 1,
               sandboxHandleBindingDigest:
-                payload.expectedSandboxHandleBindingDigest,
+                options.staleHandleBindingDigest === true
+                  ? "0".repeat(64)
+                  : payload.expectedSandboxHandleBindingDigest,
               authorityBundleRevision: 4,
               authorityBundleDigest: "e".repeat(64),
               operatorConfigRevision: 4,
@@ -524,7 +547,10 @@ const makeTestStack = (
   };
 };
 
-const envelope = (id = commandId, commandPayload = payload) => ({
+const envelope = (
+  id: CommandId = commandId,
+  commandPayload: DecideSandboxPolicyPayload = payload,
+) => ({
   commandType: "DecideSandboxPolicy",
   commandId: id,
   projectId,
@@ -590,7 +616,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             commandType: "DecideSandboxPolicy",
             projectId,
             actor,
-            schemaVersion: "1",
+            schemaVersion: "2",
             payload,
           });
           const auth = makeAuthority(fingerprint);
@@ -604,6 +630,22 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             { _tag: "External", principal },
             auth,
           );
+          const changedTuplePayload = {
+            ...payload,
+            providerVersion: "0.9.0",
+          };
+          const changedTupleFingerprint = semanticRequestFingerprint({
+            commandType: "DecideSandboxPolicy",
+            projectId,
+            actor,
+            schemaVersion: "2",
+            payload: changedTuplePayload,
+          });
+          const changedTuple = yield* gateway.execute(
+            envelope(commandId, changedTuplePayload),
+            { _tag: "External", principal },
+            makeAuthority(changedTupleFingerprint),
+          );
           const rows = yield* sql.unsafe<{
             decisions: number;
             commands: number;
@@ -615,15 +657,134 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
               (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
             [commandId, commandId],
           );
-          return { first, replay, counts: rows[0] };
+          return { first, replay, changedTuple, counts: rows[0] };
         }),
         stack.app,
       ),
     );
     expect(result.first.resolution._tag).toBe("Committed");
     expect(result.replay.resolution).toEqual(result.first.resolution);
+    expect(result.changedTuple.resolution).toMatchObject({
+      _tag: "TerminalRejected",
+      error: { _tag: "IdempotencyConflict" },
+    });
     expect(result.counts).toEqual({ decisions: 1, commands: 1, events: 1 });
     expect(stack.preparationCalls()).toBe(1);
+  });
+
+  it("replays an exact schema-1 legacy receipt before preparation", async () => {
+    const stack = makeTestStack();
+    const {
+      providerVersion: _providerVersion,
+      capabilityRevision: _capabilityRevision,
+      ...legacyPayload
+    } = payload;
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* seedSchema50AndGrant;
+          const transactions = yield* TransactionPort;
+          const commandStore = yield* CommandStore;
+          const priorFingerprint = semanticRequestFingerprint({
+            commandType: "DecideSandboxPolicy",
+            projectId,
+            actor,
+            schemaVersion: "1",
+            payload: legacyPayload,
+          });
+          yield* transactions.transact(
+            commandStore.insertCommitted(
+              commandId,
+              projectId,
+              priorFingerprint,
+              "1",
+              1,
+              committedResultJson(),
+            ),
+          );
+          const currentFingerprint = semanticRequestFingerprint({
+            commandType: "DecideSandboxPolicy",
+            projectId,
+            actor,
+            schemaVersion: "2",
+            payload: legacyPayload,
+          });
+          const gateway = yield* CommandGateway;
+          return yield* gateway.execute(
+            envelope(commandId, legacyPayload),
+            { _tag: "External", principal },
+            makeAuthority(currentFingerprint),
+          );
+        }),
+        stack.app,
+      ),
+    );
+    expect(result.schemaVersion).toBe("1");
+    expect(result.resolution._tag).toBe("Committed");
+    expect(stack.preparationCalls()).toBe(0);
+  });
+
+  it("commits a schema-2 SandboxAuthorityUnavailable receipt for legacy OS input without a prior receipt", async () => {
+    const stack = makeTestStack();
+    const {
+      providerVersion: _providerVersion,
+      capabilityRevision: _capabilityRevision,
+      ...legacyPayload
+    } = payload;
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* seedSchema50AndGrant;
+          const sql = yield* SqlClient;
+          const fingerprint = semanticRequestFingerprint({
+            commandType: "DecideSandboxPolicy",
+            projectId,
+            actor,
+            schemaVersion: "2",
+            payload: legacyPayload,
+          });
+          const gateway = yield* CommandGateway;
+          const receipt = yield* gateway.execute(
+            envelope(commandId, legacyPayload),
+            { _tag: "External", principal },
+            makeAuthority(fingerprint),
+          );
+          const rows = yield* sql.unsafe<{
+            schemaVersion: string;
+            resolution: string;
+            terminalErrorJson: string | null;
+            decisions: number;
+            receipts: number;
+            events: number;
+          }>(
+            `SELECT c.schema_version AS schemaVersion, c.resolution,
+                    c.terminal_error_json AS terminalErrorJson,
+                    (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE decision_command_id = ?) AS decisions,
+                    (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS receipts,
+                    (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events
+               FROM commands c WHERE c.command_id = ?`,
+            [commandId, commandId, commandId],
+          );
+          return { receipt, row: rows[0] };
+        }),
+        stack.app,
+      ),
+    );
+    expect(result.receipt.resolution).toMatchObject({
+      _tag: "TerminalRejected",
+      error: { _tag: "SandboxAuthorityUnavailable" },
+    });
+    expect(result.row).toMatchObject({
+      schemaVersion: "2",
+      resolution: "TerminalRejected",
+      decisions: 0,
+      receipts: 1,
+      events: 0,
+    });
+    expect(JSON.parse(result.row?.terminalErrorJson ?? "null")).toMatchObject({
+      _tag: "SandboxAuthorityUnavailable",
+    });
+    expect(stack.preparationCalls()).toBe(0);
   });
 
   it("rolls decision and receipt back when event append fails, then retry commits once", async () => {
@@ -638,7 +799,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             commandType: "DecideSandboxPolicy",
             projectId,
             actor,
-            schemaVersion: "1",
+            schemaVersion: "2",
             payload,
           });
           const auth = makeAuthority(fingerprint);
@@ -709,7 +870,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             commandType: "DecideSandboxPolicy",
             projectId,
             actor,
-            schemaVersion: "1",
+            schemaVersion: "2",
             payload,
           });
           const receipt = yield* gateway.execute(
@@ -743,6 +904,52 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
     expect(result.counts).toEqual({ decisions: 0, receipts: 1, events: 0 });
   });
 
+  it("persists stale handle-binding CAS as a stable receipt with no decision or event", async () => {
+    const stack = makeTestStack({ staleHandleBindingDigest: true });
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* seedSchema50AndGrant;
+          const sql = yield* SqlClient;
+          const gateway = yield* CommandGateway;
+          const fingerprint = semanticRequestFingerprint({
+            commandType: "DecideSandboxPolicy",
+            projectId,
+            actor,
+            schemaVersion: "2",
+            payload,
+          });
+          const receipt = yield* gateway.execute(
+            envelope(),
+            { _tag: "External", principal },
+            makeAuthority(fingerprint),
+          );
+          const rows = yield* sql.unsafe<{
+            decisions: number;
+            receipts: number;
+            events: number;
+          }>(
+            `SELECT
+              (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE decision_command_id = ?) AS decisions,
+              (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS receipts,
+              (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
+            [commandId, commandId],
+          );
+          return { receipt, counts: rows[0] };
+        }),
+        stack.app,
+      ),
+    );
+    expect(result.receipt.resolution).toMatchObject({
+      _tag: "TerminalRejected",
+      error: {
+        _tag: "StaleSandboxPolicyInputs",
+        safeDetails: { field: "SandboxHandleBindingDigest" },
+      },
+    });
+    expect(result.counts).toEqual({ decisions: 0, receipts: 1, events: 0 });
+  });
+
   it("rejects expectedPolicyRevision against an existing SQLite decision head", async () => {
     const stack = makeTestStack();
     const retryCommandId = parse(CommandId)(
@@ -757,7 +964,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             commandType: "DecideSandboxPolicy",
             projectId,
             actor,
-            schemaVersion: "1",
+            schemaVersion: "2",
             payload,
           });
           const committed = yield* gateway.execute(
@@ -905,7 +1112,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
                 commandType: "DecideSandboxPolicy",
                 projectId,
                 actor,
-                schemaVersion: "1",
+                schemaVersion: "2",
                 payload: candidate,
               }),
               id,
