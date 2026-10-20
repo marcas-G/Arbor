@@ -6,7 +6,7 @@ const repoRoot = join(import.meta.dirname, "..", "..");
 const source = (path: string) => readFileSync(join(repoRoot, path), "utf8");
 
 describe("Windows native sandbox boundary", () => {
-  it("registers the probe-only provider at the composition boundary", () => {
+  it("registers the closed provider with the current P5 source at composition", () => {
     const appPackage = JSON.parse(
       source("apps/single-workspace/package.json"),
     ) as { dependencies: Record<string, string> };
@@ -16,7 +16,11 @@ describe("Windows native sandbox boundary", () => {
       "workspace:*",
     );
     expect(composition).toContain('from "@arbor/sandbox-windows"');
-    expect(composition).toContain("makeWindowsSandboxProcessPort()");
+    expect(composition).toContain("makeWindowsSandboxProcessPort(");
+    expect(composition).toContain(
+      "makeCurrentSandboxAuthoritySnapshotPortService(",
+    );
+    expect(composition).toContain("config.trustedHostConfigurationSource");
     expect(composition).toContain("nativeSandboxProcessPort");
   });
 
