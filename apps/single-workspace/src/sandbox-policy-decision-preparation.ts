@@ -10,15 +10,22 @@ import {
   type EffectivePolicySummaryV1,
   type Execution,
   encodeExecutionEpisodeBinding,
+  encodeSandboxEnforcementRuleSetV1,
   executionEpisode,
+  isIsoTimestamp,
+  networkBrokerControlsV1ForMode,
+  networkPolicyDigestV1,
   produceSandboxBoundaryV1,
   type SandboxAuthorityBundleSnapshotCurrent,
   type SandboxPolicyPreconditionsV1,
   type SandboxProfile,
+  type SandboxProviderQualificationEntryV1,
+  sandboxEnforcementRuleSetV1ForProvider,
   sandboxEnvironmentBasisDigestOfV1,
   type Workspace,
 } from "@arbor/domain";
 import {
+  type ClockService,
   type EnvironmentResolverService,
   type ExecutionRepositoryError,
   type ExecutionRepositoryService,
@@ -36,7 +43,13 @@ import {
   type WorktreeStoreError,
   type WorktreeStoreService,
 } from "@arbor/ports";
+import {
+  fixedWindowsNativeProductionArtifactPaths,
+  inspectWindowsNativeQualificationForRegistryEntryV3,
+  type WindowsNativeQualificationIo,
+} from "@arbor/sandbox-windows";
 import { Effect, Option } from "effect";
+import { sandboxPolicyCurrentHostV1 } from "./current-sandbox-authority-snapshot-port.js";
 
 type DecisionAuthority = Extract<
   CommandAuthorityFact,
@@ -91,7 +104,10 @@ export interface SandboxPolicyDecisionPreparationDependencies {
   >;
   readonly worktrees: Pick<WorktreeStoreService, "findByWorkspace">;
   readonly environmentResolver: Pick<EnvironmentResolverService, "observe">;
+  readonly clock: Pick<ClockService, "now">;
   readonly authoritySnapshot: SandboxAuthorityBundleSnapshotCurrent | undefined;
+  /** Test-only filesystem seam. Production uses the verifier's fixed paths. */
+  readonly qualificationIo?: WindowsNativeQualificationIo;
   /** Process-local qualification observer. It is absent in production and
    * never participates in a decision, persistence, or wire contract. */
   readonly qualificationProbe?: SandboxPolicyDecisionPreparationQualificationProbe;
@@ -136,6 +152,7 @@ interface PreparedInputs {
   readonly primaryRegion: import("@arbor/domain").CanonicalResourceRegion;
   readonly summary: EffectivePolicySummaryV1;
   readonly kind: SandboxPolicyPreconditionsV1["kind"];
+  readonly profile: SandboxProfile;
 }
 
 const operationalFailure = (cause: string): TransactionOperationalFailure => ({
@@ -282,6 +299,41 @@ const limitsForProfile = (
   snapshot.bundle.operatorConfig.limitsByProfile.find(
     (entry) => entry.profile === profile,
   )?.limits;
+
+const exactSupportedProviderEntry = (
+  snapshot: SandboxAuthorityBundleSnapshotCurrent,
+  payload: DecideSandboxPolicyPayload,
+  currentHost: ReturnType<typeof sandboxPolicyCurrentHostV1>,
+): SandboxProviderQualificationEntryV1 | undefined => {
+  if (
+    currentHost === undefined ||
+    snapshot.bundle.version !== 3 ||
+    payload.networkPolicy.kind !== "OsEnforced" ||
+    payload.providerVersion === undefined ||
+    payload.capabilityRevision === undefined
+  )
+    return undefined;
+  const ruleSet = sandboxEnforcementRuleSetV1ForProvider(payload.providerId);
+  if (ruleSet === undefined) return undefined;
+  const ruleSetDigest = sha256Hex(encodeSandboxEnforcementRuleSetV1(ruleSet));
+  const exact = snapshot.bundle.providerRegistry.entries.filter(
+    (entry) =>
+      entry.providerId === payload.providerId &&
+      entry.providerVersion === payload.providerVersion &&
+      entry.capabilityRevision === payload.capabilityRevision &&
+      entry.osFamily === currentHost.osFamily &&
+      entry.osBuild === currentHost.osBuild &&
+      entry.tuple.profile === payload.profile &&
+      entry.tuple.networkMode === payload.networkPolicy.policy.mode &&
+      entry.tuple.networkPolicyCodecVersion === 1 &&
+      entry.tuple.enforcementRuleSetDigest === ruleSetDigest,
+  );
+  return exact.length === 1 &&
+    exact[0]?.status === "Supported" &&
+    exact[0].qualificationEvidenceRef !== null
+    ? exact[0]
+    : undefined;
+};
 
 const makeCurrentPreconditions = (
   payload: DecideSandboxPolicyPayload,
@@ -464,36 +516,82 @@ export const makeSandboxPolicyDecisionPreparation = (
             operationalFailure("network policy is invalid"),
           );
         }
-        if (selection.kind !== "TrustedLocalUnconfinedV1") {
-          yield* probe(
-            "Selection",
-            "Failure",
-            operationalFailure(
-              "no qualified Supported OS provider is available; no fallback is permitted",
-            ),
+        let selectedOsEntry: SandboxProviderQualificationEntryV1 | undefined;
+        let policyKind: PreparedInputs["kind"];
+        let profile: SandboxProfile;
+        if (selection.kind === "TrustedLocalUnconfinedV1") {
+          if (
+            payload.profile !== "FullAccess" ||
+            payload.providerId !== "TrustedLocal"
+          ) {
+            yield* probe(
+              "Selection",
+              "Failure",
+              operationalFailure(
+                "TrustedLocal requires the exact FullAccess selection",
+              ),
+            );
+            return yield* Effect.fail(
+              operationalFailure(
+                "TrustedLocal requires the exact FullAccess selection",
+              ),
+            );
+          }
+          policyKind = "TrustedLocalUnconfinedV1";
+          profile = "FullAccess";
+        } else {
+          const currentHost = sandboxPolicyCurrentHostV1();
+          selectedOsEntry = exactSupportedProviderEntry(
+            authoritySnapshot,
+            payload,
+            currentHost,
           );
-          return yield* Effect.fail(
-            operationalFailure(
-              "no qualified Supported OS provider is available; no fallback is permitted",
-            ),
-          );
-        }
-        if (
-          payload.profile !== "FullAccess" ||
-          payload.providerId !== "TrustedLocal"
-        ) {
-          yield* probe(
-            "Selection",
-            "Failure",
-            operationalFailure(
-              "TrustedLocal requires the exact FullAccess selection",
-            ),
-          );
-          return yield* Effect.fail(
-            operationalFailure(
-              "TrustedLocal requires the exact FullAccess selection",
-            ),
-          );
+          const now = yield* dependencies.clock.now();
+          if (
+            currentHost === undefined ||
+            selectedOsEntry === undefined ||
+            !isIsoTimestamp(now) ||
+            currentHost.osFamily !== "Windows" ||
+            selectedOsEntry.providerId !== "windows-restricted-appcontainer-job"
+          ) {
+            yield* probe(
+              "Selection",
+              "Failure",
+              operationalFailure(
+                "no unique exact Supported provider tuple is available",
+              ),
+            );
+            return yield* Effect.fail(
+              operationalFailure(
+                "no unique exact Supported provider tuple is available",
+              ),
+            );
+          }
+          const inspection =
+            inspectWindowsNativeQualificationForRegistryEntryV3(
+              fixedWindowsNativeProductionArtifactPaths(),
+              selectedOsEntry,
+              authoritySnapshot,
+              currentHost,
+              now,
+              dependencies.qualificationIo,
+            );
+          if (inspection._tag !== "ManifestVerified") {
+            yield* probe(
+              "Selection",
+              "Failure",
+              operationalFailure(
+                "current signed Windows qualification evidence is unavailable",
+              ),
+            );
+            return yield* Effect.fail(
+              operationalFailure(
+                "current signed Windows qualification evidence is unavailable",
+              ),
+            );
+          }
+          policyKind = "OsEnforced";
+          profile = payload.profile;
         }
         yield* probe("Selection", "Pass");
         const primaryWorktree = exactActiveWorktree(captured.worktrees);
@@ -592,12 +690,12 @@ export const makeSandboxPolicyDecisionPreparation = (
             resolvedRegions: resolved.entries.map((entry) => entry.resolved),
             primaryManagedGitWorktreeRegion: primaryRegion,
             ownershipClaims: captured.ownershipClaims,
-            policyKind: "TrustedLocalUnconfinedV1",
-            profile: "FullAccess",
+            policyKind,
+            profile,
           },
           sha256Hex,
         );
-        const limits = limitsForProfile(authoritySnapshot, "FullAccess");
+        const limits = limitsForProfile(authoritySnapshot, profile);
         if (boundary === undefined) {
           yield* probe(
             "BoundaryMaterialization",
@@ -624,26 +722,44 @@ export const makeSandboxPolicyDecisionPreparation = (
           );
         }
         yield* probe("Limits", "Pass");
+        const basis =
+          policyKind === "OsEnforced"
+            ? {
+                version: 1 as const,
+                kind: "OsEnforced" as const,
+                workspaceId: workspace.workspaceId,
+                resourceBoundaryRevision: boundary.resourceBoundaryRevision,
+                mounts: boundary.mounts,
+                environmentAllowlist:
+                  bundle.operatorConfig.environmentAllowlist,
+                limits,
+                authorityBundleRevision: bundle.bundleRevision,
+                authorityBundleDigest: authoritySnapshot.bundleDigest,
+                providerRegistryRevision: bundle.providerRegistryRevision,
+                providerRegistryDigest: bundle.providerRegistryDigest,
+                qualificationEvidenceRef:
+                  selectedOsEntry?.qualificationEvidenceRef ?? "",
+              }
+            : {
+                version: 1 as const,
+                kind: "TrustedLocalUnconfinedV1" as const,
+                workspaceId: workspace.workspaceId,
+                resourceBoundaryRevision: boundary.resourceBoundaryRevision,
+                mounts: boundary.mounts,
+                environmentAllowlist:
+                  bundle.operatorConfig.environmentAllowlist,
+                limits,
+                authorityBundleRevision: bundle.bundleRevision,
+                authorityBundleDigest: authoritySnapshot.bundleDigest,
+                operatorConfigRevision: bundle.operatorConfigRevision,
+                operatorConfigDigest: bundle.operatorConfigDigest,
+                trustedRuntimeVersion: "builtin-v1" as const,
+              };
         const sandboxEnvironmentBasisDigest = sandboxEnvironmentBasisDigestOfV1(
-          {
-            version: 1,
-            kind: "TrustedLocalUnconfinedV1",
-            workspaceId: workspace.workspaceId,
-            resourceBoundaryRevision: boundary.resourceBoundaryRevision,
-            mounts: boundary.mounts,
-            environmentAllowlist: bundle.operatorConfig.environmentAllowlist,
-            limits,
-            authorityBundleRevision: bundle.bundleRevision,
-            authorityBundleDigest: authoritySnapshot.bundleDigest,
-            operatorConfigRevision: bundle.operatorConfigRevision,
-            operatorConfigDigest: bundle.operatorConfigDigest,
-            trustedRuntimeVersion: "builtin-v1",
-          },
+          basis,
           sha256Hex,
         );
-        const summary: EffectivePolicySummaryV1 = {
-          version: 1,
-          kind: "TrustedLocalUnconfinedV1",
+        const commonSummary = {
           projectId: payload.projectId,
           workspaceId: payload.workspaceId,
           executionId: payload.executionId,
@@ -653,11 +769,6 @@ export const makeSandboxPolicyDecisionPreparation = (
           resourceBoundaryDigest: boundary.resourceBoundaryDigest,
           sandboxEnvironmentBasisDigest,
           policyRevision: captured.latestPolicyRevision + 1,
-          expiresAt: payload.decisionExpiresAt,
-          trustedRuntimeIdentity: "TrustedLocal",
-          trustedRuntimeVersion: "builtin-v1",
-          profile: "FullAccess",
-          networkBoundary: "Unconfined",
           sandboxHandleBindingDigest: boundary.sandboxHandleBindingDigest,
           mounts: boundary.mounts,
           environmentAllowlist: bundle.operatorConfig.environmentAllowlist,
@@ -668,6 +779,89 @@ export const makeSandboxPolicyDecisionPreparation = (
           operatorConfigRevision: bundle.operatorConfigRevision,
           operatorConfigDigest: bundle.operatorConfigDigest,
         };
+        const summary: EffectivePolicySummaryV1 =
+          policyKind === "OsEnforced" && selectedOsEntry !== undefined
+            ? {
+                version: 1,
+                kind: "OsEnforced",
+                projectId: commonSummary.projectId,
+                workspaceId: commonSummary.workspaceId,
+                executionId: commonSummary.executionId,
+                episodeBinding: commonSummary.episodeBinding,
+                workspaceRevision: commonSummary.workspaceRevision,
+                resourceBoundaryRevision:
+                  commonSummary.resourceBoundaryRevision,
+                resourceBoundaryDigest: commonSummary.resourceBoundaryDigest,
+                sandboxEnvironmentBasisDigest:
+                  commonSummary.sandboxEnvironmentBasisDigest,
+                policyRevision: commonSummary.policyRevision,
+                expiresAt: payload.decisionExpiresAt,
+                profile: payload.profile as "ReadOnly" | "WorkspaceWrite",
+                providerId: selectedOsEntry.providerId,
+                providerVersion: selectedOsEntry.providerVersion,
+                capabilityRevision: selectedOsEntry.capabilityRevision,
+                osFamily: selectedOsEntry.osFamily,
+                osBuild: selectedOsEntry.osBuild,
+                qualificationEvidenceRef:
+                  selectedOsEntry.qualificationEvidenceRef as string,
+                networkPolicy: (
+                  selection as Extract<typeof selection, { kind: "OsEnforced" }>
+                ).policy,
+                networkPolicyDigest: networkPolicyDigestV1(
+                  (
+                    selection as Extract<
+                      typeof selection,
+                      { kind: "OsEnforced" }
+                    >
+                  ).policy,
+                  sha256Hex,
+                ),
+                networkBrokerControls: networkBrokerControlsV1ForMode(
+                  selectedOsEntry.tuple.networkMode,
+                ),
+                providerRegistryRevision: bundle.providerRegistryRevision,
+                providerRegistryDigest: bundle.providerRegistryDigest,
+                sandboxHandleBindingDigest:
+                  commonSummary.sandboxHandleBindingDigest,
+                mounts: commonSummary.mounts,
+                environmentAllowlist: commonSummary.environmentAllowlist,
+                limits: commonSummary.limits,
+                auditRefs: commonSummary.auditRefs,
+                authorityBundleRevision: commonSummary.authorityBundleRevision,
+                authorityBundleDigest: commonSummary.authorityBundleDigest,
+                operatorConfigRevision: commonSummary.operatorConfigRevision,
+                operatorConfigDigest: commonSummary.operatorConfigDigest,
+              }
+            : {
+                version: 1,
+                kind: "TrustedLocalUnconfinedV1",
+                projectId: commonSummary.projectId,
+                workspaceId: commonSummary.workspaceId,
+                executionId: commonSummary.executionId,
+                episodeBinding: commonSummary.episodeBinding,
+                workspaceRevision: commonSummary.workspaceRevision,
+                resourceBoundaryRevision:
+                  commonSummary.resourceBoundaryRevision,
+                resourceBoundaryDigest: commonSummary.resourceBoundaryDigest,
+                sandboxEnvironmentBasisDigest:
+                  commonSummary.sandboxEnvironmentBasisDigest,
+                policyRevision: commonSummary.policyRevision,
+                expiresAt: payload.decisionExpiresAt,
+                trustedRuntimeIdentity: "TrustedLocal",
+                trustedRuntimeVersion: "builtin-v1",
+                profile: "FullAccess",
+                networkBoundary: "Unconfined",
+                sandboxHandleBindingDigest:
+                  commonSummary.sandboxHandleBindingDigest,
+                mounts: commonSummary.mounts,
+                environmentAllowlist: commonSummary.environmentAllowlist,
+                limits: commonSummary.limits,
+                auditRefs: commonSummary.auditRefs,
+                authorityBundleRevision: commonSummary.authorityBundleRevision,
+                authorityBundleDigest: commonSummary.authorityBundleDigest,
+                operatorConfigRevision: commonSummary.operatorConfigRevision,
+                operatorConfigDigest: commonSummary.operatorConfigDigest,
+              };
         const prepared: PreparedInputs = {
           captured,
           boundary: workspace.resourceBoundary,
@@ -675,7 +869,8 @@ export const makeSandboxPolicyDecisionPreparation = (
           primaryWorktree,
           primaryRegion,
           summary,
-          kind: "TrustedLocalUnconfinedV1",
+          kind: policyKind,
+          profile,
         };
         preparedByPayload.set(payload, prepared);
         return summary;
@@ -730,8 +925,8 @@ export const makeSandboxPolicyDecisionPreparation = (
               resolvedRegions: prepared.resolvedRegions,
               primaryManagedGitWorktreeRegion: prepared.primaryRegion,
               ownershipClaims: captured.ownershipClaims,
-              policyKind: "TrustedLocalUnconfinedV1",
-              profile: "FullAccess",
+              policyKind: prepared.kind,
+              profile: prepared.profile,
             },
             sha256Hex,
           );

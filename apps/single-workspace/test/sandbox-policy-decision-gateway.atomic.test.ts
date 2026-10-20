@@ -512,6 +512,7 @@ const makeTestStack = (
             ownership: yield* ResourceOwnershipRepository,
             worktrees: yield* WorktreeStore,
             environmentResolver: yield* EnvironmentResolverPort,
+            clock,
             authoritySnapshot:
               options.authoritySnapshot ?? trustedAuthoritySnapshot,
           });

@@ -18,6 +18,7 @@ import {
 import { SandboxPolicyCandidateBoundaryReadPortLive } from "../../../apps/single-workspace/src/sandbox-policy-candidate-boundary-read-port.js";
 import { makeSandboxPolicyDecisionPreparation } from "../../../apps/single-workspace/src/sandbox-policy-decision-preparation.js";
 import {
+  Clock,
   EnvironmentResolverPort,
   ExecutionRepository,
   ResourceOwnershipRepository,
@@ -247,6 +248,7 @@ const sandboxPreparationDiagnostic = async (input: {
   const diagnostic = Effect.provide(
     Effect.gen(function* () {
       const tx = yield* TransactionPort;
+      const clock = yield* Clock;
       const preparation = makeSandboxPolicyDecisionPreparation({
         transaction: tx,
         workspaces: yield* WorkspaceRepository,
@@ -255,6 +257,7 @@ const sandboxPreparationDiagnostic = async (input: {
         ownership: yield* ResourceOwnershipRepository,
         worktrees: yield* WorktreeStore,
         environmentResolver: yield* EnvironmentResolverPort,
+        clock,
         authoritySnapshot: {
           bundle: input.pair.bundle,
           bundleDigest: input.pair.bundleDigest,

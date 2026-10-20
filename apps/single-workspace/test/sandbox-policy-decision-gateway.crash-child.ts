@@ -360,6 +360,7 @@ const registry = Layer.provide(
           ownership: ownershipRepo,
           worktrees: worktreeStore,
           environmentResolver,
+          clock,
           authoritySnapshot,
         }),
         clock,

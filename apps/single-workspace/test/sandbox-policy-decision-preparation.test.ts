@@ -1,3 +1,5 @@
+import { createHash, createPrivateKey, sign } from "node:crypto";
+import { win32 } from "node:path";
 import type { DecideSandboxPolicyPayload } from "@arbor/application";
 import type {
   CanonicalResourceRegion,
@@ -9,10 +11,15 @@ import type {
 } from "@arbor/domain";
 import {
   CommandId,
+  decodeCanonicalWindowsNativeOperatorTrustSetV1,
+  decodeEffectivePolicySummaryV1,
   ExecutionId,
+  encodeSandboxEnforcementRuleSetV1,
+  encodeWindowsNativeManifestSignatureV1,
   Principal,
   ProjectId,
   parse,
+  sandboxEnforcementRuleSetV1ForProvider,
   WorkspaceId,
 } from "@arbor/domain";
 import type {
@@ -23,8 +30,16 @@ import type {
   WorktreeRecord,
 } from "@arbor/ports";
 import { TransactionScope } from "@arbor/ports";
+import {
+  encodeWindowsNativeArtifactManifestV1,
+  fixedWindowsNativeProductionArtifactPaths,
+  WINDOWS_NATIVE_PROCESS_HOST_COMPILER_ARGUMENTS_V1,
+  type WindowsNativeArtifactManifestV1,
+  type WindowsNativeQualificationIo,
+} from "@arbor/sandbox-windows";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
+import { sandboxPolicyCurrentHostV1 } from "../src/current-sandbox-authority-snapshot-port.js";
 import type { SandboxPolicyDecisionPreparationDependencies } from "../src/sandbox-policy-decision-preparation.js";
 import { makeSandboxPolicyDecisionPreparation } from "../src/sandbox-policy-decision-preparation.js";
 
@@ -151,7 +166,9 @@ const payload = (
   ...overrides,
 });
 
-const osPayload = (): OsEnforcedDecisionPayload => ({
+const osPayload = (
+  overrides: Partial<OsEnforcedDecisionPayload> = {},
+): OsEnforcedDecisionPayload => ({
   ...payload(),
   expectedProviderRegistryRevision: 3,
   expectedProviderRegistryDigest: "3".repeat(64),
@@ -163,6 +180,7 @@ const osPayload = (): OsEnforcedDecisionPayload => ({
     kind: "OsEnforced",
     policy: { version: 1, mode: "Disabled", destinations: [] },
   },
+  ...overrides,
 });
 
 const authority = {
@@ -210,6 +228,155 @@ const resolver: EnvironmentResolverService = {
     }),
 };
 
+const hash = (bytes: Buffer | string) =>
+  createHash("sha256").update(bytes).digest("hex");
+
+const makeSignedWindowsAuthority = () => {
+  const host = sandboxPolicyCurrentHostV1();
+  if (host === undefined || host.osFamily !== "Windows")
+    throw new Error(
+      "Windows host identity required by this qualification test",
+    );
+  const paths = fixedWindowsNativeProductionArtifactPaths();
+  const providerId = "windows-restricted-appcontainer-job";
+  const providerVersion = "t3d-v1";
+  const capabilityRevision = 4;
+  const ruleSet = sandboxEnforcementRuleSetV1ForProvider(providerId);
+  if (ruleSet === undefined) throw new Error("provider ruleset missing");
+  const ruleSetDigest = hash(encodeSandboxEnforcementRuleSetV1(ruleSet));
+  const fileBytes = new Map<string, Buffer>([
+    [paths.source, Buffer.from("fixed process host source")],
+    [paths.compiler, Buffer.from("fixed framework compiler")],
+    [paths.binary, Buffer.from("shipped PE bytes")],
+    [
+      win32.join(paths.testControlRoot, "control-token.artifact"),
+      Buffer.from("control"),
+    ],
+  ]);
+  const manifest: WindowsNativeArtifactManifestV1 = {
+    version: 1,
+    providerId,
+    providerVersion,
+    capabilityRevision,
+    osFamily: "Windows",
+    osBuild: host.osBuild,
+    platformPrimitiveSetId:
+      "windows-restricted-token-lowintegrity-appcontainer-job-namedpipe-v1",
+    qualificationRows: [
+      {
+        profile: "ReadOnly",
+        networkMode: "Disabled",
+        networkPolicyCodecVersion: 1,
+        enforcementRuleSetDigest: ruleSetDigest,
+      },
+    ],
+    sourceSha256: hash(fileBytes.get(paths.source) ?? ""),
+    compilerSha256: hash(fileBytes.get(paths.compiler) ?? ""),
+    compilerVersion: "4.8.9037.0",
+    compilerArgumentsSha256: hash(
+      WINDOWS_NATIVE_PROCESS_HOST_COMPILER_ARGUMENTS_V1.join("\n"),
+    ),
+    binarySha256: hash(fileBytes.get(paths.binary) ?? ""),
+    buildMethod: "fixed-framework64-csc",
+    buildVersion: "1",
+    testControlArtifactHashes: [
+      { artifactId: "control-token", sha256: hash("control") },
+    ],
+    limits,
+    operatorConfigRevision: operatorConfig.revision,
+    operatorConfigDigest: "2".repeat(64),
+    discoveryMethod: "fixed-windows-build-probe",
+    discoveryVersion: "1",
+    matrixResults: [{ matrixId: "disabled-readonly", result: "Pass" }],
+    hostControls: [
+      {
+        controlId: "appcontainer-token",
+        artifactId: "control-token",
+        result: "Pass",
+      },
+    ],
+  };
+  const manifestBytes = Buffer.from(
+    encodeWindowsNativeArtifactManifestV1(manifest),
+  );
+  fileBytes.set(paths.manifest, manifestBytes);
+  const seed = Buffer.from(
+    "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+    "hex",
+  );
+  const privateKey = createPrivateKey({
+    key: Buffer.concat([
+      Buffer.from("302e020100300506032b657004220420", "hex"),
+      seed,
+    ]),
+    format: "der",
+    type: "pkcs8",
+  });
+  const signature = sign(
+    null,
+    Buffer.concat([
+      Buffer.from("Arbor.WindowsNativeQualificationManifestV1\0", "ascii"),
+      manifestBytes,
+    ]),
+    privateKey,
+  );
+  fileBytes.set(
+    paths.signature,
+    Buffer.from(
+      encodeWindowsNativeManifestSignatureV1({
+        version: 1,
+        keyId: "operator-2026-a",
+        signatureBase64: signature.toString("base64"),
+      }),
+    ),
+  );
+  const trust = decodeCanonicalWindowsNativeOperatorTrustSetV1(
+    '{"version":1,"revision":1,"sourceIdentity":"host:test","providerId":"windows-restricted-appcontainer-job","keys":[{"keyId":"operator-2026-a","algorithm":"Ed25519","publicKeySpkiDerBase64":"MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=","publicKeySpkiSha256":"06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9","validFrom":"2026-10-20T00:00:00.000Z","validUntil":"2027-10-20T00:00:00.000Z","status":"Active"}],"revokedKeyIds":[]}',
+    (bytes) => hash(Buffer.from(bytes)),
+  );
+  if (trust === undefined) throw new Error("test trust-set KAT rejected");
+  const row = {
+    providerId,
+    providerVersion,
+    capabilityRevision,
+    osFamily: host.osFamily,
+    osBuild: host.osBuild,
+    tuple: {
+      profile: "ReadOnly" as const,
+      networkMode: "Disabled" as const,
+      networkPolicyCodecVersion: 1 as const,
+      enforcementRuleSetDigest: ruleSetDigest,
+    },
+    status: "Supported" as const,
+    qualificationEvidenceRef: `blob:sha256:${hash(manifestBytes)}`,
+  };
+  const snapshot = {
+    ...authorityBundleSnapshot,
+    bundle: {
+      ...authorityBundleSnapshot.bundle,
+      version: 3 as const,
+      providerRegistry: { version: 1 as const, revision: 3, entries: [row] },
+      windowsOperatorTrustSetRevision: 1,
+      windowsOperatorTrustSetDigest: "5".repeat(64),
+      windowsOperatorTrustSet: trust,
+    },
+  } satisfies SandboxAuthorityBundleSnapshotCurrent;
+  const io: WindowsNativeQualificationIo = {
+    lstat: (path) => ({
+      isFile: () => fileBytes.has(path),
+      isDirectory: () => false,
+      isSymbolicLink: () => false,
+    }),
+    realpath: (path) => path,
+    read: (path) => {
+      const bytes = fileBytes.get(path);
+      if (bytes === undefined) throw new Error("test artifact missing");
+      return bytes;
+    },
+  };
+  return { host, row, snapshot, io };
+};
+
 const fixture = (
   mutate?: (state: {
     workspace: Workspace;
@@ -219,6 +386,7 @@ const fixture = (
   }) => void,
   environmentResolver: EnvironmentResolverService = resolver,
   authoritySnapshotOverride: SandboxAuthorityBundleSnapshotCurrent | null = authorityBundleSnapshot,
+  qualificationIo?: WindowsNativeQualificationIo,
 ) => {
   const state = {
     workspace,
@@ -283,7 +451,9 @@ const fixture = (
       findByWorkspace: () => Effect.succeed(state.worktrees),
     } as never,
     environmentResolver,
+    clock: { now: () => Effect.succeed("2026-10-20T00:00:00.000Z") },
     authoritySnapshot: authoritySnapshotOverride ?? undefined,
+    ...(qualificationIo === undefined ? {} : { qualificationIo }),
   };
   mutate?.(state);
   return {
@@ -294,6 +464,98 @@ const fixture = (
 };
 
 describe("production sandbox decision materializer", () => {
+  it("selects one exact Supported OS tuple only after V3 signed evidence verifies", async () => {
+    const signed = makeSignedWindowsAuthority();
+    const { preparation, transaction } = fixture(
+      undefined,
+      resolver,
+      signed.snapshot,
+      signed.io,
+    );
+    const request = osPayload({
+      providerId: signed.row.providerId,
+      providerVersion: signed.row.providerVersion,
+      capabilityRevision: signed.row.capabilityRevision,
+      expectedProviderRegistryRevision: 3,
+      expectedProviderRegistryDigest: "3".repeat(64),
+    });
+    const prepared = await Effect.runPromise(
+      preparation.prepare(request, authority),
+    );
+    expect(prepared).toMatchObject({
+      kind: "OsEnforced",
+      providerId: signed.row.providerId,
+      providerVersion: signed.row.providerVersion,
+      capabilityRevision: signed.row.capabilityRevision,
+      osFamily: signed.host.osFamily,
+      osBuild: signed.host.osBuild,
+      qualificationEvidenceRef: signed.row.qualificationEvidenceRef,
+      providerRegistryRevision: 3,
+      providerRegistryDigest: "3".repeat(64),
+      networkPolicy: request.networkPolicy.policy,
+    });
+    expect(decodeEffectivePolicySummaryV1(prepared, hash)).toEqual(prepared);
+    expect(JSON.stringify(prepared)).not.toContain("/repo/workspace");
+    const current = await Effect.runPromise(
+      transaction.transact(preparation.currentPreconditions(request)),
+    );
+    expect(current.kind).toBe("OsEnforced");
+    expect(current.sandboxHandleBindingDigest).toBe(
+      prepared.sandboxHandleBindingDigest,
+    );
+  });
+
+  it("rejects absent, duplicate, non-Supported, and mismatched exact tuples", async () => {
+    const signed = makeSignedWindowsAuthority();
+    const exactRow = signed.row;
+    const request = osPayload({
+      providerId: signed.row.providerId,
+      providerVersion: signed.row.providerVersion,
+      capabilityRevision: signed.row.capabilityRevision,
+    });
+    const cases = [
+      [],
+      [{ ...exactRow, status: "Experimental" as const }],
+      [exactRow, { ...exactRow }],
+      [{ ...exactRow, qualificationEvidenceRef: null }],
+      [{ ...exactRow, providerVersion: "other-version" }],
+    ];
+    for (const entries of cases) {
+      const snapshot = {
+        ...signed.snapshot,
+        bundle: {
+          ...signed.snapshot.bundle,
+          providerRegistry: { version: 1 as const, revision: 3, entries },
+        },
+      } satisfies SandboxAuthorityBundleSnapshotCurrent;
+      const { preparation } = fixture(undefined, resolver, snapshot, signed.io);
+      await expect(
+        Effect.runPromise(preparation.prepare(request, authority)),
+      ).rejects.toMatchObject({
+        _tag: "TransactionOperationalFailure",
+      });
+    }
+    const paths = fixedWindowsNativeProductionArtifactPaths();
+    const badSignatureIo: WindowsNativeQualificationIo = {
+      ...signed.io,
+      read: (path) =>
+        path === paths.signature
+          ? Buffer.from("tampered signature")
+          : signed.io.read(path),
+    };
+    const { preparation } = fixture(
+      undefined,
+      resolver,
+      signed.snapshot,
+      badSignatureIo,
+    );
+    await expect(
+      Effect.runPromise(preparation.prepare(request, authority)),
+    ).rejects.toMatchObject({
+      _tag: "TransactionOperationalFailure",
+    });
+  });
+
   it("binds P1 preparation to complete current V3 bundle revision/digest", async () => {
     const v3 = {
       ...authorityBundleSnapshot,
@@ -364,6 +626,7 @@ describe("production sandbox decision materializer", () => {
       operatorConfigDigest: "2".repeat(64),
       auditRefs: [String(commandId)],
     });
+    expect(decodeEffectivePolicySummaryV1(prepared, hash)).toEqual(prepared);
     expect(JSON.stringify(prepared)).not.toContain("/repo/workspace");
     expect(prepared.sandboxHandleBindingDigest).not.toBe("5".repeat(64));
     const current = await Effect.runPromise(

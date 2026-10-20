@@ -955,6 +955,7 @@ export const buildSingleWorkspaceLayer = (
             ownership: yield* ResourceOwnershipRepository,
             worktrees: yield* WorktreeStore,
             environmentResolver: yield* EnvironmentResolverPort,
+            clock: yield* Clock,
             authoritySnapshot:
               authoritySnapshot._tag === "Available"
                 ? authoritySnapshot.snapshot
