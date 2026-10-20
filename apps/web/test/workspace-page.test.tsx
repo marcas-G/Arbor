@@ -121,6 +121,7 @@ const candidateReadForDigest = (digest: string): CandidateRead =>
         sandboxHandleBindingDigest: digest,
         providerId: "linux-bwrap",
         providerVersion: "bwrap-v2",
+        capabilityRevision: 7,
         profile: "WorkspaceWrite",
         networkMode: "Restricted",
         providerRegistryRevision: 3,
@@ -246,7 +247,7 @@ describe("W-05 Workspace page", () => {
     });
     renderWorkspace();
     const osChoice = await screen.findByRole("radio", {
-      name: /工作区写入隔离.*linux-bwrap/u,
+      name: /工作区写入隔离.*linux-bwrap.*capability 7/u,
     });
     const trustedChoice = screen.getByRole("radio", {
       name: /TrustedLocal：FullAccess/u,

@@ -897,6 +897,7 @@ describe("DecideSandboxPolicyForm", () => {
         sandboxHandleBindingDigest: "c".repeat(64),
         providerId: "linux-bwrap",
         providerVersion: "bwrap-v2",
+        capabilityRevision: 7,
         profile: "WorkspaceWrite",
         networkMode: "Restricted",
         providerRegistryRevision: 6,
@@ -934,7 +935,9 @@ describe("DecideSandboxPolicyForm", () => {
       },
     );
     fireEvent.click(
-      screen.getByRole("radio", { name: /工作区写入隔离.*linux-bwrap/u }),
+      screen.getByRole("radio", {
+        name: /工作区写入隔离.*linux-bwrap.*capability 7/u,
+      }),
     );
     fireEvent.change(
       screen.getByLabelText("Restricted 网络目的地（每行一个 HTTPS origin）"),
@@ -959,6 +962,8 @@ describe("DecideSandboxPolicyForm", () => {
       expectedProviderRegistryDigest: "d".repeat(64),
       profile: "WorkspaceWrite",
       providerId: "linux-bwrap",
+      providerVersion: "bwrap-v2",
+      capabilityRevision: 7,
       networkPolicy: {
         kind: "OsEnforced",
         policy: {

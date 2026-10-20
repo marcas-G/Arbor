@@ -128,7 +128,7 @@ export function DecideSandboxPolicyForm({
             const label =
               item.kind === "TrustedLocalUnconfinedV1"
                 ? "TrustedLocal：FullAccess，不受 OS 隔离"
-                : `${profileLabel(item.profile)} · ${item.providerId} · ${networkLabel(item.networkMode)}`;
+                : `${profileLabel(item.profile)} · ${item.providerId} ${item.providerVersion} · capability ${item.capabilityRevision} · ${networkLabel(item.networkMode)}`;
             return (
               <label className="arbor-command-check" key={item.candidateId}>
                 <input

@@ -99,7 +99,7 @@ export function WorkspaceDetailView({
               <li key={candidate.candidateId}>
                 {candidate.kind === "TrustedLocalUnconfinedV1"
                   ? "TrustedLocal · FullAccess · 不受 OS 隔离（高风险）"
-                  : `${candidate.providerId} ${candidate.providerVersion} · ${candidate.profile === "ReadOnly" ? "只读" : "工作区写入"} · ${candidate.networkMode}`}
+                  : `${candidate.providerId} ${candidate.providerVersion} · capability ${candidate.capabilityRevision} · ${candidate.profile === "ReadOnly" ? "只读" : "工作区写入"} · ${candidate.networkMode}`}
               </li>
             ))}
           </ul>
