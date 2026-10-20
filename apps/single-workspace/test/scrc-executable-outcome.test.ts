@@ -101,6 +101,84 @@ describe("SCRC executable outcome taxonomy", () => {
     });
   });
 
+  it("reconstructs the exact P9 binding from persisted ExpectedFailure proof", () => {
+    const expectedFailure = {
+      _tag: "ExpectedFailure" as const,
+      observation: {
+        text: "required sandbox capability was unavailable; execution did not start",
+        truncated: false,
+      },
+      sandboxProviderUnavailable: {
+        policyRevision: 3,
+        policyDigest: "a".repeat(64),
+        profile: "ReadOnly" as const,
+        providerId: "windows-restricted-appcontainer-job",
+        providerVersion: "t3d-v1",
+        capabilityRevision: "4",
+        probeEvidenceRef: `blob:sha256:${"b".repeat(64)}`,
+        failureCode: "ProviderVersionMismatch",
+        effectDisposition: "NoEffect" as const,
+      },
+    };
+    const context = {
+      projectId: "prj_p9_replay" as never,
+      workspaceId: "ws_p9_replay" as never,
+      executionId: "exe_p9_replay" as never,
+      executionEpisodeBinding: {
+        _tag: "WorkEpisode" as const,
+        workId: "wrk_p9_replay" as never,
+        targetWorkRevision: 4 as never,
+      },
+      recoveryBindingIdentity: {
+        executionId: "exe_p9_replay" as never,
+        providerTurnId: "ptn_p9_replay" as never,
+        logicalStepNo: 2,
+        repairAttempt: 0,
+        logicalActionId: "lac_p9_replay",
+        actionIndex: 1,
+        callRef: "call_p9_replay",
+      },
+    };
+    const intent = {
+      invocationId: "tin_p9_replay" as never,
+      callRef: "call_p9_replay",
+      toolName: "shell",
+      toolVersion: "1",
+      argumentsJson: "{}",
+      approvalId: null,
+    };
+    expect(toExecutableOutcome(expectedFailure, { context, intent })).toEqual({
+      _tag: "SandboxProviderUnavailable",
+      outcome: {
+        _tag: "SandboxProviderUnavailable",
+        projectId: context.projectId,
+        workspaceId: context.workspaceId,
+        executionId: context.executionId,
+        episodeBinding: context.executionEpisodeBinding,
+        policyRevision: 3,
+        policyDigest: "a".repeat(64),
+        profileId: "ReadOnly",
+        providerId: "windows-restricted-appcontainer-job",
+        providerVersion: "t3d-v1",
+        capabilityRevision: "4",
+        probeEvidenceRef: `blob:sha256:${"b".repeat(64)}`,
+        failureCode: "ProviderVersionMismatch",
+        actionBinding: {
+          identity: {
+            executionId: context.executionId,
+            logicalStepNo: 2,
+            repairAttempt: 0,
+          },
+          providerTurnId: "ptn_p9_replay",
+          logicalActionId: "lac_p9_replay",
+          actionIndex: 1,
+          callRef: "call_p9_replay",
+          invocationId: intent.invocationId,
+        },
+      },
+    });
+  });
+
   it("keeps a final P39 NotOccurred result as a failed sourced observation with its distinct P4 Artifact", () => {
     expect(
       toExecutableOutcome({

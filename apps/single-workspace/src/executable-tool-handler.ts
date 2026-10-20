@@ -92,6 +92,17 @@ export const toExecutableOutcome = (
     CanonicalToolObservation,
     { readonly _tag: "ApprovalRequired" }
   >,
+  source?: {
+    readonly context: Pick<
+      ToolExecutionContext,
+      | "projectId"
+      | "workspaceId"
+      | "executionId"
+      | "executionEpisodeBinding"
+      | "recoveryBindingIdentity"
+    >;
+    readonly intent: ToolIntent;
+  },
 ): ExecutableInvocationOutcome => {
   switch (result._tag) {
     case "Success":
@@ -104,6 +115,61 @@ export const toExecutableOutcome = (
         artifactRefs: result.resultRef === null ? [] : [result.resultRef],
       };
     case "ExpectedFailure":
+      if (result.sandboxProviderUnavailable !== undefined) {
+        const unavailable = result.sandboxProviderUnavailable;
+        const context = source?.context;
+        const intent = source?.intent;
+        const identity = context?.recoveryBindingIdentity;
+        const episodeBinding = context?.executionEpisodeBinding;
+        if (
+          context === undefined ||
+          intent === undefined ||
+          identity === undefined ||
+          episodeBinding === undefined ||
+          identity.executionId !== context.executionId ||
+          identity.callRef !== intent.callRef ||
+          intent.invocationId === undefined ||
+          intent.callRef.length === 0
+        )
+          return {
+            _tag: "Observation",
+            source: "Runtime",
+            observation: bounded(
+              "sandbox provider-unavailable evidence lacks exact P3 source identity",
+            ),
+            status: "Failed",
+          };
+        return {
+          _tag: "SandboxProviderUnavailable",
+          outcome: {
+            _tag: "SandboxProviderUnavailable",
+            projectId: context.projectId,
+            workspaceId: context.workspaceId,
+            executionId: context.executionId,
+            episodeBinding,
+            policyRevision: unavailable.policyRevision,
+            policyDigest: unavailable.policyDigest,
+            profileId: unavailable.profile,
+            providerId: unavailable.providerId,
+            providerVersion: unavailable.providerVersion,
+            capabilityRevision: unavailable.capabilityRevision,
+            probeEvidenceRef: unavailable.probeEvidenceRef,
+            failureCode: unavailable.failureCode,
+            actionBinding: {
+              identity: {
+                executionId: identity.executionId,
+                logicalStepNo: identity.logicalStepNo,
+                repairAttempt: identity.repairAttempt,
+              },
+              providerTurnId: identity.providerTurnId,
+              logicalActionId: identity.logicalActionId,
+              actionIndex: identity.actionIndex,
+              callRef: intent.callRef,
+              invocationId: intent.invocationId,
+            },
+          },
+        };
+      }
       return {
         _tag: "Observation",
         source: "Tool",
@@ -623,7 +689,10 @@ export const makeExecutableToolHandler = (
           revision: issued.revision,
         };
       }
-      const outcome = toExecutableOutcome(result);
+      const outcome = toExecutableOutcome(result, {
+        context: toolContext,
+        intent,
+      });
       return outcome._tag === "Observation"
         ? { ...outcome, invocationId: intent.invocationId }
         : outcome;
