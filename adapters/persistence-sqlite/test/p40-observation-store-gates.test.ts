@@ -26,11 +26,13 @@ import {
 } from "@arbor/ports";
 import { Effect, Exit, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
+  createCurrentSchemaTestDatabaseFactory,
   createSchema42TestDatabase,
   type Schema42TestDatabase,
-} from "../../../tests/support/schema42-database.js";
+  type Schema42TestDatabaseFactory,
+} from "../../../tests/support/schema44-database.js";
 import {
   CURRENT_MIGRATIONS,
   DomainEventJournalLive,
@@ -58,6 +60,27 @@ const workerId = "worker:p40";
 const incarnationId = "incarnation:p40";
 const now = "2026-10-11T00:00:01.000Z";
 const databases: Schema42TestDatabase[] = [];
+let currentSchemaFactory: Schema42TestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  currentSchemaFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".p40-observation-store-template-",
+  });
+}, 120_000);
+
+afterAll(() => {
+  currentSchemaFactory?.cleanup();
+  currentSchemaFactory = undefined;
+}, 120_000);
+
+const createCurrentSchemaCase = (): Schema42TestDatabase => {
+  if (currentSchemaFactory === undefined) {
+    throw new Error("The current-schema P40 test database is not ready.");
+  }
+  const database = currentSchemaFactory.create();
+  databases.push(database);
+  return database;
+};
 const fence = {
   executionId,
   workerId,
@@ -258,8 +281,7 @@ describe("P40 P4 persistent observation admission gates", () => {
   });
 
   it("rejects a NotAdmitted Success before artifact materialization or settlement writes", async () => {
-    const database = await createSchema42TestDatabase();
-    databases.push(database);
+    const database = createCurrentSchemaCase();
     const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
       yield* seedWorkspaceExecution;
@@ -361,8 +383,7 @@ describe("P40 P4 persistent observation admission gates", () => {
   }, 120_000);
 
   it("rejects a 2,001-unit P4 candidate before materializing its Artifact", async () => {
-    const database = await createSchema42TestDatabase();
-    databases.push(database);
+    const database = createCurrentSchemaCase();
     const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
       yield* seedWorkspaceExecution;
@@ -416,8 +437,7 @@ describe("P40 P4 persistent observation admission gates", () => {
   }, 120_000);
 
   it("persists and idempotently replays a Stop-winning NotAdmitted Interrupted observation", async () => {
-    const database = await createSchema42TestDatabase();
-    databases.push(database);
+    const database = createCurrentSchemaCase();
     const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
       yield* seedWorkspaceExecution;
@@ -543,8 +563,7 @@ describe("P40 P4 persistent observation admission gates", () => {
   ] as const)(
     "a Stop candidate preserves an already committed $name P40 winner",
     async (winnerCase) => {
-      const database = await createSchema42TestDatabase();
-      databases.push(database);
+      const database = createCurrentSchemaCase();
       const app = makeApp(database.databaseFilename);
       const program = Effect.gen(function* () {
         yield* seedWorkspaceExecution;
@@ -650,8 +669,7 @@ describe("P40 P4 persistent observation admission gates", () => {
   );
 
   it("returns only the committed winner to a fenced loser and rejects that same fence after takeover", async () => {
-    const database = await createSchema42TestDatabase();
-    databases.push(database);
+    const database = createCurrentSchemaCase();
     const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
       yield* seedWorkspaceExecution;
@@ -747,8 +765,7 @@ describe("P40 P4 persistent observation admission gates", () => {
   }, 120_000);
 
   it("rolls back Artifact metadata and terminal evidence together", async () => {
-    const database = await createSchema42TestDatabase();
-    databases.push(database);
+    const database = createCurrentSchemaCase();
     const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
       yield* seedWorkspaceExecution;
@@ -833,8 +850,7 @@ describe("P40 P4 persistent observation admission gates", () => {
   }, 120_000);
 
   it("keeps a P9 replay-failure fact immutable in SQLite", async () => {
-    const database = await createSchema42TestDatabase();
-    databases.push(database);
+    const database = createCurrentSchemaCase();
     const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
       yield* seedWorkspaceExecution;
@@ -890,8 +906,7 @@ describe("P40 P4 persistent observation admission gates", () => {
   }, 120_000);
 
   it("rechecks the lease at the P9 fact write boundary using trusted time, not firstDetectedAt", async () => {
-    const database = await createSchema42TestDatabase();
-    databases.push(database);
+    const database = createCurrentSchemaCase();
     const sqlite = layer({ filename: database.databaseFilename });
     const ticks = ["2026-10-11T00:00:01.999Z", "2026-10-11T00:00:02.001Z"];
     const clock = Layer.succeed(Clock, {
@@ -961,8 +976,7 @@ describe("P40 P4 persistent observation admission gates", () => {
   }, 120_000);
 
   it("commits a final NotOccurred selection with its exact P40 RNO Observation and never rewrites the selection", async () => {
-    const database = await createSchema42TestDatabase();
-    databases.push(database);
+    const database = createCurrentSchemaCase();
     const app = makeApp(database.databaseFilename);
     const factId = "f".repeat(64);
     const evidenceRef = "art_018f2b3c-4d5e-7abc-8def-0123456789a3";
