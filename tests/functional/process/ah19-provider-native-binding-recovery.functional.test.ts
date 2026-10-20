@@ -1425,6 +1425,110 @@ const readSnapshot = (
   }
 };
 
+const readConversationHistoryEvidence = (
+  databaseFile: string,
+  input: { rootWorkspaceId: string; sessionId: string },
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    db.exec("BEGIN DEFERRED");
+    return {
+      owner: db
+        .prepare(
+          `SELECT context_epoch, covered_through_created_at,
+                  covered_through_message_id, checkpoint_kind, checkpoint_ref,
+                  binding_fingerprint, source_manifest_json,
+                  producer_execution_id, producer_provider_turn_id
+             FROM conversation_checkpoint_owners WHERE root_workspace_id = ?`,
+        )
+        .get(input.rootWorkspaceId) as
+        | {
+            context_epoch: number;
+            covered_through_created_at: string | null;
+            covered_through_message_id: string | null;
+            checkpoint_kind: string | null;
+            checkpoint_ref: string | null;
+            binding_fingerprint: string | null;
+            source_manifest_json: string | null;
+            producer_execution_id: string | null;
+            producer_provider_turn_id: string | null;
+          }
+        | undefined,
+      messages: db
+        .prepare(
+          `SELECT message_id, body_ref, state, created_at FROM human_messages
+            WHERE root_workspace_id = ? ORDER BY created_at, message_id`,
+        )
+        .all(input.rootWorkspaceId) as Array<{
+        message_id: string;
+        body_ref: string;
+        state: string;
+        created_at: string;
+      }>,
+      jobs: db
+        .prepare(
+          `SELECT message_id, state, active_execution_id, next_attempt_no,
+                  response_body, response_execution_id, revision
+             FROM conversation_response_jobs WHERE root_workspace_id = ?
+            ORDER BY created_at, message_id`,
+        )
+        .all(input.rootWorkspaceId) as Array<{
+        message_id: string;
+        state: string;
+        active_execution_id: string | null;
+        next_attempt_no: number;
+        response_body: string | null;
+        response_execution_id: string | null;
+        revision: number;
+      }>,
+      attempts: db
+        .prepare(
+          `SELECT message_id, attempt_no, execution_id, settled_at,
+                  settlement_kind, retry_decision_json
+             FROM conversation_attempts WHERE message_id IN (
+               SELECT message_id FROM human_messages WHERE root_workspace_id = ?
+             ) ORDER BY message_id, attempt_no`,
+        )
+        .all(input.rootWorkspaceId) as Array<{
+        message_id: string;
+        attempt_no: number;
+        execution_id: string;
+        settled_at: string | null;
+        settlement_kind: string | null;
+        retry_decision_json: string | null;
+      }>,
+      executions: db
+        .prepare(
+          `SELECT execution_id, settled_at, settlement_kind, settlement_json
+             FROM executions WHERE execution_id IN (
+               SELECT execution_id FROM conversation_attempts WHERE message_id IN (
+                 SELECT message_id FROM human_messages WHERE root_workspace_id = ?
+               )
+             ) ORDER BY admitted_at, execution_id`,
+        )
+        .all(input.rootWorkspaceId) as Array<{
+        execution_id: string;
+        settled_at: string | null;
+        settlement_kind: string | null;
+        settlement_json: string | null;
+      }>,
+      assistantEntries: db
+        .prepare(
+          `SELECT sequence, source_ref, payload_json FROM session_entries
+            WHERE session_id = ? AND item_type = 'AssistantMessage'
+            ORDER BY sequence`,
+        )
+        .all(input.sessionId) as Array<{
+        sequence: number;
+        source_ref: string | null;
+        payload_json: string;
+      }>,
+    };
+  } finally {
+    db.close();
+  }
+};
+
 const readTypedSessionRows = (databaseFile: string, sessionId: string) => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
@@ -2298,6 +2402,8 @@ const startAtCheckpointBoundary = async (
   boundary:
     | "AH17BeforeCheckpointEpochCommit"
     | "AH17AfterCheckpointEpochCommit"
+    | "AH19BeforeConversationCheckpointOwnerCommit"
+    | "AH19AfterConversationCheckpointOwnerCommit"
     | "AH12BeforeSuccessCommit"
     | "AH11AfterStepEffectsCommit",
   extraDaemonEnvironment: Readonly<Record<string, string>> = {},
@@ -2392,6 +2498,8 @@ const startAtCheckpointBoundary = async (
     ...extraDaemonEnvironment,
   };
   let workId: string;
+  let conversationSeedBody: string | undefined;
+  let conversationCurrentBody: string | undefined;
   if (episode === "Work") {
     workId = await seedRootWorkViaPublicApproval(
       fixture,
@@ -2404,15 +2512,85 @@ const startAtCheckpointBoundary = async (
     );
   } else {
     workId = functionalId("wrk");
+    conversationSeedBody = `AH19 answered history source ${crypto.randomUUID()}`;
+    await fixture.restart({
+      entry: childEntry,
+      daemonEnvironment: {
+        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_BINDING_VARIANT: "A",
+        ARBOR_AH19_REPORT_URL: reportUrl,
+        ...(traceStartup ? { ARBOR_AH19_STARTUP_TRACE: "1" } : {}),
+        ARBOR_AH19_CONVERSATION_SEED: "1",
+      },
+    });
+    await submitHumanMessage(client, project, conversationSeedBody);
+    const answeredSeed = await waitForPublic(
+      async () =>
+        readConversationHistoryEvidence(fixture.databaseFile, {
+          rootWorkspaceId: project.rootWorkspaceId,
+          sessionId: project.rootSessionId,
+        }),
+      (evidence) => {
+        const seed = evidence.messages.find(
+          (message) => message.body_ref === conversationSeedBody,
+        );
+        const job = evidence.jobs.find(
+          (candidate) => candidate.message_id === seed?.message_id,
+        );
+        const attempt = evidence.attempts.find(
+          (candidate) => candidate.message_id === seed?.message_id,
+        );
+        const execution = evidence.executions.find(
+          (candidate) => candidate.execution_id === attempt?.execution_id,
+        );
+        return (
+          seed !== undefined &&
+          job?.state === "Answered" &&
+          job.response_body !== null &&
+          job.response_execution_id === attempt?.execution_id &&
+          attempt?.settled_at !== null &&
+          attempt?.settlement_kind === "Completed" &&
+          execution !== undefined &&
+          execution.settled_at !== null &&
+          execution.settlement_kind === "Completed" &&
+          execution.settlement_json?.includes(
+            "ConversationResponseProduced",
+          ) === true &&
+          evidence.assistantEntries.some((entry) =>
+            entry.payload_json.includes(
+              "AH19 answered conversation history source",
+            ),
+          )
+        );
+      },
+      60_000,
+    ).catch((error: unknown) => {
+      throw new Error(
+        `AH19 conversation seed did not settle: ${error instanceof Error ? error.message : String(error)}; child=${childOutput.filter((line) => line.includes("AH19_CHILD_")).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}; process=${JSON.stringify(fixture.daemonProcessSnapshot())}`,
+      );
+    });
+    expect(answeredSeed.messages).toHaveLength(1);
+    expect(answeredSeed.jobs).toHaveLength(1);
+    expect(answeredSeed.jobs[0]).toMatchObject({ state: "Answered" });
+    expect(answeredSeed.attempts).toEqual([
+      expect.objectContaining({ settlement_kind: "Completed" }),
+    ]);
+    expect(answeredSeed.executions).toEqual([
+      expect.objectContaining({ settlement_kind: "Completed" }),
+    ]);
+    expect(
+      answeredSeed.assistantEntries.some((entry) =>
+        entry.payload_json.includes(
+          "AH19 answered conversation history source",
+        ),
+      ),
+    ).toBe(true);
     await fixture.restart({
       entry: childEntry,
       daemonEnvironment: ah19DaemonEnvironment,
     });
-    await submitHumanMessage(
-      client,
-      project,
-      `AH19 terminal response ${crypto.randomUUID()}`,
-    );
+    conversationCurrentBody = `AH19 terminal response ${crypto.randomUUID()}`;
+    await submitHumanMessage(client, project, conversationCurrentBody);
   }
   const probe = await waitForPublic(
     async () => {
@@ -2525,6 +2703,38 @@ const startAtCheckpointBoundary = async (
   const executionId =
     probe.executionId ??
     readExecutionIdForProviderTurn(fixture.databaseFile, probe.providerTurnId);
+  if (
+    episode === "ConversationResponse" &&
+    conversationSeedBody !== undefined &&
+    conversationCurrentBody !== undefined
+  ) {
+    const evidence = readConversationHistoryEvidence(fixture.databaseFile, {
+      rootWorkspaceId: project.rootWorkspaceId,
+      sessionId: project.rootSessionId,
+    });
+    const seed = evidence.messages.find(
+      (message) => message.body_ref === conversationSeedBody,
+    );
+    const current = evidence.messages.find(
+      (message) => message.body_ref === conversationCurrentBody,
+    );
+    const seedJob = evidence.jobs.find(
+      (job) => job.message_id === seed?.message_id,
+    );
+    const currentJob = evidence.jobs.find(
+      (job) => job.message_id === current?.message_id,
+    );
+    expect(seed).toBeDefined();
+    expect(current).toMatchObject({ state: "Pending" });
+    expect(seed?.message_id).not.toBe(current?.message_id);
+    expect(seedJob).toMatchObject({ state: "Answered" });
+    expect(currentJob).toMatchObject({
+      state: "Running",
+      active_execution_id: executionId,
+    });
+    expect(evidence.messages).toHaveLength(2);
+    expect(evidence.jobs).toHaveLength(2);
+  }
   return {
     fixture,
     project,
@@ -4951,7 +5161,7 @@ describe("AH19 restart binding qualification", () => {
               "AH17AfterCheckpointEpochCommit",
             )
           : await startAtCheckpointBoundary(
-              "AH17AfterCheckpointEpochCommit",
+              "AH19AfterConversationCheckpointOwnerCommit",
               {},
               "ConversationResponse",
             );
@@ -4969,8 +5179,65 @@ describe("AH19 restart binding qualification", () => {
       const manifest = JSON.parse(nativeRow?.manifest_json ?? "{}") as {
         sourceAgentLoopStep?: { logicalStepNo: number; repairAttempt: number };
       };
-      const source = manifest.sourceAgentLoopStep;
+      const source =
+        route === "WorkStartup"
+          ? manifest.sourceAgentLoopStep
+          : (() => {
+              const link = before.providerLinks.find(
+                (candidate) => candidate.provider_turn_id === nativeTurnId,
+              );
+              expect(link).toMatchObject({
+                role: "OverflowCompaction",
+              });
+              return link === undefined
+                ? undefined
+                : {
+                    logicalStepNo: link.logical_step_no,
+                    repairAttempt: link.repair_attempt,
+                  };
+            })();
       expect(source).toBeDefined();
+      expect(scenario.probe.boundary).toBe(
+        route === "WorkStartup"
+          ? "AH17AfterCheckpointEpochCommit"
+          : "AH19AfterConversationCheckpointOwnerCommit",
+      );
+      expect(scenario.probe.boundary).not.toBe(
+        route === "WorkStartup"
+          ? "AH19AfterConversationCheckpointOwnerCommit"
+          : "AH17AfterCheckpointEpochCommit",
+      );
+      if (route === "ConversationCommon") {
+        const evidence = readConversationHistoryEvidence(fixture.databaseFile, {
+          rootWorkspaceId: project.rootWorkspaceId,
+          sessionId: project.rootSessionId,
+        });
+        const owner = evidence.owner;
+        const currentJob = evidence.jobs.find(
+          (job) => job.active_execution_id === executionId,
+        );
+        expect(owner).toMatchObject({
+          context_epoch: 1,
+          checkpoint_kind: "ProviderNative",
+          producer_execution_id: executionId,
+          producer_provider_turn_id: nativeTurnId,
+        });
+        expect(before.session?.context_epoch).toBe(0);
+        expect(before.checkpoints).toEqual([]);
+        expect(evidence.messages).toHaveLength(2);
+        expect(evidence.messages[1]).toMatchObject({ state: "Pending" });
+        expect(currentJob).toMatchObject({
+          state: "Running",
+          active_execution_id: executionId,
+        });
+        expect(evidence.jobs).toHaveLength(2);
+        expect(evidence.jobs.some((job) => job.state === "Answered")).toBe(
+          true,
+        );
+      } else {
+        expect(before.session?.context_epoch).toBe(1);
+        expect(before.checkpoints).toHaveLength(1);
+      }
       await fixture.crash();
       await expireLeaseAfterOldDaemonExit(
         fixture,
@@ -5028,7 +5295,9 @@ describe("AH19 restart binding qualification", () => {
       );
       expect(outcome.requests).toBe(0);
       const after = readSnapshot(fixture.databaseFile, ids);
-      expect(after.session?.context_epoch).toBe(1);
+      expect(after.session?.context_epoch).toBe(
+        route === "WorkStartup" ? 1 : 0,
+      );
       expect(after.checkpoints).toEqual(before.checkpoints);
       expect(after.execution?.settled_at).toBeNull();
       expect(after.steps).toContainEqual(
@@ -6178,9 +6447,23 @@ describe("AH19 restart binding qualification", () => {
       response_execution_id: null,
     });
     expect(beforeKill.execution?.settlement_kind).toBeNull();
-    expect(beforeKill.session?.context_epoch).toBe(1);
-    expect(beforeKill.checkpoints).toHaveLength(1);
-    expect(beforeKill.checkpoints[0]?.source_ref).toBe(nativeTurnId);
+    expect(beforeKill.session?.context_epoch).toBe(0);
+    expect(beforeKill.checkpoints).toEqual([]);
+    const checkpointOwner = readConversationHistoryEvidence(
+      fixture.databaseFile,
+      {
+        rootWorkspaceId: project.rootWorkspaceId,
+        sessionId: project.rootSessionId,
+      },
+    ).owner;
+    expect(checkpointOwner).toMatchObject({
+      context_epoch: 1,
+      checkpoint_kind: "ProviderNative",
+      producer_execution_id: executionId,
+      producer_provider_turn_id: nativeTurnId,
+      binding_fingerprint: expect.any(String),
+      checkpoint_ref: `ah19-opaque:${nativeTurnId}`,
+    });
     const sourceStep = beforeKill.steps.find(
       (step) => step.logical_step_no === 0 && step.repair_attempt === 0,
     );
@@ -6391,8 +6674,21 @@ describe("AH19 restart binding qualification", () => {
           entry.source_ref === `${replacementTurnId}:assistant`,
       ),
     ).toBe(true);
-    const nativeCheckpoint = beforeKill.checkpoints[0];
-    expect(nativeCheckpoint).toBeDefined();
+    expect(beforeKill.session?.context_epoch).toBe(0);
+    expect(beforeKill.checkpoints).toEqual([]);
+    const checkpointOwner = readConversationHistoryEvidence(
+      fixture.databaseFile,
+      {
+        rootWorkspaceId: project.rootWorkspaceId,
+        sessionId: project.rootSessionId,
+      },
+    ).owner;
+    expect(checkpointOwner).toMatchObject({
+      context_epoch: 1,
+      checkpoint_kind: "ProviderNative",
+      producer_execution_id: executionId,
+      checkpoint_ref: expect.any(String),
+    });
     await fixture.crash();
     await expireLeaseAfterOldDaemonExit(
       fixture,
@@ -6446,8 +6742,14 @@ describe("AH19 restart binding qualification", () => {
       20_000,
     );
     expect(failedClosed.snapshot.leases[0]?.generation).toBe(1);
-    expect(failedClosed.snapshot.session?.context_epoch).toBe(1);
-    expect(failedClosed.snapshot.checkpoints).toEqual([nativeCheckpoint]);
+    expect(failedClosed.snapshot.session?.context_epoch).toBe(0);
+    expect(failedClosed.snapshot.checkpoints).toEqual([]);
+    expect(
+      readConversationHistoryEvidence(fixture.databaseFile, {
+        rootWorkspaceId: project.rootWorkspaceId,
+        sessionId: project.rootSessionId,
+      }).owner,
+    ).toEqual(checkpointOwner);
     expect(
       failedClosed.snapshot.steps.find(
         (step) => step.logical_step_no === 0 && step.repair_attempt === 0,

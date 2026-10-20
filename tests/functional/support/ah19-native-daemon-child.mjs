@@ -68,6 +68,7 @@ const gateTurnSuffix = process.env.ARBOR_AH19_GATE_TURN_SUFFIX;
 const nestedNativeMode = process.env.ARBOR_AH19_NESTED_NATIVE === "1";
 const terminalConversationMode =
   process.env.ARBOR_AH19_TERMINAL_CONVERSATION === "1";
+const conversationSeedMode = process.env.ARBOR_AH19_CONVERSATION_SEED === "1";
 const ordinaryWorkMode = process.env.ARBOR_AH19_ORDINARY_WORK === "1";
 const frontierTextOnlyMode = process.env.ARBOR_AH19_FRONTIER_TEXT_ONLY === "1";
 const rootWorkSeedJson = process.env.ARBOR_AH19_ROOT_WORK_SEED_JSON;
@@ -77,6 +78,8 @@ let ah11AfterEffectsCount = 0;
 const boundaries = new Set([
   "AH17BeforeCheckpointEpochCommit",
   "AH17AfterCheckpointEpochCommit",
+  "AH19BeforeConversationCheckpointOwnerCommit",
+  "AH19AfterConversationCheckpointOwnerCommit",
   "AH12BeforeSuccessCommit",
   "AH11AfterStepEffectsCommit",
 ]);
@@ -333,6 +336,27 @@ const nativeAdapter = {
             /_0$/u.test(providerTurnId) &&
             !providerTurnId.includes("_overflow_")
           ) {
+            if (conversationSeedMode) {
+              return Stream.flatMap(beforeStream, () =>
+                Stream.fromIterable([
+                  ...started(request, context),
+                  {
+                    _tag: "Canonical",
+                    event: {
+                      _tag: "TextDelta",
+                      text: "AH19 answered conversation history source.",
+                    },
+                  },
+                  {
+                    _tag: "Canonical",
+                    event: {
+                      _tag: "TurnCompleted",
+                      finishReason: "Stop",
+                    },
+                  },
+                ]),
+              );
+            }
             if (terminalConversationMode) {
               return Stream.flatMap(beforeStream, () =>
                 Stream.concat(
