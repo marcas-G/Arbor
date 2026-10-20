@@ -1420,6 +1420,10 @@ export const ToolRuntimeLive = (
                 ),
               );
             });
+          const resolveReplaySandboxPolicy =
+            context.resolveSandboxProcessPolicy === undefined
+              ? undefined
+              : resolveSandboxPolicyOnce;
           const probeReconciliation = (
             boundary:
               | "AH7BeforeReconciliationFactCommit"
@@ -1641,7 +1645,7 @@ export const ToolRuntimeLive = (
                         intent,
                         context,
                         currentRecord,
-                        resolveSandboxPolicyOnce,
+                        resolveReplaySandboxPolicy,
                       )
                     : { _tag: "Interrupted" as const };
                 }
@@ -1650,7 +1654,7 @@ export const ToolRuntimeLive = (
                     intent,
                     context,
                     currentRecord,
-                    resolveSandboxPolicyOnce,
+                    resolveReplaySandboxPolicy,
                   );
                 }
                 return {
@@ -1701,7 +1705,7 @@ export const ToolRuntimeLive = (
                       intent,
                       context,
                       committed.value,
-                      resolveSandboxPolicyOnce,
+                      resolveReplaySandboxPolicy,
                     );
                   }
                 }
@@ -1746,7 +1750,7 @@ export const ToolRuntimeLive = (
                   intent,
                   context,
                   winner.value,
-                  resolveSandboxPolicyOnce,
+                  resolveReplaySandboxPolicy,
                 );
               }
               if (winner.value.effectAdmissionState !== "NotAdmitted") {
@@ -1796,7 +1800,7 @@ export const ToolRuntimeLive = (
                       intent,
                       context,
                       record,
-                      resolveSandboxPolicyOnce,
+                      resolveReplaySandboxPolicy,
                     );
                   }
                   if (
@@ -1956,7 +1960,7 @@ export const ToolRuntimeLive = (
                 profile: trustedProfile,
                 effectKey: trustedEffectKey as string,
               },
-              resolveSandboxPolicyOnce,
+              resolveReplaySandboxPolicy,
             );
             if (receipt._tag !== "NotP39Receipt") return receipt;
           }
@@ -3447,7 +3451,7 @@ export const ToolRuntimeLive = (
                   intent,
                   context,
                   recorded,
-                  resolveSandboxPolicyOnce,
+                  resolveReplaySandboxPolicy,
                 );
               }
               if (

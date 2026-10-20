@@ -40,7 +40,10 @@ policy remains a typed `SandboxUnavailableObservationPolicyMismatch`; replay
 does not add an intent, settle again, admit an effect, call a provider, or
 fallback to TrustedLocal. This regression seeds the settled invocation and
 canonical observation evidence in the existing in-memory P4 fixture; it does
-not claim SQLite restart qualification.
+not claim SQLite restart qualification. Replay preserves eager-only callers
+when no lazy resolver was supplied; if a lazy resolver is supplied and
+returns no current policy, it remains authoritative and the eager snapshot is
+not used as fallback.
 
 Verification: `pnpm build`, `pnpm typecheck`; ToolRuntime P4 pipeline 82/82;
 Executable handler identity 7/7; architecture 192/192; changed-file Biome and
