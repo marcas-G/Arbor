@@ -15,9 +15,13 @@ import {
 } from "@arbor/ports";
 import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { pollOnce } from "../../../packages/application/src/consumer-loop.js";
-import { createSchema46TestDatabase } from "../../../tests/support/schema44-database.js";
+import {
+  type CurrentSchemaTestDatabase,
+  type CurrentSchemaTestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
+} from "../../../tests/support/schema44-database.js";
 import {
   AttentionProjectionStoreLive,
   ClockLive,
@@ -29,10 +33,8 @@ import {
   makeProjectAttentionProjectionStore,
   makeRecoveryAttentionFactStoreLive,
   P10_ATTENTION_CONSUMER_ID,
-  P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,
   ProjectionStoreLive,
   rebuildProjection,
-  runMigrations,
   TransactionPortLive,
 } from "../src/index.js";
 import { encodeToolObservationEvidence } from "../src/tool-observation-evidence-codec.js";
@@ -154,17 +156,24 @@ const seed = (filename: string) =>
     ),
   );
 
-const upgrade = (filename: string) =>
-  Effect.runPromise(
-    Effect.scoped(
-      Effect.provide(
-        runMigrations([P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION], {
-          allowOfflineOnly: true,
-        }),
-        layer({ filename }),
-      ),
-    ),
-  );
+let currentSchemaFactory: CurrentSchemaTestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  currentSchemaFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".p47-ah14-store-current-schema-template-",
+  });
+}, 120_000);
+
+afterAll(() => {
+  currentSchemaFactory?.cleanup();
+  currentSchemaFactory = undefined;
+}, 120_000);
+
+const createCurrentSchemaCase = (): CurrentSchemaTestDatabase => {
+  if (currentSchemaFactory === undefined)
+    throw new Error("The current-schema AH14 store template is not ready.");
+  return currentSchemaFactory.create();
+};
 
 const makeApp = (filename: string) => {
   const sqlite = layer({ filename });
@@ -199,9 +208,8 @@ const runStore = <A>(
 
 describe("P47 / P9 legacy-adoption immutable failure facts", () => {
   it("writes one exact fact/event pair and exact retry preserves the first timestamp", async () => {
-    const fixture = await createSchema46TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       const first = await runStore(
         fixture.databaseFilename,
@@ -258,9 +266,8 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
   });
 
   it("rejects stale generations before writing any fact or event", async () => {
-    const fixture = await createSchema46TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       const exit = await Effect.runPromiseExit(
         Effect.scoped(
@@ -307,9 +314,8 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
   });
 
   it("rejects an expired current generation before reading or writing AH14 evidence", async () => {
-    const fixture = await createSchema46TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       await Effect.runPromise(
         Effect.scoped(
@@ -370,9 +376,8 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
   });
 
   it("keeps Attention active and writes no resolution when any exact P4 action proof is absent", async () => {
-    const fixture = await createSchema46TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       const result = await runStore(
         fixture.databaseFilename,
@@ -431,9 +436,8 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
   });
 
   it("resolves only a complete exact P4 denial binding and writes the immutable resolution event/fact", async () => {
-    const fixture = await createSchema46TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       const args = "{}";
       const argsHash = sha256Hex(args);
@@ -594,9 +598,8 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
   });
 
   it("resolves an exact Applied P4 settlement only with its same-invocation Observation", async () => {
-    const fixture = await createSchema46TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       const args = "{}";
       const argsHash = sha256Hex(args);
@@ -786,9 +789,8 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
   });
 
   it("projects the exact fact to one Workspace marker and does not revive a resolved marker", async () => {
-    const fixture = await createSchema46TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       const fact = await runStore(
         fixture.databaseFilename,
@@ -938,9 +940,8 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
   });
 
   it("commits the AH14 marker with the P10 offset, rolls back before commit, and rebuilds after event pruning without reviving a resolved row", async () => {
-    const fixture = await createSchema46TestDatabase();
+    const fixture = createCurrentSchemaCase();
     try {
-      await upgrade(fixture.databaseFilename);
       await seed(fixture.databaseFilename);
       const program = Effect.gen(function* () {
         const tx = yield* TransactionPort;
