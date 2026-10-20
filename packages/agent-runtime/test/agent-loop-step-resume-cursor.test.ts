@@ -4,6 +4,7 @@ import type { AgentLoopStepRecord } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
 import {
   isAgentLoopStepManifestBound,
+  isPreparedStepAwaitingInitialManifest,
   selectInitialAgentLoopStepCursor,
 } from "../src/agent-loop-driver.js";
 
@@ -286,5 +287,52 @@ describe("P9 AgentLoopStep resume cursor", () => {
         manifestId: "manifest_other",
       }),
     ).toBe(false);
+  });
+
+  it("defers manifest validation only for a fresh Prepared step before its first ProviderTurn", () => {
+    const freshPrepared = step(0);
+    expect(isPreparedStepAwaitingInitialManifest(freshPrepared, null)).toBe(
+      true,
+    );
+    expect(
+      isPreparedStepAwaitingInitialManifest(
+        { ...freshPrepared, manifestId: "manifest-stale" },
+        null,
+      ),
+    ).toBe(false);
+    expect(
+      isPreparedStepAwaitingInitialManifest(
+        { ...freshPrepared, state: "ProviderResultAvailable" },
+        null,
+      ),
+    ).toBe(false);
+    expect(
+      isPreparedStepAwaitingInitialManifest(freshPrepared, {
+        manifestId: "manifest-other",
+        manifestJson: "{}",
+      }),
+    ).toBe(false);
+    const mismatchedManifest = {
+      manifestId: "manifest-other",
+      manifestJson: JSON.stringify({
+        providerTurnId: "ptn_wrong",
+        executionId,
+        sessionId: parse(SessionId)("ses_00000000-0000-7000-8000-000000000001"),
+        logicalStepNo: 0,
+        repairAttempt: 0,
+      }),
+    };
+    const mayResume =
+      isPreparedStepAwaitingInitialManifest(
+        { ...freshPrepared, manifestId: "manifest-other" },
+        null,
+      ) ||
+      isAgentLoopStepManifestBound(
+        { ...freshPrepared, manifestId: "manifest-other" },
+        executionId,
+        parse(SessionId)("ses_00000000-0000-7000-8000-000000000001"),
+        mismatchedManifest,
+      );
+    expect(mayResume).toBe(false);
   });
 });
