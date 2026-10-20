@@ -16,7 +16,7 @@ import type {
   ExecutionId,
   LeaseGeneration,
   Principal,
-  SandboxAuthorityBundleSnapshotV2,
+  SandboxAuthorityBundleSnapshotCurrent,
   SandboxPolicyDecisionCommittedInternalV1,
   WakeReason,
 } from "@arbor/domain";
@@ -166,7 +166,7 @@ const sandboxPolicyDecisionIsCurrentForRequirement = (input: {
   readonly execution: Execution;
   readonly requirement: import("@arbor/ports").SandboxPolicyRequirementV1;
   readonly committed: CommittedSandboxPolicyDecisionV1;
-  readonly authority: SandboxAuthorityBundleSnapshotV2;
+  readonly authority: SandboxAuthorityBundleSnapshotCurrent;
   readonly now: string;
 }): boolean => {
   const { execution, requirement, committed, authority } = input;

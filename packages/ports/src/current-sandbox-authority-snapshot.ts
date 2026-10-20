@@ -1,5 +1,5 @@
 import type {
-  SandboxAuthorityBundleSnapshotV2,
+  SandboxAuthorityBundleSnapshotCurrent,
   SandboxAuthorityLoadErrorV1,
   SandboxPolicyCurrentHostV1,
 } from "@arbor/domain";
@@ -8,7 +8,7 @@ import { Context, type Effect } from "effect";
 export type CurrentSandboxAuthoritySnapshotV2Result =
   | {
       readonly _tag: "Available";
-      readonly snapshot: SandboxAuthorityBundleSnapshotV2;
+      readonly snapshot: SandboxAuthorityBundleSnapshotCurrent;
       readonly currentHost: SandboxPolicyCurrentHostV1;
     }
   | {
@@ -19,7 +19,7 @@ export type CurrentSandboxAuthoritySnapshotV2Result =
     };
 
 /** P5-owned, read-only seam for consumers that need current authority state.
- * Every call revalidates the protected V2 source/high-water pair. */
+ * Every call revalidates the protected current V2|V3 source/high-water pair. */
 export interface CurrentSandboxAuthoritySnapshotPortService {
   readonly loadCurrentVerifiedV2: () => Effect.Effect<CurrentSandboxAuthoritySnapshotV2Result>;
 }

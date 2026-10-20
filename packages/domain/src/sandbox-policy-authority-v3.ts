@@ -27,6 +27,10 @@ export interface SandboxAuthorityBundleSnapshotV3 {
   readonly canonicalJson: string;
 }
 
+export type SandboxAuthorityBundleSnapshotCurrent =
+  | SandboxAuthorityBundleSnapshotV3
+  | import("./sandbox-policy-authority-v2.js").SandboxAuthorityBundleSnapshotV2;
+
 export interface SandboxAuthorityHighWaterV3 {
   readonly version: 3;
   readonly sourceIdentity: string;

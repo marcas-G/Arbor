@@ -61,7 +61,14 @@ export type SandboxAuthorityLoadErrorV1 =
   | "RevisionRollback"
   | "RevisionReuseMismatch"
   | "SourceReenrollmentRequired"
-  | "HighWaterCommitFailed";
+  | "HighWaterCommitFailed"
+  | "TrustSetMalformed"
+  | "TrustSetDigestMismatch"
+  | "TrustKeyUnavailable"
+  | "TrustKeyRevoked"
+  | "TrustKeyExpired"
+  | "SignatureInvalid"
+  | "TrustCurrentnessMismatch";
 
 export type SandboxAuthorityAuditOutcomeV1 =
   | "Loaded"
