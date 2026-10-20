@@ -5766,8 +5766,8 @@ describe("AH19 restart binding qualification", () => {
     const ids = { sessionId: project.rootSessionId, executionId, workId };
     expect(probe.providerTurnId).toBe(targetNativeTurnId);
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
-    expect(beforeKill.session?.context_epoch).toBe(0);
-    expect(beforeKill.checkpoints).toEqual([]);
+    expect(beforeKill.session?.context_epoch).toBe(1);
+    expect(beforeKill.checkpoints).toHaveLength(1);
     const olderCheckpoint = JSON.parse(
       beforeKill.checkpoints[0]?.payload_json ?? "{}",
     ) as Record<string, unknown>;
@@ -5809,12 +5809,12 @@ describe("AH19 restart binding qualification", () => {
     ]);
     const olderReplacementLink = beforeKill.providerLinks.find(
       (link) =>
-        link.logical_step_no === 0 && link.role === "OverflowReplacement",
+        link.logical_step_no === 1 && link.role === "OverflowReplacement",
     );
     expect(olderReplacementLink).toMatchObject({
       provider_turn_id: `ptn_${executionId}_1_overflow_0`,
       predecessor_provider_turn_id: olderNativeTurnId,
-      context_epoch: 0,
+      context_epoch: 1,
     });
 
     await fixture.crash();
