@@ -114,3 +114,14 @@ P1/01 keeps the existing profile-specific
 `expectedSandboxHandleBindingDigest` CAS. P13 maps only the selected P10
 candidate's digest to that field; candidate ID remains presentation-only.
 No P1 wire or persistence contract changes. See the V6 acceptance record.
+
+## Accepted Option A exact provider selector (2026-10-20)
+
+P1/01 adds required OsEnforced `providerVersion` and
+`capabilityRevision`, advances only the DecideSandboxPolicy handler schema
+to 2, and retains schema 1 for exact prior-receipt replay. P1/03 binds those
+fields to one exact Supported row in the verified P5 V2 snapshot; the
+existing full-bundle/registry/boundary CAS and schema-50 storage remain
+unchanged. No new result version, SQL object, migration, event, rejection
+tag, or implementation authorization is introduced. Accepted proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.

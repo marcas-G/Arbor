@@ -281,3 +281,28 @@ retry. Sandbox provider queue tests assert max batch 100, scan 5s, claim TTL
 crashes and rebuild. Derived RecoveryBinding attention tests assert JSON null
 identity, valid-hash-content mismatch, malformed hash no row, strict
 intent_at/occurredAt and no materialization.
+
+## Accepted Option A exact candidate-selection qualification (2026-10-20)
+
+Under `ACCEPT_P10_P1_OS_PROVIDER_TUPLE_SELECTION_OPTION_A`, fixed proposal
+SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`,
+P10 acceptance covers the revised candidate V2 DTO and selection binding:
+
+- Exact Supported rows differing only in capabilityRevision yield distinct
+  OsEnforced candidates and candidate IDs, with stable deterministic order.
+  Candidate IDs remain presentation-only.
+- Candidate fields, including providerVersion/capabilityRevision, copy from
+  the exact current-host P5 row. Experimental/Unavailable, wrong-host/build,
+  absent, duplicate/conflicting or ambiguous rows produce no partial
+  candidate set and no inferred tuple.
+- The revised canonical candidate-ID preimage has a fixed KAT, including
+  capabilityRevision immediately after providerVersion. TrustedLocal's
+  preimage and singleton/last ordering remain unchanged.
+- Candidate DTO excludes currentHost, evidence refs, paths, destinations and
+  provider diagnostics. No P10 candidate can authorize or submit a decision;
+  P1 exact selector/CAS is the sole command authority.
+
+These are design qualification requirements. This landing runs no tests,
+does not claim a real host Supported tuple, and does not authorize runtime
+implementation or provider qualification.

@@ -245,3 +245,13 @@ FullAccess is explicit TrustedLocal/Unconfined with warning and confirmation,
 never an automatic provider fallback. NeedsDecision is policy-required pause;
 Unavailable is reserved for actual current provider no-spawn fact/outcome. No
 browser auto-retry or model-originated decision is permitted.
+
+## Accepted Option A command selection (2026-10-20)
+
+For OsEnforced, the human-actionable DecideSandboxPolicy command exposes the
+exact selected candidate's providerId, providerVersion and
+capabilityRevision, in addition to the existing profile/network and CAS
+fields. Candidate IDs remain presentation-only; there is no inferred or
+default provider tuple. This maps to the P1 handler schema 2 contract, not a
+new command or route. Accepted proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.

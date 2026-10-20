@@ -392,3 +392,21 @@ remains the only human decision command boundary. Provider registry changes
 advance the full V2 bundle pair and therefore stale TrustedLocal under the
 accepted all-variant currentness rule, even though TrustedLocal has no
 provider-registry branch fields.
+
+## Accepted Option A exact provider selector (2026-10-20)
+
+Under `ACCEPT_P10_P1_OS_PROVIDER_TUPLE_SELECTION_OPTION_A` (proposal
+SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`), the
+existing V2 provider-registry row remains the source of the exact
+OsEnforced selection. P1's required `providerId,providerVersion,
+capabilityRevision` values are matched only against one Supported row with
+the trusted process-local currentHost `osFamily/osBuild`, selected profile,
+network mode, codec version 1 and canonical enforcement-rule-set digest.
+The row's qualification evidence ref and provider/host fields are copied
+from the verified registry/evidence, never caller supplied. The existing
+full-bundle and registry revision/digest checks remain the CAS. The V2
+registry schema, ordering/uniqueness key, high-water, evidence format,
+operator provisioning and P5 authority snapshot are unchanged; P5 does not
+infer, sort-select or downgrade a candidate. No migration or P5 runtime
+implementation authorization follows from this amendment.

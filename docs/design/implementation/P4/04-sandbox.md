@@ -317,3 +317,16 @@ qualification manifest blob ref (omit for TrustedLocal). Then exact-dedup,
 UTF-8 sort and enforce the existing V21 bounds. No ref is synthesized from
 time, log offset, path, provider diagnostic, caller input, or arbitrary audit
 content. All remain internal-only and are redacted by the public view.
+
+## Accepted Option A provider-tuple input binding (2026-10-20)
+
+Under `ACCEPT_P10_P1_OS_PROVIDER_TUPLE_SELECTION_OPTION_A`, fixed proposal
+SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`,
+an OsEnforced decision's `providerVersion` and `capabilityRevision` are
+copied from the exact P5 Supported row selected by the P1 command's explicit
+providerId/version/capabilityRevision selector and trusted current-host,
+profile, network-mode, codec and ruleset match. P4 continues to materialize
+and validate the existing `OsEnforcedPolicySnapshotV1`; that snapshot
+already contains both values in its fixed key order. The snapshot codec,
+runtime policy, provider capability and handle contracts do not change.

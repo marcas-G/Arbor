@@ -783,12 +783,71 @@ provider diagnostic, or client input. Public receipt/view projections
 continue to redact every audit ref. This adds no payload field, event, DDL,
 receipt variant, or fingerprint input beyond the already frozen V21 command.
 
+## Accepted Option A provider-tuple selector amendment (2026-10-20)
+
+Accepted under `ACCEPT_P10_P1_OS_PROVIDER_TUPLE_SELECTION_OPTION_A`, fixed
+proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
+This amendment supersedes only the V21 OsEnforced payload-shape and P10/P13
+mapping sentences that described the provider choice without
+`providerVersion` and `capabilityRevision`; all other V21/V3 fields and
+semantics remain unchanged.
+
+`DecideSandboxPolicy` advances its semantic handler/receipt schema from `1`
+to `2`; its previous receipt schema `1` is allowed only for exact prior
+receipt replay through the existing Gateway compatibility path. The external
+wire codec remains v1 and the internal CommandEnvelope continues to supply
+the handler schemaVersion outside the payload. For the OsEnforced payload,
+the exact closed key order is the existing common prefix through
+`expectedProviderRegistryDigest`, then `profile,providerId,providerVersion,
+capabilityRevision,networkPolicy,decisionExpiresAt`. `providerVersion` is the
+exact canonical string; `capabilityRevision` is a positive safe integer.
+TrustedLocalUnconfinedV1 has no such fields and rejects them as unknown.
+OsEnforced `NetworkPolicyV1.mode` must equal the selected registry tuple's
+`networkMode`.
+
+The external decoder accepts exactly the legacy OsEnforced shape with both
+new fields absent (for exact receipt replay or a current-schema terminal
+rejection), or the current shape with both present; a partial pair is
+MalformedRequest. A new submission always uses handler schema `2`. If an
+exact legacy-shaped request has a stored schema-1 receipt, Gateway uses its
+existing allowlisted prior-receipt path and exact old fingerprint/result
+validator; payload shape never selects schema 1. If no receipt exists, the
+legacy shape has no exact tuple selector and commits the existing durable
+`SandboxAuthorityUnavailable` rejection under schema 2, with no decision or
+event. No new command writes a schema-1 receipt. A changed tuple under a
+previously used CommandId remains `IdempotencyConflict`.
+
+Before decision materialization, P1 matches exactly one current P5 V2
+Supported registry row by the human-selected `providerId`, `providerVersion`
+and `capabilityRevision`, trusted currentHost `osFamily/osBuild`, selected
+profile, `NetworkPolicyV1.mode`, codec version `1`, and canonical
+`enforcementRuleSetDigest`. It copies all provider/evidence/host facts from
+that row; none are trusted from client input. Missing, non-Supported,
+ambiguous, wrong-version/capability/host/profile/mode, missing evidence or
+rule-set mismatch returns the existing terminal
+`SandboxAuthorityUnavailable` rejection without a decision/event and never
+falls back to TrustedLocal. The existing provider-registry revision/digest
+and full authority-bundle/operator/boundary CAS remain authoritative; stale
+expected refs retain the existing safe `StaleSandboxPolicyInputs` receipt.
+
+The committed result remains
+`SandboxPolicyDecisionCommittedInternalV1` with its existing canonical
+OsEnforced snapshot, which already stores providerVersion and
+capabilityRevision. Result bytes, result codec version, public safe view,
+decision row, event, auditRefs and SQLite schema do not change. Register the
+existing strict result validator for handler schema 2 as well as schema 1;
+schema-1 stored result bytes remain immutable. No migration or historical row
+rewrite is introduced.
+
 ## Accepted Sandbox Policy Candidate Read Model V5 command boundary
 
 The P10 `sandboxPolicyCandidateRead` is presentation/read-model data only.
 P1 does not accept `candidateId`, candidate list, or candidate-read reason as
 payload or authority. P13 maps the human's selected existing variant and
-common preconditions to the unchanged DecideSandboxPolicy payload. Both
+common preconditions to the DecideSandboxPolicy payload as amended by Option
+A; the OsEnforced variant also carries the exact providerVersion and
+capabilityRevision selector. Both
 OsEnforced and TrustedLocal carry the common exact
 `expectedAuthorityBundleRevision/Digest`; OsEnforced additionally carries
 the existing provider-registry pair, while TrustedLocal omits that branch

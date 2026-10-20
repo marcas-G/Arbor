@@ -381,3 +381,15 @@ P1/P10 contracts; this transport/deployment document adds no HTTP, WebSocket,
 CLI, auth, readiness or transport route semantics. A lease TTL does not
 preempt a process holding SQLite's writer lock; deployment qualification uses
 the measured lock-hold/writer-wait limits from P12 `05`/`13`.
+
+## Accepted Option A command transport reference (2026-10-20)
+
+The existing authenticated `/commands` route forwards the P1/01 current
+OsEnforced request including the explicit `providerVersion` and
+`capabilityRevision` fields. The external codec remains its existing v1
+envelope; the internal CommandEnvelope uses the current registered
+DecideSandboxPolicy handler schema, with prior schema-1 handling restricted
+to the P1 exact stored-receipt replay path. P12 adds no request-derived host,
+evidence or authority fields, no route, and no transport-side selection or
+defaulting. The accepted source is proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.

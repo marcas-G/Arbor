@@ -449,3 +449,22 @@ returns the persisted result before reading current boundary or operator
 configuration, per V21. P1 performs no network, Pref64, process, or filesystem
 probe inside the transaction. No additional revision, table, event, migration,
 authority field, or transaction is introduced.
+
+## Accepted Option A provider-tuple selection at the V21 linearization point
+
+Under `ACCEPT_P10_P1_OS_PROVIDER_TUPLE_SELECTION_OPTION_A` (proposal
+SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`), the
+read-only preparation uses the exact OsEnforced selector fields
+`providerId,providerVersion,capabilityRevision` to locate one row in the
+verified P5 V2 registry, matched against trusted currentHost, profile,
+network mode, codec version and enforcement-rule-set digest. The final
+transaction rechecks the exact expected authority bundle/operator config and
+provider-registry revision/digest CAS as before and only commits the
+prepared summary if those source identities remain current. It does not read
+the P5 source or probe a provider inside the transaction. A stale source
+remains the existing durable `StaleSandboxPolicyInputs` receipt; an absent or
+non-Supported exact selector is the existing durable
+`SandboxAuthorityUnavailable` rejection, with no decision/event. No schema,
+receipt, event, or transaction-order change is made beyond the handler schema
+2 identity defined by P1/01.

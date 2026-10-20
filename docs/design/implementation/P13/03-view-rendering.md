@@ -170,3 +170,18 @@ resubmit it. After any V2 bundle child changes,
 including registry-only changes while a TrustedLocal decision is committed,
 show NeedsDecision and require explicit reapproval without implying an
 OS-provider dependency for TrustedLocal.
+
+## Accepted Option A exact provider selection (2026-10-20)
+
+Under `ACCEPT_P10_P1_OS_PROVIDER_TUPLE_SELECTION_OPTION_A`, fixed proposal
+SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`,
+P13 renders the safe `capabilityRevision` alongside providerId/providerVersion
+for each OsEnforced V2 candidate so distinct supported capability tuples are
+deliberate, distinguishable human choices. On submission, P13 copies the
+selected candidate's exact `providerId`, `providerVersion`,
+`capabilityRevision`, profile, matching NetworkPolicy mode, existing registry
+pair, common CAS fields and selected handle digest into the P1 OsEnforced
+request. It never submits `candidateId`, currentHost, evidence refs or
+qualification details. There is no auto-selection, nearest-version choice,
+fallback or local authority; stale/refetch behavior is unchanged.
