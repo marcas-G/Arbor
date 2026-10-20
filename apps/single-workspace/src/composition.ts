@@ -521,6 +521,22 @@ export type SingleWorkspaceServices =
   | WorkspaceKnowledgePort
   | WorkspacePlacementPort;
 
+/** One production construction path shared by composition and qualification
+ * journeys. The only trust input is P5's protected source service; it never
+ * accepts an arbitrary signature verifier or operator path. */
+export const makeProductionWindowsSandboxProcessPort = (
+  source: TrustedHostConfigurationSourceService | undefined,
+) => {
+  const clock = { now: () => Effect.sync(() => new Date().toISOString()) };
+  return makeWindowsSandboxProcessPort(undefined, {
+    currentAuthority: makeCurrentSandboxAuthoritySnapshotPortService(
+      source,
+      clock,
+    ),
+    clock,
+  });
+};
+
 /** The single-workspace composition root: wires P1–P4 into one runtime. */
 export const buildSingleWorkspaceLayer = (
   config: SingleWorkspaceConfig,
@@ -597,16 +613,9 @@ export const buildSingleWorkspaceLayer = (
     environmentResolver,
   );
   const nativePosixSandbox = makeNativePosixSandboxProcessPort();
-  const windowsQualificationClock = {
-    now: () => Effect.sync(() => new Date().toISOString()),
-  };
-  const windowsSandbox = makeWindowsSandboxProcessPort(undefined, {
-    currentAuthority: makeCurrentSandboxAuthoritySnapshotPortService(
-      config.trustedHostConfigurationSource,
-      windowsQualificationClock,
-    ),
-    clock: windowsQualificationClock,
-  });
+  const windowsSandbox = makeProductionWindowsSandboxProcessPort(
+    config.trustedHostConfigurationSource,
+  );
   const windowsSandboxProviderIds = new Set<string>(
     Object.values(WINDOWS_SANDBOX_PROVIDER_IDS),
   );

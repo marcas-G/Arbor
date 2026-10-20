@@ -21,6 +21,7 @@ import {
 } from "@arbor/sandbox-windows";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
+import { makeProductionWindowsSandboxProcessPort } from "../src/composition.js";
 import { loadSandboxAuthorityBundleSnapshotCurrent } from "../src/sandbox-authority-bundle.js";
 import { inspectWindowsQualificationAtP4Admission } from "../src/sandbox-process-policy-materializer.js";
 
@@ -302,6 +303,24 @@ describe("P5 Windows D2 V3 current protected authority", () => {
             io,
           }),
         );
+      const productionProvider =
+        makeProductionWindowsSandboxProcessPort(source);
+      const capabilities = await Effect.runPromise(
+        productionProvider.capabilities(),
+      );
+      expect(
+        capabilities.every(
+          (capability) =>
+            capability.status === "Experimental" &&
+            capability.profiles.length === 0,
+        ),
+      ).toBe(true);
+      const readsAfterCapabilityProbe = sourceReads;
+      expect(readsAfterCapabilityProbe).toBeGreaterThan(0);
+      protectedPair.source = "{bad-json";
+      expect((await inspect())._tag).toBe("Unavailable");
+      expect(sourceReads).toBeGreaterThan(readsAfterCapabilityProbe);
+      protectedPair.source = current.bundleJson;
       expect((await inspect())._tag).toBe("ManifestVerified");
       const readsAfterProbe = { sourceReads, artifactReads };
       files.set(
@@ -322,8 +341,6 @@ describe("P5 Windows D2 V3 current protected authority", () => {
       files.set(paths.binary, Buffer.from("changed PE after probe"));
       expect((await inspect())._tag).toBe("Unavailable");
       files.set(paths.binary, binaryBytes);
-      protectedPair.source = "{bad-json";
-      expect((await inspect())._tag).toBe("Unavailable");
     },
   );
 
