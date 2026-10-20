@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -266,11 +266,11 @@ const startProvider = () =>
                       ? "verified and accepted"
                       : "the Agent incorporates the public steer",
                   verificationMission: {
-                    goal: "independently verify the black-box shell observation",
+                    goal: "independently verify the black-box read observation",
                     criteria: [
                       {
                         criterionId: "bb-criterion",
-                        requirement: "shell observation contains BB_VERIFIED",
+                        requirement: "read observation contains BB_VERIFIED",
                         required: true,
                       },
                     ],
@@ -303,20 +303,22 @@ const startProvider = () =>
           }
 
           if (toolNames.has("record_verification_evidence")) {
-            const successfulShellResult = call.messages.some(
+            const successfulReadResult = call.messages.some(
               (message) =>
                 message.role === "tool" &&
-                /"exitCode"\s*:\s*0/u.test(message.content ?? ""),
+                (message.content ?? "").includes("BB_VERIFIED"),
             );
             const evidenceIds = [
               ...serialized.matchAll(/evd_[0-9a-f-]{36}/gu),
             ].map((match) => match[0]);
-            if (!successfulShellResult) {
+            if (!successfulReadResult) {
               sse(
                 response,
-                toolDelta("shell", {
-                  command: "Write-Output 'BB_VERIFIED'",
-                  cwd: { mount: "workspace", path: "." },
+                toolDelta("read", {
+                  target: {
+                    mount: "workspace",
+                    path: "verification-marker.txt",
+                  },
                 }),
                 "tool_calls",
               );
@@ -340,13 +342,13 @@ const startProvider = () =>
                 criteriaResults: [
                   {
                     criterionId: "bb-criterion",
-                    requirement: "shell observation contains BB_VERIFIED",
+                    requirement: "read observation contains BB_VERIFIED",
                     required: true,
                     verdict: "Pass",
                     evidenceRefs: [evidenceIds.at(-1)],
                   },
                 ],
-                summary: "Black-box verifier observed BB_VERIFIED.",
+                summary: "Black-box verifier read BB_VERIFIED.",
               }),
               "tool_calls",
             );
@@ -746,6 +748,11 @@ beforeEach(async (context) => {
     daemonLifecycleDiagnostics.length = 0;
     directory = mkdtempSync(join(tmpdir(), "arbor-scenario-black-box-"));
     mkdirSync(join(directory, "workspace"), { recursive: true });
+    writeFileSync(
+      join(directory, "workspace", "verification-marker.txt"),
+      "BB_VERIFIED",
+      "utf8",
+    );
     databaseFixture = databaseFactory.create();
     databaseFile = databaseFixture.databaseFilename;
     projectId = id("prj");
