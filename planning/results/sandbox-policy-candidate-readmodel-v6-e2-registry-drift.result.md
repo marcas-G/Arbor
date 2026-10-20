@@ -69,8 +69,12 @@ crash/reapproval matrix remains open.**
 
 - Fresh-candidate reapproval after the stale receipt and P1 commit-before/after
   process-kill/restart join are not yet qualified.
-- No OsEnforced candidate was available in the local registry fixture; no OS
-  provider run is claimed.
+- The requested follow-on sequence (commit a fresh OsEnforced policy, create a
+  second P4 intent, then drift/restart) remains OPEN under a confirmed design
+  gap: the current P1 payload cannot distinguish multiple Supported versions
+  of the same provider/candidate tuple. No version or candidate identity may be
+  guessed, and no production P1 OS selector is being added until the fixed
+  governance proposal is accepted. No OS provider run is claimed.
 - V6-F broader gates, two-daemon successor convergence, and overall V5/V6
   closure remain open.
 
