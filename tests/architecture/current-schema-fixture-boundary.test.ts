@@ -19,6 +19,9 @@ const historicalSchemaFixtureOwners = [
   "adapters/persistence-sqlite/test/schema42-database-fixture.test.ts",
   "adapters/persistence-sqlite/test/schema44-database-fixture.test.ts",
   "apps/single-workspace/test/p6-inbox-rebuild-fixture-child.test.ts",
+  // P6 is an exact historical schema-48 operator; its shared template is not
+  // an ordinary current-runtime fixture.
+  "apps/single-workspace/test/p6-inbox-rebuild.test.ts",
   "apps/single-workspace/test/retry-verification-origin-backfill.test.ts",
   "apps/single-workspace/test/schema-upgrade-operator.test.ts",
   "tests/functional/process/agent-loop-ah10-direct-child-assign-work-receipt-binding.functional.test.ts",
