@@ -4848,7 +4848,7 @@ describe("AH19 restart binding qualification", () => {
 
   it("rebases ordinary Native recovery from binding A to B through its portable frontier", async () => {
     const scenario = await startOrdinaryNativeAtCheckpointBoundary(
-      "AH17AfterCheckpointEpochCommit",
+      "AH17BeforeCheckpointEpochCommit",
     );
     const { fixture, project, workId, native, probe, reportUrl, childOutput } =
       scenario;
@@ -5766,9 +5766,8 @@ describe("AH19 restart binding qualification", () => {
     const ids = { sessionId: project.rootSessionId, executionId, workId };
     expect(probe.providerTurnId).toBe(targetNativeTurnId);
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
-    expect(beforeKill.session?.context_epoch).toBe(1);
-    expect(beforeKill.checkpoints).toHaveLength(1);
-    expect(beforeKill.checkpoints[0]?.source_ref).toBe(olderNativeTurnId);
+    expect(beforeKill.session?.context_epoch).toBe(0);
+    expect(beforeKill.checkpoints).toEqual([]);
     const olderCheckpoint = JSON.parse(
       beforeKill.checkpoints[0]?.payload_json ?? "{}",
     ) as Record<string, unknown>;
@@ -5810,12 +5809,12 @@ describe("AH19 restart binding qualification", () => {
     ]);
     const olderReplacementLink = beforeKill.providerLinks.find(
       (link) =>
-        link.logical_step_no === 1 && link.role === "OverflowReplacement",
+        link.logical_step_no === 0 && link.role === "OverflowReplacement",
     );
     expect(olderReplacementLink).toMatchObject({
       provider_turn_id: `ptn_${executionId}_1_overflow_0`,
       predecessor_provider_turn_id: olderNativeTurnId,
-      context_epoch: 1,
+      context_epoch: 0,
     });
 
     await fixture.crash();
@@ -6170,29 +6169,28 @@ describe("AH19 restart binding qualification", () => {
     ).toBe(false);
   }, 180_000);
 
-  it("rebases a StepEffectsCommitted Native source to its exact next successor without replaying effects", async () => {
+  it("resumes a StepEffectsCommitted source to its exact next successor without replaying effects", async () => {
     const scenario = await startAtCheckpointBoundary(
       "AH11AfterStepEffectsCommit",
       {
         ARBOR_AH19_NESTED_NATIVE: "1",
-        ARBOR_AH19_AH11_MATCH_INDEX: "2",
+        ARBOR_AH19_AH11_MATCH_INDEX: "1",
       },
     );
     const { fixture, project, workId, probe, reportUrl, childOutput } =
       scenario;
     const executionId = probe.executionId;
-    const sourceInferenceTurnId = `ptn_${executionId}_1`;
-    const olderNativeTurnId = `ptn_${executionId}_1_native_compact_0`;
-    const replacementTurnId = `ptn_${executionId}_1_overflow_0`;
-    const replacementCallRef = `call_ah19_plan_${replacementTurnId.replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+    const sourceInferenceTurnId = `ptn_${executionId}_0`;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
     expect(probe.providerTurnId).toBe(sourceInferenceTurnId);
+    expect(
+      probes.filter((entry) => entry.boundary === "AH11AfterStepEffectsCommit"),
+    ).toHaveLength(1);
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
-    expect(beforeKill.session?.context_epoch).toBe(1);
-    expect(beforeKill.checkpoints).toHaveLength(1);
-    expect(beforeKill.checkpoints[0]?.source_ref).toBe(olderNativeTurnId);
+    expect(beforeKill.session?.context_epoch).toBe(0);
+    expect(beforeKill.checkpoints).toEqual([]);
     const sourceStep = beforeKill.steps.find(
-      (step) => step.logical_step_no === 1 && step.repair_attempt === 0,
+      (step) => step.logical_step_no === 0 && step.repair_attempt === 0,
     );
     expect(sourceStep).toMatchObject({
       provider_turn_id: sourceInferenceTurnId,
@@ -6200,21 +6198,12 @@ describe("AH19 restart binding qualification", () => {
       successor_json: null,
       next_action_index: 1,
     });
-    const olderReplacementLink = beforeKill.providerLinks.find(
-      (link) =>
-        link.logical_step_no === 1 && link.role === "OverflowReplacement",
-    );
-    expect(olderReplacementLink).toMatchObject({
-      provider_turn_id: replacementTurnId,
-      predecessor_provider_turn_id: olderNativeTurnId,
-      context_epoch: 1,
-    });
     const sourceAction = beforeKill.actions.filter(
-      (action) => action.logical_step_no === 1 && action.repair_attempt === 0,
+      (action) => action.logical_step_no === 0 && action.repair_attempt === 0,
     );
     expect(sourceAction).toHaveLength(1);
+    const sourceCallRef = sourceAction[0]?.call_ref ?? "";
     expect(sourceAction[0]).toMatchObject({
-      call_ref: replacementCallRef,
       action_kind: "update_plan",
       state: "Applied",
     });
@@ -6222,7 +6211,7 @@ describe("AH19 restart binding qualification", () => {
       beforeKill.sessionEntries.filter(
         (entry) =>
           entry.entry_kind === "Observation" &&
-          entry.payload_json.includes(replacementCallRef),
+          entry.payload_json.includes(sourceCallRef),
       ),
     ).toHaveLength(1);
     expect(
@@ -6230,23 +6219,12 @@ describe("AH19 restart binding qualification", () => {
         (event) => event.providerTurnId === sourceInferenceTurnId,
       ),
     ).toHaveLength(1);
-    expect(
-      providerRequests.filter(
-        (event) => event.providerTurnId === replacementTurnId,
-      ),
-    ).toHaveLength(1);
 
     await fixture.crash();
     const afterKill = readSnapshot(fixture.databaseFile, ids);
-    expect(afterKill.steps.find((step) => step.logical_step_no === 1)).toEqual(
+    expect(afterKill.steps.find((step) => step.logical_step_no === 0)).toEqual(
       sourceStep,
     );
-    expect(
-      afterKill.providerLinks.find(
-        (link) =>
-          link.logical_step_no === 1 && link.role === "OverflowReplacement",
-      ),
-    ).toEqual(olderReplacementLink);
     await expireLeaseAfterOldDaemonExit(
       fixture,
       project.rootSessionId,
@@ -6256,7 +6234,8 @@ describe("AH19 restart binding qualification", () => {
     await fixture.restart({
       entry: childEntry,
       daemonEnvironment: {
-        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_BOUNDARY: "AH11AfterStepEffectsCommit",
+        ARBOR_AH19_AH11_COUNT_ONLY: "1",
         ARBOR_AH19_BINDING_VARIANT: "B",
         ARBOR_AH19_REPORT_URL: reportUrl,
       },
@@ -6265,7 +6244,7 @@ describe("AH19 restart binding qualification", () => {
       async () => {
         const snapshot = readSnapshot(fixture.databaseFile, ids);
         const resumedStep = snapshot.steps.find(
-          (step) => step.logical_step_no === 1 && step.repair_attempt === 0,
+          (step) => step.logical_step_no === 0 && step.repair_attempt === 0,
         );
         const childFailure = childOutput.some((line) => {
           try {
@@ -6279,7 +6258,14 @@ describe("AH19 restart binding qualification", () => {
         return { snapshot, resumedStep, childFailure };
       },
       (state) =>
-        state.resumedStep?.state === "NextStepReady" || state.childFailure,
+        (state.resumedStep?.state === "NextStepReady" &&
+          state.snapshot.steps.some(
+            (step) =>
+              step.logical_step_no === 1 &&
+              step.repair_attempt === 0 &&
+              step.state === "SettlementProposed",
+          )) ||
+        state.childFailure,
       75_000,
     ).catch((error: unknown) => {
       throw new Error(
@@ -6300,10 +6286,6 @@ describe("AH19 restart binding qualification", () => {
           state: step.state,
           successor: step.successor_json,
         })),
-        replacementLink: converged.snapshot.providerLinks.find(
-          (link) =>
-            link.logical_step_no === 1 && link.role === "OverflowReplacement",
-        ),
         child: childOutput.filter(
           (line) =>
             line.includes("AH19NativeCheckpointRecovery") ||
@@ -6314,6 +6296,9 @@ describe("AH19 restart binding qualification", () => {
         ),
       })}`,
     ).toBe(false);
+    expect(
+      childOutput.filter((line) => line.includes('"tag":"AH19_AH11_COUNT"')),
+    ).toEqual([]);
     const successorProgress = await waitForPublic(
       async () => ({
         snapshot: readSnapshot(fixture.databaseFile, ids),
@@ -6321,7 +6306,7 @@ describe("AH19 restart binding qualification", () => {
           (event) =>
             event.bindingVariant === "B" &&
             event.operationKind === "Inference" &&
-            event.providerTurnId === `ptn_${executionId}_2`,
+            event.providerTurnId === `ptn_${executionId}_1`,
         ),
       }),
       (state) =>
@@ -6334,7 +6319,7 @@ describe("AH19 restart binding qualification", () => {
     });
     const finalSnapshot = successorProgress.snapshot;
     const resumedStep = finalSnapshot.steps.find(
-      (step) => step.logical_step_no === 1 && step.repair_attempt === 0,
+      (step) => step.logical_step_no === 0 && step.repair_attempt === 0,
     );
     expect(resumedStep?.state).toBe("NextStepReady");
     const successor = JSON.parse(resumedStep?.successor_json ?? "{}") as Record<
@@ -6343,77 +6328,296 @@ describe("AH19 restart binding qualification", () => {
     >;
     expect(successor).toMatchObject({
       executionId,
-      logicalStepNo: 2,
+      logicalStepNo: 1,
       repairAttempt: 0,
-      providerTurnId: `ptn_${executionId}_2`,
+      providerTurnId: `ptn_${executionId}_1`,
     });
     expect(
       finalSnapshot.steps.find(
-        (step) => step.logical_step_no === 2 && step.repair_attempt === 0,
+        (step) => step.logical_step_no === 1 && step.repair_attempt === 0,
       )?.predecessor_logical_step_no,
-    ).toBe(1);
-    expect(finalSnapshot.session?.context_epoch).toBe(2);
-    expect(finalSnapshot.checkpoints).toHaveLength(2);
+    ).toBe(0);
+    expect(finalSnapshot.session?.context_epoch).toBe(1);
+    expect(finalSnapshot.checkpoints).toHaveLength(1);
     expect(
-      finalSnapshot.providerLinks.find(
-        (link) =>
-          link.logical_step_no === 1 && link.role === "OverflowReplacement",
-      ),
-    ).toEqual(olderReplacementLink);
-    expect(
-      finalSnapshot.actions.filter((action) => action.logical_step_no === 1),
+      finalSnapshot.actions.filter((action) => action.logical_step_no === 0),
     ).toEqual(sourceAction);
     expect(
       finalSnapshot.sessionEntries.filter(
         (entry) =>
           entry.entry_kind === "Observation" &&
-          entry.payload_json.includes(replacementCallRef),
+          entry.payload_json.includes(sourceCallRef),
       ),
     ).toHaveLength(1);
-    expect(
-      providerRequests.filter(
-        (event) =>
-          event.bindingVariant === "A" &&
-          [sourceInferenceTurnId, replacementTurnId].includes(
-            event.providerTurnId,
-          ),
-      ),
-    ).toHaveLength(2);
-    const bindingBSummary = providerRequests.filter(
-      (event) =>
-        event.bindingVariant === "B" &&
-        event.operationKind === "CompactionSummary",
-    );
-    expect(bindingBSummary).toHaveLength(1);
-    expect(
-      bindingBSummary[0]?.items.filter(
-        (item) => item.opaqueItemRef !== undefined,
-      ),
-    ).toEqual([]);
     expect(
       providerRequests.filter(
         (event) =>
           event.bindingVariant === "B" &&
           event.operationKind === "Inference" &&
-          event.providerTurnId === `ptn_${executionId}_2`,
+          event.providerTurnId === `ptn_${executionId}_1`,
+      ),
+    ).toHaveLength(1);
+  }, 180_000);
+
+  it("resumes a committed Native source StepEffectsCommitted to its exact successor without replaying effects", async () => {
+    const scenario = await startOrdinaryNativeAtCheckpointBoundary(
+      "AH17BeforeCheckpointEpochCommit",
+    );
+    const { fixture, project, workId, probe, childOutput } = scenario;
+    const nativeTurnId = scenario.native.providerTurnId;
+    const executionId = probe.executionId;
+    const ids = { sessionId: project.rootSessionId, executionId, workId };
+    const nativeCommitted = readSnapshot(fixture.databaseFile, ids);
+    const nativeManifest = JSON.parse(
+      nativeCommitted.providerTurns.find(
+        (turn) => turn.provider_turn_id === nativeTurnId,
+      )?.manifest_json ?? "{}",
+    ) as Record<string, unknown>;
+    const sourceStepNo = Number(
+      (
+        nativeManifest.sourceAgentLoopStep as
+          | { logicalStepNo?: number }
+          | undefined
+      )?.logicalStepNo,
+    );
+    const sourceInferenceTurnId = `ptn_${executionId}_${sourceStepNo}`;
+    expect(nativeCommitted.session?.context_epoch).toBe(0);
+    expect(nativeCommitted.checkpoints).toHaveLength(0);
+    expect(
+      nativeCommitted.steps.find(
+        (step) =>
+          step.logical_step_no === sourceStepNo && step.repair_attempt === 0,
+      ),
+    ).toMatchObject({
+      provider_turn_id: sourceInferenceTurnId,
+      state: "Prepared",
+    });
+    await fixture.crash();
+    await expireLeaseAfterOldDaemonExit(
+      fixture,
+      project.rootSessionId,
+      executionId,
+      workId,
+    );
+    await fixture.restart({
+      entry: childEntry,
+      daemonEnvironment: {
+        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_SECONDARY_BOUNDARY: "AH11AfterStepEffectsCommit",
+        ARBOR_AH19_AH11_COUNT_ONLY: "1",
+        ARBOR_AH19_AH11_COUNT_ONLY_HOLD: "1",
+        ARBOR_AH19_NATIVE_SOURCE_ACTION_TURN_ID: sourceInferenceTurnId,
+        ARBOR_AH19_NATIVE_SOURCE_ACTION_CHECKPOINT_REF: `ah19-opaque:${nativeTurnId}`,
+        ARBOR_AH19_BINDING_VARIANT: "A",
+        ARBOR_AH19_REPORT_URL: scenario.reportUrl,
+      },
+    });
+    const effectsProbe = await waitForPublic(
+      async () =>
+        childOutput
+          .map((line) => {
+            try {
+              return JSON.parse(line) as {
+                tag?: string;
+                count?: number;
+                providerTurnId?: string;
+              };
+            } catch {
+              return undefined;
+            }
+          })
+          .find(
+            (event) =>
+              event?.tag === "AH19_AH11_COUNT" &&
+              event.providerTurnId === sourceInferenceTurnId,
+          ),
+      (event) => event !== undefined,
+      60_000,
+    ).catch((error: unknown) => {
+      const snapshot = readSnapshot(fixture.databaseFile, ids);
+      throw new Error(
+        `Native checkpoint source never reached its matching StepEffectsCommitted boundary: ${error instanceof Error ? error.message : String(error)}; sessionEpoch=${snapshot.session?.context_epoch}; execution=${JSON.stringify(snapshot.execution)}; steps=${JSON.stringify(snapshot.steps.map(({ logical_step_no, repair_attempt, provider_turn_id, state, next_action_index, successor_json }) => ({ logical_step_no, repair_attempt, provider_turn_id, state, next_action_index, successor_json })))}; leases=${JSON.stringify(snapshot.leases)}; providerRequests=${JSON.stringify(providerRequests.map(({ operationKind, providerTurnId, bindingVariant }) => ({ operationKind, providerTurnId, bindingVariant })))}; childErrors=${childOutput
+          .filter((line) => line.includes("AH19_CHILD_ERROR"))
+          .slice(-4)
+          .join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
+      );
+    });
+    if (effectsProbe === undefined) {
+      throw new Error("Native StepEffectsCommitted source probe missing");
+    }
+    expect(effectsProbe.providerTurnId).toBe(sourceInferenceTurnId);
+    const beforeKill = readSnapshot(fixture.databaseFile, ids);
+    const sourceStep = beforeKill.steps.find(
+      (step) =>
+        step.logical_step_no === sourceStepNo && step.repair_attempt === 0,
+    );
+    const nativeTurn = beforeKill.providerTurns.find(
+      (turn) => turn.provider_turn_id === nativeTurnId,
+    );
+    expect(nativeTurn).toBeDefined();
+    const nativeCheckpoint = JSON.parse(
+      beforeKill.checkpoints[0]?.payload_json ?? "{}",
+    ) as Record<string, unknown>;
+    expect(sourceStep).toMatchObject({
+      provider_turn_id: sourceInferenceTurnId,
+      state: "StepEffectsCommitted",
+      successor_json: null,
+    });
+    expect(beforeKill.session?.context_epoch).toBe(1);
+    expect(nativeCheckpoint).toMatchObject({
+      _tag: "CompactionCheckpoint",
+      implementation: "ProviderNative",
+      opaqueItemRef: `ah19-opaque:${nativeTurnId}`,
+      bindingFingerprint: nativeManifest.resolvedModelBindingFingerprint,
+    });
+    expect(nativeManifest).toMatchObject({
+      operationKind: "CompactionNative",
+      providerTurnId: nativeTurnId,
+      sourceAgentLoopStep: {
+        executionId,
+        logicalStepNo: sourceStepNo,
+        repairAttempt: 0,
+        providerTurnId: sourceInferenceTurnId,
+      },
+    });
+    const sourceLinks = beforeKill.providerLinks.filter(
+      (link) =>
+        link.logical_step_no === sourceStepNo && link.repair_attempt === 0,
+    );
+    // This ordinary Work Native checkpoint is sourced directly by the
+    // manifest's sourceAgentLoopStep and does not use a P20 overflow chain.
+    expect(sourceLinks).toEqual([]);
+    const sourceActions = beforeKill.actions.filter(
+      (action) => action.logical_step_no === sourceStepNo,
+    );
+    const sourceObservations = beforeKill.sessionEntries.filter(
+      (entry) =>
+        entry.entry_kind === "Observation" &&
+        sourceActions.some((action) =>
+          entry.payload_json.includes(action.call_ref),
+        ),
+    );
+    const observedSourceEffectBoundaries = childOutput.filter((line) => {
+      try {
+        const event = JSON.parse(line) as {
+          tag?: string;
+          providerTurnId?: string;
+        };
+        return (
+          event.tag === "AH19_AH11_COUNT" &&
+          event.providerTurnId === sourceInferenceTurnId
+        );
+      } catch {
+        return false;
+      }
+    });
+    expect(observedSourceEffectBoundaries).toHaveLength(1);
+    expect(
+      probes.filter(
+        (entry) => entry.boundary === "AH17BeforeCheckpointEpochCommit",
+      ),
+    ).toHaveLength(1);
+
+    await fixture.crash();
+    const afterKill = readSnapshot(fixture.databaseFile, ids);
+    expect(
+      afterKill.steps.find((step) => step.logical_step_no === sourceStepNo),
+    ).toEqual(sourceStep);
+    expect(afterKill.checkpoints).toEqual(beforeKill.checkpoints);
+    await expireLeaseAfterOldDaemonExit(
+      fixture,
+      project.rootSessionId,
+      executionId,
+      workId,
+    );
+    await fixture.restart({
+      entry: childEntry,
+      daemonEnvironment: {
+        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_SECONDARY_BOUNDARY: "AH11AfterStepEffectsCommit",
+        ARBOR_AH19_AH11_COUNT_ONLY: "1",
+        ARBOR_AH19_AH11_COUNT_ONLY_HOLD: "1",
+        ARBOR_AH19_AH11_COUNT_ONLY_PROVIDER_TURN_ID: sourceInferenceTurnId,
+        ARBOR_AH19_BINDING_VARIANT: "A",
+        ARBOR_AH19_REPORT_URL: scenario.reportUrl,
+      },
+    });
+    const resumed = await waitForPublic(
+      async () => readSnapshot(fixture.databaseFile, ids),
+      (snapshot) => {
+        const source = snapshot.steps.find(
+          (step) =>
+            step.logical_step_no === sourceStepNo && step.repair_attempt === 0,
+        );
+        return source?.state === "NextStepReady";
+      },
+      60_000,
+    );
+    const resumedSource = resumed.steps.find(
+      (step) =>
+        step.logical_step_no === sourceStepNo && step.repair_attempt === 0,
+    );
+    expect(resumedSource?.state).toBe("NextStepReady");
+    const successor = JSON.parse(
+      resumedSource?.successor_json ?? "{}",
+    ) as Record<string, unknown>;
+    expect(successor).toMatchObject({
+      executionId,
+      logicalStepNo: sourceStepNo + 1,
+      repairAttempt: 0,
+      providerTurnId: `ptn_${executionId}_${sourceStepNo + 1}`,
+    });
+    expect(
+      resumed.steps.find(
+        (step) =>
+          step.logical_step_no === sourceStepNo + 1 &&
+          step.repair_attempt === 0,
+      )?.predecessor_logical_step_no,
+    ).toBe(sourceStepNo);
+    expect(resumed.checkpoints).toEqual(beforeKill.checkpoints);
+    expect(
+      resumed.providerLinks.filter(
+        (link) =>
+          link.logical_step_no === sourceStepNo && link.repair_attempt === 0,
+      ),
+    ).toEqual(sourceLinks);
+    expect(
+      resumed.actions.filter(
+        (action) => action.logical_step_no === sourceStepNo,
+      ),
+    ).toEqual(sourceActions);
+    expect(
+      resumed.sessionEntries.filter(
+        (entry) =>
+          entry.entry_kind === "Observation" &&
+          sourceActions.some((action) =>
+            entry.payload_json.includes(action.call_ref),
+          ),
+      ),
+    ).toEqual(sourceObservations);
+    expect(
+      providerRequests.filter(
+        (event) => event.providerTurnId === sourceInferenceTurnId,
       ),
     ).toHaveLength(1);
     expect(
-      providerRequests.filter(
-        (event) =>
-          event.bindingVariant === "B" &&
-          event.providerTurnId === replacementTurnId,
-      ),
-    ).toEqual([]);
-    expect(
-      providerRequests.some(
-        (event) =>
-          event.bindingVariant === "B" &&
-          event.items.some(
-            (item) => item.opaqueItemRef === `ah19-opaque:${olderNativeTurnId}`,
-          ),
-      ),
-    ).toBe(false);
+      providerRequests.filter((event) => event.providerTurnId === nativeTurnId),
+    ).toHaveLength(1);
+    const finalSourceEffectBoundaries = childOutput.filter((line) => {
+      try {
+        const event = JSON.parse(line) as {
+          tag?: string;
+          providerTurnId?: string;
+        };
+        return (
+          event.tag === "AH19_AH11_COUNT" &&
+          event.providerTurnId === sourceInferenceTurnId
+        );
+      } catch {
+        return false;
+      }
+    });
+    expect(finalSourceEffectBoundaries).toEqual(observedSourceEffectBoundaries);
   }, 180_000);
 
   it("settles a terminal ConversationResponse from its pinned StepEffectsCommitted output after Native rebase", async () => {
@@ -6518,6 +6722,105 @@ describe("AH19 restart binding qualification", () => {
       })
       .catch((error: unknown) => {
         const failedSnapshot = readSnapshot(fixture.databaseFile, ids);
+        const stepBinding = (() => {
+          const db = new DatabaseSync(fixture.databaseFile, { readOnly: true });
+          try {
+            return db
+              .prepare(
+                `SELECT manifest_id FROM agent_loop_steps
+                  WHERE execution_id = ? AND logical_step_no = 0 AND repair_attempt = 0`,
+              )
+              .get(executionId) as { manifest_id: string | null } | undefined;
+          } finally {
+            db.close();
+          }
+        })();
+        const sourceTurn = failedSnapshot.providerTurns.find(
+          (turn) => turn.provider_turn_id === sourceInferenceTurnId,
+        );
+        let sourceManifest: Record<string, unknown> = {};
+        try {
+          sourceManifest = JSON.parse(
+            sourceTurn?.manifest_json ?? "{}",
+          ) as Record<string, unknown>;
+        } catch {
+          sourceManifest = { invalid: true };
+        }
+        const conversationOwner = readConversationHistoryEvidence(
+          fixture.databaseFile,
+          {
+            rootWorkspaceId: project.rootWorkspaceId,
+            sessionId: project.rootSessionId,
+          },
+        ).owner;
+        const replayEvidence = {
+          driverManifestGate: {
+            stepManifestId: stepBinding?.manifest_id,
+            providerTurnManifestId: sourceTurn?.manifest_id,
+            providerTurnIdMatches:
+              sourceManifest.providerTurnId === sourceInferenceTurnId,
+            executionIdMatches: sourceManifest.executionId === executionId,
+            sessionIdMatches:
+              sourceManifest.sessionId === project.rootSessionId,
+            logicalStepNoMatches: sourceManifest.logicalStepNo === 0,
+            repairAttemptMatches: sourceManifest.repairAttempt === 0,
+            manifestIdMatches:
+              stepBinding?.manifest_id == null ||
+              stepBinding.manifest_id === sourceTurn?.manifest_id,
+          },
+          owner: conversationOwner,
+          steps: failedSnapshot.steps,
+          providerLinks: failedSnapshot.providerLinks,
+          providerTurns: failedSnapshot.providerTurns.map((turn) => {
+            let manifest: Record<string, unknown> = {};
+            try {
+              manifest = JSON.parse(turn.manifest_json ?? "{}") as Record<
+                string,
+                unknown
+              >;
+            } catch {
+              manifest = { invalid: true };
+            }
+            return {
+              providerTurnId: turn.provider_turn_id,
+              executionId: turn.execution_id,
+              sessionId: turn.session_id,
+              contextEpoch: turn.context_epoch,
+              manifestId: turn.manifest_id,
+              settledAt: turn.settled_at,
+              finishReason: turn.finish_reason,
+              logicalStepNo: manifest.logicalStepNo,
+              repairAttempt: manifest.repairAttempt,
+              operationKind: manifest.operationKind,
+              resolvedModelBindingFingerprint:
+                manifest.resolvedModelBindingFingerprint,
+              sourceAgentLoopStep: manifest.sourceAgentLoopStep,
+              conversationCheckpoint: manifest.conversationCheckpoint,
+            };
+          }),
+          providerAttempts: failedSnapshot.providerAttempts.map((attempt) => {
+            let events: Array<Record<string, unknown>> = [];
+            try {
+              events = JSON.parse(attempt.canonical_event_prefix_json) as Array<
+                Record<string, unknown>
+              >;
+            } catch {
+              events = [];
+            }
+            return {
+              providerTurnId: attempt.provider_turn_id,
+              attemptNo: attempt.attempt_no,
+              outcome: attempt.outcome,
+              errorKind: attempt.provider_error_kind,
+              deliveredPosition: attempt.delivered_position,
+              eventTags: events.map((event) => event._tag),
+            };
+          }),
+          execution: failedSnapshot.execution,
+          responseJobs: failedSnapshot.responseJobs,
+          sessionEpoch: failedSnapshot.session?.context_epoch,
+          sessionCheckpoints: failedSnapshot.checkpoints,
+        };
         persistAh19StartupRecord({
           kind: "startup-failure",
           boundary: "conversation-response-restart",
@@ -6535,8 +6838,24 @@ describe("AH19 restart binding qualification", () => {
             return [];
           }
         });
+        const qualificationStages = childOutput.flatMap((line) => {
+          try {
+            const event = JSON.parse(line) as {
+              tag?: string;
+              boundary?: string;
+              stage?: string;
+            };
+            return event.tag === "AH19_PROBE" &&
+              event.boundary === "AH19NativeCheckpointRecovery" &&
+              typeof event.stage === "string"
+              ? [event.stage]
+              : [];
+          } catch {
+            return [];
+          }
+        });
         throw new Error(
-          `AH19 ConversationResponse daemon restart failed: ${error instanceof Error ? error.message : String(error)}; qualification=${qualification.join("|")}; providerRequests=${JSON.stringify(providerRequests.map(({ operationKind, bindingVariant }) => ({ operationKind, bindingVariant })))}; persistedState=${JSON.stringify(ah19PersistedStateSummary(failedSnapshot))}`,
+          `AH19 ConversationResponse daemon restart failed: ${error instanceof Error ? error.message : String(error)}; qualification=${qualification.join("|")}; qualificationStages=${qualificationStages.join("|")}; providerRequests=${JSON.stringify(providerRequests.map(({ operationKind, bindingVariant }) => ({ operationKind, bindingVariant })))}; replayEvidence=${JSON.stringify(replayEvidence)}; persistedState=${JSON.stringify(ah19PersistedStateSummary(failedSnapshot))}`,
         );
       });
     const recovered = await waitForPublic(
