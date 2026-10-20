@@ -29,7 +29,7 @@ import {
   WorktreeStore,
 } from "@arbor/ports";
 import { Context, Effect, Option } from "effect";
-import { loadSandboxAuthorityBundleSnapshotV2 } from "./sandbox-authority-bundle.js";
+import { loadSandboxAuthorityBundleSnapshotCurrent } from "./sandbox-authority-bundle.js";
 
 export const exactSupportedOsProviderEntry = (
   entries: ReadonlyArray<SandboxProviderQualificationEntryV1>,
@@ -93,7 +93,7 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
     const authority =
       input.source === undefined
         ? { _tag: "Unavailable" as const, failure: "SourceMissing" as const }
-        : yield* loadSandboxAuthorityBundleSnapshotV2(
+        : yield* loadSandboxAuthorityBundleSnapshotCurrent(
             input.source,
             input.now,
             SANDBOX_ENV_ALLOWLIST,

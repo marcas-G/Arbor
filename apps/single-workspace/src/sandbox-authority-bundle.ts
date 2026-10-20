@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   SandboxAuthorityAuditRecordV2,
+  SandboxAuthorityBundleSnapshotCurrent,
   SandboxAuthorityBundleSnapshotV1,
   SandboxAuthorityBundleSnapshotV2,
   SandboxAuthorityBundleV1,
@@ -23,6 +24,7 @@ import {
   type TrustedHostConfigurationSourceService,
 } from "@arbor/ports";
 import { Context, Effect, Layer } from "effect";
+import { loadSandboxAuthorityBundleSnapshotV3 } from "./sandbox-authority-bundle-v3.js";
 
 const digest = (value: string): string =>
   createHash("sha256").update(value, "utf8").digest("hex");
@@ -429,7 +431,7 @@ export const SandboxAuthoritySnapshotLive = (
     Effect.gen(function* () {
       const clock = yield* Clock;
       const now = yield* clock.now();
-      return yield* loadSandboxAuthorityBundleSnapshotV2(
+      return yield* loadSandboxAuthorityBundleSnapshotCurrent(
         source,
         now,
         SANDBOX_ENV_ALLOWLIST,
@@ -458,7 +460,7 @@ export const sandboxIssuerSnapshotOf = (
 export type SandboxAuthoritySnapshotV2LoadResult =
   | {
       readonly _tag: "Available";
-      readonly snapshot: SandboxAuthorityBundleSnapshotV2;
+      readonly snapshot: SandboxAuthorityBundleSnapshotCurrent;
     }
   | {
       readonly _tag: "Unavailable";
@@ -656,10 +658,65 @@ export const SandboxAuthoritySnapshotV2Live = (
     Effect.gen(function* () {
       const clock = yield* Clock;
       const now = yield* clock.now();
-      return yield* loadSandboxAuthorityBundleSnapshotV2(
+      return yield* loadSandboxAuthorityBundleSnapshotCurrent(
         source,
         now,
         allowedEnvironmentNames,
       );
     }),
   );
+
+/** Dispatches on the exact protected source version. A malformed or V3
+ * source can never fall back to the V2 loader, even during cutover. */
+export const loadSandboxAuthorityBundleSnapshotCurrent = (
+  source: TrustedHostConfigurationSourceService | undefined,
+  now: string,
+  allowedEnvironmentNames: ReadonlyArray<string>,
+): Effect.Effect<SandboxAuthoritySnapshotV2LoadResult> =>
+  Effect.gen(function* () {
+    if (source === undefined)
+      return yield* loadSandboxAuthorityBundleSnapshotV2(
+        source,
+        now,
+        allowedEnvironmentNames,
+      );
+    const initial = yield* Effect.match(
+      source.readVerifiedSandboxAuthorityBundle(),
+      { onFailure: () => undefined, onSuccess: (value) => value },
+    );
+    if (initial === undefined)
+      return {
+        _tag: "Unavailable" as const,
+        failure: "SourceUnreadable" as const,
+      };
+    let version: unknown;
+    try {
+      const parsed: unknown = JSON.parse(initial.canonicalJson);
+      version =
+        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>).version
+          : undefined;
+    } catch {
+      return {
+        _tag: "Unavailable" as const,
+        failure: "BundleMalformed" as const,
+      };
+    }
+    if (version === 3)
+      return yield* loadSandboxAuthorityBundleSnapshotV3(
+        source,
+        now,
+        allowedEnvironmentNames,
+        initial,
+      );
+    if (version === 2)
+      return yield* loadSandboxAuthorityBundleSnapshotV2(
+        source,
+        now,
+        allowedEnvironmentNames,
+      );
+    return {
+      _tag: "Unavailable" as const,
+      failure: "BundleMalformed" as const,
+    };
+  });

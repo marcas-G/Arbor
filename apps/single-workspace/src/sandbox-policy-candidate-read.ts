@@ -6,7 +6,7 @@ import {
   encodeSandboxEnforcementRuleSetV1,
   executionEpisode,
   produceSandboxBoundaryV1,
-  type SandboxAuthorityBundleSnapshotV2,
+  type SandboxAuthorityBundleSnapshotCurrent,
   type SandboxPolicyCandidateReadV2,
   type SandboxPolicyCurrentHostV1,
   sandboxEnforcementRuleSetV1ForProvider,
@@ -46,7 +46,7 @@ export const buildSandboxPolicyCandidateReadV2 = (input: {
   readonly latestCommittedPolicyRevision: number;
   readonly expectedEpisodeRevision: number;
   readonly boundary: SandboxPolicyCandidateBoundarySnapshotV1;
-  readonly authority: SandboxAuthorityBundleSnapshotV2;
+  readonly authority: SandboxAuthorityBundleSnapshotCurrent;
   readonly currentHost: SandboxPolicyCurrentHostV1;
 }):
   | { readonly _tag: "Ready"; readonly value: SandboxPolicyCandidateReadV2 }

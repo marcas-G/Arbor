@@ -6,7 +6,7 @@ import {
   type TrustedHostConfigurationSourceService,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
-import { loadSandboxAuthorityBundleSnapshotV2 } from "./sandbox-authority-bundle.js";
+import { loadSandboxAuthorityBundleSnapshotCurrent } from "./sandbox-authority-bundle.js";
 
 export const sandboxPolicyCurrentHostV1 = () => {
   const osFamily: "Linux" | "macOS" | "Windows" | undefined =
@@ -28,7 +28,7 @@ export const sandboxPolicyCurrentHostV1 = () => {
 
 /** P5 adapter for consumers that must observe bundle drift at read time.
  * Unlike the startup V1 issuer snapshot, every method call re-loads and
- * verifies the protected V2 source/high-water pair. */
+ * verifies the protected current V2|V3 source/high-water pair. */
 export const CurrentSandboxAuthoritySnapshotPortLive = (
   source: TrustedHostConfigurationSourceService | undefined,
 ) =>
@@ -46,7 +46,7 @@ export const CurrentSandboxAuthoritySnapshotPortLive = (
                 failure: "CurrentHostIdentityUnavailable" as const,
               };
             const now = yield* clock.now();
-            const loaded = yield* loadSandboxAuthorityBundleSnapshotV2(
+            const loaded = yield* loadSandboxAuthorityBundleSnapshotCurrent(
               source,
               now,
               SANDBOX_ENV_ALLOWLIST,

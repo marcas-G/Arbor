@@ -12,7 +12,7 @@ import {
   encodeExecutionEpisodeBinding,
   executionEpisode,
   produceSandboxBoundaryV1,
-  type SandboxAuthorityBundleSnapshotV2,
+  type SandboxAuthorityBundleSnapshotCurrent,
   type SandboxPolicyPreconditionsV1,
   type SandboxProfile,
   sandboxEnvironmentBasisDigestOfV1,
@@ -91,7 +91,7 @@ export interface SandboxPolicyDecisionPreparationDependencies {
   >;
   readonly worktrees: Pick<WorktreeStoreService, "findByWorkspace">;
   readonly environmentResolver: Pick<EnvironmentResolverService, "observe">;
-  readonly authoritySnapshot: SandboxAuthorityBundleSnapshotV2 | undefined;
+  readonly authoritySnapshot: SandboxAuthorityBundleSnapshotCurrent | undefined;
   /** Process-local qualification observer. It is absent in production and
    * never participates in a decision, persistence, or wire contract. */
   readonly qualificationProbe?: SandboxPolicyDecisionPreparationQualificationProbe;
@@ -276,7 +276,7 @@ const resolvedObservationIsConsistent = (observation: {
 };
 
 const limitsForProfile = (
-  snapshot: SandboxAuthorityBundleSnapshotV2,
+  snapshot: SandboxAuthorityBundleSnapshotCurrent,
   profile: SandboxProfile,
 ) =>
   snapshot.bundle.operatorConfig.limitsByProfile.find(
@@ -287,7 +287,7 @@ const makeCurrentPreconditions = (
   payload: DecideSandboxPolicyPayload,
   captured: CapturedInputs | undefined,
   prepared: PreparedInputs | undefined,
-  authoritySnapshot: SandboxAuthorityBundleSnapshotV2 | undefined,
+  authoritySnapshot: SandboxAuthorityBundleSnapshotCurrent | undefined,
 ): SandboxPolicyPreconditionsV1 => {
   const bundle = authoritySnapshot?.bundle;
   const forceMismatch = prepared === undefined || captured === undefined;
