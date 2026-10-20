@@ -49,8 +49,15 @@ const startupDiagnosticProbe = createAh19StartupDiagnosticProbe(
   process.env.ARBOR_AH19_STARTUP_TRACE === "1",
 );
 const targetAhBoundary = process.env.ARBOR_AH_BOUNDARY;
+const skipAhBoundaryCount = Number.parseInt(
+  process.env.ARBOR_AH_BOUNDARY_SKIP_COUNT ?? "0",
+  10,
+);
+let matchedAhBoundaryCount = 0;
 const pauseAtAhBoundary = async (event) => {
   if (event.boundary !== targetAhBoundary) return;
+  matchedAhBoundaryCount += 1;
+  if (matchedAhBoundaryCount <= skipAhBoundaryCount) return;
   process.stdout.write(`${JSON.stringify({ tag: "AH_PROBE", ...event })}\n`);
   await new Promise(() => {});
 };
@@ -67,6 +74,13 @@ const sandboxPolicyDecisionPreparationQualificationProbe = async (event) => {
   process.stdout.write(
     `${JSON.stringify({ tag: "P1_SANDBOX_PREPARATION_PROBE", ...event })}\n`,
   );
+};
+const schedulerQualificationProbe = (event) => {
+  if (process.env.ARBOR_SCHEDULER_PROBE === "1") {
+    process.stdout.write(
+      `${JSON.stringify({ tag: "SCHEDULER_PROBE", ...event })}\n`,
+    );
+  }
 };
 const governance = {
   authenticatedHumans: [
@@ -95,6 +109,9 @@ const config = {
   startupDiagnosticProbe,
   ...(process.env.ARBOR_WORKSPACE_ID !== undefined
     ? { workspaceId: parse(WorkspaceId)(process.env.ARBOR_WORKSPACE_ID) }
+    : {}),
+  ...(process.env.ARBOR_SCHEDULER_PROBE === "1"
+    ? { schedulerQualificationProbe }
     : {}),
   // The process test commits an initially current policy, then changes the
   // protected V2 pair and kills this daemon before another scheduler tick.

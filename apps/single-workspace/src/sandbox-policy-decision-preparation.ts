@@ -67,7 +67,9 @@ export type SandboxPolicyPreparationReasonCode =
   | "AuthorityBundleRevisionMismatch"
   | "AuthorityBundleDigestMismatch"
   | "AuthorityOperatorRevisionMismatch"
-  | "AuthorityOperatorDigestMismatch";
+  | "AuthorityOperatorDigestMismatch"
+  | "OsProviderTupleUnavailable"
+  | "WindowsQualificationEvidenceUnavailable";
 
 export type SandboxPolicyDecisionPreparationQualificationProbe = (event: {
   readonly stage:
@@ -84,7 +86,7 @@ export type SandboxPolicyDecisionPreparationQualificationProbe = (event: {
   readonly errorTag?: string;
   readonly repository?: string;
   readonly operation?: string;
-  readonly reasonCode?: SandboxPolicyPreparationReasonCode;
+  readonly reasonCode?: string;
 }) => Promise<void>;
 
 export interface SandboxPolicyDecisionPreparationDependencies {
@@ -396,7 +398,7 @@ export const makeSandboxPolicyDecisionPreparation = (
     stage: Parameters<SandboxPolicyDecisionPreparationQualificationProbe>[0]["stage"],
     result: "Pass" | "Failure",
     error?: unknown,
-    reasonCode?: SandboxPolicyPreparationReasonCode,
+    reasonCode?: string,
   ): Effect.Effect<void> =>
     dependencies.qualificationProbe === undefined
       ? Effect.void
@@ -416,6 +418,8 @@ export const makeSandboxPolicyDecisionPreparation = (
               : undefined;
           const errorTag =
             safeIdentifier(record?._tag) ?? safeIdentifier(nested?._tag);
+          const failureCode = safeIdentifier(record?.reason);
+          const reportedReasonCode = reasonCode ?? failureCode;
           const repository =
             safeIdentifier(record?.repository) ??
             safeIdentifier(nested?.repository);
@@ -429,7 +433,9 @@ export const makeSandboxPolicyDecisionPreparation = (
               ...(errorTag === undefined ? {} : { errorTag }),
               ...(repository === undefined ? {} : { repository }),
               ...(operation === undefined ? {} : { operation }),
-              ...(reasonCode === undefined ? {} : { reasonCode }),
+              ...(reportedReasonCode === undefined
+                ? {}
+                : { reasonCode: reportedReasonCode }),
             });
           } catch {
             // Qualification observers never change policy preparation.
@@ -560,6 +566,7 @@ export const makeSandboxPolicyDecisionPreparation = (
               operationalFailure(
                 "no unique exact Supported provider tuple is available",
               ),
+              "OsProviderTupleUnavailable",
             );
             return yield* Effect.fail(
               operationalFailure(
@@ -580,9 +587,13 @@ export const makeSandboxPolicyDecisionPreparation = (
             yield* probe(
               "Selection",
               "Failure",
-              operationalFailure(
-                "current signed Windows qualification evidence is unavailable",
-              ),
+              {
+                ...operationalFailure(
+                  "current signed Windows qualification evidence is unavailable",
+                ),
+                reason: inspection.reason,
+              },
+              inspection.reason,
             );
             return yield* Effect.fail(
               operationalFailure(
