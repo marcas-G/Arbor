@@ -61,13 +61,13 @@ import {
   type AttentionReadDeps,
   loadAttentionFacts,
 } from "../packages/projection-runtime/src/index.js";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "./support/schema44-database.js";
 
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: "p12-runtime-safety-template-",
   });
 }, 120_000);

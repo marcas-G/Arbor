@@ -1,20 +1,21 @@
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "../../../adapters/persistence-sqlite/src/index.js";
 import { ProjectId, parse } from "../../../packages/domain/src/index.js";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
 } from "../src/index.js";
 
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 
 describe("P34 daemon migration wiring", () => {
   beforeAll(async () => {
-    schema44Factory = await createSchema44TestDatabaseFactory();
+    schema44Factory = await createCurrentSchemaTestDatabaseFactory();
   }, 120_000);
 
   afterAll(() => schema44Factory?.cleanup(), 120_000);
@@ -59,7 +60,7 @@ describe("P34 daemon migration wiring", () => {
         ),
       );
       expect(result).toEqual({
-        version: 48,
+        version: CURRENT_SCHEMA_VERSION,
         tables: [
           "assign_work_binding_attention_facts",
           "assign_work_target_bindings",

@@ -37,7 +37,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   deliverHandler,
   produceDeliverableHandler,
@@ -69,14 +69,14 @@ const executionId = parse(ExecutionId)(
 const principal = parse(Principal)("runtime:producer-agent");
 const actor = parse(Actor)("runtime:producer-agent");
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema44TestDatabaseFactory({
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
     prefix: ".mac-p3-delivery-schema44-",
   });
 }, 120_000);

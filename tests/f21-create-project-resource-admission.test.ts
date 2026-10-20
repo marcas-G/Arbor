@@ -40,16 +40,16 @@ import {
   WorkspaceRepository,
 } from "../packages/ports/src/index.js";
 import {
-  createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   withSchema44TestDatabase,
 } from "./support/schema44-database.js";
 
 const roots: string[] = [];
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: "f21-create-project-resource-template-",
   });
 }, 120_000);

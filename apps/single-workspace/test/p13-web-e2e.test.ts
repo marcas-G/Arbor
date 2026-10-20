@@ -5,7 +5,7 @@ import { Principal, parse } from "@arbor/domain";
 import { Effect, Fiber } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   ProductionDaemonService,
@@ -37,7 +37,7 @@ let runConsumers: (() => Promise<void>) | undefined;
 let startupError: unknown;
 let programFiber: ReturnType<typeof Effect.runFork> | undefined;
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
@@ -51,7 +51,7 @@ const schema44DatabaseFile = () => {
 };
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema44TestDatabaseFactory({
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
     prefix: ".p13-web-e2e-schema44-",
   });
   fixture = fixtureFactory.create();

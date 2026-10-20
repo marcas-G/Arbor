@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { SecretStorePort, secretRef } from "@arbor/ports";
 import { Effect, type Layer } from "effect";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   type ArborProviderConfigFile,
@@ -19,7 +19,7 @@ import {
 
 const tempDirs: string[] = [];
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 const withConfig = (content: string): { dir: string; path: string } => {
   const dir = mkdtempSync(join(tmpdir(), "arbor-config-"));
@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory();
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory();
 }, 120_000);
 
 afterAll(() => schema44Factory?.cleanup(), 120_000);

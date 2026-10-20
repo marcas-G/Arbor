@@ -10,7 +10,7 @@ import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import {
@@ -43,7 +43,7 @@ const fenceNow = "2026-10-12T00:00:00.000Z";
 let schema44Factory: Schema44TestDatabaseFactory | undefined;
 
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: ".p4-invocation-store-template-",
   });
 }, 120_000);

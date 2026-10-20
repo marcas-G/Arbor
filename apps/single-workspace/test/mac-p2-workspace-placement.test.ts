@@ -24,7 +24,7 @@ import {
   expect,
   it,
 } from "vitest";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { assignWorkHandler } from "../src/control-actions.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
@@ -33,14 +33,14 @@ const rootWorkspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-012345678a01",
 );
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema44TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
   | undefined;
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema44TestDatabaseFactory({
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
     prefix: ".mac-p2-placement-schema44-",
   });
 }, 120_000);

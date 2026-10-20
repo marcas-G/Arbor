@@ -12,7 +12,7 @@ import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import {
@@ -61,7 +61,7 @@ const makeApp = (filename: string) => {
 let schema44Factory: Schema44TestDatabaseFactory | undefined;
 
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory();
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory();
 }, 120_000);
 
 afterAll(() => {

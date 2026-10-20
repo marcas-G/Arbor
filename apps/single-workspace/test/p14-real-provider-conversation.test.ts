@@ -33,7 +33,7 @@ import {
   it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema48TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
@@ -52,7 +52,7 @@ const assistantAnswer =
 const liveHumanInputSentinelEnabled =
   process.env.ARBOR_WAVE1_LIVE_HUMAN_INPUT === "1";
 let fixtureFactory:
-  | Awaited<ReturnType<typeof createSchema48TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 let fixture:
   | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
@@ -60,7 +60,7 @@ let fixture:
 const scratchDirectories: string[] = [];
 
 beforeAll(async () => {
-  fixtureFactory = await createSchema48TestDatabaseFactory({
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
     prefix: ".p14-conversation-schema44-",
   });
 }, 120_000);

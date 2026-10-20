@@ -46,7 +46,7 @@ import {
   p7SeedProject,
 } from "../../support/p7-app.js";
 import {
-  createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   withSchema44TestDatabase,
 } from "../../support/schema44-database.js";
 
@@ -79,10 +79,10 @@ interface WebSocketOpenObservation {
 const handles: WebTransportHandle[] = [];
 const directories: string[] = [];
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: "p12-view-auth-template-",
   });
 }, 120_000);

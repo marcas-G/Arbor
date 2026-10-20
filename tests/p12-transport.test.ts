@@ -25,6 +25,7 @@ import {
   ProjectRepositoryLive,
   ResourceOwnershipRepositoryLive,
   runMigrations,
+  SandboxPolicyDecisionStoreLive,
   SessionRepositoryLive,
   TransactionPortLive,
   VerificationRepositoryLive,
@@ -105,7 +106,7 @@ import type {
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import {
-  createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   withSchema44TestDatabase,
 } from "./support/schema44-database.js";
 
@@ -322,6 +323,7 @@ const makeApp = (databaseFile = ":memory:"): Layer.Layer<DbServices> => {
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
+    Layer.provide(SandboxPolicyDecisionStoreLive, infra),
     // P14: the registry also wires SubmitHumanMessage (human chat-turn).
     Layer.provide(HumanMessageStoreLive, infra),
     Layer.provide(ConversationResponseJobStoreLive, infra),
@@ -359,10 +361,10 @@ const run = <A>(
   Effect.runPromise(Effect.provide(program, makeApp(databaseFile)));
 
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: "p12-transport-template-",
   });
 }, 120_000);

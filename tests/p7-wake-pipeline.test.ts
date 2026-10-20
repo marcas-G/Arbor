@@ -2,6 +2,7 @@ import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  CURRENT_SCHEMA_VERSION,
   P7_MIGRATIONS,
   runMigrations,
   WorkWaitStoreLive,
@@ -34,7 +35,7 @@ import {
   p7SeedWork,
   runP7,
 } from "./support/p7-app.js";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "./support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "./support/schema44-database.js";
 
 const WORK_CONSUMER = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789b1");
 const CMD_CONSUMER = parse(CommandId)(
@@ -123,12 +124,12 @@ const waitOf = (deps: WakeSinkDependencies, workId: WorkId) =>
   deps.tx.transact(deps.waits.findByWork(workId));
 
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 
 describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
   beforeAll(async () => {
-    schema44Factory = await createSchema44TestDatabaseFactory();
+    schema44Factory = await createCurrentSchemaTestDatabaseFactory();
   }, 120_000);
 
   afterAll(() => schema44Factory?.cleanup(), 120_000);
@@ -308,7 +309,7 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
     );
   });
 
-  it("composition smoke: builds against a real schema-48 database", async () => {
+  it("composition smoke: builds against the real current schema", async () => {
     const database = schema44Factory.create();
     try {
       const app = buildSingleWorkspaceLayer({
@@ -337,7 +338,10 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
           never
         >,
       );
-      expect(result).toEqual({ version: 48, hasWorkWaits: true });
+      expect(result).toEqual({
+        version: CURRENT_SCHEMA_VERSION,
+        hasWorkWaits: true,
+      });
     } finally {
       database.cleanup();
     }

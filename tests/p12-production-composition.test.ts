@@ -51,7 +51,7 @@ import {
 import { UsageService } from "../packages/projection-runtime/src/index.js";
 import { p7Project, p7RootWorkspace, p7SeedProject } from "./support/p7-app.js";
 import {
-  createSchema50TestDatabaseFactory as createSchema44TestDatabaseFactory,
+  createCurrentSchemaTestDatabaseFactory,
   withSchema44TestDatabase,
 } from "./support/schema44-database.js";
 
@@ -68,10 +68,10 @@ import {
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "p12-production-"));
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 beforeAll(async () => {
-  schema44Factory = await createSchema44TestDatabaseFactory({
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
     prefix: "p12-production-template-",
   });
 }, 120_000);

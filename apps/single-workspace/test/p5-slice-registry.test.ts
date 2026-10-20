@@ -1,16 +1,16 @@
 import { CommandHandlerRegistry } from "@arbor/application";
 import { Effect, Option } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSchema48TestDatabaseFactory as createSchema44TestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 let schema44Factory: Awaited<
-  ReturnType<typeof createSchema44TestDatabaseFactory>
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 
 describe("P5 slice command handler registry", () => {
   beforeAll(async () => {
-    schema44Factory = await createSchema44TestDatabaseFactory();
+    schema44Factory = await createCurrentSchemaTestDatabaseFactory();
   }, 120_000);
 
   afterAll(() => schema44Factory?.cleanup(), 120_000);

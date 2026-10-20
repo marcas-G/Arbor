@@ -3,7 +3,7 @@ import { P39RecoveryEvidenceStore, TransactionScope } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { createSchema44TestDatabase } from "../../../tests/support/schema44-database.js";
+import { createCurrentSchemaTestDatabase } from "../../../tests/support/schema44-database.js";
 import { layer, P39RecoveryEvidenceStoreLive } from "../src/index.js";
 
 const invocationId = parse(ToolInvocationId)(
@@ -20,7 +20,7 @@ const makeApp = (filename: string) => {
 
 describe("P39 RecoveryBinding store DeniedUnbound projection", () => {
   it("returns the terminal P4 denial projection but never binding or selected evidence", async () => {
-    const database = await createSchema44TestDatabase();
+    const database = await createCurrentSchemaTestDatabase();
     try {
       const result = await Effect.runPromise(
         Effect.provide(
