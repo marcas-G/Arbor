@@ -409,12 +409,12 @@ describe("V6-E V2 registry-only drift across daemon restart", () => {
     daemonEnvironment.ARBOR_AUTH_TOKENS =
       "local=user:local,operator=user:operator";
     daemonEnvironment.ARBOR_TICK_INTERVAL_MS = "25";
+    daemonEnvironment.ARBOR_AH_BOUNDARY = "AH7AfterToolIntentCommit";
     const marker = `V6-E-${crypto.randomUUID().slice(0, 8)}`;
     const probeLines: Record<string, unknown>[] = [];
     const executableProbeLines: Record<string, unknown>[] = [];
     const preparationProbeLines: Record<string, unknown>[] = [];
     const stdoutLines: string[] = [];
-    let probeArmed = false;
     let providerCalls = 0;
     const fixture = await startProductionFixture({
       firstDaemonEntry: child,
@@ -458,7 +458,6 @@ describe("V6-E V2 registry-only drift across daemon restart", () => {
           };
         }
         if (context.includes(marker) && available.has("shell")) {
-          if (!probeArmed) return { _tag: "HttpError", status: 503 };
           providerCalls += 1;
           return {
             _tag: "ToolCall",
@@ -565,28 +564,27 @@ describe("V6-E V2 registry-only drift across daemon restart", () => {
       decision: "Approve",
       reason: "V6 E2 public Work admission",
     });
-    await waitForPublic(
+    const admittedWork = await waitForPublic(
       () =>
         client.view<{
           readonly workId?: string;
           readonly status: string;
+          readonly activeExecution?: { readonly executionId: string };
         } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
-      (work) => work?.workId !== undefined,
+      (work) =>
+        work?.workId !== undefined &&
+        work.activeExecution?.executionId !== undefined,
     ).catch((error: unknown) => {
       throw new Error(
         `V6 E2 Work admission absent: ${String(error)}; provider=${JSON.stringify(fixture.providerCalls)}; daemon=${fixture.daemonErrors.join(" | ")}`,
         { cause: error },
       );
     });
-    await fixture.crash();
-    probeArmed = true;
-    await fixture.restart({
-      entry: child,
-      daemonEnvironment: {
-        ARBOR_AH_BOUNDARY: "AH7AfterToolIntentCommit",
-        ARBOR_TICK_INTERVAL_MS: "25",
-      },
-    });
+    if (admittedWork === null)
+      throw new Error("public Current Work omitted its admitted Work");
+    const pregrantedExecutionId = admittedWork.activeExecution?.executionId;
+    if (pregrantedExecutionId === undefined)
+      throw new Error("public Current Work omitted its active Execution");
     const executableApproval = await waitForExecutableApproval(
       client,
       project.rootWorkspaceId,
@@ -597,6 +595,45 @@ describe("V6-E V2 registry-only drift across daemon restart", () => {
         { cause: error },
       );
     });
+    const preGrantState = durableSandboxRead(
+      fixture.databaseFile,
+      pregrantedExecutionId,
+    );
+    expect(preGrantState.actions).toMatchObject([{ state: "Pending" }]);
+    expect(preGrantState.invocation).toBeUndefined();
+    const grantId = functionalId("pgr");
+    const grantExpiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+    await client
+      .command(project.projectId, "GrantPermission", {
+        permissionGrantId: grantId,
+        issuer: "user:local",
+        subject: {
+          _tag: "HumanPrincipal",
+          principal: "user:operator",
+        },
+        capability: "DecideSandboxPolicy",
+        target: pregrantedExecutionId,
+        expiresAt: grantExpiresAt,
+      })
+      .catch((error: unknown) => {
+        const db = new DatabaseSync(fixture.databaseFile, { readOnly: true });
+        let execution: unknown;
+        try {
+          execution = db
+            .prepare(
+              `SELECT execution_id, project_id, workspace_id, episode_kind,
+                      episode_revision, settlement_kind, settled_at
+                 FROM executions WHERE execution_id = ?`,
+            )
+            .get(pregrantedExecutionId);
+        } finally {
+          db.close();
+        }
+        throw new Error(
+          `pre-intent DecideSandboxPolicy Grant failed: ${String(error)}; currentWork=${JSON.stringify(admittedWork)}; execution=${JSON.stringify(execution)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+          { cause: error },
+        );
+      });
     const executableResolution = await client.command(
       project.projectId,
       "ResolveExecutableApproval",
@@ -651,6 +688,7 @@ describe("V6-E V2 registry-only drift across daemon restart", () => {
       throw new Error(
         `AH7 probe omitted execution identity: ${JSON.stringify(probe)}`,
       );
+    expect(executionId).toBe(pregrantedExecutionId);
     const pendingState = durableSandboxRead(fixture.databaseFile, executionId);
     const actionRow = pendingState.actions[0] as
       | { readonly logical_action_id?: string; readonly state?: string }
@@ -732,16 +770,6 @@ describe("V6-E V2 registry-only drift across daemon restart", () => {
       settled_at: null,
     });
 
-    const grantId = functionalId("pgr");
-    const grantExpiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
-    await client.command(project.projectId, "GrantPermission", {
-      permissionGrantId: grantId,
-      issuer: "user:local",
-      subject: { _tag: "HumanPrincipal", principal: "user:operator" },
-      capability: "DecideSandboxPolicy",
-      target: seeded.execution,
-      expiresAt: grantExpiresAt,
-    });
     const oldPayload = policyPayload({
       read: initialRead,
       projectId: project.projectId,
