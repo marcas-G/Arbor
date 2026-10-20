@@ -1,8 +1,13 @@
-import type { SandboxAuthorityBundleSnapshotCurrent } from "@arbor/domain";
+import { readFileSync } from "node:fs";
+import type {
+  SandboxAuthorityBundleSnapshotCurrent,
+  SandboxProviderQualificationEntryV1,
+} from "@arbor/domain";
 import { Clock, CurrentSandboxAuthoritySnapshotPort } from "@arbor/ports";
 import { Effect } from "effect";
 import { verifyWindowsNativeOperatorProvenanceV1 } from "./operator-provenance.js";
 import {
+  decodeCanonicalWindowsNativeArtifactManifestV1,
   fixedWindowsNativeProductionArtifactPaths,
   inspectWindowsNativeQualificationPaths,
   type WindowsNativeQualificationExpectationV1,
@@ -14,6 +19,74 @@ const unavailable = (reason: string): WindowsNativeQualificationInspection => ({
   _tag: "Unavailable",
   reason,
 });
+
+/** Registry/host/operator limits are authority. Manifest metadata is read
+ * only to form fixed build expectations; the subsequent inspector re-reads
+ * its exact bytes, matches the registry digest and verifies the signature. */
+export const inspectWindowsNativeQualificationForRegistryEntryV3 = (
+  paths: ReturnType<typeof fixedWindowsNativeProductionArtifactPaths>,
+  row: SandboxProviderQualificationEntryV1,
+  snapshot: SandboxAuthorityBundleSnapshotCurrent,
+  currentHost: {
+    readonly osFamily: "Linux" | "macOS" | "Windows";
+    readonly osBuild: string;
+  },
+  now: string,
+  io?: WindowsNativeQualificationIo,
+): WindowsNativeQualificationInspection => {
+  if (
+    snapshot.bundle.version !== 3 ||
+    row.providerId !== "windows-restricted-appcontainer-job" ||
+    row.osFamily !== "Windows" ||
+    row.tuple.networkMode !== "Disabled" ||
+    row.qualificationEvidenceRef === null
+  )
+    return unavailable("RegistryQualificationBindingMismatch");
+  const limits = snapshot.bundle.operatorConfig.limitsByProfile.find(
+    (entry) => entry.profile === row.tuple.profile,
+  )?.limits;
+  if (limits === undefined) return unavailable("OperatorConfigMismatch");
+  try {
+    const metadataBytes =
+      io?.read(paths.manifest) ?? readFileSync(paths.manifest);
+    const metadataText = new TextDecoder("utf-8", { fatal: true }).decode(
+      metadataBytes,
+    );
+    if (!Buffer.from(metadataText, "utf8").equals(metadataBytes))
+      return unavailable("ManifestCanonicalCodecInvalid");
+    const metadata =
+      decodeCanonicalWindowsNativeArtifactManifestV1(metadataText);
+    if (metadata === undefined)
+      return unavailable("ManifestCanonicalCodecInvalid");
+    return inspectWindowsNativeQualificationWithAuthorityV3(
+      paths,
+      {
+        providerId: "windows-restricted-appcontainer-job",
+        providerVersion: row.providerVersion,
+        capabilityRevision: row.capabilityRevision,
+        osBuild: row.osBuild,
+        profile: row.tuple.profile,
+        networkMode: "Disabled",
+        enforcementRuleSetDigest: row.tuple.enforcementRuleSetDigest,
+        qualificationEvidenceRef: row.qualificationEvidenceRef,
+        operatorConfigRevision: snapshot.bundle.operatorConfigRevision,
+        operatorConfigDigest: snapshot.bundle.operatorConfigDigest,
+        limits,
+        compilerVersion: metadata.compilerVersion,
+        buildMethod: metadata.buildMethod,
+        buildVersion: metadata.buildVersion,
+        discoveryMethod: metadata.discoveryMethod,
+        discoveryVersion: metadata.discoveryVersion,
+      },
+      snapshot,
+      currentHost,
+      now,
+      io,
+    );
+  } catch {
+    return unavailable("ManifestUnavailable");
+  }
+};
 
 /** Identity evidence only. The caller cannot supply a digest-only verifier:
  * the Ed25519 key is selected solely from this immutable verified V3

@@ -28,8 +28,75 @@ import {
   WorkspaceRepository,
   WorktreeStore,
 } from "@arbor/ports";
+import {
+  fixedWindowsNativeProductionArtifactPaths,
+  inspectWindowsNativeQualificationForRegistryEntryV3,
+  WINDOWS_SANDBOX_PROVIDER_IDS,
+  type WindowsNativeQualificationIo,
+} from "@arbor/sandbox-windows";
 import { Context, Effect, Option } from "effect";
+import { sandboxPolicyCurrentHostV1 } from "./current-sandbox-authority-snapshot-port.js";
 import { loadSandboxAuthorityBundleSnapshotCurrent } from "./sandbox-authority-bundle.js";
+
+/** P4 pre-effect identity gate. It reopens current P5 source/high-water and
+ * every fixed installed artifact; a previous capability probe is not enough.
+ * The current Windows provider still has no Supported/run path. */
+export const inspectWindowsQualificationAtP4Admission = (input: {
+  readonly source: TrustedHostConfigurationSourceService | undefined;
+  readonly now: string;
+  readonly summary: Pick<
+    OsEnforcedPolicySummaryV1,
+    | "providerId"
+    | "providerVersion"
+    | "capabilityRevision"
+    | "osFamily"
+    | "osBuild"
+    | "qualificationEvidenceRef"
+    | "profile"
+    | "networkPolicy"
+  >;
+  readonly io?: WindowsNativeQualificationIo;
+}) =>
+  Effect.gen(function* () {
+    const currentHost = sandboxPolicyCurrentHostV1();
+    if (currentHost === undefined || currentHost.osFamily !== "Windows")
+      return { _tag: "Unavailable" as const, reason: "WindowsHostRequired" };
+    const current = yield* loadSandboxAuthorityBundleSnapshotCurrent(
+      input.source,
+      input.now,
+      SANDBOX_ENV_ALLOWLIST,
+    );
+    if (current._tag !== "Available" || current.snapshot.bundle.version !== 3)
+      return {
+        _tag: "Unavailable" as const,
+        reason: "TrustCurrentnessMismatch",
+      };
+    const row = current.snapshot.bundle.providerRegistry.entries.find(
+      (entry) =>
+        entry.providerId === input.summary.providerId &&
+        entry.providerVersion === input.summary.providerVersion &&
+        entry.capabilityRevision === input.summary.capabilityRevision &&
+        entry.osFamily === input.summary.osFamily &&
+        entry.osBuild === input.summary.osBuild &&
+        entry.tuple.profile === input.summary.profile &&
+        entry.tuple.networkMode === input.summary.networkPolicy.mode &&
+        entry.qualificationEvidenceRef ===
+          input.summary.qualificationEvidenceRef,
+    );
+    if (row === undefined)
+      return {
+        _tag: "Unavailable" as const,
+        reason: "RegistryQualificationBindingMismatch",
+      };
+    return inspectWindowsNativeQualificationForRegistryEntryV3(
+      fixedWindowsNativeProductionArtifactPaths(),
+      row,
+      current.snapshot,
+      currentHost,
+      input.now,
+      input.io,
+    );
+  });
 
 export const exactSupportedOsProviderEntry = (
   entries: ReadonlyArray<SandboxProviderQualificationEntryV1>,
@@ -184,6 +251,19 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
         Date.parse(input.now)
     )
       return undefined;
+
+    if (
+      summary.kind === "OsEnforced" &&
+      summary.providerId ===
+        WINDOWS_SANDBOX_PROVIDER_IDS.restrictedAppContainerJob
+    ) {
+      const inspection = yield* inspectWindowsQualificationAtP4Admission({
+        source: input.source,
+        now: input.now,
+        summary,
+      });
+      if (inspection._tag !== "ManifestVerified") return undefined;
+    }
 
     let supportedOsProviderEntry:
       | SandboxProviderQualificationEntryV1

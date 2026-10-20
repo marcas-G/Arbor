@@ -1,7 +1,9 @@
 import { release } from "node:os";
 import {
   Clock,
+  type ClockService,
   CurrentSandboxAuthoritySnapshotPort,
+  type CurrentSandboxAuthoritySnapshotPortService,
   SANDBOX_ENV_ALLOWLIST,
   type TrustedHostConfigurationSourceService,
 } from "@arbor/ports";
@@ -29,6 +31,28 @@ export const sandboxPolicyCurrentHostV1 = () => {
 /** P5 adapter for consumers that must observe bundle drift at read time.
  * Unlike the startup V1 issuer snapshot, every method call re-loads and
  * verifies the protected current V2|V3 source/high-water pair. */
+export const makeCurrentSandboxAuthoritySnapshotPortService = (
+  source: TrustedHostConfigurationSourceService | undefined,
+  clock: ClockService,
+): CurrentSandboxAuthoritySnapshotPortService => ({
+  loadCurrentVerifiedV2: () =>
+    Effect.gen(function* () {
+      const currentHost = sandboxPolicyCurrentHostV1();
+      if (currentHost === undefined)
+        return {
+          _tag: "Unavailable" as const,
+          failure: "CurrentHostIdentityUnavailable" as const,
+        };
+      const now = yield* clock.now();
+      const loaded = yield* loadSandboxAuthorityBundleSnapshotCurrent(
+        source,
+        now,
+        SANDBOX_ENV_ALLOWLIST,
+      );
+      return loaded._tag === "Available" ? { ...loaded, currentHost } : loaded;
+    }),
+});
+
 export const CurrentSandboxAuthoritySnapshotPortLive = (
   source: TrustedHostConfigurationSourceService | undefined,
 ) =>
@@ -36,25 +60,8 @@ export const CurrentSandboxAuthoritySnapshotPortLive = (
     CurrentSandboxAuthoritySnapshotPort,
     Effect.gen(function* () {
       const clock = yield* Clock;
-      return CurrentSandboxAuthoritySnapshotPort.of({
-        loadCurrentVerifiedV2: () =>
-          Effect.gen(function* () {
-            const currentHost = sandboxPolicyCurrentHostV1();
-            if (currentHost === undefined)
-              return {
-                _tag: "Unavailable" as const,
-                failure: "CurrentHostIdentityUnavailable" as const,
-              };
-            const now = yield* clock.now();
-            const loaded = yield* loadSandboxAuthorityBundleSnapshotCurrent(
-              source,
-              now,
-              SANDBOX_ENV_ALLOWLIST,
-            );
-            return loaded._tag === "Available"
-              ? { ...loaded, currentHost }
-              : loaded;
-          }),
-      });
+      return CurrentSandboxAuthoritySnapshotPort.of(
+        makeCurrentSandboxAuthoritySnapshotPortService(source, clock),
+      );
     }),
   );
