@@ -40,6 +40,12 @@ export class TrustedHostConfigurationSource extends Context.Service<
  * source/high-water and create-only preserve exact raw evidence. */
 export interface SandboxAuthorityProvisioningStoreService
   extends TrustedHostConfigurationSourceService {
+  /** D2 offline cutover only: exact protected audit bytes before V3 source
+   * replacement. Older test stores without this seam cannot provision V3. */
+  readonly readSandboxAuthorityAuditForensic?: () => Effect.Effect<
+    string | undefined,
+    SandboxAuthorityLoadErrorV1
+  >;
   readonly writeSandboxAuthorityBundleAtomically: (
     canonicalJson: string,
   ) => Effect.Effect<boolean, SandboxAuthorityLoadErrorV1>;
