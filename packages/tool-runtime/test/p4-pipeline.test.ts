@@ -2348,7 +2348,7 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
   });
 
-  it("returns typed unavailability when the probed provider version differs from the durable policy", async () => {
+  it("binds provider-version mismatch unavailability to the durable policy tuple", async () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],
       events: [],
@@ -2367,8 +2367,40 @@ describe("P4 tool runtime pipeline", () => {
     expect(result).toMatchObject({
       _tag: "SandboxProviderUnavailable",
       providerId: "bwrap",
-      providerVersion: "0.9.0",
+      providerVersion: "0.8.0",
       failureCode: "ProviderVersionMismatch",
+      capabilityRevision: "capability-v1",
+      probeEvidenceRef: `blob:sha256:${"a".repeat(64)}`,
+    });
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+    expect(trace.settlementWrites).toBe(1);
+  });
+
+  it("binds capability-revision mismatch unavailability to the durable policy tuple", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [
+        sandboxCapability("bwrap", "Supported", "0.8.0", "capability-v2"),
+      ],
+    };
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(processPolicy(processEpisode)),
+    );
+    expect(result).toMatchObject({
+      _tag: "SandboxProviderUnavailable",
+      providerId: "bwrap",
+      providerVersion: "0.8.0",
+      capabilityRevision: "capability-v1",
+      probeEvidenceRef: `blob:sha256:${"a".repeat(64)}`,
+      failureCode: "CapabilityRevisionMismatch",
     });
     expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
     expect(trace.settlementWrites).toBe(1);
