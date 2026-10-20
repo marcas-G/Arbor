@@ -263,7 +263,11 @@ export const removeP39PrivateTestDirectory = (directory: string): void => {
   rmSync(directory, {
     recursive: true,
     force: true,
-    maxRetries: 8,
+    // A child process can have exited and emitted `close` while Windows is
+    // still retiring its last SQLite section-object handle.  Keep teardown
+    // bounded, but allow that kernel-visible release to become observable so
+    // a cleanup EPERM cannot mask the actual qualification result.
+    maxRetries: 120,
     retryDelay: 250,
   });
 };

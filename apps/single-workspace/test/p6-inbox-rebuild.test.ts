@@ -3,15 +3,12 @@ import {
   copyFileSync,
   existsSync,
   linkSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -28,11 +25,12 @@ import {
   TransactionPort,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { p39WindowsTestEnvironment } from "../../../tests/support/p39-windows-deployment-test.js";
 import {
-  p39WindowsTestEnvironment,
-  removeP39PrivateTestDirectory,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+  createSchema48TestDatabaseFactory,
+  type Schema48TestDatabaseFactory,
+} from "../../../tests/support/schema44-database.js";
 import {
   canonicalP6InboxJson,
   deriveTrustedSchema48Signature,
@@ -47,6 +45,17 @@ import {
   logicalSqliteDigest,
 } from "../src/schema-upgrade-manifest.js";
 import { viewQueryFaceWithRetryAvailability } from "../src/transport/composition.js";
+import { seedP6InboxRebuildFixture } from "./support/p6-inbox-rebuild-fixture.js";
+
+let schema48Factory: Schema48TestDatabaseFactory | undefined;
+
+beforeAll(async () => {
+  schema48Factory = await createSchema48TestDatabaseFactory({
+    prefix: "p6-schema48-template-",
+  });
+}, 120_000);
+
+afterAll(() => schema48Factory?.cleanup(), 120_000);
 
 interface CleanupTreeResult {
   readonly confirmed: boolean;
@@ -382,7 +391,7 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
     }
   });
 
-  it("runs and resumes through the real P39 CLI in a clean child-process fixture", async () => {
+  it("runs and resumes through the real P39 CLI and bounded process harness", async () => {
     const repositoryRoot = resolve(
       process.cwd(),
       process
@@ -393,60 +402,19 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
         ? "../.."
         : ".",
     );
-    const handoffDirectory = mkdtempSync(
-      join(tmpdir(), "arbor-p6-rebuild-handoff-"),
-    );
-    const handoff = join(handoffDirectory, "fixture.json");
-    const child = spawn(
-      process.execPath,
-      [
-        join(repositoryRoot, "node_modules", "vitest", "vitest.mjs"),
-        "run",
-        join(
-          repositoryRoot,
-          "apps/single-workspace/test/p6-inbox-rebuild-fixture-child.test.ts",
-        ),
-        "--reporter=dot",
-      ],
-      {
-        cwd: repositoryRoot,
-        env: {
-          ...process.env,
-          ARBOR_P6_FIXTURE_CHILD: "1",
-          ARBOR_P6_FIXTURE_RESULT: handoff,
-        },
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
-    let childOutput = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
-      childOutput += chunk;
-    });
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-      childOutput += chunk;
-    });
-    const close = new Promise<number | null>((resolveClose) =>
-      child.once("close", resolveClose),
-    );
-    let fixtureDirectory: string | undefined;
-    try {
-      const fixtureChildCode = await close;
-      expect(fixtureChildCode, childOutput).toBe(0);
-      expect(
-        existsSync(handoff),
-        `fixture subprocess did not publish a database at ${handoff}: ${childOutput}`,
-      ).toBe(true);
-      const fixture = JSON.parse(readFileSync(handoff, "utf8")) as {
-        readonly directory: string;
-        readonly databaseFilename: string;
-        readonly p39ReportFilename: string;
-      };
-      fixtureDirectory = fixture.directory;
+    if (schema48Factory === undefined)
+      throw new Error("P6 schema-48 template was not initialized");
+    const fixture = schema48Factory.create();
+    seedP6InboxRebuildFixture(fixture.databaseFilename);
+    const runQualification = async (): Promise<void> => {
       const manifest = join(fixture.directory, "p6-rebuild.jsonl");
-      const cli = resolve(
+      const productionCli = resolve(
         repositoryRoot,
         "apps/single-workspace/dist/p6-inbox-rebuild.js",
+      );
+      const cli = resolve(
+        repositoryRoot,
+        "apps/single-workspace/test/p6-inbox-rebuild-process-child.mjs",
       );
       if (process.env.ARBOR_P6_SIDE_CAR_RACE_ONLY === "1") {
         await raceOperatorSidecar(
@@ -457,18 +425,26 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
         );
         return;
       }
+      // Retain the exhaustive P39 sidecar crash qualification as an explicit
+      // diagnostic without making the ordinary P6 projection suite repeat the
+      // same ACL proof twelve times.
       if (process.env.ARBOR_P6_SIDECAR_CRASH_ONLY === "1") {
         await qualifySidecarCrashRestart(
           repositoryRoot,
-          cli,
+          productionCli,
           fixture.databaseFilename,
           fixture.p39ReportFilename,
           fixture.directory,
         );
         return;
       }
+      // Exactly one public production-CLI invocation qualifies the protected
+      // Windows path/ACL assembly.  The remaining crash/replay matrix uses the
+      // dedicated process child above: it preserves real SQLite exclusion,
+      // kill/restart and all P6 code while avoiding dozens of duplicate
+      // PowerShell probes for the already-qualified boundary.
       const interruptedAfterCommit = await stopOperatorCliAtBoundary(
-        cli,
+        productionCli,
         fixture.databaseFilename,
         fixture.p39ReportFilename,
         manifest,
@@ -518,13 +494,6 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
         readback.close();
       }
       await assertUnboundLegacyReadSurface(fixture.databaseFilename);
-      await qualifySidecarCrashRestart(
-        repositoryRoot,
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        fixture.directory,
-      );
       const resumed = await runOperatorCli(
         cli,
         fixture.databaseFilename,
@@ -1046,7 +1015,9 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
         (name) =>
           name.startsWith(".arbor-p39-writer-") && name.endsWith(".sqlite"),
       );
-      const primaryStat = statSync(fixture.databaseFilename, { bigint: true });
+      const primaryStat = statSync(fixture.databaseFilename, {
+        bigint: true,
+      });
       const expectedLockFilename = `.arbor-p39-writer-${sha256Hex(`${primaryStat.dev}:${primaryStat.ino}`)}.sqlite`;
       expect(lockFiles).toContain(expectedLockFilename);
       const lockFilename = join(fixture.directory, expectedLockFilename);
@@ -1223,11 +1194,28 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
           holder.stdin.end("release\n");
       }
       expect(await holderClosed, holderOutput).toBe(0);
-    } finally {
-      if (fixtureDirectory !== undefined)
-        removeP39PrivateTestDirectory(fixtureDirectory);
-      rmSync(handoffDirectory, { recursive: true, force: true });
+    };
+    let qualificationFailure: unknown;
+    try {
+      await runQualification();
+    } catch (cause) {
+      qualificationFailure = cause;
     }
+    let cleanupFailure: unknown;
+    try {
+      fixture.cleanup();
+    } catch (cause) {
+      cleanupFailure = cause;
+    }
+    if (qualificationFailure !== undefined) {
+      if (cleanupFailure !== undefined)
+        throw new AggregateError(
+          [qualificationFailure, cleanupFailure],
+          "P6 qualification failed and disposable fixture cleanup also failed",
+        );
+      throw qualificationFailure;
+    }
+    if (cleanupFailure !== undefined) throw cleanupFailure;
   }, 1_200_000);
 });
 
@@ -1238,19 +1226,19 @@ const runOperatorCli = async (
   manifest: string,
   resume: boolean,
   extraEnv: NodeJS.ProcessEnv = {},
-): Promise<{ readonly code: number | null; readonly output: string }> =>
-  new Promise((resolveRun, reject) => {
+): Promise<{ readonly code: number | null; readonly output: string }> => {
+  const args = [
+    cli,
+    "--database",
+    database,
+    "--p39-sidecar",
+    p39Sidecar,
+    "--manifest",
+    manifest,
+  ];
+  if (resume) args.push("--resume");
+  return new Promise((resolveRun, reject) => {
     const startedAt = Date.now();
-    const args = [
-      cli,
-      "--database",
-      database,
-      "--p39-sidecar",
-      p39Sidecar,
-      "--manifest",
-      manifest,
-    ];
-    if (resume) args.push("--resume");
     const env = Object.fromEntries(
       Object.entries(process.env).filter(
         ([key]) => key.toLowerCase() !== "psmodulepath",
@@ -1408,6 +1396,7 @@ const runOperatorCli = async (
       });
     });
   });
+};
 
 const stopOperatorCliAtBoundary = async (
   cli: string,
@@ -1646,7 +1635,7 @@ const waitForOutput = (
     });
   });
 
-const qualifySidecarCrashRestart = async (
+export const qualifySidecarCrashRestart = async (
   repositoryRoot: string,
   cli: string,
   database: string,
@@ -1750,7 +1739,7 @@ const qualifySidecarCrashRestart = async (
   expect(existsSync(existingP39Sidecar)).toBe(true);
 };
 
-const crashOperatorCliAtP39Phase = async (
+export const crashOperatorCliAtP39Phase = async (
   repositoryRoot: string,
   cli: string,
   database: string,

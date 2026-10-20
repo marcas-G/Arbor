@@ -52,6 +52,20 @@ export interface P6InboxRebuildArguments {
   readonly resume: boolean;
 }
 
+/** Explicit process-boundary dependencies. Production callers use the
+ * fail-closed P39 implementations below; process qualification may substitute
+ * an already-qualified SQLite permit harness so crash/replay cases do not
+ * repeatedly re-qualify the unrelated Windows ACL boundary. */
+export interface P6InboxRebuildDependencies {
+  readonly writerLockFilename: typeof p39WriterLockFilename;
+  readonly runMaintenanceWithPermit: typeof runP39SqliteMaintenanceWithPermit;
+}
+
+const productionP6InboxRebuildDependencies: P6InboxRebuildDependencies = {
+  writerLockFilename: p39WriterLockFilename,
+  runMaintenanceWithPermit: runP39SqliteMaintenanceWithPermit,
+};
+
 export class P6InboxRebuildRefusal extends Error {
   readonly _tag = "P6InboxRebuildRefusal";
   readonly code = "P6_REBUILD_REFUSED";
@@ -696,7 +710,15 @@ export const deriveTrustedSchema48Signature = (): Promise<string> => {
           yield* client.unsafe("COMMIT");
           yield* client.unsafe("PRAGMA legacy_alter_table = OFF");
           yield* client.unsafe("PRAGMA foreign_keys = ON");
-          yield* runMigrations(CURRENT_MIGRATIONS, { allowOfflineOnly: true });
+          // P6 is an exact historical schema-48 maintenance operation.  The
+          // production migration catalog continues to grow, so applying the
+          // whole current catalog here silently changes the supposedly pinned
+          // signature whenever a later migration is registered.  Rebuild the
+          // same prefix accepted by the operator instead.
+          yield* runMigrations(
+            CURRENT_MIGRATIONS.filter(({ id }) => id <= 48),
+            { allowOfflineOnly: true },
+          );
           const primary = {
             unsafe: client.unsafe,
             withTransaction: client.withTransaction,
@@ -712,6 +734,7 @@ export const deriveTrustedSchema48Signature = (): Promise<string> => {
 
 export const runP6InboxRebuild = async (
   args: P6InboxRebuildArguments,
+  dependencies: P6InboxRebuildDependencies = productionP6InboxRebuildDependencies,
 ): Promise<void> => {
   if (
     !existsSync(args.database) ||
@@ -728,7 +751,7 @@ export const runP6InboxRebuild = async (
   const protectedApplications = protectedApplicationDatabases().filter(
     (path) => !sameIdentity(targetIdentity, existingPathIdentity(path)),
   );
-  const lockFilename = p39WriterLockFilename(args.database);
+  const lockFilename = dependencies.writerLockFilename(args.database);
   const lockPath =
     typeof lockFilename === "string"
       ? lockFilename
@@ -786,7 +809,7 @@ export const runP6InboxRebuild = async (
   let currentPhase = "P39 path and sidecar validation";
   try {
     await Effect.runPromise(
-      runP39SqliteMaintenanceWithPermit(
+      dependencies.runMaintenanceWithPermit(
         {
           primaryFilename: args.database,
           sidecarFilename: args.p39Sidecar,
