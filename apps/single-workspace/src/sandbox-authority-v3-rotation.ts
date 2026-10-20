@@ -74,15 +74,6 @@ export const rotateSandboxAuthorityV3Trust = (input: {
     const before = yield* read();
     if (before.source === undefined || before.highWater === undefined)
       return yield* fail("CurrentV3Unavailable");
-    const auditBefore = yield* Effect.match(
-      store.readSandboxAuthorityAuditForensic(),
-      {
-        onFailure: () => undefined,
-        onSuccess: (value) => value,
-      },
-    );
-    if (auditBefore === undefined)
-      return yield* fail("ForensicPreservationFailed");
     const current = yield* loadSandboxAuthorityBundleSnapshotV3(
       store,
       new Date().toISOString(),
@@ -96,6 +87,12 @@ export const rotateSandboxAuthorityV3Trust = (input: {
       afterLoad.highWater !== before.highWater
     )
       return yield* fail("CurrentV3Unavailable");
+    const auditBefore = yield* Effect.match(
+      store.readSandboxAuthorityAuditForensic(),
+      { onFailure: () => undefined, onSuccess: (value) => value },
+    );
+    if (auditBefore === undefined)
+      return yield* fail("ForensicPreservationFailed");
     const trust = decodeCanonicalWindowsNativeOperatorTrustSetV1(
       input.trustSetCanonicalJson,
       hashBytes,
@@ -126,23 +123,18 @@ export const rotateSandboxAuthorityV3Trust = (input: {
       )
     )
       return yield* fail("RegistryRevisionInvalid");
-    for (const oldRow of previous.providerRegistry.entries.filter(
+    const oldWindowsRows = previous.providerRegistry.entries.filter(
       (row) => row.osFamily === "Windows",
+    );
+    for (const row of registry.entries.filter(
+      (entry) => entry.osFamily === "Windows",
     )) {
-      const successor = registry.entries.find(
-        (row) =>
-          row.providerId === oldRow.providerId &&
-          row.providerVersion === oldRow.providerVersion &&
-          row.osBuild === oldRow.osBuild &&
-          row.tuple.profile === oldRow.tuple.profile &&
-          row.tuple.networkMode === oldRow.tuple.networkMode &&
-          row.tuple.enforcementRuleSetDigest ===
-            oldRow.tuple.enforcementRuleSetDigest,
-      );
-      if (
-        successor !== undefined &&
-        successor.capabilityRevision <= oldRow.capabilityRevision
-      )
+      const priorMax = oldWindowsRows
+        .filter((old) => old.providerId === row.providerId)
+        .reduce((highest, old) => Math.max(highest, old.capabilityRevision), 0);
+      // Revision advance binds the provider's rotated trust epoch, even if
+      // the operator also changes version, OS build, tuple or rule set.
+      if (priorMax > 0 && row.capabilityRevision <= priorMax)
         return yield* fail("CapabilityRevisionInvalid");
     }
     if (previous.bundleRevision >= Number.MAX_SAFE_INTEGER)
@@ -193,6 +185,12 @@ export const rotateSandboxAuthorityV3Trust = (input: {
       if (readback !== item.bytes)
         return yield* fail("ForensicPreservationFailed");
     }
+    const auditAtWrite = yield* Effect.match(
+      store.readSandboxAuthorityAuditForensic(),
+      { onFailure: () => undefined, onSuccess: (value) => value },
+    );
+    if (auditAtWrite !== auditBefore)
+      return yield* fail("CurrentV3Unavailable");
     const written = yield* Effect.match(
       store.writeSandboxAuthorityBundleAtomically(bundleJson),
       {
