@@ -218,6 +218,24 @@ export const isAgentLoopStepManifestBound = (
   );
 };
 
+/** A durable Prepared step is created before model-context preparation. In
+ * particular, Native compaction can be the first ProviderTurn operation for
+ * that step, so a crash before its owner/session commit may leave only the
+ * Native manifest while the ordinary inference turn has not been manifested
+ * yet. Defer the inference-manifest check only for that exact pre-provider
+ * state; model-decision recovery validates any Native source manifest before
+ * it resumes, and ProviderRuntime binds the eventual inference request. */
+export const isPreparedStepAwaitingInitialManifest = (
+  step: AgentLoopStepRecord,
+  persistedManifest: {
+    readonly manifestId: string;
+    readonly manifestJson: string;
+  } | null,
+): boolean =>
+  step.state === "Prepared" &&
+  step.manifestId === undefined &&
+  persistedManifest === null;
+
 export interface AgentLoopDriverOptions {
   /** P12 `03` §3: the credential reference the driver binds to a ProviderTurn.
    * Comes from Composition-Root config; the driver never hardcodes a raw ref.
@@ -407,6 +425,10 @@ export const AgentLoopDriverLive = (
                 )
                 .pipe(Effect.mapError(failure));
               if (
+                !isPreparedStepAwaitingInitialManifest(
+                  current,
+                  priorManifest,
+                ) &&
                 !isAgentLoopStepManifestBound(
                   current,
                   input.execution.executionId,
