@@ -7,7 +7,7 @@ import {
   executionEpisode,
   produceSandboxBoundaryV1,
   type SandboxAuthorityBundleSnapshotV2,
-  type SandboxPolicyCandidateReadV1,
+  type SandboxPolicyCandidateReadV2,
   type SandboxPolicyCurrentHostV1,
   sandboxEnforcementRuleSetV1ForProvider,
   sandboxPolicyCandidateIdV2,
@@ -18,7 +18,7 @@ import {
   sha256Hex,
 } from "@arbor/ports";
 
-export type SandboxPolicyCandidateReadBuildFailureV1 =
+export type SandboxPolicyCandidateReadBuildFailureV2 =
   | { readonly _tag: "InvalidRequirementOrExecution" }
   | { readonly _tag: "InvalidBoundarySnapshot" }
   | { readonly _tag: "InvalidHostTupleProof" }
@@ -39,8 +39,8 @@ const produceBoundary = (
 
 /** Build candidates from one verified P5 host snapshot and one pinned P11
  * snapshot. This is pure and never invokes a provider capability probe. */
-export const buildSandboxPolicyCandidateReadV1 = (input: {
-  readonly reason: SandboxPolicyCandidateReadV1["reason"];
+export const buildSandboxPolicyCandidateReadV2 = (input: {
+  readonly reason: SandboxPolicyCandidateReadV2["reason"];
   readonly execution: Execution;
   readonly requirement: SandboxPolicyRequirementV1;
   readonly latestCommittedPolicyRevision: number;
@@ -49,8 +49,8 @@ export const buildSandboxPolicyCandidateReadV1 = (input: {
   readonly authority: SandboxAuthorityBundleSnapshotV2;
   readonly currentHost: SandboxPolicyCurrentHostV1;
 }):
-  | { readonly _tag: "Ready"; readonly value: SandboxPolicyCandidateReadV1 }
-  | SandboxPolicyCandidateReadBuildFailureV1 => {
+  | { readonly _tag: "Ready"; readonly value: SandboxPolicyCandidateReadV2 }
+  | SandboxPolicyCandidateReadBuildFailureV2 => {
   const { execution, requirement, boundary, authority, currentHost } = input;
   const episode = executionEpisode(execution);
   if (
@@ -97,7 +97,7 @@ export const buildSandboxPolicyCandidateReadV1 = (input: {
   const bundle = authority.bundle;
   const candidatesById = new Map<
     string,
-    SandboxPolicyCandidateReadV1["candidates"][number]
+    SandboxPolicyCandidateReadV2["candidates"][number]
   >();
   for (const entry of bundle.providerRegistry.entries) {
     const ruleSet = sandboxEnforcementRuleSetV1ForProvider(entry.providerId);
@@ -122,6 +122,7 @@ export const buildSandboxPolicyCandidateReadV1 = (input: {
       kind: "OsEnforced" as const,
       providerId: entry.providerId,
       providerVersion: entry.providerVersion,
+      capabilityRevision: entry.capabilityRevision,
       profile: entry.tuple.profile,
       networkMode: entry.tuple.networkMode as
         | "Disabled"
@@ -135,7 +136,7 @@ export const buildSandboxPolicyCandidateReadV1 = (input: {
       candidateId: sandboxPolicyCandidateIdV2(tuple, idHash),
       sandboxHandleBindingDigest:
         production.sandboxHandleBindingDigest as never,
-    } satisfies SandboxPolicyCandidateReadV1["candidates"][number];
+    } satisfies SandboxPolicyCandidateReadV2["candidates"][number];
     const previous = candidatesById.get(candidate.candidateId);
     if (
       previous !== undefined &&
@@ -157,7 +158,7 @@ export const buildSandboxPolicyCandidateReadV1 = (input: {
     candidateId: sandboxPolicyCandidateIdV2(trustedTuple, idHash),
     sandboxHandleBindingDigest:
       trustedProduction.sandboxHandleBindingDigest as never,
-  } satisfies SandboxPolicyCandidateReadV1["candidates"][number];
+  } satisfies SandboxPolicyCandidateReadV2["candidates"][number];
   const previousTrusted = candidatesById.get(trustedCandidate.candidateId);
   if (
     previousTrusted !== undefined &&
@@ -169,7 +170,7 @@ export const buildSandboxPolicyCandidateReadV1 = (input: {
       (
         candidate,
       ): candidate is Extract<
-        SandboxPolicyCandidateReadV1["candidates"][number],
+        SandboxPolicyCandidateReadV2["candidates"][number],
         { readonly kind: "OsEnforced" }
       > => candidate.kind === "OsEnforced",
     )
@@ -177,6 +178,7 @@ export const buildSandboxPolicyCandidateReadV1 = (input: {
       const leftTuple = [
         left.providerId,
         left.providerVersion,
+        String(left.capabilityRevision),
         left.profile,
         left.networkMode,
         String(left.providerRegistryRevision),
@@ -185,6 +187,7 @@ export const buildSandboxPolicyCandidateReadV1 = (input: {
       const rightTuple = [
         right.providerId,
         right.providerVersion,
+        String(right.capabilityRevision),
         right.profile,
         right.networkMode,
         String(right.providerRegistryRevision),

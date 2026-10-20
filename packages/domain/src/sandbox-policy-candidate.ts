@@ -6,13 +6,14 @@ import {
 } from "./sandbox-policy.js";
 import { compareUtf8BytesV1 } from "./sandbox-policy-producers.js";
 
-export type SandboxPolicyCandidateV1 =
+export type SandboxPolicyCandidateV2 =
   | {
       readonly kind: "OsEnforced";
       readonly candidateId: string;
       readonly sandboxHandleBindingDigest: Sha256;
       readonly providerId: string;
       readonly providerVersion: string;
+      readonly capabilityRevision: number;
       readonly profile: "ReadOnly" | "WorkspaceWrite";
       readonly networkMode: "Disabled" | "Restricted" | "Enabled";
       readonly providerRegistryRevision: number;
@@ -36,10 +37,10 @@ export interface SandboxPolicyCandidateCommonPreconditionsV1 {
   readonly operatorConfigDigest: Sha256;
 }
 
-export interface SandboxPolicyCandidateReadV1 {
+export interface SandboxPolicyCandidateReadV2 {
   readonly reason: "InitialDecision" | "RefreshStaleCommittedPolicy";
   readonly commonPreconditions: SandboxPolicyCandidateCommonPreconditionsV1;
-  readonly candidates: ReadonlyArray<SandboxPolicyCandidateV1>;
+  readonly candidates: ReadonlyArray<SandboxPolicyCandidateV2>;
 }
 
 export type SandboxPolicyCandidateByteHasher = (preimage: Uint8Array) => string;
@@ -116,7 +117,7 @@ const encodedTupleString = (value: string): Uint8Array => {
 export const sandboxPolicyCandidateIdV2 = (
   candidate:
     | Omit<
-        Extract<SandboxPolicyCandidateV1, { readonly kind: "OsEnforced" }>,
+        Extract<SandboxPolicyCandidateV2, { readonly kind: "OsEnforced" }>,
         "candidateId" | "sandboxHandleBindingDigest"
       >
     | { readonly kind: "TrustedLocalUnconfinedV1" },
@@ -133,6 +134,8 @@ export const sandboxPolicyCandidateIdV2 = (
     candidate.kind === "OsEnforced" &&
     (candidate.providerId.length === 0 ||
       candidate.providerVersion.length === 0 ||
+      !Number.isSafeInteger(candidate.capabilityRevision) ||
+      candidate.capabilityRevision < 1 ||
       (candidate.profile !== "ReadOnly" &&
         candidate.profile !== "WorkspaceWrite") ||
       (candidate.networkMode !== "Disabled" &&
@@ -149,6 +152,7 @@ export const sandboxPolicyCandidateIdV2 = (
       ? [
           candidate.providerId,
           candidate.providerVersion,
+          String(candidate.capabilityRevision),
           candidate.profile,
           candidate.networkMode,
           String(candidate.providerRegistryRevision),
@@ -189,7 +193,7 @@ const digest = (value: unknown): value is Sha256 =>
 const decodeCandidate = (
   value: unknown,
   hashBytes: SandboxPolicyCandidateByteHasher,
-): SandboxPolicyCandidateV1 | undefined => {
+): SandboxPolicyCandidateV2 | undefined => {
   if (!isRecord(value)) return undefined;
   if (value.kind === "TrustedLocalUnconfinedV1") {
     if (
@@ -222,6 +226,7 @@ const decodeCandidate = (
       "sandboxHandleBindingDigest",
       "providerId",
       "providerVersion",
+      "capabilityRevision",
       "profile",
       "networkMode",
       "providerRegistryRevision",
@@ -234,6 +239,7 @@ const decodeCandidate = (
     value.providerId.length === 0 ||
     typeof value.providerVersion !== "string" ||
     value.providerVersion.length === 0 ||
+    !positive(value.capabilityRevision) ||
     (value.profile !== "ReadOnly" && value.profile !== "WorkspaceWrite") ||
     (value.networkMode !== "Disabled" &&
       value.networkMode !== "Restricted" &&
@@ -248,6 +254,7 @@ const decodeCandidate = (
     sandboxHandleBindingDigest: value.sandboxHandleBindingDigest as Sha256,
     providerId: value.providerId,
     providerVersion: value.providerVersion,
+    capabilityRevision: value.capabilityRevision,
     profile: value.profile as "ReadOnly" | "WorkspaceWrite",
     networkMode: value.networkMode as "Disabled" | "Restricted" | "Enabled",
     providerRegistryRevision: value.providerRegistryRevision,
@@ -260,12 +267,13 @@ const decodeCandidate = (
 };
 
 const compareOsCandidates = (
-  left: Extract<SandboxPolicyCandidateV1, { readonly kind: "OsEnforced" }>,
-  right: Extract<SandboxPolicyCandidateV1, { readonly kind: "OsEnforced" }>,
+  left: Extract<SandboxPolicyCandidateV2, { readonly kind: "OsEnforced" }>,
+  right: Extract<SandboxPolicyCandidateV2, { readonly kind: "OsEnforced" }>,
 ): number => {
   const leftTuple = [
     left.providerId,
     left.providerVersion,
+    String(left.capabilityRevision),
     left.profile,
     left.networkMode,
     String(left.providerRegistryRevision),
@@ -274,6 +282,7 @@ const compareOsCandidates = (
   const rightTuple = [
     right.providerId,
     right.providerVersion,
+    String(right.capabilityRevision),
     right.profile,
     right.networkMode,
     String(right.providerRegistryRevision),
@@ -331,10 +340,10 @@ const decodeCommonPreconditions = (
   };
 };
 
-export const decodeSandboxPolicyCandidateReadV1 = (
+export const decodeSandboxPolicyCandidateReadV2 = (
   input: unknown,
   hashBytes: SandboxPolicyCandidateByteHasher,
-): SandboxPolicyCandidateReadV1 | undefined => {
+): SandboxPolicyCandidateReadV2 | undefined => {
   if (
     !isRecord(input) ||
     !hasExactKeys(input, ["reason", "commonPreconditions", "candidates"]) ||
@@ -348,9 +357,9 @@ export const decodeSandboxPolicyCandidateReadV1 = (
     input.commonPreconditions,
   );
   if (commonPreconditions === undefined) return undefined;
-  const candidates: SandboxPolicyCandidateV1[] = [];
+  const candidates: SandboxPolicyCandidateV2[] = [];
   for (const candidate of input.candidates) {
-    let decoded: SandboxPolicyCandidateV1 | undefined;
+    let decoded: SandboxPolicyCandidateV2 | undefined;
     try {
       decoded = decodeCandidate(candidate, hashBytes);
     } catch {
@@ -366,7 +375,7 @@ export const decodeSandboxPolicyCandidateReadV1 = (
     (
       candidate,
     ): candidate is Extract<
-      SandboxPolicyCandidateV1,
+      SandboxPolicyCandidateV2,
       { readonly kind: "OsEnforced" }
     > => candidate.kind === "OsEnforced",
   );
@@ -393,9 +402,9 @@ export const decodeSandboxPolicyCandidateReadV1 = (
   };
 };
 
-const encodeCandidate = (candidate: SandboxPolicyCandidateV1): string =>
+const encodeCandidate = (candidate: SandboxPolicyCandidateV2): string =>
   candidate.kind === "OsEnforced"
-    ? `{"kind":"OsEnforced","candidateId":${JSON.stringify(candidate.candidateId)},"sandboxHandleBindingDigest":${JSON.stringify(candidate.sandboxHandleBindingDigest)},"providerId":${JSON.stringify(candidate.providerId)},"providerVersion":${JSON.stringify(candidate.providerVersion)},"profile":${JSON.stringify(candidate.profile)},"networkMode":${JSON.stringify(candidate.networkMode)},"providerRegistryRevision":${candidate.providerRegistryRevision},"providerRegistryDigest":${JSON.stringify(candidate.providerRegistryDigest)}}`
+    ? `{"kind":"OsEnforced","candidateId":${JSON.stringify(candidate.candidateId)},"sandboxHandleBindingDigest":${JSON.stringify(candidate.sandboxHandleBindingDigest)},"providerId":${JSON.stringify(candidate.providerId)},"providerVersion":${JSON.stringify(candidate.providerVersion)},"capabilityRevision":${candidate.capabilityRevision},"profile":${JSON.stringify(candidate.profile)},"networkMode":${JSON.stringify(candidate.networkMode)},"providerRegistryRevision":${candidate.providerRegistryRevision},"providerRegistryDigest":${JSON.stringify(candidate.providerRegistryDigest)}}`
     : `{"kind":"TrustedLocalUnconfinedV1","candidateId":${JSON.stringify(candidate.candidateId)},"sandboxHandleBindingDigest":${JSON.stringify(candidate.sandboxHandleBindingDigest)}}`;
 
 const encodeCommonPreconditions = (
@@ -403,28 +412,28 @@ const encodeCommonPreconditions = (
 ): string =>
   `{"expectedEpisodeRevision":${value.expectedEpisodeRevision},"latestCommittedPolicyRevision":${value.latestCommittedPolicyRevision},"episodeBinding":${encodeExecutionEpisodeBinding(value.episodeBinding)},"workspaceRevision":${value.workspaceRevision},"resourceBoundaryRevision":${value.resourceBoundaryRevision},"authorityBundleRevision":${value.authorityBundleRevision},"authorityBundleDigest":${JSON.stringify(value.authorityBundleDigest)},"operatorConfigRevision":${value.operatorConfigRevision},"operatorConfigDigest":${JSON.stringify(value.operatorConfigDigest)}}`;
 
-export const encodeSandboxPolicyCandidateReadV1 = (
-  input: SandboxPolicyCandidateReadV1,
+export const encodeSandboxPolicyCandidateReadV2 = (
+  input: SandboxPolicyCandidateReadV2,
   hashBytes: SandboxPolicyCandidateByteHasher,
 ): string => {
-  const normalized = decodeSandboxPolicyCandidateReadV1(input, hashBytes);
+  const normalized = decodeSandboxPolicyCandidateReadV2(input, hashBytes);
   if (normalized === undefined) {
-    throw new TypeError("SandboxPolicyCandidateReadV1 has an invalid shape");
+    throw new TypeError("SandboxPolicyCandidateReadV2 has an invalid shape");
   }
   return `{"reason":${JSON.stringify(normalized.reason)},"commonPreconditions":${encodeCommonPreconditions(normalized.commonPreconditions)},"candidates":[${normalized.candidates.map(encodeCandidate).join(",")}]}`;
 };
 
-export const decodeCanonicalSandboxPolicyCandidateReadV1 = (
+export const decodeCanonicalSandboxPolicyCandidateReadV2 = (
   json: string,
   hashBytes: SandboxPolicyCandidateByteHasher,
-): SandboxPolicyCandidateReadV1 | undefined => {
+): SandboxPolicyCandidateReadV2 | undefined => {
   try {
-    const decoded = decodeSandboxPolicyCandidateReadV1(
+    const decoded = decodeSandboxPolicyCandidateReadV2(
       JSON.parse(json),
       hashBytes,
     );
     return decoded !== undefined &&
-      encodeSandboxPolicyCandidateReadV1(decoded, hashBytes) === json
+      encodeSandboxPolicyCandidateReadV2(decoded, hashBytes) === json
       ? decoded
       : undefined;
   } catch {

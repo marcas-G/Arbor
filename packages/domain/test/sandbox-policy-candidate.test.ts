@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
-  decodeCanonicalSandboxPolicyCandidateReadV1,
-  decodeSandboxPolicyCandidateReadV1,
-  encodeSandboxPolicyCandidateReadV1,
-  type SandboxPolicyCandidateReadV1,
+  decodeCanonicalSandboxPolicyCandidateReadV2,
+  decodeSandboxPolicyCandidateReadV2,
+  encodeSandboxPolicyCandidateReadV2,
+  type SandboxPolicyCandidateReadV2,
   sandboxPolicyCandidateIdV2,
 } from "../src/sandbox-policy-candidate.js";
 
@@ -18,7 +18,7 @@ const episodeBinding = {
   workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
   targetWorkRevision: 7 as never,
 };
-const candidateRead: SandboxPolicyCandidateReadV1 = {
+const candidateRead: SandboxPolicyCandidateReadV2 = {
   reason: "RefreshStaleCommittedPolicy",
   commonPreconditions: {
     expectedEpisodeRevision: 3,
@@ -40,7 +40,7 @@ const candidateRead: SandboxPolicyCandidateReadV1 = {
   ],
 };
 
-describe("SandboxPolicyCandidateReadV1", () => {
+describe("SandboxPolicyCandidateReadV2", () => {
   it("matches the accepted TrustedLocal candidate-id golden vector", () => {
     expect(
       sandboxPolicyCandidateIdV2(
@@ -50,8 +50,24 @@ describe("SandboxPolicyCandidateReadV1", () => {
     ).toBe(trustedCandidateId);
   });
 
+  it("binds capabilityRevision into the accepted OsEnforced V2 candidate ID", () => {
+    const candidate = {
+      kind: "OsEnforced" as const,
+      providerId: "sandbox.provider.test",
+      providerVersion: "1.0.0",
+      capabilityRevision: 7,
+      profile: "ReadOnly" as const,
+      networkMode: "Disabled" as const,
+      providerRegistryRevision: 3,
+      providerRegistryDigest: "a".repeat(64) as never,
+    };
+    expect(sandboxPolicyCandidateIdV2(candidate as never, sha256Bytes)).toBe(
+      "spc2_fe70c74f7f7674ad4b09b636e21dabc47ae99af2080a6a7a68d15960a8603094",
+    );
+  });
+
   it("round-trips the closed candidate DTO in canonical owner order", () => {
-    const json = encodeSandboxPolicyCandidateReadV1(candidateRead, sha256Bytes);
+    const json = encodeSandboxPolicyCandidateReadV2(candidateRead, sha256Bytes);
     const decoded = JSON.parse(json) as {
       readonly candidates: ReadonlyArray<Record<string, unknown>>;
       readonly commonPreconditions: Record<string, unknown>;
@@ -73,15 +89,16 @@ describe("SandboxPolicyCandidateReadV1", () => {
       "sandboxHandleBindingDigest",
     ]);
     expect(
-      decodeCanonicalSandboxPolicyCandidateReadV1(json, sha256Bytes),
+      decodeCanonicalSandboxPolicyCandidateReadV2(json, sha256Bytes),
     ).toEqual(candidateRead);
   });
 
-  it("accepts sorted OS tuples before the unique TrustedLocal choice", () => {
+  it("distinguishes capability revisions and sorts them before TrustedLocal", () => {
     const osCandidate = {
       kind: "OsEnforced" as const,
       providerId: "bwrap",
       providerVersion: "1.2.0",
+      capabilityRevision: 7,
       profile: "WorkspaceWrite" as const,
       networkMode: "Disabled" as const,
       providerRegistryRevision: 5,
@@ -92,15 +109,26 @@ describe("SandboxPolicyCandidateReadV1", () => {
       ...osCandidate,
       candidateId: sandboxPolicyCandidateIdV2(osCandidate, sha256Bytes),
     };
+    const nextCapability = {
+      ...osCandidate,
+      capabilityRevision: 8,
+    };
+    const nextCapabilityWithId = {
+      ...nextCapability,
+      candidateId: sandboxPolicyCandidateIdV2(nextCapability, sha256Bytes),
+    };
+    expect(nextCapabilityWithId.candidateId).not.toBe(
+      osCandidateWithId.candidateId,
+    );
     const trustedCandidate = candidateRead.candidates[0];
     if (trustedCandidate === undefined) {
       throw new Error("fixture requires the TrustedLocal candidate");
     }
     const read = {
       ...candidateRead,
-      candidates: [osCandidateWithId, trustedCandidate],
+      candidates: [osCandidateWithId, nextCapabilityWithId, trustedCandidate],
     };
-    const json = encodeSandboxPolicyCandidateReadV1(read, sha256Bytes);
+    const json = encodeSandboxPolicyCandidateReadV2(read, sha256Bytes);
     const decoded = JSON.parse(json) as {
       readonly candidates: ReadonlyArray<Record<string, unknown>>;
     };
@@ -110,26 +138,34 @@ describe("SandboxPolicyCandidateReadV1", () => {
       "sandboxHandleBindingDigest",
       "providerId",
       "providerVersion",
+      "capabilityRevision",
       "profile",
       "networkMode",
       "providerRegistryRevision",
       "providerRegistryDigest",
     ]);
     expect(
-      decodeCanonicalSandboxPolicyCandidateReadV1(json, sha256Bytes),
+      decodeCanonicalSandboxPolicyCandidateReadV2(json, sha256Bytes),
     ).toEqual(read);
     expect(
-      decodeSandboxPolicyCandidateReadV1(
+      decodeSandboxPolicyCandidateReadV2(
         { ...read, candidates: [...read.candidates].reverse() },
         sha256Bytes,
       ),
     ).toBeUndefined();
+    const oldOsShape = JSON.parse(json) as {
+      candidates: Array<Record<string, unknown>>;
+    };
+    delete oldOsShape.candidates[0]?.capabilityRevision;
+    expect(
+      decodeSandboxPolicyCandidateReadV2(oldOsShape, sha256Bytes),
+    ).toBeUndefined();
   });
 
   it("rejects unknown fields, candidate-id mismatch, and a missing TrustedLocal choice", () => {
-    const json = encodeSandboxPolicyCandidateReadV1(candidateRead, sha256Bytes);
+    const json = encodeSandboxPolicyCandidateReadV2(candidateRead, sha256Bytes);
     expect(
-      decodeCanonicalSandboxPolicyCandidateReadV1(
+      decodeCanonicalSandboxPolicyCandidateReadV2(
         json.replace(
           '"reason":"RefreshStaleCommittedPolicy"',
           '"reason":"RefreshStaleCommittedPolicy","extra":true',
@@ -138,7 +174,7 @@ describe("SandboxPolicyCandidateReadV1", () => {
       ),
     ).toBeUndefined();
     expect(
-      decodeCanonicalSandboxPolicyCandidateReadV1(
+      decodeCanonicalSandboxPolicyCandidateReadV2(
         json.replace(trustedCandidateId, `spc2_${"0".repeat(64)}`),
         sha256Bytes,
       ),
@@ -148,21 +184,21 @@ describe("SandboxPolicyCandidateReadV1", () => {
       candidates: [],
     } as never;
     expect(() =>
-      encodeSandboxPolicyCandidateReadV1(withoutTrustedLocal, sha256Bytes),
+      encodeSandboxPolicyCandidateReadV2(withoutTrustedLocal, sha256Bytes),
     ).toThrow();
   });
 
   it("rejects the legacy common digest and malformed per-candidate digests", () => {
-    const json = encodeSandboxPolicyCandidateReadV1(candidateRead, sha256Bytes);
+    const json = encodeSandboxPolicyCandidateReadV2(candidateRead, sha256Bytes);
     const legacyCommon = json.replace(
       '"resourceBoundaryRevision":2,"authorityBundleRevision":5',
       `"resourceBoundaryRevision":2,"sandboxHandleBindingDigest":"${"a".repeat(64)}","authorityBundleRevision":5`,
     );
     expect(
-      decodeCanonicalSandboxPolicyCandidateReadV1(legacyCommon, sha256Bytes),
+      decodeCanonicalSandboxPolicyCandidateReadV2(legacyCommon, sha256Bytes),
     ).toBeUndefined();
     expect(
-      decodeSandboxPolicyCandidateReadV1(
+      decodeSandboxPolicyCandidateReadV2(
         {
           ...candidateRead,
           candidates: [
@@ -180,7 +216,7 @@ describe("SandboxPolicyCandidateReadV1", () => {
     };
     delete missingCandidateDigest.candidates[0]?.sandboxHandleBindingDigest;
     expect(
-      decodeSandboxPolicyCandidateReadV1(missingCandidateDigest, sha256Bytes),
+      decodeSandboxPolicyCandidateReadV2(missingCandidateDigest, sha256Bytes),
     ).toBeUndefined();
   });
 });

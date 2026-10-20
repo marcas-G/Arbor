@@ -22,7 +22,7 @@ import type {
   SandboxPolicyRequirementV1,
 } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
-import { buildSandboxPolicyCandidateReadV1 } from "../src/sandbox-policy-candidate-read.js";
+import { buildSandboxPolicyCandidateReadV2 } from "../src/sandbox-policy-candidate-read.js";
 
 const projectId = "prj_v6_candidate" as never;
 const workspaceId = "ws_v16_fixture" as never;
@@ -149,7 +149,7 @@ const read = (
   },
   authoritySnapshot = authority,
 ) =>
-  buildSandboxPolicyCandidateReadV1({
+  buildSandboxPolicyCandidateReadV2({
     reason: "InitialDecision",
     execution,
     requirement,
@@ -176,6 +176,45 @@ const read = (
   });
 
 describe("V6 per-candidate P4 binding digest projection", () => {
+  it("emits distinct candidates for Supported rows differing only by capabilityRevision", () => {
+    const secondCapability = {
+      ...providerEntry,
+      capabilityRevision: 2,
+    } satisfies SandboxProviderQualificationEntryV1;
+    const authorityWithCapabilityVariants = {
+      ...authority,
+      bundle: {
+        ...authority.bundle,
+        providerRegistry: {
+          ...authority.bundle.providerRegistry,
+          entries: [
+            providerEntry,
+            providerEntryWorkspaceWrite,
+            secondCapability,
+          ],
+        },
+      },
+    } as SandboxAuthorityBundleSnapshotV2;
+    const result = read([], undefined, authorityWithCapabilityVariants);
+    expect(result._tag).toBe("Ready");
+    if (result._tag !== "Ready") return;
+    const readOnlyCandidates = result.value.candidates.filter(
+      (
+        candidate,
+      ): candidate is Extract<
+        (typeof result.value.candidates)[number],
+        { readonly kind: "OsEnforced" }
+      > => candidate.kind === "OsEnforced" && candidate.profile === "ReadOnly",
+    );
+    expect(
+      readOnlyCandidates.map((candidate) => candidate.capabilityRevision),
+    ).toEqual([1, 2]);
+    expect(
+      new Set(readOnlyCandidates.map((candidate) => candidate.candidateId))
+        .size,
+    ).toBe(2);
+  });
+
   it("derives independent RO, owned RW and TrustedLocal digests from one pinned P11 snapshot", () => {
     const claims = [
       {

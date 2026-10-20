@@ -77,7 +77,7 @@ import {
 } from "@arbor/projection-runtime";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { buildSandboxPolicyCandidateReadV1 } from "./sandbox-policy-candidate-read.js";
+import { buildSandboxPolicyCandidateReadV2 } from "./sandbox-policy-candidate-read.js";
 
 interface ConversationJobViewRow {
   readonly message_id: string;
@@ -865,7 +865,7 @@ const projectionQueryService = (
                     workspaceId: currentExecution.value.workspaceId,
                   })
                   .pipe(Effect.mapError(projectionReadError));
-                const built = buildSandboxPolicyCandidateReadV1({
+                const built = buildSandboxPolicyCandidateReadV2({
                   reason: Option.isSome(currentDecision)
                     ? "RefreshStaleCommittedPolicy"
                     : "InitialDecision",

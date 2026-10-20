@@ -13,7 +13,7 @@ import type {
   ProjectId,
   ResourceBoundary,
   ResponsibilityDefinition,
-  SandboxPolicyCandidateReadV1,
+  SandboxPolicyCandidateReadV2,
   SandboxPolicyPreconditionsV1,
   SandboxPolicyStatusViewV1,
   SessionId,
@@ -246,7 +246,7 @@ export type WorkspaceDetailRes = WorkspaceDetailResCore &
       }
     | {
         readonly sandboxPolicyPreconditions?: never;
-        readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateReadV1;
+        readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateReadV2;
       }
   );
 

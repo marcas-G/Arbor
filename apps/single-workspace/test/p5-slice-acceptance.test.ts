@@ -29,7 +29,7 @@ import {
   ResponsibilityRevision,
   Revision,
   responsibilityBound,
-  type SandboxPolicyCandidateReadV1,
+  type SandboxPolicyCandidateReadV2,
   SessionId,
   WorkId,
   WorkRevision,
@@ -561,7 +561,7 @@ describe("I0 executable/control vertical slice", () => {
           const detail = yield* projection.query<
             { readonly workspaceId: WorkspaceId },
             {
-              readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateReadV1;
+              readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateReadV2;
             }
           >("workspace-detail", { workspaceId });
           const candidateRead = detail.value.sandboxPolicyCandidateRead;
