@@ -2,9 +2,11 @@ import type {
   AgentActionHandlerInput,
   AgentActionOutcome,
 } from "@arbor/agent-runtime";
+import { decodeTurn } from "@arbor/model-context";
 import type {
   AgentLoopStepStoreService,
   ClockService,
+  ProviderTurnStoreService,
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
@@ -26,6 +28,10 @@ export const commitDurableControlActionEffect = <A>(input: {
   readonly expectedToolName: string;
   readonly tx: TransactionPortService;
   readonly loopSteps: AgentLoopStepStoreService;
+  readonly providerTurns: Pick<
+    ProviderTurnStoreService,
+    "findManifestByTurn" | "findSettledResult"
+  >;
   readonly sessions: Pick<SessionRepositoryService, "appendItemIdempotent">;
   readonly clock: ClockService;
   readonly effect: () => Effect.Effect<
@@ -74,12 +80,87 @@ export const commitDurableControlActionEffect = <A>(input: {
                   }) ?? Promise.resolve(),
               );
         const step = yield* input.loopSteps.find(context.identity);
-        if (
-          Option.isNone(step) ||
-          step.value.state !== "ActionsInProgress" ||
-          step.value.providerTurnId !== context.providerTurnId
-        ) {
+        if (Option.isNone(step) || step.value.state !== "ActionsInProgress") {
           yield* reportSuppressed("P9StepNoLongerActionable");
+          return yield* Effect.fail({
+            _tag: "LeaseFencingRejected" as const,
+            executionId: fence.executionId,
+            generation: fence.fencingGeneration,
+          });
+        }
+        const [pinnedManifest, providerResult] = yield* Effect.all([
+          input.providerTurns.findManifestByTurn(context.providerTurnId),
+          input.providerTurns.findSettledResult(context.providerTurnId),
+        ]);
+        let manifestIdentityMatches = false;
+        if (
+          pinnedManifest !== null &&
+          step.value.manifestId === pinnedManifest.manifestId &&
+          providerResult._tag === "SettledSuccess" &&
+          providerResult.evidenceVersion === "provider-success-v1" &&
+          providerResult.manifestId === pinnedManifest.manifestId &&
+          providerResult.manifestJson === pinnedManifest.manifestJson &&
+          providerResult.turn.providerTurnId === context.providerTurnId &&
+          providerResult.turn.manifestId === pinnedManifest.manifestId &&
+          providerResult.turn.executionId ===
+            handlerInput.execution.executionId &&
+          providerResult.turn.sessionId === handlerInput.execution.sessionId &&
+          providerResult.turn.contextEpoch === context.contextEpoch &&
+          context.identity.executionId === handlerInput.execution.executionId &&
+          fence.executionId === handlerInput.execution.executionId &&
+          step.value.identity.executionId === context.identity.executionId &&
+          step.value.identity.logicalStepNo ===
+            context.identity.logicalStepNo &&
+          step.value.identity.repairAttempt === context.identity.repairAttempt
+        ) {
+          try {
+            const manifest = JSON.parse(pinnedManifest.manifestJson) as Record<
+              string,
+              unknown
+            >;
+            manifestIdentityMatches =
+              manifest.providerTurnId === context.providerTurnId &&
+              manifest.executionId === context.identity.executionId &&
+              manifest.sessionId === handlerInput.execution.sessionId &&
+              manifest.contextEpoch === context.contextEpoch &&
+              manifest.modelRef === providerResult.turn.modelRef &&
+              manifest.outputContractRef ===
+                providerResult.turn.outputContractRef &&
+              manifest.logicalStepNo === context.identity.logicalStepNo &&
+              manifest.repairAttempt === context.identity.repairAttempt;
+          } catch {
+            manifestIdentityMatches = false;
+          }
+        }
+        if (!manifestIdentityMatches) {
+          yield* reportSuppressed("P9PinnedManifestMismatch");
+          return yield* Effect.fail({
+            _tag: "LeaseFencingRejected" as const,
+            executionId: fence.executionId,
+            generation: fence.fencingGeneration,
+          });
+        }
+        if (providerResult._tag !== "SettledSuccess") {
+          return yield* Effect.fail({
+            _tag: "LeaseFencingRejected" as const,
+            executionId: fence.executionId,
+            generation: fence.fencingGeneration,
+          });
+        }
+        const decodedProviderResult = decodeTurn(
+          providerResult.canonicalEvents,
+        );
+        if (
+          !decodedProviderResult.ok ||
+          !decodedProviderResult.output.toolInvocations.some(
+            (invocation) =>
+              invocation.providerTurnId === context.providerTurnId &&
+              invocation.outputPosition === context.actionIndex &&
+              invocation.callRef === context.callRef &&
+              invocation.toolName === input.expectedToolName,
+          )
+        ) {
+          yield* reportSuppressed("P9PinnedManifestCallRefMismatch");
           return yield* Effect.fail({
             _tag: "LeaseFencingRejected" as const,
             executionId: fence.executionId,

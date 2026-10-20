@@ -110,6 +110,8 @@ import {
   type MessageStoreService,
   PermissionGrantRepository,
   type PermissionGrantRepositoryService,
+  ProviderTurnStore,
+  type ProviderTurnStoreService,
   RecoveryAttentionFactStore,
   type RecoveryAttentionFactStoreService,
   SessionRepository,
@@ -225,6 +227,10 @@ export interface UpdatePlanDependencies {
   readonly tx: TransactionPortService;
   readonly clock: ClockService;
   readonly loopSteps?: AgentLoopStepStoreService;
+  readonly providerTurns?: Pick<
+    ProviderTurnStoreService,
+    "findManifestByTurn" | "findSettledResult"
+  >;
   readonly sessions?: Pick<SessionRepositoryService, "appendItemIdempotent">;
 }
 
@@ -247,6 +253,10 @@ export interface ProposeChildDependencies {
   readonly workspaces: WorkspaceRepositoryService;
   readonly tx: TransactionPortService;
   readonly loopSteps?: AgentLoopStepStoreService;
+  readonly providerTurns?: Pick<
+    ProviderTurnStoreService,
+    "findManifestByTurn" | "findSettledResult"
+  >;
   readonly sessions?: Pick<SessionRepositoryService, "appendItemIdempotent">;
 }
 
@@ -2234,13 +2244,15 @@ export const updatePlanHandler = (
         });
       if (
         dependencies.loopSteps !== undefined &&
-        dependencies.sessions !== undefined
+        dependencies.sessions !== undefined &&
+        dependencies.providerTurns !== undefined
       ) {
         const committed = yield* commitDurableControlActionEffect({
           handlerInput: input,
           expectedToolName: "update_plan",
           tx: dependencies.tx,
           loopSteps: dependencies.loopSteps,
+          providerTurns: dependencies.providerTurns,
           sessions: dependencies.sessions,
           clock: dependencies.clock,
           effect: () =>
@@ -2261,6 +2273,16 @@ export const updatePlanHandler = (
             ),
         });
         return committed.outcome;
+      }
+      if (
+        dependencies.loopSteps !== undefined ||
+        dependencies.sessions !== undefined
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure("UpdatePlan.commit")(
+            "P9 Control commit requires the exact ProviderTurn manifest store",
+          ),
+        );
       }
       const plan = yield* dependencies.tx.transact(revise());
       return {
@@ -2670,13 +2692,15 @@ const proposeChildWorkspaceHandler = (
         });
       if (
         dependencies.loopSteps !== undefined &&
-        dependencies.sessions !== undefined
+        dependencies.sessions !== undefined &&
+        dependencies.providerTurns !== undefined
       ) {
         const committed = yield* commitDurableControlActionEffect({
           handlerInput: input,
           expectedToolName: "propose_workspace",
           tx: dependencies.tx,
           loopSteps: dependencies.loopSteps,
+          providerTurns: dependencies.providerTurns,
           sessions: dependencies.sessions,
           clock: dependencies.clock,
           effect: () =>
@@ -2694,6 +2718,16 @@ const proposeChildWorkspaceHandler = (
             ),
         });
         return committed.outcome;
+      }
+      if (
+        dependencies.loopSteps !== undefined ||
+        dependencies.sessions !== undefined
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure("ProposeWorkspace.commit")(
+            "P9 Control commit requires the exact ProviderTurn manifest store",
+          ),
+        );
       }
       const record = yield* dependencies.tx.transact(persistProposal());
       return {
@@ -4427,6 +4461,7 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
       const verifications = yield* VerificationRepository;
       const toolInvocations = yield* ToolInvocationStore;
       const loopSteps = yield* AgentLoopStepStore;
+      const providerTurns = yield* Effect.serviceOption(ProviderTurnStore);
       const assignWorkBindings = yield* Effect.serviceOption(
         AssignWorkTargetBindingRepository,
       );
@@ -4467,6 +4502,9 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
           sessions: yield* SessionRepository,
           toolInvocations,
           loopSteps,
+          ...(Option.isSome(providerTurns)
+            ? { providerTurns: providerTurns.value }
+            : {}),
           ...(Option.isSome(assignWorkBindings)
             ? { bindings: assignWorkBindings.value }
             : {}),
