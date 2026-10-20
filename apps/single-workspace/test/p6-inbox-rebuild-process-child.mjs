@@ -52,6 +52,13 @@ const runQualifiedSqliteMaintenance = (
   settings = {},
 ) => {
   const lockFilename = qualifiedWriterLockFilename(options.primaryFilename);
+  const configuredBusyTimeout = Number.parseInt(
+    process.env.ARBOR_P6_TEST_LOCK_BUSY_TIMEOUT_MS ?? "60000",
+    10,
+  );
+  const busyTimeoutMs = Number.isSafeInteger(configuredBusyTimeout)
+    ? Math.min(60_000, Math.max(1, configuredBusyTimeout))
+    : 60_000;
   return Effect.acquireUseRelease(
     Effect.try({
       try: () => {
@@ -67,7 +74,7 @@ const runQualifiedSqliteMaintenance = (
         }
         const lock = new DatabaseSync(lockFilename);
         lock.exec(
-          "PRAGMA busy_timeout = 60000; CREATE TABLE IF NOT EXISTS p39_writer_lock (lock_id INTEGER PRIMARY KEY CHECK (lock_id = 1)); INSERT OR IGNORE INTO p39_writer_lock(lock_id) VALUES (1); BEGIN IMMEDIATE;",
+          `PRAGMA busy_timeout = ${busyTimeoutMs}; CREATE TABLE IF NOT EXISTS p39_writer_lock (lock_id INTEGER PRIMARY KEY CHECK (lock_id = 1)); INSERT OR IGNORE INTO p39_writer_lock(lock_id) VALUES (1); BEGIN IMMEDIATE;`,
         );
         process.stdout.write("P6_TEST_LOCK_ACQUIRED\n");
         return lock;

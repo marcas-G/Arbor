@@ -3,7 +3,6 @@ import {
   copyFileSync,
   existsSync,
   linkSync,
-  readdirSync,
   readFileSync,
   statSync,
   unlinkSync,
@@ -29,6 +28,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { p39WindowsTestEnvironment } from "../../../tests/support/p39-windows-deployment-test.js";
 import {
   createSchema48TestDatabaseFactory,
+  type Schema48TestDatabase,
   type Schema48TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
 import {
@@ -391,813 +391,44 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
     }
   });
 
-  it("runs and resumes through the real P39 CLI and bounded process harness", async () => {
-    const repositoryRoot = resolve(
-      process.cwd(),
-      process
-        .cwd()
-        .replaceAll("\\", "/")
-        .toLowerCase()
-        .endsWith("apps/single-workspace")
-        ? "../.."
-        : ".",
-    );
+  const repositoryRoot = resolve(
+    process.cwd(),
+    process
+      .cwd()
+      .replaceAll("\\", "/")
+      .toLowerCase()
+      .endsWith("apps/single-workspace")
+      ? "../.."
+      : ".",
+  );
+  const productionCli = resolve(
+    repositoryRoot,
+    "apps/single-workspace/dist/p6-inbox-rebuild.js",
+  );
+  const processCli = resolve(
+    repositoryRoot,
+    "apps/single-workspace/test/p6-inbox-rebuild-process-child.mjs",
+  );
+  const caseTimeoutMs = 105_000;
+
+  interface P6FixtureContext {
+    readonly fixture: Schema48TestDatabase;
+    readonly manifest: string;
+  }
+
+  const withP6Fixture = async (
+    run: (context: P6FixtureContext) => Promise<void>,
+  ): Promise<void> => {
     if (schema48Factory === undefined)
       throw new Error("P6 schema-48 template was not initialized");
     const fixture = schema48Factory.create();
     seedP6InboxRebuildFixture(fixture.databaseFilename);
-    const runQualification = async (): Promise<void> => {
-      const manifest = join(fixture.directory, "p6-rebuild.jsonl");
-      const productionCli = resolve(
-        repositoryRoot,
-        "apps/single-workspace/dist/p6-inbox-rebuild.js",
-      );
-      const cli = resolve(
-        repositoryRoot,
-        "apps/single-workspace/test/p6-inbox-rebuild-process-child.mjs",
-      );
-      if (process.env.ARBOR_P6_SIDE_CAR_RACE_ONLY === "1") {
-        await raceOperatorSidecar(
-          repositoryRoot,
-          cli,
-          fixture.databaseFilename,
-          fixture.directory,
-        );
-        return;
-      }
-      // Retain the exhaustive P39 sidecar crash qualification as an explicit
-      // diagnostic without making the ordinary P6 projection suite repeat the
-      // same ACL proof twelve times.
-      if (process.env.ARBOR_P6_SIDECAR_CRASH_ONLY === "1") {
-        await qualifySidecarCrashRestart(
-          repositoryRoot,
-          productionCli,
-          fixture.databaseFilename,
-          fixture.p39ReportFilename,
-          fixture.directory,
-        );
-        return;
-      }
-      // Exactly one public production-CLI invocation qualifies the protected
-      // Windows path/ACL assembly.  The remaining crash/replay matrix uses the
-      // dedicated process child above: it preserves real SQLite exclusion,
-      // kill/restart and all P6 code while avoiding dozens of duplicate
-      // PowerShell probes for the already-qualified boundary.
-      const interruptedAfterCommit = await stopOperatorCliAtBoundary(
-        productionCli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        manifest,
-        "database-committed",
-      );
-      expect(interruptedAfterCommit.code).not.toBe(0);
-      const preparedText = readFileSync(manifest, "utf8");
-      const beforeAuditRecords = preparedText
-        .trimEnd()
-        .split("\n")
-        .map(
-          (line) =>
-            JSON.parse(line) as {
-              record: Record<string, unknown> & { kind: string };
-            },
-        );
-      expect(beforeAuditRecords.map(({ record }) => record.kind)).toEqual([
-        "Created",
-        "Prepared",
-      ]);
-      const readback = new DatabaseSync(fixture.databaseFilename, {
-        readOnly: true,
-      });
-      try {
-        expect(
-          readback
-            .prepare(
-              `SELECT workspace_id,kind,summary,correlation_id,admitted_at,
-                      consumed_at,revision FROM inbox_entries
-                WHERE entry_key = ?`,
-            )
-            .get(
-              "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
-            ),
-        ).toMatchObject({
-          workspace_id: "ws_018f2b3c-4d5e-7abc-8def-01234567a457",
-          kind: "Governance",
-          summary:
-            "A historical RetryVerification receipt has incomplete origin evidence.",
-          correlation_id: "cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
-          admitted_at: "2026-10-18T00:00:00.000Z",
-          consumed_at: null,
-          revision: 1,
-        });
-        expect(readback.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-      } finally {
-        readback.close();
-      }
-      await assertUnboundLegacyReadSurface(fixture.databaseFilename);
-      const resumed = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        manifest,
-        true,
-      );
-      expect(resumed.code, resumed.output).toBe(0);
-      const committed = readFileSync(manifest, "utf8");
-      expect(committed.startsWith(preparedText)).toBe(true);
-      expect(readFileSync(manifest, "utf8")).toBe(committed);
-      const records = committed
-        .trimEnd()
-        .split("\n")
-        .map(
-          (line) =>
-            JSON.parse(line) as {
-              record: Record<string, unknown> & { kind: string };
-            },
-        );
-      expect(records.map(({ record }) => record.kind)).toEqual([
-        "Created",
-        "Prepared",
-        "Committed",
-      ]);
-      expect(records[0]?.record.descriptors).toEqual(
-        descriptorHashesThrough(48),
-      );
-      expect(records[1]?.record.canonicalInputDigest).toBe(
-        records[2]?.record.canonicalInputDigest,
-      );
-      expect(records[2]?.record).toMatchObject({
-        inserted: 0,
-        moved: 0,
-        noOp: 1,
-      });
-
-      const p39ManifestAlias = `${fixture.p39ReportFilename}-journal`;
-      expect(existsSync(p39ManifestAlias)).toBe(false);
-      const primaryBeforeReportAlias = logicalSqliteDigest(
-        fixture.databaseFilename,
-      );
-      const reportBeforeAlias = logicalSqliteDigest(fixture.p39ReportFilename);
-      const reportManifestAliasRun = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        p39ManifestAlias,
-        false,
-      );
-      expect(
-        reportManifestAliasRun.code,
-        reportManifestAliasRun.output,
-      ).not.toBe(0);
-      expect(existsSync(p39ManifestAlias)).toBe(false);
-      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
-        primaryBeforeReportAlias,
-      );
-      expect(logicalSqliteDigest(fixture.p39ReportFilename)).toBe(
-        reportBeforeAlias,
-      );
-
-      const sameTargetManifest = join(
-        fixture.directory,
-        "p6-same-target-application.jsonl",
-      );
-      const sameTargetRun = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        join(fixture.directory, "p6-same-target-report.sqlite"),
-        sameTargetManifest,
-        false,
-        { ARBOR_DB: fixture.databaseFilename },
-      );
-      expect(sameTargetRun.code, sameTargetRun.output).toBe(0);
-
-      const movedProjection = new DatabaseSync(fixture.databaseFilename);
-      try {
-        movedProjection
-          .prepare(
-            `UPDATE inbox_entries
-                SET workspace_id = 'ws_018f2b3c-4d5e-7abc-8def-01234567a458',
-                    revision = 2, updated_at = 'projection-preimage'
-              WHERE entry_key = ?`,
-          )
-          .run(
-            "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
-          );
-      } finally {
-        movedProjection.close();
-      }
-      const firstMoveManifest = join(
-        fixture.directory,
-        "p6-first-route-move.jsonl",
-      );
-      const interruptedFirstMove = await stopOperatorCliAtBoundary(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        firstMoveManifest,
-        "prepared",
-      );
-      expect(interruptedFirstMove.code).not.toBe(0);
-      expect(
-        validateP6InboxManifestText(
-          readFileSync(firstMoveManifest, "utf8"),
-        ).map(({ record }) => record.kind),
-      ).toEqual(["Created", "Prepared"]);
-      const firstMovePreimage = new DatabaseSync(fixture.databaseFilename, {
-        readOnly: true,
-      });
-      try {
-        expect(
-          firstMovePreimage
-            .prepare(
-              `SELECT workspace_id, revision, updated_at FROM inbox_entries
-                WHERE entry_key = ?`,
-            )
-            .get(
-              "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
-            ),
-        ).toMatchObject({
-          workspace_id: "ws_018f2b3c-4d5e-7abc-8def-01234567a458",
-          revision: 2,
-          updated_at: "projection-preimage",
-        });
-      } finally {
-        firstMovePreimage.close();
-      }
-      const secondMoveManifest = join(
-        fixture.directory,
-        "p6-second-route-move.jsonl",
-      );
-      const secondMove = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        secondMoveManifest,
-        false,
-      );
-      expect(secondMove.code, secondMove.output).toBe(0);
-      expect(
-        validateP6InboxManifestText(readFileSync(secondMoveManifest, "utf8"))[2]
-          ?.record,
-      ).toMatchObject({ inserted: 0, moved: 1, noOp: 0 });
-      const secondMovePostimage = new DatabaseSync(fixture.databaseFilename, {
-        readOnly: true,
-      });
-      let secondMoveUpdatedAt = "";
-      try {
-        const row = secondMovePostimage
-          .prepare(
-            `SELECT workspace_id, revision, updated_at FROM inbox_entries
-              WHERE entry_key = ?`,
-          )
-          .get(
-            "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
-          ) as {
-          workspace_id: string;
-          revision: number;
-          updated_at: string;
-        };
-        expect(row).toMatchObject({
-          workspace_id: "ws_018f2b3c-4d5e-7abc-8def-01234567a457",
-          revision: 3,
-        });
-        secondMoveUpdatedAt = row.updated_at;
-      } finally {
-        secondMovePostimage.close();
-      }
-      const beforeFirstMoveResume = logicalSqliteDigest(
-        fixture.databaseFilename,
-      );
-      const replayedFirstMove = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        firstMoveManifest,
-        true,
-      );
-      expect(replayedFirstMove.code, replayedFirstMove.output).toBe(0);
-      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
-        beforeFirstMoveResume,
-      );
-      const replayedMoveReadback = new DatabaseSync(fixture.databaseFilename, {
-        readOnly: true,
-      });
-      try {
-        expect(
-          replayedMoveReadback
-            .prepare(
-              `SELECT workspace_id, revision, updated_at FROM inbox_entries
-                WHERE entry_key = ?`,
-            )
-            .get(
-              "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
-            ),
-        ).toEqual({
-          workspace_id: "ws_018f2b3c-4d5e-7abc-8def-01234567a457",
-          revision: 3,
-          updated_at: secondMoveUpdatedAt,
-        });
-      } finally {
-        replayedMoveReadback.close();
-      }
-      const replayedFirstMoveRecords = validateP6InboxManifestText(
-        readFileSync(firstMoveManifest, "utf8"),
-      );
-      expect(replayedFirstMoveRecords.map(({ record }) => record.kind)).toEqual(
-        ["Created", "Prepared", "Committed"],
-      );
-      expect(replayedFirstMoveRecords[2]?.record).toMatchObject({
-        inserted: 0,
-        moved: 0,
-        noOp: 1,
-      });
-
-      const createdOnlyManifest = join(
-        fixture.directory,
-        "p6-created-only-drift.jsonl",
-      );
-      const createdOnlyStopped = await stopOperatorCliAtBoundary(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        createdOnlyManifest,
-        "created",
-      );
-      expect(createdOnlyStopped.code).not.toBe(0);
-      const createdOnlyRecords = validateP6InboxManifestText(
-        readFileSync(createdOnlyManifest, "utf8"),
-      );
-      expect(createdOnlyRecords.map(({ record }) => record.kind)).toEqual([
-        "Created",
-      ]);
-      const createdOnlyDriftDb = new DatabaseSync(fixture.databaseFilename);
-      try {
-        createdOnlyDriftDb
-          .prepare(
-            "UPDATE works SET revision = 1, updated_at = '2026-10-18T00:01:00.000Z' WHERE work_id = 'wrk_p6_operator_fixture'",
-          )
-          .run();
-      } finally {
-        createdOnlyDriftDb.close();
-      }
-      const driftDigest = logicalSqliteDigest(fixture.databaseFilename);
-      const createdOnlyDrift = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        createdOnlyManifest,
-        true,
-      );
-      expect(createdOnlyDrift.code, createdOnlyDrift.output).not.toBe(0);
-      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(driftDigest);
-      expect(
-        validateP6InboxManifestText(
-          readFileSync(createdOnlyManifest, "utf8"),
-        ).map(({ record }) => record.kind),
-      ).toEqual(["Created"]);
-      const restoreCreatedDrift = new DatabaseSync(fixture.databaseFilename);
-      try {
-        restoreCreatedDrift
-          .prepare(
-            "UPDATE works SET revision = 0, updated_at = 't0' WHERE work_id = 'wrk_p6_operator_fixture'",
-          )
-          .run();
-      } finally {
-        restoreCreatedDrift.close();
-      }
-      const createdOnlyResume = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        createdOnlyManifest,
-        true,
-      );
-      expect(createdOnlyResume.code, createdOnlyResume.output).toBe(0);
-
-      const descriptorDriftManifest = join(
-        fixture.directory,
-        "p6-created-only-descriptor-drift.jsonl",
-      );
-      const descriptorDriftStopped = await stopOperatorCliAtBoundary(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        descriptorDriftManifest,
-        "created",
-      );
-      expect(descriptorDriftStopped.code).not.toBe(0);
-      const validCreatedRecord = validateP6InboxManifestText(
-        readFileSync(descriptorDriftManifest, "utf8"),
-      )[0];
-      expect(validCreatedRecord?.record.kind).toBe("Created");
-      const descriptorDriftHeader = p6InboxManifestEnvelope(0, null, {
-        ...validCreatedRecord?.record,
-        descriptors: descriptorHashesThrough(48).slice(0, -1),
-      });
-      writeFileSync(
-        descriptorDriftManifest,
-        `${canonicalP6InboxJson(descriptorDriftHeader)}\n`,
-        { flag: "w", mode: 0o600 },
-      );
-      const descriptorDriftBefore = logicalSqliteDigest(
-        fixture.databaseFilename,
-      );
-      const descriptorDriftResume = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        descriptorDriftManifest,
-        true,
-      );
-      expect(descriptorDriftResume.code, descriptorDriftResume.output).not.toBe(
-        0,
-      );
-      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
-        descriptorDriftBefore,
-      );
-
-      const preparedCrashManifest = join(
-        fixture.directory,
-        "p6-prepared-crash.jsonl",
-      );
-      const interruptedPrepared = await stopOperatorCliAtBoundary(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        preparedCrashManifest,
-        "prepared",
-      );
-      expect(interruptedPrepared.code).not.toBe(0);
-      expect(
-        validateP6InboxManifestText(
-          readFileSync(preparedCrashManifest, "utf8"),
-        ).map(({ record }) => record.kind),
-      ).toEqual(["Created", "Prepared"]);
-      const driftDb = new DatabaseSync(fixture.databaseFilename);
-      try {
-        driftDb
-          .prepare(
-            "UPDATE works SET revision = 1, updated_at = '2026-10-18T00:01:00.000Z' WHERE work_id = 'wrk_p6_operator_fixture'",
-          )
-          .run();
-      } finally {
-        driftDb.close();
-      }
-      const digestAfterExternalInputDrift = logicalSqliteDigest(
-        fixture.databaseFilename,
-      );
-      const driftResume = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        preparedCrashManifest,
-        true,
-      );
-      expect(driftResume.code, driftResume.output).not.toBe(0);
-      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
-        digestAfterExternalInputDrift,
-      );
-      expect(
-        validateP6InboxManifestText(
-          readFileSync(preparedCrashManifest, "utf8"),
-        ).map(({ record }) => record.kind),
-      ).toEqual(["Created", "Prepared"]);
-      const restoreDrift = new DatabaseSync(fixture.databaseFilename);
-      try {
-        restoreDrift
-          .prepare(
-            "UPDATE works SET revision = 0, updated_at = 't0' WHERE work_id = 'wrk_p6_operator_fixture'",
-          )
-          .run();
-      } finally {
-        restoreDrift.close();
-      }
-      const digestBeforePreparedResume = logicalSqliteDigest(
-        fixture.databaseFilename,
-      );
-      const preparedResume = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        preparedCrashManifest,
-        true,
-      );
-      expect(preparedResume.code, preparedResume.output).toBe(0);
-      const preparedCommitted = validateP6InboxManifestText(
-        readFileSync(preparedCrashManifest, "utf8"),
-      );
-      expect(preparedCommitted.map(({ record }) => record.kind)).toEqual([
-        "Created",
-        "Prepared",
-        "Committed",
-      ]);
-      expect(preparedCommitted[2]?.record).toMatchObject({
-        inserted: 0,
-        moved: 0,
-        noOp: 1,
-      });
-      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
-        digestBeforePreparedResume,
-      );
-
-      const digestBeforeRefusals = logicalSqliteDigest(
-        fixture.databaseFilename,
-      );
-      const missingResume = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        join(fixture.directory, "missing-resume.jsonl"),
-        true,
-      );
-      expect(missingResume.code, missingResume.output).not.toBe(0);
-      const tamperedManifest = join(fixture.directory, "tampered.jsonl");
-      writeFileSync(
-        tamperedManifest,
-        committed.replace('"kind":"Committed"', '"kind":"Forged"'),
-        { flag: "wx", mode: 0o600 },
-      );
-      const tamperedResume = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        tamperedManifest,
-        true,
-      );
-      expect(tamperedResume.code, tamperedResume.output).not.toBe(0);
-      expect(existsSync(tamperedManifest)).toBe(true);
-      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
-        digestBeforeRefusals,
-      );
-
-      for (const invalidPrefix of [
-        "schema47",
-        "schema49",
-        "pseudo48",
-      ] as const) {
-        const invalidDatabase = join(
-          fixture.directory,
-          `${invalidPrefix}.sqlite`,
-        );
-        copyFileSync(fixture.databaseFilename, invalidDatabase);
-        const invalid = new DatabaseSync(invalidDatabase);
-        try {
-          if (invalidPrefix === "schema47")
-            invalid.exec("PRAGMA user_version = 47");
-          else if (invalidPrefix === "schema49")
-            invalid.exec("PRAGMA user_version = 49");
-          else
-            invalid.exec("CREATE TABLE p6_schema_tamper (id TEXT PRIMARY KEY)");
-        } finally {
-          invalid.close();
-        }
-        const beforeInvalidRun = logicalSqliteDigest(invalidDatabase);
-        const invalidManifest = join(
-          fixture.directory,
-          `${invalidPrefix}.jsonl`,
-        );
-        const invalidRun = await runOperatorCli(
-          cli,
-          invalidDatabase,
-          fixture.p39ReportFilename,
-          invalidManifest,
-          false,
-        );
-        expect(invalidRun.code, invalidRun.output).not.toBe(0);
-        expect(existsSync(invalidManifest)).toBe(false);
-        expect(logicalSqliteDigest(invalidDatabase)).toBe(beforeInvalidRun);
-      }
-
-      await raceOperatorSidecar(
-        repositoryRoot,
-        cli,
-        fixture.databaseFilename,
-        fixture.directory,
-      );
-      seedFailAfterFirstCandidate(fixture.databaseFilename);
-      const digestBeforeRollback = logicalSqliteDigest(
-        fixture.databaseFilename,
-      );
-      const rollbackManifest = join(fixture.directory, "p6-rollback.jsonl");
-      const rollbackRun = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        fixture.p39ReportFilename,
-        rollbackManifest,
-        false,
-      );
-      expect(rollbackRun.code, rollbackRun.output).not.toBe(0);
-      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
-        digestBeforeRollback,
-      );
-      const rollbackRecords = validateP6InboxManifestText(
-        readFileSync(rollbackManifest, "utf8"),
-      );
-      expect(rollbackRecords.map(({ record }) => record.kind)).toEqual([
-        "Created",
-        "Prepared",
-      ]);
-      const afterRollback = new DatabaseSync(fixture.databaseFilename, {
-        readOnly: true,
-      });
-      try {
-        expect(
-          afterRollback
-            .prepare(
-              "SELECT entry_key FROM inbox_entries WHERE entry_key LIKE 'retry-verification-unbound:%'",
-            )
-            .all(),
-        ).toEqual([]);
-      } finally {
-        afterRollback.close();
-      }
-
-      const lockFiles = readdirSync(fixture.directory).filter(
-        (name) =>
-          name.startsWith(".arbor-p39-writer-") && name.endsWith(".sqlite"),
-      );
-      const primaryStat = statSync(fixture.databaseFilename, {
-        bigint: true,
-      });
-      const expectedLockFilename = `.arbor-p39-writer-${sha256Hex(`${primaryStat.dev}:${primaryStat.ino}`)}.sqlite`;
-      expect(lockFiles).toContain(expectedLockFilename);
-      const lockFilename = join(fixture.directory, expectedLockFilename);
-      const protectedAppDbFilename = join(
-        fixture.directory,
-        "protected-empty-application.sqlite",
-      );
-      const protectedAppDb = new DatabaseSync(protectedAppDbFilename);
-      protectedAppDb.close();
-      const protectedAppManifest = join(
-        fixture.directory,
-        "p6-protected-application-alias.jsonl",
-      );
-      const protectedAppDigest = logicalSqliteDigest(protectedAppDbFilename);
-      const protectedAppAlias = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        protectedAppDbFilename,
-        protectedAppManifest,
-        false,
-        { ARBOR_DB: protectedAppDbFilename },
-      );
-      expect(protectedAppAlias.code, protectedAppAlias.output).not.toBe(0);
-      expect(existsSync(protectedAppManifest)).toBe(false);
-      expect(logicalSqliteDigest(protectedAppDbFilename)).toBe(
-        protectedAppDigest,
-      );
-
-      const protectedWalDbFilename = join(
-        fixture.directory,
-        "protected-wal-application.sqlite",
-      );
-      const protectedWalDb = new DatabaseSync(protectedWalDbFilename);
-      protectedWalDb.exec(
-        "PRAGMA journal_mode = WAL; CREATE TABLE protected_data(value TEXT);",
-      );
-      protectedWalDb
-        .prepare("INSERT INTO protected_data VALUES ('protected')")
-        .run();
-      const protectedWalDigest = logicalSqliteDigest(protectedWalDbFilename);
-      expect(
-        existsSync(`${protectedWalDbFilename}-wal`),
-        "protected app DB WAL must remain present and untouched",
-      ).toBe(true);
-      const protectedWalManifest = join(
-        fixture.directory,
-        "p6-protected-application-wal-alias.jsonl",
-      );
-      const protectedWalBefore = logicalSqliteDigest(fixture.databaseFilename);
-      const protectedWalAlias = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        `${protectedWalDbFilename}-wal`,
-        protectedWalManifest,
-        false,
-        { ARBOR_DB: protectedWalDbFilename },
-      );
-      expect(protectedWalAlias.code, protectedWalAlias.output).not.toBe(0);
-      expect(existsSync(protectedWalManifest)).toBe(false);
-      expect(logicalSqliteDigest(protectedWalDbFilename)).toBe(
-        protectedWalDigest,
-      );
-      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
-        protectedWalBefore,
-      );
-      const protectedWalIdentityAlias = join(
-        fixture.directory,
-        "p6-protected-wal-hardlink.sqlite",
-      );
-      linkSync(`${protectedWalDbFilename}-wal`, protectedWalIdentityAlias);
-      const hardlinkManifest = join(
-        fixture.directory,
-        "p6-protected-wal-hardlink.jsonl",
-      );
-      const hardlinkAlias = await runOperatorCli(
-        cli,
-        fixture.databaseFilename,
-        protectedWalIdentityAlias,
-        hardlinkManifest,
-        false,
-        { ARBOR_DB: protectedWalDbFilename },
-      );
-      expect(hardlinkAlias.code, hardlinkAlias.output).not.toBe(0);
-      expect(existsSync(hardlinkManifest)).toBe(false);
-      expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
-        protectedWalBefore,
-      );
-      unlinkSync(protectedWalIdentityAlias);
-      protectedWalDb.close();
-      for (const [label, sidecarPath] of [
-        ["writer-lock", lockFilename],
-      ] as const) {
-        const aliasManifest = join(
-          fixture.directory,
-          `p6-${label}-alias.jsonl`,
-        );
-        const aliasBefore = logicalSqliteDigest(fixture.databaseFilename);
-        const aliasRun = await runOperatorCli(
-          cli,
-          fixture.databaseFilename,
-          sidecarPath,
-          aliasManifest,
-          false,
-          {},
-        );
-        expect(aliasRun.code, `${label}: ${aliasRun.output}`).not.toBe(0);
-        expect(existsSync(aliasManifest)).toBe(false);
-        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(aliasBefore);
-      }
-      const holder = spawn(
-        process.execPath,
-        [
-          join(
-            repositoryRoot,
-            "apps/single-workspace/test/p6-writer-lock-holder.mjs",
-          ),
-          lockFilename,
-        ],
-        {
-          cwd: repositoryRoot,
-          windowsHide: true,
-          env: {
-            ...p39WindowsTestEnvironment(),
-            ARBOR_P6_LOCK_DIAGNOSTIC: join(
-              fixture.directory,
-              "lock-holder-diagnostic.txt",
-            ),
-          },
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
-      let holderOutput = "";
-      holder.stdout.setEncoding("utf8").on("data", (chunk: string) => {
-        holderOutput += chunk;
-      });
-      holder.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-        holderOutput += chunk;
-      });
-      const holderClosed = new Promise<number | null>((resolveClose) =>
-        holder.once("close", resolveClose),
-      );
-      try {
-        try {
-          await waitForOutput(holder, "READY\n", 30_000);
-        } catch (cause) {
-          const diagnostic = join(
-            fixture.directory,
-            "lock-holder-diagnostic.txt",
-          );
-          const detail = existsSync(diagnostic)
-            ? readFileSync(diagnostic, "utf8")
-            : "no child diagnostic file";
-          throw new Error(`${String(cause)} ${holderOutput} ${detail}`);
-        }
-        const beforeRefusal = logicalSqliteDigest(fixture.databaseFilename);
-        const refusedManifest = join(
-          fixture.directory,
-          "p6-shared-refused.jsonl",
-        );
-        const refused = await runOperatorCli(
-          cli,
-          fixture.databaseFilename,
-          fixture.p39ReportFilename,
-          refusedManifest,
-          false,
-        );
-        expect(refused.code, refused.output).not.toBe(0);
-        expect(existsSync(refusedManifest)).toBe(false);
-        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
-          beforeRefusal,
-        );
-      } finally {
-        if (holder.exitCode === null && holder.stdin.writable)
-          holder.stdin.end("release\n");
-      }
-      expect(await holderClosed, holderOutput).toBe(0);
-    };
     let qualificationFailure: unknown;
     try {
-      await runQualification();
+      await run({
+        fixture,
+        manifest: join(fixture.directory, "p6-rebuild.jsonl"),
+      });
     } catch (cause) {
       qualificationFailure = cause;
     }
@@ -1211,12 +442,701 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
       if (cleanupFailure !== undefined)
         throw new AggregateError(
           [qualificationFailure, cleanupFailure],
-          "P6 qualification failed and disposable fixture cleanup also failed",
+          "P6 qualification failed and fixture cleanup also failed",
         );
       throw qualificationFailure;
     }
     if (cleanupFailure !== undefined) throw cleanupFailure;
-  }, 1_200_000);
+  };
+
+  const commitInitialProjection = async ({
+    fixture,
+    manifest,
+  }: P6FixtureContext): Promise<string> => {
+    const committed = await runOperatorCli(
+      processCli,
+      fixture.databaseFilename,
+      fixture.p39ReportFilename,
+      manifest,
+      false,
+    );
+    expect(committed.code, committed.output).toBe(0);
+    return readFileSync(manifest, "utf8");
+  };
+
+  it(
+    "qualifies one production CLI ACL path and resumes database-committed",
+    () =>
+      withP6Fixture(async ({ fixture, manifest }) => {
+        const interrupted = await stopOperatorCliAtBoundary(
+          productionCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          "database-committed",
+        );
+        expect(interrupted.code).not.toBe(0);
+        const preparedText = readFileSync(manifest, "utf8");
+        expect(
+          validateP6InboxManifestText(preparedText).map(
+            ({ record }) => record.kind,
+          ),
+        ).toEqual(["Created", "Prepared"]);
+        const readback = new DatabaseSync(fixture.databaseFilename, {
+          readOnly: true,
+        });
+        try {
+          expect(
+            readback
+              .prepare(
+                "SELECT workspace_id,kind,summary,correlation_id,admitted_at,consumed_at,revision FROM inbox_entries WHERE entry_key = ?",
+              )
+              .get(
+                "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
+              ),
+          ).toMatchObject({
+            workspace_id: "ws_018f2b3c-4d5e-7abc-8def-01234567a457",
+            kind: "Governance",
+            summary:
+              "A historical RetryVerification receipt has incomplete origin evidence.",
+            correlation_id: "cmd_018f2b3c-4d5e-7abc-8def-01234567a459",
+            admitted_at: "2026-10-18T00:00:00.000Z",
+            consumed_at: null,
+            revision: 1,
+          });
+          expect(readback.prepare("PRAGMA foreign_key_check").all()).toEqual(
+            [],
+          );
+        } finally {
+          readback.close();
+        }
+        await assertUnboundLegacyReadSurface(fixture.databaseFilename);
+        const resumed = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          true,
+        );
+        expect(resumed.code, resumed.output).toBe(0);
+        const committedText = readFileSync(manifest, "utf8");
+        expect(committedText.startsWith(preparedText)).toBe(true);
+        const records = validateP6InboxManifestText(committedText);
+        expect(records.map(({ record }) => record.kind)).toEqual([
+          "Created",
+          "Prepared",
+          "Committed",
+        ]);
+        expect(records[0]?.record.descriptors).toEqual(
+          descriptorHashesThrough(48),
+        );
+        expect(records[1]?.record.canonicalInputDigest).toBe(
+          records[2]?.record.canonicalInputDigest,
+        );
+        expect(records[2]?.record).toMatchObject({
+          inserted: 0,
+          moved: 0,
+          noOp: 1,
+        });
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "rejects evidence aliases and permits the exact protected app target",
+    () =>
+      withP6Fixture(async ({ fixture }) => {
+        const aliasPath = `${fixture.p39ReportFilename}-journal`;
+        const primaryBefore = logicalSqliteDigest(fixture.databaseFilename);
+        const reportBefore = logicalSqliteDigest(fixture.p39ReportFilename);
+        const alias = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          aliasPath,
+          false,
+        );
+        expect(alias.code, alias.output).not.toBe(0);
+        expect(existsSync(aliasPath)).toBe(false);
+        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
+          primaryBefore,
+        );
+        expect(logicalSqliteDigest(fixture.p39ReportFilename)).toBe(
+          reportBefore,
+        );
+        const sameTarget = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          join(fixture.directory, "p6-same-target-report.sqlite"),
+          join(fixture.directory, "p6-same-target-application.jsonl"),
+          false,
+          { ARBOR_DB: fixture.databaseFilename },
+        );
+        expect(sameTarget.code, sameTarget.output).toBe(0);
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "does not let stale prepared route replay undo a later move",
+    () =>
+      withP6Fixture(async (context) => {
+        const { fixture } = context;
+        await commitInitialProjection(context);
+        const entryKey =
+          "retry-verification-unbound:cmd_018f2b3c-4d5e-7abc-8def-01234567a459";
+        const moved = new DatabaseSync(fixture.databaseFilename);
+        try {
+          moved
+            .prepare(
+              "UPDATE inbox_entries SET workspace_id = 'ws_018f2b3c-4d5e-7abc-8def-01234567a458', revision = 2, updated_at = 'projection-preimage' WHERE entry_key = ?",
+            )
+            .run(entryKey);
+        } finally {
+          moved.close();
+        }
+        const firstManifest = join(
+          fixture.directory,
+          "p6-first-route-move.jsonl",
+        );
+        const first = await stopOperatorCliAtBoundary(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          firstManifest,
+          "prepared",
+        );
+        expect(first.code).not.toBe(0);
+        const secondManifest = join(
+          fixture.directory,
+          "p6-second-route-move.jsonl",
+        );
+        const second = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          secondManifest,
+          false,
+        );
+        expect(second.code, second.output).toBe(0);
+        expect(
+          validateP6InboxManifestText(readFileSync(secondManifest, "utf8"))[2]
+            ?.record,
+        ).toMatchObject({ inserted: 0, moved: 1, noOp: 0 });
+        const after = new DatabaseSync(fixture.databaseFilename, {
+          readOnly: true,
+        });
+        let updatedAt = "";
+        try {
+          const row = after
+            .prepare(
+              "SELECT workspace_id,revision,updated_at FROM inbox_entries WHERE entry_key = ?",
+            )
+            .get(entryKey) as {
+            workspace_id: string;
+            revision: number;
+            updated_at: string;
+          };
+          expect(row).toMatchObject({
+            workspace_id: "ws_018f2b3c-4d5e-7abc-8def-01234567a457",
+            revision: 3,
+          });
+          updatedAt = row.updated_at;
+        } finally {
+          after.close();
+        }
+        const digest = logicalSqliteDigest(fixture.databaseFilename);
+        const replay = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          firstManifest,
+          true,
+        );
+        expect(replay.code, replay.output).toBe(0);
+        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(digest);
+        const finalRead = new DatabaseSync(fixture.databaseFilename, {
+          readOnly: true,
+        });
+        try {
+          expect(
+            finalRead
+              .prepare(
+                "SELECT workspace_id,revision,updated_at FROM inbox_entries WHERE entry_key = ?",
+              )
+              .get(entryKey),
+          ).toEqual({
+            workspace_id: "ws_018f2b3c-4d5e-7abc-8def-01234567a457",
+            revision: 3,
+            updated_at: updatedAt,
+          });
+        } finally {
+          finalRead.close();
+        }
+        expect(
+          validateP6InboxManifestText(readFileSync(firstManifest, "utf8"))[2]
+            ?.record,
+        ).toMatchObject({ inserted: 0, moved: 0, noOp: 1 });
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "fails Created resume on input drift then resumes after restoration",
+    () =>
+      withP6Fixture(async ({ fixture }) => {
+        const manifest = join(fixture.directory, "p6-created-drift.jsonl");
+        const stopped = await stopOperatorCliAtBoundary(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          "created",
+        );
+        expect(stopped.code).not.toBe(0);
+        expect(
+          validateP6InboxManifestText(readFileSync(manifest, "utf8")).map(
+            ({ record }) => record.kind,
+          ),
+        ).toEqual(["Created"]);
+        const db = new DatabaseSync(fixture.databaseFilename);
+        try {
+          db.prepare(
+            "UPDATE works SET revision=1, updated_at='drift' WHERE work_id='wrk_p6_operator_fixture'",
+          ).run();
+        } finally {
+          db.close();
+        }
+        const drift = logicalSqliteDigest(fixture.databaseFilename);
+        const refused = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          true,
+        );
+        expect(refused.code, refused.output).not.toBe(0);
+        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(drift);
+        const restore = new DatabaseSync(fixture.databaseFilename);
+        try {
+          restore
+            .prepare(
+              "UPDATE works SET revision=0, updated_at='t0' WHERE work_id='wrk_p6_operator_fixture'",
+            )
+            .run();
+        } finally {
+          restore.close();
+        }
+        const resumed = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          true,
+        );
+        expect(resumed.code, resumed.output).toBe(0);
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "rejects a Created manifest with a changed descriptor prefix",
+    () =>
+      withP6Fixture(async ({ fixture }) => {
+        const manifest = join(fixture.directory, "p6-descriptor-drift.jsonl");
+        const stopped = await stopOperatorCliAtBoundary(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          "created",
+        );
+        expect(stopped.code).not.toBe(0);
+        const created = validateP6InboxManifestText(
+          readFileSync(manifest, "utf8"),
+        )[0];
+        const changed = p6InboxManifestEnvelope(0, null, {
+          ...created?.record,
+          descriptors: descriptorHashesThrough(48).slice(0, -1),
+        });
+        writeFileSync(manifest, `${canonicalP6InboxJson(changed)}\n`, {
+          flag: "w",
+          mode: 0o600,
+        });
+        const digest = logicalSqliteDigest(fixture.databaseFilename);
+        const refused = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          true,
+        );
+        expect(refused.code, refused.output).not.toBe(0);
+        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(digest);
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "fails Prepared resume on input drift then resumes after restoration",
+    () =>
+      withP6Fixture(async (context) => {
+        const { fixture } = context;
+        await commitInitialProjection(context);
+        const manifest = join(fixture.directory, "p6-prepared-drift.jsonl");
+        const stopped = await stopOperatorCliAtBoundary(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          "prepared",
+        );
+        expect(stopped.code).not.toBe(0);
+        const db = new DatabaseSync(fixture.databaseFilename);
+        try {
+          db.prepare(
+            "UPDATE works SET revision=1, updated_at='drift' WHERE work_id='wrk_p6_operator_fixture'",
+          ).run();
+        } finally {
+          db.close();
+        }
+        const drift = logicalSqliteDigest(fixture.databaseFilename);
+        const refused = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          true,
+        );
+        expect(refused.code, refused.output).not.toBe(0);
+        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(drift);
+        const restore = new DatabaseSync(fixture.databaseFilename);
+        try {
+          restore
+            .prepare(
+              "UPDATE works SET revision=0, updated_at='t0' WHERE work_id='wrk_p6_operator_fixture'",
+            )
+            .run();
+        } finally {
+          restore.close();
+        }
+        const beforeResume = logicalSqliteDigest(fixture.databaseFilename);
+        const resumed = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          true,
+        );
+        expect(resumed.code, resumed.output).toBe(0);
+        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
+          beforeResume,
+        );
+        expect(
+          validateP6InboxManifestText(readFileSync(manifest, "utf8")).map(
+            ({ record }) => record.kind,
+          ),
+        ).toEqual(["Created", "Prepared", "Committed"]);
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "rejects missing and tampered resume manifests without mutation",
+    () =>
+      withP6Fixture(async (context) => {
+        const { fixture } = context;
+        const committed = await commitInitialProjection(context);
+        const digest = logicalSqliteDigest(fixture.databaseFilename);
+        const missing = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          join(fixture.directory, "missing.jsonl"),
+          true,
+        );
+        expect(missing.code, missing.output).not.toBe(0);
+        const tampered = join(fixture.directory, "tampered.jsonl");
+        writeFileSync(
+          tampered,
+          committed.replace('"kind":"Committed"', '"kind":"Forged"'),
+          { flag: "wx", mode: 0o600 },
+        );
+        const forged = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          tampered,
+          true,
+        );
+        expect(forged.code, forged.output).not.toBe(0);
+        expect(existsSync(tampered)).toBe(true);
+        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(digest);
+      }),
+    caseTimeoutMs,
+  );
+
+  it.each(["schema47", "schema49", "pseudo48"] as const)(
+    "rejects the %s migration prefix without evidence mutation",
+    (invalidPrefix) =>
+      withP6Fixture(async ({ fixture }) => {
+        const invalidDatabase = join(
+          fixture.directory,
+          `${invalidPrefix}.sqlite`,
+        );
+        copyFileSync(fixture.databaseFilename, invalidDatabase);
+        const db = new DatabaseSync(invalidDatabase);
+        try {
+          if (invalidPrefix === "schema47") db.exec("PRAGMA user_version=47");
+          else if (invalidPrefix === "schema49")
+            db.exec("PRAGMA user_version=49");
+          else db.exec("CREATE TABLE p6_schema_tamper(id TEXT PRIMARY KEY)");
+        } finally {
+          db.close();
+        }
+        const before = logicalSqliteDigest(invalidDatabase);
+        const manifest = join(fixture.directory, `${invalidPrefix}.jsonl`);
+        const refused = await runOperatorCli(
+          processCli,
+          invalidDatabase,
+          fixture.p39ReportFilename,
+          manifest,
+          false,
+        );
+        expect(refused.code, refused.output).not.toBe(0);
+        expect(existsSync(manifest)).toBe(false);
+        expect(logicalSqliteDigest(invalidDatabase)).toBe(before);
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "serializes competing rebuild processes through the SQLite writer lock",
+    () =>
+      withP6Fixture(async ({ fixture }) => {
+        await raceOperatorSidecar(
+          repositoryRoot,
+          processCli,
+          fixture.databaseFilename,
+          fixture.directory,
+        );
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "rolls back all Inbox rows when a later candidate fails",
+    () =>
+      withP6Fixture(async ({ fixture }) => {
+        seedFailAfterFirstCandidate(fixture.databaseFilename);
+        const before = logicalSqliteDigest(fixture.databaseFilename);
+        const manifest = join(fixture.directory, "p6-rollback.jsonl");
+        const result = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          fixture.p39ReportFilename,
+          manifest,
+          false,
+        );
+        expect(result.code, result.output).not.toBe(0);
+        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(before);
+        expect(
+          validateP6InboxManifestText(readFileSync(manifest, "utf8")).map(
+            ({ record }) => record.kind,
+          ),
+        ).toEqual(["Created", "Prepared"]);
+        const db = new DatabaseSync(fixture.databaseFilename, {
+          readOnly: true,
+        });
+        try {
+          expect(
+            db
+              .prepare(
+                "SELECT entry_key FROM inbox_entries WHERE entry_key LIKE 'retry-verification-unbound:%'",
+              )
+              .all(),
+          ).toEqual([]);
+        } finally {
+          db.close();
+        }
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "rejects protected app, WAL and hard-link evidence aliases",
+    () =>
+      withP6Fixture(async (context) => {
+        const { fixture } = context;
+        await commitInitialProjection(context);
+        const protectedApp = join(
+          fixture.directory,
+          "protected-empty-application.sqlite",
+        );
+        new DatabaseSync(protectedApp).close();
+        const appDigest = logicalSqliteDigest(protectedApp);
+        const appManifest = join(fixture.directory, "p6-protected-app.jsonl");
+        const appAlias = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          protectedApp,
+          appManifest,
+          false,
+          { ARBOR_DB: protectedApp },
+        );
+        expect(appAlias.code, appAlias.output).not.toBe(0);
+        expect(existsSync(appManifest)).toBe(false);
+        expect(logicalSqliteDigest(protectedApp)).toBe(appDigest);
+        const protectedWal = join(
+          fixture.directory,
+          "protected-wal-application.sqlite",
+        );
+        const walDb = new DatabaseSync(protectedWal);
+        try {
+          walDb.exec(
+            "PRAGMA journal_mode=WAL; CREATE TABLE protected_data(value TEXT)",
+          );
+          walDb
+            .prepare("INSERT INTO protected_data VALUES ('protected')")
+            .run();
+          const digest = logicalSqliteDigest(protectedWal);
+          const walManifest = join(fixture.directory, "p6-protected-wal.jsonl");
+          const walAlias = await runOperatorCli(
+            processCli,
+            fixture.databaseFilename,
+            `${protectedWal}-wal`,
+            walManifest,
+            false,
+            { ARBOR_DB: protectedWal },
+          );
+          expect(walAlias.code, walAlias.output).not.toBe(0);
+          expect(existsSync(walManifest)).toBe(false);
+          expect(logicalSqliteDigest(protectedWal)).toBe(digest);
+          const hardlink = join(fixture.directory, "p6-wal-hardlink.sqlite");
+          linkSync(`${protectedWal}-wal`, hardlink);
+          try {
+            const hardlinkManifest = join(
+              fixture.directory,
+              "p6-wal-hardlink.jsonl",
+            );
+            const hardlinkAlias = await runOperatorCli(
+              processCli,
+              fixture.databaseFilename,
+              hardlink,
+              hardlinkManifest,
+              false,
+              { ARBOR_DB: protectedWal },
+            );
+            expect(hardlinkAlias.code, hardlinkAlias.output).not.toBe(0);
+            expect(existsSync(hardlinkManifest)).toBe(false);
+          } finally {
+            if (existsSync(hardlink)) unlinkSync(hardlink);
+          }
+        } finally {
+          walDb.close();
+        }
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "rejects the exact writer-lock file as an evidence sidecar",
+    () =>
+      withP6Fixture(async (context) => {
+        const { fixture } = context;
+        await commitInitialProjection(context);
+        const stat = statSync(fixture.databaseFilename, { bigint: true });
+        const lock = join(
+          fixture.directory,
+          ".arbor-p39-writer-" +
+            sha256Hex(`${String(stat.dev)}:${String(stat.ino)}`) +
+            ".sqlite",
+        );
+        expect(existsSync(lock)).toBe(true);
+        const before = logicalSqliteDigest(fixture.databaseFilename);
+        const manifest = join(fixture.directory, "p6-writer-lock-alias.jsonl");
+        const alias = await runOperatorCli(
+          processCli,
+          fixture.databaseFilename,
+          lock,
+          manifest,
+          false,
+        );
+        expect(alias.code, alias.output).not.toBe(0);
+        expect(existsSync(manifest)).toBe(false);
+        expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(before);
+      }),
+    caseTimeoutMs,
+  );
+
+  it(
+    "refuses while another process owns the writer lock",
+    () =>
+      withP6Fixture(async (context) => {
+        const { fixture } = context;
+        await commitInitialProjection(context);
+        const stat = statSync(fixture.databaseFilename, { bigint: true });
+        const lock = join(
+          fixture.directory,
+          ".arbor-p39-writer-" +
+            sha256Hex(`${String(stat.dev)}:${String(stat.ino)}`) +
+            ".sqlite",
+        );
+        const holder = spawn(
+          process.execPath,
+          [
+            join(
+              repositoryRoot,
+              "apps/single-workspace/test/p6-writer-lock-holder.mjs",
+            ),
+            lock,
+          ],
+          {
+            cwd: repositoryRoot,
+            windowsHide: true,
+            env: {
+              ...p39WindowsTestEnvironment(),
+              ARBOR_P6_LOCK_DIAGNOSTIC: join(
+                fixture.directory,
+                "lock-holder-diagnostic.txt",
+              ),
+            },
+            stdio: ["pipe", "pipe", "pipe"],
+          },
+        );
+        let output = "";
+        holder.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+          output += chunk;
+        });
+        holder.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+          output += chunk;
+        });
+        const closed = new Promise<number | null>((resolveClose) =>
+          holder.once("close", resolveClose),
+        );
+        try {
+          await waitForOutput(holder, "READY\n", 30_000);
+          const before = logicalSqliteDigest(fixture.databaseFilename);
+          const manifest = join(fixture.directory, "p6-shared-refused.jsonl");
+          const refused = await runOperatorCli(
+            processCli,
+            fixture.databaseFilename,
+            fixture.p39ReportFilename,
+            manifest,
+            false,
+            { ARBOR_P6_TEST_LOCK_BUSY_TIMEOUT_MS: "3000" },
+          );
+          expect(refused.code, refused.output).not.toBe(0);
+          expect(existsSync(manifest)).toBe(false);
+          expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(before);
+        } finally {
+          if (holder.exitCode === null && holder.stdin.writable)
+            holder.stdin.end("release\n");
+        }
+        expect(await closed, output).toBe(0);
+      }),
+    caseTimeoutMs,
+  );
 });
 
 const runOperatorCli = async (
