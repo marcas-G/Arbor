@@ -24,7 +24,15 @@ export {
   type WindowsNativeArtifactIo,
   type WindowsNativeOperatorBuildBindingV1,
 } from "./native-artifact.js";
+export {
+  verifyWindowsNativeOperatorProvenanceV1,
+  type WindowsNativeOperatorProvenanceResult,
+} from "./operator-provenance.js";
 
+export {
+  inspectCurrentWindowsNativeQualificationManifest,
+  inspectWindowsNativeQualificationWithAuthorityV3,
+} from "./operator-qualification.js";
 export {
   decodeCanonicalWindowsNativeArtifactManifestV1,
   decodeWindowsNativeArtifactManifestV1,

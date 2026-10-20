@@ -1,6 +1,12 @@
-import { createHash } from "node:crypto";
+import { createHash, createPrivateKey, sign } from "node:crypto";
 import { win32 } from "node:path";
+import {
+  decodeCanonicalWindowsNativeOperatorTrustSetV1,
+  encodeWindowsNativeManifestSignatureV1,
+  type SandboxAuthorityBundleSnapshotV3,
+} from "@arbor/domain";
 import { describe, expect, it } from "vitest";
+import { inspectWindowsNativeQualificationWithAuthorityV3 } from "../src/operator-qualification.js";
 import {
   decodeCanonicalWindowsNativeArtifactManifestV1,
   encodeWindowsNativeArtifactManifestV1,
@@ -146,6 +152,114 @@ const verify = {
 };
 
 describe("strict Windows native qualification manifest V1", () => {
+  it("binds a genuine Ed25519 sidecar to the current V3 trust/registry tuple", () => {
+    const trustJson =
+      '{"version":1,"revision":1,"sourceIdentity":"host:test","providerId":"windows-restricted-appcontainer-job","keys":[{"keyId":"operator-2026-a","algorithm":"Ed25519","publicKeySpkiDerBase64":"MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=","publicKeySpkiSha256":"06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9","validFrom":"2026-10-20T00:00:00.000Z","validUntil":"2027-10-20T00:00:00.000Z","status":"Active"}],"revokedKeyIds":[]}';
+    const trust = decodeCanonicalWindowsNativeOperatorTrustSetV1(
+      trustJson,
+      (bytes) => hash(Buffer.from(bytes)),
+    );
+    if (trust === undefined) throw new Error("trust KAT rejected");
+    const seed = Buffer.from(
+      "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+      "hex",
+    );
+    const pkcs8 = Buffer.concat([
+      Buffer.from("302e020100300506032b657004220420", "hex"),
+      seed,
+    ]);
+    const privateKey = createPrivateKey({
+      key: pkcs8,
+      format: "der",
+      type: "pkcs8",
+    });
+    const message = Buffer.concat([
+      Buffer.from("Arbor.WindowsNativeQualificationManifestV1\0", "ascii"),
+      manifestBytes,
+    ]);
+    const signed = sign(null, message, privateKey);
+    const sidecar = Buffer.from(
+      encodeWindowsNativeManifestSignatureV1({
+        version: 1,
+        keyId: "operator-2026-a",
+        signatureBase64: signed.toString("base64"),
+      }),
+      "utf8",
+    );
+    const qualified = {
+      ...expected,
+      qualificationEvidenceRef: `blob:sha256:${hash(manifestBytes)}`,
+    };
+    const snapshot = {
+      bundle: {
+        version: 3,
+        operatorConfigRevision: expected.operatorConfigRevision,
+        operatorConfigDigest: expected.operatorConfigDigest,
+        windowsOperatorTrustSet: trust,
+        providerRegistry: {
+          entries: [
+            {
+              providerId: expected.providerId,
+              providerVersion: expected.providerVersion,
+              capabilityRevision: expected.capabilityRevision,
+              osFamily: "Windows",
+              osBuild: expected.osBuild,
+              tuple: {
+                profile: expected.profile,
+                networkMode: expected.networkMode,
+                networkPolicyCodecVersion: 1,
+                enforcementRuleSetDigest: expected.enforcementRuleSetDigest,
+              },
+              status: "Experimental",
+              qualificationEvidenceRef: qualified.qualificationEvidenceRef,
+            },
+          ],
+        },
+      },
+    } as unknown as SandboxAuthorityBundleSnapshotV3;
+    const io = makeIo({ files: new Map([[paths.signature, sidecar]]) });
+    const inspect = (current = snapshot) =>
+      inspectWindowsNativeQualificationWithAuthorityV3(
+        paths,
+        qualified,
+        current,
+        { osFamily: "Windows", osBuild: expected.osBuild },
+        "2026-10-20T00:00:00.000Z",
+        io,
+      );
+    expect(inspect()).toMatchObject({
+      _tag: "ManifestVerified",
+      qualificationEvidenceRef: qualified.qualificationEvidenceRef,
+    });
+    expect(
+      inspect({
+        ...snapshot,
+        bundle: {
+          ...snapshot.bundle,
+          windowsOperatorTrustSet: {
+            ...trust,
+            revokedKeyIds: ["operator-2026-a"],
+          },
+        },
+      }),
+    ).toEqual({ _tag: "Unavailable", reason: "OperatorProvenanceInvalid" });
+    expect(
+      inspect({
+        ...snapshot,
+        bundle: {
+          ...snapshot.bundle,
+          providerRegistry: {
+            ...snapshot.bundle.providerRegistry,
+            entries: [],
+          },
+        },
+      }),
+    ).toEqual({
+      _tag: "Unavailable",
+      reason: "RegistryQualificationBindingMismatch",
+    });
+  });
+
   it("pins exact ordered canonical bytes and the complete manifest digest", () => {
     const encoded = encodeWindowsNativeArtifactManifestV1(manifest);
     expect(encoded).toBe(
