@@ -525,9 +525,9 @@ describe("I0 executable/control vertical slice", () => {
               sandboxPolicyIssuerBinding: {
                 executionId: exe1,
                 operatorConfigRevision:
-                  sandboxAuthorityFixture.bundle.issuerConfigRevision,
+                  sandboxAuthorityFixture.bundle.operatorConfigRevision,
                 operatorConfigDigest:
-                  sandboxAuthorityFixture.bundle.issuerConfigDigest,
+                  sandboxAuthorityFixture.bundle.operatorConfigDigest,
                 authorityBundleRevision:
                   sandboxAuthorityFixture.bundle.bundleRevision,
                 authorityBundleDigest: sandboxAuthorityFixture.bundleDigest,
