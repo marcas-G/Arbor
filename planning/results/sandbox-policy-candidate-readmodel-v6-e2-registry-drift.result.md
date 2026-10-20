@@ -53,17 +53,15 @@ crash/reapproval matrix remains open.**
 - P3/P4/P39 pending-action fixture test — PASS, 1/1 before the existing
   Workspace adapter was added; the functional process case also passes that
   existing-Workspace fixture path and P11 readback.
-- `pnpm build` passes. `pnpm typecheck` passes after correcting E1 test helper
-  package-module imports and typed IDs/state. Full `pnpm check` reached core
-  batch 6 and stopped on six baseline cases: five fixtures still start at
-  `user_version 48` despite the schema-50 offline-upgrade gate, and one AH7 P39
-  fact-failure fixture reaches the newly-required sandbox-policy interruption
-  before its asserted OutcomeUnknown settlement. The five fixture repairs and
-  the AH7 valid-policy setup are being handled on the unified line; none of
-  those baseline cases were changed here. The earlier P41/P42 suffix issue was
-  fixed by unified commit `05b593eb` and no longer fails. Biome and
-  `git diff --check` passed before the most recent P1 test additions; rerun
-  before commit.
+- `pnpm build`, `pnpm typecheck`, Biome and `git diff --check` pass. Full
+  `pnpm check` passes lint/typecheck/architecture and core batches 1–6, but
+  stops at batch 7 on baseline integration drift: 12 tests across 11 files
+  still use `user_version 48` despite the schema-50 offline-upgrade gate; two
+  P38 shell-approval tests reach the newly-required sandbox-policy
+  interruption before their asserted ApprovalRequired state; and the P13 E2E
+  suite fails startup with an undefined handle. These are assigned to unified
+  baseline convergence, and none were changed here. The P41/P42 suffix issue
+  was fixed by unified commit `05b593eb` and no longer fails.
 
 ## Remaining V6-E qualification
 

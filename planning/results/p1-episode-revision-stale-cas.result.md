@@ -17,7 +17,7 @@ receipt. No trusted authority facts or other caller fields were relaxed.
 
 Verification: `pnpm build` PASS; `sandbox-policy-grant-authority.test.ts` and
 `sandbox-policy-decision-gateway.atomic.test.ts` PASS, 17/17. Full `pnpm check`
-passes lint/typecheck/architecture and core batches 1–5, then stops in batch 6
-on five separate schema-48 test fixtures and one AH7 P39 policy-interruption
-fixture. Those baseline fixes are assigned on the unified line; no related
-baseline production/test semantics were changed in this patch.
+passes lint/typecheck/architecture and core batches 1–6, then stops in batch 7
+on schema-48 fixtures and P38 sandbox-policy interruption expectations; the
+P13 E2E suite also fails startup. Those baseline fixes are assigned on the
+unified line; no related baseline semantics were changed in this patch.
