@@ -88,13 +88,18 @@ pauses at `AH7AfterToolIntentCommit`.
 
 The replacement journey proves public CreateProject/GrantPermission/Work
 admission, a real provider shell ToolCall, P4 intent and verified recovery
-binding, then P1 TrustedLocal decision at V2 bundle revision 1. It changes only
-the provider registry and bundle revisions, kills daemon 1, and restarts daemon
-2 against the same schema-50 SQLite file and protected source. Before
-reapproval, P2 parks the same Pending action with unchanged invocation and
-RecoveryBinding; the P10 candidate read refreshes, stale old P1 payload is
-rejected without writes, and no sandbox provider run is claimed. This closes
-the previously observed lazy P4 intent-ordering RED for this flow.
+binding, then P1 TrustedLocal decision at V2 bundle revision 1. The exact
+DecideSandboxPolicy PermissionGrant is now issued while the shell executable
+approval is Pending but before ResolveExecutableApproval; the test reads the
+durable P3 Action as Pending and asserts no P4 ToolInvocation exists yet. This
+preserves P4's invocation-authority source revision through restart. It then
+changes only provider registry and bundle revisions, kills daemon 1, and
+restarts daemon 2 against the same schema-50 SQLite file and protected source.
+Before reapproval, P2 parks the same Pending action with unchanged invocation
+and RecoveryBinding; the P10 candidate read refreshes, stale old P1 payload is
+rejected without writes, and no sandbox provider run is claimed. The corrected
+real-flow test passed twice after this ordering was installed. This closes the
+previously observed lazy P4 intent-ordering RED for this flow.
 
 The first attempt after the operator bridge timed out while waiting for
 executable approval and showed the original HumanConversation unconsumed. The
