@@ -12,6 +12,63 @@ describe("AH7 P39 fact-store failure at the P3 executable boundary", () => {
     const providerTurnId = "ptn_ah7_p39_fact_failure";
     const callRef = "call_ah7_p39_fact_failure";
     const invocationId = "tin_018f2b3c-4d5e-7abc-8def-0123456789a4";
+    const episode = {
+      _tag: "WorkEpisode" as const,
+      workId: "wrk_ah7_p39_fact_failure",
+      targetWorkRevision: 1,
+    };
+    const sandboxPolicyResolution = {
+      policy: {
+        kind: "TrustedLocalUnconfinedRuntimePolicy" as const,
+        executionId,
+        episodeBinding: episode,
+        sandboxHandleId: "sbx_ah7_p39_fact_failure",
+        policyRevision: 1,
+        profile: "FullAccess" as const,
+        providerId: "TrustedLocal" as const,
+        providerVersion: "builtin-v1",
+        capabilityRevision: "builtin-v1",
+        boundary: "TrustedLocal" as const,
+        trustedRuntimeIdentity: "TrustedLocal" as const,
+        trustedRuntimeVersion: "builtin-v1",
+        networkBoundary: "Unconfined" as const,
+        policyDigest: "a".repeat(64),
+        admittedMounts: [
+          {
+            ref: "workspace",
+            rootPath: "C:/arbor/ah7-p39-fixture",
+            access: "ReadWrite" as const,
+          },
+        ],
+        environmentAllowlist: ["PATH"],
+        limits: {
+          wallTimeMs: 5_000,
+          stdoutBytes: 1_024,
+          stderrBytes: 1_024,
+          processCount: 1,
+          memoryBytes: 1_000_000,
+          cpuTimeMs: 5_000,
+        },
+        auditRefs: ["cmd_ah7_p39_fact_failure"],
+      },
+      mounts: [
+        {
+          ref: "workspace",
+          address: {
+            _tag: "FileTree" as const,
+            path: "C:/arbor/ah7-p39-fixture",
+          },
+          region: {
+            resourceSpaceId: "filesystem",
+            normalizedRegion: {
+              kind: "FileTree",
+              path: "C:/arbor/ah7-p39-fixture",
+            },
+          },
+          access: "ReadWrite" as const,
+        },
+      ],
+    };
     const toolResultRows: Array<Record<string, unknown>> = [];
     const actions: Array<Record<string, unknown>> = [];
     let step = {
@@ -25,18 +82,35 @@ describe("AH7 P39 fact-store failure at the P3 executable boundary", () => {
 
     const handler = makeExecutableToolHandler(
       {
-        invoke: () =>
-          Effect.fail({
-            _tag: "ToolRuntimeOperationalFailure",
-            stage: "SettlementJournal",
-            effectDisposition: "OutcomeUncertain",
-            invocationRef: invocationId,
-            cause: {
-              _tag: "PersistenceUnavailable",
-              repository: "ToolReconciliationFactStore",
-              operation: "record",
-              sourceTag: "InjectedP39FactWriteFailure",
-            },
+        invoke: (_intent, context) =>
+          Effect.gen(function* () {
+            if (context.resolveSandboxProcessPolicy === undefined) {
+              return yield* Effect.die(
+                "fixture must provide the current shell sandbox policy",
+              );
+            }
+            const resolved = yield* context.resolveSandboxProcessPolicy({
+              now: "2026-10-17T00:00:01.000Z",
+            });
+            if (
+              resolved?.policy.kind !== "TrustedLocalUnconfinedRuntimePolicy"
+            ) {
+              return yield* Effect.die(
+                "fixture must resolve the explicit TrustedLocal policy",
+              );
+            }
+            return yield* Effect.fail({
+              _tag: "ToolRuntimeOperationalFailure" as const,
+              stage: "SettlementJournal" as const,
+              effectDisposition: "OutcomeUncertain" as const,
+              invocationRef: invocationId,
+              cause: {
+                _tag: "PersistenceUnavailable",
+                repository: "ToolReconciliationFactStore",
+                operation: "record",
+                sourceTag: "InjectedP39FactWriteFailure",
+              },
+            });
           }),
       },
       { now: () => Effect.succeed("2026-10-17T00:00:01.000Z") },
@@ -45,6 +119,10 @@ describe("AH7 P39 fact-store failure at the P3 executable boundary", () => {
           Effect.succeed([{ name: "shell", version: "3", hash: "shell-v3" }]),
         resolveForModel: () => Effect.die("unused"),
       },
+      undefined,
+      undefined,
+      undefined,
+      () => Effect.succeed(sandboxPolicyResolution as never),
     );
     const loopSteps = {
       listActions: () => Effect.succeed(actions),
@@ -86,7 +164,7 @@ describe("AH7 P39 fact-store failure at the P3 executable boundary", () => {
             binding: {
               _tag: "WorkspaceExecution",
               workspaceId,
-              focus: { _tag: "Coordination" },
+              episode,
             },
           } as never,
           context: {
