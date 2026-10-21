@@ -126,6 +126,38 @@ const canonicalUtc = (value: unknown): value is string =>
   Number.isFinite(Date.parse(value)) &&
   new Date(Date.parse(value)).toISOString() === value;
 
+const verifiedActivationHighwater = (
+  projectId: ProjectId,
+  raw: {
+    readonly projectIdRaw: unknown;
+    readonly maxEventSequenceRaw: unknown;
+    readonly capturedAtRaw: unknown;
+    readonly factDigestRaw: unknown;
+  },
+) => {
+  if (
+    raw.projectIdRaw !== projectId ||
+    typeof raw.maxEventSequenceRaw !== "number" ||
+    !Number.isSafeInteger(raw.maxEventSequenceRaw) ||
+    raw.maxEventSequenceRaw < 0 ||
+    !canonicalUtc(raw.capturedAtRaw) ||
+    typeof raw.factDigestRaw !== "string"
+  ) {
+    return null;
+  }
+  const expectedDigest = sha256Hex(
+    `f18-v2-activation-highwater-v1\0${projectId}\0${raw.maxEventSequenceRaw}\0${raw.capturedAtRaw}`,
+  );
+  return raw.factDigestRaw === expectedDigest
+    ? {
+        projectId,
+        maxEventSequence: raw.maxEventSequenceRaw,
+        capturedAt: raw.capturedAtRaw,
+        factDigest: raw.factDigestRaw,
+      }
+    : null;
+};
+
 const payloadFieldsMatch = (
   payload: Record<string, unknown>,
   verification: Verification,
@@ -242,14 +274,29 @@ const validateCandidate = (
     const rawDecode = yield* deps.journal.decodeRaw(candidate);
     let payload = rawPayload;
     let legacyAbsentReason = false;
+    let legacyActivationHighwater: ReturnType<
+      typeof verifiedActivationHighwater
+    > = null;
     if (rawDecode._tag !== "Decoded") {
       if (
         candidate.deadLetterReason === "malformed event payload" &&
         rawPayload.conclusionReason === "" &&
         Object.hasOwn(rawPayload, "conclusionReason")
       ) {
-        const highwater = yield* deps.store.activationHighwater(projectId);
-        if (highwater !== null && candidate.sequenceRaw <= highwater) {
+        const highwaterRaw = yield* deps.store.activationHighwater(projectId);
+        if (highwaterRaw !== null) {
+          legacyActivationHighwater = verifiedActivationHighwater(
+            projectId,
+            highwaterRaw,
+          );
+          if (legacyActivationHighwater === null) {
+            return { _tag: "Rejected", failureCode: "StateCorruption" };
+          }
+        }
+        if (
+          legacyActivationHighwater !== null &&
+          candidate.sequenceRaw <= legacyActivationHighwater.maxEventSequence
+        ) {
           payload = { ...rawPayload, conclusionReason: null };
           const compatibilityDecode = decodeSupportedEventPayload(
             "VerificationConcluded",
@@ -509,6 +556,7 @@ const validateCandidate = (
       stableJson({
         candidate,
         originalPayloadJson: candidate.payloadJsonRaw,
+        legacyActivationHighwater,
         storedReceipt: stored,
         verification,
         ownerWorkspace: ownerResult.value,
@@ -913,9 +961,13 @@ export const runVerificationSignalReconciliationSweep = (
       });
     }
     const candidates = yield* deps.tx.transact(
-      deps.store.listDeadLetterCandidates({
-        projectId,
-        limit: config.batchSize,
+      Effect.gen(function* () {
+        const now = yield* deps.clock.now();
+        return yield* deps.store.listDeadLetterCandidates({
+          projectId,
+          limit: config.batchSize,
+          now,
+        });
       }),
     );
     if (candidates.length === 0) {

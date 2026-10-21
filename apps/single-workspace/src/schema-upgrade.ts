@@ -1258,7 +1258,9 @@ const validateDescriptorPin = (version: number): void => {
       process.cwd(),
       "adapters/persistence-sqlite/src/p51-verification-v2-consumer-reconciliation-migration.ts",
     );
-    const sourceHash = sha256Hex(readFileSync(sourcePath, "utf8"));
+    const sourceHash = sha256Hex(
+      readFileSync(sourcePath, "utf8").replace(/\r\n/gu, "\n"),
+    );
     if (sourceHash !== PINNED_P51_MIGRATION_SOURCE_SHA256)
       throw new SchemaUpgradeRefusal(
         "P51 activation high-water implementation differs from the accepted offline pin",

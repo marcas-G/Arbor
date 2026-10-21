@@ -269,7 +269,12 @@ describe("release-functional long-lived responsibility", () => {
           () =>
             client.view<{
               verdict?: string;
-              criteriaResults?: Array<{ criterionId: string; verdict: string }>;
+              criteriaResults?: Array<{
+                criterionId: string;
+                requirement: string;
+                required: boolean;
+                verdict: string;
+              }>;
             }>("verification", { workId }),
           (value) =>
             value.verdict === "Pass" &&
@@ -478,7 +483,12 @@ describe("release-functional long-lived responsibility", () => {
           () =>
             client.view<{
               verdict?: string;
-              criteriaResults?: Array<{ criterionId: string; verdict: string }>;
+              criteriaResults?: Array<{
+                criterionId: string;
+                requirement: string;
+                required: boolean;
+                verdict: string;
+              }>;
               acceptance?: { acceptanceId: string };
             }>("verification", { workId }),
           (value) =>

@@ -99,15 +99,19 @@ export interface VerificationSignalReconciliationStoreService {
   readonly listDeadLetterCandidates: (input: {
     readonly projectId: ProjectId;
     readonly limit: number;
+    readonly now: string;
   }) => Effect.Effect<
     ReadonlyArray<VerificationSignalReconciliationCandidate>,
     VerificationSignalReconciliationStoreError,
     TransactionScope
   >;
-  readonly activationHighwater: (
-    projectId: ProjectId,
-  ) => Effect.Effect<
-    number | null,
+  readonly activationHighwater: (projectId: ProjectId) => Effect.Effect<
+    {
+      readonly projectIdRaw: unknown;
+      readonly maxEventSequenceRaw: unknown;
+      readonly capturedAtRaw: unknown;
+      readonly factDigestRaw: unknown;
+    } | null,
     VerificationSignalReconciliationStoreError,
     TransactionScope
   >;

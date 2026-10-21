@@ -136,13 +136,23 @@ export const VerificationSignalReconciliationStoreLive = Layer.effect(
                   AND event.sequence = dead_letter.sequence
                 WHERE dead_letter.consumer_id = 'workflow-signals'
                   AND dead_letter.project_id = ?
+                  AND NOT EXISTS (
+                    SELECT 1 FROM verification_signal_reconciliations AS reconciliation
+                     WHERE reconciliation.consumer_id = dead_letter.consumer_id
+                       AND reconciliation.project_id = dead_letter.project_id
+                       AND reconciliation.event_sequence = dead_letter.sequence
+                       AND (
+                         reconciliation.phase IN ('Completed', 'Attention')
+                         OR reconciliation.lease_expires_at > ?
+                       )
+                  )
                   AND dead_letter.reason IN (
                     'unsupported eventVersion 2', 'malformed event payload'
                   )
                   AND event.event_type = 'VerificationConcluded'
                   AND event.event_version = 2
                 ORDER BY event.sequence LIMIT ?`,
-              [input.projectId, input.limit],
+              [input.projectId, input.now, input.limit],
             ),
           );
           return rows.map((row) => ({
@@ -164,16 +174,27 @@ export const VerificationSignalReconciliationStoreLive = Layer.effect(
       activationHighwater: (projectId) =>
         Effect.gen(function* () {
           const rows = yield* run(
-            sql.unsafe<{ readonly max_event_sequence: number }>(
-              `SELECT max_event_sequence
+            sql.unsafe<{
+              readonly project_id: unknown;
+              readonly max_event_sequence: unknown;
+              readonly captured_at: unknown;
+              readonly fact_digest: unknown;
+            }>(
+              `SELECT project_id, max_event_sequence, captured_at, fact_digest
                  FROM verification_conclusion_v2_activation_highwaters
                 WHERE project_id = ?`,
               [projectId],
             ),
           );
-          return rows[0] === undefined
+          const row = rows[0];
+          return row === undefined
             ? null
-            : Number(rows[0].max_event_sequence);
+            : {
+                projectIdRaw: row.project_id,
+                maxEventSequenceRaw: row.max_event_sequence,
+                capturedAtRaw: row.captured_at,
+                factDigestRaw: row.fact_digest,
+              };
         }),
       find: (identity) =>
         Effect.gen(function* () {
