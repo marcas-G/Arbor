@@ -188,7 +188,7 @@ describe("P48 AH19 Root Workspace Conversation checkpoint owner migration", () =
             }),
             "2026-10-17T01:02:04.000Z",
             "CompactionTurn",
-            "ptn_legacy_session_checkpoint",
+            "ptn_018f2b3c-4d5e-7abc-8def-0123456789af",
             "legacy-session-checkpoint-hash",
           );
         before.exec("COMMIT");

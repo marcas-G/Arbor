@@ -113,7 +113,7 @@ const canonicalToolCalls = async (
       cacheHints: [],
     },
     context: {
-      providerTurnId: "ptn_seg" as never,
+      providerTurnId: "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789b0_0" as never,
       attemptNo: 0,
       cancellationSignal: new AbortController().signal,
       turnDeadlineAt: new Date(Date.now() + 20_000).toISOString(),

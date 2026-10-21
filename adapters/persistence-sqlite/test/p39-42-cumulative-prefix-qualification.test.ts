@@ -660,7 +660,7 @@ describe("test-only P39 maintenance cumulative prefix qualification 0039–0042"
                  provider_turn_id, logical_action_id, failure_code,
                  first_detected_at
                ) VALUES (NULL, 'evt_null_p41', ?, ?, ?, 0, 0,
-                         'ptn_prefix', 'lac_prefix_null',
+                         'ptn_018f2b3c-4d5e-7abc-8def-0123456789b1', 'lac_prefix_null',
                          'StepManifestMismatch', 't')`,
               [projectId, executionId, workspaceId],
             ),
@@ -675,7 +675,7 @@ describe("test-only P39 maintenance cumulative prefix qualification 0039–0042"
                provider_turn_id, logical_action_id, failure_code,
                first_detected_at
              ) VALUES (?, 'evt_prefix_p41', ?, ?, ?, 0, 0,
-                       'ptn_prefix', 'lac_prefix',
+                       'ptn_018f2b3c-4d5e-7abc-8def-0123456789b1', 'lac_prefix',
                        'StepManifestMismatch', 't')`,
             [`att_${"a".repeat(64)}`, projectId, executionId, workspaceId],
           );

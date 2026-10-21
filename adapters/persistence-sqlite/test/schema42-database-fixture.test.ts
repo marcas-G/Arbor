@@ -302,7 +302,7 @@ describe("central schema-42 test database fixture", () => {
                  provider_turn_id, logical_action_id, failure_code,
                  first_detected_at
                ) VALUES (NULL, 'evt_schema42_null', ?, ?, ?, 0, 0,
-                         'ptn_schema42', 'lac_schema42_null',
+                         'ptn_018f2b3c-4d5e-7abc-8def-0123456789b2', 'lac_schema42_null',
                          'StepManifestMismatch', 't')`,
               [projectId, executionId, workspaceId],
             ),
@@ -314,7 +314,7 @@ describe("central schema-42 test database fixture", () => {
                provider_turn_id, logical_action_id, failure_code,
                first_detected_at
              ) VALUES (?, 'evt_schema42_valid', ?, ?, ?, 0, 0,
-                       'ptn_schema42', 'lac_schema42_valid',
+                       'ptn_018f2b3c-4d5e-7abc-8def-0123456789b2', 'lac_schema42_valid',
                        'StepManifestMismatch', 't')`,
             [attentionFactId, projectId, executionId, workspaceId],
           );
