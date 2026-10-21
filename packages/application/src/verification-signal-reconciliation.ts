@@ -18,6 +18,7 @@ import type {
   ProjectRepositoryService,
   RetryVerificationOriginRepositoryService,
   TransactionPortService,
+  TransactionScope,
   VerificationRepositoryService,
   VerificationSignalReconciliationCandidate,
   VerificationSignalReconciliationFailureCode,
@@ -68,6 +69,7 @@ export interface VerificationSignalReconciliationDependencies {
     "admitUpsert" | "findStoredByKey"
   >;
   readonly clock: { readonly now: () => Effect.Effect<string, unknown> };
+  readonly qualificationProbe?: VerificationSignalReconciliationQualificationProbe;
 }
 
 export interface VerificationSignalReconciliationSweepResult {
@@ -76,6 +78,24 @@ export interface VerificationSignalReconciliationSweepResult {
   readonly attention: number;
   readonly deferred: number;
 }
+
+export type VerificationSignalReconciliationQualificationBoundary =
+  | "AfterSourceValidationBeforeClaim"
+  | "AfterVerificationWakeEffectBeforeDisposition"
+  | "AfterVerificationWakeDispositionCommit"
+  | "BeforeParentInboxDispositionCommit"
+  | "AfterParentInboxDispositionCommit"
+  | "AfterParentWakeEffectBeforeDisposition"
+  | "AfterParentWakeDispositionCommit"
+  | "AfterCompletedDispositionCommit"
+  | "AfterAttentionCommit";
+
+export type VerificationSignalReconciliationQualificationProbe = (event: {
+  readonly boundary: VerificationSignalReconciliationQualificationBoundary;
+  readonly projectId: ProjectId;
+  readonly eventSequence: number;
+  readonly leaseGeneration: number;
+}) => Promise<void>;
 
 type Proof =
   | {
@@ -109,25 +129,32 @@ const canonicalUtc = (value: unknown): value is string =>
 const payloadFieldsMatch = (
   payload: Record<string, unknown>,
   verification: Verification,
-): boolean =>
-  payload.verificationId === verification.verificationId &&
-  payload.workId === verification.workId &&
-  payload.targetWorkRevision === verification.targetWorkRevision &&
-  payload.verdict ===
-    (verification.state.status === "Concluded"
-      ? verification.state.verdict
-      : null) &&
-  payload.conclusionReason ===
-    (verification.state.status === "Concluded"
-      ? (verification.state.conclusionReason ?? null)
-      : null) &&
-  payload.summaryRef === verification.summaryRef &&
-  stableJson(payload.evidenceRefs) === stableJson(verification.evidenceRefs) &&
-  stableJson(payload.missionSnapshot) ===
-    stableJson(verification.missionSnapshot) &&
-  stableJson(payload.criteriaResults) ===
-    stableJson(verification.criteriaResults ?? []) &&
-  payload.snapshotStatus === verification.snapshotStatus;
+): boolean => {
+  const canonicalEvidenceRefs =
+    verification.criteriaResults?.flatMap(
+      (criterion) => criterion.evidenceRefs,
+    ) ?? [];
+  return (
+    payload.verificationId === verification.verificationId &&
+    payload.workId === verification.workId &&
+    payload.targetWorkRevision === verification.targetWorkRevision &&
+    payload.verdict ===
+      (verification.state.status === "Concluded"
+        ? verification.state.verdict
+        : null) &&
+    payload.conclusionReason ===
+      (verification.state.status === "Concluded"
+        ? (verification.state.conclusionReason ?? null)
+        : null) &&
+    payload.summaryRef === verification.summaryRef &&
+    stableJson(payload.evidenceRefs) === stableJson(canonicalEvidenceRefs) &&
+    stableJson(payload.missionSnapshot) ===
+      stableJson(verification.missionSnapshot) &&
+    stableJson(payload.criteriaResults) ===
+      stableJson(verification.criteriaResults ?? []) &&
+    payload.snapshotStatus === verification.snapshotStatus
+  );
+};
 
 const expectedWakeSignals = (
   verification: Verification,
@@ -173,7 +200,7 @@ const validateCandidate = (
   candidate: VerificationSignalReconciliationCandidate,
   projectId: ProjectId,
   deps: VerificationSignalReconciliationDependencies,
-): Effect.Effect<Proof, unknown> =>
+): Effect.Effect<Proof, unknown, TransactionScope> =>
   Effect.gen(function* () {
     if (
       candidate.deadLetterReason !== "unsupported eventVersion 2" &&
@@ -221,9 +248,7 @@ const validateCandidate = (
         rawPayload.conclusionReason === "" &&
         Object.hasOwn(rawPayload, "conclusionReason")
       ) {
-        const highwater = yield* deps.tx.transact(
-          deps.store.activationHighwater(projectId),
-        );
+        const highwater = yield* deps.store.activationHighwater(projectId);
         if (highwater !== null && candidate.sequenceRaw <= highwater) {
           payload = { ...rawPayload, conclusionReason: null };
           const compatibilityDecode = decodeSupportedEventPayload(
@@ -260,8 +285,8 @@ const validateCandidate = (
     ) {
       return { _tag: "Rejected", failureCode: "EventDecodeFailed" };
     }
-    const verificationResult = yield* deps.tx.transact(
-      deps.verifications.findById(payloadId as VerificationId),
+    const verificationResult = yield* deps.verifications.findById(
+      payloadId as VerificationId,
     );
     if (Option.isNone(verificationResult)) {
       return { _tag: "Rejected", failureCode: "CanonicalMismatch" };
@@ -281,9 +306,7 @@ const validateCandidate = (
     ) {
       return { _tag: "Rejected", failureCode: "CanonicalMismatch" };
     }
-    const workResult = yield* deps.tx.transact(
-      deps.works.findById(verification.workId),
-    );
+    const workResult = yield* deps.works.findById(verification.workId);
     if (Option.isNone(workResult)) {
       return { _tag: "Rejected", failureCode: "RouteMismatch" };
     }
@@ -294,12 +317,8 @@ const validateCandidate = (
     ) {
       return { _tag: "Rejected", failureCode: "RouteMismatch" };
     }
-    const ownerResult = yield* deps.tx.transact(
-      deps.workspaces.findById(ownerWorkspaceId),
-    );
-    const projectResult = yield* deps.tx.transact(
-      deps.projects.findById(projectId),
-    );
+    const ownerResult = yield* deps.workspaces.findById(ownerWorkspaceId);
+    const projectResult = yield* deps.projects.findById(projectId);
     if (
       Option.isNone(ownerResult) ||
       ownerResult.value.projectId !== projectId ||
@@ -309,8 +328,8 @@ const validateCandidate = (
       return { _tag: "Rejected", failureCode: "RouteMismatch" };
     }
     if (ownerResult.value.parentWorkspaceId !== null) {
-      const parentResult = yield* deps.tx.transact(
-        deps.workspaces.findById(ownerResult.value.parentWorkspaceId),
+      const parentResult = yield* deps.workspaces.findById(
+        ownerResult.value.parentWorkspaceId,
       );
       if (
         Option.isNone(parentResult) ||
@@ -320,8 +339,8 @@ const validateCandidate = (
       }
     }
 
-    const receiptResult = yield* deps.tx.transact(
-      deps.commands.findResolution(commandId as CommandId),
+    const receiptResult = yield* deps.commands.findResolution(
+      commandId as CommandId,
     );
     if (Option.isNone(receiptResult)) {
       return { _tag: "Rejected", failureCode: "ReceiptMissing" };
@@ -356,8 +375,8 @@ const validateCandidate = (
       if (retryResult._tag !== "Committed") {
         return { _tag: "Rejected", failureCode: "ReceiptMismatch" };
       }
-      const origin = yield* deps.tx.transact(
-        deps.retryOrigins.findOrigin(commandId as CommandId),
+      const origin = yield* deps.retryOrigins.findOrigin(
+        commandId as CommandId,
       );
       if (
         Option.isNone(origin) ||
@@ -467,7 +486,10 @@ const validateCandidate = (
       targetWorkRevision: verification.targetWorkRevision,
       verdict: verification.state.verdict,
       conclusionReason: verification.state.conclusionReason ?? null,
-      evidenceRefs: verification.evidenceRefs,
+      evidenceRefs:
+        verification.criteriaResults?.flatMap(
+          (criterion) => criterion.evidenceRefs,
+        ) ?? [],
       summaryRef: verification.summaryRef,
       missionSnapshot: verification.missionSnapshot,
       criteriaResults: verification.criteriaResults ?? [],
@@ -564,6 +586,23 @@ const advance = (
       now,
     }),
   );
+
+const probeBoundary = (
+  deps: VerificationSignalReconciliationDependencies,
+  boundary: VerificationSignalReconciliationQualificationBoundary,
+  row: VerificationSignalReconciliationRow,
+) =>
+  deps.qualificationProbe === undefined
+    ? Effect.void
+    : Effect.promise(
+        () =>
+          deps.qualificationProbe?.({
+            boundary,
+            projectId: row.projectId,
+            eventSequence: row.eventSequence,
+            leaseGeneration: row.leaseGeneration,
+          }) ?? Promise.resolve(),
+      );
 
 const handleProvenSource = (
   proof: Extract<Proof, { readonly _tag: "Proven" }>,
@@ -663,6 +702,14 @@ const handleProvenSource = (
       Date.parse(row.leaseExpiresAt) <= Date.parse(now)
     )
       return "Deferred";
+    if (
+      childPass &&
+      (row.phase === "ParentInboxCommitted" ||
+        row.phase === "ParentWakeDelivered") &&
+      !(yield* inboxIsExact())
+    ) {
+      return "Attention:InboxConflict";
+    }
     const wakeDeps = {
       tx: deps.tx,
       waits: deps.waits,
@@ -680,6 +727,11 @@ const handleProvenSource = (
         },
         wakeDeps,
       );
+      yield* probeBoundary(
+        deps,
+        "AfterVerificationWakeEffectBeforeDisposition",
+        row,
+      );
       const advanced = yield* advance(
         deps,
         row,
@@ -688,6 +740,7 @@ const handleProvenSource = (
         yield* deps.clock.now(),
       );
       if (!advanced) return "Deferred";
+      yield* probeBoundary(deps, "AfterVerificationWakeDispositionCommit", row);
       row = {
         ...row,
         phase: "VerificationWakeDelivered",
@@ -707,66 +760,85 @@ const handleProvenSource = (
     }
     if (parentWorkspaceId === null) return "Deferred";
     if (row.phase === "VerificationWakeDelivered") {
-      const inboxOutcome = yield* deps.tx.transact(
-        Effect.gen(function* () {
-          const findStored = deps.inbox.findStoredByKey;
-          if (findStored === undefined) return "Conflict" as const;
-          let stored = yield* findStored.call(
-            deps.inbox,
-            parentWorkspaceId,
-            entryKey,
-          );
-          if (Option.isSome(stored)) {
-            if (
-              !exactChildResultInbox(
-                stored.value.entry,
-                parentWorkspaceId,
-                verificationId,
-                workId,
-                proof.source.workRevision,
-                proof.occurredAt,
-              )
-            )
-              return "Conflict" as const;
-          } else {
-            yield* deps.inbox.admitUpsert({
-              recipientWorkspaceId: parentWorkspaceId,
-              entryKey,
-              kind: "Message",
-              summary: `Child result ready for Work ${workId} revision ${proof.source.workRevision}`,
-              admittedAt: proof.occurredAt,
-            });
-            stored = yield* findStored.call(
+      const inboxResult = yield* Effect.result(
+        deps.tx.transact(
+          Effect.gen(function* () {
+            const findStored = deps.inbox.findStoredByKey;
+            if (findStored === undefined) return "Conflict" as const;
+            let stored = yield* findStored.call(
               deps.inbox,
               parentWorkspaceId,
               entryKey,
             );
-            if (
-              Option.isNone(stored) ||
-              !exactChildResultInbox(
-                stored.value.entry,
-                parentWorkspaceId,
-                verificationId,
-                workId,
-                proof.source.workRevision,
-                proof.occurredAt,
+            if (Option.isSome(stored)) {
+              if (
+                !exactChildResultInbox(
+                  stored.value.entry,
+                  parentWorkspaceId,
+                  verificationId,
+                  workId,
+                  proof.source.workRevision,
+                  proof.occurredAt,
+                )
               )
-            )
-              return "Conflict" as const;
-          }
-          const committed = yield* deps.store.advance({
-            identity: row,
-            expectedPhase: "VerificationWakeDelivered",
-            nextPhase: "ParentInboxCommitted",
-            leaseOwner: row.leaseOwner ?? "",
-            leaseGeneration: row.leaseGeneration,
-            now: yield* deps.clock.now(),
-          });
-          return committed ? ("Committed" as const) : ("Lost" as const);
-        }),
+                return "Conflict" as const;
+            } else {
+              yield* deps.inbox.admitUpsert({
+                recipientWorkspaceId: parentWorkspaceId,
+                entryKey,
+                kind: "Message",
+                summary: `Child result ready for Work ${workId} revision ${proof.source.workRevision}`,
+                admittedAt: proof.occurredAt,
+              });
+              stored = yield* findStored.call(
+                deps.inbox,
+                parentWorkspaceId,
+                entryKey,
+              );
+              if (
+                Option.isNone(stored) ||
+                !exactChildResultInbox(
+                  stored.value.entry,
+                  parentWorkspaceId,
+                  verificationId,
+                  workId,
+                  proof.source.workRevision,
+                  proof.occurredAt,
+                )
+              )
+                return "Conflict" as const;
+            }
+            const committed = yield* deps.store.advance({
+              identity: row,
+              expectedPhase: "VerificationWakeDelivered",
+              nextPhase: "ParentInboxCommitted",
+              leaseOwner: row.leaseOwner ?? "",
+              leaseGeneration: row.leaseGeneration,
+              now: yield* deps.clock.now(),
+            });
+            if (!committed) {
+              return yield* Effect.fail({
+                _tag: "F18InboxPhaseCASLost" as const,
+              });
+            }
+            yield* probeBoundary(
+              deps,
+              "BeforeParentInboxDispositionCommit",
+              row,
+            );
+            return "Committed" as const;
+          }),
+        ),
       );
+      const inboxOutcome = Result.isSuccess(inboxResult)
+        ? inboxResult.success
+        : isRecord(inboxResult.failure) &&
+            inboxResult.failure._tag === "F18InboxPhaseCASLost"
+          ? "Lost"
+          : yield* Effect.fail(inboxResult.failure);
       if (inboxOutcome === "Conflict") return "Attention:InboxConflict";
       if (inboxOutcome === "Lost") return "Deferred";
+      yield* probeBoundary(deps, "AfterParentInboxDispositionCommit", row);
       row = { ...row, phase: "ParentInboxCommitted" };
     }
     if (row.phase === "ParentInboxCommitted") {
@@ -788,6 +860,7 @@ const handleProvenSource = (
           scheduler: deps.scheduler,
         },
       );
+      yield* probeBoundary(deps, "AfterParentWakeEffectBeforeDisposition", row);
       const advanced = yield* advance(
         deps,
         row,
@@ -796,6 +869,7 @@ const handleProvenSource = (
         yield* deps.clock.now(),
       );
       if (!advanced) return "Deferred";
+      yield* probeBoundary(deps, "AfterParentWakeDispositionCommit", row);
       row = { ...row, phase: "ParentWakeDelivered" };
     }
     if (row.phase === "ParentWakeDelivered") {
@@ -806,6 +880,9 @@ const handleProvenSource = (
         "Completed",
         yield* deps.clock.now(),
       );
+      if (completed) {
+        yield* probeBoundary(deps, "AfterCompletedDispositionCommit", row);
+      }
       return completed ? "Completed" : "Deferred";
     }
     return "Deferred";
@@ -835,6 +912,15 @@ export const runVerificationSignalReconciliationSweep = (
         reason: "invalid F18 reconciliation lease or batch policy",
       });
     }
+    const candidates = yield* deps.tx.transact(
+      deps.store.listDeadLetterCandidates({
+        projectId,
+        limit: config.batchSize,
+      }),
+    );
+    if (candidates.length === 0) {
+      return { scanned: 0, completed: 0, attention: 0, deferred: 0 };
+    }
     const projectResult = yield* deps.tx.transact(
       deps.projects.findById(projectId),
     );
@@ -861,12 +947,6 @@ export const runVerificationSignalReconciliationSweep = (
         reason: "F18 reconciliation Project root Workspace cannot be proven",
       });
     }
-    const candidates = yield* deps.tx.transact(
-      deps.store.listDeadLetterCandidates({
-        projectId,
-        limit: config.batchSize,
-      }),
-    );
     let completed = 0;
     let attention = 0;
     let deferred = 0;
@@ -888,6 +968,17 @@ export const runVerificationSignalReconciliationSweep = (
         validateCandidate(candidate, projectId, deps),
       );
       if (proof._tag === "Rejected") {
+        const prior = yield* deps.tx.transact(
+          deps.store.find({
+            consumerId: "workflow-signals",
+            projectId,
+            eventSequence: sequence,
+          }),
+        );
+        if (prior?.phase === "Attention") {
+          attention += 1;
+          continue;
+        }
         const now = yield* deps.clock.now();
         const sourceIdentity = `workflow-signals:${projectId}:${sequence}`;
         const evidenceDigest = sha256Hex(
@@ -903,16 +994,7 @@ export const runVerificationSignalReconciliationSweep = (
               projectId,
               eventSequence: sequence,
             },
-            eventId:
-              ![
-                "DeadLetterBindingMismatch",
-                "EventEnvelopeMalformed",
-                "UnsupportedSourcePair",
-                "EventDecodeFailed",
-              ].includes(proof.failureCode) &&
-              typeof candidate.eventIdRaw === "string"
-                ? (candidate.eventIdRaw as EventId)
-                : null,
+            eventId: prior?.eventId ?? null,
             failureCode: proof.failureCode,
             evidenceDigest,
             targetWorkspaceId: projectResult.value.rootWorkspaceId,
@@ -921,9 +1003,24 @@ export const runVerificationSignalReconciliationSweep = (
             attentionFactId,
           }),
         );
+        const attentionRow = yield* deps.tx.transact(
+          deps.store.find({
+            consumerId: "workflow-signals",
+            projectId,
+            eventSequence: sequence,
+          }),
+        );
+        if (attentionRow !== null) {
+          yield* probeBoundary(deps, "AfterAttentionCommit", attentionRow);
+        }
         attention += 1;
         continue;
       }
+      yield* probeBoundary(deps, "AfterSourceValidationBeforeClaim", {
+        projectId,
+        eventSequence: sequence,
+        leaseGeneration: 0,
+      } as VerificationSignalReconciliationRow);
       const previous = yield* deps.tx.transact(
         deps.store.find(proof.source.identity),
       );
@@ -956,6 +1053,12 @@ export const runVerificationSignalReconciliationSweep = (
             ),
           }),
         );
+        const attentionRow = yield* deps.tx.transact(
+          deps.store.find(proof.source.identity),
+        );
+        if (attentionRow !== null) {
+          yield* probeBoundary(deps, "AfterAttentionCommit", attentionRow);
+        }
         attention += 1;
       } else deferred += 1;
     }

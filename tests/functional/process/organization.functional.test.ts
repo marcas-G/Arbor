@@ -1,3 +1,6 @@
+import { mkdirSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type CapturedProviderCall,
@@ -33,16 +36,27 @@ describe("release-functional long-lived responsibility", () => {
   it("F18 proposes, approves, runs and parent-accepts a child result", async () => {
     const marker = `F18-CHILD-${crypto.randomUUID().slice(0, 8)}`;
     let childDirectory = "";
+    let allowParentAcceptance = false;
     const childWorkProvider = makeWorkProvider({ marker, verdict: "Pass" });
     const reply = (call: CapturedProviderCall): ScriptedProviderResponse => {
       const available = tools(call);
       const context = serialized(call);
       const readyResultRef = /rref_[a-f0-9]{64}/u.exec(context)?.[0];
-      if (available.has("accept_result") && readyResultRef !== undefined) {
+      if (
+        available.has("accept_result") &&
+        readyResultRef !== undefined &&
+        allowParentAcceptance
+      ) {
         return {
           _tag: "ToolCall",
           name: "accept_result",
           arguments: { resultRef: readyResultRef },
+        };
+      }
+      if (available.has("accept_result") && readyResultRef !== undefined) {
+        return {
+          _tag: "Text",
+          text: "The result is waiting for durable recovery qualification.",
         };
       }
       if (
@@ -111,6 +125,10 @@ describe("release-functional long-lived responsibility", () => {
       isolatedPortHandshake: true,
       admitWorkspaceDirectory: true,
       reply,
+      daemonEnvironment: {
+        NODE_ENV: "test",
+        ARBOR_F18_TEST_LEASE_TTL_MS: "5000",
+      },
     });
     fixtures.push(fixture);
     childDirectory = fixture.workspaceDirectory;
@@ -192,33 +210,202 @@ describe("release-functional long-lived responsibility", () => {
       throw new Error("child initial Work is not publicly visible");
     }
 
-    let verification: {
-      verdict?: string;
-      acceptance?: { acceptanceId: string };
-    };
+    const verification = await waitForPublic(
+      () => client.view<{ verdict?: string }>("verification", { workId }),
+      (value) => value.verdict === "Pass",
+      30_000,
+    );
+    expect(verification.verdict).toBe("Pass");
+
+    await fixture.crash();
+    const database = new DatabaseSync(fixture.databaseFile);
+    let eventSequence = 0;
+    let inboxKey = "";
     try {
-      verification = await waitForPublic(
-        () =>
-          client.view<{
-            verdict?: string;
-            acceptance?: { acceptanceId: string };
-          }>("verification", { workId }),
-        (value) => value.verdict === "Pass" && value.acceptance !== undefined,
-        30_000,
+      database.exec("BEGIN IMMEDIATE");
+      const event = database
+        .prepare(
+          `SELECT event_id, sequence, payload_json FROM domain_events
+            WHERE project_id = ? AND event_type = 'VerificationConcluded'
+            ORDER BY sequence DESC LIMIT 1`,
+        )
+        .get(project.projectId) as
+        | { event_id: string; sequence: number; payload_json: string }
+        | undefined;
+      if (event === undefined) throw new Error("F18 conclusion event missing");
+      eventSequence = Number(event.sequence);
+      const payload = JSON.parse(event.payload_json) as {
+        verificationId: string;
+        targetWorkRevision: number;
+      };
+      const expectedInboxKey = `child-result:${payload.verificationId}:${payload.targetWorkRevision}`;
+      inboxKey = expectedInboxKey;
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO consumer_dead_letters
+            (consumer_id, project_id, sequence, reason, created_at)
+           VALUES ('workflow-signals', ?, ?, 'unsupported eventVersion 2', ?)`,
+        )
+        .run(project.projectId, eventSequence, new Date().toISOString());
+      database
+        .prepare(
+          `INSERT INTO consumer_offsets
+            (consumer_id, project_id, last_sequence, updated_at)
+           VALUES ('workflow-signals', ?, ?, ?)
+           ON CONFLICT(consumer_id, project_id) DO UPDATE SET
+             last_sequence = MAX(consumer_offsets.last_sequence, excluded.last_sequence),
+             updated_at = excluded.updated_at`,
+        )
+        .run(project.projectId, eventSequence, new Date().toISOString());
+      database
+        .prepare(
+          "DELETE FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
+        )
+        .run(project.rootWorkspaceId, expectedInboxKey);
+      database.exec("COMMIT");
+      const offset = database
+        .prepare(
+          `SELECT last_sequence FROM consumer_offsets
+            WHERE consumer_id = 'workflow-signals' AND project_id = ?`,
+        )
+        .get(project.projectId) as { last_sequence: number } | undefined;
+      expect(Number(offset?.last_sequence ?? 0)).toBeGreaterThanOrEqual(
+        eventSequence,
       );
     } catch (error) {
-      const parentInbox = await client.view<{
-        unconsumed: Array<{ entryKey: string; summary: string }>;
-      }>("inbox-view", { workspaceId: project.rootWorkspaceId });
-      const providerSummary = fixture.providerCalls.map((call) => ({
-        tools: [...tools(call)],
-        resultRef: /rref_[a-f0-9]{64}/u.exec(serialized(call))?.[0],
-      }));
+      database.exec("ROLLBACK");
+      throw error;
+    } finally {
+      database.close();
+    }
+
+    let crashRestartError: unknown;
+    try {
+      await fixture.restart({
+        daemonEnvironment: {
+          NODE_ENV: "test",
+          ARBOR_F18_TEST_LEASE_TTL_MS: "5000",
+          ARBOR_F18_TEST_CRASH_BOUNDARY: "AfterParentInboxDispositionCommit",
+        },
+      });
+    } catch (error) {
+      crashRestartError = error;
+    }
+    if (
+      !(crashRestartError instanceof Error) ||
+      !crashRestartError.message.includes(
+        "F18_TEST_CRASH:AfterParentInboxDispositionCommit",
+      )
+    ) {
+      const diagnostic = new DatabaseSync(fixture.databaseFile, {
+        readOnly: true,
+      });
+      let reconciliationRows: unknown[] = [];
+      try {
+        reconciliationRows = diagnostic
+          .prepare(
+            `SELECT project_id, event_sequence, event_id, verification_id,
+                    owner_workspace_id, parent_workspace_id, phase, failure_code
+               FROM verification_signal_reconciliations
+              WHERE project_id = ? ORDER BY event_sequence`,
+          )
+          .all(project.projectId);
+      } finally {
+        diagnostic.close();
+      }
       throw new Error(
-        `${error instanceof Error ? error.message : String(error)}; parentInbox=${JSON.stringify(parentInbox)}; provider=${JSON.stringify(providerSummary)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        `expected the exact F18 commit-boundary crash; actual=${String(crashRestartError)}; reconciliation=${JSON.stringify(reconciliationRows)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        { cause: crashRestartError },
       );
     }
-    expect(verification.acceptance?.acceptanceId).toBeTruthy();
+    const afterInboxCommit = new DatabaseSync(fixture.databaseFile, {
+      readOnly: true,
+    });
+    try {
+      const phase = afterInboxCommit
+        .prepare(
+          `SELECT phase FROM verification_signal_reconciliations
+            WHERE consumer_id = 'workflow-signals' AND project_id = ?
+              AND event_sequence = ?`,
+        )
+        .get(project.projectId, eventSequence) as { phase: string } | undefined;
+      expect(phase?.phase).toBe("ParentInboxCommitted");
+      const restoredInbox = afterInboxCommit
+        .prepare(
+          `SELECT consumed_at FROM inbox_entries
+            WHERE workspace_id = ? AND entry_key = ?`,
+        )
+        .get(project.rootWorkspaceId, inboxKey) as
+        | { consumed_at: string | null }
+        | undefined;
+      expect(restoredInbox).toBeDefined();
+    } finally {
+      afterInboxCommit.close();
+    }
+
+    await new Promise((resolveWait) => setTimeout(resolveWait, 5_500));
+    allowParentAcceptance = true;
+    const barrierDirectory = join(
+      fixture.directory,
+      "f18-source-validation-barrier",
+    );
+    mkdirSync(barrierDirectory, { recursive: true });
+    const competingEnvironment = {
+      NODE_ENV: "test",
+      ARBOR_F18_TEST_LEASE_TTL_MS: "5000",
+      ARBOR_F18_TEST_CRASH_BOUNDARY: "",
+      ARBOR_F18_TEST_BARRIER_DIR: barrierDirectory,
+    };
+    const [additionalDaemon] = await Promise.all([
+      fixture.startAdditionalDaemon({
+        entry: resolve("tests/functional/support/nonce-daemon-child.mjs"),
+        daemonEnvironment: competingEnvironment,
+      }),
+      fixture.restart({ daemonEnvironment: competingEnvironment }),
+    ]);
+    expect(
+      readdirSync(barrierDirectory).filter((name) =>
+        name.startsWith("arrived-"),
+      ),
+    ).toHaveLength(2);
+    const competed = new DatabaseSync(fixture.databaseFile, { readOnly: true });
+    try {
+      const phase = competed
+        .prepare(
+          `SELECT phase, lease_generation FROM verification_signal_reconciliations
+            WHERE consumer_id = 'workflow-signals' AND project_id = ?
+              AND event_sequence = ?`,
+        )
+        .get(project.projectId, eventSequence) as
+        | { phase: string; lease_generation: number }
+        | undefined;
+      const inboxCount = Number(
+        (
+          competed
+            .prepare(
+              `SELECT COUNT(*) AS n FROM inbox_entries
+                WHERE workspace_id = ? AND entry_key = ?`,
+            )
+            .get(project.rootWorkspaceId, inboxKey) as { n: number }
+        ).n,
+      );
+      expect(phase?.phase).toBe("Completed");
+      expect(phase?.lease_generation).toBe(2);
+      expect(inboxCount).toBe(1);
+    } finally {
+      competed.close();
+    }
+    await additionalDaemon.crash();
+    const accepted = await waitForPublic(
+      () =>
+        client.view<{
+          verdict?: string;
+          acceptance?: { acceptanceId: string };
+        }>("verification", { workId }),
+      (value) => value.verdict === "Pass" && value.acceptance !== undefined,
+      60_000,
+    );
+    expect(accepted.acceptance?.acceptanceId).toBeTruthy();
     const completed = await waitForPublic(
       () =>
         client.view<{
@@ -235,6 +422,11 @@ describe("release-functional long-lived responsibility", () => {
       completed.nodes.find((node) => node.workspaceId === child.workspaceId)
         ?.currentWork,
     ).toBeUndefined();
-    expect(fixture.daemonErrors).toEqual([]);
+    expect(
+      fixture.daemonErrors.filter(
+        (message) =>
+          !message.includes("F18_TEST_CRASH:AfterParentInboxDispositionCommit"),
+      ),
+    ).toEqual([]);
   }, 90_000);
 });

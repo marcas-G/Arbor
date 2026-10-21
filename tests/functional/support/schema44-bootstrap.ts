@@ -8,14 +8,18 @@ import {
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { cwd } from "node:process";
 import { DatabaseSync } from "node:sqlite";
+import { Effect } from "effect";
 import {
+  layer,
   P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
   P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
   P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,
   P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION,
   P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
   P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
+  P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
   preflightVerificationEvidenceSnapshot,
+  runMigrations,
   splitStatements,
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import { backfillRetryVerificationOrigins } from "../../../apps/single-workspace/src/retry-verification-origin-backfill.js";
@@ -130,9 +134,9 @@ const readManifest = (): FunctionalSchema44Manifest => {
 };
 
 /** Copy both closed template databases into an ACL-protected case directory. */
-export const cloneFunctionalSchema50Database = (
+export const cloneFunctionalSchema50Database = async (
   directory: string,
-): { readonly databaseFile: string; readonly reportFile: string } => {
+): Promise<{ readonly databaseFile: string; readonly reportFile: string }> => {
   const manifest = readManifest();
   if (!isInside(manifest.root, directory)) {
     throw new Error(
@@ -219,6 +223,16 @@ export const cloneFunctionalSchema50Database = (
   } finally {
     database.close();
   }
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        runMigrations([P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION], {
+          allowOfflineOnly: true,
+        }),
+        layer({ filename: databaseFile }),
+      ),
+    ),
+  );
   return { databaseFile, reportFile };
 };
 

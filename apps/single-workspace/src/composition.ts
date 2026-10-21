@@ -22,6 +22,7 @@ import {
   type ParentUserGovernanceFacts,
   type RemoteWorkerMediationPort,
   RemoteWorkerMediationPortLive,
+  type VerificationSignalReconciliationQualificationProbe,
   type WorkflowSignalConsumer,
   WorkflowSignalConsumerLive,
 } from "@arbor/application";
@@ -425,6 +426,7 @@ export interface SingleWorkspaceConfig {
   readonly attentionProjectionQualificationProbe?: AttentionProjectionQualificationProbe;
   /** Test-only P10 poll pause point after its marker/ACK/offset transaction commits. */
   readonly attentionPollQualificationProbe?: AttentionPollQualificationProbe;
+  readonly verificationSignalReconciliationQualificationProbe?: VerificationSignalReconciliationQualificationProbe;
   /** Test-only process-local probe around P11 activation transaction commit. */
   readonly workspaceResourceActivationQualificationProbe?: WorkspaceResourceActivationQualificationProbe;
   /** Test-only process-local P12 pause after the CreateProject receipt commits,
@@ -1241,6 +1243,13 @@ export const buildSingleWorkspaceLayer = (
         : {
             attentionPollQualificationProbe:
               config.attentionPollQualificationProbe,
+          }),
+      ...(config.verificationSignalReconciliationQualificationProbe ===
+      undefined
+        ? {}
+        : {
+            verificationSignalReconciliationQualificationProbe:
+              config.verificationSignalReconciliationQualificationProbe,
           }),
       ...(config.executionSettlementQualificationProbe === undefined
         ? {}
