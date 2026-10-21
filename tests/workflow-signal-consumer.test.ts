@@ -305,6 +305,114 @@ describe("WorkflowSignalConsumer", () => {
     expect(wakes).toContain(`${parentWorkspaceId}:InputArrived`);
   });
 
+  it("dispatches an exact VerificationConcluded v2 payload and rejects malformed v2 before effects", async () => {
+    const wakes: string[] = [];
+    const admitted: Array<{ readonly entryKey: string }> = [];
+    const deps = {
+      tx: {
+        transact: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
+      },
+      waits: {
+        findByWork: () => Effect.succeed(Option.none()),
+        listActive: () => Effect.succeed([]),
+        clear: () => Effect.void,
+      },
+      works: {
+        findById: () =>
+          Effect.succeed(
+            Option.some({ workspaceId, workId, revision: parse(Revision)(0) }),
+          ),
+        listByWorkspace: () => Effect.succeed([{ workId }]),
+      },
+      workspaces: {
+        findById: () =>
+          Effect.succeed(Option.some({ workspaceId, parentWorkspaceId })),
+      },
+      scheduler: {
+        reevaluate: (id: WorkspaceId, reason: { readonly _tag: string }) =>
+          Effect.sync(() => {
+            wakes.push(`${id}:${reason._tag}`);
+            return { _tag: "Idle" as const };
+          }),
+      },
+      dependencies: { findById: () => Effect.succeed(Option.none()) },
+      messages: { findById: () => Effect.succeed(Option.none()) },
+      executions: { findById: () => Effect.succeed(Option.none()) },
+      inbox: {
+        countByKey: () => Effect.succeed(0),
+        admitUpsert: (entry: { readonly entryKey: string }) =>
+          Effect.sync(() => void admitted.push(entry)),
+      },
+    } as unknown as WorkflowSignalConsumerDependencies;
+    const verificationId = "ver_018f2b3c-4d5e-7abc-8def-0123456789a1";
+    const evidenceId = "evd_018f2b3c-4d5e-7abc-8def-0123456789a2";
+    const validPayload = {
+      verificationId,
+      workId,
+      targetWorkRevision: 0,
+      verdict: "Pass",
+      conclusionReason: null,
+      evidenceRefs: [evidenceId],
+      summaryRef: "sha256:summary",
+      missionSnapshot: {
+        goal: "verify child result",
+        criteria: [
+          { criterionId: "c1", requirement: "proof exists", required: true },
+        ],
+        riskRequirements: [],
+      },
+      criteriaResults: [
+        {
+          criterionId: "c1",
+          requirement: "proof exists",
+          required: true,
+          verdict: "Pass",
+          evidenceRefs: [evidenceId],
+        },
+      ],
+      snapshotStatus: "Available",
+    };
+    const malformed = await Effect.runPromiseExit(
+      runWorkflowSignalConsumer(
+        [
+          {
+            eventId: "evt-v2-malformed",
+            eventType: "VerificationConcluded",
+            eventVersion: 2,
+            occurredAt: "2026-10-21T00:00:00.000Z",
+            payload: { ...validPayload, conclusionReason: undefined },
+          },
+        ],
+        deps,
+      ),
+    );
+    expect(malformed._tag).toBe("Failure");
+    expect(admitted).toEqual([]);
+    expect(wakes).toEqual([]);
+
+    const outcomes = await Effect.runPromise(
+      runWorkflowSignalConsumer(
+        [
+          {
+            eventId: "evt-v2-valid",
+            eventType: "VerificationConcluded",
+            eventVersion: 2,
+            occurredAt: "2026-10-21T00:00:01.000Z",
+            payload: validPayload,
+          },
+        ],
+        deps,
+      ),
+    );
+    expect(outcomes).toEqual([
+      expect.objectContaining({ _tag: "Delivered", kind: "ChildResultReady" }),
+    ]);
+    expect(admitted).toEqual([
+      expect.objectContaining({ entryKey: `child-result:${verificationId}:0` }),
+    ]);
+    expect(wakes).toEqual([`${parentWorkspaceId}:InputArrived`]);
+  });
+
   it("admits child WorkBlocked once and wakes only when its Inbox wait is already stale", async () => {
     const wakes: string[] = [];
     const inboxRows = new Map<
