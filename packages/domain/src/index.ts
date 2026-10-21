@@ -8,6 +8,7 @@ export * from "./dependency.js";
 export * from "./environment.js";
 export * from "./errors.js";
 export * from "./events.js";
+export * from "./event-versions.js";
 export * from "./execution.js";
 export * from "./formation.js";
 export * from "./ids.js";

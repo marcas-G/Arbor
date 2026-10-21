@@ -43,7 +43,10 @@ export type ConsumerLoopError =
 
 export interface ConsumerLoopStores {
   readonly tx: Pick<TransactionPortService, "transact">;
-  readonly journal: Pick<DomainEventJournalService, "readAfter">;
+  readonly journal: Pick<
+    DomainEventJournalService,
+    "readAfterRaw" | "decodeRaw"
+  >;
   readonly offsets: ConsumerOffsetStoreService;
   readonly deadLetters: ConsumerDeadLetterStoreService;
   readonly projection: ProjectionStoreService;
@@ -72,9 +75,6 @@ export interface ConsumerLoopResult {
   readonly quarantined: number;
   readonly records: ReadonlyArray<string>;
 }
-
-/** P1 `05` §3 reader ceiling: events above it are poison path 1 (CC-3). */
-const READER_EVENT_VERSION_CEILING = 1;
 
 interface QuarantineEntry {
   readonly sequence: number;
@@ -147,15 +147,15 @@ export const pollOnce = <R>(
   },
 ): Effect.Effect<ConsumerLoopResult, ConsumerLoopError, R> =>
   Effect.gen(function* () {
-    const { fromSequence, events } = yield* deps.tx.transact(
+    const { fromSequence, candidates } = yield* deps.tx.transact(
       Effect.gen(function* () {
         const fromSequence = yield* deps.offsets.read(consumerId, projectId);
-        const events = yield* deps.journal.readAfter(
+        const candidates = yield* deps.journal.readAfterRaw(
           projectId,
           fromSequence,
           batchSize,
         );
-        return { fromSequence, events };
+        return { fromSequence, candidates };
       }),
     );
 
@@ -167,17 +167,47 @@ export const pollOnce = <R>(
     let appliedCount = 0;
     let quarantinedCount = 0;
     const afterCommit: Array<Effect.Effect<void, unknown>> = [];
-    for (const event of events) {
-      lastSequence = event.sequence;
-      if (event.eventVersion > READER_EVENT_VERSION_CEILING) {
+    for (const candidate of candidates) {
+      if (
+        typeof candidate.sequenceRaw !== "number" ||
+        !Number.isSafeInteger(candidate.sequenceRaw) ||
+        candidate.sequenceRaw <= 0
+      ) {
+        return yield* Effect.fail({
+          _tag: "PersistenceCorruption" as const,
+          repository: "DomainEventJournal" as const,
+          operation: "consumer-event-sequence",
+          reason: "journal sequence cannot be proven for quarantine",
+        });
+      }
+      lastSequence = candidate.sequenceRaw;
+      const decoded = yield* deps.journal.decodeRaw(candidate);
+      if (decoded._tag === "Poison") {
         quarantined.push({
-          sequence: event.sequence,
-          reason: `unsupported eventVersion ${event.eventVersion}`,
+          sequence: candidate.sequenceRaw,
+          reason:
+            decoded.reason === "UnsupportedEventPair" &&
+            candidate.eventVersionRaw === 2
+              ? "unsupported eventVersion 2"
+              : decoded.reason === "UnsupportedEventPair" ||
+                  decoded.reason === "UnknownEventType"
+                ? "unsupported event type/version pair"
+                : decoded.reason === "MalformedPayload"
+                  ? "malformed event payload"
+                  : "malformed event envelope",
         });
         continue;
       }
+      if (decoded.event.projectId !== projectId) {
+        quarantined.push({
+          sequence: candidate.sequenceRaw,
+          reason: "malformed event envelope",
+        });
+        continue;
+      }
+      const decodedEvent = decoded.event;
       const atomicHandler = deps.atomicHandler;
-      if (atomicHandler?.matches(event) === true) {
+      if (atomicHandler?.matches(decodedEvent) === true) {
         yield* deps.tx
           .transact(
             Effect.gen(function* () {
@@ -195,17 +225,17 @@ export const pollOnce = <R>(
                 yield* deps.projection.apply(priorApplied);
                 appliedCount += priorApplied.length;
               }
-              const result = yield* atomicHandler.apply(event);
+              const result = yield* atomicHandler.apply(decodedEvent);
               if (result.quarantineReason !== undefined) {
                 yield* deps.deadLetters.quarantine(
                   consumerId,
                   projectId,
-                  event.sequence,
+                  decodedEvent.sequence,
                   result.quarantineReason,
                 );
                 quarantinedCount += 1;
               } else {
-                yield* deps.projection.apply([event]);
+                yield* deps.projection.apply([decodedEvent]);
                 appliedCount += 1;
                 if (result.record !== undefined) records.push(result.record);
                 if (result.afterCommit !== undefined) {
@@ -215,7 +245,7 @@ export const pollOnce = <R>(
               yield* deps.offsets.advance(
                 consumerId,
                 projectId,
-                event.sequence,
+                decodedEvent.sequence,
               );
               return result;
             }),
@@ -228,12 +258,12 @@ export const pollOnce = <R>(
               }),
             ),
           );
-        committedSequence = event.sequence;
+        committedSequence = decodedEvent.sequence;
         continue;
       }
-      const exit = yield* Effect.exit(deps.handlers([event]));
+      const exit = yield* Effect.exit(deps.handlers([decodedEvent]));
       if (Exit.isSuccess(exit)) {
-        applied.push(event);
+        applied.push(decodedEvent);
         records.push(...exit.value);
         continue;
       }
@@ -246,7 +276,7 @@ export const pollOnce = <R>(
         });
       }
       quarantined.push({
-        sequence: event.sequence,
+        sequence: decodedEvent.sequence,
         reason: `handler defect: ${safeFailureReason(defect)}`,
       });
     }

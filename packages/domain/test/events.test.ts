@@ -3,10 +3,14 @@ import type { DomainEvent } from "../src/index.js";
 import {
   Actor,
   EVENT_CATALOG,
+  EVENT_VERSION_REGISTRY,
   EventId,
   EventSequence,
   ProjectId,
   parse,
+  decodeSupportedEventPayload,
+  isSupportedEventReadPair,
+  isSupportedEventWritePair,
 } from "../src/index.js";
 
 const EXPECTED_EVENTS = [
@@ -95,6 +99,76 @@ const AGGREGATE_SNAPSHOT_FIELDS = [
 describe("domain event catalog", () => {
   it("contains exactly the §5.3 event set", () => {
     expect(Object.keys(EVENT_CATALOG).sort()).toEqual(EXPECTED_EVENTS);
+  });
+
+  it("has explicit exact writer and reader versions for every catalog event", () => {
+    expect(Object.keys(EVENT_VERSION_REGISTRY).sort()).toEqual(
+      Object.keys(EVENT_CATALOG).sort(),
+    );
+    for (const eventType of Object.keys(EVENT_CATALOG)) {
+      if (eventType === "VerificationConcluded") {
+        expect(isSupportedEventWritePair(eventType, 2)).toBe(true);
+        expect(isSupportedEventWritePair(eventType, 1)).toBe(false);
+        expect(isSupportedEventReadPair(eventType, 1)).toBe(true);
+        expect(isSupportedEventReadPair(eventType, 2)).toBe(true);
+      } else {
+        expect(isSupportedEventWritePair(eventType, 1)).toBe(true);
+        expect(isSupportedEventWritePair(eventType, 2)).toBe(false);
+        expect(isSupportedEventReadPair(eventType, 1)).toBe(true);
+        expect(isSupportedEventReadPair(eventType, 2)).toBe(false);
+      }
+      expect(isSupportedEventReadPair(eventType, 3)).toBe(false);
+    }
+    expect(isSupportedEventReadPair("UnknownEvent", 1)).toBe(false);
+  });
+
+  it("strictly decodes VerificationConcluded v2 and requires explicit null reason", () => {
+    const payload = {
+      verificationId: "ver_018f2b3c-4d5e-7abc-8def-0123456789ab",
+      workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789ab",
+      targetWorkRevision: 1,
+      verdict: "Pass",
+      conclusionReason: null,
+      evidenceRefs: ["evd_018f2b3c-4d5e-7abc-8def-0123456789ab"],
+      summaryRef: "sha256:summary",
+      missionSnapshot: {
+        goal: "verify goal",
+        criteria: [
+          { criterionId: "c1", requirement: "proof", required: true },
+        ],
+        riskRequirements: [],
+      },
+      criteriaResults: [
+        {
+          criterionId: "c1",
+          requirement: "proof",
+          required: true,
+          verdict: "Pass",
+          evidenceRefs: ["evd_018f2b3c-4d5e-7abc-8def-0123456789ab"],
+        },
+      ],
+      snapshotStatus: "Available",
+    };
+    expect(
+      decodeSupportedEventPayload("VerificationConcluded", 2, payload)._tag,
+    ).toBe("Decoded");
+    const { conclusionReason: _reason, ...omittedReason } = payload;
+    expect(
+      decodeSupportedEventPayload(
+        "VerificationConcluded",
+        2,
+        omittedReason,
+      )._tag,
+    ).toBe("MalformedPayload");
+    expect(
+      decodeSupportedEventPayload("VerificationConcluded", 2, {
+        ...payload,
+        conclusionReason: "",
+      })._tag,
+    ).toBe("MalformedPayload");
+    expect(
+      decodeSupportedEventPayload("WorkCompleted", 2, {})._tag,
+    ).toBe("UnsupportedPair");
   });
 
   it("excludes high-frequency runtime trace records", () => {
