@@ -173,7 +173,10 @@ const loopStores: Effect.Effect<
   const projection = yield* ProjectionStore;
   return {
     tx: { transact: tx.transact },
-    journal: { readAfter: journal.readAfter },
+    journal: {
+      readAfterRaw: journal.readAfterRaw,
+      decodeRaw: journal.decodeRaw,
+    },
     offsets,
     deadLetters,
     projection,

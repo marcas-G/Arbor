@@ -425,7 +425,7 @@ describe("p8-conclude", () => {
     );
   });
 
-  it('ConcludeVerification Pass: criteria complete + evidence-bound → Concluded, VerificationConcluded fields (conclusionReason null), channel1Release, no wake on Pass', async () => {
+  it("ConcludeVerification Pass: criteria complete + evidence-bound → Concluded, VerificationConcluded fields (conclusionReason null), channel1Release, no wake on Pass", async () => {
     await runP7(
       Effect.gen(function* () {
         yield* seed;

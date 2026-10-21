@@ -48,12 +48,14 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
       requiresUserVersion: 49,
       offlineOnly: true,
     });
-    expect(P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION).toMatchObject({
-      id: 51,
-      name: "verification_v2_consumer_reconciliation",
-      requiresUserVersion: 50,
-      offlineOnly: true,
-    });
+    expect(P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION).toMatchObject(
+      {
+        id: 51,
+        name: "verification_v2_consumer_reconciliation",
+        requiresUserVersion: 50,
+        offlineOnly: true,
+      },
+    );
     expect(CURRENT_SCHEMA_VERSION).toBe(51);
     expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-6)).toEqual([
       46, 47, 48, 49, 50, 51,
@@ -134,7 +136,7 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
             db.prepare("PRAGMA user_version").get() as {
               user_version: number;
             }
-        ).user_version,
+          ).user_version,
         ).toBe(51);
         expect(
           db

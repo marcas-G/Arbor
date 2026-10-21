@@ -62,7 +62,9 @@ const OTHER_EVENT_V1_NAMES = [
   "ControlApprovalResolved",
   "ExecutableApprovalRequested",
   "ExecutableApprovalResolved",
-] as const satisfies ReadonlyArray<Exclude<EventTypeName, "VerificationConcluded">>;
+] as const satisfies ReadonlyArray<
+  Exclude<EventTypeName, "VerificationConcluded">
+>;
 
 const v1: EventVersionCapability = Object.freeze({
   writer: Object.freeze([1]),
@@ -150,11 +152,16 @@ const strictVerificationConcludedV2 = (value: unknown): boolean => {
     (value.verdict !== "Pass" &&
       value.verdict !== "Fail" &&
       value.verdict !== "Unknown") ||
-    (value.conclusionReason !== null && value.conclusionReason !== "Orphaned") ||
+    (value.conclusionReason !== null &&
+      value.conclusionReason !== "Orphaned") ||
     !stringArray(value.evidenceRefs) ||
     typeof value.summaryRef !== "string" ||
     !isRecord(value.missionSnapshot) ||
-    !hasExactKeys(value.missionSnapshot, ["goal", "criteria", "riskRequirements"]) ||
+    !hasExactKeys(value.missionSnapshot, [
+      "goal",
+      "criteria",
+      "riskRequirements",
+    ]) ||
     typeof value.missionSnapshot.goal !== "string" ||
     !stringArray(value.missionSnapshot.riskRequirements) ||
     !Array.isArray(value.missionSnapshot.criteria) ||
@@ -213,11 +220,14 @@ const strictVerificationConcludedV2 = (value: unknown): boolean => {
       result.required !== criterion.required ||
       resultEvidenceRefs.length === 0 ||
       new Set(resultEvidenceRefs).size !== resultEvidenceRefs.length ||
-      resultEvidenceRefs.some(
-        (evidenceId, evidenceIndex) =>
+      resultEvidenceRefs.some((evidenceId, evidenceIndex) => {
+        const previousEvidence = resultEvidenceRefs[evidenceIndex - 1];
+        return (
           evidenceIndex > 0 &&
-          resultEvidenceRefs[evidenceIndex - 1]! > evidenceId,
-      )
+          previousEvidence !== undefined &&
+          previousEvidence > evidenceId
+        );
+      })
     ) {
       return false;
     }

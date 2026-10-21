@@ -971,7 +971,9 @@ export const descriptorHashesThrough = (
     50: "9f1bd851506ca468098c56f2efd6db3b277f443f1ed65ea910b3370db45bdf98",
     51: "b9f5e98b4d41499e84e83c0d399c9a48cc2e1489c85c22ce9914161e0e721317",
   };
-  for (const id of [37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]) {
+  for (const id of [
+    37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+  ]) {
     if (id <= version) {
       const expected = pinned[id] ?? refuse(`descriptor ${id} is not pinned`);
       if (

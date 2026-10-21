@@ -2,15 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { DomainEvent } from "../src/index.js";
 import {
   Actor,
+  decodeSupportedEventPayload,
   EVENT_CATALOG,
   EVENT_VERSION_REGISTRY,
   EventId,
   EventSequence,
-  ProjectId,
-  parse,
-  decodeSupportedEventPayload,
   isSupportedEventReadPair,
   isSupportedEventWritePair,
+  ProjectId,
+  parse,
 } from "../src/index.js";
 
 const EXPECTED_EVENTS = [
@@ -133,9 +133,7 @@ describe("domain event catalog", () => {
       summaryRef: "sha256:summary",
       missionSnapshot: {
         goal: "verify goal",
-        criteria: [
-          { criterionId: "c1", requirement: "proof", required: true },
-        ],
+        criteria: [{ criterionId: "c1", requirement: "proof", required: true }],
         riskRequirements: [],
       },
       criteriaResults: [
@@ -154,11 +152,8 @@ describe("domain event catalog", () => {
     ).toBe("Decoded");
     const { conclusionReason: _reason, ...omittedReason } = payload;
     expect(
-      decodeSupportedEventPayload(
-        "VerificationConcluded",
-        2,
-        omittedReason,
-      )._tag,
+      decodeSupportedEventPayload("VerificationConcluded", 2, omittedReason)
+        ._tag,
     ).toBe("MalformedPayload");
     expect(
       decodeSupportedEventPayload("VerificationConcluded", 2, {
@@ -166,9 +161,9 @@ describe("domain event catalog", () => {
         conclusionReason: "",
       })._tag,
     ).toBe("MalformedPayload");
-    expect(
-      decodeSupportedEventPayload("WorkCompleted", 2, {})._tag,
-    ).toBe("UnsupportedPair");
+    expect(decodeSupportedEventPayload("WorkCompleted", 2, {})._tag).toBe(
+      "UnsupportedPair",
+    );
   });
 
   it("excludes high-frequency runtime trace records", () => {
