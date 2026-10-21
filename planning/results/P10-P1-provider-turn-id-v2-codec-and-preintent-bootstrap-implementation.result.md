@@ -58,6 +58,9 @@ and proves recovery admits one effect.
 - `b9fa0d0d` — import organization after the complete Biome scan.
 - `5a58edd2` — canonical lowercase tokens and expanded CandidateRead read-only
   oracle.
+- `efc69cc1` — opt in the remaining P38 Stop/claim/replay/effect-crash
+  journeys to the shared P1 TrustedLocal fixture and make the overlap lease
+  owner deterministic.
 
 ## Verification
 
@@ -69,9 +72,14 @@ and proves recovery admits one effect.
 - P9 provider disconnect/recovery selected targets: **3/3 passed**.
 - P17/P14 public conversation progress and stream bridge tests: **14/14
   passed**.
-- P38 approve, reject, expire, two-daemon restart and P39 precommit claim
-  process cases: **5/5 passed**. The separate approve case was rerun after
-  adding the explicit read-only CandidateRead oracle: **1/1 passed**.
+- Complete P38 public Executable-approval process file, including approve,
+  reject, expire, restart, precommit claim rollback, both Stop orderings, both
+  TTL races, overlapping lease claim, denied-winner, committed-claim replay,
+  and non-idempotent post-effect crash: **14/14 passed**. The four previously
+  failing journeys now use the test-only V2 authority, real GitWorktree and
+  exact pre-intent TrustedLocal policy path. The CandidateRead oracle compares
+  command/event/decision/invocation/recovery counts, provider-call count and
+  P4 state around the public read.
 - V6 post-intent registry-drift/restart public process qualification:
   **1/1 passed**.
 - AH18 linked overflow process suite: **11/12 passed** on the full run. In the
@@ -111,4 +119,5 @@ CandidateRead oracle did not compare provider-call or global command/event
 counts. Commit `5a58edd2` closes both: only UUID hex remains case-insensitive,
 and the read oracle compares command, event, decision, invocation, recovery,
 provider-call and P4 snapshot values around the public read. The reviewer
-inspected that commit read-only and confirmed no remaining issues.
+inspected that commit read-only and confirmed no remaining issues. The later
+P38 full-file follow-up commit `efc69cc1` still awaits independent review.
