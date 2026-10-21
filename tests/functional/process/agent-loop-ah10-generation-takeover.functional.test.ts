@@ -25,6 +25,7 @@ interface Ah10Probe {
   readonly boundary: string;
   readonly executionId: string;
   readonly fencingGeneration?: number;
+  readonly workerId?: string;
   readonly workerIncarnationId?: string;
   readonly pauseRequested?: boolean;
   readonly providerTurnId?: string;
@@ -115,10 +116,13 @@ const readAh10Rows = (databaseFile: string) => {
     return {
       leases: db
         .prepare(
-          "SELECT execution_id, generation, expires_at FROM execution_leases",
+          `SELECT execution_id, worker_id, worker_incarnation_id, generation, expires_at
+             FROM execution_leases`,
         )
         .all() as Array<{
         execution_id: string;
+        worker_id: string;
+        worker_incarnation_id: string;
         generation: number;
         expires_at: string;
       }>,
@@ -332,6 +336,7 @@ describe("AH10 real daemon generation takeover", () => {
         entry: ah10Child,
         daemonEnvironment: {
           ARBOR_AH10_ROLE: "old",
+          ARBOR_AH10_PAUSE_LEASE_RENEWAL: "1",
           ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
             crashSide === "before" ? "1" : "0",
         },
@@ -351,8 +356,6 @@ describe("AH10 real daemon generation takeover", () => {
         event.role === "old" &&
         event.boundary === "AH7AfterActionIntentCommit" &&
         event.actionIndex === 0;
-      const oldLeasePause = (event: Ah10Probe) =>
-        event.role === "old" && event.boundary === "AH10BeforeLeaseRenewal";
       const oldAction = await waitForPublic(
         async () => events.find(oldActionGate),
         (event) => event !== undefined,
@@ -362,11 +365,18 @@ describe("AH10 real daemon generation takeover", () => {
         throw new Error("AH10 old action gate is absent");
       expect(oldAction?.providerTurnId).toMatch(/^ptn_/u);
       expect(oldAction?.executionId).toMatch(/^exe_/u);
-      await waitForPublic(
+      const oldLeasePause = (event: Ah10Probe) =>
+        event.role === "old" &&
+        event.boundary === "AH10BeforeLeaseRenewal" &&
+        event.pauseRequested === true &&
+        event.executionId === oldAction.executionId;
+      const pauseEvidence = await waitForPublic(
         async () => events.find(oldLeasePause),
         (event) => event !== undefined,
         20_000,
       );
+      if (pauseEvidence === undefined)
+        throw new Error("AH10 old owner did not pause its lease renewal");
 
       const oldLease = readAh10Rows(fixture.databaseFile).leases.find(
         (lease) => lease.execution_id === oldAction?.executionId,
@@ -374,15 +384,24 @@ describe("AH10 real daemon generation takeover", () => {
       expect(oldLease).toMatchObject({ generation: 0 });
       if (oldLease === undefined)
         throw new Error("AH10 old lease row is absent");
-      await waitForPublic(
-        async () =>
-          readAh10Rows(fixture.databaseFile).leases.find(
-            (lease) => lease.execution_id === oldAction.executionId,
-          ),
-        (lease) =>
-          lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-        35_000,
-      );
+      const expiredLease = await waitForLiveOwnerLeaseExpiryForQualification({
+        databaseFile: fixture.databaseFile,
+        executionId: oldAction.executionId,
+        daemon: { snapshot: () => fixture.daemonProcessSnapshot() },
+        pauseEvidence: {
+          boundary: "AH10BeforeLeaseRenewal",
+          pauseRequested: pauseEvidence.pauseRequested === true,
+          executionId: pauseEvidence.executionId,
+          fencingGeneration: pauseEvidence.fencingGeneration ?? -1,
+        },
+        expected: {
+          workerId: oldLease.worker_id,
+          workerIncarnationId: oldLease.worker_incarnation_id,
+          generation: oldLease.generation,
+          expiresAt: oldLease.expires_at,
+        },
+      });
+      expect(expiredLease).toEqual(oldLease);
 
       const newDaemon = await fixture.startAdditionalDaemon({
         entry: ah10Child,
