@@ -84,7 +84,9 @@ deployment or release operation is in scope.
   of malformed ExecutionId, wrong UUID version, negative/out-of-range or
   leading-zero ordinals, `_r0`, unknown/duplicate suffixes, non-zero overflow
   ordinal, truncation, arbitrary prefix-only strings and cross-family
-  ambiguity.
+  ambiguity. For every `contextEpoch` family explicitly accept `0` and
+  `Number.MAX_SAFE_INTEGER`, and reject `-1`, a leading-zero value, and
+  `Number.MAX_SAFE_INTEGER + 1`.
 - Prove UUIDv7 is accepted for read/replay and never emitted by a new-write
   constructor. Preserve a historical value byte-for-byte in the fixture.
 
