@@ -27,6 +27,7 @@ import {
   type SnapshotRetentionError,
   type SnapshotRetentionPlan,
   type VerificationConsumerDependencies,
+  type VerificationSignalReconciliationQualificationProbe,
   WorkflowSignalConsumer,
 } from "@arbor/application";
 import {
@@ -322,6 +323,7 @@ export interface ProductionDaemonConfig {
   readonly executableApprovalExpiryQualificationProbe?: ExecutableApprovalExpiryQualificationProbe;
   /** Process-local test seam for the durable Deliver Attention poll boundary. */
   readonly attentionPollQualificationProbe?: AttentionPollQualificationProbe;
+  readonly verificationSignalReconciliationQualificationProbe?: VerificationSignalReconciliationQualificationProbe;
 }
 
 export type ProductionDaemonServices =
@@ -459,6 +461,13 @@ export const ProductionDaemonServiceLive = (
               scheduler,
               inbox,
               clock,
+              ...(config.verificationSignalReconciliationQualificationProbe ===
+              undefined
+                ? {}
+                : {
+                    qualificationProbe:
+                      config.verificationSignalReconciliationQualificationProbe,
+                  }),
             },
             {
               leaseOwner: f18ReconciliationLeaseOwner,

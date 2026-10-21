@@ -76,12 +76,15 @@ export const VerificationSignalReconciliationStoreLive = Layer.effect(
   VerificationSignalReconciliationStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = repositoryFailure(
-      "VerificationSignalReconciliationStore",
-      "reconciliation",
-    );
-    const run = <A>(effect: Effect.Effect<A, SqlError>) =>
-      effect.pipe(Effect.mapError(failure));
+    const run = <A>(
+      effect: Effect.Effect<A, SqlError>,
+      operation = "reconciliation",
+    ) =>
+      effect.pipe(
+        Effect.mapError(
+          repositoryFailure("VerificationSignalReconciliationStore", operation),
+        ),
+      );
     const find = (identity: VerificationSignalReconciliationIdentity) =>
       Effect.gen(function* () {
         const rows = yield* run(
@@ -211,6 +214,7 @@ export const VerificationSignalReconciliationStoreLive = Layer.effect(
                 now,
               ],
             ),
+            "insert-pending",
           );
           const stored = yield* find(identity);
           if (

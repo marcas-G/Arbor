@@ -30,7 +30,7 @@ const criteriaResults = [
     verdict: "Pass",
     evidenceRefs: [evidenceId],
   },
-];
+] as const;
 const verification: Verification = {
   verificationId,
   workId,
@@ -89,13 +89,67 @@ const candidate = {
 } as const;
 
 describe("F18 historical Verification signal reconciliation", () => {
+  it("writes fixed root Attention with null EventId for a pre-decode envelope failure", async () => {
+    const attentionWrites: Array<Record<string, unknown>> = [];
+    const malformed = {
+      ...candidate,
+      deadLetterReason: "malformed event payload",
+      payloadJsonRaw: "not-json",
+    };
+    const deps = {
+      tx: {
+        transact: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
+      },
+      store: {
+        listDeadLetterCandidates: () => Effect.succeed([malformed]),
+        find: () => Effect.succeed(null),
+        recordAttention: (input: Record<string, unknown>) =>
+          Effect.sync(() => void attentionWrites.push(input)),
+      },
+      projects: {
+        findById: () => Effect.succeed(Option.some({ rootWorkspaceId })),
+      },
+      workspaces: {
+        findById: () =>
+          Effect.succeed(Option.some({ projectId, parentWorkspaceId: null })),
+      },
+      clock: { now: () => Effect.succeed("2026-10-21T00:00:01.000Z") },
+    } as never;
+
+    const sweep = await Effect.runPromise(
+      runVerificationSignalReconciliationSweep(projectId, deps, {
+        leaseOwner: "f18-malformed-test",
+        leaseTtlMs: 30_000,
+        batchSize: 10,
+      }),
+    );
+
+    expect(sweep.attention).toBe(1);
+    expect(attentionWrites).toEqual([
+      expect.objectContaining({
+        identity: {
+          consumerId: "workflow-signals",
+          projectId,
+          eventSequence: 17,
+        },
+        eventId: null,
+        failureCode: "EventEnvelopeMalformed",
+        targetWorkspaceId: rootWorkspaceId,
+        sourceIdentity: `workflow-signals:${projectId}:17`,
+      }),
+    ]);
+  });
+
   it("proves the v2 receipt and canonical row before idempotent child Inbox/wake convergence", async () => {
     let state: VerificationSignalReconciliationRow | null = null;
+    const stateNow = () => state as VerificationSignalReconciliationRow | null;
     let inboxEntry: {
       entry: Record<string, unknown>;
       consumedAt: string | null;
     } | null = null;
     const effects: Array<string> = [];
+    let failParentWakeOnce = true;
+    let testNow = "2026-10-21T00:00:01.000Z";
     const tx = {
       transact: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
     };
@@ -147,7 +201,28 @@ describe("F18 historical Verification signal reconciliation", () => {
             };
             return state;
           }),
-        claim: () => Effect.succeed(state),
+        claim: (input: {
+          readonly leaseOwner: string;
+          readonly now: string;
+          readonly leaseTtlMs: number;
+        }) =>
+          Effect.sync(() => {
+            if (
+              state === null ||
+              state.leaseExpiresAt === null ||
+              Date.parse(state.leaseExpiresAt) > Date.parse(input.now)
+            )
+              return null;
+            state = {
+              ...state,
+              leaseOwner: input.leaseOwner,
+              leaseGeneration: state.leaseGeneration + 1,
+              leaseExpiresAt: new Date(
+                Date.parse(input.now) + input.leaseTtlMs,
+              ).toISOString(),
+            };
+            return state;
+          }),
         advance: (input: {
           readonly nextPhase: VerificationSignalReconciliationRow["phase"];
         }) =>
@@ -207,8 +282,14 @@ describe("F18 historical Verification signal reconciliation", () => {
       },
       scheduler: {
         reevaluate: (workspaceId: unknown) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             effects.push(`wake:${workspaceId}`);
+            if (failParentWakeOnce) {
+              failParentWakeOnce = false;
+              return yield* Effect.fail({
+                _tag: "InjectedCrashAfterInboxCommit" as const,
+              });
+            }
             return { _tag: "Idle" as const };
           }),
       },
@@ -223,12 +304,23 @@ describe("F18 historical Verification signal reconciliation", () => {
             inboxEntry = { entry, consumedAt: null };
           }),
       },
-      clock: { now: () => Effect.succeed("2026-10-21T00:00:01.000Z") },
+      clock: { now: () => Effect.succeed(testNow) },
     } as never;
 
-    const first = await Effect.runPromise(
+    const interrupted = await Effect.runPromiseExit(
       runVerificationSignalReconciliationSweep(projectId, deps, {
         leaseOwner: "f18-test",
+        leaseTtlMs: 60_000,
+        batchSize: 10,
+      }),
+    );
+    expect(interrupted._tag).toBe("Failure");
+    expect(stateNow()?.phase).toBe("ParentInboxCommitted");
+    expect(inboxEntry).not.toBeNull();
+    testNow = "2026-10-21T00:02:00.000Z";
+    const first = await Effect.runPromise(
+      runVerificationSignalReconciliationSweep(projectId, deps, {
+        leaseOwner: "f18-restart",
         leaseTtlMs: 60_000,
         batchSize: 10,
       }),
@@ -244,11 +336,13 @@ describe("F18 historical Verification signal reconciliation", () => {
     expect(first.completed).toBe(1);
     expect(first.attention).toBe(0);
     expect(replay.completed).toBe(1);
-    expect(state?.phase).toBe("Completed");
+    expect(stateNow()?.phase).toBe("Completed");
+    expect(stateNow()?.leaseGeneration).toBe(2);
     expect(effects).toEqual([
       "phase:VerificationWakeDelivered",
       "parent-inbox",
       "phase:ParentInboxCommitted",
+      `wake:${rootWorkspaceId}`,
       `wake:${rootWorkspaceId}`,
       "phase:ParentWakeDelivered",
       "phase:Completed",

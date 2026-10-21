@@ -61,6 +61,22 @@ describe("VerificationSignalReconciliationStoreLive", () => {
                     '{}','ses_f18_store',NULL,'{}',0,0,'Active',
                     '2026-10-21T00:00:00.000Z','2026-10-21T00:00:00.000Z')`,
                   );
+                  yield* sql.unsafe(
+                    `INSERT INTO sessions (session_id,binding_kind,workspace_id,
+                    execution_id,context_epoch,created_at)
+                   VALUES ('ses_f18_child','WorkspacePrimary','ws_f18_child',NULL,0,
+                    '2026-10-21T00:00:00.000Z')`,
+                  );
+                  yield* sql.unsafe(
+                    `INSERT INTO workspaces (workspace_id,project_id,parent_workspace_id,
+                    name,responsibility_definition,responsibility_revision,
+                    resource_boundary,resource_boundary_revision,agent_binding,
+                    primary_session_id,current_work_id,workspace_policy,
+                    workspace_policy_revision,revision,lifecycle,created_at,updated_at)
+                   VALUES ('ws_f18_child','prj_f18_store','ws_f18_store','Child','{}',0,'{}',0,
+                    '{}','ses_f18_child',NULL,'{}',0,0,'Active',
+                    '2026-10-21T00:00:00.000Z','2026-10-21T00:00:00.000Z')`,
+                  );
                 }),
               );
               const tx = yield* TransactionPort;
@@ -79,8 +95,8 @@ describe("VerificationSignalReconciliationStoreLive", () => {
                 workId: "wrk_f18_store",
                 workRevision: 0,
                 verdict: "Pass" as const,
-                ownerWorkspaceId: "ws_f18_store" as never,
-                parentWorkspaceId: null,
+                ownerWorkspaceId: "ws_f18_child" as never,
+                parentWorkspaceId: "ws_f18_store" as never,
                 sourceDigest: "a".repeat(64),
                 effectPlanDigest: "b".repeat(64),
               };
