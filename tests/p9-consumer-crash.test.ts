@@ -146,19 +146,57 @@ const journalEvent = (eventType: string, payload: unknown, eventVersion = 1) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const journal = yield* DomainEventJournal;
-    yield* tx.transact(
-      journal.append([
-        {
-          projectId: p7Project,
-          eventType: eventType as EventTypeName,
-          eventVersion,
-          occurredAt: "t",
-          aggregateRef: p7Project,
-          actor: p7TestActor,
-          payload,
-        },
-      ]),
-    );
+    const event = {
+      projectId: p7Project,
+      eventType: eventType as EventTypeName,
+      eventVersion,
+      occurredAt: "t",
+      aggregateRef: p7Project,
+      actor: p7TestActor,
+      payload,
+    };
+    if (eventVersion !== 1) {
+      const writerResult = yield* Effect.result(
+        tx.transact(journal.append([event])),
+      );
+      expect(writerResult._tag).toBe("Failure");
+      const sql = yield* SqlClient;
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql.unsafe(
+            `INSERT INTO project_event_sequences (project_id,last_sequence)
+               VALUES (?,1)
+               ON CONFLICT(project_id) DO UPDATE SET last_sequence = last_sequence + 1`,
+            [p7Project],
+          );
+          const rows = yield* sql.unsafe<{ last_sequence: number }>(
+            "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
+            [p7Project],
+          );
+          const sequence = Number(rows[0]?.last_sequence ?? 0);
+          yield* sql.unsafe(
+            `INSERT INTO domain_events (
+              event_id,project_id,sequence,event_type,event_version,occurred_at,
+              aggregate_ref,actor,caused_by_command_id,caused_by_event_id,
+              correlation_ref,payload_json
+            ) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)`,
+            [
+              `evt_018f2b3c-4d5e-7abc-8def-${String(sequence).padStart(12, "0")}`,
+              p7Project,
+              sequence,
+              eventType,
+              eventVersion,
+              "t",
+              p7Project,
+              p7TestActor,
+              JSON.stringify(payload),
+            ],
+          );
+        }),
+      );
+    } else {
+      yield* tx.transact(journal.append([event]));
+    }
   });
 
 const producedPayload = (n: number) => ({
