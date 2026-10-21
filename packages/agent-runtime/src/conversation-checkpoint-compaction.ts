@@ -1,7 +1,10 @@
 import {
   ContextEpochNumber,
+  ExecutionId,
   type Execution,
   executionEpisode,
+  providerTurnConversationNativeCompactionId,
+  providerTurnConversationSummaryCompactionId,
   type ProviderTurnId,
   parse,
 } from "@arbor/domain";
@@ -28,8 +31,20 @@ export const conversationCheckpointProviderTurnId = (
   logicalStepNo: number,
   checkpointKind: "Summary" | "ProviderNative",
   contextEpoch: number,
-): ProviderTurnId =>
-  `ptn_${executionId}_${logicalStepNo}_conversation_${checkpointKind === "Summary" ? "compact" : "native_compact"}_${contextEpoch}` as ProviderTurnId;
+): ProviderTurnId => {
+  const exactExecutionId = parse(ExecutionId)(executionId);
+  return checkpointKind === "Summary"
+    ? providerTurnConversationSummaryCompactionId(
+        exactExecutionId,
+        logicalStepNo,
+        contextEpoch,
+      )
+    : providerTurnConversationNativeCompactionId(
+        exactExecutionId,
+        logicalStepNo,
+        contextEpoch,
+      );
+};
 
 export const runConversationCheckpointCompaction = (
   input: {
