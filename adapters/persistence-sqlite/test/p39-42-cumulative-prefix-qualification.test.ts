@@ -94,7 +94,7 @@ const descriptorPins: Readonly<
 
 const assertDescriptorPrefixAndFingerprint = () => {
   const currentIds = CURRENT_MIGRATIONS.map(({ id }) => id);
-  expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(50);
+  expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(51);
   expect(currentIds.slice(0, P38_MIGRATIONS.length)).toEqual(
     P38_MIGRATIONS.map(({ id }) => id),
   );
