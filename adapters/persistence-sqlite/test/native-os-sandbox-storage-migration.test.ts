@@ -11,6 +11,8 @@ import {
   P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
   P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_FINGERPRINT,
   P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
+  P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_FINGERPRINT,
+  P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
   runMigrations,
 } from "../src/index.js";
 
@@ -46,9 +48,15 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
       requiresUserVersion: 49,
       offlineOnly: true,
     });
-    expect(CURRENT_SCHEMA_VERSION).toBe(50);
-    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-5)).toEqual([
-      46, 47, 48, 49, 50,
+    expect(P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION).toMatchObject({
+      id: 51,
+      name: "verification_v2_consumer_reconciliation",
+      requiresUserVersion: 50,
+      offlineOnly: true,
+    });
+    expect(CURRENT_SCHEMA_VERSION).toBe(51);
+    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-6)).toEqual([
+      46, 47, 48, 49, 50, 51,
     ]);
     const fingerprint = (requires: number, name: string, sql: string) =>
       createHash("sha256")
@@ -69,6 +77,13 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
         49,
         P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION.name,
         P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION.sql,
+      ),
+    );
+    expect(P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_FINGERPRINT).toBe(
+      fingerprint(
+        50,
+        P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION.name,
+        P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION.sql,
       ),
     );
   });
@@ -111,7 +126,7 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
           P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
         ]),
       ).toBe(1);
-      expect(await run(fixture.databaseFilename)).toBe(0);
+      expect(await run(fixture.databaseFilename)).toBe(1);
       const db = new DatabaseSync(fixture.databaseFilename, { readOnly: true });
       try {
         expect(
@@ -119,8 +134,8 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
             db.prepare("PRAGMA user_version").get() as {
               user_version: number;
             }
-          ).user_version,
-        ).toBe(50);
+        ).user_version,
+        ).toBe(51);
         expect(
           db
             .prepare(

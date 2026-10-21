@@ -10,6 +10,16 @@ export interface MigrationFile {
   readonly foreignKeysOff?: boolean;
   readonly requiresUserVersion?: number;
   readonly offlineOnly?: boolean;
+  /** Same-transaction data initialization for migrations whose canonical
+   * facts require a deterministic runtime digest. */
+  readonly onApply?: (
+    sql: unknown,
+    context?: MigrationApplyContext,
+  ) => Effect.Effect<void, SqlError>;
+}
+
+export interface MigrationApplyContext {
+  readonly capturedAt?: string;
 }
 
 export const splitStatements = (sql: string): ReadonlyArray<string> => {
@@ -74,7 +84,10 @@ export const splitStatements = (sql: string): ReadonlyArray<string> => {
  */
 export const runMigrations = (
   migrations: ReadonlyArray<MigrationFile>,
-  options: { readonly allowOfflineOnly?: boolean } = {},
+  options: {
+    readonly allowOfflineOnly?: boolean;
+    readonly migrationContext?: MigrationApplyContext;
+  } = {},
 ): Effect.Effect<number, SqlError | SqliteAdapterError, SqlClient> =>
   Effect.gen(function* () {
     // Migration 0039 is only executable through the trusted P39 maintenance
@@ -141,6 +154,9 @@ export const runMigrations = (
       const apply = Effect.gen(function* () {
         for (const statement of splitStatements(migration.sql)) {
           yield* sql.unsafe(statement);
+        }
+        if (migration.onApply !== undefined) {
+          yield* migration.onApply(sql, options.migrationContext);
         }
         yield* sql.unsafe(`PRAGMA user_version = ${migration.id}`);
       });

@@ -304,7 +304,7 @@ const seedActionAndApproval = (
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     expect(CURRENT_MIGRATION_BASELINE).toBe(CURRENT_SCHEMA_VERSION);
-    expect(CURRENT_SCHEMA_VERSION).toBe(50);
+    expect(CURRENT_SCHEMA_VERSION).toBe(51);
     expect(CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual([
       ...P38_MIGRATIONS.map(({ id }) => id),
       40,
