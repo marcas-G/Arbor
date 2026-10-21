@@ -36,6 +36,19 @@ export interface ToolObservationReplayAttentionProjectionRow {
   readonly sourceFactId: string;
 }
 
+export interface VerificationSignalReconciliationAttentionProjectionRow {
+  readonly projectId: ProjectId;
+  readonly dedupKey: string;
+  readonly source: "F18VerificationSignalReconciliation";
+  readonly severity: "ActionRequired";
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly summary: "A verified result delivery could not be reconciled; recovery is paused.";
+  readonly failureCode: string;
+  readonly occurredAt: string;
+  readonly sourceEventId: EventId | null;
+  readonly sourceFactId: string;
+}
+
 export interface AssignWorkBindingAttentionProjectionRow {
   readonly projectId: ProjectId;
   readonly dedupKey: string;
@@ -157,6 +170,13 @@ export interface AttentionProjectionStoreService {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<DeliverReplayAttentionProjectionRow>,
+    AttentionProjectionStoreError,
+    TransactionScope
+  >;
+  readonly listVerificationSignalReconciliationFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<VerificationSignalReconciliationAttentionProjectionRow>,
     AttentionProjectionStoreError,
     TransactionScope
   >;

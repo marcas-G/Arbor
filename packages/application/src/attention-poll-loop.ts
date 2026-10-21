@@ -17,6 +17,8 @@ import type {
   SandboxProviderUnavailableAttentionQueueService,
   SandboxProviderUnavailableStoreError,
   TransactionPortService,
+  VerificationSignalReconciliationStoreError,
+  VerificationSignalReconciliationStoreService,
 } from "@arbor/ports";
 import {
   SANDBOX_UNAVAILABLE_ATTENTION_BATCH_MAX,
@@ -65,6 +67,11 @@ export interface AttentionPollLoopDependencies {
   >;
   /** P50 level-triggered queue for sandbox provider-unavailable facts. */
   readonly sandboxUnavailableQueue?: SandboxProviderUnavailableAttentionQueueService;
+  /** P51 retained F18 Attention admission queue, independent of journal offsets. */
+  readonly verificationReconciliationQueue?: Pick<
+    VerificationSignalReconciliationStoreService,
+    "claimAttentionQueue" | "projectAttentionClaim"
+  >;
   /** Test-only boundary after the poll transaction has committed. A blocked
    * probe lets process qualification kill the daemon after the durable marker,
    * queue ACK and P1 offset are visible together. */
@@ -83,6 +90,7 @@ export type AttentionPollLoopError =
   | AttentionProjectionStoreError
   | RecoveryAttentionFactStoreError
   | SandboxProviderUnavailableStoreError
+  | VerificationSignalReconciliationStoreError
   | ReturnType<typeof attentionPollError>
   | ReturnType<typeof claimLost>;
 
@@ -256,6 +264,32 @@ export const runAttentionPollOnce = (
     if (claimResult._tag === "NoClaim") return emptyResult();
     const projectId = claimResult.claim.projectId;
 
+    let verificationAttentionClaims: ReadonlyArray<
+      import("@arbor/ports").VerificationSignalReconciliationAttentionClaim
+    > = [];
+    const verificationReconciliationQueue =
+      deps.verificationReconciliationQueue;
+    if (verificationReconciliationQueue !== undefined) {
+      const queueClaimedAt = yield* deps.clock.now();
+      const claims = yield* deps.tx.transact(
+        Effect.gen(function* () {
+          const current = yield* deps.pollStore.isCurrentClaim(
+            claimResult.claim,
+            queueClaimedAt,
+          );
+          if (!current) return [];
+          return yield* verificationReconciliationQueue.claimAttentionQueue({
+            projectId,
+            leaseOwner: policy.leaseOwner,
+            now: queueClaimedAt,
+            leaseTtlMs: policy.leaseTtlMs,
+            limit: Math.min(policy.queueBatchSize, 64),
+          });
+        }),
+      );
+      verificationAttentionClaims = claims;
+    }
+
     let sandboxClaims: ReadonlyArray<
       import("@arbor/ports").SandboxProviderUnavailableAttentionQueueClaim
     > = [];
@@ -341,6 +375,15 @@ export const runAttentionPollOnce = (
             dataStartedAt,
           );
           if (!current) return yield* Effect.fail(claimLost());
+
+          for (const queueClaim of verificationAttentionClaims) {
+            if (verificationReconciliationQueue === undefined) break;
+            const projectedAt = yield* deps.clock.now();
+            yield* verificationReconciliationQueue.projectAttentionClaim(
+              queueClaim,
+              projectedAt,
+            );
+          }
 
           fromSequence = yield* deps.offsets.read(consumerId, projectId);
           lastSequence = fromSequence;

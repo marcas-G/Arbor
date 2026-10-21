@@ -50,6 +50,7 @@ export * from "./tool-observation-evidence.js";
 export * from "./tool-observation-replay-attention.js";
 export * from "./tool-reconciliation.js";
 export * from "./trusted-host-config.js";
+export * from "./verification-signal-reconciliation.js";
 export * from "./verification-store.js";
 export * from "./work-blocker.js";
 export * from "./work-plan.js";
