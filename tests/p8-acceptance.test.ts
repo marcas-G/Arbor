@@ -1075,7 +1075,7 @@ describe("p8-acceptance", () => {
           workId: WORK_A,
           targetWorkRevision: 0,
           verdict: "Pass",
-          conclusionReason: "",
+          conclusionReason: null,
           evidenceRefs: [EV_A1, EV_A2],
           summaryRef: "summary:a",
           missionSnapshot: MISSION_A,

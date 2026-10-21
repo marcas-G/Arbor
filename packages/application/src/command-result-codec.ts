@@ -309,6 +309,10 @@ const concludeVerificationResultV2: Validator = (value) => {
         verificationId: id("VerificationId"),
         state: literal("Concluded"),
         verdict: verificationVerdict,
+        conclusionReason: (reason) =>
+          reason === null ||
+          (oneOf("Orphaned")(reason) &&
+            recordOf(value)?.verdict === "Unknown"),
         summaryRef: (ref) => typeof ref === "string" && ref.length > 0,
         wakeSignals: arrayOf(concludeVerificationWakeSignal),
         channel1Release: (release) =>
@@ -339,7 +343,6 @@ const concludeVerificationResultV2: Validator = (value) => {
         ),
         snapshotStatus: oneOf("Available", "NotApplicableOrphaned"),
       },
-      { conclusionReason: oneOf("Orphaned") },
     )
   ) {
     return false;

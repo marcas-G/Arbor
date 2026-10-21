@@ -425,7 +425,7 @@ describe("p8-conclude", () => {
     );
   });
 
-  it('ConcludeVerification Pass: criteria complete + evidence-bound → Concluded, VerificationConcluded fields (conclusionReason ""), channel1Release, no wake on Pass', async () => {
+  it('ConcludeVerification Pass: criteria complete + evidence-bound → Concluded, VerificationConcluded fields (conclusionReason null), channel1Release, no wake on Pass', async () => {
     await runP7(
       Effect.gen(function* () {
         yield* seed;
@@ -460,7 +460,7 @@ describe("p8-conclude", () => {
               criterionResult("c2", "Pass", [EV(2)]),
             ],
             snapshotStatus: "Available",
-            conclusionReason: undefined,
+            conclusionReason: null,
             wakeSignals: [],
             channel1Release: { workId: WORK_1, targetWorkRevision: 0 },
           });
@@ -477,7 +477,7 @@ describe("p8-conclude", () => {
             workId: WORK_1,
             targetWorkRevision: 0,
             verdict: "Pass",
-            conclusionReason: "",
+            conclusionReason: null,
             evidenceRefs: [EV(1), EV(2)],
             summaryRef: "summary:1",
             missionSnapshot: mission,
