@@ -51,6 +51,7 @@ import {
   admitSpecialistSettlement,
   type SpecialistSettlementAdmissionInput,
 } from "./specialist-settlement.js";
+import { deriveVerificationConclusionEffectPlan } from "./verification-signal-plan.js";
 import {
   deliverVerificationWake,
   type VerificationWakeError,
@@ -327,6 +328,7 @@ const deliverVerificationConcluded = (
       );
     }
     const workId = payload.workId as WorkId;
+    const verdict = payload.verdict as VerificationVerdict;
     const work = yield* deps.tx.transact(deps.works.findById(workId));
     if (Option.isNone(work)) {
       return yield* Effect.fail(invariant(event, `work not found: ${workId}`));
@@ -336,12 +338,12 @@ const deliverVerificationConcluded = (
         verificationId: payload.verificationId as VerificationId,
         workId,
         targetWorkRevision: payload.targetWorkRevision as WorkRevision,
-        verdict: payload.verdict as VerificationVerdict,
+        verdict,
         ownerWorkspaceId: work.value.workspaceId,
       },
       deps,
     );
-    if (payload.verdict === "Pass") {
+    if (verdict === "Pass") {
       const owner = yield* deps.tx.transact(
         deps.workspaces.findById(work.value.workspaceId),
       );
@@ -351,7 +353,11 @@ const deliverVerificationConcluded = (
         );
       }
       const parentWorkspaceId = owner.value.parentWorkspaceId;
-      if (parentWorkspaceId !== null) {
+      const effectPlan = deriveVerificationConclusionEffectPlan(
+        verdict,
+        parentWorkspaceId,
+      );
+      if (effectPlan.admitParentResult && parentWorkspaceId !== null) {
         const verificationId = payload.verificationId as VerificationId;
         const targetWorkRevision = payload.targetWorkRevision as WorkRevision;
         yield* deps.tx.transact(
