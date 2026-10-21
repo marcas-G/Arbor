@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 import { Effect, Layer } from "effect";
 import {
   ClockLive,
@@ -243,30 +244,76 @@ export const commitTrustedLocalP11Policy = async (input: {
   );
   if (
     snapshot?.kind !== "TrustedLocalUnconfinedV1" ||
+    snapshot.projectId !== input.projectId ||
     snapshot.executionId !== input.executionId ||
     snapshot.workspaceId !== input.workspaceId ||
     snapshot.profile !== "FullAccess" ||
-    snapshot.episodeBinding === undefined
+    snapshot.networkBoundary !== "Unconfined" ||
+    snapshot.trustedRuntimeIdentity !== "TrustedLocal" ||
+    snapshot.trustedRuntimeVersion !== "builtin-v1" ||
+    snapshot.expiresAt !== input.expiresAt ||
+    snapshot.workspaceRevision !== read.commonPreconditions.workspaceRevision ||
+    snapshot.resourceBoundaryRevision !==
+      read.commonPreconditions.resourceBoundaryRevision ||
+    snapshot.policyRevision !==
+      read.commonPreconditions.latestCommittedPolicyRevision + 1 ||
+    snapshot.sandboxHandleBindingDigest !==
+      candidate.sandboxHandleBindingDigest ||
+    snapshot.authorityBundleRevision !==
+      read.commonPreconditions.authorityBundleRevision ||
+    snapshot.authorityBundleDigest !==
+      read.commonPreconditions.authorityBundleDigest ||
+    snapshot.operatorConfigRevision !==
+      read.commonPreconditions.operatorConfigRevision ||
+    snapshot.operatorConfigDigest !==
+      read.commonPreconditions.operatorConfigDigest ||
+    !isDeepStrictEqual(
+      snapshot.episodeBinding,
+      read.commonPreconditions.episodeBinding,
+    )
   ) {
     throw new Error(
-      `committed P11 snapshot is not bound to the exact execution/workspace: ${JSON.stringify(snapshot)}`,
+      `committed P11 snapshot differs from exact public candidate preconditions: ${JSON.stringify({ snapshot, expected: read.commonPreconditions, candidateHandleDigest: candidate.sandboxHandleBindingDigest })}`,
     );
   }
   const mounts = Array.isArray(snapshot.mounts)
     ? (snapshot.mounts as Array<Record<string, unknown>>)
     : [];
+  const [workspaceMount] = mounts;
+  const targetRef = workspaceMount?.targetRef;
   if (
-    !mounts.some(
-      (mount) =>
-        mount.mountId === "workspace" &&
-        typeof mount.targetRef === "object" &&
-        mount.targetRef !== null &&
-        "resourceSpace" in mount.targetRef &&
-        mount.targetRef.resourceSpace === "filesystem" &&
-        mount.access === "ReadWrite",
+    mounts.length !== 1 ||
+    workspaceMount?.mountId !== "workspace" ||
+    workspaceMount.access !== "ReadWrite" ||
+    typeof workspaceMount.targetIdentityDigest !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(workspaceMount.targetIdentityDigest) ||
+    typeof targetRef !== "object" ||
+    targetRef === null ||
+    Array.isArray(targetRef) ||
+    !isDeepStrictEqual(Object.keys(workspaceMount).sort(), [
+      "access",
+      "mountId",
+      "targetIdentityDigest",
+      "targetRef",
+    ]) ||
+    !isDeepStrictEqual(Object.keys(targetRef).sort(), [
+      "kind",
+      "regionIdentityDigest",
+      "resourceSpace",
+      "version",
+    ]) ||
+    (targetRef as Record<string, unknown>).version !== 1 ||
+    (targetRef as Record<string, unknown>).kind !== "RegionDigest" ||
+    (targetRef as Record<string, unknown>).resourceSpace !== "filesystem" ||
+    typeof (targetRef as Record<string, unknown>).regionIdentityDigest !==
+      "string" ||
+    !/^[0-9a-f]{64}$/u.test(
+      (targetRef as Record<string, unknown>).regionIdentityDigest as string,
     )
   ) {
-    throw new Error("committed P11 snapshot omitted writable workspace mount");
+    throw new Error(
+      `committed P11 snapshot must contain exactly one workspace ReadWrite filesystem mount: ${JSON.stringify(mounts)}`,
+    );
   }
   return { snapshot, read };
 };
