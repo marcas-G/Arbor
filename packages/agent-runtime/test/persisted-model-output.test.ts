@@ -1,16 +1,20 @@
 import { sha256Hex } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
 import { matchesPersistedModelOutput } from "../src/persisted-model-output.js";
+import { fixtureProviderTurnId } from "./fixtures/provider-turn.js";
+
+const providerTurnId = fixtureProviderTurnId();
+const differentProviderTurnId = fixtureProviderTurnId(1);
 
 const makeFixture = () => {
   const input = {
-    providerTurnId: "ptn_p41_output",
+    providerTurnId,
     outputContractRef: "contract:p41-output",
     text: "selection made",
     finishReason: "Stop",
     toolInvocations: [
       {
-        providerTurnId: "ptn_p41_output",
+        providerTurnId,
         outputPosition: 0,
         callRef: "call_p41_output",
         toolName: "select_current_work",
@@ -82,7 +86,7 @@ describe("shared persisted ModelOutput binding", () => {
           ...fixture.entry,
           source: {
             ...fixture.entry.source,
-            ref: "ptn_other:assistant",
+            ref: `${differentProviderTurnId}:assistant`,
           },
         },
       }),
@@ -98,7 +102,7 @@ describe("shared persisted ModelOutput binding", () => {
       name: "ProviderTurn identity",
       change: (fixture: ReturnType<typeof makeFixture>) => ({
         ...fixture.input,
-        providerTurnId: "ptn_other",
+        providerTurnId: differentProviderTurnId,
       }),
     },
     {

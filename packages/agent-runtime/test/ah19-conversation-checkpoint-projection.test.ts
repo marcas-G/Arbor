@@ -8,6 +8,13 @@ import type {
 import { sha256Hex } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
 import { projectConversationCheckpointHistory } from "../src/conversation-checkpoint-projection.js";
+import { fixtureExecutionProviderTurnId } from "./fixtures/provider-turn.js";
+
+const checkpointProducerExecutionId =
+  "exe_00000000-0000-7000-8000-000000000002";
+const checkpointProducerProviderTurnId = fixtureExecutionProviderTurnId(
+  checkpointProducerExecutionId,
+);
 
 const rootWorkspaceId = "ws_root" as never;
 const projectId = "prj_root" as never;
@@ -195,8 +202,8 @@ const owner = (
     currentRunningAttemptNo: 0,
     currentAdmissionJobRevision: 0,
     checkpointKind: "Summary",
-    producerExecutionId: "exe_checkpoint_producer",
-    producerProviderTurnId: "ptn_checkpoint_producer",
+    producerExecutionId: checkpointProducerExecutionId,
+    producerProviderTurnId: checkpointProducerProviderTurnId,
     producerManifestId: "manifest-checkpoint-producer",
   };
   return {
@@ -210,8 +217,8 @@ const owner = (
     checkpointRef: "a".repeat(64),
     bindingFingerprint: null,
     sourceManifestJson: JSON.stringify(manifest),
-    producerExecutionId: "exe_checkpoint_producer" as never,
-    producerProviderTurnId: "ptn_checkpoint_producer" as never,
+    producerExecutionId: checkpointProducerExecutionId as never,
+    producerProviderTurnId: checkpointProducerProviderTurnId,
     updatedAt: "2026-10-17T00:04:00.000Z",
     ...overrides,
   };

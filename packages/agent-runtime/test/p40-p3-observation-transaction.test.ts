@@ -2,13 +2,14 @@ import { TransactionScope } from "@arbor/ports";
 import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 import { executeAgentLoopActions } from "../src/agent-loop-actions.js";
+import { fixtureExecutionProviderTurnId } from "./fixtures/provider-turn.js";
 
 // P3 consumer source test only: the handler stubs the already-decoded P40
 // result. It does not claim or exercise P39 binding authentication.
-const executionId = "exe_p40_p3_atomic";
+const executionId = "exe_00000000-0000-7000-8000-000000000005";
 const sessionId = "ses_p40_p3_atomic";
 const workspaceId = "ws_p40_p3_atomic";
-const providerTurnId = "ptn_p40_p3_atomic";
+const providerTurnId = fixtureExecutionProviderTurnId(executionId);
 const logicalActionId = "lac_p40_p3_atomic";
 const callRef = "call_p40_p3_atomic";
 const invocationId = "tin_p40_p3_atomic";

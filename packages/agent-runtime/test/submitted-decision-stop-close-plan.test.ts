@@ -1,10 +1,13 @@
 import { sha256Hex } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
 import { reconstructSubmittedDecisionStopCloseActions } from "../src/submitted-decision-stop-close-plan.js";
+import { fixtureExecutionProviderTurnId } from "./fixtures/provider-turn.js";
+
+const executionId = "exe_00000000-0000-7000-8000-000000000008";
 
 const turn = {
-  providerTurnId: "ptn_p41_stop_close",
-  executionId: "exe_p41_stop_close",
+  providerTurnId: fixtureExecutionProviderTurnId(executionId),
+  executionId,
   sessionId: "ses_p41_stop_close",
   contextEpoch: 0,
   modelRef: "model:p41-test",
@@ -161,7 +164,10 @@ describe("P41 pinned action reconstruction for Stop-only close", () => {
   });
 
   it.each([
-    ["ProviderTurn identity", { providerTurnId: "ptn_other" }],
+    [
+      "ProviderTurn identity",
+      { providerTurnId: fixtureExecutionProviderTurnId(executionId, 1) },
+    ],
     ["Execution identity", { executionId: "exe_other" }],
     ["Session identity", { sessionId: "ses_other" }],
     ["context epoch", { contextEpoch: 1 }],
