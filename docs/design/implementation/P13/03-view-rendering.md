@@ -214,6 +214,10 @@ with `Unknown`; `Available` shows the exact stored criterion verdicts in
 mission order; `NotApplicableOrphaned` shows the exact empty list. The
 Available projection must be complete, ordered and criterion-identical to the
 mission. Corrupt or mismatched Available state is a typed projection failure,
-never an Unknown fallback. Evidence IDs remain on the existing evidence
-surface. Workspace-detail Open Verification remains Pending/Unknown. The
-rendered criterion verdict grants no authority and does not change Acceptance.
+never an Unknown fallback. Stored results must be non-null and include exactly
+one result per mission criterion, in order, with matching criterion ID,
+requirement and required flag. Duplicate, malformed or evidence-mismatched
+results are typed failures. Evidence IDs remain on the existing evidence
+surface; the read model does not synthesize them. Workspace-detail Open
+Verification remains Pending/Unknown. The rendered criterion verdict grants
+no authority and does not change Acceptance.
