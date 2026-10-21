@@ -9,13 +9,13 @@ import {
   ContextEpochNumber,
   conversationResponseEpisode,
   executionEpisode,
-  providerTurnInferenceId,
-  providerTurnNativeCompactionId,
   providerTurnOverflowReplacementId as makeOverflowReplacementProviderTurnId,
-  providerTurnRepairInferenceId,
-  providerTurnSummaryCompactionId,
   ProviderTurnId,
   parse,
+  providerTurnInferenceId,
+  providerTurnNativeCompactionId,
+  providerTurnRepairInferenceId,
+  providerTurnSummaryCompactionId,
   workEpisode,
 } from "@arbor/domain";
 import {
@@ -480,13 +480,32 @@ const belongsToConversationExecution = (
       source.kind === "ProviderTurnCall" ||
       source.kind === "CompactionTurn") &&
     (() => {
+      const [providerTurnRef, ...sourceSuffix] = source.ref.split(":");
+      if (
+        providerTurnRef === undefined ||
+        !providerTurnRef.startsWith(providerTurnPrefix)
+      ) {
+        return false;
+      }
       try {
-        return (
-          parse(ProviderTurnId)(source.ref) === source.ref &&
-          source.ref.startsWith(providerTurnPrefix)
-        );
+        parse(ProviderTurnId)(providerTurnRef);
       } catch {
         return false;
+      }
+      switch (source.kind) {
+        case "ProviderTurn":
+          return (
+            sourceSuffix.length === 0 ||
+            (sourceSuffix.length === 1 && sourceSuffix[0] === "assistant")
+          );
+        case "ProviderTurnCall":
+          return (
+            sourceSuffix.length === 1 &&
+            sourceSuffix[0] !== undefined &&
+            sourceSuffix[0].length > 0
+          );
+        case "CompactionTurn":
+          return sourceSuffix.length === 0;
       }
     })()
   ) {
@@ -4112,9 +4131,7 @@ export const runModelDecision = (
               );
             }
             const sourceManifest = yield* tx
-              .transact(
-                providerTurns.findManifestByTurn(outputTurnId),
-              )
+              .transact(providerTurns.findManifestByTurn(outputTurnId))
               .pipe(Effect.mapError(failure));
             if (sourceManifest === null) {
               return yield* Effect.fail(
