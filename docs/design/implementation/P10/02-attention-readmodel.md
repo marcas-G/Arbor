@@ -217,6 +217,30 @@ changes its own Attention projection, never the P1 intent, Workspace, claims,
 or receipt. Normal event-derived Attention sources retain the existing
 freshness watermark/barrier behavior.
 
+## Accepted F18 verification reconciliation Attention (DID v1.58)
+
+Accepted under `ACCEPT_F18_VERIFICATION_V2_CONSUMER_AND_READMODEL_CONVERGENCE_OPTION_A`,
+proposal SHA-256
+`C6C41E96C5A59B46810DB9FA7A998DDBC5887B93D75ADF3606E0CA25E351EC73`.
+P10 joins `verification_signal_reconciliation_attention_rows` to the immutable
+P9 fact and exposes one row with source
+`F18VerificationSignalReconciliation`, exact Root Workspace target,
+`ActionRequired`, `attentionFactId` dedup key, closed `failureCode`, and
+`firstDetectedAt` occurrence time. Every code uses the fixed public summary:
+“A verified result delivery could not be reconciled; recovery is paused.”
+Internal diagnostic summary is limited to source kind, ProjectId, event
+sequence and failure code; no payload, criterion/user text, paths, receipt
+bytes or secrets are exposed. Subtree bubbling counts one row and copies no
+context. The row never auto-clears and has no repair or model-wake authority.
+
+The P9 retained queue is scanned each bounded poll and startup cycle
+independently of journal offsets. A worker claims Pending or expired work by
+lease/generation CAS, validates the exact fact/reconciliation/root binding,
+then atomically inserts or validates the marker and marks the queue Projected
+under that generation. Rebuild enumerates immutable facts and atomically
+recreates/validates markers and converges matching queue rows. Marker/fact
+conflict is persistence corruption and produces no public row.
+
 ## 3. Read-model contract
 
 - Pure function of canonical state + journal; materialized incrementally via the generic consumer (P1 `05`); rebuildable (`04`).

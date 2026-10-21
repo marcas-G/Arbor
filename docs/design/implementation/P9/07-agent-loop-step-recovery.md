@@ -45,6 +45,83 @@ P2's nine-step recovery order remains. During “reconcile external reality” a
 8. converge settled Execution → HumanMessage / projections
 ```
 
+## Accepted F18 Verification signal reconciliation (DID v1.58)
+
+Accepted under `ACCEPT_F18_VERIFICATION_V2_CONSUMER_AND_READMODEL_CONVERGENCE_OPTION_A`,
+proposal SHA-256
+`C6C41E96C5A59B46810DB9FA7A998DDBC5887B93D75ADF3606E0CA25E351EC73`.
+This section owns the durable recovery for a valid `VerificationConcluded(v2)`
+whose `workflow-signals` offset already advanced under the former global v1
+reader gate. Recovery examines only retained workflow dead letters with exact
+reason `unsupported eventVersion 2` or `malformed event payload`, and a raw
+`VerificationConcluded` v2 source. It never resets an offset, changes or
+deletes a dead letter, or replays a command, RetryVerification, Verifier,
+Provider or model turn. Other consumers have no owned effect and their old
+dead letters remain audit facts.
+
+The durable identity is `(workflow-signals, projectId, eventSequence)`, even
+when the event envelope cannot be decoded. Source validation precedes Pending:
+the envelope and payload, canonical Verification/Work/owner route, direct
+Parent, and same-Project Committed receipt must bind exactly. Ordinary source
+uses the strict v2 result projection and verdict-specific `wakeSignals`; G5
+uses the exact retry-origin and strict outer v1 receipt. The only compatibility
+case for historical malformed absent reason is `LegacyAbsentReasonV2`: the
+event sequence is at or below the immutable per-Project activation high-water;
+event reason is exactly empty string; canonical reason is SQL NULL; v2 result
+omits the property; snapshot is Available and non-Orphaned; all other fields
+match. Original bytes remain unchanged and are included in the source digest.
+All other malformed or mismatched sources create Attention without a Pending
+row or effect.
+
+After successful validation the row freezes EventId, source CommandId,
+Verification/Work/revision/verdict, owner Workspace, direct Parent, source and
+effect-plan digests. A partial unique constraint covers `(projectId,eventId)`
+when EventId is known. States are exactly `Pending`,
+`VerificationWakeDelivered`, `ParentInboxCommitted`, `ParentWakeDelivered`,
+`Completed`, and `Attention`; child Pass uses all phases, Root Pass and all
+Fail/Unknown paths skip Parent phases. Every nonterminal row is advanced under
+lease owner, monotonically increasing generation and expiry CAS. A stale CAS
+owner stops without Attention. Takeover rereads and revalidates source,
+digests, route and prior effects; drift is Attention.
+
+Effects precede their disposition commits. The existing idempotent exact
+Verification wait clear and owner reevaluation run before
+`VerificationWakeDelivered`. For child Pass, exact Parent Inbox insert-or-
+validate and `ParentInboxCommitted` are atomic; Parent `InputArrived` follows,
+then `ParentWakeDelivered`. `Completed` commits last. The Inbox key is
+`child-result:<verificationId>:<targetWorkRevision>` and all immutable fields
+must exactly match the reconciliation-bound direct Parent and source event;
+consumed state is preserved. Conflicts never move, overwrite, unconsume,
+duplicate, or wake an Inbox row. A crash before effect retries; a crash after
+idempotent scheduler effect but before disposition may repeat only that
+idempotent reevaluation. Restart after disposition skips its effect.
+
+Any unprovable envelope, source, receipt, canonical binding, route, digest,
+state or generation; ambiguous Inbox row; or missing durable Inbox at a
+terminal phase atomically commits the reconciliation row as `Attention` with
+one immutable fact and P10 queue admission. The fixed failure-code set is
+`DeadLetterBindingMismatch`, `EventEnvelopeMalformed`,
+`UnsupportedSourcePair`, `EventDecodeFailed`, `ReceiptMissing`,
+`ReceiptMismatch`, `CanonicalMismatch`, `RouteMismatch`, `InboxConflict`,
+`StateCorruption`, and `GenerationRegression`. A pre-decode failure has null
+EventId. Fact identity is
+`sha256("f18-v2-reconciliation-attention-v1\0" + sourceIdentity)` where
+`sourceIdentity=workflow-signals:<projectId>:<eventSequence>`; dedup key is
+`f18-verification-v2-reconciliation:<projectId>:<eventSequence>`. The target
+is the exact Project root, severity `ActionRequired`, and public summary is
+“A verified result delivery could not be reconciled; recovery is paused.”
+Safe diagnostics carry only source kind, ProjectId, sequence and closed
+failure code. Fact identity/evidence/target/time are immutable. Attention is
+terminal, has no model wake, repair authority or auto-clear.
+
+Migration 0051 captures the exact per-Project journal high-water at activation
+for already existing Projects. New Projects have no legacy eligibility. Its
+five stores are the immutable activation high-water, reconciliation state,
+append-only Attention facts, retained Attention admission queue, and P10
+marker; exact physical columns and constraints are specified by the accepted
+F18 implementation package. The migration does not mutate journal, receipt,
+dead-letter, offset, canonical Verification or Inbox history.
+
 Recovery obtains a current lease before any Execution-originated runtime write.
 RecoveryController authority remains the only unfenced path for canonical
 settlement and cannot execute Agent actions.

@@ -1130,3 +1130,27 @@ version or decision/result row field. Existing `commands.result_json` bytes
 and schema-1/schema-2 receipts remain immutable and replay under their existing
 strict validators; the result decoder accepts the new literals only for new
 terminal receipts. See P1/01/03 and the accepted P10/P1 bootstrap manifest.
+
+## Accepted F18 Verification v2 reconciliation schema (DID v1.58)
+
+The accepted F18 package reserves migration `0051_verification_v2_consumer_reconciliation`,
+`requiresUserVersion: 50`. It captures each currently existing Project's exact
+committed `domain_events` high-water in the same migration transaction before
+enabling the corrected v2 writer. The captured value, capture time and fact
+digest are immutable. Projects created after activation have no compatibility
+row. Historical journal, command receipt, dead-letter, offset, Verification
+and Inbox rows are not updated, rewritten, deleted or reset.
+
+The migration creates five stores owned by P1: immutable per-Project
+activation high-waters; durable `workflow-signals` reconciliation state keyed
+by `(consumer_id, project_id, event_sequence)`; append-only reconciliation
+Attention facts; retained Attention admission queue keyed by
+`(project_id, attention_fact_id)`; and the P10 marker keyed by
+`attention_fact_id`. Constraints enforce the exact terminal/nonterminal phase
+fields and lease generation, one known EventId per Project, immutable fact
+identity and foreign-key linkage. The precise DDL, indexes and trigger/store
+guard implementation are part of the SHA-pinned accepted F18 implementation
+plan and remain subject to code qualification; they cannot change these
+identities or lifecycle rules. Migration preflight/apply is offline, fails
+closed on anything other than the registered schema-50 prefix, and captures
+high-waters atomically with the schema advance to 51.

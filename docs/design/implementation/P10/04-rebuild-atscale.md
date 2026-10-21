@@ -327,3 +327,16 @@ projections over existing P4/P1 rows and carry no marker, event, queue,
 full-rebuild state or offset. They are recomputed on each authorized read;
 pruning events cannot remove them. Existing provider-fact rebuild does not
 materialize or clear those derived sources.
+
+## Accepted F18 verification Attention queue rebuild (DID v1.58)
+
+The F18 P10 marker references the immutable P9
+`F18VerificationSignalReconciliation` Attention fact. Live queue projection
+and rebuild both validate exact Project/fact/root identity and all immutable
+marker fields. The live projector atomically commits marker insertion or
+validation with the retained queue's `Projected` state under its current lease
+generation. Rebuild enumerates every immutable F18 Attention fact, recreates
+or validates its marker, and marks a matching queue row Projected in that
+same rebuild transaction. A fact/marker conflict fails as persistence
+corruption and cannot produce a public Attention row. The journal offset and
+dead letters are not inputs to this source-specific rebuild.

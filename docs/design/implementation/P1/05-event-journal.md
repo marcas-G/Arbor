@@ -110,8 +110,8 @@ This event carries only workspace/revision/status identifiers. It contains no
 path, Profile ref/version, filesystem diagnostic, or user/model text. The new
 type is added to the DomainEvent payload/catalog and the P10 consumer's
 registered handler; an unregistered type is a projection defect, not a
-successful no-op. Existing event types/payloads and reader ceilings remain
-unchanged; no EventVersion=2 or upcast is introduced.
+successful no-op. This event remains exactly v1 under the F18 exact pair
+registry below; no EventVersion=2 or upcast is introduced for it.
 
 ## 3. `eventVersion` policy (frozen)
 
@@ -132,6 +132,52 @@ unchanged; no EventVersion=2 or upcast is introduced.
   stalls (no head-of-line block). Operator reviews dead letters.
 - v1 performs NO upcasting.
 ```
+
+## Accepted F18 exact event type/version registry (DID v1.58)
+
+The accepted F18 Verification v2 decision supersedes the global numeric
+reader ceiling above for all new implementations and writes. The authoritative
+capability is the exact `(eventType, eventVersion)` pair. `EVENT_CATALOG` is a
+closed registry and must equal the following 57 event names exactly:
+
+```text
+ProjectCreated, ProjectPolicyChanged, ProjectRenamed, ProjectClosed,
+WorkspaceCreated, WorkspaceResourceActivationChanged, ResponsibilityChanged,
+ResourceBoundaryChanged, ResourceOwnershipChanged, WorkspacePolicyChanged,
+WorkspaceRetired, WorkspaceLineageRecorded, PrimarySessionReplaced,
+WorkAssigned, CurrentWorkChanged, WorkRefined, WorkCompleted, WorkCancelled,
+WorkSteered, WorkBlockerResolved, WorkBlockerSuperseded, DependencyDeclared,
+DependencySatisfied, DependencyContractRevised, DependencyWithdrawn,
+DependencyMarkedUnfulfillable, DeadlockAttentionRequested,
+ReconciliationEscalated, AssignWorkTargetBindingEscalated,
+DeliverReplayEscalated, ToolObservationReplayEvidenceEscalated,
+SubmittedDecisionBindingEscalated, SandboxProviderUnavailable,
+LegacyAdoptionEvidenceEscalated, LegacyAdoptionEvidenceResolved,
+DeliverableProduced, MessageSent, VerificationStarted, WorkOutcomeAccepted,
+ExecutionAdmitted, ExecutionStopRequested, ExecutionSettled,
+PermissionChanged, SandboxPolicyGrantIssued, SandboxPolicyDecisionRecorded,
+DecisionRecorded, EnvironmentChanged, WorktreeCreated, WorktreeRetired,
+HumanInterventionApplied, HumanMessageSubmitted,
+ConversationResponseResumed, ConversationResponseCancelled,
+ControlApprovalResolved, ExecutableApprovalRequested,
+ExecutableApprovalResolved, VerificationConcluded
+```
+
+The only legal new writer pair for `VerificationConcluded` is v2. Its strict
+historical v1 pair remains reader-only. Each of the other 56 names has only
+the v1 writer and reader pair. There is no default version. A writer validates
+the exact pair before sequence allocation or event insertion; an unsupported
+new pair is a writer defect and leaves no journal mutation. A reader validates
+exact membership before decoding. Unknown event type v1, any non-Verification
+v2, and every unlisted version are poison and use the existing CC-3 atomic
+dead-letter plus offset-advance disposition. Supported `VerificationConcluded`
+v2 uses its strict VCS decoder; no payload is decoded under a different pair.
+
+The same pair table governs Application polling, the SQLite generic runner,
+raw journal readers including P10 Attention polling, and every rebuild/replay
+path. Adding or removing a catalog name without the exact corresponding
+writer/reader decision is a qualification failure. Existing historical bytes,
+dead letters and offsets are not rewritten or reset.
 
 ## 4. Consumer offset / projection boundary (frozen)
 
