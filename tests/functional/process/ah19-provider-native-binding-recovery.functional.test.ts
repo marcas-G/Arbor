@@ -6009,39 +6009,33 @@ describe("AH19 restart binding qualification", () => {
         () => undefined,
         () => undefined,
       );
-    const successorCheckStage = await waitForPublic(
-      async () =>
-        childOutput
-          .map((line) => {
-            try {
-              return JSON.parse(line) as {
-                tag?: string;
-                boundary?: string;
-                stage?: string;
-                providerTurnId?: string;
-              };
-            } catch {
-              return undefined;
-            }
-          })
-          .find(
-            (event) =>
-              event?.tag === "AH19_PROBE" &&
-              event.boundary === "AH19NativeCheckpointRecovery" &&
-              event.stage?.startsWith("NativeRebaseSuccessorChecks:") ===
-                true &&
-              event.stage.includes("predecessorStep=false") &&
-              event.providerTurnId === olderNativeTurnId,
-          ),
-      (event) => event !== undefined,
-      45_000,
-    );
-    expect(successorCheckStage?.stage).toContain("predecessorStep=false");
+    const restartChildError = childOutput
+      .flatMap((line) => {
+        try {
+          return [
+            JSON.parse(line) as {
+              tag?: string;
+              error?: { _tag?: string; stage?: string; reason?: string };
+            },
+          ];
+        } catch {
+          return [];
+        }
+      })
+      .find((event) => event.tag === "AH19_CHILD_ERROR");
+    expect(restartChildError?.error).toMatchObject({
+      _tag: "ExecutionDriverInvariantFailure",
+      stage: "AgentLoopStep",
+      reason: "AgentLoopStepReplayBindingMismatch",
+    });
     expect(
       childOutput.some((line) =>
         line.includes("NativeRebaseResumesPersistedSuccessor"),
       ),
     ).toBe(false);
+    expect(
+      providerRequests.filter((event) => event.bindingVariant === "B"),
+    ).toEqual([]);
     const leakedRequests = providerRequests.filter(
       (event) =>
         event.bindingVariant === "B" &&
@@ -6049,6 +6043,9 @@ describe("AH19 restart binding qualification", () => {
     );
     expect(leakedRequests).toEqual([]);
     const afterRestart = readSnapshot(fixture.databaseFile, ids);
+    expect(afterRestart.actions).toEqual(corrupted.actions);
+    expect(afterRestart.sessionEntries).toEqual(corrupted.sessionEntries);
+    expect(afterRestart.checkpoints).toEqual(corrupted.checkpoints);
     expect(
       afterRestart.providerTurns.find(
         (turn) => turn.provider_turn_id === targetNativeTurnId,
@@ -6072,9 +6069,7 @@ describe("AH19 restart binding qualification", () => {
     const { fixture, project, workId, probe, reportUrl, childOutput } =
       scenario;
     const executionId = probe.executionId;
-    const olderNativeTurnId = `ptn_${executionId}_1_native_compact_0`;
     const targetNativeTurnId = `ptn_${executionId}_2_native_compact_1`;
-    const olderOpaqueRef = `ah19-opaque:${olderNativeTurnId}`;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
     const beforeKill = readSnapshot(fixture.databaseFile, ids);
     const sourceStep = beforeKill.steps.find(
@@ -6116,47 +6111,37 @@ describe("AH19 restart binding qualification", () => {
         () => undefined,
         () => undefined,
       );
-    const successorCheckStage = await waitForPublic(
-      async () =>
-        childOutput
-          .map((line) => {
-            try {
-              return JSON.parse(line) as {
-                tag?: string;
-                boundary?: string;
-                stage?: string;
-                providerTurnId?: string;
-              };
-            } catch {
-              return undefined;
-            }
-          })
-          .find(
-            (event) =>
-              event?.tag === "AH19_PROBE" &&
-              event.boundary === "AH19NativeCheckpointRecovery" &&
-              event.stage?.startsWith("NativeRebaseSuccessorChecks:") ===
-                true &&
-              event.stage.includes("exactNextStep=false") &&
-              event.providerTurnId === olderNativeTurnId,
-          ),
-      (event) => event !== undefined,
-      45_000,
-    );
-    expect(successorCheckStage?.stage).toContain("exactNextStep=false");
+    const restartChildError = childOutput
+      .flatMap((line) => {
+        try {
+          return [
+            JSON.parse(line) as {
+              tag?: string;
+              error?: { _tag?: string; stage?: string; reason?: string };
+            },
+          ];
+        } catch {
+          return [];
+        }
+      })
+      .find((event) => event.tag === "AH19_CHILD_ERROR");
+    expect(restartChildError?.error).toMatchObject({
+      _tag: "ExecutionDriverInvariantFailure",
+      stage: "AgentLoopStep",
+      reason: "AgentLoopStepReplayBindingMismatch",
+    });
     expect(
       childOutput.some((line) =>
         line.includes("NativeRebaseResumesPersistedSuccessor"),
       ),
     ).toBe(false);
     expect(
-      providerRequests.filter(
-        (event) =>
-          event.bindingVariant === "B" &&
-          event.items.some((item) => item.opaqueItemRef === olderOpaqueRef),
-      ),
+      providerRequests.filter((event) => event.bindingVariant === "B"),
     ).toEqual([]);
     const afterRestart = readSnapshot(fixture.databaseFile, ids);
+    expect(afterRestart.actions).toEqual(corrupted.actions);
+    expect(afterRestart.sessionEntries).toEqual(corrupted.sessionEntries);
+    expect(afterRestart.checkpoints).toEqual(corrupted.checkpoints);
     expect(
       afterRestart.providerTurns.some(
         (turn) => turn.provider_turn_id === targetNativeTurnId,
