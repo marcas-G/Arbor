@@ -1,4 +1,4 @@
-import { Actor, parse } from "@arbor/domain";
+import { Actor, ProviderTurnId, parse } from "@arbor/domain";
 import type {
   AgentLoopStepFence,
   AssignWorkBindingAttentionFact,
@@ -120,7 +120,7 @@ const toLegacyAdoptionFact = (
   projectId: row.project_id as never,
   executionId: row.execution_id as never,
   workspaceId: row.workspace_id as never,
-  providerTurnId: row.provider_turn_id as never,
+  providerTurnId: parse(ProviderTurnId)(row.provider_turn_id),
   logicalStepNo: Number(row.logical_step_no),
   repairAttempt: Number(row.repair_attempt),
   failureCode: row.failure_code,
@@ -137,7 +137,7 @@ const toLegacyAdoptionResolution = (
   projectId: row.project_id as never,
   executionId: row.execution_id as never,
   workspaceId: row.workspace_id as never,
-  providerTurnId: row.provider_turn_id as never,
+  providerTurnId: parse(ProviderTurnId)(row.provider_turn_id),
   originalEvidenceSha256: row.original_evidence_sha256,
   resolutionEvidenceSha256: row.resolution_evidence_sha256,
   actionDispositionSummaryJson: row.action_disposition_summary_json,

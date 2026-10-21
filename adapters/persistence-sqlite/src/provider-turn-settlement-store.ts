@@ -154,6 +154,14 @@ export const makeProviderTurnSettlementStore = (
         const row = turnRows[0];
         if (row === undefined) return { _tag: "NotFound" as const };
         const turn = toRecord(row);
+        if (turn === null) {
+          return yield* Effect.fail<ProviderFailure>({
+            _tag: "ProviderFailure",
+            kind: "ProtocolViolation",
+            taxonomyVersion: "phase1-v2",
+            safeDiagnostic: "persisted-provider-turn-id-invalid",
+          });
+        }
         if (row.settled_at === null || row.finish_reason === null) {
           return { _tag: "Unsettled" as const, turn };
         }

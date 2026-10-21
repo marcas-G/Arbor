@@ -1,11 +1,11 @@
 import type {
   ContextEpochNumber,
   ProviderFailure,
-  ProviderTurnId,
   ProviderTurnRecord,
   ProviderTurnStoreService,
   SessionId,
 } from "@arbor/ports";
+import { ProviderTurnId as ProviderTurnIdSchema, parse } from "@arbor/domain";
 import { TransactionScope } from "@arbor/ports";
 import { Effect } from "effect";
 import {
@@ -185,8 +185,30 @@ export const makeProviderTurnIntentStore = (
             safeDiagnostic: "native-source-manifest-orphaned-or-incomplete",
           });
         }
-        return rows.map((row) => ({
-          providerTurnId: row.provider_turn_id as ProviderTurnId,
+        const decodedRows = rows.flatMap((row) => {
+          try {
+            return [
+              {
+                row,
+                providerTurnId: parse(ProviderTurnIdSchema)(
+                  row.provider_turn_id,
+                ),
+              },
+            ];
+          } catch {
+            return [];
+          }
+        });
+        if (decodedRows.length !== rows.length) {
+          return yield* Effect.fail<ProviderFailure>({
+            _tag: "ProviderFailure",
+            kind: "ProtocolViolation",
+            taxonomyVersion: "phase1-v2",
+            safeDiagnostic: "persisted-provider-turn-id-invalid",
+          });
+        }
+        return decodedRows.map(({ row, providerTurnId }) => ({
+          providerTurnId,
           manifestId: row.manifest_id,
           executionId: row.execution_id,
           sessionId: row.session_id as SessionId,

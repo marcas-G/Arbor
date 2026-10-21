@@ -1,4 +1,4 @@
-import type { ExecutionId, ProviderTurnId } from "@arbor/domain";
+import { type ExecutionId, ProviderTurnId, parse } from "@arbor/domain";
 import {
   type AgentLoopStepActionRecord,
   type AgentLoopStepActionState,
@@ -16,7 +16,10 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
-import { repositoryFailure } from "./repository-error.js";
+import {
+  persistenceCorruption,
+  repositoryFailure,
+} from "./repository-error.js";
 
 interface StepRow {
   readonly execution_id: string;
@@ -80,12 +83,13 @@ const toProviderTurnLink = (
   identity: toIdentity(row),
   overflowOrdinal: 0,
   role: row.role,
-  providerTurnId: row.provider_turn_id as ProviderTurnId,
+  providerTurnId: parse(ProviderTurnId)(row.provider_turn_id),
   ...(row.predecessor_provider_turn_id === null
     ? {}
     : {
-        predecessorProviderTurnId:
-          row.predecessor_provider_turn_id as ProviderTurnId,
+        predecessorProviderTurnId: parse(ProviderTurnId)(
+          row.predecessor_provider_turn_id,
+        ),
       }),
   contextEpoch: row.context_epoch as never,
   ...(row.manifest_id === null ? {} : { manifestId: row.manifest_id }),
@@ -95,6 +99,17 @@ const toProviderTurnLink = (
 
 const parseJson = (value: string | null): unknown | undefined =>
   value === null ? undefined : (JSON.parse(value) as unknown);
+
+const decodeStored = <A>(operation: string, decode: () => A) =>
+  Effect.try({
+    try: decode,
+    catch: () =>
+      persistenceCorruption(
+        "AgentLoopStepStore",
+        operation,
+        "invalid-provider-turn-id",
+      ),
+  });
 
 const toIdentity = (row: {
   readonly execution_id: string;
@@ -118,7 +133,7 @@ const toStep = (row: StepRow): AgentLoopStepRecord => ({
           repairAttempt: Number(row.predecessor_repair_attempt),
         },
       }),
-  providerTurnId: row.provider_turn_id as ProviderTurnId,
+  providerTurnId: parse(ProviderTurnId)(row.provider_turn_id),
   ...(row.manifest_id === null ? {} : { manifestId: row.manifest_id }),
   state: row.state,
   ...(row.decoder_version === null
@@ -278,9 +293,10 @@ export const AgentLoopStepStoreLive: Layer.Layer<
             ],
           ),
         );
-        return rows[0] === undefined
+        const row = rows[0];
+        return row === undefined
           ? Option.none<AgentLoopStepRecord>()
-          : Option.some(toStep(rows[0]));
+          : Option.some(yield* decodeStored("find", () => toStep(row)));
       });
 
     return AgentLoopStepStore.of({
@@ -304,9 +320,12 @@ export const AgentLoopStepStoreLive: Layer.Layer<
               [executionId],
             ),
           );
-          return rows[0] === undefined
+          const row = rows[0];
+          return row === undefined
             ? Option.none<AgentLoopStepRecord>()
-            : Option.some(toStep(rows[0]));
+            : Option.some(
+                yield* decodeStored("findCurrent", () => toStep(row)),
+              );
         }),
       listByExecution: (executionId) =>
         Effect.gen(function* () {
@@ -317,7 +336,9 @@ export const AgentLoopStepStoreLive: Layer.Layer<
               [executionId],
             ),
           );
-          return rows.map(toStep);
+          return yield* Effect.forEach(rows, (row) =>
+            decodeStored("listByExecution", () => toStep(row)),
+          );
         }),
       createPrepared: (record, fence) =>
         Effect.gen(function* () {
@@ -344,7 +365,7 @@ export const AgentLoopStepStoreLive: Layer.Layer<
           if (row === undefined) {
             return yield* Effect.fail(failure("insert returned no row"));
           }
-          return toStep(row);
+          return yield* decodeStored("createPrepared", () => toStep(row));
         }),
       transition: (input, fence) =>
         Effect.gen(function* () {
@@ -375,7 +396,7 @@ export const AgentLoopStepStoreLive: Layer.Layer<
           const row = rows[0];
           return row === undefined
             ? yield* Effect.fail(conflict("step CAS rejected"))
-            : toStep(row);
+            : yield* decodeStored("transition", () => toStep(row));
         }),
       ensureSuccessor: (predecessor, successor, fence) =>
         Effect.gen(function* () {
@@ -405,7 +426,7 @@ export const AgentLoopStepStoreLive: Layer.Layer<
           if (row === undefined) {
             return yield* Effect.fail(failure("insert returned no row"));
           }
-          return toStep(row);
+          return yield* decodeStored("ensureSuccessor", () => toStep(row));
         }),
       createAction: (record, fence) =>
         Effect.gen(function* () {
@@ -504,8 +525,11 @@ export const AgentLoopStepStoreLive: Layer.Layer<
               ],
             ),
           );
-          if (existing[0] !== undefined) {
-            const prior = toProviderTurnLink(existing[0]);
+          const existingLink = existing[0];
+          if (existingLink !== undefined) {
+            const prior = yield* decodeStored("ensureProviderTurnLink", () =>
+              toProviderTurnLink(existingLink),
+            );
             return same(prior, link)
               ? prior
               : yield* Effect.fail(
@@ -530,7 +554,9 @@ export const AgentLoopStepStoreLive: Layer.Layer<
               ],
             ),
           );
-          return toProviderTurnLink(rows[0] as ProviderTurnLinkRow);
+          return yield* decodeStored("ensureProviderTurnLink", () =>
+            toProviderTurnLink(rows[0] as ProviderTurnLinkRow),
+          );
         }),
       listProviderTurnLinks: (identity) =>
         Effect.gen(function* () {
@@ -545,7 +571,11 @@ export const AgentLoopStepStoreLive: Layer.Layer<
               ],
             ),
           );
-          return rows.map(toProviderTurnLink);
+          return yield* Effect.forEach(rows, (row) =>
+            decodeStored("listProviderTurnLinks", () =>
+              toProviderTurnLink(row),
+            ),
+          );
         }),
       findProviderTurnLinkByProviderTurnId: (providerTurnId) =>
         Effect.gen(function* () {
@@ -556,9 +586,15 @@ export const AgentLoopStepStoreLive: Layer.Layer<
               [providerTurnId],
             ),
           );
-          return rows[0] === undefined
+          const row = rows[0];
+          return row === undefined
             ? Option.none<AgentLoopStepProviderTurnLink>()
-            : Option.some(toProviderTurnLink(rows[0]));
+            : Option.some(
+                yield* decodeStored(
+                  "findProviderTurnLinkByProviderTurnId",
+                  () => toProviderTurnLink(row),
+                ),
+              );
         }),
     });
   }),

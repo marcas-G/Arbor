@@ -1,4 +1,9 @@
-import type { CommandId, ExecutionId } from "@arbor/domain";
+import {
+  ProviderTurnId,
+  type CommandId,
+  type ExecutionId,
+  parse,
+} from "@arbor/domain";
 import type {
   AssignWorkTargetBinding,
   AssignWorkTargetBindingStoreError,
@@ -54,7 +59,7 @@ const decode = (row: BindingRow): AssignWorkTargetBinding => {
     commandId: row.command_id as never,
     projectId: row.project_id as never,
     executionId: row.execution_id as never,
-    providerTurnId: row.provider_turn_id as never,
+    providerTurnId: parse(ProviderTurnId)(row.provider_turn_id),
     logicalActionId: row.logical_action_id,
     callRef: row.call_ref,
     parentWorkspaceId: row.parent_workspace_id as never,
