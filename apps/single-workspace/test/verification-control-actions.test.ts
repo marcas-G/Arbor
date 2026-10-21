@@ -577,7 +577,7 @@ describe("verification control actions", () => {
       missionSnapshot: verification.missionSnapshot,
       criteriaResults,
       snapshotStatus: "Available" as const,
-      conclusionReason: undefined,
+      conclusionReason: null,
       wakeSignals: [],
       channel1Release: {
         workId: verification.workId,
@@ -604,7 +604,7 @@ describe("verification control actions", () => {
         workId: verification.workId,
         targetWorkRevision: verification.targetWorkRevision,
         verdict: "Pass",
-        conclusionReason: "",
+        conclusionReason: null,
         evidenceRefs: [evidenceId],
         summaryRef: "blob:summary",
         missionSnapshot: verification.missionSnapshot,
@@ -623,7 +623,9 @@ describe("verification control actions", () => {
             { evidenceId, criterionId: "focused-test" } as never,
           ]),
       } as never,
-      works: {} as never,
+      works: {
+        findById: () => Effect.succeed(Option.some({ workspaceId } as never)),
+      } as never,
       journal: {
         lastSequence: () => Effect.succeed(1),
         readAfter: () => Effect.succeed([event] as never),
