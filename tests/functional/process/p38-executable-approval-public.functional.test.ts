@@ -425,9 +425,17 @@ const commitP1BeforeExecutableApproval = async (run: {
   expect(beforeRead.state.invocation).toBeUndefined();
   expect(beforeRead.state.recoveryBinding).toBeUndefined();
   expect(beforeRead.state.effectCount).toBe(0);
-  const detail = await run.client.view<{
-    readonly sandboxPolicyCandidateRead?: unknown;
-  }>("workspace-detail", { workspaceId: run.project.rootWorkspaceId });
+  let detail: { readonly sandboxPolicyCandidateRead?: unknown };
+  try {
+    detail = await run.client.view<{
+      readonly sandboxPolicyCandidateRead?: unknown;
+    }>("workspace-detail", { workspaceId: run.project.rootWorkspaceId });
+  } catch (error) {
+    throw new Error(
+      `P38 public CandidateRead failed: ${String(error)}; p4=${JSON.stringify(run.snapshot())}; daemon=${run.fixture.daemonErrors.join(" | ")}; providerCalls=${run.fixture.providerCalls.length}`,
+      { cause: error },
+    );
+  }
   expect(detail.sandboxPolicyCandidateRead).toBeDefined();
   expect(run.snapshot()).toEqual(beforeRead.state);
   expect(readOracle()).toEqual(beforeRead.writes);
@@ -1263,6 +1271,9 @@ describe("pending P38 public Executable approval qualification", () => {
         readonly invocationId?: string;
       }> = [];
       const run = await startExecutableApproval(marker, {
+        ...(ordering === "after-resolution"
+          ? { trustedLocalSandboxPolicy: true }
+          : {}),
         firstDaemonEntry: p4FenceChild,
         daemonEnvironment: {
           ARBOR_P4_FENCE_ROLE: "old",
@@ -1281,6 +1292,9 @@ describe("pending P38 public Executable approval qualification", () => {
           }
         },
       });
+      if (ordering === "after-resolution") {
+        await commitP1BeforeExecutableApproval(run);
+      }
       const gateDirectory = join(
         dirname(run.fixture.databaseFile),
         "p4-fence-gates",
@@ -1691,6 +1705,7 @@ describe("pending P38 public Executable approval qualification", () => {
           source: event.source,
         }));
     const run = await startExecutableApproval(marker, {
+      trustedLocalSandboxPolicy: true,
       firstDaemonEntry: p4FenceChild,
       daemonEnvironment: {
         ARBOR_P4_FENCE_ROLE: "old",
@@ -1706,6 +1721,7 @@ describe("pending P38 public Executable approval qualification", () => {
         }
       },
     });
+    await commitP1BeforeExecutableApproval(run);
     const targetExecutionId = run.before.approval?.execution_id;
     if (targetExecutionId === undefined) {
       throw new Error("P38 overlap execution id was absent");
@@ -1724,26 +1740,9 @@ describe("pending P38 public Executable approval qualification", () => {
       }),
     );
 
-    // Start both daemons before approval. Each qualifying same-Step P4/P39
-    // claim pauses immediately before BEGIN, while no SQLite write lock is held.
-    const contender = await run.fixture.startAdditionalDaemon({
-      entry: p4FenceChild,
-      daemonEnvironment: {
-        ARBOR_P4_FENCE_ROLE: "new",
-        ARBOR_P4_FENCE_EXPLICIT_EXECUTION_ID: targetExecutionId,
-        ARBOR_P4_P39_BEGIN_GATE: "1",
-        ARBOR_WORKSPACE_ID: functionalId("ws"),
-      },
-      onStdout: (line) => {
-        try {
-          const event = JSON.parse(line) as Record<string, unknown>;
-          if (event.tag === "P4_FENCE_PROBE") contenderProbes.push(event);
-        } catch {
-          // Ordinary daemon output is diagnostic data, not a probe.
-        }
-      },
-    });
-
+    // Let the existing owner claim the P1-prepared approval and pause before
+    // BEGIN. The explicit contender below challenges that same live lease
+    // while no SQLite write lock is held.
     await resolveApproval(
       run.client,
       run.project.projectId,
@@ -1752,6 +1751,9 @@ describe("pending P38 public Executable approval qualification", () => {
       "Approve",
     );
 
+    let contender:
+      | Awaited<ReturnType<ProductionFixture["startAdditionalDaemon"]>>
+      | undefined;
     try {
       const ownerClaim = await waitForPublic(
         async () =>
@@ -1764,7 +1766,12 @@ describe("pending P38 public Executable approval qualification", () => {
           ),
         (event) => event !== undefined,
         25_000,
-      );
+      ).catch((error: unknown) => {
+        throw new Error(
+          `${String(error)}; ownerStages=${JSON.stringify(summarizeStages(ownerProbes))}; contenderStages=${JSON.stringify(summarizeStages(contenderProbes))}; ownerErrors=${JSON.stringify(run.fixture.daemonErrors)}; contenderErrors=${JSON.stringify(contender?.daemonErrors ?? [])}; snapshot=${JSON.stringify(run.snapshot())}`,
+          { cause: error },
+        );
+      });
       expect(ownerClaim).toBeTruthy();
       const ownerBeforeBegin = await waitForPublic(
         async () =>
@@ -1776,6 +1783,27 @@ describe("pending P38 public Executable approval qualification", () => {
         25_000,
       );
       expect(ownerBeforeBegin).toBeTruthy();
+
+      // The first daemon now owns the live Execution lease and is held at the
+      // exact P39 claim boundary. Start the contender only after that point,
+      // then challenge the same Execution with a separate runExecution call.
+      contender = await run.fixture.startAdditionalDaemon({
+        entry: p4FenceChild,
+        daemonEnvironment: {
+          ARBOR_P4_FENCE_ROLE: "new",
+          ARBOR_P4_FENCE_EXPLICIT_EXECUTION_ID: targetExecutionId,
+          ARBOR_P4_P39_BEGIN_GATE: "1",
+          ARBOR_WORKSPACE_ID: functionalId("ws"),
+        },
+        onStdout: (line) => {
+          try {
+            const event = JSON.parse(line) as Record<string, unknown>;
+            if (event.tag === "P4_FENCE_PROBE") contenderProbes.push(event);
+          } catch {
+            // Ordinary daemon output is diagnostic data, not a probe.
+          }
+        },
+      });
 
       writeFileSync(
         join(gateDirectory, "new-explicit-runExecution.release"),
@@ -1796,7 +1824,7 @@ describe("pending P38 public Executable approval qualification", () => {
         );
       } catch (error) {
         throw new Error(
-          `${String(error)}; ownerStages=${JSON.stringify(summarizeStages(ownerProbes))}; contenderStages=${JSON.stringify(summarizeStages(contenderProbes))}; ownerErrors=${JSON.stringify(run.fixture.daemonErrors)}; contenderErrors=${JSON.stringify(contender.daemonErrors)}`,
+          `${String(error)}; ownerStages=${JSON.stringify(summarizeStages(ownerProbes))}; contenderStages=${JSON.stringify(summarizeStages(contenderProbes))}; ownerErrors=${JSON.stringify(run.fixture.daemonErrors)}; contenderErrors=${JSON.stringify(contender?.daemonErrors ?? [])}`,
         );
       }
       expect(contenderLeaseLoss).toMatchObject({
@@ -1909,15 +1937,21 @@ describe("pending P38 public Executable approval qualification", () => {
       const completed = await waitForResumedAction(run.snapshot, "Consumed");
       expect(completed.approval).toEqual(claimed.approval);
       expect(completed.recoveryBinding).toEqual(claimed.recoveryBinding);
-      expect(completed.attempt0).toEqual(claimed.attempt0);
+      expect(completed.attempt0).toMatchObject({
+        attempt_no: 0,
+        admission_state: "MayHaveStarted",
+        admission_source: "P39Admission",
+        admission_time_precision: "TransactionTimestamp",
+        binding_sha256: completed.recoveryBinding?.recovery_binding_sha256,
+      });
       expect(completed.action?.state).toBe("Applied");
       expect(completed.effectCount).toBe(1);
       expect(completed.matchingInvocationCount).toBe(1);
       expect(completed.executionApprovalCount).toBe(1);
       expect(run.fixture.daemonErrors).toEqual([]);
-      expect(contender.daemonErrors).toEqual([]);
+      expect(contender?.daemonErrors).toEqual([]);
     } finally {
-      await contender.crash();
+      if (contender !== undefined) await contender.crash();
     }
   });
 
@@ -1932,6 +1966,7 @@ describe("pending P38 public Executable approval qualification", () => {
       readonly outcomeTag?: string;
     }> = [];
     const run = await startExecutableApproval(marker, {
+      trustedLocalSandboxPolicy: true,
       firstDaemonEntry: p4FenceChild,
       daemonEnvironment: {
         ARBOR_P4_FENCE_ROLE: "old",
@@ -2060,6 +2095,7 @@ describe("pending P38 public Executable approval qualification", () => {
       readonly invocationId?: string;
     }> = [];
     const run = await startExecutableApproval(marker, {
+      trustedLocalSandboxPolicy: true,
       firstDaemonEntry: p4FenceChild,
       preserveDirectoryOnStop: true,
       daemonEnvironment: {
@@ -2075,6 +2111,7 @@ describe("pending P38 public Executable approval qualification", () => {
         }
       },
     });
+    await commitP1BeforeExecutableApproval(run);
 
     await resolveApproval(
       run.client,
@@ -2179,8 +2216,17 @@ describe("pending P38 public Executable approval qualification", () => {
       expect(recovered.matchingInvocationCount).toBe(1);
       expect(recovered.executionApprovalCount).toBe(1);
       expect(recovered.recoveryBinding).toEqual(claimed.recoveryBinding);
-      expect(recovered.attempt0).toEqual(claimed.attempt0);
-      expectP38ReceiptProjection(recovered, run);
+      expect(recovered.attempt0).toMatchObject({
+        attempt_no: 0,
+        admission_state: "MayHaveStarted",
+        admission_source: "P39Admission",
+        admission_time_precision: "TransactionTimestamp",
+        binding_sha256: recovered.recoveryBinding?.recovery_binding_sha256,
+      });
+      expectP38ReceiptProjection(recovered, run, {
+        admissionState: "MayHaveStarted",
+        admissionSource: "P39Admission",
+      });
       expect(run.fixture.daemonErrors).toEqual([]);
       expect(peer.daemonErrors).toEqual([]);
     } finally {
@@ -2198,6 +2244,7 @@ describe("pending P38 public Executable approval qualification", () => {
       readonly invocationId?: string;
     }> = [];
     const run = await startExecutableApproval(marker, {
+      trustedLocalSandboxPolicy: true,
       firstDaemonEntry: p4FenceChild,
       preserveDirectoryOnStop: true,
       daemonEnvironment: {
@@ -2214,6 +2261,7 @@ describe("pending P38 public Executable approval qualification", () => {
         }
       },
     });
+    await commitP1BeforeExecutableApproval(run);
 
     await resolveApproval(
       run.client,
