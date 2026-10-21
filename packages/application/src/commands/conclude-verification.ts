@@ -347,7 +347,7 @@ export interface ConcludeVerificationResult {
   readonly missionSnapshot: VerificationMission;
   readonly criteriaResults: ReadonlyArray<CriterionResultInput>;
   readonly snapshotStatus: "Available" | "NotApplicableOrphaned";
-  readonly conclusionReason: ConclusionReason | undefined;
+  readonly conclusionReason: ConclusionReason | null;
   readonly wakeSignals: ReadonlyArray<ConcludeVerificationWakeSignal>;
   readonly channel1Release: Channel1Release;
 }
@@ -523,7 +523,10 @@ export const makeConcludeVerificationHandler = (
         eventPayload.workId !== verification.workId ||
         eventPayload.targetWorkRevision !== verification.targetWorkRevision ||
         eventPayload.verdict !== payload.verdict ||
-        eventPayload.conclusionReason !== (payload.conclusionReason ?? "") ||
+        eventPayload.conclusionReason !==
+          (receipt.schemaVersion === "2"
+            ? (payload.conclusionReason ?? null)
+            : (payload.conclusionReason ?? "")) ||
         eventPayload.summaryRef !== payload.summaryRef ||
         JSON.stringify(eventPayload.evidenceRefs) !==
           JSON.stringify(expectedEvidenceRefs)
@@ -550,7 +553,10 @@ export const makeConcludeVerificationHandler = (
         result.state !== "Concluded" ||
         result.verdict !== payload.verdict ||
         result.summaryRef !== payload.summaryRef ||
-        result.conclusionReason !== payload.conclusionReason ||
+        result.conclusionReason !==
+          (receipt.schemaVersion === "2"
+            ? (payload.conclusionReason ?? null)
+            : payload.conclusionReason) ||
         result.channel1Release.workId !== verification.workId ||
         result.channel1Release.targetWorkRevision !==
           verification.targetWorkRevision
@@ -558,12 +564,33 @@ export const makeConcludeVerificationHandler = (
         return yield* conclusionReplayFailure();
       }
       if (receipt.schemaVersion === "2") {
+        const ownerWork = yield* dependencies.works.findById(
+          verification.workId,
+        );
+        if (Option.isNone(ownerWork)) return yield* conclusionReplayFailure();
+        const expectedWakeSignals: ReadonlyArray<ConcludeVerificationWakeSignal> =
+          payload.verdict === "Pass"
+            ? []
+            : [
+                {
+                  workspaceId: ownerWork.value.workspaceId,
+                  reason: { _tag: "VerificationReturned" },
+                  detail: {
+                    verificationId: payload.verificationId,
+                    workId: verification.workId,
+                    workRevision: verification.targetWorkRevision,
+                    verdict: payload.verdict,
+                  },
+                },
+              ];
         if (
           JSON.stringify(result.missionSnapshot) !==
             JSON.stringify(verification.missionSnapshot) ||
           JSON.stringify(result.criteriaResults) !==
             JSON.stringify(verification.criteriaResults) ||
-          result.snapshotStatus !== verification.snapshotStatus
+          result.snapshotStatus !== verification.snapshotStatus ||
+          JSON.stringify(result.wakeSignals) !==
+            JSON.stringify(expectedWakeSignals)
         ) {
           return yield* conclusionReplayFailure();
         }
@@ -770,7 +797,7 @@ export const makeConcludeVerificationHandler = (
             workId: verification.workId,
             targetWorkRevision: verification.targetWorkRevision,
             verdict: payload.verdict,
-            conclusionReason: payload.conclusionReason ?? "",
+            conclusionReason: payload.conclusionReason ?? null,
             evidenceRefs,
             summaryRef: payload.summaryRef,
             missionSnapshot: verification.missionSnapshot,
@@ -795,7 +822,7 @@ export const makeConcludeVerificationHandler = (
             payload.conclusionReason === "Orphaned"
               ? "NotApplicableOrphaned"
               : "Available",
-          conclusionReason: payload.conclusionReason,
+          conclusionReason: payload.conclusionReason ?? null,
           wakeSignals,
           channel1Release: {
             workId: verification.workId,

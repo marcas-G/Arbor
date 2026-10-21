@@ -298,6 +298,7 @@ describe("registered command receipt decoders", () => {
           ? {
               ...(validResults.ConcludeVerification as Record<string, unknown>),
               verdict: "Pass",
+              conclusionReason: null,
               missionSnapshot: {
                 goal: "goal",
                 criteria: [
@@ -410,6 +411,7 @@ describe("registered command receipt decoders", () => {
 
     const v2Result = {
       ...base,
+      conclusionReason: null,
       missionSnapshot: {
         goal: "goal",
         criteria: [
@@ -443,6 +445,11 @@ describe("registered command receipt decoders", () => {
 
     for (const invalid of [
       { ...v2Result, unexpected: true },
+      (() => {
+        const { conclusionReason: _reason, ...omitted } = v2Result;
+        return omitted;
+      })(),
+      { ...v2Result, conclusionReason: "" },
       { ...v2Result, criteriaResults: [] },
       {
         ...v2Result,
