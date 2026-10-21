@@ -343,7 +343,7 @@ const factInput = (failureCode = "ProviderUnavailable") => ({
     failureCode,
     actionBinding: {
       identity: { executionId, logicalStepNo: 0, repairAttempt: 0 },
-      providerTurnId: "ptn_p50_test" as never,
+      providerTurnId: `ptn_${executionId}_0` as never,
       logicalActionId: "lac_p50_test",
       actionIndex: 0,
       callRef: "call_p50_test",

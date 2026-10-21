@@ -173,8 +173,8 @@ const preIntentStaleMutations = [
   },
   {
     name: "Action ProviderTurnId",
-    sql: "UPDATE agent_loop_steps SET provider_turn_id = 'ptn_changed' WHERE execution_id = ?",
-    params: [executionId],
+    sql: "UPDATE agent_loop_steps SET provider_turn_id = ? WHERE execution_id = ?",
+    params: [`ptn_${executionId}_1`, executionId],
     field: "ActionRevision",
   },
   {

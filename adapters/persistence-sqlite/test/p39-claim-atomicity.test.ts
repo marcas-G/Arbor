@@ -339,7 +339,7 @@ const seedActionAndApproval = (
       [
         executionId,
         scenario.logicalStepNo,
-        `ptn_018f2b3c-4d5e-7abc-8def-0123456789${scenario.suffix}`,
+        `ptn_${executionId}_${scenario.logicalStepNo}`,
         now,
       ],
     );

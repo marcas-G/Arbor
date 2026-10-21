@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import {
+  providerTurnInferenceId,
+  providerTurnRepairInferenceId,
+} from "@arbor/domain";
+import {
   AttentionProjectionStore,
   RecoveryAttentionFactStore,
   TransactionPort,
@@ -32,7 +36,7 @@ import {
   TransactionPortLive,
 } from "../src/index.js";
 
-const executionId = "exe_p41_storage";
+const executionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789ac";
 const projectId = "prj_p41_storage";
 const workspaceId = "ws_p41_storage";
 const sessionId = "ses_p41_storage";
@@ -180,7 +184,7 @@ const insertFact = (
       values.workspaceId ?? workspaceId,
       0,
       0,
-      "ptn_p41_storage",
+      providerTurnInferenceId(executionId as never, 0),
       values.logicalActionId,
       "StepManifestMismatch",
       "2026-10-12T00:00:00.000Z",
@@ -420,7 +424,7 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
       workspaceId: workspaceId as never,
       logicalStepNo: 2,
       repairAttempt: 1,
-      providerTurnId: "ptn_store_persisted" as never,
+      providerTurnId: providerTurnRepairInferenceId(executionId as never, 2, 1),
       logicalActionId: "lac_store_persisted",
       failureCode: "DecisionRequestWorkspaceMismatch" as const,
       firstDetectedAt: "2026-10-12T00:00:00.000Z",
@@ -618,7 +622,10 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
           workspaceId: workspaceId as never,
           logicalStepNo: 0,
           repairAttempt: 0,
-          providerTurnId: "ptn_p41_absent" as never,
+          providerTurnId: providerTurnInferenceId(
+            "exe_018f2b3c-4d5e-7abc-8def-0123456789ad" as never,
+            0,
+          ),
           logicalActionId: "lac_p41_absent",
           failureCode: "StepManifestMismatch" as const,
           firstDetectedAt: "2026-10-12T00:00:00.000Z",

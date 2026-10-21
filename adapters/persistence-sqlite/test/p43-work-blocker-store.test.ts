@@ -31,7 +31,7 @@ const projectId = "prj_blocked_test";
 const workspaceId = "ws_blocked_test" as WorkspaceId;
 const sessionId = "ses_blocked_test";
 const workId = "wrk_blocked_test" as WorkId;
-const executionId = "exe_blocked_test";
+const executionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789ae";
 
 let schema42Factory: Schema42TestDatabaseFactory | undefined;
 
@@ -152,7 +152,7 @@ const baseBlocker: WorkBlocker = {
   failedActionRefs: [
     {
       executionId: executionId as WorkBlocker["openCycleId"],
-      providerTurnId: "ptn_blocked_test" as never,
+      providerTurnId: `ptn_${executionId}_0` as never,
       logicalStepNo: 0,
       repairAttempt: 0,
       actionIndex: 0,
