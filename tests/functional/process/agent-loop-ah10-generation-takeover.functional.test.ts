@@ -1576,11 +1576,14 @@ describe("AH10 real daemon generation takeover", () => {
         readonly resultRef: string;
       }> = [];
       const listWorkspaceCalls: number[] = [];
+      const listWorkspacesUnavailableCalls: number[] = [];
       const missingResultRefContexts: string[] = [];
       const providerTrace: Array<{
         readonly index: number;
         readonly tools: ReadonlyArray<string | undefined>;
         readonly tail: string;
+        readonly resultRefs: ReadonlyArray<string>;
+        readonly readyResultsPresent: boolean;
       }> = [];
       let probeArmed = false;
       let parentSeedWaitIssued = false;
@@ -1597,6 +1600,10 @@ describe("AH10 real daemon generation takeover", () => {
             index,
             tools: call.tools.map((tool) => tool.function?.name),
             tail: context.slice(-1_200),
+            resultRefs: [...context.matchAll(/rref_[a-f0-9]{64}/gu)].map(
+              (match) => match[0],
+            ),
+            readyResultsPresent: context.includes("readyResults"),
           });
           const available = new Set(
             call.tools
@@ -1706,20 +1713,27 @@ describe("AH10 real daemon generation takeover", () => {
             context.includes(parentMarker) &&
             available.has("accept_result")
           ) {
-            const resultRef = /rref_[a-f0-9]{64}/u.exec(context)?.[0];
-            if (resultRef === undefined) {
-              if (context.includes("Child result ready")) {
-                listWorkspaceCalls.push(index);
-                return {
-                  _tag: "ToolCall",
-                  name: "list_workspaces",
-                  arguments: { query: childMarker },
-                };
-              }
-              missingResultRefContexts.push(context.slice(-2_000));
+            if (acceptResultCalls.length > 0) {
               return {
                 _tag: "Text",
-                text: "No direct-child ready resultRef was supplied.",
+                text: `Accepted the child result ${parentMarker}.`,
+              };
+            }
+            const resultRef = /rref_[a-f0-9]{64}/u.exec(context)?.[0];
+            if (resultRef === undefined) {
+              if (!available.has("list_workspaces")) {
+                listWorkspacesUnavailableCalls.push(index);
+                missingResultRefContexts.push(context.slice(-2_000));
+                return {
+                  _tag: "Text",
+                  text: "No direct-child ready resultRef or list_workspaces control was supplied.",
+                };
+              }
+              listWorkspaceCalls.push(index);
+              return {
+                _tag: "ToolCall",
+                name: "list_workspaces",
+                arguments: { query: childMarker },
               };
             }
             acceptResultCalls.push({ providerCallIndex: index, resultRef });
@@ -1837,6 +1851,7 @@ describe("AH10 real daemon generation takeover", () => {
         daemonEnvironment: {
           ARBOR_AH10_ROLE: "old",
           ARBOR_AH10_GATE_ACTION_KIND: "accept_result",
+          ARBOR_AH10_PAUSE_LEASE_RENEWAL: "1",
           ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
             crashSide === "before" ? "1" : "0",
         },
@@ -1865,7 +1880,7 @@ describe("AH10 real daemon generation takeover", () => {
         15_000,
       ).catch((error: unknown) => {
         throw new Error(
-          `AcceptResult-specific ActionIntent was not observed: ${error instanceof Error ? error.message : String(error)}; listWorkspaceCalls=${JSON.stringify(listWorkspaceCalls)}; missingResultRef=${JSON.stringify(missingResultRefContexts)}; actionIntents=${JSON.stringify(events.filter((event) => event.role === "old" && event.boundary === "AH7AfterActionIntentCommit"))}`,
+          `AcceptResult-specific ActionIntent was not observed: ${error instanceof Error ? error.message : String(error)}; listWorkspaceCalls=${JSON.stringify(listWorkspaceCalls)}; listWorkspacesUnavailableCalls=${JSON.stringify(listWorkspacesUnavailableCalls)}; missingResultRef=${JSON.stringify(missingResultRefContexts)}; providerTrace=${JSON.stringify(providerTrace.slice(-8))}; actionIntents=${JSON.stringify(events.filter((event) => event.role === "old" && event.boundary === "AH7AfterActionIntentCommit"))}`,
         );
       });
       if (oldAction === undefined) {
@@ -1873,6 +1888,7 @@ describe("AH10 real daemon generation takeover", () => {
       }
       expect(oldAction.callRef).toMatch(/^call_/u);
       expect(listWorkspaceCalls).toHaveLength(1);
+      expect(listWorkspacesUnavailableCalls).toEqual([]);
       expect(acceptResultCalls).toHaveLength(1);
       expect(acceptResultCalls[0]?.resultRef).toMatch(/^rref_[a-f0-9]{64}$/u);
       const oldLeasePause = await waitForPublic(
@@ -1881,6 +1897,7 @@ describe("AH10 real daemon generation takeover", () => {
             (event) =>
               event.role === "old" &&
               event.boundary === "AH10BeforeLeaseRenewal" &&
+              event.pauseRequested === true &&
               event.executionId === oldAction.executionId,
           ),
         (event) => event !== undefined,
@@ -1890,6 +1907,11 @@ describe("AH10 real daemon generation takeover", () => {
         throw new Error("AH10 old AcceptResult lease pause evidence absent");
       }
       expect(oldLeasePause?.fencingGeneration).toBe(0);
+      const oldAcceptLease = readAh10Rows(fixture.databaseFile).leases.find(
+        (lease) => lease.execution_id === oldAction.executionId,
+      );
+      if (oldAcceptLease === undefined)
+        throw new Error("AH10 old AcceptResult lease row is absent");
       await waitForLiveOwnerLeaseExpiryForQualification({
         databaseFile: fixture.databaseFile,
         executionId: oldAction.executionId,
@@ -1898,6 +1920,12 @@ describe("AH10 real daemon generation takeover", () => {
           pauseRequested: oldLeasePause.pauseRequested === true,
           executionId: oldLeasePause.executionId,
           fencingGeneration: oldLeasePause.fencingGeneration ?? -1,
+        },
+        expected: {
+          workerId: oldAcceptLease.worker_id,
+          workerIncarnationId: oldAcceptLease.worker_incarnation_id,
+          generation: oldAcceptLease.generation,
+          expiresAt: oldAcceptLease.expires_at,
         },
         daemon: {
           snapshot: fixture.daemonProcessSnapshot,
@@ -2088,7 +2116,27 @@ describe("AH10 real daemon generation takeover", () => {
             `observation_${oldAction.executionId}_`,
           ),
       );
-      expect(parentObservations).toHaveLength(2);
+      expect(
+        parentObservations,
+        `AH10 AcceptResult provider/workspace facts: ${JSON.stringify({
+          providerTrace: providerTrace.slice(-10),
+          listWorkspaceCalls,
+          listWorkspacesUnavailableCalls,
+          acceptResultCalls,
+          childVerification: {
+            verdict: childVerification.verdict,
+            verificationId: childVerification.verificationId,
+            targetWorkRevision: childVerification.targetWorkRevision,
+          },
+          childCurrentWork,
+          works: final.works,
+          deliverables: final.deliverables,
+          acceptances: final.acceptances,
+          listWorkspaceActions: final.actions.filter(
+            (action) => action.action_kind === "list_workspaces",
+          ),
+        })}`,
+      ).toHaveLength(2);
       expect(
         parentObservations.filter(
           (observation) => observation.source_ref === observationSourceRef,
@@ -2120,10 +2168,13 @@ describe("AH10 real daemon generation takeover", () => {
       readonly resultRef: string;
     }> = [];
     const listWorkspaceCalls: number[] = [];
+    const listWorkspacesUnavailableCalls: number[] = [];
     const providerTrace: Array<{
       readonly index: number;
       readonly tools: ReadonlyArray<string | undefined>;
       readonly tail: string;
+      readonly resultRefs: ReadonlyArray<string>;
+      readonly readyResultsPresent: boolean;
     }> = [];
     let probeArmed = false;
     let parentSeedWaitIssued = false;
@@ -2140,6 +2191,10 @@ describe("AH10 real daemon generation takeover", () => {
           index,
           tools: call.tools.map((tool) => tool.function?.name),
           tail: context.slice(-1_200),
+          resultRefs: [...context.matchAll(/rref_[a-f0-9]{64}/gu)].map(
+            (match) => match[0],
+          ),
+          readyResultsPresent: context.includes("readyResults"),
         });
         const available = new Set(
           call.tools
@@ -2258,19 +2313,20 @@ describe("AH10 real daemon generation takeover", () => {
             };
           }
           const resultRef = /rref_[a-f0-9]{64}/u.exec(context)?.[0];
-          if (
-            resultRef === undefined &&
-            context.includes("Child result ready")
-          ) {
+          if (resultRef === undefined) {
+            if (!available.has("list_workspaces")) {
+              listWorkspacesUnavailableCalls.push(index);
+              return {
+                _tag: "Text",
+                text: "No direct-child ready resultRef or list_workspaces control was supplied.",
+              };
+            }
             listWorkspaceCalls.push(index);
             return {
               _tag: "ToolCall",
               name: "list_workspaces",
               arguments: { query: childMarker },
             };
-          }
-          if (resultRef === undefined) {
-            return { _tag: "HttpError", status: 422 };
           }
           acceptResultCalls.push({ providerCallIndex: index, resultRef });
           return {
@@ -2464,13 +2520,14 @@ describe("AH10 real daemon generation takeover", () => {
       30_000,
     ).catch((error: unknown) => {
       throw new Error(
-        `committed AcceptResult ActionIntent absent: ${error instanceof Error ? error.message : String(error)}; providerTrace=${JSON.stringify(providerTrace)}; listWorkspaceCalls=${JSON.stringify(listWorkspaceCalls)}; acceptResultCalls=${JSON.stringify(acceptResultCalls)}; events=${JSON.stringify(events)}; oldDaemon=${fixture.daemonErrors.join(" | ")}`,
+        `committed AcceptResult ActionIntent absent: ${error instanceof Error ? error.message : String(error)}; providerTrace=${JSON.stringify(providerTrace.slice(-8))}; listWorkspaceCalls=${JSON.stringify(listWorkspaceCalls)}; listWorkspacesUnavailableCalls=${JSON.stringify(listWorkspacesUnavailableCalls)}; acceptResultCalls=${JSON.stringify(acceptResultCalls)}; events=${JSON.stringify(events)}; oldDaemon=${fixture.daemonErrors.join(" | ")}`,
       );
     });
     if (oldAction === undefined) {
       throw new Error("AH10 committed AcceptResult ActionIntent absent");
     }
     expect(listWorkspaceCalls).toHaveLength(1);
+    expect(listWorkspacesUnavailableCalls).toEqual([]);
     expect(acceptResultCalls).toHaveLength(1);
     expect(acceptResultCalls[0]?.resultRef).toMatch(/^rref_[a-f0-9]{64}$/u);
     releaseGate(fixture, "old", "action-intent");
