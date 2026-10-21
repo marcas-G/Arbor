@@ -5,6 +5,24 @@ import {
   isValidOverflowCompactionLinkPair,
 } from "../src/model-decision.js";
 import { planSubmittedDecisionStopClose } from "../src/submitted-decision-stop-close-plan.js";
+import {
+  fixtureExecutionProviderTurnId,
+  fixtureSummaryCompactionProviderTurnId,
+} from "./fixtures/provider-turn.js";
+
+const replayProviderTurnId = "ptn_00000000-0000-7000-8000-000000000001";
+const bindingExecutionId = "exe_00000000-0000-7000-8000-000000000003";
+const recoveryExecutionId = "exe_00000000-0000-7000-8000-000000000004";
+const recoveryInferenceId = fixtureExecutionProviderTurnId(recoveryExecutionId);
+const recoveryCompactionId = fixtureSummaryCompactionProviderTurnId(
+  recoveryExecutionId,
+  0,
+  0,
+);
+const otherRecoveryInferenceId = fixtureExecutionProviderTurnId(
+  recoveryExecutionId,
+  1,
+);
 
 const input = () => ({
   executionWorkspaceId: "ws_owner",
@@ -18,7 +36,7 @@ const input = () => ({
   },
   workspace: { currentWorkId: "wrk_b", revision: 11 },
   step: {
-    providerTurnId: "ptn_pinned",
+    providerTurnId: replayProviderTurnId,
     state: "ActionsInProgress" as const,
     nextActionIndex: 0,
     manifestId: "manifest_pinned",
@@ -31,7 +49,7 @@ const input = () => ({
     actionKind: "select_current_work",
     state: "Pending" as const,
   },
-  providerTurnId: "ptn_pinned",
+  providerTurnId: replayProviderTurnId,
   providerResult: {
     _tag: "SettledSuccess" as const,
     manifestId: "manifest_pinned",
@@ -85,13 +103,13 @@ describe("pinned Submitted DecisionRequest replay guard", () => {
 describe("Submitted DecisionEpisode Stop-only close plan", () => {
   it("terminalizes only the exact pending selection action and skips the remaining pinned actions", () => {
     const identity = {
-      executionId: "exe_binding" as never,
+      executionId: bindingExecutionId as never,
       logicalStepNo: 0,
       repairAttempt: 0,
     };
     const step = {
       identity,
-      providerTurnId: "ptn_binding" as never,
+      providerTurnId: fixtureExecutionProviderTurnId(bindingExecutionId),
       state: "ActionsInProgress" as const,
       nextActionIndex: 0,
       revision: 3,
@@ -146,7 +164,7 @@ describe("Submitted DecisionEpisode Stop-only close plan", () => {
 
   it("rejects a plan when the decoder-selected current action is not the exact pending selection", () => {
     const identity = {
-      executionId: "exe_binding" as never,
+      executionId: bindingExecutionId as never,
       logicalStepNo: 0,
       repairAttempt: 0,
     };
@@ -166,7 +184,7 @@ describe("Submitted DecisionEpisode Stop-only close plan", () => {
       planSubmittedDecisionStopClose({
         step: {
           identity,
-          providerTurnId: "ptn_binding" as never,
+          providerTurnId: fixtureExecutionProviderTurnId(bindingExecutionId),
           state: "ActionsInProgress",
           nextActionIndex: 0,
           revision: 3,
@@ -183,7 +201,7 @@ describe("Submitted DecisionEpisode Stop-only close plan", () => {
 describe("overflow compaction recovery link guard", () => {
   it("accepts a compaction link that names the failed inference as predecessor", () => {
     const identity = {
-      executionId: "exe_recovery" as never,
+      executionId: recoveryExecutionId as never,
       logicalStepNo: 0,
       repairAttempt: 0,
     };
@@ -192,7 +210,7 @@ describe("overflow compaction recovery link guard", () => {
         identity,
         overflowOrdinal: 0 as const,
         role: "Inference" as const,
-        providerTurnId: "ptn_inference" as never,
+        providerTurnId: recoveryInferenceId,
         contextEpoch: 0 as never,
         state: "SettledFailure" as const,
         createdAt: "t0",
@@ -201,8 +219,8 @@ describe("overflow compaction recovery link guard", () => {
         identity,
         overflowOrdinal: 0 as const,
         role: "OverflowCompaction" as const,
-        providerTurnId: "ptn_compaction" as never,
-        predecessorProviderTurnId: "ptn_inference" as never,
+        providerTurnId: recoveryCompactionId,
+        predecessorProviderTurnId: recoveryInferenceId,
         contextEpoch: 0 as never,
         state: "Prepared" as const,
         createdAt: "t1",
@@ -211,15 +229,15 @@ describe("overflow compaction recovery link guard", () => {
     expect(
       isValidOverflowCompactionLinkPair(
         links,
-        "ptn_inference",
-        "ptn_compaction",
+        recoveryInferenceId,
+        recoveryCompactionId,
       ),
     ).toBe(true);
   });
 
   it("rejects an OverflowCompaction link whose predecessor is not the failed inference", () => {
     const identity = {
-      executionId: "exe_recovery" as never,
+      executionId: recoveryExecutionId as never,
       logicalStepNo: 0,
       repairAttempt: 0,
     };
@@ -228,7 +246,7 @@ describe("overflow compaction recovery link guard", () => {
         identity,
         overflowOrdinal: 0 as const,
         role: "Inference" as const,
-        providerTurnId: "ptn_inference" as never,
+        providerTurnId: recoveryInferenceId,
         contextEpoch: 0 as never,
         state: "SettledFailure" as const,
         createdAt: "t0",
@@ -237,8 +255,8 @@ describe("overflow compaction recovery link guard", () => {
         identity,
         overflowOrdinal: 0 as const,
         role: "OverflowCompaction" as const,
-        providerTurnId: "ptn_compaction" as never,
-        predecessorProviderTurnId: "ptn_wrong-inference" as never,
+        providerTurnId: recoveryCompactionId,
+        predecessorProviderTurnId: otherRecoveryInferenceId,
         contextEpoch: 0 as never,
         state: "Prepared" as const,
         createdAt: "t1",
@@ -247,8 +265,8 @@ describe("overflow compaction recovery link guard", () => {
     expect(
       isValidOverflowCompactionLinkPair(
         links,
-        "ptn_inference",
-        "ptn_compaction",
+        recoveryInferenceId,
+        recoveryCompactionId,
       ),
     ).toBe(false);
   });

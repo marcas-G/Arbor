@@ -2,12 +2,13 @@ import type { ToolInvocation } from "@arbor/model-context";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { decodeControlInvocation } from "../src/control-decoder.js";
+import { fixtureProviderTurnId } from "./fixtures/provider-turn.js";
 
 const invocation = (
   toolName: string,
   argumentsJson: string,
 ): ToolInvocation => ({
-  providerTurnId: "ptn_deliverable" as never,
+  providerTurnId: fixtureProviderTurnId(),
   outputPosition: 0,
   callRef: `${toolName}-call`,
   toolName,

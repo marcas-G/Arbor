@@ -2,11 +2,12 @@ import { TransactionScope } from "@arbor/ports";
 import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 import { executeAgentLoopActions } from "../src/agent-loop-actions.js";
+import { fixtureExecutionProviderTurnId } from "./fixtures/provider-turn.js";
 
-const executionId = "exe_p9_control_settlement";
+const executionId = "exe_00000000-0000-7000-8000-000000000006";
 const sessionId = "ses_p9_control_settlement";
 const workspaceId = "ws_p9_control_settlement";
-const providerTurnId = "ptn_p9_control_settlement";
+const providerTurnId = fixtureExecutionProviderTurnId(executionId);
 const callRef = "call_p9_control_settlement";
 
 interface State {

@@ -2,9 +2,10 @@ import type { ToolInvocation } from "@arbor/model-context";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { decodeControlInvocation } from "../src/control-decoder.js";
+import { fixtureProviderTurnId } from "./fixtures/provider-turn.js";
 
 const invocation = (condition: unknown): ToolInvocation => ({
-  providerTurnId: "ptn_wait" as never,
+  providerTurnId: fixtureProviderTurnId(),
   outputPosition: 0,
   callRef: "wait-call",
   toolName: "wait",
@@ -99,7 +100,7 @@ describe("wait control revision decoding", () => {
   it("decodes only bounded exact refs for resolve_work_blocker", async () => {
     const decoded = await Effect.runPromise(
       decodeControlInvocation({
-        providerTurnId: "ptn_wait" as never,
+        providerTurnId: fixtureProviderTurnId(),
         outputPosition: 0,
         callRef: "resolve-call",
         toolName: "resolve_work_blocker",
@@ -126,7 +127,7 @@ describe("wait control revision decoding", () => {
     const invalid = await Effect.runPromise(
       Effect.flip(
         decodeControlInvocation({
-          providerTurnId: "ptn_wait" as never,
+          providerTurnId: fixtureProviderTurnId(),
           outputPosition: 0,
           callRef: "resolve-call-invalid",
           toolName: "resolve_work_blocker",

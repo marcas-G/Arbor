@@ -2,9 +2,10 @@ import type { ToolInvocation } from "@arbor/model-context";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { makeControlToolRegistry } from "../src/control.js";
+import { fixtureProviderTurnId } from "./fixtures/provider-turn.js";
 
 const invocation = (argumentsJson: string): ToolInvocation => ({
-  providerTurnId: "ptn_test" as never,
+  providerTurnId: fixtureProviderTurnId(),
   outputPosition: 0,
   callRef: "call_test",
   toolName: "propose_workspace",
