@@ -153,3 +153,24 @@ Stale registry/bundle refs retain the existing stable stale receipt. No
 browser auto-selection, fallback or provider execution is part of this UI
 qualification. This design landing does not run browser tests or authorize
 implementation.
+
+## Accepted pre-intent CandidateRead bootstrap qualification (2026-10-21)
+
+The same existing Workspace Detail candidate view is shown when P4 has
+returned the nonterminal `ApprovalRequired` pause, P3's exact Executable
+Action remains Pending, and the exact P4 approval is Pending/unconsumed. P13
+exposes only the existing safe candidate DTO; no P3
+action, approval, ToolInvocation, RecoveryBinding or source-provenance
+identifier is rendered. Human order is policy selection/DecideSandboxPolicy
+first, then the existing ResolveExecutableApproval command. The candidate
+view neither creates nor consumes approval, and no automatic selection/
+submission occurs. P1 checks immutable approval expiry against trusted
+transaction time at commit.
+
+The existing stale HTTP 200 receipt handles `ActionRevision` and
+`ExecutableApprovalRevision` with one fixed generic stale/refetch message.
+P13 refetches through the existing invalidation/explicit-refetch path, never
+replays the old selection, and never displays revision numbers or expiry
+details. UI qualification must include time-only approval expiry with
+unchanged row revision and dual Action/approval mismatch; the latter always
+uses the stable P1 Action-first safe field. P9 terminal behavior is unchanged.

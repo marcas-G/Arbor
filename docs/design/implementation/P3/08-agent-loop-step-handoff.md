@@ -283,6 +283,29 @@ stores the process-local `AgentAction` object.
 - Historical terminal `Denied(ApprovalRequired)` rows remain terminal on
   replay. Recovery never promotes them to a Pending request. A new
   approval-required call uses the nonterminal pause above.
+
+### Accepted P10/P1 pre-intent CandidateRead source (2026-10-21)
+
+Under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, after the
+Application has admitted the exact Pending Executable approval for the P3
+Action paused by `ApprovalRequired`, P4/06 may expose a read-only pre-intent
+sandbox-policy requirement. It is bound to the current active Execution/
+Episode, ProviderTurn/Step/LogicalAction/actionIndex/callRef, exact Pending P3
+Action revision/input hash/tool identity, and exact Pending, unconsumed P4
+approval identity/revision/expiry. P10 exposes only the existing safe
+CandidateRead DTO; neither the Action nor approval identifiers/bindings become
+public or caller-supplied.
+
+This read creates no P4 ToolInvocation or RecoveryBinding, changes no P3
+action/cursor/Step, does not consume approval, and calls no provider or
+executor. The human may commit DecideSandboxPolicy first and then resolve the
+existing approval. After approval, the ordinary P4 claim atomically persists
+the first ToolInvocation intent and consumes the exact Approved revision. A
+stale/missing source before that P1 commit follows the P1/01 receipt binding;
+P3 does not synthesize a replacement Action or approval. This does not change
+the V21 NotAdmitted policy-interruption path once an intent exists or the P9
+terminal provider-unavailable path.
+
 - A P4 no-effect `Denied` ToolResult is terminal for that `LogicalActionId`:
   persist ToolResult status `Denied`, disposition `AuthorizationDenied`,
   action state `TerminalRejected`, Observation source and cursor advance

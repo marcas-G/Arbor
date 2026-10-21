@@ -1127,7 +1127,9 @@ interface SandboxPolicyRequirementReadPortService {
     readonly workspaceId: WorkspaceId;
     readonly executionId: ExecutionId;
   }) => Effect.Effect<
-    Option.Option<SandboxPolicyRequirementV1>,
+    Option.Option<
+      SandboxPolicyRequirementV1 | SandboxPolicyPreIntentRequirementV1
+    >,
     ToolObservationEvidenceStoreError,
     TransactionScope
   >;
@@ -1151,7 +1153,65 @@ interface SandboxPolicyRequirementV1 {
 }
 ```
 
-Return a value only when the canonical Execution is exact, active, unsettled,
+## Accepted pre-intent P3 Action requirement (2026-10-21)
+
+Under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, the existing
+read-only port also returns this closed proof variant:
+
+```ts
+interface SandboxPolicyPreIntentRequirementV1 {
+  readonly _tag: "SandboxPolicyPreIntentRequirementV1";
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly executionId: ExecutionId;
+  readonly episodeBinding: ExecutionEpisodeBinding;
+  readonly expectedEpisodeRevision: number;
+  readonly providerTurnId: ProviderTurnId;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly logicalActionId: string;
+  readonly actionIndex: number;
+  readonly callRef: CallRef;
+  readonly actionRevision: number;
+  readonly inputHash: Sha256;
+  readonly toolName: string;
+  readonly toolVersion: string;
+  readonly approvalId: string;
+  readonly approvalState: "Pending";
+  readonly approvalRevision: number;
+  readonly approvalExpiresAt: string;
+}
+```
+
+The existing `SandboxPolicyRequirementV1` remains the post-intent variant and
+keeps its exact NotAdmitted invocation/Bound RecoveryBinding checks. The
+pre-intent variant is returned only after P4's existing nonterminal
+`ApprovalRequired` handoff created an exact Pending P4 Executable approval for
+the same unique current P3 Executable Action. Its Execution is active,
+unsettled, and not stop-requested; its Step is ActionsInProgress at that
+action's cursor; the Action is Pending with exact pinned ProviderTurn/Step/
+LogicalAction/actionIndex/callRef/inputHash/toolName/toolVersion; the approval
+is exact to the same action, `state=Pending` and unconsumed, and there is no
+ToolInvocation or RecoveryBinding for that action. The proof carries its
+immutable `expiresAt`; P1 checks it against trusted GatewayNow inside the
+final transaction. Ambiguous/duplicate/corrupt source rows fail closed through
+the existing typed read error. Valid absence, Approved/Rejected/Expired/
+Cancelled/consumed approval, terminal/stopped/settled execution, non-Pending
+action, or a newly present P4 intent returns None or the applicable existing
+post-intent variant; it never fabricates a new invocation/binding.
+
+Both variants are obtained under the caller's existing TransactionScope and
+are read-only. The P10 candidate DTO remains unchanged and omits Action,
+approval, invocation, RecoveryBinding, tool arguments, target refs/paths and
+source digests. P1's read-only preparation resolves path-free TargetRefs/access
+from the exact pinned action through existing P11 rules outside its write
+transaction; P1's current-preconditions CAS re-reads the exact Action and
+approval source under the same final transaction. No requirement, marker,
+P3/P4 row, event, queue item, Attention or approval consumption is created by
+this port. P9's terminal unavailable contract is unchanged.
+
+For the existing post-intent `SandboxPolicyRequirementV1` variant, return a
+value only when the canonical Execution is exact, active, unsettled,
 and not stop-requested; the exact invocation is unsettled and
 `effect_admission_state=NotAdmitted`; its immutable RecoveryBinding is
 Bound and verifies canonical bytes, SHA-256 and exact intent/resource
@@ -1162,7 +1222,7 @@ policy-bearing under the existing P4 rule (`shell` or exact sandbox-profile
 binding). Where an effect attempt has profile fields, they are either all
 NULL or complete and exact against the bound proof.
 
-Valid absence, terminal/stopped/settled Execution, settled or
+For that post-intent variant, valid absence, terminal/stopped/settled Execution, settled or
 MayHaveStarted invocation, non-Pending action, or non-policy-bearing tool
 returns `None`. Missing, malformed, mismatched, duplicate, or ambiguous
 RecoveryBinding/action evidence returns the existing typed P4 read/corruption
@@ -1171,7 +1231,7 @@ opens no independent transaction. P10 combines its verified result with the
 same-read candidate/currentness barrier; it returns no partial candidate DTO
 on a typed port, authority, tuple, or barrier failure.
 
-Qualification cases: exact active Execution + Pending Executable P3 Action +
+Post-intent qualification cases: exact active Execution + Pending Executable P3 Action +
 matching ActionsInProgress cursor + NotAdmitted invocation + verified Bound
 RecoveryBinding yields exactly one proof result; duplicate actions/bindings,
 valid-JSON identity or input-hash mismatch, malformed binding, and proof
@@ -1181,3 +1241,14 @@ invocation yields None only when source integrity is valid. Assert that every
 branch is read-only, runs within the caller's TransactionScope, makes no
 independent connection, and creates no P3/P4/P9/P10 row, event, marker,
 Attention, or candidate state.
+
+Pre-intent qualification cases: the exact Pending Action plus exact Pending,
+unconsumed approval after `ApprovalRequired` yields one
+`SandboxPolicyPreIntentRequirementV1`; no P4 invocation/binding is required or
+created. Approved/expired/rejected/cancelled/consumed approval, missing or
+duplicate Action/approval, stale input hash, a different current action
+cursor, or any P4 intent for the same source yields no pre-intent proof or the
+existing typed integrity error as applicable. P10's combined query returns
+no partial DTO. Every branch is read-only, uses the existing TransactionScope
+and writes no row/event/marker/Attention; P4's effect/approval claim semantics
+are unchanged.

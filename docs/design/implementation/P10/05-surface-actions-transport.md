@@ -375,10 +375,11 @@ claims, or ownership regions. Existing summary, receipt and Attention
 redaction is unchanged.
 
 P10 obtains a same-transaction proof result from P4's read-only
-`SandboxPolicyRequirementReadPort` in P4/06. The port validates the exact
-pending P3 action, active Execution, NotAdmitted invocation and immutable
-RecoveryBinding; P10 MUST NOT read P3/P4 private stores directly. P10 combines
-that result with the exact current P1 decision/result, P5 full bundle,
+`SandboxPolicyRequirementReadPort` in P4/06. The port validates either the
+existing exact Pending P3 action plus NotAdmitted invocation and immutable
+RecoveryBinding, or the accepted pre-intent exact Pending P3 action plus
+Pending/unconsumed Executable approval; P10 MUST NOT read P3/P4 private stores
+directly. P10 combines that result with the exact current P1 decision/result, P5 full bundle,
 Workspace/boundary refs and existing freshness barrier. Under that same P10
 read transaction, the P11 read seam supplies the complete current
 ResourceBoundary and exact active Workspace ResourceOwnership facts. For every
@@ -432,7 +433,9 @@ invalidation or explicit refetch, even when `candidateId` is unchanged.
 
 V5 qualification matrix: an initial no-decision plus exact pending P4/P3
 requirement returns one coherent candidate read with the common preconditions
-and no invocation/binding identity; a committed TrustedLocal decision plus
+and no invocation/binding identity; this requirement may be either the
+existing post-intent NotAdmitted proof or the accepted pre-intent Pending
+Action/approval proof. A committed TrustedLocal decision plus
 provider-registry-only V2 bundle drift becomes NeedsDecision and returns the
 new common bundle pair; a command using the old candidate read is rejected by
 the existing P1 stale receipt, while a fresh explicit TrustedLocal selection
@@ -542,3 +545,49 @@ capabilityRevision into the P1 OsEnforced payload alongside the existing
 providerId and other selection/precondition fields. This is a DTO/preimage
 revision only: no new route, ViewId, command, candidate persistence or
 candidate authority is introduced.
+
+## Accepted pre-intent P3 Action CandidateRead bootstrap (2026-10-21)
+
+Accepted under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, fixed
+proposal SHA-256
+`009A965AE81F64E051625E8AC33DD499D0A6EEB35B3D3055941F96A207F00A6C`.
+The existing Workspace Detail `sandboxPolicyCandidateRead` route, V2 DTO,
+`InitialDecision` reason, candidate IDs/sort order, common preconditions,
+P5/P11 barrier and no-auto-selection rule are unchanged. P10 may receive the
+same closed candidate DTO from either P4's existing post-intent NotAdmitted
+requirement or its accepted pre-intent requirement sourced from the exact
+Pending P3 Executable Action and exact Pending/unconsumed P4 approval after
+the nonterminal ApprovalRequired handoff.
+
+For the pre-intent source, P4 validates the exact active Execution/Episode,
+current ActionsInProgress cursor, Pending Action identity/revision/inputHash/
+tool identity, Pending approval identity/revision/unconsumed state and
+its immutable `expiresAt`, all under the caller's existing read transaction.
+P1, not P10, determines expiry eligibility using trusted GatewayNow inside
+the final transaction. P10
+combines this proof with the same current P1 decision/result, full P5 bundle,
+P11 complete ResourceBoundary/ownership and profile-specific handle-digest
+barrier. It emits no partial DTO on missing, ambiguous, stale, corrupt or
+unsupported source.
+
+The DTO exposes none of the Action, approval, invocation, RecoveryBinding,
+tool argument, target-ref/path, or source digest fields. The new pre-intent
+source does not create candidate/requirement persistence or change
+`InitialDecision` into a P1 authority. P1 itself prepares and re-reads the
+exact source in its existing receipt-first/current-preconditions transaction.
+If that source changes, P1 returns the accepted `ActionRevision` or
+`ExecutableApprovalRevision` safe stale field, with Action-first precedence,
+no decision/event and no approval consumption. Time-only approval expiry is
+checked against trusted transaction time even if the row revision is
+unchanged. P9 terminal/no-later-action, P4 approval claim, decision policy,
+Web wire fields and public redaction are unchanged.
+
+Qualification requires a real schema-50/public Workspace Detail read after
+ApprovalRequired has admitted a Pending approval but before any ToolInvocation
+or RecoveryBinding exists; prove zero P3/P4 mutation, Provider, effect,
+Observation and approval consumption from the read. Also prove action/approval
+CAS drift, P1 rejection of approval expiry with unchanged row revision,
+Action-first classification for dual mismatch, no partial candidate on
+ambiguity, and unchanged post-intent NotAdmitted behavior. This does not claim the later
+ProviderTurn/drift qualification closed; a P9 provider-unavailable terminal
+Action/Step still admits no later action.

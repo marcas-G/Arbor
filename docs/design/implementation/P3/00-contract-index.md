@@ -133,3 +133,10 @@ invocation and ActionsInProgress step without ToolResult/Observation/cursor
 advance; recovery uses the existing HumanIntervention wake and strict P4
 RecoveryBinding. No new P3 codec/state exists. P10 binding Attention derives
 from existing P4 rows.
+
+Accepted pre-intent CandidateRead bootstrap adds a read-only source when the
+exact P3 Executable Action is Pending and the exact P4 Executable approval is
+Pending/unconsumed after P4's nonterminal ApprovalRequired path. It does not
+change that P3 Action or Step. P4/06 and P10/05 own the requirement/read
+projection; P1 owns source CAS and receipt. See P3/03/08 and the bootstrap
+governance decision/manifest.

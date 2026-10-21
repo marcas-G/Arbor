@@ -216,3 +216,11 @@ OsEnforced candidate-ID preimage, preserving the existing read route and
 common preconditions. P10 still emits only exact current-host Supported rows;
 candidate IDs remain presentation-only. Accepted proposal SHA-256
 `02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
+
+Accepted pre-intent CandidateRead uses the same P4/06 read-only requirement
+port and existing Workspace Detail DTO when a Pending P3 Executable Action
+is paired with its exact Pending/unconsumed Executable approval after
+`ApprovalRequired`; the existing NotAdmitted invocation/RecoveryBinding
+source remains unchanged. P10 exposes no P3/P4 identities and performs no
+decision or approval mutation. See P3/03/08, P4/02/03/06, P10/05/07 and
+P1/01/03.

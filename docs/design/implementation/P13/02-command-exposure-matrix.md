@@ -255,3 +255,14 @@ fields. Candidate IDs remain presentation-only; there is no inferred or
 default provider tuple. This maps to the P1 handler schema 2 contract, not a
 new command or route. Accepted proposal SHA-256
 `02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
+
+## Accepted pre-intent CandidateRead bootstrap (2026-10-21)
+
+The existing human-only DecideSandboxPolicy route remains the only command
+that records sandbox policy. P13 may expose the same Workspace Detail
+CandidateRead while a P3 Executable Action is Pending and its exact P4
+Executable approval remains Pending/unconsumed. The human submits the
+existing policy command before resolving that approval through the existing
+`ResolveExecutableApproval` route. No ActionId, ApprovalId, source digest,
+candidate ID, new command, command payload field, auto-submit or approval
+mutation is introduced by the CandidateRead.

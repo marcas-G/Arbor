@@ -87,4 +87,12 @@ providerVersion and capabilityRevision from the P10 candidate V2 DTO; no
 candidate ID or inferred tuple reaches P1. Existing human-only exposure,
 confirmation, and stale/refetch behavior remain. Accepted proposal SHA-256
 `02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
+
+The accepted pre-intent bootstrap adds no P13 command or wire field. P13 may
+render the existing CandidateRead while the exact Executable approval is
+Pending; the user submits the existing DecideSandboxPolicy fields before
+resolving that approval. `ActionRevision` and `ExecutableApprovalRevision`
+receipt fields share the existing generic stale/refetch display; no Action,
+approval, source digest or timestamp is shown and no command is auto-resubmitted.
+See P13/02/03/06 and the bootstrap/stale-binding manifest.
 ```
