@@ -17,7 +17,13 @@ import {
 import { makeWorkProvider } from "../support/work-provider.js";
 
 const fixtures: ProductionFixture[] = [];
-const F18_PROCESS_CRASH_CASES = [
+const F18_PROCESS_CRASH_CASES: ReadonlyArray<{
+  readonly boundary: string;
+  readonly phase: string | null;
+  readonly inboxRows: number;
+  readonly completed: boolean;
+  readonly attention?: boolean;
+}> = [
   {
     boundary: "AfterSourceValidationBeforeClaim",
     phase: null,
