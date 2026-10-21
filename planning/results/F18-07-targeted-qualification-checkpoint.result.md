@@ -1,7 +1,7 @@
 # F18-07 targeted qualification checkpoint
 
-Date: 2026-10-21  
-Implementation commits: `1f84e51c`, `a7b984ea`, `4a9c2a7f`  
+Date: 2026-10-21
+Implementation commits: `1f84e51c`, `a7b984ea`, `4a9c2a7f`
 Status: **targeted layers passed; full F18-07/F18-08 qualification remains open**
 
 ## Review-finding disposition
