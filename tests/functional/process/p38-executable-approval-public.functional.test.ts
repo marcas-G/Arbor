@@ -18,6 +18,12 @@ import {
   waitForExecutableApproval,
   waitForPublic,
 } from "../support/public-client.js";
+import {
+  commitTrustedLocalP11Policy,
+  createTrustedLocalP11FixtureEnvironment,
+  grantTrustedLocalP11Permission,
+  initializeTrustedLocalP11Worktree,
+} from "../support/trusted-local-p11-fixture.js";
 
 interface ExecutableApprovalRow {
   readonly approval_id: string;
@@ -100,12 +106,16 @@ const fixtures: ProductionFixture[] = [];
 const p4FenceChild = resolve(
   "tests/functional/support/p4-tool-lease-fencing-child.mjs",
 );
+const sandboxPolicyV2DaemonChild = resolve(
+  "tests/functional/support/sandbox-policy-v2-daemon-child.mjs",
+);
 
 interface ApprovalFixtureQualificationOptions {
   readonly firstDaemonEntry?: string;
   readonly daemonEnvironment?: Readonly<Record<string, string>>;
   readonly onDaemonStdout?: (line: string) => void;
   readonly preserveDirectoryOnStop?: boolean;
+  readonly trustedLocalSandboxPolicy?: boolean;
 }
 
 afterEach(async () => {
@@ -123,14 +133,51 @@ const startExecutableApproval = async (
       ? `if (Test-Path -LiteralPath 'proof.txt') { Add-Content -LiteralPath '${effectLog}' -Value '${marker}'; mv -LiteralPath 'proof.txt' -Destination '${destination}'; Write-Output '${marker}' }`
       : `if [ -f proof.txt ]; then printf '%s\\n' '${marker}' >> '${effectLog}' && mv proof.txt '${destination}' && printf '%s\\n' '${marker}'; fi`;
 
+  const trustedLocalFixture =
+    qualification.trustedLocalSandboxPolicy === true
+      ? createTrustedLocalP11FixtureEnvironment()
+      : undefined;
+  let releaseShellAction!: () => void;
+  let markShellActionRequested!: () => void;
+  const shellActionGate = new Promise<void>((resolveGate) => {
+    releaseShellAction = resolveGate;
+  });
+  const shellActionRequested = new Promise<void>((resolveRequest) => {
+    markShellActionRequested = resolveRequest;
+  });
+  const daemonEnvironment = trustedLocalFixture?.daemonEnvironment ?? {};
+  Object.assign(daemonEnvironment, qualification.daemonEnvironment ?? {});
+  if (trustedLocalFixture !== undefined) {
+    daemonEnvironment.ARBOR_TICK_INTERVAL_MS = "25";
+  }
   const fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
-    ...(qualification.firstDaemonEntry === undefined
+    ...(Object.keys(daemonEnvironment).length === 0
       ? {}
-      : { firstDaemonEntry: qualification.firstDaemonEntry }),
-    ...(qualification.daemonEnvironment === undefined
+      : { daemonEnvironment }),
+    ...(trustedLocalFixture === undefined
       ? {}
-      : { daemonEnvironment: qualification.daemonEnvironment }),
+      : { setupProbe: trustedLocalFixture.setupProbe }),
+    ...(qualification.trustedLocalSandboxPolicy === true
+      ? {
+          beforeResponse: async (call) => {
+            const requestedShell = call.tools.some(
+              (tool) => tool.function?.name === "shell",
+            );
+            if (requestedShell) {
+              markShellActionRequested();
+              await shellActionGate;
+            }
+          },
+        }
+      : {}),
+    ...(qualification.firstDaemonEntry === undefined &&
+    trustedLocalFixture === undefined
+      ? {}
+      : {
+          firstDaemonEntry:
+            qualification.firstDaemonEntry ?? sandboxPolicyV2DaemonChild,
+        }),
     ...(qualification.onDaemonStdout === undefined
       ? {}
       : { onDaemonStdout: qualification.onDaemonStdout }),
@@ -213,6 +260,17 @@ const startExecutableApproval = async (
     `P38 executable approval ${marker}`,
     { resourceSelection: "Profile" },
   );
+  const sandboxPolicyExpiresAt = new Date(
+    Date.now() + 60 * 60_000,
+  ).toISOString();
+  if (qualification.trustedLocalSandboxPolicy === true) {
+    await initializeTrustedLocalP11Worktree({
+      databaseFile: fixture.databaseFile,
+      projectId: project.projectId,
+      workspaceId: project.rootWorkspaceId,
+      path: fixture.workspaceDirectory,
+    });
+  }
   await client.command(project.projectId, "GrantPermission", {
     permissionGrantId: functionalId("pgr"),
     issuer: "user:local",
@@ -227,13 +285,60 @@ const startExecutableApproval = async (
     `请完成 ${marker}：把 proof.txt 移到 ${destination}，并在副作用日志中记录一次。`,
   );
 
-  const workApproval = await waitForApproval(client, project, marker);
+  const workApproval = await waitForApproval(client, project, marker).catch(
+    (error: unknown) => {
+      throw new Error(
+        `P38 Work admission did not reach public approval: ${String(error)}; providerCalls=${JSON.stringify(fixture.providerCalls.map((call) => ({ tools: call.tools.map((tool) => tool.function?.name), messages: call.messages.map((message) => ({ role: message.role, content: message.content?.slice(0, 600) })) })))}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        { cause: error },
+      );
+    },
+  );
   await client.command(project.projectId, "ResolveControlApproval", {
     approvalId: workApproval.approvalId,
     expectedRevision: workApproval.revision,
     decision: "Approve",
     reason: "admit the Work whose shell action is separately gated",
   });
+
+  if (qualification.trustedLocalSandboxPolicy === true) {
+    await shellActionRequested;
+    const activeWork = await waitForPublic(
+      () =>
+        client.view<{
+          readonly activeExecution?: { readonly executionId: string };
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (work) => work?.activeExecution?.executionId !== undefined,
+    );
+    const executionId = activeWork?.activeExecution?.executionId;
+    if (executionId === undefined) {
+      throw new Error("P38 Work had no active Execution for P1 grant setup");
+    }
+    try {
+      await grantTrustedLocalP11Permission({
+        client,
+        projectId: project.projectId,
+        executionId,
+        expiresAt: sandboxPolicyExpiresAt,
+      });
+    } catch (error) {
+      const db = new DatabaseSync(fixture.databaseFile, { readOnly: true });
+      let execution: unknown;
+      try {
+        execution = db
+          .prepare(
+            "SELECT execution_id, project_id, workspace_id, stop_requested_at, settlement_kind, settled_at FROM executions WHERE execution_id = ?",
+          )
+          .get(executionId);
+      } finally {
+        db.close();
+      }
+      throw new Error(
+        `P38 TrustedLocal P1 grant failed: ${String(error)}; execution=${JSON.stringify(execution)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        { cause: error },
+      );
+    }
+    releaseShellAction();
+  }
 
   const { approvalId, revision } = await waitForExecutableApproval(
     client,
@@ -269,7 +374,43 @@ const startExecutableApproval = async (
     effectLog,
     before,
     snapshot,
+    sandboxPolicyExpiresAt,
   };
+};
+
+const commitP1BeforeExecutableApproval = async (run: {
+  readonly client: ReturnType<typeof makePublicClient>;
+  readonly fixture: ProductionFixture;
+  readonly project: Awaited<ReturnType<typeof createFunctionalProject>>;
+  readonly before: ApprovalSnapshot;
+  readonly snapshot: () => ApprovalSnapshot;
+  readonly sandboxPolicyExpiresAt: string;
+}) => {
+  const executionId = run.before.approval?.execution_id;
+  if (executionId === undefined) {
+    throw new Error("P38 pre-intent policy qualification lacks an Execution");
+  }
+  const expiresAt = run.sandboxPolicyExpiresAt;
+  const beforeRead = run.snapshot();
+  expect(beforeRead.approval?.state).toBe("Pending");
+  expect(beforeRead.invocation).toBeUndefined();
+  expect(beforeRead.recoveryBinding).toBeUndefined();
+  expect(beforeRead.effectCount).toBe(0);
+  const detail = await run.client.view<{
+    readonly sandboxPolicyCandidateRead?: unknown;
+  }>("workspace-detail", { workspaceId: run.project.rootWorkspaceId });
+  expect(detail.sandboxPolicyCandidateRead).toBeDefined();
+  expect(run.snapshot()).toEqual(beforeRead);
+  await commitTrustedLocalP11Policy({
+    client: run.client,
+    baseUrl: run.fixture.baseUrl,
+    databaseFile: run.fixture.databaseFile,
+    projectId: run.project.projectId,
+    workspaceId: run.project.rootWorkspaceId,
+    executionId,
+    expiresAt,
+  });
+  expect(run.snapshot()).toEqual(beforeRead);
 };
 
 const readApprovalSnapshot = (
@@ -468,6 +609,10 @@ const expectP38ReceiptProjection = (
     readonly revision: number;
     readonly before: ApprovalSnapshot;
   },
+  expectedAttempt: {
+    readonly admissionState: string;
+    readonly admissionSource: string;
+  } = { admissionState: "NotAdmitted", admissionSource: "P39Claim" },
 ) => {
   const approval = snapshot.approval;
   const canonicalBindingJson = snapshot.recoveryBinding?.canonical_binding_json;
@@ -513,8 +658,8 @@ const expectP38ReceiptProjection = (
   );
   expect(snapshot.attempt0).toMatchObject({
     attempt_no: 0,
-    admission_state: "NotAdmitted",
-    admission_source: "P39Claim",
+    admission_state: expectedAttempt.admissionState,
+    admission_source: expectedAttempt.admissionSource,
     binding_sha256: snapshot.recoveryBinding?.recovery_binding_sha256,
   });
   expect(approval).toMatchObject({
@@ -731,7 +876,10 @@ describe("pending P38 public Executable approval qualification", () => {
 
   it("approves over the public API and resumes the same Execution/AgentLoopStep", async () => {
     const marker = `P38-APPROVE-${crypto.randomUUID().slice(0, 8)}`;
-    const run = await startExecutableApproval(marker);
+    const run = await startExecutableApproval(marker, {
+      trustedLocalSandboxPolicy: true,
+    });
+    await commitP1BeforeExecutableApproval(run);
     const approved = await resolveApproval(
       run.client,
       run.project.projectId,
@@ -826,7 +974,12 @@ describe("pending P38 public Executable approval qualification", () => {
 
   it("survives restart with two daemons and consumes one approval/effect", async () => {
     const marker = `P38-TAKEOVER-${crypto.randomUUID().slice(0, 8)}`;
-    const run = await startExecutableApproval(marker);
+    const run = await startExecutableApproval(marker, {
+      trustedLocalSandboxPolicy: true,
+    });
+    await commitP1BeforeExecutableApproval(run);
+    await run.fixture.crash();
+    await run.fixture.restart({ entry: sandboxPolicyV2DaemonChild });
     await resolveApproval(
       run.client,
       run.project.projectId,
@@ -834,8 +987,6 @@ describe("pending P38 public Executable approval qualification", () => {
       run.revision,
       "Approve",
     );
-    await run.fixture.crash();
-    await run.fixture.restart();
     const peer = await run.fixture.startAdditionalDaemon({
       entry: resolve("apps/single-workspace/dist/main.js"),
     });
@@ -877,10 +1028,11 @@ describe("pending P38 public Executable approval qualification", () => {
       readonly approvalId?: string | null;
     }> = [];
     const run = await startExecutableApproval(marker, {
+      trustedLocalSandboxPolicy: true,
       firstDaemonEntry: p4FenceChild,
       daemonEnvironment: {
         ARBOR_P4_FENCE_ROLE: "old",
-        ARBOR_P4_FENCE_ADMISSION_BOUNDARY: "P4P39ClaimBeforeCommit",
+        ARBOR_P4_P39_BEGIN_GATE: "1",
       },
       onDaemonStdout: (line) => {
         try {
@@ -891,6 +1043,20 @@ describe("pending P38 public Executable approval qualification", () => {
         }
       },
     });
+    await commitP1BeforeExecutableApproval(run);
+    const gateDirectory = join(
+      dirname(run.fixture.databaseFile),
+      "p4-fence-gates",
+    );
+    mkdirSync(gateDirectory, { recursive: true });
+    writeFileSync(
+      join(gateDirectory, "p4-p39-target.json"),
+      JSON.stringify({
+        executionId: run.before.approval?.execution_id,
+        invocationId: run.before.approval?.tool_invocation_id,
+        approvalId: run.approvalId,
+      }),
+    );
     const peer = await run.fixture.startAdditionalDaemon({
       entry: p4FenceChild,
       daemonEnvironment: { ARBOR_P4_FENCE_ROLE: "new" },
@@ -903,22 +1069,31 @@ describe("pending P38 public Executable approval qualification", () => {
         run.revision,
         "Approve",
       );
-      const beforeCommit = await waitForPublic(
+      const claimAttempt = await waitForPublic(
         async () =>
           probes.find(
             (event) =>
               event.role === "old" &&
-              event.boundary === "P4P39ClaimBeforeCommit",
+              event.boundary === "P38P39ClaimBeforeTransaction",
           ),
         (event) => event !== undefined,
         60_000,
       );
-      if (beforeCommit === undefined) {
-        throw new Error("P38/P39 before-commit claim probe was absent");
+      if (claimAttempt === undefined) {
+        throw new Error("P38/P39 claim attempt probe was absent");
       }
-      expect(beforeCommit.executionId).toBe(run.before.approval?.execution_id);
-      expect(beforeCommit.invocationId).toBe(
+      expect(claimAttempt.executionId).toBe(run.before.approval?.execution_id);
+      expect(claimAttempt.invocationId).toBe(
         run.before.approval?.tool_invocation_id,
+      );
+      await waitForPublic(
+        async () =>
+          probes.find(
+            (event) =>
+              event.role === "old" && event.boundary === "P38P39BeforeBegin",
+          ),
+        (event) => event !== undefined,
+        60_000,
       );
 
       const owner = run.fixture.daemonProcessSnapshot();
@@ -999,6 +1174,7 @@ describe("pending P38 public Executable approval qualification", () => {
         entry: p4FenceChild,
         daemonEnvironment: { ARBOR_P4_FENCE_ROLE: "new" },
       });
+      writeFileSync(join(gateDirectory, "new-p39-begin.release"), "release");
       try {
         const recovered = await waitForResumedAction(run.snapshot, "Consumed");
         expect(recovered.approval).toMatchObject({
@@ -1023,12 +1199,15 @@ describe("pending P38 public Executable approval qualification", () => {
         expect(recovered.matchingInvocationCount).toBe(1);
         expect(recovered.executionApprovalCount).toBe(1);
         expect(recovered.recoveryBinding?.recovery_binding_state).toBe("Bound");
-        expectP38ReceiptProjection(recovered, run);
+        expectP38ReceiptProjection(recovered, run, {
+          admissionState: "MayHaveStarted",
+          admissionSource: "P39Admission",
+        });
         expect(recovered.attempt0).toMatchObject({
           attempt_no: 0,
-          admission_state: "NotAdmitted",
-          admission_source: "P39Claim",
-          admission_time_precision: "NotAdmitted",
+          admission_state: "MayHaveStarted",
+          admission_source: "P39Admission",
+          admission_time_precision: "TransactionTimestamp",
           binding_sha256: recovered.recoveryBinding?.recovery_binding_sha256,
         });
         expect(run.fixture.daemonErrors).toEqual([]);
