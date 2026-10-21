@@ -190,7 +190,7 @@ const executeAssign = async (input: {
     commandId: COMMAND,
     projectId: PROJECT,
     executionId: EXECUTION,
-    providerTurnId: "ptn_target_turn" as never,
+    providerTurnId: "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a1_0" as never,
     logicalActionId: "lac_target_binding",
     callRef: "call_target_binding",
     parentWorkspaceId: PARENT,

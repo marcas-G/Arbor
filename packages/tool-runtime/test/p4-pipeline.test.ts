@@ -198,7 +198,7 @@ const p39ApprovedCase = (
     recoveryBindingIdentity: {
       executionId,
       providerTurnId: parse(ProviderTurnId)(
-        `ptn_018f2b3c-4d5e-7abc-8def-0123456789${suffix}`,
+        `ptn_${executionId}_13_r${Number.parseInt(suffix, 16)}`,
       ),
       logicalStepNo: 13,
       repairAttempt: 0,

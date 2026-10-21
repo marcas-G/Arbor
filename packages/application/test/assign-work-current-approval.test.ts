@@ -70,7 +70,7 @@ describe("current-Workspace AssignWork approval Command boundary", () => {
       commandId,
       projectId,
       executionId,
-      providerTurnId: "ptn_current_assign" as never,
+      providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
       logicalActionId: "lac_current_assign",
       callRef: "call_current_assign",
       workspaceId,

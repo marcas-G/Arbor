@@ -8,7 +8,7 @@ const bindingB = `p16fp_${"b".repeat(64)}`;
 
 const nativeEntry = (
   sequence = 12,
-  sourceRef = "ptn_exe-ah19_0_native_compact_0",
+  sourceRef = "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a1_0_native_compact_0",
 ): SessionEntryRecord => ({
   sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
   sequence,
@@ -43,7 +43,8 @@ describe("AH19 ProviderNative Session projection", () => {
       bindingFingerprint: bindingA,
     });
     expect(matching.nativeCheckpoint).toMatchObject({
-      providerTurnId: "ptn_exe-ah19_0_native_compact_0",
+      providerTurnId:
+        "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a1_0_native_compact_0",
       bindingFingerprint: bindingA,
       bindingMatches: true,
       fromEpoch: 0,
@@ -86,7 +87,10 @@ describe("AH19 ProviderNative Session projection", () => {
 
   it("lets a newer portable Summary checkpoint supersede an older Native checkpoint", () => {
     const summary: SessionEntryRecord = {
-      ...nativeEntry(20, "ptn_exe-ah19_0_compact_1"),
+      ...nativeEntry(
+        20,
+        "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a1_0_compact_1",
+      ),
       payload: {
         _tag: "CompactionCheckpoint",
         implementation: "Summary",
