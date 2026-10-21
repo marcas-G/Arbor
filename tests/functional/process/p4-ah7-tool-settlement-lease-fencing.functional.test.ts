@@ -17,6 +17,12 @@ import {
   waitForExecutableApproval,
   waitForPublic,
 } from "../support/public-client.js";
+import {
+  commitTrustedLocalP11Policy,
+  createTrustedLocalP11FixtureEnvironment,
+  grantTrustedLocalP11Permission,
+  initializeTrustedLocalP11Worktree,
+} from "../support/trusted-local-p11-fixture.js";
 
 interface P4FenceProbe {
   readonly tag: "P4_FENCE_PROBE";
@@ -303,14 +309,40 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
     const events: P4FenceProbe[] = [];
     let manualWaitCalls = 0;
     let targetToolCalls = 0;
+    const p11Fixture = createTrustedLocalP11FixtureEnvironment();
+    let shellResponseGated = false;
+    let releaseShellResponse!: () => void;
+    let observeShellRequest!: () => void;
+    const shellResponseGate = new Promise<void>((resolveGate) => {
+      releaseShellResponse = resolveGate;
+    });
+    const shellRequestObserved = new Promise<void>((resolveObserved) => {
+      observeShellRequest = resolveObserved;
+    });
+    const daemonEnvironment = p11Fixture.daemonEnvironment;
+    Object.assign(daemonEnvironment, {
+      ARBOR_P4_FENCE_ROLE: "old",
+      ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
+      ARBOR_P4_FENCE_ADMISSION_BOUNDARY: "AH7AfterToolIntentCommit",
+    });
     const fixture = await startProductionFixture({
       admitWorkspaceDirectory: true,
       firstDaemonEntry: fenceChild,
-      daemonEnvironment: {
-        ARBOR_P4_FENCE_ROLE: "old",
-        ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
-      },
+      daemonEnvironment,
+      setupProbe: p11Fixture.setupProbe,
       onDaemonStdout: (line) => recordProbe(events, line),
+      beforeResponse: async (call) => {
+        if (
+          !shellResponseGated &&
+          call.tools.some((tool) => tool.function?.name === "shell") &&
+          JSON.stringify(call.messages).includes(steerMarker)
+        ) {
+          shellResponseGated = true;
+          observeShellRequest();
+          await shellResponseGate;
+        }
+        return "respond";
+      },
       reply: (call) => {
         const available = new Set(
           call.tools
@@ -390,6 +422,12 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
       "P4 stale tool settlement fence",
       { resourceSelection: "Profile" },
     );
+    await initializeTrustedLocalP11Worktree({
+      databaseFile: fixture.databaseFile,
+      projectId: project.projectId,
+      workspaceId: project.rootWorkspaceId,
+      path: fixture.workspaceDirectory,
+    });
     await client.command(project.projectId, "GrantPermission", {
       permissionGrantId: functionalId("pgr"),
       issuer: "user:local",
@@ -456,6 +494,30 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
       steer: { severity: "Normal", guidance: `Proceed with ${steerMarker}.` },
       provenance: { source: "HumanInput" },
     });
+    await shellRequestObserved;
+    const currentWorkForPolicy = await waitForPublic(
+      () =>
+        client.view<{
+          readonly workId?: string;
+          readonly activeExecution?: { readonly executionId: string };
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (value) =>
+        value !== null &&
+        value.workId === idleWork.workId &&
+        value.activeExecution?.executionId !== undefined,
+    );
+    const policyExecutionId =
+      currentWorkForPolicy?.activeExecution?.executionId;
+    if (policyExecutionId === undefined)
+      throw new Error("P4 settlement Current Work omitted active Execution");
+    const p11ExpiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+    await grantTrustedLocalP11Permission({
+      client,
+      projectId: project.projectId,
+      executionId: policyExecutionId,
+      expiresAt: p11ExpiresAt,
+    });
+    releaseShellResponse();
 
     const executableApproval = await waitForExecutableApproval(
       client,
@@ -514,6 +576,40 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
         reason: `P4/P2 exact shell approval ${marker}`,
       }),
     ).toMatchObject({ body: { resolution: "Committed" } });
+
+    expect(approvalBinding.row.execution_id).toBe(policyExecutionId);
+    const notAdmitted = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH7AfterToolIntentCommit" &&
+            event.executionId === policyExecutionId,
+        ),
+      (event) => event !== undefined,
+      45_000,
+    );
+    if (notAdmitted?.invocationId === undefined)
+      throw new Error("P4 settlement did not expose exact NotAdmitted intent");
+    const { snapshot } = await commitTrustedLocalP11Policy({
+      client,
+      baseUrl: fixture.baseUrl,
+      databaseFile: fixture.databaseFile,
+      projectId: project.projectId,
+      workspaceId: project.rootWorkspaceId,
+      executionId: policyExecutionId,
+      expiresAt: p11ExpiresAt,
+    });
+    expect(snapshot).toMatchObject({
+      kind: "TrustedLocalUnconfinedV1",
+      executionId: policyExecutionId,
+      profile: "FullAccess",
+    });
+    mkdirSync(join(fixture.directory, "p4-fence-gates"), { recursive: true });
+    writeFileSync(
+      join(fixture.directory, "p4-fence-gates", "old-tool-admission.release"),
+      "release the exact P4 NotAdmitted invocation after public P11 decision",
+    );
 
     const oldEffect = await waitForPublic(
       async () =>
@@ -661,6 +757,7 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
     const newDaemon = await fixture.startAdditionalDaemon({
       entry: fenceChild,
       daemonEnvironment: {
+        ...p11Fixture.daemonEnvironment,
         ARBOR_P4_FENCE_ROLE: "new",
         ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
         ARBOR_P4_FENCE_PAUSE_NEW: "1",

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Effect } from "effect";
 import {
@@ -22,6 +22,46 @@ import {
 import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
 
 const onWebTransportListening = createFunctionalDaemonListenReporter();
+const sandboxAuthoritySourceFile =
+  process.env.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE;
+const trustedHostConfigurationSource =
+  sandboxAuthoritySourceFile === undefined
+    ? undefined
+    : {
+        readVerifiedSandboxAuthorityBundle: () =>
+          Effect.sync(() => {
+            const pair = JSON.parse(
+              readFileSync(sandboxAuthoritySourceFile, "utf8"),
+            );
+            return {
+              sourceIdentity: pair.sourceIdentity,
+              canonicalJson: pair.bundleCanonicalJson,
+            };
+          }),
+        readSandboxAuthorityHighWater: () =>
+          Effect.sync(
+            () =>
+              JSON.parse(readFileSync(sandboxAuthoritySourceFile, "utf8"))
+                .highWaterCanonicalJson,
+          ),
+        commitSandboxAuthorityHighWater: () => Effect.succeed(false),
+        appendSandboxAuthorityAudit: (canonicalJson) =>
+          Effect.sync(() => {
+            appendFileSync(
+              `${sandboxAuthoritySourceFile}.audit`,
+              `${canonicalJson}\n`,
+              { encoding: "utf8", mode: 0o600 },
+            );
+            return true;
+          }),
+      };
+const governance = {
+  authenticatedHumans: [
+    parse(Principal)("user:local"),
+    parse(Principal)("user:operator"),
+  ],
+  directParentOf: [],
+};
 
 const role = process.env.ARBOR_P4_FENCE_ROLE;
 if (role !== "old" && role !== "new") {
@@ -362,6 +402,9 @@ const config = {
     host: "127.0.0.1",
   },
   onWebTransportListening,
+  ...(trustedHostConfigurationSource === undefined
+    ? {}
+    : { trustedHostConfigurationSource }),
   toolQualificationProbe,
   executableToolQualificationProbe,
   p39RecoveryBindingQualificationProbe,
@@ -395,7 +438,15 @@ if (role === "new" && explicitExecutionTarget !== undefined) {
             undefined,
             executionLeaseQualificationProbe,
           ),
-          main(config),
+          main({
+            ...config,
+            ...(trustedHostConfigurationSource === undefined
+              ? {}
+              : { trustedHostConfigurationSource }),
+            ...(trustedHostConfigurationSource === undefined
+              ? {}
+              : { governance }),
+          }),
         ),
       );
       emit({
@@ -424,7 +475,16 @@ if (role === "new" && explicitExecutionTarget !== undefined) {
 emit({ boundary: "P4ChildBeforeDaemonMain" });
 try {
   await Effect.runPromise(
-    Effect.provide(Effect.scoped(runDaemonForever(config)), main(config)),
+    Effect.provide(
+      Effect.scoped(runDaemonForever(config)),
+      main({
+        ...config,
+        ...(trustedHostConfigurationSource === undefined
+          ? {}
+          : { trustedHostConfigurationSource }),
+        ...(trustedHostConfigurationSource === undefined ? {} : { governance }),
+      }),
+    ),
   );
   emit({ boundary: "P4ChildDaemonMainResolved" });
 } catch (error) {

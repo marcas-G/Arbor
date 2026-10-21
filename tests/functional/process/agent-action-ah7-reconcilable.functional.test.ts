@@ -1,22 +1,8 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  ClockLive,
-  layer as sqliteLayer,
-  TransactionPortLive,
-  WorkspaceRepositoryLive,
-  WorktreeStoreLive,
-} from "../../../adapters/persistence-sqlite/src/index.js";
-import {
-  TransactionPort,
-  WorkspaceRepository,
-  WorktreeStore,
-} from "../../../packages/ports/src/index.js";
 import { SHELL_DEFINITION } from "../../../packages/tool-runtime/src/catalog.js";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
 import {
@@ -37,9 +23,11 @@ import {
   waitForPublic,
 } from "../support/public-client.js";
 import {
-  sandboxPolicyV2TestPair,
-  writeSandboxPolicyV2TestPair,
-} from "../support/sandbox-policy-v2-source.js";
+  commitTrustedLocalP11Policy,
+  createTrustedLocalP11FixtureEnvironment,
+  grantTrustedLocalP11Permission,
+  initializeTrustedLocalP11Worktree,
+} from "../support/trusted-local-p11-fixture.js";
 
 const fixtures: ProductionFixture[] = [];
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
@@ -47,191 +35,6 @@ const reconciliationChild = resolve(
   "tests/functional/support/ah10-process-child.mjs",
 );
 
-interface SandboxPolicyCandidateRead {
-  readonly commonPreconditions: {
-    readonly episodeBinding: Record<string, unknown>;
-    readonly expectedEpisodeRevision: number;
-    readonly latestCommittedPolicyRevision: number;
-    readonly workspaceRevision: number;
-    readonly resourceBoundaryRevision: number;
-    readonly authorityBundleRevision: number;
-    readonly authorityBundleDigest: string;
-    readonly operatorConfigRevision: number;
-    readonly operatorConfigDigest: string;
-  };
-  readonly candidates: ReadonlyArray<{
-    readonly kind: string;
-    readonly candidateId: string;
-    readonly sandboxHandleBindingDigest: string;
-  }>;
-}
-
-interface WorkspaceDetailForP11 {
-  readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateRead;
-  readonly sandboxPolicy?: {
-    readonly kind?: string;
-    readonly profile?: string;
-    readonly status?: string;
-  };
-}
-
-const insertProductionPrimaryWorktree = async (input: {
-  readonly databaseFile: string;
-  readonly projectId: string;
-  readonly workspaceId: string;
-  readonly path: string;
-}) => {
-  const infra = Layer.mergeAll(
-    sqliteLayer({ filename: input.databaseFile }),
-    ClockLive,
-  );
-  const app = Layer.mergeAll(
-    infra,
-    Layer.provide(TransactionPortLive, infra),
-    Layer.provide(WorktreeStoreLive, infra),
-    Layer.provide(WorkspaceRepositoryLive, infra),
-  );
-  await Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const tx = yield* TransactionPort;
-        const workspaces = yield* WorkspaceRepository;
-        const worktrees = yield* WorktreeStore;
-        const workspace = yield* tx.transact(
-          workspaces.findById(input.workspaceId as never),
-        );
-        if (workspace._tag === "None")
-          throw new Error("AH7 P11 fixture Workspace is absent");
-        const current = workspace.value;
-        const nextWorkspaceRevision = current.revision + 1;
-        const nextBoundaryRevision = current.resourceBoundaryRevision + 1;
-        yield* tx.transact(
-          Effect.gen(function* () {
-            yield* workspaces.updateResourceBoundaryIfRevision(
-              input.workspaceId as never,
-              current.revision,
-              {
-                basisResponsibilityRevision: current.responsibilityRevision,
-                addresses: [{ _tag: "GitWorktree" as const, path: input.path }],
-              },
-              nextBoundaryRevision as never,
-              nextWorkspaceRevision as never,
-            );
-            yield* worktrees.insert({
-              worktreeId: functionalId("wt") as never,
-              projectId: input.projectId as never,
-              workspaceId: input.workspaceId as never,
-              address: { _tag: "GitWorktree", path: input.path },
-              state: "Active",
-              createdAt: new Date().toISOString(),
-            });
-          }),
-        );
-      }),
-      app,
-    ),
-  );
-};
-
-const operatorCommand = async (
-  baseUrl: string,
-  projectId: string,
-  commandType: string,
-  payload: unknown,
-) => {
-  const response = await fetch(`${baseUrl}/commands`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: "Bearer operator",
-    },
-    body: JSON.stringify({
-      commandType,
-      commandId: functionalId("cmd"),
-      projectId,
-      actor: "user:operator",
-      issuedAt: new Date().toISOString(),
-      payload,
-    }),
-  });
-  const body = (await response.json()) as Record<string, unknown>;
-  if (!response.ok)
-    throw new Error(
-      `${commandType} operator command failed: ${JSON.stringify(body)}`,
-    );
-  return body;
-};
-
-const trustedLocalSandboxPolicyPayload = (input: {
-  readonly read: SandboxPolicyCandidateRead;
-  readonly projectId: string;
-  readonly workspaceId: string;
-  readonly executionId: string;
-  readonly expiresAt: string;
-}) => {
-  const trustedLocal = input.read.candidates.find(
-    (candidate) => candidate.kind === "TrustedLocalUnconfinedV1",
-  );
-  if (trustedLocal === undefined)
-    throw new Error("AH7 P11 candidate read lacks TrustedLocal FullAccess");
-  return {
-    projectId: input.projectId,
-    workspaceId: input.workspaceId,
-    executionId: input.executionId,
-    episodeBinding: input.read.commonPreconditions.episodeBinding,
-    expectedEpisodeRevision:
-      input.read.commonPreconditions.expectedEpisodeRevision,
-    expectedPolicyRevision:
-      input.read.commonPreconditions.latestCommittedPolicyRevision,
-    expectedWorkspaceRevision: input.read.commonPreconditions.workspaceRevision,
-    expectedResourceBoundaryRevision:
-      input.read.commonPreconditions.resourceBoundaryRevision,
-    expectedSandboxHandleBindingDigest: trustedLocal.sandboxHandleBindingDigest,
-    expectedAuthorityBundleRevision:
-      input.read.commonPreconditions.authorityBundleRevision,
-    expectedAuthorityBundleDigest:
-      input.read.commonPreconditions.authorityBundleDigest,
-    expectedOperatorConfigRevision:
-      input.read.commonPreconditions.operatorConfigRevision,
-    expectedOperatorConfigDigest:
-      input.read.commonPreconditions.operatorConfigDigest,
-    profile: "FullAccess",
-    providerId: "TrustedLocal",
-    networkPolicy: { kind: "TrustedLocalUnconfinedV1", version: 1 },
-    decisionExpiresAt: input.expiresAt,
-  };
-};
-
-const readCommittedSandboxPolicySnapshot = (
-  databaseFile: string,
-  executionId: string,
-): Record<string, unknown> | undefined => {
-  const db = new DatabaseSync(databaseFile, { readOnly: true });
-  try {
-    const row = db
-      .prepare(
-        `SELECT c.result_json FROM sandbox_policy_decisions d
-           JOIN commands c ON c.command_id = d.decision_command_id
-          WHERE d.execution_id = ? ORDER BY d.policy_revision DESC LIMIT 1`,
-      )
-      .get(executionId) as { readonly result_json?: string | null } | undefined;
-    if (row?.result_json === undefined || row.result_json === null)
-      return undefined;
-    const result = JSON.parse(row.result_json) as {
-      readonly effectivePolicySnapshot?: unknown;
-    };
-    if (
-      typeof result.effectivePolicySnapshot !== "object" ||
-      result.effectivePolicySnapshot === null ||
-      Array.isArray(result.effectivePolicySnapshot)
-    ) {
-      return undefined;
-    }
-    return result.effectivePolicySnapshot as Record<string, unknown>;
-  } finally {
-    db.close();
-  }
-};
 const readExecutionProviderTurns = (
   databaseFile: string,
   executionId: string,
@@ -876,15 +679,15 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         },
       );
       let fixture: ProductionFixture;
-      let sandboxAuthoritySourceFile: string | undefined;
-      const daemonEnvironment: Record<string, string> = {
-        ARBOR_AUTH_TOKENS: "local=user:local,operator=user:operator",
+      const p11Fixture = createTrustedLocalP11FixtureEnvironment();
+      const daemonEnvironment = p11Fixture.daemonEnvironment;
+      Object.assign(daemonEnvironment, {
         ARBOR_AH_BOUNDARY:
           reconciliationMode === undefined ? boundary : "disabled",
         ...(semantics === "NonIdempotent"
           ? { ARBOR_AH_NON_IDEMPOTENT: "1" }
           : {}),
-      };
+      });
       try {
         fixture = await startProductionFixture({
           admitWorkspaceDirectory: true,
@@ -996,23 +799,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           },
           firstDaemonEntry: crashChild,
           daemonEnvironment,
-          setupProbe: async (event) => {
-            if (event.stage !== "after-clone") return;
-            const sourceDirectory = resolve(
-              event.directory,
-              "sandbox-policy-v2-source",
-            );
-            const sourcePair = sandboxPolicyV2TestPair({
-              bundleRevision: 1,
-              registryRevision: 1,
-            });
-            sandboxAuthoritySourceFile = writeSandboxPolicyV2TestPair(
-              sourceDirectory,
-              sourcePair,
-            );
-            daemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE =
-              sandboxAuthoritySourceFile;
-          },
+          setupProbe: p11Fixture.setupProbe,
           onDaemonStdout: (line) => {
             startupStdout.push(line);
             recordAhProbeLine(hits, line);
@@ -1046,7 +833,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           { cause: error },
         );
       }
-      if (sandboxAuthoritySourceFile === undefined)
+      if (daemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE === undefined)
         throw new Error(
           "AH7 P11 sandbox authority fixture was not initialized",
         );
@@ -1058,31 +845,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         "AH7 shell intent ambiguity",
         { resourceSelection: "Profile" },
       );
-      execFileSync("git", ["init", "--quiet"], {
-        cwd: fixture.workspaceDirectory,
-        stdio: "ignore",
-      });
-      execFileSync("git", ["config", "user.name", "Arbor Test"], {
-        cwd: fixture.workspaceDirectory,
-        stdio: "ignore",
-      });
-      execFileSync(
-        "git",
-        ["config", "user.email", "arbor-test@example.invalid"],
-        {
-          cwd: fixture.workspaceDirectory,
-          stdio: "ignore",
-        },
-      );
-      execFileSync("git", ["add", "proof.txt"], {
-        cwd: fixture.workspaceDirectory,
-        stdio: "ignore",
-      });
-      execFileSync("git", ["commit", "--quiet", "-m", "AH7 P11 fixture"], {
-        cwd: fixture.workspaceDirectory,
-        stdio: "ignore",
-      });
-      await insertProductionPrimaryWorktree({
+      await initializeTrustedLocalP11Worktree({
         databaseFile: fixture.databaseFile,
         projectId: project.projectId,
         workspaceId: project.rootWorkspaceId,
@@ -1231,74 +994,31 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       sandboxPolicyGrantExpiresAt = new Date(
         Date.now() + 60 * 60_000,
       ).toISOString();
-      await client.command(project.projectId, "GrantPermission", {
-        permissionGrantId: functionalId("pgr"),
-        issuer: "user:local",
-        subject: { _tag: "HumanPrincipal", principal: "user:operator" },
-        capability: "DecideSandboxPolicy",
-        target: pregrantedExecutionId,
+      await grantTrustedLocalP11Permission({
+        client,
+        projectId: project.projectId,
+        executionId: pregrantedExecutionId,
         expiresAt: sandboxPolicyGrantExpiresAt,
       });
       releaseSteeredShellResponse();
 
       const commitCurrentP11Policy = async (executionId: string) => {
-        const detail = await waitForPublic(
-          () =>
-            client.view<WorkspaceDetailForP11>("workspace-detail", {
-              workspaceId: project.rootWorkspaceId,
-            }),
-          (value) => value.sandboxPolicyCandidateRead !== undefined,
-          45_000,
-        ).catch((error: unknown) => {
-          throw new Error(
-            `AH7 P11 candidate read absent for exact Execution ${executionId}: ${error instanceof Error ? error.message : String(error)}; stdout=${startupStdout.slice(-20).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
-            { cause: error },
-          );
-        });
-        const read = detail.sandboxPolicyCandidateRead;
-        if (read === undefined)
-          throw new Error("AH7 P11 candidate read disappeared after wait");
-        const commandResult = await operatorCommand(
-          fixture.baseUrl,
-          project.projectId,
-          "DecideSandboxPolicy",
-          trustedLocalSandboxPolicyPayload({
-            read,
-            projectId: project.projectId,
-            workspaceId: project.rootWorkspaceId,
-            executionId,
-            expiresAt: sandboxPolicyGrantExpiresAt,
-          }),
-        );
-        expect(commandResult).toMatchObject({
-          body: { resolution: "Committed" },
-        });
-        const snapshot = readCommittedSandboxPolicySnapshot(
-          fixture.databaseFile,
+        const { snapshot } = await commitTrustedLocalP11Policy({
+          client,
+          baseUrl: fixture.baseUrl,
+          databaseFile: fixture.databaseFile,
+          projectId: project.projectId,
+          workspaceId: project.rootWorkspaceId,
           executionId,
-        );
+          expiresAt: sandboxPolicyGrantExpiresAt,
+        });
         expect(snapshot).toMatchObject({
           kind: "TrustedLocalUnconfinedV1",
           projectId: project.projectId,
           workspaceId: project.rootWorkspaceId,
           executionId,
-          episodeBinding: read.commonPreconditions.episodeBinding,
           profile: "FullAccess",
         });
-        const mounts = Array.isArray(snapshot?.mounts)
-          ? (snapshot.mounts as Array<Record<string, unknown>>)
-          : [];
-        expect(mounts.length).toBeGreaterThan(0);
-        expect(
-          mounts.some(
-            (mount) =>
-              mount.mountId === "workspace" &&
-              typeof mount.targetRef === "object" &&
-              mount.targetRef !== null &&
-              "resourceSpace" in mount.targetRef &&
-              mount.targetRef.resourceSpace === "filesystem",
-          ),
-        ).toBe(true);
       };
 
       const executableApproval = await waitForExactShellApproval({

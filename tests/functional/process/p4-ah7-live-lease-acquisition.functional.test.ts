@@ -19,6 +19,12 @@ import {
   waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
+import {
+  commitTrustedLocalP11Policy,
+  createTrustedLocalP11FixtureEnvironment,
+  grantTrustedLocalP11Permission,
+  initializeTrustedLocalP11Worktree,
+} from "../support/trusted-local-p11-fixture.js";
 
 interface LeaseProbe {
   readonly tag: "P4_FENCE_PROBE";
@@ -711,18 +717,32 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       readonly pid: number;
       readonly port: number;
     }> = [];
+    const p11Fixture = createTrustedLocalP11FixtureEnvironment();
+    let shellResponseGated = false;
+    let releaseShellResponse!: () => void;
+    let observeShellRequest!: () => void;
+    const shellResponseGate = new Promise<void>((resolveGate) => {
+      releaseShellResponse = resolveGate;
+    });
+    const shellRequestObserved = new Promise<void>((resolveObserved) => {
+      observeShellRequest = resolveObserved;
+    });
+    const daemonEnvironment = p11Fixture.daemonEnvironment;
+    Object.assign(daemonEnvironment, {
+      ARBOR_P4_FENCE_ROLE: "old",
+      ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
+      ARBOR_P4_FENCE_PAUSE_OLD_ACQUIRE: "1",
+      ARBOR_P4_FENCE_ADMISSION_BOUNDARY: "AH7AfterToolIntentCommit",
+    });
 
     const fixture = await startProductionFixture({
       admitWorkspaceDirectory: true,
       preserveDirectoryOnStop: true,
       firstDaemonEntry: fenceChild,
-      daemonEnvironment: {
-        ARBOR_P4_FENCE_ROLE: "old",
-        ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
-        ARBOR_P4_FENCE_PAUSE_OLD_ACQUIRE: "1",
-      },
+      daemonEnvironment,
       setupProbe: (event) => {
         if (startupDiagnostics.length < 8) startupDiagnostics.push(event);
+        return p11Fixture.setupProbe(event);
       },
       onDaemonStdout: (line) => {
         recordProbe(events, line);
@@ -754,6 +774,18 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
             callIndex,
           });
         }
+      },
+      beforeResponse: async (call) => {
+        if (
+          !shellResponseGated &&
+          call.tools.some((tool) => tool.function?.name === "shell") &&
+          JSON.stringify(call.messages).includes(steerMarker)
+        ) {
+          shellResponseGated = true;
+          observeShellRequest();
+          await shellResponseGate;
+        }
+        return "respond";
       },
       reply: (call) => {
         const available = new Set(
@@ -868,6 +900,12 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       "P4 live lease acquisition",
       { resourceSelection: "Profile" },
     );
+    await initializeTrustedLocalP11Worktree({
+      databaseFile: fixture.databaseFile,
+      projectId: project.projectId,
+      workspaceId: project.rootWorkspaceId,
+      path: fixture.workspaceDirectory,
+    });
     await client.command(project.projectId, "GrantPermission", {
       permissionGrantId: functionalId("pgr"),
       issuer: "user:local",
@@ -930,6 +968,30 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       steer: { severity: "Normal", guidance: `Proceed with ${steerMarker}.` },
       provenance: { source: "HumanInput" },
     });
+    await shellRequestObserved;
+    const currentWorkForPolicy = await waitForPublic(
+      () =>
+        client.view<{
+          readonly workId?: string;
+          readonly activeExecution?: { readonly executionId: string };
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (value) =>
+        value !== null &&
+        value.workId === currentWork.workId &&
+        value.activeExecution?.executionId !== undefined,
+    );
+    const policyExecutionId =
+      currentWorkForPolicy?.activeExecution?.executionId;
+    if (policyExecutionId === undefined)
+      throw new Error("P4 live-lease Current Work omitted active Execution");
+    const p11ExpiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+    await grantTrustedLocalP11Permission({
+      client,
+      projectId: project.projectId,
+      executionId: policyExecutionId,
+      expiresAt: p11ExpiresAt,
+    });
+    releaseShellResponse();
 
     const inbox = await waitForPublic(
       () =>
@@ -1014,6 +1076,7 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     expect(
       executionRows(fixture.databaseFile, executionId).invocations,
     ).toEqual([]);
+    expect(executionId).toBe(policyExecutionId);
 
     writeFileSync(
       join(gateDirectory, "old-acquire.request"),
@@ -1063,6 +1126,37 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     writeFileSync(
       join(gateDirectory, "old-acquire.release"),
       "allow the exact approved Execution to call LeaseService.acquire",
+    );
+    const notAdmitted = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH7AfterToolIntentCommit" &&
+            event.executionId === executionId,
+        ),
+      (event) => event !== undefined,
+      45_000,
+    );
+    if (notAdmitted?.invocationId === undefined)
+      throw new Error("P4 live lease did not expose exact NotAdmitted intent");
+    const { snapshot } = await commitTrustedLocalP11Policy({
+      client,
+      baseUrl: fixture.baseUrl,
+      databaseFile: fixture.databaseFile,
+      projectId: project.projectId,
+      workspaceId: project.rootWorkspaceId,
+      executionId,
+      expiresAt: p11ExpiresAt,
+    });
+    expect(snapshot).toMatchObject({
+      kind: "TrustedLocalUnconfinedV1",
+      executionId,
+      profile: "FullAccess",
+    });
+    writeFileSync(
+      join(gateDirectory, "old-tool-admission.release"),
+      "release the exact P4 NotAdmitted invocation after public P11 decision",
     );
     const approvalResume = await waitForPublic(
       async () => {
@@ -1352,6 +1446,7 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     const newDaemon = await fixture.startAdditionalDaemon({
       entry: fenceChild,
       daemonEnvironment: {
+        ...p11Fixture.daemonEnvironment,
         ARBOR_P4_FENCE_ROLE: "new",
         ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
         ARBOR_P4_FENCE_EXPLICIT_EXECUTION_ID: executionId,
