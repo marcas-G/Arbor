@@ -185,3 +185,23 @@ pair, common CAS fields and selected handle digest into the P1 OsEnforced
 request. It never submits `candidateId`, currentHost, evidence refs or
 qualification details. There is no auto-selection, nearest-version choice,
 fallback or local authority; stale/refetch behavior is unchanged.
+
+## Accepted pre-intent CandidateRead bootstrap (2026-10-21)
+
+When the exact active Execution has a Pending P3 Executable Action and its
+existing P4 Executable approval is Pending/unconsumed after the nonterminal
+`ApprovalRequired` pause, P13 renders the same `sandboxPolicyCandidateRead`
+variants and common preconditions from Workspace Detail. No ActionId,
+ApprovalId, P3 input hash, P4 invocation/binding or source digest is rendered.
+The human deliberately submits the existing DecideSandboxPolicy fields first;
+P13 does not create or resolve the approval and adds no command or route. The
+human then resolves the exact existing Executable approval through the
+existing Inbox command. The first P4 invocation intent/approval consumption
+continues to use the existing atomic claim transaction.
+
+P1 safe stale fields `ActionRevision` and `ExecutableApprovalRevision` use
+the existing generic stale/refetch summary. P13 refetches only through its
+existing invalidation/explicit-refetch behavior, requires a deliberate human
+choice, and never auto-submits the old payload. The approval expiry detail and
+revision numbers are not displayed. No provider diagnostic, host path, target
+ref, source digest or secret is added to the view.

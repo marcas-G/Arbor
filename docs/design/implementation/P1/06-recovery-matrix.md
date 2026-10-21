@@ -108,6 +108,21 @@ AgentLoopStep action/settlement takeover reuses this matrix per generated
 CommandId. Cross-generation logical eligibility and receipt-first convergence
 are owned by `07`; AgentLoopStep state recovery is P9 `07`.
 
+## Accepted pre-intent requirement stale-receipt replay (2026-10-21)
+
+The two additive `StaleSandboxPolicyInputs.safeDetails.field` values
+`ActionRevision` and `ExecutableApprovalRevision` use the existing P1
+TerminalRejected receipt path. A same CommandId with a committed receipt
+replays its exact historical result before P3/P4 requirement source reads;
+it never recaptures, repairs or mutates Action/approval proof. A new
+CommandId whose captured Action or exact Pending/unconsumed approval source
+changed before the final transaction commits only the typed stale receipt,
+with no decision/event and no approval consumption. If both sources changed,
+the receipt deterministically reports `ActionRevision`. Approval expiry by
+time alone reports `ExecutableApprovalRevision` when its stored row revision
+has not yet advanced. These are additive decoder literals only; no old
+receipt bytes are rewritten and no P9/P10 state or recovery path changes.
+
 ## V21 policy decision and binding-recovery cases
 
 | Boundary | Before commit / failure | After commit / restart |

@@ -203,4 +203,27 @@ same action/invocation after current policy and original-target checks pass.
 Repeated scans with missing/stale policy or invalid binding do not issue a
 provider decision, lease or P4 dispatch. Actual provider-unavailable is
 consumed only from its durable P4 ExpectedFailure, never by re-probe/re-spawn.
+
+## Accepted pre-intent sandbox CandidateRead source (2026-10-21)
+
+Under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, the exact
+currently Pending P3 Executable Action may be the source for P4's
+read-only pre-intent sandbox-policy requirement only after P4 has returned its
+existing nonterminal `ApprovalRequired` result and the owning Application has
+admitted the exact Pending Executable approval. The Action remains Pending at
+the same `nextActionIndex`; the AgentLoopStep remains ActionsInProgress. The
+P3 source is its pinned ProviderTurn, Step identity, LogicalActionId,
+actionIndex, callRef, exact Action revision/input hash and exact tool identity.
+P3 does not store a new candidate/requirement row or advance the cursor.
+
+The candidate read and P1 decision do not consume, create, widen or resolve
+Executable approval. P1 runs first; the human may then ResolveExecutableApproval
+through its existing P1 command. The normal P4 approval claim remains the
+single point that atomically persists ToolInvocation intent and consumes the
+exact Approved revision. P3 supplies no source identity from Session text or
+model-authored identifiers; P4/P10 re-read the pinned P3 records and exact P4
+approval record. If source facts change before P1's final CAS, the exact stale
+receipt binding in P1/01 applies. This source adds no P3 state, schema or
+settlement variant and does not alter the P9 terminal provider-unavailable
+path.
 - No lease acquisition/settlement mechanics (P2).

@@ -74,8 +74,11 @@ currentness input; any bundle child change, including registry-only change,
 stales TrustedLocal just as it stales OsEnforced.
 
 SandboxPolicyDecisionRequired/NeedsDecision is separately derived from a
-current active Execution and exact pending NotAdmitted invocation whose policy
-is absent/stale; it is not a provider-unavailable fact. V21
+current active Execution and either (a) the existing exact pending NotAdmitted
+invocation whose policy is absent/stale, or (b) the accepted exact pre-intent
+P3 Pending Executable Action plus Pending/unconsumed approval requirement when
+the policy is absent. It is not a provider-unavailable fact or a new persisted
+Attention/requirement row. V21
 SandboxRecoveryBindingFailure is derived from P4 invocation/binding evidence
 with its own integrity rules and must never be conflated with current source
 drift or provider-unavailable freshness.
@@ -91,8 +94,9 @@ shared full-bundle pair already stored in its snapshot detects a registry-only
 bundle change. The earlier V21 registry-drift exclusion is superseded.
 
 `NeedsDecision` is derived only when the exact visible active
-Execution/Episode has a P4-proven pending policy requirement and its current
-decision is absent or stale under that full-bundle and basis comparison. P10
+Execution/Episode has an exact P4-proven post-intent or accepted pre-intent
+policy requirement and its current decision is absent or stale under that
+full-bundle and basis comparison. P10
 does not create requirement state, Attention state, or policy selection. A
 provider registry change can pause TrustedLocal Work and require explicit
 human reconfirmation; it never adds an OS-provider dependency or changes
@@ -100,3 +104,23 @@ TrustedLocal's unconfined meaning. Candidate read and `NeedsDecision` share
 the existing Workspace Detail freshness/read barrier; generic lag or a typed
 P4 port/authority error returns the existing error/lag behavior, never a
 partial candidate list.
+
+## Accepted pre-intent CandidateRead freshness (2026-10-21)
+
+Under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, the same
+Workspace Detail read transaction may derive the existing initial
+`NeedsDecision`/candidate-read surface from the P4
+`SandboxPolicyPreIntentRequirementV1`. P10 validates its exact active
+Execution/Episode, current P3 action cursor, Pending executable Action
+revision/input/tool identity, and exact Pending/unconsumed approval source,
+including its immutable expiry. It combines that P4 proof with the existing P1 decision/result, full
+P5 bundle and P11 complete boundary/ownership barrier. It emits no candidate
+if source is missing, ambiguous, corrupt or stale. P1 checks approval expiry
+against trusted GatewayNow inside its final transaction; a time-only expiry
+does not mutate or delete the P4 source row. The candidate DTO
+and Attention/source unions are unchanged; P10 writes no requirement,
+approval, Attention, queue, marker, event or decision. After
+`ResolveExecutableApproval`, the pre-intent source is no longer eligible; if
+the P4 claim has created a NotAdmitted invocation, the existing post-intent
+requirement path applies. P9 terminal provider-unavailable behavior is
+unchanged.

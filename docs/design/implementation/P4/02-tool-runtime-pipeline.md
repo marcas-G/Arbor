@@ -41,6 +41,21 @@ Application adds P3 action identity and issues/reads the exact Pending record;
 the action remains Pending. ApprovalRequired is not a CanonicalToolObservation
 or new Denied settlement.
 
+## Accepted pre-intent sandbox CandidateRead bootstrap (2026-10-21)
+
+After this existing nonterminal `ApprovalRequired` path has left a Pending P3
+Executable Action and the Application has admitted its exact Pending
+Executable approval, P4/06 may expose the read-only pre-intent
+`SandboxPolicyRequirementPreIntentV1` source to P10. This is not another
+`ToolRuntimePort.invoke`; it writes no ToolInvocation/RecoveryBinding, does
+not consume approval, and enters neither Resource Admission nor effect
+admission. The user may commit DecideSandboxPolicy before resolving approval.
+Only after the exact approval is Approved may the normal P4 claim transaction
+persist the ToolInvocation intent and consume that Approved revision together.
+P4 then retains the existing current-policy gate before effect admission; a
+missing/stale policy remains the existing same-invocation
+SandboxPolicyRequiredInterruption, and no provider/effect fallback is added.
+
 ## 2. `ToolRuntimePort.invoke`
 
 ```ts

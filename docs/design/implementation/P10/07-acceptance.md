@@ -306,3 +306,31 @@ P10 acceptance covers the revised candidate V2 DTO and selection binding:
 These are design qualification requirements. This landing runs no tests,
 does not claim a real host Supported tuple, and does not authorize runtime
 implementation or provider qualification.
+
+## Accepted pre-intent CandidateRead bootstrap qualification (2026-10-21)
+
+Under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, qualify the
+existing public Workspace Detail CandidateRead when the exact active
+Execution/Episode has an ActionsInProgress step, current Pending P3
+Executable Action, and its exact Pending/unconsumed P4 Executable
+approval after `ApprovalRequired`, before any P4 ToolInvocation or
+RecoveryBinding exists. The same V2 candidate DTO/common preconditions and
+P11/P5 barriers apply; the public result exposes no P3 Action/approval,
+invocation, RecoveryBinding, argument, target ref or source digest. The read
+creates no candidate or requirement row, consumes no approval, and performs
+no ToolInvocation, Provider call, effect, Observation, settlement, event or
+Attention write.
+
+P1 qualification reuses the existing DecideSandboxPolicy payload/handler
+schema 2 and Gateway transaction: policy can be committed before
+ResolveExecutableApproval; first actual P4 intent and exact approval
+consumption use the existing atomic claim. Crash before P1 commit leaves no
+decision/receipt/event; crash after commit replays the exact receipt before
+source reads. Fresh source movement returns the typed safe stale receipt with
+Action-first precedence; time-only approval expiry with unchanged row
+revision returns `ExecutableApprovalRevision` when P1 checks trusted
+transaction time; both cases write no decision/
+event and consume no approval. P10/P13 use the existing CandidateRead DTO and
+generic deliberate stale-refetch UI without auto-selection/resubmit. P9's
+provider-unavailable terminal Action/Step and no-later-action contract is
+unchanged; this bootstrap does not claim second-ProviderTurn/drift qualification.

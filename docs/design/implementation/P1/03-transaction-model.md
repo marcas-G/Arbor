@@ -468,3 +468,37 @@ non-Supported exact selector is the existing durable
 `SandboxAuthorityUnavailable` rejection, with no decision/event. No schema,
 receipt, event, or transaction-order change is made beyond the handler schema
 2 identity defined by P1/01.
+
+## Accepted pre-intent P3 Action/approval CAS (2026-10-21)
+
+For the accepted pre-intent CandidateRead source, the existing read-only P1
+preparation outside `BEGIN IMMEDIATE` carries an internal P4 requirement
+proof for the unique current Pending P3 Executable Action and its exact
+Pending/unconsumed P4 Executable approval. The proof binds the active
+Execution/Episode, pinned ProviderTurn/Step/LogicalAction/actionIndex/callRef,
+P3 Action revision/input hash/tool identity, approval identity/state/revision/
+immutable `expiresAt`, and P11-derived path-free resource source. These are
+server-derived facts, not command payload fields, fingerprint inputs, or
+public CandidateRead fields.
+
+At the existing final receipt-first linearization point, P1 re-reads the exact
+Action and approval through transaction-scoped source ports; it does not open a
+nested transaction or perform filesystem/provider I/O. P1 requires the same
+Pending Action identity/revision/input/tool tuple and the same Pending,
+unconsumed approval identity/revision/expiry. It compares approval
+`expiresAt` with the one trusted GatewayNow for that final transaction, so
+time-only expiry is stale even if the persisted approval row has not yet been
+advanced by its expiry worker. When both are stale, Action is checked and
+reported first; otherwise an approval identity/state/revision/consumption or
+expiry mismatch is reported as `ExecutableApprovalRevision`.
+
+A fresh CommandId whose source proof changed commits the existing durable
+`TerminalRejected(StaleSandboxPolicyInputs)` receipt with safeDetails field
+`ActionRevision` or `ExecutableApprovalRevision`, and no decision/event. This
+source check does not consume approval. Same-CommandId committed receipt
+lookup remains before source re-read and returns exact prior result bytes;
+the source proof is excluded from semantic request fingerprint. No candidate
+ID, ActionId, ApprovalId, source digest, safe numeric revision, expiry,
+decision payload/result field, table, schemaVersion, migration or new
+transaction is introduced. P4's normal first effect-intent transaction
+remains the sole approval-consumption boundary.

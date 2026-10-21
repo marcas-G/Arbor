@@ -108,6 +108,14 @@ command fields. OsEnforced alone retains the registry branch precondition.
 Candidate read is P10 projection data, not P1 authority or fingerprint
 input. See P1/01 and the V5 acceptance record.
 
+Accepted pre-intent CandidateRead binds its exact P3 Action and P4 Pending
+Executable approval through read-only preparation and P1's final
+transaction-scoped CAS. Source drift uses the two additive existing-tag stale
+safe fields `ActionRevision` and `ExecutableApprovalRevision`; the latter
+also covers trusted-time expiry. P1 wire, semantic fingerprint, handler
+schema 2, receipt-first replay and SQLite schema remain unchanged. See
+P1/01/03/04/06 and the accepted bootstrap manifest.
+
 ## Accepted candidate profile binding digest V6
 
 P1/01 keeps the existing profile-specific

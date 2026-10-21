@@ -230,3 +230,10 @@ P4/05 makes explicit that its unchanged full-boundary/ownership producer and
 handle-digest codec project each offered profile separately at initial and
 refresh candidate reads. P10 consumes one coherent P11 source snapshot. See
 P4/05 and the V6 acceptance record.
+
+Accepted pre-intent CandidateRead extends the P4/06 read-only requirement
+port with an exact Pending P3 Action + Pending/unconsumed Executable approval
+source after `ApprovalRequired`. It creates no ToolInvocation/RecoveryBinding
+or approval consumption; the existing post-intent NotAdmitted source and P4
+claim transaction are unchanged. P4/02/03/06 own this ordering. See the
+accepted bootstrap/stale-binding decision and landing manifest.

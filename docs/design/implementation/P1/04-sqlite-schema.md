@@ -1120,3 +1120,13 @@ SQLite table, column, FK, trigger, migration descriptor, schema version, or
 historical row. Schema-1 receipts remain immutable and are only replayed by
 the exact prior-receipt compatibility path. Accepted proposal SHA-256
 `02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
+
+## Accepted pre-intent stale receipt compatibility (2026-10-21)
+
+The pre-intent Action/Executable-approval stale binding adds only two
+`StaleSandboxPolicyInputs.safeDetails.field` literals to the existing command
+result codec. It adds no column, table, index, trigger, migration, schema
+version or decision/result row field. Existing `commands.result_json` bytes
+and schema-1/schema-2 receipts remain immutable and replay under their existing
+strict validators; the result decoder accepts the new literals only for new
+terminal receipts. See P1/01/03 and the accepted P10/P1 bootstrap manifest.

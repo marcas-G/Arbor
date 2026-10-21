@@ -754,10 +754,10 @@ level are rejected. StaleSandboxPolicyInputs is an existing closed durable
 TerminalRejected receipt with safeDetails.field exactly one of
 EpisodeRevision,PolicyRevision,WorkspaceRevision,ResourceBoundaryRevision,
 SandboxHandleBindingDigest,AuthorityBundleRevision,OperatorConfigRevision,
-ProviderRegistryRevision. It exposes no old/current numeric value, digest,
-target/path or diagnosis. POST /commands
-returns HTTP 200 CommandReceiptView and same-CommandId replay returns that
-same receipt. Do not add 409 or Problem mapping.
+ProviderRegistryRevision,ActionRevision,ExecutableApprovalRevision. It
+exposes no old/current numeric value, digest, target/path or diagnosis.
+POST /commands returns HTTP 200 CommandReceiptView; same-CommandId replay
+returns that same receipt. Do not add 409 or Problem mapping.
 
 ## Accepted V3 policy producer receipt bindings
 
@@ -879,3 +879,38 @@ revision preconditions remain authoritative when they change. `candidateId`
 remains presentation identity and is never submitted. This mapping adds no P1
 wire field, codec, fingerprint input, rejection, event, decision snapshot,
 SQL table or migration.
+
+## Accepted pre-intent requirement stale-receipt binding (2026-10-21)
+
+Accepted under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1` and
+`ACCEPT_P10_P1_PREINTENT_STALE_RECEIPT_BINDING_OPTION_A`, fixed proposal
+SHA-256s
+`009A965AE81F64E051625E8AC33DD499D0A6EEB35B3D3055941F96A207F00A6C` and
+`FDF4F4036385DC30722F0A21BFF8E20E1C6F1A136B2CF7DE32310FD1F141FEA4`.
+
+The closed `StaleSandboxPolicyInputs.safeDetails.field` enum adds exactly
+`ActionRevision` and `ExecutableApprovalRevision`. `ActionRevision` identifies
+that the exact P3 Action source prepared by P1 changed, disappeared, moved
+from Pending/current, or no longer matches its pinned input/tool identity.
+`ExecutableApprovalRevision` identifies that the exact Pending/unconsumed P4
+approval source changed identity/state/revision, was consumed, disappeared,
+or expired. The internal approval proof binds approval identity, literal
+`Pending` state, revision, unconsumed status and immutable `expiresAt`;
+time-only expiry is independently checked against trusted GatewayNow in the
+final transaction even if the approval row's revision has not advanced.
+Neither field exposes an ID, revision number, timestamp, digest, path or
+diagnosis. If both exact sources are stale, P1 reports `ActionRevision`
+first; it checks and reports approval staleness only after the Action source
+matches.
+
+These are additive safe-detail literals on the existing
+`TerminalRejected(StaleSandboxPolicyInputs)` receipt. The DecideSandboxPolicy
+external payload, handler schema 2, semantic request fingerprint, decision
+result, decision/event/SQLite schema, and existing HTTP 200 receipt mapping do
+not change. Existing schema-1/schema-2 receipt bytes remain immutable; the
+strict result decoder accepts historical fields unchanged and the two new
+safe literals only on new receipts. A same CommandId committed receipt still
+replays before any P3/P4 source read; a fresh CommandId whose source becomes
+stale during P1 preparation returns the typed stale receipt with no decision
+or event. `candidateId`, Action/approval IDs and any source digest remain
+forbidden command fields.

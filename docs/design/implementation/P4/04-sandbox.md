@@ -384,3 +384,17 @@ status before cutover, and D2 cannot create a new Supported row. The physical
 signature/identity result alone leaves all Windows provider capabilities
 Experimental with empty tuples and `SandboxProcessPort.run` Unavailable.
 D4–D6 enforcement qualification remains necessary.
+
+## Accepted pre-intent policy selection ordering (2026-10-21)
+
+The pre-intent CandidateRead is a P4/06 read-only proof used by P10/P1; it is
+not a ToolRuntime invocation or a new sandbox runtime policy. It does not
+create a ToolInvocation/RecoveryBinding, consume approval, open a Sandbox,
+call a provider/executor or admit an effect. The existing exact approval
+gate remains before P4's first ToolInvocation intent and effect-admission
+boundary: after P1 commits policy, the human resolves the exact pending
+Executable approval, and P4's existing claim transaction atomically stores
+the intent and consumes the Approved revision. P4 uses the committed current
+decision only after that ordinary gate. Missing/stale policy still follows
+the existing NotAdmitted SandboxPolicyRequiredInterruption; real provider
+unavailability still follows the existing P9 terminal no-later-action path.
