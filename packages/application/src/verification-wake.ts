@@ -18,6 +18,7 @@ import type {
   WorkWaitStoreService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
+import { deriveVerificationConclusionEffectPlan } from "./verification-signal-plan.js";
 
 /** P8 `03` §3 dual-channel wake consumption (P8-009): consumes the
  * ConcludeVerification Result data (P8-004 `channel1Release` + verdict +
@@ -120,7 +121,10 @@ export const deliverVerificationWake = (
     // evidence entry; PASS never fires this channel. `routed` reports
     // the routing decision, so a replayed Fail stays routed: true while
     // its repeated reevaluate is a harmless re-derivation.
-    const routed = conclusion.verdict !== "Pass";
+    const routed = deriveVerificationConclusionEffectPlan(
+      conclusion.verdict,
+      null,
+    ).reevaluateOwner;
     if (routed) {
       const reason: WakeReason = { _tag: "VerificationReturned" };
       yield* deps.scheduler.reevaluate(conclusion.ownerWorkspaceId, reason);

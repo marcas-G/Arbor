@@ -29,6 +29,7 @@ export * from "./remote-worker-mediation.js";
 export * from "./snapshot-retention.js";
 export * from "./storage-assessment.js";
 export * from "./verification-consumer.js";
+export * from "./verification-signal-plan.js";
 export * from "./verifier-spawn.js";
 export * from "./wake-sink.js";
 export * from "./workflow-signal-consumer.js";
