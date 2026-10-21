@@ -32,7 +32,7 @@ const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
-const providerTurnId = "ptn_legacy_raw" as never;
+const providerTurnId = "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1" as never;
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );

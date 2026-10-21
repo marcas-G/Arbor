@@ -14,6 +14,7 @@ import {
   SessionId,
   WorkId,
   WorkspaceId,
+  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   type AdmitExecutionPayload,
@@ -636,7 +637,10 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
               reason: "delegate a bounded outcome from the current parent Work",
             },
             invocation: {
-              providerTurnId: "ptn_assign_work" as never,
+              providerTurnId: providerTurnInferenceId(
+                parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+                0,
+              ),
               outputPosition: 0,
               callRef: "assign-call",
               toolName: "assign_work",
@@ -759,7 +763,10 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
                 ),
               },
               invocation: {
-                providerTurnId: "ptn_root_assign_rejected" as never,
+                providerTurnId: providerTurnInferenceId(
+                  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a2"),
+                  0,
+                ),
                 outputPosition: 0,
                 callRef: "root-assign-rejected",
                 toolName: "assign_work",
@@ -772,7 +779,10 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
           const accepted = yield* handler.handle({
             action: baseAction,
             invocation: {
-              providerTurnId: "ptn_root_assign_accepted" as never,
+              providerTurnId: providerTurnInferenceId(
+                parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a3"),
+                0,
+              ),
               outputPosition: 0,
               callRef: "root-assign-accepted",
               toolName: "assign_work",

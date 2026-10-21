@@ -12,6 +12,7 @@ import {
   WorkId,
   WorkRevision,
   WorkspaceId,
+  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   Clock,
@@ -224,7 +225,10 @@ describe("MAC-P3 cross-Work deliverable closure", () => {
               artifacts: [],
             },
             invocation: {
-              providerTurnId: "ptn_produce_report" as never,
+              providerTurnId: providerTurnInferenceId(
+                parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+                0,
+              ),
               outputPosition: 0,
               callRef: "produce-report",
               toolName: "produce_deliverable",
@@ -261,7 +265,10 @@ describe("MAC-P3 cross-Work deliverable closure", () => {
               summary: "research report ready",
             },
             invocation: {
-              providerTurnId: "ptn_deliver_report" as never,
+              providerTurnId: providerTurnInferenceId(
+                parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a2"),
+                0,
+              ),
               outputPosition: 0,
               callRef: "deliver-report",
               toolName: "deliver",

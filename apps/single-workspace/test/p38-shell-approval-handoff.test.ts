@@ -5,6 +5,7 @@ import {
   parse,
   SessionId,
   WorkspaceId,
+  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   type ClockService,
@@ -210,7 +211,10 @@ const runApprovalHandoff = async (command: string) => {
   const outcome = await Effect.runPromise(
     handler.handle({
       invocation: {
-        providerTurnId: "ptn_p38-shell-policy" as never,
+        providerTurnId: providerTurnInferenceId(
+          parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+          0,
+        ),
         outputPosition: 0,
         callRef: "p38-shell-call",
         toolName: "shell",

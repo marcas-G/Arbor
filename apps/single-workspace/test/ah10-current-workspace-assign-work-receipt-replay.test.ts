@@ -11,6 +11,7 @@ import {
   SessionId,
   WorkId,
   WorkspaceId,
+  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   Clock,
@@ -35,7 +36,10 @@ const workspaceId = parse(WorkspaceId)(
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
-const providerTurnId = "ptn_current_assign_work_receipt" as never;
+const providerTurnId = providerTurnInferenceId(
+  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+  0,
+);
 const invocation = {
   providerTurnId,
   outputPosition: 0,

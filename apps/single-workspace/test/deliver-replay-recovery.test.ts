@@ -4,7 +4,13 @@ import {
   type CommandHandlerRegistryService,
   newUuid7,
 } from "@arbor/application";
-import { type MessageId, messageEntryKey } from "@arbor/domain";
+import {
+  ExecutionId,
+  type MessageId,
+  messageEntryKey,
+  parse,
+  providerTurnInferenceId,
+} from "@arbor/domain";
 import {
   type DeliverReplayAttentionFact,
   type RecordDeliverReplayFailureInput,
@@ -16,12 +22,15 @@ import { Cause, Effect, Exit, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { deliverMessageGatewayHandler } from "../src/control-actions.js";
 
-const providerTurnId = "ptn_deliver-recovery-test";
+const providerTurnId = providerTurnInferenceId(
+  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+  0,
+);
 const outputPosition = 0;
 const logicalActionId = "la_deliver-recovery-test";
 const occurrence = `${providerTurnId}:${outputPosition}`;
 const messageId = `msg_${newUuid7("deliver-message", occurrence)}` as MessageId;
-const executionId = "exe_deliver-recovery-test";
+const executionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const projectId = "prj_deliver-recovery-test";
 const senderWorkspaceId = `ws_${newUuid7("p37-deliver-recovery", "sender")}`;
 const recipientWorkspaceId = `ws_${newUuid7("p37-deliver-recovery", "recipient")}`;

@@ -1,9 +1,21 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import {
+  ExecutionId,
+  parse,
+  providerTurnInferenceId,
+} from "@arbor/domain";
+import {
   makeExecutableToolHandler,
   toExecutableOutcome,
 } from "../src/executable-tool-handler.js";
+
+const fixtureExecutionId = parse(ExecutionId)(
+  "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+);
+const testTurnId = providerTurnInferenceId(fixtureExecutionId, 0);
+const p9ReplayTurnId = providerTurnInferenceId(fixtureExecutionId, 2);
+const p40ReplayTurnId = providerTurnInferenceId(fixtureExecutionId, 3);
 
 describe("SCRC executable outcome taxonomy", () => {
   it.each([
@@ -88,7 +100,7 @@ describe("SCRC executable outcome taxonomy", () => {
           logicalStepNo: 0,
           repairAttempt: 0,
         },
-        providerTurnId: "ptn_test" as never,
+        providerTurnId: testTurnId,
         logicalActionId: "lac_test",
         actionIndex: 0,
         callRef: "call_test",
@@ -131,7 +143,7 @@ describe("SCRC executable outcome taxonomy", () => {
       },
       recoveryBindingIdentity: {
         executionId: "exe_p9_replay" as never,
-        providerTurnId: "ptn_p9_replay" as never,
+        providerTurnId: p9ReplayTurnId,
         logicalStepNo: 2,
         repairAttempt: 0,
         logicalActionId: "lac_p9_replay",
@@ -169,7 +181,7 @@ describe("SCRC executable outcome taxonomy", () => {
             logicalStepNo: 2,
             repairAttempt: 0,
           },
-          providerTurnId: "ptn_p9_replay",
+          providerTurnId: p9ReplayTurnId,
           logicalActionId: "lac_p9_replay",
           actionIndex: 1,
           callRef: "call_p9_replay",
@@ -285,7 +297,7 @@ describe("SCRC executable outcome taxonomy", () => {
       Effect.flip(
         handler.handle({
           invocation: {
-            providerTurnId: "ptn_p40_replay" as never,
+            providerTurnId: p40ReplayTurnId,
             outputPosition: 0,
             callRef: "call-p40-replay",
             toolName: "read",
@@ -314,7 +326,7 @@ describe("SCRC executable outcome taxonomy", () => {
             fencingGeneration: 0 as never,
           },
           controlBasis: {} as never,
-          providerTurnId: "ptn_p40_replay",
+          providerTurnId: p40ReplayTurnId,
           logicalActionId: "lac_p40_replay",
         }),
       ),
@@ -325,7 +337,7 @@ describe("SCRC executable outcome taxonomy", () => {
       logicalActionId: "lac_p40_replay",
     });
     expect(source).toMatchObject({
-      providerTurnId: "ptn_p40_replay",
+      providerTurnId: p40ReplayTurnId,
       logicalActionId: "lac_p40_replay",
     });
   });
@@ -352,7 +364,7 @@ describe("SCRC executable outcome taxonomy", () => {
     const outcome = await Effect.runPromise(
       handler.handle({
         invocation: {
-          providerTurnId: "ptn_test" as never,
+          providerTurnId: testTurnId,
           outputPosition: 0,
           callRef: "call-1",
           toolName: "read",
@@ -418,7 +430,7 @@ describe("SCRC executable outcome taxonomy", () => {
       Effect.flip(
         handler.handle({
           invocation: {
-            providerTurnId: "ptn_test" as never,
+            providerTurnId: testTurnId,
             outputPosition: 0,
             callRef: "call-1",
             toolName: "read",
