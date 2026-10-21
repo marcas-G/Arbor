@@ -303,47 +303,43 @@ const concludeVerificationResult: Validator = (value) =>
 
 const concludeVerificationResultV2: Validator = (value) => {
   if (
-    !objectWith(
-      value,
-      {
-        verificationId: id("VerificationId"),
-        state: literal("Concluded"),
-        verdict: verificationVerdict,
-        conclusionReason: (reason) =>
-          reason === null ||
-          (oneOf("Orphaned")(reason) &&
-            recordOf(value)?.verdict === "Unknown"),
-        summaryRef: (ref) => typeof ref === "string" && ref.length > 0,
-        wakeSignals: arrayOf(concludeVerificationWakeSignal),
-        channel1Release: (release) =>
-          objectWith(release, {
-            workId: id("WorkId"),
-            targetWorkRevision: workRevision,
-          }),
-        missionSnapshot: (snapshot) =>
-          objectWith(snapshot, {
-            goal: stringValue,
-            criteria: arrayOf((criterion) =>
-              objectWith(criterion, {
-                criterionId: stringValue,
-                requirement: stringValue,
-                required: booleanValue,
-              }),
-            ),
-            riskRequirements: arrayOf(stringValue),
-          }),
-        criteriaResults: arrayOf((result) =>
-          objectWith(result, {
-            criterionId: stringValue,
-            requirement: stringValue,
-            required: booleanValue,
-            verdict: verificationVerdict,
-            evidenceRefs: arrayOf(id("EvidenceId")),
-          }),
-        ),
-        snapshotStatus: oneOf("Available", "NotApplicableOrphaned"),
-      },
-    )
+    !objectWith(value, {
+      verificationId: id("VerificationId"),
+      state: literal("Concluded"),
+      verdict: verificationVerdict,
+      conclusionReason: (reason) =>
+        reason === null ||
+        (oneOf("Orphaned")(reason) && recordOf(value)?.verdict === "Unknown"),
+      summaryRef: (ref) => typeof ref === "string" && ref.length > 0,
+      wakeSignals: arrayOf(concludeVerificationWakeSignal),
+      channel1Release: (release) =>
+        objectWith(release, {
+          workId: id("WorkId"),
+          targetWorkRevision: workRevision,
+        }),
+      missionSnapshot: (snapshot) =>
+        objectWith(snapshot, {
+          goal: stringValue,
+          criteria: arrayOf((criterion) =>
+            objectWith(criterion, {
+              criterionId: stringValue,
+              requirement: stringValue,
+              required: booleanValue,
+            }),
+          ),
+          riskRequirements: arrayOf(stringValue),
+        }),
+      criteriaResults: arrayOf((result) =>
+        objectWith(result, {
+          criterionId: stringValue,
+          requirement: stringValue,
+          required: booleanValue,
+          verdict: verificationVerdict,
+          evidenceRefs: arrayOf(id("EvidenceId")),
+        }),
+      ),
+      snapshotStatus: oneOf("Available", "NotApplicableOrphaned"),
+    })
   ) {
     return false;
   }

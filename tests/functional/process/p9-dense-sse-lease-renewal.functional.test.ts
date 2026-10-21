@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   AgentExecutionStateStoreLive,
   ClockLive,
@@ -136,14 +136,16 @@ const denseState: DenseState = {
 };
 
 const databaseDirectory = createFunctionalFixtureDirectory();
-const databaseFile = (() => {
+let databaseFile: string;
+beforeAll(async () => {
   try {
-    return cloneFunctionalSchema46Database(databaseDirectory).databaseFile;
+    databaseFile = (await cloneFunctionalSchema46Database(databaseDirectory))
+      .databaseFile;
   } catch (error) {
     removeFunctionalFixtureDirectory(databaseDirectory);
     throw error;
   }
-})();
+});
 let providerServer: Server | undefined;
 let running:
   | Promise<

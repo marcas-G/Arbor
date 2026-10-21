@@ -16,6 +16,8 @@ const historicalSchemaFixtureOwners = [
   "adapters/persistence-sqlite/test/p45-retry-verification-origin-migration.test.ts",
   "adapters/persistence-sqlite/test/p47-ah14-legacy-adoption-attention-migration.test.ts",
   "adapters/persistence-sqlite/test/p48-ah19-conversation-checkpoint-owner-migration.test.ts",
+  "adapters/persistence-sqlite/test/p51-verification-v2-consumer-reconciliation-migration.test.ts",
+  "adapters/persistence-sqlite/test/verification-signal-reconciliation-store.test.ts",
   "adapters/persistence-sqlite/test/schema42-database-fixture.test.ts",
   "adapters/persistence-sqlite/test/schema44-database-fixture.test.ts",
   "apps/single-workspace/test/p6-inbox-rebuild-fixture-child.test.ts",

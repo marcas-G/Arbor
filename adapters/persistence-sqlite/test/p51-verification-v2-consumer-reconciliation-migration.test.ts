@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { createSchema50TestDatabase } from "../../../tests/support/schema44-database.js";
 import {
+  layer,
   P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
   runMigrations,
-  layer,
 } from "../src/index.js";
-import { Effect } from "effect";
 
 const runP51 = (filename: string) =>
   Effect.runPromise(
@@ -29,10 +29,10 @@ describe("F18 schema 0051 verification signal reconciliation", () => {
         ...P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
         onApply: (sql: unknown, context?: { readonly capturedAt?: string }) =>
           Effect.gen(function* () {
-            yield* P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION.onApply!(
-              sql,
-              context,
-            );
+            const apply =
+              P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION.onApply;
+            if (apply === undefined) throw new Error("P51 onApply missing");
+            yield* apply(sql, context);
             return yield* Effect.die(new Error("inject P51 rollback"));
           }),
       };
@@ -52,9 +52,11 @@ describe("F18 schema 0051 verification signal reconciliation", () => {
       });
       try {
         expect(
-          (afterRollback.prepare("PRAGMA user_version").get() as {
-            user_version: number;
-          }).user_version,
+          (
+            afterRollback.prepare("PRAGMA user_version").get() as {
+              user_version: number;
+            }
+          ).user_version,
         ).toBe(50);
         expect(
           afterRollback
@@ -171,7 +173,9 @@ describe("F18 schema 0051 verification signal reconciliation", () => {
           fact_digest: string;
         }>;
         const projects = (
-          db.prepare("SELECT project_id FROM projects ORDER BY project_id").all() as Array<{
+          db
+            .prepare("SELECT project_id FROM projects ORDER BY project_id")
+            .all() as Array<{
             project_id: string;
           }>
         ).map(({ project_id: id }) => id);

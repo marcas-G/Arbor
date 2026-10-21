@@ -10,6 +10,8 @@ import { backup, DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import {
   layer,
+  type MigrationFile,
+  makeP51ActivationHighwaterFact,
   P36_MIGRATIONS,
   P37_MIGRATIONS,
   P38_MIGRATIONS,
@@ -28,10 +30,8 @@ import {
   P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
   P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_FINGERPRINT,
   P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
-  P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
   P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_FINGERPRINT,
-  makeP51ActivationHighwaterFact,
-  type MigrationFile,
+  P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
   p39WriterLockFilename,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
@@ -1269,7 +1269,10 @@ const validateDescriptorPin = (version: number): void => {
     const actualFingerprint = sha256Hex(
       `${descriptor.requiresUserVersion}\n${descriptor.name}\n${sqlHash}`,
     );
-    if (actualFingerprint !== P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_FINGERPRINT)
+    if (
+      actualFingerprint !==
+      P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_FINGERPRINT
+    )
       throw new SchemaUpgradeRefusal(
         "P51 descriptor fingerprint differs from the accepted storage contract",
       );
@@ -1721,7 +1724,9 @@ const runP40ToP51 = (
             if (descriptor.onApply !== undefined) {
               yield* descriptor.onApply(
                 primary,
-                version === 51 ? { capturedAt: activationCapturedAt } : undefined,
+                version === 51
+                  ? { capturedAt: activationCapturedAt }
+                  : undefined,
               );
             }
             yield* primary.unsafe(`PRAGMA user_version = ${version}`);
@@ -1797,11 +1802,9 @@ const runP40ToP51 = (
         ORDER BY project_id`,
     );
     const f18ProjectCount = Number(
-      (
-        yield* primary.unsafe<{ count: number }>(
-          "SELECT COUNT(*) AS count FROM projects",
-        )
-      )[0]?.count ?? 0,
+      (yield* primary.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM projects",
+      ))[0]?.count ?? 0,
     );
     if (
       f18Tables.length !== 5 ||
@@ -1899,9 +1902,7 @@ const runP39AndSuffix = async (
     const pendingP51 = [...previous.records]
       .reverse()
       .map(({ record }) => record)
-      .find(
-        (record) => record.kind === "Prepared" && record.step === "0051",
-      );
+      .find((record) => record.kind === "Prepared" && record.step === "0051");
     if (typeof pendingP51?.activationCapturedAt === "string") {
       activationCapturedAt = pendingP51.activationCapturedAt;
     }

@@ -105,6 +105,7 @@ const assertDescriptorPrefixAndFingerprint = () => {
     48,
     49,
     50,
+    51,
   ]);
   expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
   expect(P39_MAINTENANCE_MIGRATIONS.map(({ id }) => id)).toEqual([37, 38, 39]);

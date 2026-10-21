@@ -7,8 +7,8 @@ import type {
   ProjectId,
 } from "@arbor/domain";
 import {
-  EVENT_CATALOG,
   decodeSupportedEventPayload,
+  EVENT_CATALOG,
   isSupportedEventReadPair,
   isSupportedEventWritePair,
 } from "@arbor/domain";
@@ -151,7 +151,10 @@ const decodeRawCandidate = (
     if (decoded._tag === "MalformedPayload") {
       return { _tag: "Poison", reason: "MalformedPayload" };
     }
-    return { _tag: "Decoded", event: { ...envelope, payload: decoded.payload } };
+    return {
+      _tag: "Decoded",
+      event: { ...envelope, payload: decoded.payload },
+    };
   } catch {
     return { _tag: "Poison", reason: "MalformedPayload" };
   }
