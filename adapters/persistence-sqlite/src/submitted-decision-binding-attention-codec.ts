@@ -2,6 +2,11 @@ import type {
   SubmittedDecisionBindingAttentionFact,
   SubmittedDecisionBindingFailureCode,
 } from "@arbor/ports";
+import {
+  ProviderTurnId as ProviderTurnIdSchema,
+  type ProviderTurnId,
+  parse,
+} from "@arbor/domain";
 
 export interface SubmittedDecisionBindingAttentionDbRow {
   readonly attention_fact_id: unknown;
@@ -43,6 +48,12 @@ export const decodeSubmittedDecisionBindingAttentionFactRow = (
   const failureCode = decodeSubmittedDecisionBindingFailureCode(
     row.failure_code,
   );
+  let providerTurnId: ProviderTurnId;
+  try {
+    providerTurnId = parse(ProviderTurnIdSchema)(row.provider_turn_id);
+  } catch {
+    return undefined;
+  }
   if (
     failureCode === undefined ||
     !isString(row.attention_fact_id) ||
@@ -52,7 +63,6 @@ export const decodeSubmittedDecisionBindingAttentionFactRow = (
     !isString(row.workspace_id) ||
     !isNonnegativeSafeInteger(row.logical_step_no) ||
     !isNonnegativeSafeInteger(row.repair_attempt) ||
-    !isString(row.provider_turn_id) ||
     !isString(row.logical_action_id) ||
     !isString(row.first_detected_at)
   ) {
@@ -66,7 +76,7 @@ export const decodeSubmittedDecisionBindingAttentionFactRow = (
     workspaceId: row.workspace_id as never,
     logicalStepNo: row.logical_step_no,
     repairAttempt: row.repair_attempt,
-    providerTurnId: row.provider_turn_id as never,
+    providerTurnId,
     logicalActionId: row.logical_action_id,
     failureCode,
     firstDetectedAt: row.first_detected_at,

@@ -3,6 +3,7 @@ import type {
   ExecutionId,
   WorkspaceId,
 } from "@arbor/domain";
+import { ProviderTurnId, parse } from "@arbor/domain";
 import {
   type CommitConversationCheckpointOwnerInput,
   type ConversationCheckpointFrontier,
@@ -123,7 +124,10 @@ const toOwner = (row: OwnerRow): ConversationCheckpointOwner => ({
   bindingFingerprint: row.binding_fingerprint,
   sourceManifestJson: row.source_manifest_json,
   producerExecutionId: row.producer_execution_id as ExecutionId | null,
-  producerProviderTurnId: row.producer_provider_turn_id as never,
+  producerProviderTurnId:
+    row.producer_provider_turn_id === null
+      ? null
+      : parse(ProviderTurnId)(row.producer_provider_turn_id),
   updatedAt: row.updated_at,
 });
 
@@ -346,7 +350,12 @@ export const ConversationCheckpointStoreLive: Layer.Layer<
       ) {
         return Effect.fail(conflict("MalformedOwner"));
       }
-      const owner = toOwner(row);
+      let owner: ConversationCheckpointOwner;
+      try {
+        owner = toOwner(row);
+      } catch {
+        return Effect.fail(conflict("MalformedOwner"));
+      }
       return validOwnerShape(owner)
         ? Effect.succeed(owner)
         : Effect.fail(conflict("MalformedOwner"));
@@ -648,8 +657,12 @@ export const ConversationCheckpointStoreLive: Layer.Layer<
         const row = written[0];
         if (row === undefined) {
           const latest = yield* readOwner(input.rootWorkspaceId);
-          const actual =
-            latest[0] === undefined ? undefined : toOwner(latest[0]);
+          let actual: ConversationCheckpointOwner | undefined;
+          try {
+            actual = latest[0] === undefined ? undefined : toOwner(latest[0]);
+          } catch {
+            return yield* Effect.fail(conflict("MalformedOwner"));
+          }
           return yield* Effect.fail(
             actual?.contextEpoch !== input.expectedContextEpoch
               ? conflict("ExpectedEpochMismatch")

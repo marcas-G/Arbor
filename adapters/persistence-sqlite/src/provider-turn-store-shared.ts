@@ -1,4 +1,4 @@
-import type { ProviderTurnId } from "@arbor/domain";
+import { ProviderTurnId, parse } from "@arbor/domain";
 import type {
   CanonicalProviderEvent,
   ProviderAttemptObservation,
@@ -132,26 +132,34 @@ export const mergeObservation = (
   return merged;
 };
 
-export const toRecord = (row: TurnRow): ProviderTurnRecord => ({
-  providerTurnId: row.provider_turn_id as ProviderTurnId,
-  executionId: row.execution_id as never,
-  sessionId: row.session_id as never,
-  contextEpoch: row.context_epoch as never,
-  modelRef: row.model_ref,
-  outputContractRef: row.output_contract_ref,
-  manifestId: row.manifest_id,
-  ...(row.execution_policy_json === null ||
-  row.execution_policy_json === undefined
-    ? {}
-    : (() => {
-        const executionPolicy =
-          decodeJson<ProviderRuntimeExecutionPolicy | null>(
-            row.execution_policy_json,
-            null,
-          );
-        return executionPolicy === null ? {} : { executionPolicy };
-      })()),
-  ...(row.turn_deadline_at === null || row.turn_deadline_at === undefined
-    ? {}
-    : { turnDeadlineAt: row.turn_deadline_at }),
-});
+export const toRecord = (row: TurnRow): ProviderTurnRecord | null => {
+  let providerTurnId: ProviderTurnId;
+  try {
+    providerTurnId = parse(ProviderTurnId)(row.provider_turn_id);
+  } catch {
+    return null;
+  }
+  return {
+    providerTurnId,
+    executionId: row.execution_id as never,
+    sessionId: row.session_id as never,
+    contextEpoch: row.context_epoch as never,
+    modelRef: row.model_ref,
+    outputContractRef: row.output_contract_ref,
+    manifestId: row.manifest_id,
+    ...(row.execution_policy_json === null ||
+    row.execution_policy_json === undefined
+      ? {}
+      : (() => {
+          const executionPolicy =
+            decodeJson<ProviderRuntimeExecutionPolicy | null>(
+              row.execution_policy_json,
+              null,
+            );
+          return executionPolicy === null ? {} : { executionPolicy };
+        })()),
+    ...(row.turn_deadline_at === null || row.turn_deadline_at === undefined
+      ? {}
+      : { turnDeadlineAt: row.turn_deadline_at }),
+  };
+};

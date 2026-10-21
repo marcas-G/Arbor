@@ -61,6 +61,15 @@ export const makeProviderTurnProjectStore = (
         );
         const row = rows[0];
         if (row === undefined) return null;
+        const turn = toRecord(row);
+        if (turn === null) {
+          return yield* Effect.fail<ProviderFailure>({
+            _tag: "ProviderFailure",
+            kind: "ProtocolViolation",
+            taxonomyVersion: "phase1-v2",
+            safeDiagnostic: "persisted-provider-turn-id-invalid",
+          });
+        }
         const attemptRows = yield* run(
           sql.unsafe<AttemptRow>(
             "SELECT provider_turn_id, attempt_no, outcome, provider_error_kind, failure_taxonomy_version, observation_json, canonical_event_prefix_json, delivered_position, continuation_checkpoint_json, retry_safety, retry_decision, retry_strategy, retry_reason FROM provider_attempts WHERE provider_turn_id = ? ORDER BY attempt_no",
@@ -107,7 +116,7 @@ export const makeProviderTurnProjectStore = (
           }),
         );
         return {
-          turn: toRecord(row),
+          turn,
           attempts,
           manifestJson: row.manifest_json,
           portableRequestJson: row.portable_request_json,
@@ -242,8 +251,20 @@ export const makeProviderTurnProjectStore = (
           });
           attemptsByTurn.set(row.provider_turn_id, list);
         }
-        return turnRows.map((row) => ({
-          turn: toRecord(row),
+        const decodedTurns = turnRows.flatMap((row) => {
+          const turn = toRecord(row);
+          return turn === null ? [] : [{ row, turn }];
+        });
+        if (decodedTurns.length !== turnRows.length) {
+          return yield* Effect.fail<ProviderFailure>({
+            _tag: "ProviderFailure",
+            kind: "ProtocolViolation",
+            taxonomyVersion: "phase1-v2",
+            safeDiagnostic: "persisted-provider-turn-id-invalid",
+          });
+        }
+        return decodedTurns.map(({ row, turn }) => ({
+          turn,
           attempts: attemptsByTurn.get(row.provider_turn_id) ?? [],
           manifestJson: row.manifest_json,
           portableRequestJson: row.portable_request_json,
