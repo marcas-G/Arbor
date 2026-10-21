@@ -18,7 +18,7 @@ in favor of the DID.
 | Doc | Owns |
 |---|---|
 | `03-transaction-model.md` | `TransactionScope` service, single-transaction command resolution, fingerprint comparison, concurrent duplicate protocol, fence/stop split |
-| `01-command-contracts.md` | failure vocabulary, generic pipeline, fingerprint algorithm, P1 command payload/result/rejection/event |
+| `01-command-contracts.md` | failure vocabulary, generic pipeline, fingerprint algorithm, P1 command payload/result/rejection/event, exact receipt replay for result fields using the closed ProviderTurnId codec |
 | `02-port-contracts.md` | P1 repository/port method sets, Effect A/E/R, transaction participation |
 | `05-event-journal.md` | sequence scope + durable counter, `eventVersion`, offset/projection boundary, poison handling |
 | `04-sqlite-schema.md` | DDL, cyclic FKs, indexes, resource-region encoding, migration, retention |

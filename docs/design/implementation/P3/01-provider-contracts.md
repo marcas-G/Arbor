@@ -70,7 +70,16 @@ the existing `ContinuationState`; the CanonicalProviderEvent ADT remains closed.
 
 `SecretRef` is a P3 `ports`-level opaque reference (DID §7.9); the raw
 credential is resolved only inside the ProviderRuntime adapter. `ProviderTurnId`
-is a domain ID (`ptn_`); `CancellationRef` and `CacheHint` are P3 port types.
+uses DID §2.2.1's closed V2 codec; `CancellationRef` and `CacheHint` are P3
+port types.
+
+The AgentRuntime supplies the exact new-write V2 ID in
+`ProviderExecutionContext`. ProviderRuntime preserves it on persisted
+`ProviderTurn`/Manifest records and `CanonicalProviderEvent.TurnStarted`;
+public conversation progress `providerTurnId` fields are the same string, not
+a provider-generated or re-encoded ID. Legacy UUIDv7 IDs are read/replay-only.
+The closed decoder rejects unlisted encodings; provider transport retry never
+allocates a different ProviderTurnId.
 
 ## 3. CanonicalProviderEvent (frozen ADT — C4)
 

@@ -89,6 +89,7 @@ Output Contract, Prompt provenance, real model multi-turn continuity.
 | C5 | Prompt Program **actual text** is **not** implementation choice. The Programs P3 uses (Base Agent Protocol, Responsibility-bound Protocol, Work Execution Program, Compaction, …) are versioned phase-scoped **contract artifacts** with regression eval. Only wording iteration that does not change the contract, and numeric defaults, are empirical. |
 | C6 | DID v1.20 `AgentLoopStep` is the durable handoff state. It persists no process-local `AgentAction`; pinned Provider events + decoder reconstruct invocations and the action ledger verifies identity/hash (`08`). |
 | C7 | DID v1.22 freezes typed Session Timeline, safe-boundary promotion, AgentStepContext/ContextProjector, Summary/ProviderNative compaction and provider-aware budget evidence. Migration 0019 and implementation remain unauthorized. |
+| C8 | DID v1.58 freezes the closed ProviderTurnId V2 codec: P3 `01` owns the typed codec/Provider boundary propagation; `02` binds the exact ID in Manifest; `08` owns deterministic Step/P20 identity and exact replay. UUIDv7 is read/replay-only; P2 owns unchanged TEXT storage (`04`). |
 
 ## Inherited from P2
 
@@ -104,7 +105,7 @@ Output Contract, Prompt provenance, real model multi-turn continuity.
 
 | # | Finding | Classification | Resolution |
 |---|---|---|---|
-| F1 | `SecretRef` / `CancellationRef` / `CacheHint` ownership ambiguous | P3 phase-scoped | `SecretRef` is a P3 `ports` type; `ProviderTurnId` is a domain ID; `CancellationRef`/`CacheHint` are P3 port types (`01` §2) |
+| F1 | `SecretRef` / `CancellationRef` / `CacheHint` ownership ambiguous | P3 phase-scoped | `SecretRef` is a P3 `ports` type; `ProviderTurnId` is a domain ID using the closed DID §2.2.1 codec; `CancellationRef`/`CacheHint` are P3 port types (`01` §2) |
 | F2 | `SkillRegistry.available` used an undefined `ResponsibilityId` | P3 phase-scoped | keyed by `AgentBinding + WorkspaceId` (`02` §7) |
 | F3 | `PromptProgramFamily` referenced but undefined | P3 phase-scoped | defined as the DID §8.4 P1–P14 family union (`05` §1) |
 | F4 | `SkillRegistry` service tag vs type naming | implementation choice | Context.Service tag `SkillRegistry`; `R` lists tags (`02` §1) |

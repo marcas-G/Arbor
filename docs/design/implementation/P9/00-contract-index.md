@@ -6,6 +6,12 @@ source identities/code unions used by the exact Work-revision gate. Facts and
 events remain immutable and atomic; ephemeral RecoveryBlocked outcomes are
 not promoted into sources.
 
+**Accepted ProviderTurnId V2 codec amendment (DID v1.58):** P9 `07` recovery
+and legacy adoption use P3's strict closed codec. Existing UUIDv7 and
+deterministic V2 identities are matched byte-for-byte across Turn, Manifest,
+Step, Session source refs, Action and P20 links. Unknown formats fail closed;
+P9 writes no replacement identity and changes no settlement semantics.
+
 **Authority:** DID v1.20（含原 DID v1.11 P9 closure 与 AHT-1…AHT-8）；SD v1.3 §6.5/§7.3/§10/§14；P1 `06`/`07`, P2 `03`/`06`, P3 `06`/`08`, P4 `01`/`02`/`03`/`06`, P5 `04`/`05`, P8 `00`/`02`/`03`；GQ1–GQ5 与 2026-09-30 AgentLoopStep 治理裁决。
 **Status:** FROZEN — P9 formally closed; accepted AH7-DG-03 owner amendment
 (2026-10-10). Post-landing consistency review pending.

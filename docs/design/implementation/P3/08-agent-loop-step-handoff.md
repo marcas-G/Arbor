@@ -89,6 +89,13 @@ Both successor forms persist their complete identity, including
 `providerTurnId`, before the predecessor transition commits. `manifestId` is
 bound once Provider Runtime creates the Manifest and can never change.
 
+`providerTurnId` uses the closed DID §2.2.1 ProviderTurnId V2 codec. New Step
+identities use only the deterministic V2 inference/repair constructors;
+recognized UUIDv7 values are read/replay-only historical evidence. Step
+creation, successor recovery, source refs and action binding preserve the
+exact stored string. Unknown or malformed values fail the existing typed
+identity/recovery validation and are never reconstructed from Session text.
+
 ## 3. Durable state
 
 ```ts
@@ -479,6 +486,13 @@ Inference(failed) → OverflowCompaction → OverflowReplacement
 Every link has a stable role/identity and immutable ProviderTurn/Manifest.
 Replacement success resumes the existing action phase; replacement overflow is
 terminal. `repairAttempt` is unchanged.
+
+P20 links use the exact V2 Step-bound ProviderTurnIds in DID §2.2.1: their
+Inference link is the Step's current inference ID, their OverflowCompaction
+link uses its exact Summary/Native compaction ID, and their
+OverflowReplacement ID uses ordinal `0`. Predecessor, role and context epoch
+remain separately checked link fields. Chain recovery is exact-string replay;
+it does not normalize or reallocate a link ID.
 
 ### Accepted AH10 Submitted DecisionEpisode binding failure (DID v1.42)
 

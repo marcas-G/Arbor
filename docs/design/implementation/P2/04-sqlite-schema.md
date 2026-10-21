@@ -323,6 +323,12 @@ unique but deliberately not an immediate FK. Binding is validated by the P3
 store when Manifest/ProviderTurn is created. Action rows persist hashes and
 references only; the process-local `AgentAction` is not serialized.
 
+`agent_loop_steps.provider_turn_id` uses the exact DID §2.2.1 ProviderTurnId
+V2 value and is validated by the shared closed codec. Its `TEXT` UNIQUE key
+preserves the exact string used by the Step, Manifest, sourced SessionEntry,
+Action and P20 link. Existing UUIDv7 Step IDs are read/replay-only; no DDL
+constraint, migration, identity rewrite, or backfill is introduced.
+
 ### 3.8 Session Timeline successor contract (DID v1.22; migration 0019 reserved)
 
 Migration 0018 is already owned by Project archive/human-message terminal

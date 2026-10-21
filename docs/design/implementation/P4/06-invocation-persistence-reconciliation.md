@@ -1213,6 +1213,12 @@ under the same final transaction. No requirement, marker,
 P3/P4 row, event, queue item, Attention or approval consumption is created by
 this port. P9's terminal unavailable contract is unchanged.
 
+The proof's `providerTurnId` is validated by the closed DID §2.2.1 codec and
+is copied byte-for-byte from the exact current P3 Step. Current new Steps use
+V2 composites; the legacy UUIDv7 variant is usable only when it is the exact
+persisted Step/Manifest/action binding being read or replayed. P4 never
+generates, normalizes, or reconstructs a ProviderTurnId from action text.
+
 For the existing post-intent `SandboxPolicyRequirementV1` variant, return a
 value only when the canonical Execution is exact, active, unsettled,
 and not stop-requested; the exact invocation is unsettled and
