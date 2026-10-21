@@ -81,13 +81,16 @@ export interface VerificationSignalReconciliationSweepResult {
 
 export type VerificationSignalReconciliationQualificationBoundary =
   | "AfterSourceValidationBeforeClaim"
+  | "AfterReconciliationLeaseClaimCommit"
   | "AfterVerificationWakeEffectBeforeDisposition"
   | "AfterVerificationWakeDispositionCommit"
   | "BeforeParentInboxDispositionCommit"
   | "AfterParentInboxDispositionCommit"
   | "AfterParentWakeEffectBeforeDisposition"
   | "AfterParentWakeDispositionCommit"
+  | "BeforeCompletedDispositionCommit"
   | "AfterCompletedDispositionCommit"
+  | "BeforeAttentionCommit"
   | "AfterAttentionCommit";
 
 export type VerificationSignalReconciliationQualificationProbe = (event: {
@@ -652,6 +655,22 @@ const probeBoundary = (
           }) ?? Promise.resolve(),
       );
 
+const recordAttentionBeforeCommit = (
+  deps: VerificationSignalReconciliationDependencies,
+  input: Parameters<
+    VerificationSignalReconciliationStoreService["recordAttention"]
+  >[0],
+) =>
+  deps.tx.transact(
+    Effect.gen(function* () {
+      yield* deps.store.recordAttention(input);
+      const row = yield* deps.store.find(input.identity);
+      if (row !== null) {
+        yield* probeBoundary(deps, "BeforeAttentionCommit", row);
+      }
+    }),
+  );
+
 const handleProvenSource = (
   proof: Extract<Proof, { readonly _tag: "Proven" }>,
   deps: VerificationSignalReconciliationDependencies,
@@ -707,6 +726,7 @@ const handleProvenSource = (
       return "Deferred";
     }
     let row: VerificationSignalReconciliationRow;
+    let leaseAcquired = false;
     const now = yield* deps.clock.now();
     if (current === null) {
       row = yield* deps.tx.transact(
@@ -717,6 +737,7 @@ const handleProvenSource = (
           now,
         ),
       );
+      leaseAcquired = true;
     } else {
       if (
         current.sourceDigest !== proof.source.sourceDigest ||
@@ -742,7 +763,11 @@ const handleProvenSource = (
         );
         if (claimed === null) return "Deferred";
         row = claimed;
+        leaseAcquired = true;
       }
+    }
+    if (leaseAcquired) {
+      yield* probeBoundary(deps, "AfterReconciliationLeaseClaimCommit", row);
     }
     if (
       row.leaseOwner !== config.leaseOwner ||
@@ -921,12 +946,22 @@ const handleProvenSource = (
       row = { ...row, phase: "ParentWakeDelivered" };
     }
     if (row.phase === "ParentWakeDelivered") {
-      const completed = yield* advance(
-        deps,
-        row,
-        "ParentWakeDelivered",
-        "Completed",
-        yield* deps.clock.now(),
+      const completedAt = yield* deps.clock.now();
+      const completed = yield* deps.tx.transact(
+        Effect.gen(function* () {
+          const committed = yield* deps.store.advance({
+            identity: row,
+            expectedPhase: "ParentWakeDelivered",
+            nextPhase: "Completed",
+            leaseOwner: row.leaseOwner ?? "",
+            leaseGeneration: row.leaseGeneration,
+            now: completedAt,
+          });
+          if (committed) {
+            yield* probeBoundary(deps, "BeforeCompletedDispositionCommit", row);
+          }
+          return committed;
+        }),
       );
       if (completed) {
         yield* probeBoundary(deps, "AfterCompletedDispositionCommit", row);
@@ -1039,22 +1074,20 @@ export const runVerificationSignalReconciliationSweep = (
         const attentionFactId = sha256Hex(
           `f18-v2-reconciliation-attention-v1\0${sourceIdentity}`,
         );
-        yield* deps.tx.transact(
-          deps.store.recordAttention({
-            identity: {
-              consumerId: "workflow-signals",
-              projectId,
-              eventSequence: sequence,
-            },
-            eventId: prior?.eventId ?? null,
-            failureCode: proof.failureCode,
-            evidenceDigest,
-            targetWorkspaceId: projectResult.value.rootWorkspaceId,
-            firstDetectedAt: now,
-            sourceIdentity,
-            attentionFactId,
-          }),
-        );
+        yield* recordAttentionBeforeCommit(deps, {
+          identity: {
+            consumerId: "workflow-signals",
+            projectId,
+            eventSequence: sequence,
+          },
+          eventId: prior?.eventId ?? null,
+          failureCode: proof.failureCode,
+          evidenceDigest,
+          targetWorkspaceId: projectResult.value.rootWorkspaceId,
+          firstDetectedAt: now,
+          sourceIdentity,
+          attentionFactId,
+        });
         const attentionRow = yield* deps.tx.transact(
           deps.store.find({
             consumerId: "workflow-signals",
@@ -1088,23 +1121,21 @@ export const runVerificationSignalReconciliationSweep = (
       ) {
         const now = yield* deps.clock.now();
         const sourceIdentity = `workflow-signals:${projectId}:${sequence}`;
-        yield* deps.tx.transact(
-          deps.store.recordAttention({
-            identity: proof.source.identity,
-            eventId: proof.source.eventId,
-            failureCode:
-              outcome === "Attention:InboxConflict"
-                ? "InboxConflict"
-                : "StateCorruption",
-            evidenceDigest: proof.source.sourceDigest,
-            targetWorkspaceId: projectResult.value.rootWorkspaceId,
-            firstDetectedAt: now,
-            sourceIdentity,
-            attentionFactId: sha256Hex(
-              `f18-v2-reconciliation-attention-v1\0${sourceIdentity}`,
-            ),
-          }),
-        );
+        yield* recordAttentionBeforeCommit(deps, {
+          identity: proof.source.identity,
+          eventId: proof.source.eventId,
+          failureCode:
+            outcome === "Attention:InboxConflict"
+              ? "InboxConflict"
+              : "StateCorruption",
+          evidenceDigest: proof.source.sourceDigest,
+          targetWorkspaceId: projectResult.value.rootWorkspaceId,
+          firstDetectedAt: now,
+          sourceIdentity,
+          attentionFactId: sha256Hex(
+            `f18-v2-reconciliation-attention-v1\0${sourceIdentity}`,
+          ),
+        });
         const attentionRow = yield* deps.tx.transact(
           deps.store.find(proof.source.identity),
         );
