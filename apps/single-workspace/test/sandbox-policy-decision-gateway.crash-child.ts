@@ -29,6 +29,7 @@ import {
   ProjectRepositoryLive,
   ResourceOwnershipRepositoryLive,
   SandboxPolicyDecisionStoreLive,
+  SandboxPolicyRequirementReadPortLive,
   TransactionPortLive,
   WorkspaceRepositoryLive,
   WorktreeStoreLive,
@@ -41,6 +42,7 @@ import {
   PermissionGrantRepository,
   ResourceOwnershipRepository,
   SandboxPolicyDecisionStore,
+  SandboxPolicyRequirementReadPort,
   TransactionPort,
   WorkspaceRepository,
   WorktreeStore,
@@ -317,6 +319,10 @@ const transaction = Layer.provide(TransactionPortLive, infra);
 const commandStore = Layer.provide(CommandStoreLive, infra);
 const eventJournal = Layer.provide(DomainEventJournalLive, infra);
 const decisions = Layer.provide(SandboxPolicyDecisionStoreLive, infra);
+const sandboxPolicyRequirements = Layer.provide(
+  SandboxPolicyRequirementReadPortLive,
+  infra,
+);
 const projects = Layer.provide(ProjectRepositoryLive, infra);
 const workspaces = Layer.provide(WorkspaceRepositoryLive, infra);
 const ownership = Layer.provide(ResourceOwnershipRepositoryLive, infra);
@@ -328,6 +334,7 @@ const repos = Layer.mergeAll(
   commandStore,
   eventJournal,
   decisions,
+  sandboxPolicyRequirements,
   projects,
   workspaces,
   ownership,
@@ -342,6 +349,7 @@ const registry = Layer.provide(
       const grantRepo = yield* PermissionGrantRepository;
       const executionRepo = yield* ExecutionRepository;
       const decisionStore = yield* SandboxPolicyDecisionStore;
+      const requirementRead = yield* SandboxPolicyRequirementReadPort;
       const transactionPort = yield* TransactionPort;
       const workspaceRepo = yield* WorkspaceRepository;
       const ownershipRepo = yield* ResourceOwnershipRepository;
@@ -357,6 +365,7 @@ const registry = Layer.provide(
           workspaces: workspaceRepo,
           executions: executionRepo,
           decisions: decisionStore,
+          requirements: requirementRead,
           ownership: ownershipRepo,
           worktrees: worktreeStore,
           environmentResolver,

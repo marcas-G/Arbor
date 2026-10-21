@@ -41,6 +41,7 @@ import type {
   SchedulerTimerStoreError,
   SessionRepositoryError,
   ToolInvocationStoreError,
+  ToolObservationEvidenceStoreError,
   TransactionOperationalFailure,
   TransactionScope,
   VerificationRepositoryError,
@@ -122,6 +123,7 @@ export type CommandHandlerError =
   | ConversationJobStoreError
   | ControlApprovalStoreError
   | ToolInvocationStoreError
+  | ToolObservationEvidenceStoreError
   | DependencyRepositoryError
   | DeliverableRepositoryError
   | VerificationRepositoryError

@@ -662,6 +662,7 @@ describe("P2-014 driver / dispatch / safety", () => {
           requirementReads += 1;
           return Effect.succeed(Option.some(requirement));
         },
+        comparePreIntentSource: () => Effect.succeed(undefined),
       });
       const encodedResult = encodeSandboxPolicyDecisionCommittedInternalV1({
         version: 1,
@@ -910,6 +911,7 @@ describe("P2-014 driver / dispatch / safety", () => {
           requirementReads += 1;
           return Effect.succeed(Option.some(requirement));
         },
+        comparePreIntentSource: () => Effect.succeed(undefined),
       });
       const encodedResult = encodeSandboxPolicyDecisionCommittedInternalV1({
         version: 1,
@@ -1027,6 +1029,7 @@ describe("P2-014 driver / dispatch / safety", () => {
         requirementReads += 1;
         return Effect.succeed(Option.none());
       },
+      comparePreIntentSource: () => Effect.succeed(undefined),
     });
     const currentAuthorityPort = Layer.succeed(
       CurrentSandboxAuthoritySnapshotPort,

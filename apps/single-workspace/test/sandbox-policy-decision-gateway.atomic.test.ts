@@ -54,6 +54,7 @@ import {
   ResourceOwnershipRepositoryLive,
   runMigrations,
   SandboxPolicyDecisionStoreLive,
+  SandboxPolicyRequirementReadPortLive,
   splitStatements,
   TransactionPortLive,
   WorkspaceRepositoryLive,
@@ -69,6 +70,7 @@ import {
   PermissionGrantRepository,
   ResourceOwnershipRepository,
   SandboxPolicyDecisionStore,
+  SandboxPolicyRequirementReadPort,
   TransactionPort,
   WorkspaceRepository,
   WorktreeStore,
@@ -403,6 +405,9 @@ const makeTestStack = (
     readonly failDecisionEventOnce?: boolean;
     readonly staleWorkspaceRevision?: boolean;
     readonly staleHandleBindingDigest?: boolean;
+    readonly preIntentSourceStaleField?:
+      | "ActionRevision"
+      | "ExecutableApprovalRevision";
     readonly productionPreparation?: boolean;
     readonly authoritySnapshot?: SandboxAuthorityBundleSnapshotV2;
   } = {},
@@ -410,6 +415,7 @@ const makeTestStack = (
 ) => {
   let failed = false;
   let preparationCalls = 0;
+  let preIntentSourceChecks = 0;
   let latestPolicyRevision = 0;
   const base = layer({ filename: databaseFile });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
@@ -450,6 +456,10 @@ const makeTestStack = (
   const transaction = Layer.provide(TransactionPortLive, infra);
   const commands = Layer.provide(CommandStoreLive, infra);
   const decisions = Layer.provide(SandboxPolicyDecisionStoreLive, infra);
+  const sandboxPolicyRequirements = Layer.provide(
+    SandboxPolicyRequirementReadPortLive,
+    infra,
+  );
   const projects = Layer.provide(ProjectRepositoryLive, infra);
   const workspaces = Layer.provide(WorkspaceRepositoryLive, infra);
   const ownership = Layer.provide(ResourceOwnershipRepositoryLive, infra);
@@ -460,6 +470,7 @@ const makeTestStack = (
     transaction,
     commands,
     decisions,
+    sandboxPolicyRequirements,
     journal,
     projects,
     workspaces,
@@ -475,6 +486,7 @@ const makeTestStack = (
         const grants = yield* PermissionGrantRepository;
         const executionRepository = yield* ExecutionRepository;
         const decisionStore = yield* SandboxPolicyDecisionStore;
+        const requirementRead = yield* SandboxPolicyRequirementReadPort;
         const clock = yield* Clock;
         let preparation: DecideSandboxPolicyPreparation = {
           prepare: () =>
@@ -502,6 +514,11 @@ const makeTestStack = (
               providerRegistryRevision: 3,
               providerRegistryDigest: "2".repeat(64),
             }),
+          preIntentSourceStaleField: () =>
+            Effect.sync(() => {
+              preIntentSourceChecks += 1;
+              return options.preIntentSourceStaleField;
+            }),
         };
         if (options.productionPreparation === true) {
           preparation = makeSandboxPolicyDecisionPreparation({
@@ -509,6 +526,7 @@ const makeTestStack = (
             workspaces: yield* WorkspaceRepository,
             executions: executionRepository,
             decisions: decisionStore,
+            requirements: requirementRead,
             ownership: yield* ResourceOwnershipRepository,
             worktrees: yield* WorktreeStore,
             environmentResolver: yield* EnvironmentResolverPort,
@@ -542,6 +560,7 @@ const makeTestStack = (
   return {
     app,
     preparationCalls: () => preparationCalls,
+    preIntentSourceChecks: () => preIntentSourceChecks,
     setLatestPolicyRevision: (revision: number) => {
       latestPolicyRevision = revision;
     },
@@ -949,6 +968,62 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
       },
     });
     expect(result.counts).toEqual({ decisions: 0, receipts: 1, events: 0 });
+  });
+
+  it("commits and replays a pre-intent source stale receipt without a decision or event", async () => {
+    const stack = makeTestStack({
+      preIntentSourceStaleField: "ExecutableApprovalRevision",
+    });
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* seedSchema50AndGrant;
+          const sql = yield* SqlClient;
+          const gateway = yield* CommandGateway;
+          const fingerprint = semanticRequestFingerprint({
+            commandType: "DecideSandboxPolicy",
+            projectId,
+            actor,
+            schemaVersion: "2",
+            payload,
+          });
+          const auth = makeAuthority(fingerprint);
+          const first = yield* gateway.execute(
+            envelope(),
+            { _tag: "External", principal },
+            auth,
+          );
+          const replay = yield* gateway.execute(
+            envelope(),
+            { _tag: "External", principal },
+            auth,
+          );
+          const rows = yield* sql.unsafe<{
+            decisions: number;
+            receipts: number;
+            events: number;
+          }>(
+            `SELECT
+              (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE decision_command_id = ?) AS decisions,
+              (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS receipts,
+              (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
+            [commandId, commandId],
+          );
+          return { first, replay, counts: rows[0] };
+        }),
+        stack.app,
+      ),
+    );
+    expect(result.first.resolution).toMatchObject({
+      _tag: "TerminalRejected",
+      error: {
+        _tag: "StaleSandboxPolicyInputs",
+        safeDetails: { field: "ExecutableApprovalRevision" },
+      },
+    });
+    expect(result.replay.resolution).toEqual(result.first.resolution);
+    expect(result.counts).toEqual({ decisions: 0, receipts: 1, events: 0 });
+    expect(stack.preIntentSourceChecks()).toBe(1);
   });
 
   it("rejects expectedPolicyRevision against an existing SQLite decision head", async () => {

@@ -62,6 +62,10 @@ export type SandboxPolicyRequirement =
   | SandboxPolicyRequirementV1
   | SandboxPolicyPreIntentRequirementV1;
 
+export type SandboxPolicyPreIntentStaleField =
+  | "ActionRevision"
+  | "ExecutableApprovalRevision";
+
 /** Structural source proof equality; deliberately not a codec, digest, or
  * request-fingerprint input. */
 export const sameSandboxPolicyPreIntentRequirement = (
@@ -99,6 +103,16 @@ export interface SandboxPolicyRequirementReadPortService {
     readonly executionId: ExecutionId;
   }) => Effect.Effect<
     Option.Option<SandboxPolicyRequirement>,
+    ToolObservationEvidenceStoreError,
+    TransactionScope
+  >;
+  /** Transaction-scoped final P1 CAS. Reads action first, then approval, and
+   * uses the caller's trusted GatewayNow for expiry even without row drift. */
+  readonly comparePreIntentSource: (input: {
+    readonly expected: SandboxPolicyPreIntentRequirementV1;
+    readonly trustedNow: string;
+  }) => Effect.Effect<
+    SandboxPolicyPreIntentStaleField | undefined,
     ToolObservationEvidenceStoreError,
     TransactionScope
   >;

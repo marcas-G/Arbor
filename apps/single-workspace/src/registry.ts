@@ -432,6 +432,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
               Effect.die(
                 new Error("sandbox policy preconditions are unavailable"),
               ),
+            preIntentSourceStaleField: () => Effect.succeed(undefined),
           },
           clock: Option.getOrElse(clock, () => ({
             now: () => Effect.succeed(new Date().toISOString()),

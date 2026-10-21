@@ -443,6 +443,116 @@ describe("P4 SandboxPolicyRequirementReadPort", () => {
     expect(mismatchResult._tag).toBe("Failure");
   });
 
+  it("compares Action before approval and uses trusted GatewayNow for expiry", async () => {
+    const exact = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          yield* seedPreIntentSchema(sql);
+          const transactions = yield* TransactionPort;
+          const port = yield* SandboxPolicyRequirementReadPort;
+          const requirement = yield* transactions.transact(
+            port.findPendingByExecution({
+              projectId,
+              workspaceId,
+              executionId,
+            }),
+          );
+          if (
+            Option.isNone(requirement) ||
+            requirement.value._tag !== "SandboxPolicyPreIntentRequirementV1"
+          )
+            throw new Error("pre-intent requirement fixture missing");
+          const exactField = yield* transactions.transact(
+            port.comparePreIntentSource({
+              expected: requirement.value,
+              trustedNow: "2026-10-21T11:59:59.999Z",
+            }),
+          );
+          yield* sql.unsafe(
+            "UPDATE executions SET episode_revision = episode_revision + 1 WHERE execution_id = ?",
+            [executionId],
+          );
+          const episodeChanged = yield* transactions.transact(
+            port.comparePreIntentSource({
+              expected: requirement.value,
+              trustedNow: "2026-10-21T11:59:59.999Z",
+            }),
+          );
+          yield* sql.unsafe(
+            "UPDATE executions SET episode_revision = episode_revision - 1 WHERE execution_id = ?",
+            [executionId],
+          );
+          yield* sql.unsafe(
+            "UPDATE action_approvals SET arguments_json = ? WHERE approval_id = ?",
+            ['{"command":"different"}', requirement.value.approvalId],
+          );
+          const approvalArgumentsChanged = yield* transactions.transact(
+            port.comparePreIntentSource({
+              expected: requirement.value,
+              trustedNow: "2026-10-21T11:59:59.999Z",
+            }),
+          );
+          yield* sql.unsafe(
+            "UPDATE action_approvals SET arguments_json = ? WHERE approval_id = ?",
+            [argumentsJson, requirement.value.approvalId],
+          );
+          yield* sql.unsafe(
+            "UPDATE agent_loop_step_actions SET revision = revision + 1 WHERE logical_action_id = ?",
+            [logicalActionId],
+          );
+          yield* sql.unsafe(
+            "UPDATE action_approvals SET state = 'Approved', revision = revision + 1 WHERE approval_id = ?",
+            [requirement.value.approvalId],
+          );
+          const actionFirst = yield* transactions.transact(
+            port.comparePreIntentSource({
+              expected: requirement.value,
+              trustedNow: "2026-10-21T11:59:59.999Z",
+            }),
+          );
+          yield* sql.unsafe(
+            "UPDATE agent_loop_step_actions SET revision = revision - 1 WHERE logical_action_id = ?",
+            [logicalActionId],
+          );
+          const approvalChanged = yield* transactions.transact(
+            port.comparePreIntentSource({
+              expected: requirement.value,
+              trustedNow: "2026-10-21T11:59:59.999Z",
+            }),
+          );
+          yield* sql.unsafe(
+            "UPDATE action_approvals SET state = 'Pending', revision = 0 WHERE approval_id = ?",
+            [requirement.value.approvalId],
+          );
+          const timeExpired = yield* transactions.transact(
+            port.comparePreIntentSource({
+              expected: requirement.value,
+              trustedNow: "2026-10-21T12:00:00.000Z",
+            }),
+          );
+          return {
+            exactField,
+            episodeChanged,
+            approvalArgumentsChanged,
+            actionFirst,
+            approvalChanged,
+            timeExpired,
+          };
+        }),
+        makeApp(),
+      ),
+    );
+    expect(exact).toEqual({
+      exactField: undefined,
+      episodeChanged: "ActionRevision",
+      approvalArgumentsChanged: "ExecutableApprovalRevision",
+      actionFirst: "ActionRevision",
+      approvalChanged: "ExecutableApprovalRevision",
+      timeExpired: "ExecutableApprovalRevision",
+    });
+  });
+
   it("returns exact active NotAdmitted P3/P4 evidence read-only in caller's transaction", async () => {
     const result = await Effect.runPromise(
       Effect.provide(

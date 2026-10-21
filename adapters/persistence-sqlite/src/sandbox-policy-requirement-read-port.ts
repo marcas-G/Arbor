@@ -2,6 +2,7 @@ import {
   type CanonicalResourceRegion,
   decodeCanonicalExecutionEpisodeBinding,
   type ExecutionId,
+  encodeExecutionEpisodeBinding,
   isIsoTimestamp,
   type ProjectId,
   ProviderTurnId,
@@ -289,6 +290,187 @@ const makeLayer = () =>
             approvalExpiresAt: row.approval_expires_at,
           } satisfies SandboxPolicyPreIntentRequirementV1);
         });
+
+      const comparePreIntentSource: SandboxPolicyRequirementReadPortService["comparePreIntentSource"] =
+        ({ expected, trustedNow }) =>
+          Effect.gen(function* () {
+            interface ActionSourceRow {
+              readonly project_id: string;
+              readonly workspace_id: string;
+              readonly episode_revision: number;
+              readonly episode_json: string | null;
+              readonly action_index: number;
+              readonly logical_action_id: string;
+              readonly call_ref: string;
+              readonly route_kind: string;
+              readonly action_kind: string;
+              readonly input_hash: string;
+              readonly state: string;
+              readonly revision: number;
+              readonly step_provider_turn_id: string;
+              readonly step_logical_step_no: number;
+              readonly step_repair_attempt: number;
+              readonly step_state: string;
+              readonly next_action_index: number;
+              readonly settled_at: string | null;
+              readonly stop_requested_at: string | null;
+            }
+            const actionRows = yield* run(
+              sql.unsafe<ActionSourceRow>(
+                `SELECT e.project_id, e.workspace_id, e.episode_revision,
+                        es.episode_json,
+                        a.action_index, a.logical_action_id, a.call_ref,
+                        a.route_kind, a.action_kind, a.input_hash,
+                        a.state, a.revision,
+                        s.provider_turn_id AS step_provider_turn_id,
+                        s.logical_step_no AS step_logical_step_no,
+                        s.repair_attempt AS step_repair_attempt,
+                        s.state AS step_state,
+                        s.next_action_index,
+                        e.settled_at, e.stop_requested_at
+                   FROM executions e
+                   JOIN agent_execution_state es
+                     ON es.execution_id = e.execution_id
+                   JOIN agent_loop_steps s
+                     ON s.execution_id = e.execution_id
+                    AND s.logical_step_no = ? AND s.repair_attempt = ?
+                   JOIN agent_loop_step_actions a
+                     ON a.execution_id = s.execution_id
+                    AND a.logical_step_no = s.logical_step_no
+                    AND a.repair_attempt = s.repair_attempt
+                    AND a.action_index = ?
+                  WHERE e.execution_id = ?`,
+                [
+                  expected.logicalStepNo,
+                  expected.repairAttempt,
+                  expected.actionIndex,
+                  expected.executionId,
+                ],
+              ),
+            );
+            if (actionRows.length === 0) return "ActionRevision";
+            if (actionRows.length !== 1)
+              return yield* failCorrupt(
+                "duplicate P3 Action rows match the pre-intent source proof",
+              );
+            const action = actionRows[0];
+            if (action === undefined)
+              return yield* failCorrupt("P3 Action source row disappeared");
+            const episodeBinding =
+              action.episode_json === null
+                ? undefined
+                : decodeCanonicalExecutionEpisodeBinding(action.episode_json);
+            if (episodeBinding === undefined)
+              return yield* failCorrupt(
+                "P3 Action source has a malformed EpisodeBinding",
+              );
+            if (
+              action.project_id !== expected.projectId ||
+              action.workspace_id !== expected.workspaceId ||
+              action.episode_revision !== expected.expectedEpisodeRevision ||
+              encodeExecutionEpisodeBinding(episodeBinding) !==
+                encodeExecutionEpisodeBinding(expected.episodeBinding) ||
+              action.action_index !== expected.actionIndex ||
+              action.logical_action_id !== expected.logicalActionId ||
+              action.call_ref !== expected.callRef ||
+              action.route_kind !== "Executable" ||
+              action.action_kind !== expected.toolName ||
+              action.input_hash !== expected.inputHash ||
+              action.revision !== expected.actionRevision ||
+              action.state !== "Pending" ||
+              action.step_provider_turn_id !== expected.providerTurnId ||
+              action.step_logical_step_no !== expected.logicalStepNo ||
+              action.step_repair_attempt !== expected.repairAttempt ||
+              action.step_state !== "ActionsInProgress" ||
+              action.next_action_index !== expected.actionIndex ||
+              action.settled_at !== null ||
+              action.stop_requested_at !== null
+            )
+              return "ActionRevision";
+
+            interface ApprovalSourceRow {
+              readonly approval_id: string;
+              readonly route_kind: string;
+              readonly project_id: string | null;
+              readonly workspace_id: string | null;
+              readonly execution_id: string | null;
+              readonly logical_step_no: number | null;
+              readonly repair_attempt: number | null;
+              readonly action_index: number | null;
+              readonly logical_action_id: string | null;
+              readonly call_ref: string | null;
+              readonly tool_invocation_id: string | null;
+              readonly stable_action_id: string;
+              readonly action_version: string;
+              readonly arguments_json: string;
+              readonly state: string;
+              readonly revision: number;
+              readonly expires_at: string;
+              readonly consumed_by: string | null;
+              readonly binding_proven: number;
+              readonly invocation_exists: number;
+            }
+            const approvalRows = yield* run(
+              sql.unsafe<ApprovalSourceRow>(
+                `SELECT aa.approval_id, aa.route_kind, aa.project_id,
+                        aa.workspace_id, aa.execution_id, aa.logical_step_no,
+                        aa.repair_attempt, aa.action_index,
+                        aa.logical_action_id, aa.call_ref,
+                        aa.tool_invocation_id, aa.stable_action_id,
+                        aa.action_version, aa.arguments_json, aa.state, aa.revision,
+                        aa.expires_at, aa.consumed_by, aa.binding_proven,
+                        CASE WHEN aa.tool_invocation_id IS NOT NULL AND EXISTS(
+                          SELECT 1 FROM tool_invocations ti
+                           WHERE ti.invocation_id = aa.tool_invocation_id
+                        ) THEN 1 ELSE 0 END AS invocation_exists
+                   FROM action_approvals aa
+                  WHERE aa.approval_id = ?`,
+                [expected.approvalId],
+              ),
+            );
+            if (approvalRows.length === 0) return "ExecutableApprovalRevision";
+            if (approvalRows.length !== 1)
+              return yield* failCorrupt(
+                "duplicate P4 Executable approval ids match the pre-intent source proof",
+              );
+            const approval = approvalRows[0];
+            if (approval === undefined)
+              return yield* failCorrupt("P4 approval source row disappeared");
+            if (
+              approval.binding_proven !== 1 ||
+              approval.tool_invocation_id === null ||
+              !isIsoTimestamp(approval.expires_at)
+            )
+              return yield* failCorrupt(
+                "P4 approval source is malformed or has an unexpected P4 intent",
+              );
+            if (
+              approval.route_kind !== "Executable" ||
+              approval.project_id !== expected.projectId ||
+              approval.workspace_id !== expected.workspaceId ||
+              approval.execution_id !== expected.executionId ||
+              approval.logical_step_no !== expected.logicalStepNo ||
+              approval.repair_attempt !== expected.repairAttempt ||
+              approval.action_index !== expected.actionIndex ||
+              approval.logical_action_id !== expected.logicalActionId ||
+              approval.call_ref !== expected.callRef ||
+              approval.stable_action_id !== expected.toolName ||
+              approval.action_version !== expected.toolVersion ||
+              sha256Hex(approval.arguments_json) !== expected.inputHash ||
+              approval.state !== expected.approvalState ||
+              approval.revision !== expected.approvalRevision ||
+              approval.consumed_by !== expected.approvalConsumedBy ||
+              approval.expires_at !== expected.approvalExpiresAt ||
+              !isIsoTimestamp(trustedNow) ||
+              Date.parse(approval.expires_at) <= Date.parse(trustedNow)
+            )
+              return "ExecutableApprovalRevision";
+            if (approval.invocation_exists !== 0)
+              return yield* failCorrupt(
+                "an intent exists while its exact Executable approval remains Pending",
+              );
+            return undefined;
+          });
 
       const findPendingByExecution: SandboxPolicyRequirementReadPortService["findPendingByExecution"] =
         (input) =>
@@ -578,7 +760,10 @@ const makeLayer = () =>
             });
           });
 
-      return SandboxPolicyRequirementReadPort.of({ findPendingByExecution });
+      return SandboxPolicyRequirementReadPort.of({
+        findPendingByExecution,
+        comparePreIntentSource,
+      });
     }),
   );
 

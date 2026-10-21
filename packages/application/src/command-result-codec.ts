@@ -790,6 +790,8 @@ const rejectionDecoders = {
     safeDetails: (details) =>
       objectWith(details, {
         field: oneOf(
+          "ActionRevision",
+          "ExecutableApprovalRevision",
           "EpisodeRevision",
           "PolicyRevision",
           "WorkspaceRevision",

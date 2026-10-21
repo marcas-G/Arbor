@@ -199,7 +199,10 @@ const execution = {
   state: { status: "Active" as const, settlement: null },
 };
 
-const makeHandler = (staleField?: "workspaceRevision") => {
+const makeHandler = (
+  staleField?: "workspaceRevision",
+  sourceStaleField?: "ActionRevision" | "ExecutableApprovalRevision",
+) => {
   const inserted: unknown[] = [];
   const handler = makeDecideSandboxPolicyHandler({
     grants: {
@@ -224,6 +227,7 @@ const makeHandler = (staleField?: "workspaceRevision") => {
             ? { ...current, workspaceRevision: 4 }
             : current,
         ),
+      preIntentSourceStaleField: () => Effect.succeed(sourceStaleField),
     },
     clock: { now: () => Effect.succeed(now) },
   });
@@ -309,4 +313,38 @@ describe("DecideSandboxPolicy command", () => {
     });
     expect(inserted).toHaveLength(0);
   });
+
+  it.each(["ActionRevision", "ExecutableApprovalRevision"] as const)(
+    "returns the safe pre-intent source stale field %s without a decision",
+    async (sourceField) => {
+      const { handler, inserted } = makeHandler(undefined, sourceField);
+      const result = await Effect.runPromise(
+        Effect.provideService(
+          handler.execute(
+            {
+              commandType: "DecideSandboxPolicy",
+              commandId,
+              projectId,
+              actor: parse(Actor)(String(subject)),
+              issuedAt: now,
+              payload,
+              resolvedAuthority: authority,
+            },
+            { _tag: "External", principal: subject },
+            { _tag: "Ready", summary: snapshot },
+          ),
+          TransactionScope,
+          { session: { id: "sandbox-decision-test" } },
+        ),
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "StaleSandboxPolicyInputs",
+          safeDetails: { field: sourceField },
+        },
+      });
+      expect(inserted).toHaveLength(0);
+    },
+  );
 });

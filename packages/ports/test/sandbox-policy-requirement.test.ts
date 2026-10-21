@@ -1,4 +1,13 @@
-import { ExecutionId, ProjectId, parse, WorkspaceId } from "@arbor/domain";
+import {
+  ExecutionId,
+  ProjectId,
+  ProviderTurnId,
+  parse,
+  Sha256,
+  WorkId,
+  WorkRevision,
+  WorkspaceId,
+} from "@arbor/domain";
 import { describe, expect, it } from "vitest";
 import {
   type SandboxPolicyPreIntentRequirementV1,
@@ -13,18 +22,20 @@ const requirement = {
   executionId: parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
   episodeBinding: {
     _tag: "WorkEpisode",
-    workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789a1",
-    targetWorkRevision: 5,
+    workId: parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+    targetWorkRevision: parse(WorkRevision)(5),
   },
   expectedEpisodeRevision: 4,
-  providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+  providerTurnId: parse(ProviderTurnId)(
+    "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+  ),
   logicalStepNo: 2,
   repairAttempt: 0,
   logicalActionId: "action-1",
   actionIndex: 1,
   callRef: "call-1",
   actionRevision: 3,
-  inputHash: "a".repeat(64),
+  inputHash: parse(Sha256)("a".repeat(64)),
   toolName: "shell",
   toolVersion: "shell-v1",
   approvalId: "approval-1",
@@ -40,6 +51,8 @@ describe("SandboxPolicyPreIntentRequirementV1", () => {
       sameSandboxPolicyPreIntentRequirement(requirement, { ...requirement }),
     ).toBe(true);
     const fields = [
+      "_tag",
+      "version",
       "projectId",
       "workspaceId",
       "executionId",
@@ -55,7 +68,9 @@ describe("SandboxPolicyPreIntentRequirementV1", () => {
       "toolName",
       "toolVersion",
       "approvalId",
+      "approvalState",
       "approvalRevision",
+      "approvalConsumedBy",
       "approvalExpiresAt",
     ] as const;
     for (const field of fields) {
@@ -76,7 +91,16 @@ describe("SandboxPolicyPreIntentRequirementV1", () => {
         ...requirement,
         episodeBinding: {
           ...requirement.episodeBinding,
-          targetWorkRevision: 6,
+          targetWorkRevision: parse(WorkRevision)(6),
+        },
+      }),
+    ).toBe(false);
+    expect(
+      sameSandboxPolicyPreIntentRequirement(requirement, {
+        ...requirement,
+        episodeBinding: {
+          ...requirement.episodeBinding,
+          workId: parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a2"),
         },
       }),
     ).toBe(false);
