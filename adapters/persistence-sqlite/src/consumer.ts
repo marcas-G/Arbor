@@ -179,25 +179,56 @@ export const runConsumerBatch = (
     return yield* tx.transact(
       Effect.gen(function* () {
         const fromSequence = yield* offsets.read(consumerId, projectId);
-        const events = yield* journal.readAfter(
+        const candidates = yield* journal.readAfterRaw(
           projectId,
           fromSequence,
           batchSize,
         );
         const applicable: DomainEvent<unknown>[] = [];
         let lastSequence = fromSequence;
-        for (const event of events) {
-          lastSequence = event.sequence;
-          if (event.eventVersion > 1) {
+        for (const candidate of candidates) {
+          if (
+            typeof candidate.sequenceRaw !== "number" ||
+            !Number.isSafeInteger(candidate.sequenceRaw) ||
+            candidate.sequenceRaw <= 0
+          ) {
+            return yield* Effect.fail({
+              _tag: "PersistenceCorruption" as const,
+              repository: "DomainEventJournal" as const,
+              operation: "consumer-event-sequence",
+              reason: "journal sequence cannot be proven for quarantine",
+            });
+          }
+          const sequence = candidate.sequenceRaw;
+          lastSequence = sequence;
+          const decoded = yield* journal.decodeRaw(candidate);
+          if (decoded._tag === "Poison") {
             yield* deadLetters.quarantine(
               consumerId,
               projectId,
-              event.sequence,
-              `unsupported eventVersion ${event.eventVersion}`,
+              sequence,
+              decoded.reason === "UnsupportedEventPair" &&
+                candidate.eventVersionRaw === 2
+                ? "unsupported eventVersion 2"
+                : decoded.reason === "UnsupportedEventPair" ||
+                    decoded.reason === "UnknownEventType"
+                  ? "unsupported event type/version pair"
+                  : decoded.reason === "MalformedPayload"
+                    ? "malformed event payload"
+                    : "malformed event envelope",
             );
             continue;
           }
-          applicable.push(event);
+          if (decoded.event.projectId !== projectId) {
+            yield* deadLetters.quarantine(
+              consumerId,
+              projectId,
+              sequence,
+              "malformed event envelope",
+            );
+            continue;
+          }
+          applicable.push(decoded.event);
         }
         if (applicable.length > 0) {
           yield* projection.apply(applicable);
@@ -209,7 +240,7 @@ export const runConsumerBatch = (
           fromSequence,
           lastSequence,
           applied: applicable.length,
-          quarantined: events.length - applicable.length,
+          quarantined: candidates.length - applicable.length,
         };
       }),
     );

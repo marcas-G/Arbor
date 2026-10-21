@@ -275,7 +275,26 @@ describe("P6 WorkBlocked atomic consumer apply", () => {
               return value;
             }),
         } as never,
-        journal: { readAfter: () => Effect.succeed([event]) } as never,
+        journal: {
+          readAfterRaw: () =>
+            Effect.succeed([
+              {
+                eventIdRaw: event.eventId,
+                projectIdRaw: projectId,
+                sequenceRaw: 1,
+                eventTypeRaw: event.eventType,
+                eventVersionRaw: event.eventVersion,
+                occurredAtRaw: event.occurredAt,
+                aggregateRefRaw: event.aggregateRef,
+                actorRaw: event.actor,
+                causedByCommandIdRaw: event.causedByCommandId,
+                causedByEventIdRaw: event.causedByEventId,
+                correlationRefRaw: event.correlationRef,
+                payloadJsonRaw: JSON.stringify(event.payload),
+              },
+            ]),
+          decodeRaw: () => Effect.succeed({ _tag: "Decoded", event }),
+        } as never,
         offsets: {
           read: () => Effect.succeed(offset),
           advance: (

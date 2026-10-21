@@ -1,4 +1,5 @@
 import type { DomainEvent, ProjectId } from "@arbor/domain";
+import { isSupportedEventReadPair } from "@arbor/domain";
 import type {
   AttentionPollFailureCode,
   AttentionPollStoreError,
@@ -427,13 +428,19 @@ export const runAttentionPollOnce = (
             if (
               typeof candidate.eventVersionRaw !== "number" ||
               !Number.isSafeInteger(candidate.eventVersionRaw) ||
-              candidate.eventVersionRaw > 1
+              typeof candidate.eventTypeRaw !== "string" ||
+              !isSupportedEventReadPair(
+                candidate.eventTypeRaw,
+                candidate.eventVersionRaw,
+              )
             ) {
               yield* deps.deadLetters.quarantine(
                 consumerId,
                 projectId,
                 sequence,
-                "unsupported eventVersion",
+                candidate.eventVersionRaw === 2
+                  ? "unsupported eventVersion 2"
+                  : "unsupported event type/version pair",
               );
               lastSequence = sequence;
               quarantined += 1;

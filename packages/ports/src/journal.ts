@@ -56,6 +56,7 @@ export type RawJournalDecodeResult =
       readonly reason:
         | "MalformedEnvelope"
         | "UnknownEventType"
+        | "UnsupportedEventPair"
         | "MalformedPayload";
     };
 
