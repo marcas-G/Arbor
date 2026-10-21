@@ -1,7 +1,20 @@
+import {
+  ExecutionId,
+  parse,
+  providerTurnInferenceId,
+  providerTurnOverflowReplacementId,
+} from "@arbor/domain";
 import { TransactionScope } from "@arbor/ports";
 import { Effect, Exit, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { commitDurableControlActionEffect } from "../src/durable-control-action-effect.js";
+
+const effectExecutionId = parse(ExecutionId)(
+  "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+);
+const committedTurn = providerTurnInferenceId(effectExecutionId, 0);
+const sourceTurn = providerTurnInferenceId(effectExecutionId, 1);
+const replacementTurn = providerTurnOverflowReplacementId(effectExecutionId, 1);
 
 const initialState = () => ({
   step: {
@@ -10,7 +23,7 @@ const initialState = () => ({
       logicalStepNo: 0,
       repairAttempt: 0,
     },
-    providerTurnId: "ptn_control_commit",
+    providerTurnId: committedTurn,
     manifestId: "mft_control_commit",
     state: "ActionsInProgress" as const,
     nextActionIndex: 0,
@@ -118,7 +131,7 @@ describe("P9 direct Control effect commit", () => {
     const providerTurns = {
       findManifestByTurn: (providerTurnId: string) =>
         Effect.succeed(
-          providerTurnId === "ptn_control_commit"
+          providerTurnId === committedTurn
             ? {
                 manifestId: "mft_control_commit",
                 manifestJson: JSON.stringify({
@@ -147,7 +160,7 @@ describe("P9 direct Control effect commit", () => {
           repairAttempt: 0,
         });
         return Effect.succeed(
-          providerTurnId === "ptn_control_commit"
+          providerTurnId === committedTurn
             ? settledProviderResult({
                 providerTurnId,
                 manifestId: "mft_control_commit",
@@ -193,7 +206,7 @@ describe("P9 direct Control effect commit", () => {
       actionContext: {
         identity: durable.step.identity,
         actionIndex: 0,
-        providerTurnId: "ptn_control_commit",
+        providerTurnId: committedTurn,
         callRef: "call_control_commit",
         contextEpoch: 0,
       },
@@ -248,8 +261,6 @@ describe("P9 direct Control effect commit", () => {
   });
 
   it("accepts the exact P20 replacement manifest as the action source and fails closed on mismatches", async () => {
-    const sourceTurn = "ptn_control_source";
-    const replacementTurn = "ptn_control_source_overflow_0";
     const replacementManifestId = "mft_control_replacement";
     const manifestFor = (
       providerTurnId: string,

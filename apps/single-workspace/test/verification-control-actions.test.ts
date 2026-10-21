@@ -32,6 +32,7 @@ import {
   WorkId,
   WorkRevision,
   WorkspaceId,
+  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   AgentLoopStepStoreLive,
@@ -73,6 +74,8 @@ import { makeSingleWorkspaceControlActionHandlers } from "../src/control-actions
 const executionId = parse(ExecutionId)(
   "exe_00000000-0000-7000-8000-000000000001",
 );
+const verificationTurnId = providerTurnInferenceId(executionId, 1);
+const previousVerificationTurnId = providerTurnInferenceId(executionId, 0);
 const workspaceId = parse(WorkspaceId)(
   "ws_00000000-0000-7000-8000-000000000001",
 );
@@ -160,10 +163,10 @@ const setup = (
   let priorValidatorCalls = 0;
   let priorConclusionValidatorCalls = 0;
   const priorEvidenceCommandId = parse(CommandId)(
-    `cmd_${newUuid7("record-verification-evidence", "ptn_verify:1")}`,
+    `cmd_${newUuid7("record-verification-evidence", `${verificationTurnId}:1`)}`,
   );
   const priorEvidenceId = parse(EvidenceId)(
-    `evd_${newUuid7("verification-evidence", "ptn_verify:1")}`,
+    `evd_${newUuid7("verification-evidence", `${verificationTurnId}:1`)}`,
   );
   const priorEvidencePayload = {
     verificationId,
@@ -185,7 +188,7 @@ const setup = (
     payload: priorEvidencePayload,
   });
   const priorConclusionCommandId = parse(CommandId)(
-    `cmd_${newUuid7("conclude-verification", "ptn_verify:2")}`,
+    `cmd_${newUuid7("conclude-verification", `${verificationTurnId}:2`)}`,
   );
   const priorConclusionPayload = {
     verificationId,
@@ -420,7 +423,7 @@ const setup = (
         Effect.succeed(
           Option.some({
             identity: { executionId, logicalStepNo: 0, repairAttempt: 0 },
-            providerTurnId: "ptn_verify",
+            providerTurnId: verificationTurnId,
             state: "ActionsInProgress",
           }),
         ),
@@ -491,7 +494,7 @@ const input = (
 ): AgentActionHandlerInput => ({
   action,
   invocation: {
-    providerTurnId: "ptn_verify" as never,
+    providerTurnId: verificationTurnId,
     outputPosition,
     callRef: `control-${outputPosition}`,
     toolName:
@@ -721,7 +724,7 @@ describe("verification control actions", () => {
   });
 
   it("returns from gen1 Evidence replay with a real SQLite transaction and the registered P8 validator", async () => {
-    const occurrence = "ptn_verify:1";
+    const occurrence = `${verificationTurnId}:1`;
     const replayEvidenceId = parse(EvidenceId)(
       `evd_${newUuid7("verification-evidence", occurrence)}`,
     );
@@ -809,7 +812,7 @@ describe("verification control actions", () => {
   });
 
   it("resumes step 1 Pending Control through the real SQLite P9 store, registry, authorizer, and receipt validator", async () => {
-    const occurrence = "ptn_verify:1";
+    const occurrence = `${verificationTurnId}:1`;
     const invocationArgumentsJson = JSON.stringify({
       criterionId: "focused-test",
       sourceCallRef: "tool-call-1",
@@ -950,19 +953,19 @@ describe("verification control actions", () => {
         [executionId],
       );
       yield* sql.unsafe(
-        "INSERT INTO agent_loop_steps (execution_id, logical_step_no, repair_attempt, provider_turn_id, predecessor_logical_step_no, predecessor_repair_attempt, manifest_id, state, successor_json, next_action_index, revision, updated_at) VALUES (?, 0, 0, 'ptn_previous', NULL, NULL, NULL, 'NextStepReady', ?, 1, 1, '2026-10-02T00:00:00.000Z')",
+        `INSERT INTO agent_loop_steps (execution_id, logical_step_no, repair_attempt, provider_turn_id, predecessor_logical_step_no, predecessor_repair_attempt, manifest_id, state, successor_json, next_action_index, revision, updated_at) VALUES (?, 0, 0, '${previousVerificationTurnId}', NULL, NULL, NULL, 'NextStepReady', ?, 1, 1, '2026-10-02T00:00:00.000Z')`,
         [
           executionId,
           JSON.stringify({
             executionId,
             logicalStepNo: 1,
             repairAttempt: 0,
-            providerTurnId: "ptn_verify",
+            providerTurnId: verificationTurnId,
           }),
         ],
       );
       yield* sql.unsafe(
-        "INSERT INTO agent_loop_steps (execution_id, logical_step_no, repair_attempt, provider_turn_id, predecessor_logical_step_no, predecessor_repair_attempt, manifest_id, state, next_action_index, revision, updated_at) VALUES (?, 1, 0, 'ptn_verify', 0, 0, NULL, 'ActionsInProgress', 1, 0, '2026-10-02T00:00:00.000Z')",
+        `INSERT INTO agent_loop_steps (execution_id, logical_step_no, repair_attempt, provider_turn_id, predecessor_logical_step_no, predecessor_repair_attempt, manifest_id, state, next_action_index, revision, updated_at) VALUES (?, 1, 0, '${verificationTurnId}', 0, 0, NULL, 'ActionsInProgress', 1, 0, '2026-10-02T00:00:00.000Z')`,
         [executionId],
       );
       yield* sql.unsafe(
@@ -972,7 +975,7 @@ describe("verification control actions", () => {
       const p8LogicalActionId = `lac_${sha256Hex(
         JSON.stringify({
           executionId,
-          providerTurnId: "ptn_verify",
+          providerTurnId: verificationTurnId,
           callRef: "control-1",
           routeKind: "Control",
           actionKind: "record_verification_evidence",
@@ -1016,7 +1019,7 @@ describe("verification control actions", () => {
         input: { execution: executionForAction, context: contextForAction },
         preparedTurn: {
           manifest: {
-            providerTurnId: "ptn_verify",
+            providerTurnId: verificationTurnId,
             executionId,
             sessionId,
             contextEpoch: 0,
@@ -1038,14 +1041,14 @@ describe("verification control actions", () => {
           finishReason: "ToolCalls",
           toolInvocations: [
             {
-              providerTurnId: "ptn_verify",
+              providerTurnId: verificationTurnId,
               outputPosition: 0,
               callRef: "read-call",
               toolName: "shell",
               argumentsJson: "{}",
             },
             {
-              providerTurnId: "ptn_verify",
+              providerTurnId: verificationTurnId,
               outputPosition: 1,
               callRef: "control-1",
               toolName: "record_verification_evidence",
@@ -1143,7 +1146,7 @@ describe("verification control actions", () => {
     );
     expect(state.submitted).toHaveLength(1);
     expect(state.submitted[0]?.commandId).not.toBe(
-      `cmd_${newUuid7("record-verification-evidence", "ptn_verify:1")}`,
+      `cmd_${newUuid7("record-verification-evidence", `${verificationTurnId}:1`)}`,
     );
   });
 

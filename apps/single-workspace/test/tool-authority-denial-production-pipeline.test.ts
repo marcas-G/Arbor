@@ -11,6 +11,7 @@ import {
   SessionId,
   WorkId,
   WorkspaceId,
+  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   Clock,
@@ -217,7 +218,10 @@ const invokeExecutable = (layer: ExecutablePipelineLayer) =>
           Effect.die("unused in executable observation test"),
       }).handle({
         invocation: {
-          providerTurnId: "ptn_authority-denial" as never,
+          providerTurnId: providerTurnInferenceId(
+            parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+            0,
+          ),
           outputPosition: 0,
           callRef: "call-authority-denial",
           toolName: PATCH_DEFINITION.name,

@@ -7,6 +7,8 @@ import {
   Principal,
   parse,
   type ViewId,
+  ExecutionId,
+  providerTurnInferenceId,
 } from "@arbor/domain";
 import { Effect } from "effect";
 import type { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -416,7 +418,10 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     progress.publish("msg_1", {
       type: "delta",
       executionId: "exe_1",
-      providerTurnId: "ptn_1",
+      providerTurnId: providerTurnInferenceId(
+        parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+        0,
+      ),
       attemptNo: 0,
       text: "hello",
     });
@@ -445,7 +450,10 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     progress.publish("msg_live", {
       type: "delta",
       executionId: "exe_live",
-      providerTurnId: "ptn_live",
+      providerTurnId: providerTurnInferenceId(
+        parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+        0,
+      ),
       attemptNo: 0,
       text: "live delta",
     });

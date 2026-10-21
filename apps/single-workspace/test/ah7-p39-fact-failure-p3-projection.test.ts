@@ -1,3 +1,4 @@
+import { ExecutionId, parse, providerTurnInferenceId } from "@arbor/domain";
 import { TransactionScope } from "@arbor/ports";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
@@ -6,10 +7,13 @@ import { makeExecutableToolHandler } from "../src/executable-tool-handler.js";
 
 describe("AH7 P39 fact-store failure at the P3 executable boundary", () => {
   it("projects SettlementJournal uncertainty as ReconciliationPending, never success", async () => {
-    const executionId = "exe_ah7_p39_fact_failure";
+    const executionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789a1";
     const workspaceId = "ws_ah7_p39_fact_failure";
     const sessionId = "ses_ah7_p39_fact_failure";
-    const providerTurnId = "ptn_ah7_p39_fact_failure";
+    const providerTurnId = providerTurnInferenceId(
+      parse(ExecutionId)(executionId),
+      0,
+    );
     const callRef = "call_ah7_p39_fact_failure";
     const invocationId = "tin_018f2b3c-4d5e-7abc-8def-0123456789a4";
     const episode = {

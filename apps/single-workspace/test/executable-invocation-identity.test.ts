@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto";
-import type { ExecutionId } from "@arbor/domain";
+import {
+  ExecutionId,
+  parse,
+  providerTurnInferenceId,
+} from "@arbor/domain";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { makeExecutableToolHandler } from "../src/executable-tool-handler.js";
 
 const invocation = {
-  providerTurnId: "ptn_identity-test" as never,
+  providerTurnId: providerTurnInferenceId(
+    parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+    0,
+  ),
   outputPosition: 0,
   callRef: "same-provider-call-ref",
   toolName: "read",
@@ -184,7 +191,10 @@ describe("executable tool invocation identity scope", () => {
     );
     const trustedIdentity = {
       executionId: "exe_identity_a" as ExecutionId,
-      providerTurnId: "ptn_persisted_turn" as never,
+      providerTurnId: providerTurnInferenceId(
+        parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a2"),
+        4,
+      ),
       logicalStepNo: 4,
       repairAttempt: 1,
       logicalActionId: "action-persisted",

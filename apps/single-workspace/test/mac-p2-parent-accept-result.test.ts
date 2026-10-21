@@ -7,6 +7,7 @@ import {
   SessionId,
   WorkId,
   WorkspaceId,
+  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   AcceptanceRepository,
@@ -147,7 +148,10 @@ describe("MAC-P2 Parent Agent acceptance", () => {
           const outcome = yield* handler.handle({
             action: { _tag: "AcceptResult", resultRef },
             invocation: {
-              providerTurnId: "ptn_accept_child" as never,
+              providerTurnId: providerTurnInferenceId(
+                parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+                0,
+              ),
               outputPosition: 0,
               callRef: "accept-child",
               toolName: "accept_result",

@@ -6,6 +6,7 @@ import {
   parse,
   SessionId,
   WorkspaceId,
+  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   Clock,
@@ -187,7 +188,10 @@ describe("MAC-P2 WorkspacePlacementContext", () => {
                 reason: "assign to existing responsibility",
               },
               invocation: {
-                providerTurnId: "ptn_child_assign" as never,
+                providerTurnId: providerTurnInferenceId(
+                  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+                  0,
+                ),
                 outputPosition: 0,
                 callRef: "child-assign",
                 toolName: "assign_work",

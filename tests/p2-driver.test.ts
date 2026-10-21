@@ -50,6 +50,7 @@ import {
   ToolInvocationId,
   WorkId,
   WorkspaceId,
+  providerTurnInferenceId,
 } from "../packages/domain/dist/index.js";
 import {
   type AdmitExecutionPayload,
@@ -1080,7 +1081,10 @@ describe("P2-014 driver / dispatch / safety", () => {
         failureCode: "ProviderUnavailable",
         actionBinding: {
           identity: { executionId, logicalStepNo: 0, repairAttempt: 0 },
-          providerTurnId: "ptn_p50_driver" as never,
+          providerTurnId: providerTurnInferenceId(
+            parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+            0,
+          ),
           logicalActionId: "lac_p50_driver",
           actionIndex: 0,
           callRef: "call_p50_driver",
