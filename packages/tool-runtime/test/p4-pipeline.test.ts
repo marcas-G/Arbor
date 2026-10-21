@@ -2486,6 +2486,26 @@ describe("P4 tool runtime pipeline", () => {
       let recoveryStoreCalls = 0;
       let firstExecutorCalls = 0;
       let recoveryExecutorCalls = 0;
+      let policyResolutions = 0;
+      const policy = processPolicy(processEpisode);
+      const policyMounts: ReadonlyArray<SandboxMountBinding> = [
+        {
+          ref: "workspace",
+          address: { _tag: "GitWorktree", path: "/tmp/s" },
+          region: {
+            resourceSpaceId: "filesystem",
+            normalizedRegion: { kind: "GitWorktree", path: "/tmp/s" },
+          },
+          access: "ReadOnly",
+        },
+      ];
+      const {
+        sandboxProcessPolicy: _restartPolicy,
+        sandboxProcessMountBindings: _restartMounts,
+        ...restartContext
+      } = retry.context;
+      void _restartPolicy;
+      void _restartMounts;
       const makeTrace = (failFactWrite: boolean): PipelineTrace => ({
         noEffectDenials: [],
         events: [],
@@ -2505,7 +2525,12 @@ describe("P4 tool runtime pipeline", () => {
           failFactWrite,
         },
       });
-      const invoke = async (trace: PipelineTrace, execute: () => void) =>
+      const invoke = async (
+        trace: PipelineTrace,
+        execute: () => void,
+        afterRestart = false,
+        refreshedPolicy: SandboxProcessPolicy = policy,
+      ) =>
         Effect.runPromise(
           Effect.provide(
             Effect.match(
@@ -2519,7 +2544,21 @@ describe("P4 tool runtime pipeline", () => {
                     invocationId,
                     approvalId: null,
                   } as never,
-                  retry.context,
+                  afterRestart
+                    ? {
+                        ...restartContext,
+                        resolveSandboxProcessPolicy: ({ now }) =>
+                          Effect.sync(() => {
+                            policyResolutions += 1;
+                            expect(now).toBe("2026-01-01T00:00:00.000Z");
+                            expect(trace.transactionDepth ?? 0).toBe(0);
+                            return {
+                              policy: refreshedPolicy,
+                              mounts: policyMounts,
+                            };
+                          }),
+                      }
+                    : retry.context,
                 );
               }),
               {
@@ -2530,16 +2569,11 @@ describe("P4 tool runtime pipeline", () => {
             app(
               false,
               {
+                ...processExecutor,
                 name: "shell",
-                write: true,
-                requiresApproval: () => false,
-                execute: () => {
+                execute: (input) => {
                   execute();
-                  return Effect.succeed({
-                    settlement: { _tag: "Success" as const },
-                    observation: { text: "recovered effect", truncated: false },
-                    resultRef: null,
-                  });
+                  return processExecutor.execute(input);
                 },
               },
               {},
@@ -2567,9 +2601,13 @@ describe("P4 tool runtime pipeline", () => {
       expect(firstExecutorCalls).toBe(0);
 
       const recoveredTrace = makeTrace(false);
-      const recovered = await invoke(recoveredTrace, () => {
-        recoveryExecutorCalls += 1;
-      });
+      const recovered = await invoke(
+        recoveredTrace,
+        () => {
+          recoveryExecutorCalls += 1;
+        },
+        true,
+      );
       recoveryStoreCalls = recoveredTrace.reconciliationFactWrites ?? 0;
       expect(recovered._tag).toBe("Success");
       expect(recoveredTrace.reconciliationRequests).toEqual(
@@ -2579,9 +2617,29 @@ describe("P4 tool runtime pipeline", () => {
       if (outcomeTag === "NotOccurred") {
         expect(recoveredTrace.retryAttemptNumbers).toEqual([0, 1]);
         expect(recoveryExecutorCalls).toBe(1);
+        expect(policyResolutions).toBe(1);
+        for (const mismatch of ["handle", "mount"] as const) {
+          const driftTrace = makeTrace(false);
+          const driftedPolicy: SandboxProcessPolicy =
+            mismatch === "handle"
+              ? { ...policy, sandboxHandleId: "stale-handle" }
+              : {
+                  ...policy,
+                  admittedMounts: [
+                    {
+                      ref: "workspace",
+                      rootPath: "/tmp/stale",
+                      access: "ReadOnly",
+                    },
+                  ],
+                };
+          await invoke(driftTrace, () => {}, true, driftedPolicy);
+          expect(driftTrace.sandboxProcessPortRuns ?? 0).toBe(0);
+        }
       } else if (outcomeTag === "Occurred") {
         expect(recoveredTrace.retryAttemptNumbers).toEqual([0]);
         expect(recoveryExecutorCalls).toBe(0);
+        expect(policyResolutions).toBe(0);
         expect(recoveredTrace.p40Candidates).toHaveLength(1);
         expect(recoveredTrace.p40Candidates?.[0]).toMatchObject({
           settlement: { _tag: "Success" },
@@ -2597,6 +2655,7 @@ describe("P4 tool runtime pipeline", () => {
         });
         expect(recoveredTrace.retryAttemptNumbers).toEqual([0]);
         expect(recoveryExecutorCalls).toBe(0);
+        expect(policyResolutions).toBe(0);
         expect(recoveredTrace.p40Candidates ?? []).toEqual([]);
       }
     },

@@ -3966,7 +3966,8 @@ export const ToolRuntimeLive = (
               p39BindingEnabled &&
               Option.isSome(p39Recovery) &&
               recoveredToolOutcome === undefined &&
-              (Option.isNone(prior) ||
+              (retryAdmitted ||
+                Option.isNone(prior) ||
                 prior.value.effectAdmissionState === "NotAdmitted")
             ) {
               const isPolicyExpired = (

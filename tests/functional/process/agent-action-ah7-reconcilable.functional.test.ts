@@ -1,8 +1,22 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  ClockLive,
+  layer as sqliteLayer,
+  TransactionPortLive,
+  WorkspaceRepositoryLive,
+  WorktreeStoreLive,
+} from "../../../adapters/persistence-sqlite/src/index.js";
+import {
+  TransactionPort,
+  WorkspaceRepository,
+  WorktreeStore,
+} from "../../../packages/ports/src/index.js";
 import { SHELL_DEFINITION } from "../../../packages/tool-runtime/src/catalog.js";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
 import {
@@ -22,12 +36,202 @@ import {
   waitForExecutableApproval,
   waitForPublic,
 } from "../support/public-client.js";
+import {
+  sandboxPolicyV2TestPair,
+  writeSandboxPolicyV2TestPair,
+} from "../support/sandbox-policy-v2-source.js";
 
 const fixtures: ProductionFixture[] = [];
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
 const reconciliationChild = resolve(
   "tests/functional/support/ah10-process-child.mjs",
 );
+
+interface SandboxPolicyCandidateRead {
+  readonly commonPreconditions: {
+    readonly episodeBinding: Record<string, unknown>;
+    readonly expectedEpisodeRevision: number;
+    readonly latestCommittedPolicyRevision: number;
+    readonly workspaceRevision: number;
+    readonly resourceBoundaryRevision: number;
+    readonly authorityBundleRevision: number;
+    readonly authorityBundleDigest: string;
+    readonly operatorConfigRevision: number;
+    readonly operatorConfigDigest: string;
+  };
+  readonly candidates: ReadonlyArray<{
+    readonly kind: string;
+    readonly candidateId: string;
+    readonly sandboxHandleBindingDigest: string;
+  }>;
+}
+
+interface WorkspaceDetailForP11 {
+  readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateRead;
+  readonly sandboxPolicy?: {
+    readonly kind?: string;
+    readonly profile?: string;
+    readonly status?: string;
+  };
+}
+
+const insertProductionPrimaryWorktree = async (input: {
+  readonly databaseFile: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly path: string;
+}) => {
+  const infra = Layer.mergeAll(
+    sqliteLayer({ filename: input.databaseFile }),
+    ClockLive,
+  );
+  const app = Layer.mergeAll(
+    infra,
+    Layer.provide(TransactionPortLive, infra),
+    Layer.provide(WorktreeStoreLive, infra),
+    Layer.provide(WorkspaceRepositoryLive, infra),
+  );
+  await Effect.runPromise(
+    Effect.provide(
+      Effect.gen(function* () {
+        const tx = yield* TransactionPort;
+        const workspaces = yield* WorkspaceRepository;
+        const worktrees = yield* WorktreeStore;
+        const workspace = yield* tx.transact(
+          workspaces.findById(input.workspaceId as never),
+        );
+        if (workspace._tag === "None")
+          throw new Error("AH7 P11 fixture Workspace is absent");
+        const current = workspace.value;
+        const nextWorkspaceRevision = current.revision + 1;
+        const nextBoundaryRevision = current.resourceBoundaryRevision + 1;
+        yield* tx.transact(
+          Effect.gen(function* () {
+            yield* workspaces.updateResourceBoundaryIfRevision(
+              input.workspaceId as never,
+              current.revision,
+              {
+                basisResponsibilityRevision: current.responsibilityRevision,
+                addresses: [{ _tag: "GitWorktree" as const, path: input.path }],
+              },
+              nextBoundaryRevision as never,
+              nextWorkspaceRevision as never,
+            );
+            yield* worktrees.insert({
+              worktreeId: functionalId("wt") as never,
+              projectId: input.projectId as never,
+              workspaceId: input.workspaceId as never,
+              address: { _tag: "GitWorktree", path: input.path },
+              state: "Active",
+              createdAt: new Date().toISOString(),
+            });
+          }),
+        );
+      }),
+      app,
+    ),
+  );
+};
+
+const operatorCommand = async (
+  baseUrl: string,
+  projectId: string,
+  commandType: string,
+  payload: unknown,
+) => {
+  const response = await fetch(`${baseUrl}/commands`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: "Bearer operator",
+    },
+    body: JSON.stringify({
+      commandType,
+      commandId: functionalId("cmd"),
+      projectId,
+      actor: "user:operator",
+      issuedAt: new Date().toISOString(),
+      payload,
+    }),
+  });
+  const body = (await response.json()) as Record<string, unknown>;
+  if (!response.ok)
+    throw new Error(
+      `${commandType} operator command failed: ${JSON.stringify(body)}`,
+    );
+  return body;
+};
+
+const trustedLocalSandboxPolicyPayload = (input: {
+  readonly read: SandboxPolicyCandidateRead;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly executionId: string;
+  readonly expiresAt: string;
+}) => {
+  const trustedLocal = input.read.candidates.find(
+    (candidate) => candidate.kind === "TrustedLocalUnconfinedV1",
+  );
+  if (trustedLocal === undefined)
+    throw new Error("AH7 P11 candidate read lacks TrustedLocal FullAccess");
+  return {
+    projectId: input.projectId,
+    workspaceId: input.workspaceId,
+    executionId: input.executionId,
+    episodeBinding: input.read.commonPreconditions.episodeBinding,
+    expectedEpisodeRevision:
+      input.read.commonPreconditions.expectedEpisodeRevision,
+    expectedPolicyRevision:
+      input.read.commonPreconditions.latestCommittedPolicyRevision,
+    expectedWorkspaceRevision: input.read.commonPreconditions.workspaceRevision,
+    expectedResourceBoundaryRevision:
+      input.read.commonPreconditions.resourceBoundaryRevision,
+    expectedSandboxHandleBindingDigest: trustedLocal.sandboxHandleBindingDigest,
+    expectedAuthorityBundleRevision:
+      input.read.commonPreconditions.authorityBundleRevision,
+    expectedAuthorityBundleDigest:
+      input.read.commonPreconditions.authorityBundleDigest,
+    expectedOperatorConfigRevision:
+      input.read.commonPreconditions.operatorConfigRevision,
+    expectedOperatorConfigDigest:
+      input.read.commonPreconditions.operatorConfigDigest,
+    profile: "FullAccess",
+    providerId: "TrustedLocal",
+    networkPolicy: { kind: "TrustedLocalUnconfinedV1", version: 1 },
+    decisionExpiresAt: input.expiresAt,
+  };
+};
+
+const readCommittedSandboxPolicySnapshot = (
+  databaseFile: string,
+  executionId: string,
+): Record<string, unknown> | undefined => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const row = db
+      .prepare(
+        `SELECT c.result_json FROM sandbox_policy_decisions d
+           JOIN commands c ON c.command_id = d.decision_command_id
+          WHERE d.execution_id = ? ORDER BY d.policy_revision DESC LIMIT 1`,
+      )
+      .get(executionId) as { readonly result_json?: string | null } | undefined;
+    if (row?.result_json === undefined || row.result_json === null)
+      return undefined;
+    const result = JSON.parse(row.result_json) as {
+      readonly effectivePolicySnapshot?: unknown;
+    };
+    if (
+      typeof result.effectivePolicySnapshot !== "object" ||
+      result.effectivePolicySnapshot === null ||
+      Array.isArray(result.effectivePolicySnapshot)
+    ) {
+      return undefined;
+    }
+    return result.effectivePolicySnapshot as Record<string, unknown>;
+  } finally {
+    db.close();
+  }
+};
 const readExecutionProviderTurns = (
   databaseFile: string,
   executionId: string,
@@ -638,6 +842,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
     const noEffectRetryDenied =
       reconciliationMode === "NotOccurred" &&
       (resourceChangeDuringReconcile || reconciliationDrift !== undefined);
+    const resumesUnadmittedIntent = boundary === "AH7AfterToolIntentCommit";
     it(testName, async () => {
       const marker = `AH7-SHELL-${crypto.randomUUID().slice(0, 8)}`;
       const steerMarker = `AH7-SHELL-STEER-${crypto.randomUUID().slice(0, 8)}`;
@@ -658,7 +863,28 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       let probeArmed = false;
       let latestToolResult = "<none>";
       const startupStdout: string[] = [];
+      let releaseSteeredShellResponse!: () => void;
+      let observeSteeredShellRequest!: () => void;
+      let steeredShellResponseGated = false;
+      let sandboxPolicyGrantExpiresAt = "";
+      const steeredShellResponseGate = new Promise<void>((resolveGate) => {
+        releaseSteeredShellResponse = resolveGate;
+      });
+      const steeredShellRequestObserved = new Promise<void>(
+        (resolveObserved) => {
+          observeSteeredShellRequest = resolveObserved;
+        },
+      );
       let fixture: ProductionFixture;
+      let sandboxAuthoritySourceFile: string | undefined;
+      const daemonEnvironment: Record<string, string> = {
+        ARBOR_AUTH_TOKENS: "local=user:local,operator=user:operator",
+        ARBOR_AH_BOUNDARY:
+          reconciliationMode === undefined ? boundary : "disabled",
+        ...(semantics === "NonIdempotent"
+          ? { ARBOR_AH_NON_IDEMPOTENT: "1" }
+          : {}),
+      };
       try {
         fixture = await startProductionFixture({
           admitWorkspaceDirectory: true,
@@ -769,12 +995,23 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             return { _tag: "Text", text: `Waiting ${marker}` };
           },
           firstDaemonEntry: crashChild,
-          daemonEnvironment: {
-            ARBOR_AH_BOUNDARY:
-              reconciliationMode === undefined ? boundary : "disabled",
-            ...(semantics === "NonIdempotent"
-              ? { ARBOR_AH_NON_IDEMPOTENT: "1" }
-              : {}),
+          daemonEnvironment,
+          setupProbe: async (event) => {
+            if (event.stage !== "after-clone") return;
+            const sourceDirectory = resolve(
+              event.directory,
+              "sandbox-policy-v2-source",
+            );
+            const sourcePair = sandboxPolicyV2TestPair({
+              bundleRevision: 1,
+              registryRevision: 1,
+            });
+            sandboxAuthoritySourceFile = writeSandboxPolicyV2TestPair(
+              sourceDirectory,
+              sourcePair,
+            );
+            daemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE =
+              sandboxAuthoritySourceFile;
           },
           onDaemonStdout: (line) => {
             startupStdout.push(line);
@@ -787,6 +1024,21 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
               // Ignore non-JSON daemon output in this test-only trace.
             }
           },
+          beforeResponse: async (call) => {
+            const hasShell = call.tools.some(
+              (tool) => tool.function?.name === "shell",
+            );
+            if (
+              !steeredShellResponseGated &&
+              hasShell &&
+              JSON.stringify(call.messages).includes(steerMarker)
+            ) {
+              steeredShellResponseGated = true;
+              observeSteeredShellRequest();
+              await steeredShellResponseGate;
+            }
+            return "respond";
+          },
         });
       } catch (error) {
         throw new Error(
@@ -794,6 +1046,10 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           { cause: error },
         );
       }
+      if (sandboxAuthoritySourceFile === undefined)
+        throw new Error(
+          "AH7 P11 sandbox authority fixture was not initialized",
+        );
       fixtures.push(fixture);
       const client = makePublicClient(fixture.baseUrl);
       const project = await createFunctionalProject(
@@ -802,6 +1058,36 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         "AH7 shell intent ambiguity",
         { resourceSelection: "Profile" },
       );
+      execFileSync("git", ["init", "--quiet"], {
+        cwd: fixture.workspaceDirectory,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["config", "user.name", "Arbor Test"], {
+        cwd: fixture.workspaceDirectory,
+        stdio: "ignore",
+      });
+      execFileSync(
+        "git",
+        ["config", "user.email", "arbor-test@example.invalid"],
+        {
+          cwd: fixture.workspaceDirectory,
+          stdio: "ignore",
+        },
+      );
+      execFileSync("git", ["add", "proof.txt"], {
+        cwd: fixture.workspaceDirectory,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["commit", "--quiet", "-m", "AH7 P11 fixture"], {
+        cwd: fixture.workspaceDirectory,
+        stdio: "ignore",
+      });
+      await insertProductionPrimaryWorktree({
+        databaseFile: fixture.databaseFile,
+        projectId: project.projectId,
+        workspaceId: project.rootWorkspaceId,
+        path: fixture.workspaceDirectory,
+      });
       if (reconciliationMode !== undefined) {
         writeFileSync(
           join(fixture.workspaceDirectory, evidenceFile),
@@ -923,6 +1209,98 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       );
       expect(steeredWork?.status).toBe("Open");
 
+      await steeredShellRequestObserved;
+      const activeWorkForPolicy = await waitForPublic(
+        () =>
+          client.view<{
+            readonly workId?: string;
+            readonly revision: number;
+            readonly activeExecution?: { readonly executionId: string };
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (value) =>
+          value?.workId === workId &&
+          value.revision === 1 &&
+          value.activeExecution?.executionId !== undefined,
+      );
+      const pregrantedExecutionId =
+        activeWorkForPolicy?.activeExecution?.executionId;
+      if (pregrantedExecutionId === undefined)
+        throw new Error("AH7 current Work omitted the exact active Execution");
+      sandboxPolicyGrantExpiresAt = new Date(
+        Date.now() + 60 * 60_000,
+      ).toISOString();
+      await client.command(project.projectId, "GrantPermission", {
+        permissionGrantId: functionalId("pgr"),
+        issuer: "user:local",
+        subject: { _tag: "HumanPrincipal", principal: "user:operator" },
+        capability: "DecideSandboxPolicy",
+        target: pregrantedExecutionId,
+        expiresAt: sandboxPolicyGrantExpiresAt,
+      });
+      releaseSteeredShellResponse();
+
+      const commitCurrentP11Policy = async (executionId: string) => {
+        const detail = await waitForPublic(
+          () =>
+            client.view<WorkspaceDetailForP11>("workspace-detail", {
+              workspaceId: project.rootWorkspaceId,
+            }),
+          (value) => value.sandboxPolicyCandidateRead !== undefined,
+          45_000,
+        ).catch((error: unknown) => {
+          throw new Error(
+            `AH7 P11 candidate read absent for exact Execution ${executionId}: ${error instanceof Error ? error.message : String(error)}; stdout=${startupStdout.slice(-20).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
+            { cause: error },
+          );
+        });
+        const read = detail.sandboxPolicyCandidateRead;
+        if (read === undefined)
+          throw new Error("AH7 P11 candidate read disappeared after wait");
+        const commandResult = await operatorCommand(
+          fixture.baseUrl,
+          project.projectId,
+          "DecideSandboxPolicy",
+          trustedLocalSandboxPolicyPayload({
+            read,
+            projectId: project.projectId,
+            workspaceId: project.rootWorkspaceId,
+            executionId,
+            expiresAt: sandboxPolicyGrantExpiresAt,
+          }),
+        );
+        expect(commandResult).toMatchObject({
+          body: { resolution: "Committed" },
+        });
+        const snapshot = readCommittedSandboxPolicySnapshot(
+          fixture.databaseFile,
+          executionId,
+        );
+        expect(snapshot).toMatchObject({
+          kind: "TrustedLocalUnconfinedV1",
+          projectId: project.projectId,
+          workspaceId: project.rootWorkspaceId,
+          executionId,
+          episodeBinding: read.commonPreconditions.episodeBinding,
+          profile: "FullAccess",
+        });
+        const mounts = Array.isArray(snapshot?.mounts)
+          ? (snapshot.mounts as Array<Record<string, unknown>>)
+          : [];
+        expect(mounts.length).toBeGreaterThan(0);
+        expect(
+          mounts.some(
+            (mount) =>
+              mount.mountId === "workspace" &&
+              typeof mount.targetRef === "object" &&
+              mount.targetRef !== null &&
+              "resourceSpace" in mount.targetRef &&
+              mount.targetRef.resourceSpace === "filesystem",
+          ),
+        ).toBe(true);
+      };
+
       const executableApproval = await waitForExactShellApproval({
         client,
         databaseFile: fixture.databaseFile,
@@ -935,6 +1313,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         sideEffectSemantics: semantics,
         ...(reconciliationMode === undefined ? {} : { timeoutMs: 12_000 }),
       });
+      expect(executableApproval.row.execution_id).toBe(pregrantedExecutionId);
       expect(
         await client.command(project.projectId, "ResolveExecutableApproval", {
           approvalId: executableApproval.approvalId,
@@ -945,28 +1324,119 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       ).toMatchObject({ body: { resolution: "Committed" } });
 
       let hit: AhProbeHit | undefined;
-      try {
-        const observed = await waitForPublic(
-          async () => ({ hits, targetProviderCalls }),
-          (value) =>
-            value.hits.some((candidate) => candidate.boundary === boundary) ||
-            value.targetProviderCalls >= 5,
+      let policyCommandDaemonStopped = false;
+      if (resumesUnadmittedIntent) {
+        hit = await waitForPublic(
+          async () =>
+            hits.find(
+              (candidate) =>
+                candidate.boundary === "AH7AfterToolIntentCommit" &&
+                candidate.callRef === executableApproval.row.call_ref,
+            ),
+          (candidate) => candidate !== undefined,
           15_000,
-        );
-        hit = observed.hits.find(
-          (candidate) => candidate.boundary === boundary,
-        );
-        if (hit === undefined) {
+        ).catch((error: unknown) => {
           throw new Error(
-            "provider-call cap reached before shell intent probe",
+            `AH7 exact NotAdmitted P4 boundary absent: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; daemon=${fixture.daemonErrors.join(" | ")}`,
+            { cause: error },
+          );
+        });
+        if (hit?.executionId === undefined || hit.invocationId === undefined) {
+          throw new Error("AH7 NotAdmitted boundary lacks exact invocation");
+        }
+        expect(hit.executionId).toBe(pregrantedExecutionId);
+        await fixture.crash();
+        expect(
+          readP4InvocationApprovalBinding(
+            fixture.databaseFile,
+            hit.executionId,
+            hit.invocationId,
+          ),
+        ).toMatchObject({
+          effect_admission_state: "NotAdmitted",
+          result_ref: null,
+          settlement_kind: null,
+        });
+
+        // Command serving is deliberately decoupled from execution dispatch:
+        // the startup tick parks the exact NotAdmitted intent on the missing
+        // P11 policy, then the long interval prevents admission until the
+        // public decision has committed.
+        await fixture.restart({
+          entry: crashChild,
+          daemonEnvironment: {
+            ARBOR_AH_BOUNDARY: "disabled",
+            ARBOR_TICK_INTERVAL_MS: "3600000",
+          },
+        });
+        await commitCurrentP11Policy(hit.executionId);
+        const parked = durableSnapshot(fixture.databaseFile);
+        expect(
+          readP4InvocationApprovalBinding(
+            fixture.databaseFile,
+            hit.executionId,
+            hit.invocationId,
+          ),
+        ).toMatchObject({
+          effect_admission_state: "NotAdmitted",
+          result_ref: null,
+          settlement_kind: null,
+        });
+        expect(
+          parked.actions.filter(
+            (action) =>
+              action.execution_id === hit?.executionId &&
+              action.call_ref === hit?.callRef,
+          ),
+        ).toEqual([
+          expect.objectContaining({
+            state: "Pending",
+          }),
+        ]);
+        expect(
+          parked.steps.filter(
+            (step) =>
+              step.execution_id === hit?.executionId &&
+              step.logical_step_no === 0,
+          ),
+        ).toEqual([
+          expect.objectContaining({
+            state: "ActionsInProgress",
+            next_action_index: 0,
+          }),
+        ]);
+        expect(
+          parked.toolResults.filter((row) =>
+            isToolResultFor(row, hit?.invocationId ?? "", hit?.callRef ?? ""),
+          ),
+        ).toEqual([]);
+        await fixture.crash();
+        policyCommandDaemonStopped = true;
+      } else {
+        await commitCurrentP11Policy(pregrantedExecutionId);
+        try {
+          const observed = await waitForPublic(
+            async () => ({ hits, targetProviderCalls }),
+            (value) =>
+              value.hits.some((candidate) => candidate.boundary === boundary) ||
+              value.targetProviderCalls >= 5,
+            30_000,
+          );
+          hit = observed.hits.find(
+            (candidate) => candidate.boundary === boundary,
+          );
+          if (hit === undefined) {
+            throw new Error(
+              "provider-call cap reached before shell intent probe",
+            );
+          }
+        } catch (error) {
+          throw new Error(
+            `AH7 shell intent probe absent: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; daemon=${fixture.daemonErrors.join(" | ")}`,
           );
         }
-      } catch (error) {
-        throw new Error(
-          `AH7 shell intent probe absent: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; daemon=${fixture.daemonErrors.join(" | ")}`,
-        );
       }
-      await fixture.crash();
+      if (!policyCommandDaemonStopped) await fixture.crash();
       const crashed = durableSnapshot(fixture.databaseFile);
       if (
         hit?.executionId === undefined ||
@@ -2369,7 +2839,6 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       } else {
         await fixture.restart();
       }
-      const resumesUnadmittedIntent = boundary === "AH7AfterToolIntentCommit";
       let recovered: ReturnType<typeof durableSnapshot>;
       try {
         if (noEffectRetryDenied) {

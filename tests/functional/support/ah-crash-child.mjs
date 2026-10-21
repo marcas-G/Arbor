@@ -1,3 +1,4 @@
+import { appendFileSync, readFileSync } from "node:fs";
 import { Effect } from "effect";
 import {
   main,
@@ -7,10 +8,51 @@ import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
+import { Principal, parse } from "../../../packages/domain/dist/index.js";
 import { SHELL_DEFINITION } from "../../../packages/tool-runtime/dist/catalog.js";
 import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
 
 const onWebTransportListening = createFunctionalDaemonListenReporter();
+const sandboxAuthoritySourceFile =
+  process.env.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE;
+const trustedHostConfigurationSource =
+  sandboxAuthoritySourceFile === undefined
+    ? undefined
+    : {
+        readVerifiedSandboxAuthorityBundle: () =>
+          Effect.sync(() => {
+            const pair = JSON.parse(
+              readFileSync(sandboxAuthoritySourceFile, "utf8"),
+            );
+            return {
+              sourceIdentity: pair.sourceIdentity,
+              canonicalJson: pair.bundleCanonicalJson,
+            };
+          }),
+        readSandboxAuthorityHighWater: () =>
+          Effect.sync(
+            () =>
+              JSON.parse(readFileSync(sandboxAuthoritySourceFile, "utf8"))
+                .highWaterCanonicalJson,
+          ),
+        commitSandboxAuthorityHighWater: () => Effect.succeed(false),
+        appendSandboxAuthorityAudit: (canonicalJson) =>
+          Effect.sync(() => {
+            appendFileSync(
+              `${sandboxAuthoritySourceFile}.audit`,
+              `${canonicalJson}\n`,
+              { encoding: "utf8", mode: 0o600 },
+            );
+            return true;
+          }),
+      };
+const governance = {
+  authenticatedHumans: [
+    parse(Principal)("user:local"),
+    parse(Principal)("user:operator"),
+  ],
+  directParentOf: [],
+};
 
 const targetBoundary = process.env.ARBOR_AH_BOUNDARY;
 if (
@@ -63,7 +105,7 @@ const pauseAtBoundary = async (event) => {
 };
 
 const config = {
-  tickIntervalMs: 25,
+  tickIntervalMs: Number(process.env.ARBOR_TICK_INTERVAL_MS ?? "25"),
   projectResourceProfiles: makeProjectResourceProfilePort(
     projectResourceProfilesFromEnvironment(),
   ),
@@ -73,6 +115,9 @@ const config = {
     host: "127.0.0.1",
   },
   onWebTransportListening,
+  ...(trustedHostConfigurationSource === undefined
+    ? {}
+    : { trustedHostConfigurationSource }),
   qualificationProbe: pauseAtBoundary,
   inputPromotionQualificationProbe: pauseAtBoundary,
   providerQualificationProbe: pauseAtBoundary,
@@ -88,5 +133,14 @@ if (process.env.ARBOR_AH_NON_IDEMPOTENT === "1") {
 }
 
 await Effect.runPromise(
-  Effect.provide(Effect.scoped(runDaemonForever(config)), main(config)),
+  Effect.provide(
+    Effect.scoped(runDaemonForever(config)),
+    main({
+      ...config,
+      ...(trustedHostConfigurationSource === undefined
+        ? {}
+        : { trustedHostConfigurationSource }),
+      ...(trustedHostConfigurationSource === undefined ? {} : { governance }),
+    }),
+  ),
 );
