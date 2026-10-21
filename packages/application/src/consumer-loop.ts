@@ -394,6 +394,7 @@ export const workflowSignalConsumerLoop =
       consumer.consume(
         events.map((event) => ({
           eventType: event.eventType,
+          eventVersion: event.eventVersion,
           payload: event.payload,
           eventId: String(event.eventId),
           occurredAt: event.occurredAt,

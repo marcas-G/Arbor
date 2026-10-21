@@ -10,6 +10,7 @@ import type {
   WorkRevision,
   WorkspaceId,
 } from "@arbor/domain";
+import { decodeSupportedEventPayload } from "@arbor/domain";
 import type {
   DependencyRepositoryError,
   DependencyRepositoryService,
@@ -59,6 +60,8 @@ import { deliverWakeSignal, type WakeSinkError } from "./wake-sink.js";
 export interface WorkflowSignalEvent {
   readonly eventId: string;
   readonly eventType: string;
+  /** Present on durable journal delivery; omitted only by legacy direct callers. */
+  readonly eventVersion?: number;
   readonly occurredAt: string;
   readonly payload: unknown;
 }
@@ -294,6 +297,21 @@ const deliverVerificationConcluded = (
   deps: WorkflowSignalConsumerDependencies,
 ): Effect.Effect<WorkflowSignalOutcome, WorkflowSignalConsumerError> =>
   Effect.gen(function* () {
+    if (event.eventVersion !== undefined) {
+      const decoded = decodeSupportedEventPayload(
+        event.eventType,
+        event.eventVersion,
+        event.payload,
+      );
+      if (decoded._tag !== "Decoded") {
+        return yield* Effect.fail(
+          invariant(
+            event,
+            "unsupported or malformed VerificationConcluded version/payload",
+          ),
+        );
+      }
+    }
     const payload = recordOf(event.payload);
     if (
       payload === null ||
