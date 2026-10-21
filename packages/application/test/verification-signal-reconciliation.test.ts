@@ -1,6 +1,7 @@
 import type { Verification } from "@arbor/domain";
 import { decodeSupportedEventPayload } from "@arbor/domain";
 import type { VerificationSignalReconciliationRow } from "@arbor/ports";
+import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { runVerificationSignalReconciliationSweep } from "../src/verification-signal-reconciliation.js";
@@ -138,6 +139,85 @@ describe("F18 historical Verification signal reconciliation", () => {
         sourceIdentity: `workflow-signals:${projectId}:17`,
       }),
     ]);
+  });
+
+  it("fails closed to StateCorruption when the legacy activation high-water fact is tampered", async () => {
+    const malformedAbsentReason = {
+      ...candidate,
+      deadLetterReason: "malformed event payload",
+      payloadJsonRaw: JSON.stringify({ ...payload, conclusionReason: "" }),
+    };
+    const validCapturedAt = "2026-10-21T00:00:00.000Z";
+    const validDigest = sha256Hex(
+      `f18-v2-activation-highwater-v1\0${projectId}\0${17}\0${validCapturedAt}`,
+    );
+    const invalidFacts = [
+      {
+        projectIdRaw: projectId,
+        maxEventSequenceRaw: 17,
+        capturedAtRaw: "2026-10-21T00:00:01.000Z",
+        factDigestRaw: validDigest,
+      },
+      {
+        projectIdRaw: projectId,
+        maxEventSequenceRaw: 17,
+        capturedAtRaw: validCapturedAt,
+        factDigestRaw: "f".repeat(64),
+      },
+    ];
+
+    for (const invalidFact of invalidFacts) {
+      const attentionWrites: Array<Record<string, unknown>> = [];
+      let pendingWrites = 0;
+      const deps = {
+        tx: {
+          transact: (effect: Effect.Effect<unknown, unknown, unknown>) =>
+            effect,
+        },
+        store: {
+          listDeadLetterCandidates: () =>
+            Effect.succeed([malformedAbsentReason]),
+          activationHighwater: () => Effect.succeed(invalidFact),
+          find: () => Effect.succeed(null),
+          insertPending: () =>
+            Effect.sync(() => {
+              pendingWrites += 1;
+              return null;
+            }),
+          recordAttention: (input: Record<string, unknown>) =>
+            Effect.sync(() => void attentionWrites.push(input)),
+        },
+        journal: {
+          decodeRaw: () =>
+            Effect.succeed({
+              _tag: "Poison",
+              reason: "MalformedPayload",
+            }),
+        },
+        projects: {
+          findById: () => Effect.succeed(Option.some({ rootWorkspaceId })),
+        },
+        workspaces: {
+          findById: () =>
+            Effect.succeed(Option.some({ projectId, parentWorkspaceId: null })),
+        },
+        clock: { now: () => Effect.succeed("2026-10-21T00:00:02.000Z") },
+      } as never;
+
+      const result = await Effect.runPromise(
+        runVerificationSignalReconciliationSweep(projectId, deps, {
+          leaseOwner: "f18-highwater-tamper-test",
+          leaseTtlMs: 30_000,
+          batchSize: 10,
+        }),
+      );
+
+      expect(result.attention).toBe(1);
+      expect(pendingWrites).toBe(0);
+      expect(attentionWrites).toEqual([
+        expect.objectContaining({ failureCode: "StateCorruption" }),
+      ]);
+    }
   });
 
   it("proves the v2 receipt and canonical row before idempotent child Inbox/wake convergence", async () => {
