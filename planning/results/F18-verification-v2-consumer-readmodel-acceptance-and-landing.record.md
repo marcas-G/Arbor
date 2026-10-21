@@ -1,6 +1,6 @@
 # F18 Verification v2 Consumer and Read-model Acceptance and Landing
 
-Date: 2026-10-21  
+Date: 2026-10-21
 Decision: **accepted; exact design landing recorded; independent post-landing review required**
 
 ## Decision
@@ -47,6 +47,20 @@ Parent Acceptance authority. Physical migration implementation details remain
 bound to the accepted plan and must satisfy the frozen identities/lifecycle.
 
 Implementation baseline: `fcc2e64287ef2be73301631e0d4322cd3c9e8c9b`.  
-Landing worktree: `C:\Users\ThinkPad\.codex\worktrees\f18-verification-unknown\Arbor`.  
-Post-landing review: pending; implementation remains gated until its independent
-record confirms B0/B1/B2 = 0/0/0.
+Landing worktree: `C:\Users\ThinkPad\.codex\worktrees\f18-verification-unknown\Arbor`.
+Post-landing review: passed at `11cd51104c7e8acaf454b3c7d554ca5c030673bd`;
+implementation gate is open.
+
+## Independent post-landing review
+
+Reviewed exact landing HEAD `11cd51104c7e8acaf454b3c7d554ca5c030673bd`.
+Independent reviewer result: **B0/B1/B2 = 0/0/0; implementation gate passes.**
+The review checked the proposal, RED evidence and implementation-plan hashes;
+the eight owner-document SHA-256 values in the manifest; exact P1 event pair
+coverage and poison semantics; P8 ordinary v2 and G5 outer v1 receipt rules;
+verdict/owner effects; P9 durable identity, lease/CAS, crash transitions and
+Attention mapping; P10 retained queue/rebuild; P13 four-state projection; and
+unchanged Acceptance authority. No semantic deviation or blocking issue was
+found. Review record was returned by the independent landing reviewer on
+2026-10-21. It noted trailing Markdown hard-break spaces in this record; those
+were removed in the subsequent formatting commit and `git diff --check` passes.
