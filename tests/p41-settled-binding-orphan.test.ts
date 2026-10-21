@@ -9,7 +9,7 @@ const base = () => {
   };
   const step = {
     identity,
-    providerTurnId: "ptn_legacy" as never,
+    providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
     manifestId: "manifest_step",
     state: "ActionsInProgress" as const,
     nextActionIndex: 0,

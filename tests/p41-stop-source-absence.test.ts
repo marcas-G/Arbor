@@ -55,7 +55,7 @@ const runStoppedRecovery = async (input: {
   };
   const step = {
     identity: stepIdentity,
-    providerTurnId: "ptn_p41_source_absent" as never,
+    providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a2" as never,
     manifestId: "manifest_step",
     state: "ActionsInProgress" as const,
     nextActionIndex: 0,

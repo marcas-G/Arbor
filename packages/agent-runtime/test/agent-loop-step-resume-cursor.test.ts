@@ -262,7 +262,7 @@ describe("P9 AgentLoopStep resume cursor", () => {
       isAgentLoopStepManifestBound(prepared, executionId, sessionId, manifest),
     ).toBe(true);
     for (const [field, value] of [
-      ["providerTurnId", "ptn_wrong"],
+      ["providerTurnId", "ptn_exe_00000000-0000-7000-8000-000000000009_0"],
       [
         "executionId",
         parse(ExecutionId)("exe_00000000-0000-7000-8000-000000000009"),
@@ -315,7 +315,7 @@ describe("P9 AgentLoopStep resume cursor", () => {
     const mismatchedManifest = {
       manifestId: "manifest-other",
       manifestJson: JSON.stringify({
-        providerTurnId: "ptn_wrong",
+        providerTurnId: "ptn_exe_00000000-0000-7000-8000-000000000009_0",
         executionId,
         sessionId: parse(SessionId)("ses_00000000-0000-7000-8000-000000000001"),
         logicalStepNo: 0,

@@ -44,6 +44,7 @@ const client = OpenAICompatibleFetchClient({
 });
 
 const RUNS = 3;
+let liveTurnSequence = 0;
 const context = (): ProviderExecutionContext => {
   if (API_KEY === undefined || API_KEY.length === 0) {
     throw new Error(
@@ -51,7 +52,8 @@ const context = (): ProviderExecutionContext => {
     );
   }
   return {
-    providerTurnId: `ptn_d1_${Date.now().toString(36)}` as never,
+    providerTurnId:
+      `ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a1_${liveTurnSequence++}` as never,
     attemptNo: 0,
     secretMaterial: SecretMaterial.of(API_KEY),
     cancellationSignal: new AbortController().signal,

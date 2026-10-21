@@ -91,7 +91,8 @@ describe("EA-DG-01 Executable approval issuance boundary", () => {
     const outcome = await Effect.runPromise(
       handler.handle({
         invocation: {
-          providerTurnId: "ptn_ea_test" as never,
+          providerTurnId:
+            "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a1_0" as never,
           outputPosition: 0,
           callRef: "provider-call-ea-test",
           toolName: "write_file",

@@ -11,9 +11,9 @@ import { recoverUnsettledProviderTurns } from "../src/provider-turn-recovery.js"
 
 const turn: UnsettledProviderTurn = {
   turn: {
-    providerTurnId: "ptn_deadline_invalid" as never,
-    executionId: "exe_deadline_invalid" as never,
-    sessionId: "ses_deadline_invalid" as never,
+    providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+    executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+    sessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
     contextEpoch: 0 as never,
     modelRef: "model-a",
     outputContractRef: "oc",
@@ -23,9 +23,9 @@ const turn: UnsettledProviderTurn = {
   },
   attempts: [],
   manifestJson: JSON.stringify({
-    providerTurnId: "ptn_deadline_invalid",
-    executionId: "exe_deadline_invalid",
-    sessionId: "ses_deadline_invalid",
+    providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+    executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+    sessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789a1",
     contextEpoch: 0,
     modelRef: "model-a",
     outputContractRef: "oc",
