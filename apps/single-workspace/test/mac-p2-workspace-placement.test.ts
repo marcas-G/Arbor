@@ -4,9 +4,9 @@ import {
   Principal,
   ProjectId,
   parse,
+  providerTurnInferenceId,
   SessionId,
   WorkspaceId,
-  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   Clock,
@@ -189,7 +189,9 @@ describe("MAC-P2 WorkspacePlacementContext", () => {
               },
               invocation: {
                 providerTurnId: providerTurnInferenceId(
-                  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+                  parse(ExecutionId)(
+                    "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+                  ),
                   0,
                 ),
                 outputPosition: 0,

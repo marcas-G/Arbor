@@ -11,10 +11,10 @@ import {
   Principal,
   ProjectId,
   parse,
+  providerTurnInferenceId,
   SessionId,
   WorkId,
   WorkspaceId,
-  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   type AdmitExecutionPayload,
@@ -764,7 +764,9 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
               },
               invocation: {
                 providerTurnId: providerTurnInferenceId(
-                  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a2"),
+                  parse(ExecutionId)(
+                    "exe_018f2b3c-4d5e-7abc-8def-0123456789a2",
+                  ),
                   0,
                 ),
                 outputPosition: 0,

@@ -25,6 +25,7 @@ import {
   Principal,
   ProjectId,
   parse,
+  providerTurnInferenceId,
   SessionId,
   startVerification,
   ToolInvocationId,
@@ -32,7 +33,6 @@ import {
   WorkId,
   WorkRevision,
   WorkspaceId,
-  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   AgentLoopStepStoreLive,

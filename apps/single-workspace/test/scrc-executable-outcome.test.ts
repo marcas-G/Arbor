@@ -1,10 +1,6 @@
+import { ExecutionId, parse, providerTurnInferenceId } from "@arbor/domain";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import {
-  ExecutionId,
-  parse,
-  providerTurnInferenceId,
-} from "@arbor/domain";
 import {
   makeExecutableToolHandler,
   toExecutableOutcome,
