@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
@@ -11,6 +16,7 @@ import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
+import { Principal, parse } from "../../../packages/domain/dist/index.js";
 import {
   BUILTIN_EXECUTORS,
   SHELL_DEFINITION,
@@ -25,6 +31,46 @@ const databaseFile = process.env.ARBOR_DB;
 if (databaseFile === undefined)
   throw new Error("AH10 test child needs ARBOR_DB");
 const onWebTransportListening = createFunctionalDaemonListenReporter();
+const sandboxAuthoritySourceFile =
+  process.env.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE;
+const trustedHostConfigurationSource =
+  sandboxAuthoritySourceFile === undefined
+    ? undefined
+    : {
+        readVerifiedSandboxAuthorityBundle: () =>
+          Effect.sync(() => {
+            const pair = JSON.parse(
+              readFileSync(sandboxAuthoritySourceFile, "utf8"),
+            );
+            return {
+              sourceIdentity: pair.sourceIdentity,
+              canonicalJson: pair.bundleCanonicalJson,
+            };
+          }),
+        readSandboxAuthorityHighWater: () =>
+          Effect.sync(
+            () =>
+              JSON.parse(readFileSync(sandboxAuthoritySourceFile, "utf8"))
+                .highWaterCanonicalJson,
+          ),
+        commitSandboxAuthorityHighWater: () => Effect.succeed(false),
+        appendSandboxAuthorityAudit: (canonicalJson) =>
+          Effect.sync(() => {
+            appendFileSync(
+              `${sandboxAuthoritySourceFile}.audit`,
+              `${canonicalJson}\n`,
+              { encoding: "utf8", mode: 0o600 },
+            );
+            return true;
+          }),
+      };
+const governance = {
+  authenticatedHumans: [
+    parse(Principal)("user:local"),
+    parse(Principal)("user:operator"),
+  ],
+  directParentOf: [],
+};
 const projectResourceProfiles = makeProjectResourceProfilePort(
   projectResourceProfilesFromEnvironment(),
 );
@@ -658,6 +704,9 @@ const port = Number(process.env.ARBOR_HTTP_PORT);
 const config = {
   tickIntervalMs: 25,
   onWebTransportListening,
+  ...(trustedHostConfigurationSource === undefined
+    ? {}
+    : { trustedHostConfigurationSource }),
   projectResourceProfiles,
   webTransport: {
     staticRoot: process.env.ARBOR_WEB_DIST,
@@ -679,5 +728,14 @@ const config = {
 };
 
 await Effect.runPromise(
-  Effect.provide(Effect.scoped(runDaemonForever(config)), main(config)),
+  Effect.provide(
+    Effect.scoped(runDaemonForever(config)),
+    main({
+      ...config,
+      ...(trustedHostConfigurationSource === undefined
+        ? {}
+        : { trustedHostConfigurationSource }),
+      ...(trustedHostConfigurationSource === undefined ? {} : { governance }),
+    }),
+  ),
 );
