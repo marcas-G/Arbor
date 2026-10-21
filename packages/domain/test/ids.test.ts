@@ -148,6 +148,12 @@ describe("ProviderTurnId V2 closed codec", () => {
     ).toEqual(PROVIDER_TURN_V2_FAMILIES);
     const historical = "ptn_018f2b3c-4d5e-7abc-8def-0123456789ab";
     expect(parse(ProviderTurnId)(historical)).toBe(historical);
+    expect(
+      parse(ProviderTurnId)("ptn_exe_018F2B3C-4D5E-7ABC-8DEF-0123456789AB_0"),
+    ).toBe("ptn_exe_018F2B3C-4D5E-7ABC-8DEF-0123456789AB_0");
+    expect(
+      parse(ProviderTurnId)("ptn_018F2B3C-4D5E-7ABC-8DEF-0123456789AB"),
+    ).toBe("ptn_018F2B3C-4D5E-7ABC-8DEF-0123456789AB");
   });
 
   it("constructs only the frozen V2 family strings", () => {
@@ -206,6 +212,10 @@ describe("ProviderTurnId V2 closed codec", () => {
       "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789ab_9007199254740992",
       "ptn_forged",
       "ptn_018f2b3c-4d5e-4abc-8def-0123456789ab",
+      `PTN_${EXECUTION_ID}_0`,
+      `ptn_EXE_${UUID_V7_SAMPLE}_0`,
+      `ptn_${EXECUTION_ID}_0_COMPACT_0`,
+      "PTN_018f2b3c-4d5e-7abc-8def-0123456789ab",
     ]) {
       expect(() => parse(ProviderTurnId)(value), value).toThrow();
     }

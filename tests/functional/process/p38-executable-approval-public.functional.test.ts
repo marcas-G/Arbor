@@ -391,16 +391,46 @@ const commitP1BeforeExecutableApproval = async (run: {
     throw new Error("P38 pre-intent policy qualification lacks an Execution");
   }
   const expiresAt = run.sandboxPolicyExpiresAt;
-  const beforeRead = run.snapshot();
-  expect(beforeRead.approval?.state).toBe("Pending");
-  expect(beforeRead.invocation).toBeUndefined();
-  expect(beforeRead.recoveryBinding).toBeUndefined();
-  expect(beforeRead.effectCount).toBe(0);
+  const readOracle = () => {
+    const db = new DatabaseSync(run.fixture.databaseFile, { readOnly: true });
+    try {
+      const count = (sql: string, ...parameters: ReadonlyArray<string>) =>
+        Number(
+          (db.prepare(sql).get(...parameters) as { readonly count: number })
+            .count,
+        );
+      return {
+        commands: count("SELECT COUNT(*) AS count FROM commands"),
+        events: count("SELECT COUNT(*) AS count FROM domain_events"),
+        policyDecisions: count(
+          "SELECT COUNT(*) AS count FROM sandbox_policy_decisions WHERE execution_id = ?",
+          executionId,
+        ),
+        invocations: count(
+          "SELECT COUNT(*) AS count FROM tool_invocations WHERE execution_id = ?",
+          executionId,
+        ),
+        recoveryBindings: count(
+          "SELECT COUNT(*) AS count FROM tool_invocation_recovery_bindings b JOIN tool_invocations i USING (invocation_id) WHERE i.execution_id = ?",
+          executionId,
+        ),
+        providerCalls: run.fixture.providerCalls.length,
+      };
+    } finally {
+      db.close();
+    }
+  };
+  const beforeRead = { state: run.snapshot(), writes: readOracle() };
+  expect(beforeRead.state.approval?.state).toBe("Pending");
+  expect(beforeRead.state.invocation).toBeUndefined();
+  expect(beforeRead.state.recoveryBinding).toBeUndefined();
+  expect(beforeRead.state.effectCount).toBe(0);
   const detail = await run.client.view<{
     readonly sandboxPolicyCandidateRead?: unknown;
   }>("workspace-detail", { workspaceId: run.project.rootWorkspaceId });
   expect(detail.sandboxPolicyCandidateRead).toBeDefined();
-  expect(run.snapshot()).toEqual(beforeRead);
+  expect(run.snapshot()).toEqual(beforeRead.state);
+  expect(readOracle()).toEqual(beforeRead.writes);
   await commitTrustedLocalP11Policy({
     client: run.client,
     baseUrl: run.fixture.baseUrl,
@@ -410,7 +440,7 @@ const commitP1BeforeExecutableApproval = async (run: {
     executionId,
     expiresAt,
   });
-  expect(run.snapshot()).toEqual(beforeRead);
+  expect(run.snapshot()).toEqual(beforeRead.state);
 };
 
 const readApprovalSnapshot = (

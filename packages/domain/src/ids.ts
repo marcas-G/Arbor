@@ -76,7 +76,7 @@ export const MemoryId = makeIdSchema(ID_PREFIXES.MemoryId, "MemoryId");
 export const CommandId = makeIdSchema(ID_PREFIXES.CommandId, "CommandId");
 export const EventId = makeIdSchema(ID_PREFIXES.EventId, "EventId");
 const PROVIDER_TURN_V2_RE =
-  /^ptn_(exe_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})_(0|[1-9][0-9]*)(?:_r([1-9][0-9]*)|_compact_(0|[1-9][0-9]*)|_native_compact_(0|[1-9][0-9]*)|_conversation_compact_(0|[1-9][0-9]*)|_conversation_native_compact_(0|[1-9][0-9]*)|_overflow_0)?$/iu;
+  /^ptn_(exe_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})_(0|[1-9][0-9]*)(?:_r([1-9][0-9]*)|_compact_(0|[1-9][0-9]*)|_native_compact_(0|[1-9][0-9]*)|_conversation_compact_(0|[1-9][0-9]*)|_conversation_native_compact_(0|[1-9][0-9]*)|_overflow_0)?$/u;
 
 const isCanonicalSafeDecimal = (value: string | undefined): boolean => {
   if (value === undefined) return true;
@@ -88,7 +88,7 @@ const isCanonicalSafeDecimal = (value: string | undefined): boolean => {
 
 const isProviderTurnId = (value: string): value is string => {
   if (
-    /^ptn_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+    /^ptn_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/u.test(
       value,
     )
   ) {
