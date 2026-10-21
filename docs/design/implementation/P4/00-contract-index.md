@@ -237,3 +237,10 @@ source after `ApprovalRequired`. It creates no ToolInvocation/RecoveryBinding
 or approval consumption; the existing post-intent NotAdmitted source and P4
 claim transaction are unchanged. P4/02/03/06 own this ordering. See the
 accepted bootstrap/stale-binding decision and landing manifest.
+
+The pre-intent requirement source is the closed in-memory
+`SandboxPolicyPreIntentRequirementV1` declared in P4/06. P1 compares it
+field-by-field; it has no source digest/KAT/serialization. P11 target
+resolution occurs outside the P1 transaction and reuses the existing
+Workspace/ResourceBoundary/profile-handle CAS; P4 does not define a new target
+digest.

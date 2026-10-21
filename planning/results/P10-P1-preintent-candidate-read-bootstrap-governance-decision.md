@@ -6,6 +6,7 @@ Acceptance tokens:
 
 - `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`
 - `ACCEPT_P10_P1_PREINTENT_STALE_RECEIPT_BINDING_OPTION_A`
+- `ACCEPT_P10_P1_PREINTENT_SOURCE_PROOF_CORRECTION_V1`
 
 Accepted fixed sources:
 
@@ -17,6 +18,10 @@ Accepted fixed sources:
    - Git commit: `66d3827dc10218c8b79f7c54398d6653b4b279dd`
    - Canonical LF UTF-8 SHA-256:
      `FDF4F4036385DC30722F0A21BFF8E20E1C6F1A136B2CF7DE32310FD1F141FEA4`
+3. `planning/proposals/P10-P1-preintent-source-proof-binding-closure-draft.md`
+   - Git commit: `94fceb721004d034ddf1d070644d47d747987694`
+   - Canonical LF UTF-8 SHA-256:
+     `525170A7F8B7FC01741497CA5619094E20805EDAA37142A7D441306190E20073`
 
 The selected owner semantics are the accepted Option A bootstrap plus the
 accepted two-field P1 stale receipt binding:
@@ -46,13 +51,27 @@ accepted two-field P1 stale receipt binding:
   not change. The result decoder/view accepts the two additive safe field
   literals. P13 uses the existing generic stale/refetch message; no new route,
   command, auto-submit or auto-selection is added.
+- The exact P4 `SandboxPolicyPreIntentRequirementV1` is a closed in-memory
+  source tuple including `version:1`, Project/Workspace/Execution/Episode/
+  episodeRevision, pinned ProviderTurn/Step/LogicalAction/actionIndex/callRef,
+  Action revision/inputHash/toolName/toolVersion and approvalId/Pending/
+  revision/consumedBy-null/expiresAt. P1 compares every typed field
+  structurally; the proof is not encoded, hashed, serialized, persisted,
+  public, caller-supplied or part of command identity. No KAT is required.
+- P1 resolves the exact pinned action through existing P11 rules outside the
+  write transaction and reuses only the already-frozen
+  WorkspaceRevision/ResourceBoundaryRevision/selected-profile
+  SandboxHandleBindingDigest and P5 authority/operator/registry CAS. TargetRefs
+  and access are not serialized into the source proof; no new target digest or
+  target-source CAS is introduced.
 - P4 consumes approval only in its existing atomic ToolInvocation intent
   claim. P9's terminal provider-unavailable Action/Step and no-later-action
   semantics are unchanged. The bootstrap does not claim to close the separate
   second-ProviderTurn/drift qualification.
 
-The exact owning document scope and canonical pre/post hashes are in the
-companion `planning/results/P10-P1-preintent-candidate-read-bootstrap-landing-manifest.md`.
+The exact owning document scope and canonical pre/post hashes, including the
+accepted source-proof correction, are in the companion
+`planning/results/P10-P1-preintent-candidate-read-bootstrap-landing-manifest.md`.
 No top-level frozen owner document is changed. No production implementation,
 database migration/upgrade, provider qualification, Supported-state change,
 deployment or release is authorized by these decisions. A SHA-pinned fixed

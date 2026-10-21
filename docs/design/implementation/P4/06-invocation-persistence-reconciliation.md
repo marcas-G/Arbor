@@ -1161,6 +1161,7 @@ read-only port also returns this closed proof variant:
 ```ts
 interface SandboxPolicyPreIntentRequirementV1 {
   readonly _tag: "SandboxPolicyPreIntentRequirementV1";
+  readonly version: 1;
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
   readonly executionId: ExecutionId;
@@ -1179,6 +1180,7 @@ interface SandboxPolicyPreIntentRequirementV1 {
   readonly approvalId: string;
   readonly approvalState: "Pending";
   readonly approvalRevision: number;
+  readonly approvalConsumedBy: null;
   readonly approvalExpiresAt: string;
 }
 ```
@@ -1205,8 +1207,9 @@ are read-only. The P10 candidate DTO remains unchanged and omits Action,
 approval, invocation, RecoveryBinding, tool arguments, target refs/paths and
 source digests. P1's read-only preparation resolves path-free TargetRefs/access
 from the exact pinned action through existing P11 rules outside its write
-transaction; P1's current-preconditions CAS re-reads the exact Action and
-approval source under the same final transaction. No requirement, marker,
+transaction; those targets are not fields of the requirement source tuple.
+P1's current-preconditions CAS re-reads the exact Action and approval source
+under the same final transaction. No requirement, marker,
 P3/P4 row, event, queue item, Attention or approval consumption is created by
 this port. P9's terminal unavailable contract is unchanged.
 

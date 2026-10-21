@@ -472,20 +472,42 @@ receipt, event, or transaction-order change is made beyond the handler schema
 ## Accepted pre-intent P3 Action/approval CAS (2026-10-21)
 
 For the accepted pre-intent CandidateRead source, the existing read-only P1
-preparation outside `BEGIN IMMEDIATE` carries an internal P4 requirement
-proof for the unique current Pending P3 Executable Action and its exact
-Pending/unconsumed P4 Executable approval. The proof binds the active
-Execution/Episode, pinned ProviderTurn/Step/LogicalAction/actionIndex/callRef,
-P3 Action revision/input hash/tool identity, approval identity/state/revision/
-immutable `expiresAt`, and P11-derived path-free resource source. These are
-server-derived facts, not command payload fields, fingerprint inputs, or
-public CandidateRead fields.
+preparation outside `BEGIN IMMEDIATE` carries the closed P4
+`SandboxPolicyPreIntentRequirementV1` for the unique current Pending P3
+Executable Action and its exact Pending/unconsumed P4 Executable approval.
+This in-memory source tuple consists exactly of the DTO's version,
+Project/Workspace/Execution/Episode/episode-revision, pinned ProviderTurn/Step/
+LogicalAction/actionIndex/callRef, Action revision/inputHash/toolName/
+toolVersion, and approvalId/Pending-state/revision/consumedBy-null/immutable
+expiresAt fields. Equality is structural and field-by-field across that exact
+typed tuple; it is not encoded, hashed, serialized, persisted, returned by
+P10/P13, accepted from the caller, or included in the P1 semantic request
+fingerprint. No source-codec version, digest, KAT or source digest field is
+introduced.
+
+P1's read-only preparation independently resolves the exact pinned action's
+arguments to path-free TargetRefs/access through the existing P11 resolver,
+complete current ResourceBoundary and current Workspace ownership, outside
+the write transaction. These TargetRefs/access are not serialized into the
+pre-intent source tuple. The P1 preparation and final CAS reuse only the
+existing `expectedWorkspaceRevision`, `expectedResourceBoundaryRevision`,
+selected-profile `expectedSandboxHandleBindingDigest`, and existing P5
+authority/operator/provider-registry revision/digest inputs. The P3
+inputHash/tool identity pins which request was resolved; the existing P11
+ResourceBoundary/handle CAS pins current target/access derivation. No new
+TargetRef/target-resource digest or target-source CAS is added. All are
+server-derived facts, not command payload fields or public CandidateRead
+fields.
 
 At the existing final receipt-first linearization point, P1 re-reads the exact
-Action and approval through transaction-scoped source ports; it does not open a
-nested transaction or perform filesystem/provider I/O. P1 requires the same
-Pending Action identity/revision/input/tool tuple and the same Pending,
-unconsumed approval identity/revision/expiry. It compares approval
+P3 Action/P4 approval rows through transaction-scoped source ports and
+structurally compares every field of the prepared
+`SandboxPolicyPreIntentRequirementV1`; it does not open a nested transaction
+or perform filesystem/P11 resolution or provider I/O in that transaction.
+After the exact P3/P4 source matches, the existing P1 current-preconditions
+CAS compares WorkspaceRevision, ResourceBoundaryRevision,
+SandboxHandleBindingDigestV1 and P5 authority/operator/provider-registry refs.
+P1 compares approval
 `expiresAt` with the one trusted GatewayNow for that final transaction, so
 time-only expiry is stale even if the persisted approval row has not yet been
 advanced by its expiry worker. When both are stale, Action is checked and
