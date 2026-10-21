@@ -16,6 +16,9 @@ current producer families and legacy evidence. Arbitrary strings must remain
 invalid. This draft does not authorize changing `docs/design/**`, runtime code,
 SQL, migrations, receipts, provider support, or deployment.
 
+Recommended Option A acceptance token:
+`ACCEPT_P10_P1_PROVIDER_TURN_ID_CODEC_V1`.
+
 ## Observable failure evidence
 
 The production-process reproduction is recorded in
@@ -66,6 +69,13 @@ Execution/turn/repair/compaction/checkpoint identity rules. Every producer,
 manifest codec, Action/RecoveryBinding source, P20 link, and replay path uses
 the same codec or a typed constructor. Unknown suffixes, malformed Execution
 IDs, invalid ordinals/epochs, and arbitrary strings fail closed.
+
+For this option's new-write/legacy split, accepted deterministic composite
+V2 forms are the only forms written by new runtime work; UUIDv7 ProviderTurn
+IDs remain read/replay-only compatibility values. Existing rows, manifests,
+receipts and source refs are retained byte-for-byte and are never normalized
+or backfilled. The owner landing must enumerate the exact composite grammar
+before it authorizes this split.
 
 The owner landing must inventory and either accept or retire every observed
 producer shape before it publishes the grammar. The current source scan
@@ -150,7 +160,10 @@ than Option A.
 
 ## Requested disposition
 
-Choose a closed ProviderTurnId codec and compatibility contract, then identify
-the owning P3/P2/P9 contracts and versioned landing package. Until acceptance,
-the P4 pre-intent reader's strict ProviderTurnId branch remains blocked; do not
-claim the public pre-intent CandidateRead → P1 → approval qualification.
+Accept Option A with token
+`ACCEPT_P10_P1_PROVIDER_TURN_ID_CODEC_V1`, choose Option B, or request a
+bounded alternative. The resulting owner landing must specify the complete
+grammar and identify the owning P3/P2/P9 contracts and versioned package.
+Until acceptance, the P4 pre-intent reader's strict ProviderTurnId branch
+remains blocked; do not claim the public pre-intent CandidateRead → P1 →
+approval qualification.

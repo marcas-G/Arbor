@@ -8,7 +8,7 @@ Reviewed artifacts:
 Proposal canonical LF SHA-256 independently recomputed:
 
 ```text
-21BCCF8B7618CA77352B9B6F9A717584AD999C14C0B7B9E6EB21CD7E944A379E
+5794DD19BA3BF1BDF58C0878863F1F51EA154CBF541E893CFA1CC63758108D2E
 ```
 
 Review disposition: **NO BLOCKING FINDINGS — suitable for manual governance
@@ -23,6 +23,13 @@ external action-reference decoders; and public ConversationStreamEvent
 ProviderTurnId fields. The evidence supports the Option A recommendation that
 the current deterministic identities be formalized by a closed versioned
 codec while preserving recognized legacy representations.
+
+The exact recommended acceptance token is
+`ACCEPT_P10_P1_PROVIDER_TURN_ID_CODEC_V1`. Option A's reviewed split is:
+recognized deterministic composite V2 forms are the only new-write forms;
+UUIDv7 IDs remain read/replay-only; existing rows and references remain
+byte-identical with no normalization/backfill; and unknown encodings fail
+closed. The exact composite grammar remains an owner-landing obligation.
 
 The review initially found and the draft corrected two citation issues: the
 overflow contract is DID v1.23 OVS-1…OVS-7 / §9.11A and migration 0020, not
