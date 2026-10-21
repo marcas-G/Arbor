@@ -3,7 +3,11 @@ import type {
   Execution,
   ExecutionSettlement,
 } from "@arbor/domain";
-import { conversationResponseEpisode, executionEpisode } from "@arbor/domain";
+import {
+  conversationResponseEpisode,
+  executionEpisode,
+  providerTurnInferenceId,
+} from "@arbor/domain";
 import type { ModelOutput } from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
@@ -240,8 +244,10 @@ export const completeAgentLoopStep = (
         logicalStepNo: turn + 1,
         repairAttempt: 0,
       } as const;
-      const successorProviderTurnId =
-        `ptn_${input.execution.executionId}_${turn + 1}` as never;
+      const successorProviderTurnId = providerTurnInferenceId(
+        input.execution.executionId,
+        turn + 1,
+      );
       yield* tx
         .transact(
           Effect.gen(function* () {

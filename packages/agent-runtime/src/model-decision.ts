@@ -9,6 +9,11 @@ import {
   ContextEpochNumber,
   conversationResponseEpisode,
   executionEpisode,
+  providerTurnInferenceId,
+  providerTurnNativeCompactionId,
+  providerTurnOverflowReplacementId as makeOverflowReplacementProviderTurnId,
+  providerTurnRepairInferenceId,
+  providerTurnSummaryCompactionId,
   ProviderTurnId,
   parse,
   workEpisode,
@@ -312,14 +317,26 @@ export const isValidOverflowCompactionLinkPair = (
   );
 };
 
-const nativeCompactionProviderTurnId = (
-  value: string,
-): ProviderTurnId | null =>
-  /^ptn_exe_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}_[0-9]+_native_compact_[0-9]+$/iu.test(
-    value,
-  )
-    ? (value as ProviderTurnId)
-    : null;
+const nativeCompactionProviderTurnId = (value: string): ProviderTurnId | null =>
+  (() => {
+    try {
+      const decoded = parse(ProviderTurnId)(value);
+      return /_native_compact_(?:0|[1-9][0-9]*)$/u.test(decoded)
+        ? decoded
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+
+const decodedProviderTurnId = (value: unknown): ProviderTurnId | null => {
+  if (typeof value !== "string") return null;
+  try {
+    return parse(ProviderTurnId)(value);
+  } catch {
+    return null;
+  }
+};
 
 interface NativePortableFrontier {
   readonly manifest: Record<string, unknown>;
@@ -462,7 +479,16 @@ const belongsToConversationExecution = (
     (source.kind === "ProviderTurn" ||
       source.kind === "ProviderTurnCall" ||
       source.kind === "CompactionTurn") &&
-    source.ref.startsWith(providerTurnPrefix)
+    (() => {
+      try {
+        return (
+          parse(ProviderTurnId)(source.ref) === source.ref &&
+          source.ref.startsWith(providerTurnPrefix)
+        );
+      } catch {
+        return false;
+      }
+    })()
   ) {
     return true;
   }
@@ -1308,9 +1334,13 @@ export const runModelDecision = (
       const controlBasis = yield* currentControlBasis();
       const providerTurnId =
         overflowReplacementProviderTurnId ??
-        ((repairAttempt === 0
-          ? `ptn_${input.execution.executionId}_${turn}`
-          : `ptn_${input.execution.executionId}_${turn}_r${repairAttempt}`) as never);
+        (repairAttempt === 0
+          ? providerTurnInferenceId(input.execution.executionId, turn)
+          : providerTurnRepairInferenceId(
+              input.execution.executionId,
+              turn,
+              repairAttempt,
+            ));
       const loopStepIdentity = {
         executionId: input.execution.executionId,
         logicalStepNo: turn,
@@ -1444,15 +1474,24 @@ export const runModelDecision = (
                 capability.portableRequestCompatibility?.operationKinds.includes(
                   "CompactionNative",
                 ) === true;
-              let linkedCompactionProviderTurnId: string;
+              let linkedCompactionProviderTurnId: ProviderTurnId;
               if (providerTurnLinks.length === 0) {
                 if (ownerEpoch !== Number(inference.contextEpoch)) {
                   return yield* Effect.fail(
                     failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
                   );
                 }
-                const compactionProviderTurnId =
-                  `ptn_${input.execution.executionId}_${turn}_${nativeSupported ? "native_" : ""}compact_${inference.contextEpoch}` as never;
+                const compactionProviderTurnId = nativeSupported
+                  ? providerTurnNativeCompactionId(
+                      input.execution.executionId,
+                      turn,
+                      inference.contextEpoch,
+                    )
+                  : providerTurnSummaryCompactionId(
+                      input.execution.executionId,
+                      turn,
+                      inference.contextEpoch,
+                    );
                 const [compactionReceipt, replacementReceipt] =
                   yield* Effect.all(
                     [
@@ -1463,7 +1502,10 @@ export const runModelDecision = (
                       ),
                       tx.transact(
                         providerTurns.findSettledResult(
-                          `ptn_${input.execution.executionId}_${turn}_overflow_0` as never,
+                          makeOverflowReplacementProviderTurnId(
+                            input.execution.executionId,
+                            turn,
+                          ),
                         ),
                       ),
                     ],
@@ -1526,8 +1568,16 @@ export const runModelDecision = (
                     providerTurnLinks,
                     loopStep.providerTurnId,
                     [
-                      `ptn_${input.execution.executionId}_${turn}_compact_${inference.contextEpoch}`,
-                      `ptn_${input.execution.executionId}_${turn}_native_compact_${inference.contextEpoch}`,
+                      providerTurnSummaryCompactionId(
+                        input.execution.executionId,
+                        turn,
+                        inference.contextEpoch,
+                      ),
+                      providerTurnNativeCompactionId(
+                        input.execution.executionId,
+                        turn,
+                        inference.contextEpoch,
+                      ),
                     ],
                   ) ||
                   Number(compactionLink.contextEpoch) !==
@@ -1550,7 +1600,10 @@ export const runModelDecision = (
                   );
                 }
                 const replacementProviderTurnId =
-                  `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+                  makeOverflowReplacementProviderTurnId(
+                    input.execution.executionId,
+                    turn,
+                  );
                 const existingReplacement = replacementLinks[0];
                 if (
                   existingReplacement !== undefined &&
@@ -1573,7 +1626,7 @@ export const runModelDecision = (
                         role: "OverflowReplacement",
                         providerTurnId: replacementProviderTurnId,
                         predecessorProviderTurnId:
-                          linkedCompactionProviderTurnId as never,
+                          linkedCompactionProviderTurnId,
                         contextEpoch: owner.contextEpoch,
                         state: "Prepared",
                         createdAt: yield* now(),
@@ -1599,14 +1652,14 @@ export const runModelDecision = (
               const compactionManifest = yield* tx
                 .transact(
                   providerTurns.findManifestByTurn(
-                    linkedCompactionProviderTurnId as never,
+                    linkedCompactionProviderTurnId,
                   ),
                 )
                 .pipe(Effect.mapError(failure));
               const compactionReceipt = yield* tx
                 .transact(
                   providerTurns.findSettledResult(
-                    linkedCompactionProviderTurnId as never,
+                    linkedCompactionProviderTurnId,
                   ),
                 )
                 .pipe(Effect.mapError(failure));
@@ -1628,7 +1681,7 @@ export const runModelDecision = (
                 existingContract === "provider-native-compaction-v1" ||
                 (existingContract === undefined && nativeSupported);
               resumeOverflowCompactionProviderTurnId =
-                linkedCompactionProviderTurnId as never;
+                linkedCompactionProviderTurnId;
               replayPersistedContextLimit = true;
               continue;
             }
@@ -1638,10 +1691,22 @@ export const runModelDecision = (
                 capability.portableRequestCompatibility?.operationKinds.includes(
                   "CompactionNative",
                 ) === true;
-              const compactionProviderTurnId =
-                `ptn_${input.execution.executionId}_${turn}_${nativeSupported ? "native_" : ""}compact_${inference.contextEpoch}` as never;
+              const compactionProviderTurnId = nativeSupported
+                ? providerTurnNativeCompactionId(
+                    input.execution.executionId,
+                    turn,
+                    inference.contextEpoch,
+                  )
+                : providerTurnSummaryCompactionId(
+                    input.execution.executionId,
+                    turn,
+                    inference.contextEpoch,
+                  );
               const replacementProviderTurnId =
-                `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+                makeOverflowReplacementProviderTurnId(
+                  input.execution.executionId,
+                  turn,
+                );
               const currentSession = yield* tx
                 .transact(sessions.findById(input.execution.sessionId))
                 .pipe(Effect.mapError(failure));
@@ -1721,8 +1786,16 @@ export const runModelDecision = (
                     providerTurnLinks,
                     loopStep.providerTurnId,
                     [
-                      `ptn_${input.execution.executionId}_${turn}_compact_${compactionLink.contextEpoch}`,
-                      `ptn_${input.execution.executionId}_${turn}_native_compact_${compactionLink.contextEpoch}`,
+                      providerTurnSummaryCompactionId(
+                        input.execution.executionId,
+                        turn,
+                        compactionLink.contextEpoch,
+                      ),
+                      providerTurnNativeCompactionId(
+                        input.execution.executionId,
+                        turn,
+                        compactionLink.contextEpoch,
+                      ),
                     ],
                   )
                 ) {
@@ -2027,7 +2100,10 @@ export const runModelDecision = (
                     );
                   }
                   const replacementProviderTurnId =
-                    `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+                    makeOverflowReplacementProviderTurnId(
+                      input.execution.executionId,
+                      turn,
+                    );
                   let replacementEpoch: number;
                   if (bindingMatches) {
                     if (currentEpoch === compactionEpoch) {
@@ -2283,7 +2359,10 @@ export const runModelDecision = (
                     (link) => link.role === "OverflowReplacement",
                   );
                   const replacementProviderTurnId =
-                    `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+                    makeOverflowReplacementProviderTurnId(
+                      input.execution.executionId,
+                      turn,
+                    );
                   if (replacementLinks.length > 1) {
                     return yield* Effect.fail(
                       failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
@@ -4003,6 +4082,7 @@ export const runModelDecision = (
                 ? (outputEntry.payload as Record<string, unknown>)
                 : undefined;
             const outputProviderTurnId = outputPayload?.providerTurnId;
+            const outputTurnId = decodedProviderTurnId(outputProviderTurnId);
             const replacementLinks = sourceStepLinks.filter(
               (link) => link.role === "OverflowReplacement",
             );
@@ -4015,10 +4095,10 @@ export const runModelDecision = (
               outputEntry?.entryKind !== "ModelOutput" ||
               outputEntry.source?.kind !== "ProviderTurn" ||
               outputPayload?._tag !== "AssistantMessage" ||
-              typeof outputProviderTurnId !== "string" ||
-              outputEntry.source.ref !== `${outputProviderTurnId}:assistant` ||
+              outputTurnId === null ||
+              outputEntry.source.ref !== `${outputTurnId}:assistant` ||
               replacementLinks.length !== 1 ||
-              replacementLink?.providerTurnId !== outputProviderTurnId ||
+              replacementLink?.providerTurnId !== outputTurnId ||
               replacementLink.identity.logicalStepNo !==
                 sourceStep.identity.logicalStepNo ||
               replacementLink.identity.repairAttempt !==
@@ -4033,7 +4113,7 @@ export const runModelDecision = (
             }
             const sourceManifest = yield* tx
               .transact(
-                providerTurns.findManifestByTurn(outputProviderTurnId as never),
+                providerTurns.findManifestByTurn(outputTurnId),
               )
               .pipe(Effect.mapError(failure));
             if (sourceManifest === null) {
@@ -4171,7 +4251,13 @@ export const runModelDecision = (
                   ? (outputEntry.payload as Record<string, unknown>)
                   : undefined;
               const outputProviderTurnId = outputPayload?.providerTurnId;
+              const outputTurnId = decodedProviderTurnId(outputProviderTurnId);
               const replacementLink = replacementLinks[0];
+              if (outputTurnId === null) {
+                return yield* Effect.fail(
+                  failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                );
+              }
               const outputIdentityChecks = {
                 sequence:
                   outputSequence !== undefined && outputHash !== undefined,
@@ -4179,15 +4265,12 @@ export const runModelDecision = (
                 modelOutput: outputEntry?.entryKind === "ModelOutput",
                 providerSource: outputEntry?.source?.kind === "ProviderTurn",
                 assistantPayload: outputPayload?._tag === "AssistantMessage",
-                providerId: typeof outputProviderTurnId === "string",
+                providerId: true,
                 sourceRef:
-                  typeof outputProviderTurnId === "string" &&
-                  outputEntry?.source?.ref ===
-                    `${outputProviderTurnId}:assistant`,
+                  outputEntry?.source?.ref === `${outputTurnId}:assistant`,
                 contentRef:
-                  typeof outputProviderTurnId === "string" &&
                   outputPayload?.contentRef ===
-                    `provider:${outputProviderTurnId}:assistant`,
+                  `provider:${outputTurnId}:assistant`,
                 text:
                   typeof outputPayload?.text === "string" &&
                   typeof outputPayload.finishReason === "string",
@@ -4202,7 +4285,7 @@ export const runModelDecision = (
                     sourceStep.identity.repairAttempt,
                 linkOrdinal: replacementLink?.overflowOrdinal === 0,
                 linkProviderTurn:
-                  replacementLink?.providerTurnId === outputProviderTurnId,
+                  replacementLink?.providerTurnId === outputTurnId,
                 linkPredecessor:
                   replacementLink?.predecessorProviderTurnId ===
                   nativeCheckpointProviderTurnId,
@@ -4230,7 +4313,6 @@ export const runModelDecision = (
                   failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
                 );
               }
-              const outputTurnId = outputProviderTurnId as never;
               const [outputResult, outputManifest] = yield* Effect.all(
                 [
                   tx.transact(providerTurns.findSettledResult(outputTurnId)),
@@ -4248,7 +4330,7 @@ export const runModelDecision = (
                   outputResult.finishReason === outputPayload?.finishReason,
                 turnId:
                   outputResult._tag === "SettledSuccess" &&
-                  outputResult.turn.providerTurnId === outputProviderTurnId,
+                  outputResult.turn.providerTurnId === outputTurnId,
                 execution:
                   outputResult._tag === "SettledSuccess" &&
                   outputResult.turn.executionId === input.execution.executionId,
@@ -4492,8 +4574,10 @@ export const runModelDecision = (
               logicalStepNo: sourceStep.identity.logicalStepNo + 1,
               repairAttempt: 0,
             } as const;
-            const successorProviderTurnId =
-              `ptn_${input.execution.executionId}_${successorIdentity.logicalStepNo}` as never;
+            const successorProviderTurnId = providerTurnInferenceId(
+              input.execution.executionId,
+              successorIdentity.logicalStepNo,
+            );
             const successorUpdatedAt = yield* now();
             const predecessorUpdatedAt = yield* now();
             yield* tx
@@ -4648,7 +4732,10 @@ export const runModelDecision = (
               );
             }
             const replacementProviderTurnId =
-              `ptn_${input.execution.executionId}_${sourceStepIdentity.logicalStepNo}_overflow_0` as never;
+              makeOverflowReplacementProviderTurnId(
+                input.execution.executionId,
+                sourceStepIdentity.logicalStepNo,
+              );
             const existingReplacement = stepProviderLinks.filter(
               (link) => link.role === "OverflowReplacement",
             );
@@ -4999,7 +5086,10 @@ export const runModelDecision = (
             }
             if (isOverflowNativeCheckpoint) {
               const replacementProviderTurnId =
-                `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+                makeOverflowReplacementProviderTurnId(
+                  input.execution.executionId,
+                  turn,
+                );
               const existingReplacement = stepProviderLinks.filter(
                 (link) => link.role === "OverflowReplacement",
               );
@@ -5244,8 +5334,16 @@ export const runModelDecision = (
           );
         }
         const expectedCompactionProviderTurnId = resumeOverflowNativeCompaction
-          ? `ptn_${input.execution.executionId}_${turn}_native_compact_${stepContext.contextEpoch}`
-          : `ptn_${input.execution.executionId}_${turn}_compact_${stepContext.contextEpoch}`;
+          ? providerTurnNativeCompactionId(
+              input.execution.executionId,
+              turn,
+              stepContext.contextEpoch,
+            )
+          : providerTurnSummaryCompactionId(
+              input.execution.executionId,
+              turn,
+              stepContext.contextEpoch,
+            );
         if (
           resumeOverflowCompactionProviderTurnId !==
           expectedCompactionProviderTurnId
@@ -5284,8 +5382,11 @@ export const runModelDecision = (
                 {
                   execution: input.execution,
                   logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
-                  providerTurnId:
-                    resumeOverflowCompactionProviderTurnId as never,
+                  ...(resumeOverflowCompactionProviderTurnId === undefined
+                    ? {}
+                    : {
+                        providerTurnId: resumeOverflowCompactionProviderTurnId,
+                      }),
                   owner: conversationOwner,
                   sources,
                   coveredThrough,
@@ -5363,8 +5464,10 @@ export const runModelDecision = (
             failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
           );
         }
-        const replacementProviderTurnId =
-          `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+        const replacementProviderTurnId = makeOverflowReplacementProviderTurnId(
+          input.execution.executionId,
+          turn,
+        );
         yield* tx
           .transact(
             loopSteps.ensureProviderTurnLink(
@@ -6061,10 +6164,19 @@ export const runModelDecision = (
             capability.portableRequestCompatibility?.operationKinds.includes(
               "CompactionNative",
             ) === true;
-          const compactTurnId =
-            `${input.execution.executionId}_${turn}_${nativeSupported ? "native_" : ""}compact_${stepContext.contextEpoch}` as never;
+          const compactTurnId = nativeSupported
+            ? providerTurnNativeCompactionId(
+                input.execution.executionId,
+                turn,
+                stepContext.contextEpoch,
+              )
+            : providerTurnSummaryCompactionId(
+                input.execution.executionId,
+                turn,
+                stepContext.contextEpoch,
+              );
           if (!replayPersistedContextLimit) {
-            const compactionProviderTurnId = `ptn_${compactTurnId}` as never;
+            const compactionProviderTurnId = compactTurnId;
             const linkProbeIdentity = {
               executionId: String(input.execution.executionId),
               providerTurnId: String(compactionProviderTurnId),
@@ -6089,7 +6201,7 @@ export const runModelDecision = (
                       identity: overflowStep.identity,
                       overflowOrdinal: 0,
                       role: "OverflowCompaction",
-                      providerTurnId: `ptn_${compactTurnId}` as never,
+                      providerTurnId: compactTurnId,
                       predecessorProviderTurnId: providerTurnId,
                       contextEpoch: stepContext.contextEpoch,
                       state: "Prepared",
@@ -6149,7 +6261,7 @@ export const runModelDecision = (
                   {
                     execution: input.execution,
                     logicalStepNo: overflowStep.identity.logicalStepNo,
-                    providerTurnId: `ptn_${compactTurnId}` as never,
+                    providerTurnId: compactTurnId,
                     owner: conversationOwner,
                     sources,
                     coveredThrough,
@@ -6215,7 +6327,10 @@ export const runModelDecision = (
                 },
               ).pipe(Effect.mapError(failure));
           overflowReplacementProviderTurnId =
-            `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+            makeOverflowReplacementProviderTurnId(
+              input.execution.executionId,
+              turn,
+            );
           yield* tx
             .transact(
               overflowSteps.ensureProviderTurnLink(
@@ -6424,8 +6539,11 @@ export const runModelDecision = (
           logicalStepNo: turn,
           repairAttempt: repairAttempt + 1,
         } as const;
-        const successorProviderTurnId =
-          `ptn_${input.execution.executionId}_${turn}_r${repairAttempt + 1}` as never;
+        const successorProviderTurnId = providerTurnRepairInferenceId(
+          input.execution.executionId,
+          turn,
+          repairAttempt + 1,
+        );
         yield* tx
           .transact(
             Effect.gen(function* () {

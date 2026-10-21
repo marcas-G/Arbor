@@ -1,5 +1,7 @@
 import {
   ContextEpochNumber,
+  providerTurnNativeCompactionId,
+  providerTurnSummaryCompactionId,
   type Execution,
   type ProviderTurnId,
   parse,
@@ -132,8 +134,11 @@ export const runSummaryCompaction = (
   deps: CompactionDependencies,
 ) =>
   Effect.gen(function* () {
-    const providerTurnId =
-      `ptn_${input.execution.executionId}_${input.logicalStepNo}_compact_${input.currentEpoch}` as ProviderTurnId;
+    const providerTurnId = providerTurnSummaryCompactionId(
+      input.execution.executionId,
+      input.logicalStepNo,
+      input.currentEpoch,
+    );
     const nextEpoch = parse(ContextEpochNumber)(Number(input.currentEpoch) + 1);
     const request = {
       requestVersion: 2 as const,
@@ -230,8 +235,11 @@ export const runNativeCompaction = (
   deps: CompactionDependencies,
 ) =>
   Effect.gen(function* () {
-    const providerTurnId =
-      `ptn_${input.execution.executionId}_${input.logicalStepNo}_native_compact_${input.currentEpoch}` as ProviderTurnId;
+    const providerTurnId = providerTurnNativeCompactionId(
+      input.execution.executionId,
+      input.logicalStepNo,
+      input.currentEpoch,
+    );
     const nextEpoch = parse(ContextEpochNumber)(Number(input.currentEpoch) + 1);
     const request = input.nativeRecovery?.request ?? {
       requestVersion: 2 as const,

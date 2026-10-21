@@ -14,6 +14,7 @@ import type {
 } from "@arbor/domain";
 import {
   encodeExecutionEpisodeBinding,
+  providerTurnInferenceId,
   workEpisode as exactWorkEpisode,
   executionEpisode,
 } from "@arbor/domain";
@@ -1915,8 +1916,10 @@ export const executeAgentLoopActions = (
             logicalStepNo: turn + 1,
             repairAttempt: 0,
           } as const;
-          const successorProviderTurnId =
-            `ptn_${input.execution.executionId}_${turn + 1}` as never;
+          const successorProviderTurnId = providerTurnInferenceId(
+            input.execution.executionId,
+            turn + 1,
+          );
           yield* tx
             .transact(
               Effect.gen(function* () {
