@@ -1,10 +1,10 @@
 import {
   ContextEpochNumber,
-  providerTurnNativeCompactionId,
-  providerTurnSummaryCompactionId,
   type Execution,
   type ProviderTurnId,
   parse,
+  providerTurnNativeCompactionId,
+  providerTurnSummaryCompactionId,
 } from "@arbor/domain";
 import type {
   PortableInputItem,

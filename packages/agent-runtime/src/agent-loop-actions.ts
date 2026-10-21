@@ -14,9 +14,9 @@ import type {
 } from "@arbor/domain";
 import {
   encodeExecutionEpisodeBinding,
-  providerTurnInferenceId,
   workEpisode as exactWorkEpisode,
   executionEpisode,
+  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   type ControlBasis,

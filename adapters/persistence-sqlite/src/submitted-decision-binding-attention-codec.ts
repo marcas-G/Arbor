@@ -1,12 +1,12 @@
+import {
+  type ProviderTurnId,
+  ProviderTurnId as ProviderTurnIdSchema,
+  parse,
+} from "@arbor/domain";
 import type {
   SubmittedDecisionBindingAttentionFact,
   SubmittedDecisionBindingFailureCode,
 } from "@arbor/ports";
-import {
-  ProviderTurnId as ProviderTurnIdSchema,
-  type ProviderTurnId,
-  parse,
-} from "@arbor/domain";
 
 export interface SubmittedDecisionBindingAttentionDbRow {
   readonly attention_fact_id: unknown;
