@@ -9,11 +9,10 @@ import {
 import { PermissionGrantRepository, TransactionPort } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
-import { createCurrentSchemaTestDatabase } from "../../../tests/support/schema44-database.js";
+import { createSchema50TestDatabase } from "../../../tests/support/schema44-database.js";
 import {
   layer,
-  P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
-  P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
+  P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
   runMigrations,
 } from "../src/index.js";
 import { PermissionGrantRepositoryLive } from "../src/permission-grant-repository.js";
@@ -28,8 +27,8 @@ const grantCommandId = parse(CommandId)(
 );
 
 describe("PermissionGrantRepository sandbox issuer provenance", () => {
-  it("round-trips the exact immutable provenance in a disposable schema-50 database", async () => {
-    const fixture = await createCurrentSchemaTestDatabase();
+  it("round-trips immutable provenance after upgrading a disposable schema-50 database to 51", async () => {
+    const fixture = await createSchema50TestDatabase();
     try {
       const seed = new DatabaseSync(fixture.databaseFilename);
       try {
@@ -86,10 +85,7 @@ describe("PermissionGrantRepository sandbox issuer provenance", () => {
         Effect.provide(
           Effect.gen(function* () {
             yield* runMigrations(
-              [
-                P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
-                P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
-              ],
+              [P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION],
               { allowOfflineOnly: true },
             );
             const transactions = yield* TransactionPort;
