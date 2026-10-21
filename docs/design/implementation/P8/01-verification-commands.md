@@ -83,6 +83,32 @@ the canonical row and event. It does not invoke the handler or append duplicate
 facts. Missing, unsupported, malformed, or conflicting receipts/evidence fail
 closed. Migration and implementation remain separately authorized work.
 
+## Accepted F18 Verification v2 consumer binding (DID v1.58)
+
+Accepted under `ACCEPT_F18_VERIFICATION_V2_CONSUMER_AND_READMODEL_CONVERGENCE_OPTION_A`,
+proposal SHA-256
+`C6C41E96C5A59B46810DB9FA7A998DDBC5887B93D75ADF3606E0CA25E351EC73`.
+New ordinary v2 row, event and ConcludeVerification result/receipt encode an
+absent `conclusionReason` as an explicit JSON `null`; omission and empty string
+are invalid before commit. `Orphaned` remains the only non-null reason. The
+strict v2 event and result decoders bind the complete canonical Verification
+snapshot, Work/revision, Evidence IDs, summary, reason and status. A durable
+Committed schema-v2 receipt must bind result state `Concluded`, exact
+`channel1Release` Work/revision, and exactly the verdict-specific `wakeSignals`:
+empty for Pass; one exact `VerificationReturned` for Fail or Unknown. The G5
+RetryVerification exception retains its strict v1 outer receipt and exact
+retry-origin binding; no internal ConcludeVerification receipt is created.
+
+Historical absent-reason v2 bytes are eligible only through the bounded
+`LegacyAbsentReasonV2` reconciliation contract in P9 `07`: exact
+pre-activation high-water, empty event reason, SQL NULL canonical reason,
+omitted result property, Available non-Orphaned snapshot and exact agreement of
+all other fields. Those bytes remain unchanged and the source digest binds the
+original representation. No conclusion, retry, Verifier, Provider or model
+turn is replayed. Any incomplete or post-high-water tuple fails closed to the
+P9/P10 Attention contract. Acceptance authority and aggregation semantics are
+unchanged.
+
 ## 1. `StartVerification`
 
 ### Payload

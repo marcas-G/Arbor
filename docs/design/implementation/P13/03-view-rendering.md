@@ -205,3 +205,15 @@ existing invalidation/explicit-refetch behavior, requires a deliberate human
 choice, and never auto-submits the old payload. The approval expiry detail and
 revision numbers are not displayed. No provider diagnostic, host path, target
 ref, source digest or secret is added to the view.
+
+## Accepted F18 Verification criterion projection (DID v1.58)
+
+For each Verification view, P13 renders the canonical snapshot status without
+inference. `Pending` and `UnavailableLegacy` show the frozen mission criteria
+with `Unknown`; `Available` shows the exact stored criterion verdicts in
+mission order; `NotApplicableOrphaned` shows the exact empty list. The
+Available projection must be complete, ordered and criterion-identical to the
+mission. Corrupt or mismatched Available state is a typed projection failure,
+never an Unknown fallback. Evidence IDs remain on the existing evidence
+surface. Workspace-detail Open Verification remains Pending/Unknown. The
+rendered criterion verdict grants no authority and does not change Acceptance.

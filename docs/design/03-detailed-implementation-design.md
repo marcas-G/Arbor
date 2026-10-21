@@ -18,6 +18,35 @@ payload/fingerprint change, or P9 terminal-semantics change is introduced.
 Acceptance source SHA-256:
 `5794DD19BA3BF1BDF58C0878863F1F51EA154CBF541E893CFA1CC63758108D2E`.
 
+**Governance changes (v1.57 → v1.58): F18 Verification v2 consumer and read-model convergence**
+
+- The accepted F18 Option A package replaces P1 `05`'s global event-version
+  ceiling with exact `(eventType,eventVersion)` writer/reader capabilities.
+  Only `VerificationConcluded` may be newly written at v2; its v1 is historical
+  reader-only, while all other 56 catalog types remain exact v1. Unknown type
+  v1 and every unsupported pair take the existing atomic CC-3 poison path.
+- P8 v2 conclusions explicitly encode absent reason as JSON null and bind the
+  strict same-Project Committed v2 receipt, exact release and verdict-specific
+  wake signals. The exact pre-activation high-water compatibility tuple is
+  read-only; G5 retains its strict v1 outer RetryVerification receipt.
+- P9 owns durable reconciliation keyed by the exact workflow dead-letter
+  tuple, generation-fenced phases, effect-before-disposition crash semantics,
+  immutable high-water facts, and Root-targeted ActionRequired Attention.
+  P10 owns retained queue projection/rebuild; P13 projects all four canonical
+  criterion snapshot statuses without inference. Parent Acceptance and
+  Unknown aggregation semantics are unchanged.
+- Accepted token
+  `ACCEPT_F18_VERIFICATION_V2_CONSUMER_AND_READMODEL_CONVERGENCE_OPTION_A`,
+  proposal SHA-256
+  `C6C41E96C5A59B46810DB9FA7A998DDBC5887B93D75ADF3606E0CA25E351EC73`;
+  RED evidence SHA-256
+  `0FA66DDC6D4D97932855C11E459A86E2C0365C7228C85FAF5727BE85E638B49B`.
+  Acceptance and exact landing manifest are recorded in
+  `planning/results/F18-verification-v2-consumer-readmodel-acceptance-and-landing.record.md`.
+  Implementation is separately authorized by
+  `AUTHORIZE_F18_VERIFICATION_V2_CONSUMER_AND_READMODEL_CONVERGENCE_IMPLEMENTATION`,
+  but is gated on independent post-landing B0/B1/B2=0/0/0 review.
+
 **Governance changes (v1.51 → v1.52): F23 P6 operator rebuild and v1 route-command qualification**
 
 - The accepted P6 UnboundLegacy package has no v1 canonical Work-owner or
