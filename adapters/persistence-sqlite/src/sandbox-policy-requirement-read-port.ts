@@ -2,13 +2,17 @@ import {
   type CanonicalResourceRegion,
   decodeCanonicalExecutionEpisodeBinding,
   type ExecutionId,
+  isIsoTimestamp,
   type ProjectId,
+  ProviderTurnId,
   parse,
+  Sha256,
   ToolInvocationId,
   type WorkspaceId,
 } from "@arbor/domain";
 import {
   canonicalArgumentsDigestV1,
+  type SandboxPolicyPreIntentRequirementV1,
   SandboxPolicyRequirementReadPort,
   type SandboxPolicyRequirementReadPortService,
   sha256Hex,
@@ -85,6 +89,207 @@ const makeLayer = () =>
           persistenceCorruption(REPOSITORY, OPERATION, reason),
         );
 
+      const findPreIntentRequirement = (input: {
+        readonly projectId: ProjectId;
+        readonly workspaceId: WorkspaceId;
+        readonly executionId: ExecutionId;
+      }) =>
+        Effect.gen(function* () {
+          interface PreIntentRow {
+            readonly project_id: string;
+            readonly workspace_id: string;
+            readonly execution_id: string;
+            readonly episode_revision: number;
+            readonly episode_json: string | null;
+            readonly provider_turn_id: string;
+            readonly logical_step_no: number;
+            readonly repair_attempt: number;
+            readonly next_action_index: number;
+            readonly action_index: number;
+            readonly logical_action_id: string;
+            readonly call_ref: string;
+            readonly action_route_kind: string;
+            readonly action_kind: string;
+            readonly input_hash: string;
+            readonly action_state: string;
+            readonly action_revision: number;
+            readonly approval_id: string | null;
+            readonly approval_route_kind: string | null;
+            readonly approval_state: string | null;
+            readonly approval_revision: number | null;
+            readonly approval_expires_at: string | null;
+            readonly approval_consumed_by: string | null;
+            readonly approval_tool_invocation_id: string | null;
+            readonly approval_tool_name: string | null;
+            readonly approval_tool_version: string | null;
+            readonly approval_arguments_json: string | null;
+            readonly approval_binding_proven: number | null;
+            readonly matching_approval_count: number;
+            readonly invocation_exists: number;
+          }
+          const rows = yield* run(
+            sql.unsafe<PreIntentRow>(
+              `SELECT e.project_id, e.workspace_id, e.execution_id,
+                      e.episode_revision, es.episode_json,
+                      s.provider_turn_id, s.logical_step_no,
+                      s.repair_attempt, s.next_action_index,
+                      a.action_index, a.logical_action_id, a.call_ref,
+                      a.route_kind AS action_route_kind,
+                      a.action_kind, a.input_hash, a.state AS action_state,
+                      a.revision AS action_revision,
+                      aa.approval_id, aa.route_kind AS approval_route_kind,
+                      aa.state AS approval_state, aa.revision AS approval_revision,
+                      aa.expires_at AS approval_expires_at,
+                      aa.consumed_by AS approval_consumed_by,
+                      aa.tool_invocation_id AS approval_tool_invocation_id,
+                      aa.stable_action_id AS approval_tool_name,
+                      aa.action_version AS approval_tool_version,
+                      aa.arguments_json AS approval_arguments_json,
+                      aa.binding_proven AS approval_binding_proven,
+                      (SELECT COUNT(*) FROM action_approvals ax
+                        WHERE ax.route_kind = 'Executable'
+                          AND ax.execution_id = e.execution_id
+                          AND ax.logical_step_no = s.logical_step_no
+                          AND ax.repair_attempt = s.repair_attempt
+                          AND ax.action_index = a.action_index
+                          AND ax.logical_action_id = a.logical_action_id
+                          AND ax.call_ref = a.call_ref) AS matching_approval_count,
+                      CASE WHEN aa.tool_invocation_id IS NOT NULL AND EXISTS(
+                        SELECT 1 FROM tool_invocations ti
+                         WHERE ti.invocation_id = aa.tool_invocation_id
+                      ) THEN 1 ELSE 0 END AS invocation_exists
+                 FROM executions e
+                 JOIN agent_execution_state es ON es.execution_id = e.execution_id
+                 JOIN agent_loop_steps s ON s.execution_id = e.execution_id
+                 JOIN agent_loop_step_actions a
+                   ON a.execution_id = s.execution_id
+                  AND a.logical_step_no = s.logical_step_no
+                  AND a.repair_attempt = s.repair_attempt
+                  AND a.action_index = s.next_action_index
+                 LEFT JOIN action_approvals aa
+                   ON aa.route_kind = 'Executable'
+                  AND aa.execution_id = e.execution_id
+                  AND aa.project_id = e.project_id
+                  AND aa.workspace_id = e.workspace_id
+                  AND aa.logical_step_no = a.logical_step_no
+                  AND aa.repair_attempt = a.repair_attempt
+                  AND aa.action_index = a.action_index
+                  AND aa.logical_action_id = a.logical_action_id
+                  AND aa.call_ref = a.call_ref
+                WHERE e.execution_id = ? AND e.project_id = ?
+                  AND e.workspace_id = ? AND e.settled_at IS NULL
+                  AND e.stop_requested_at IS NULL
+                  AND s.state = 'ActionsInProgress'
+                  AND a.route_kind = 'Executable' AND a.state = 'Pending'
+                  AND a.action_kind = 'shell'
+                ORDER BY aa.approval_id`,
+              [input.executionId, input.projectId, input.workspaceId],
+            ),
+          );
+          if (rows.length === 0) return Option.none();
+          if (rows.length !== 1) {
+            return yield* failCorrupt(
+              "multiple or ambiguous active pre-intent P3 actions were found",
+            );
+          }
+          const row = rows[0];
+          if (row === undefined)
+            return yield* failCorrupt("source row disappeared");
+          if (row.matching_approval_count > 1)
+            return yield* failCorrupt(
+              "duplicate P4 approval rows match the current P3 action",
+            );
+          if (row.matching_approval_count === 0) return Option.none();
+          if (row.approval_id === null) return Option.none();
+          if (
+            row.approval_state !== "Pending" ||
+            row.approval_consumed_by !== null
+          )
+            return Option.none();
+          if (
+            row.approval_route_kind !== "Executable" ||
+            row.approval_binding_proven !== 1 ||
+            row.approval_revision === null ||
+            !Number.isSafeInteger(row.approval_revision) ||
+            row.approval_revision < 0 ||
+            row.approval_tool_invocation_id === null ||
+            row.approval_tool_name !== row.action_kind ||
+            row.approval_tool_version === null ||
+            row.approval_tool_version.length === 0 ||
+            row.approval_arguments_json === null ||
+            sha256Hex(row.approval_arguments_json) !== row.input_hash ||
+            row.invocation_exists !== 0
+          ) {
+            return yield* failCorrupt(
+              "pre-intent P4 approval does not prove the exact Pending P3 action",
+            );
+          }
+          const episodeBinding =
+            row.episode_json === null
+              ? undefined
+              : decodeCanonicalExecutionEpisodeBinding(row.episode_json);
+          let providerTurnId: import("@arbor/domain").ProviderTurnId;
+          let inputHash: import("@arbor/domain").Sha256;
+          try {
+            providerTurnId = parse(ProviderTurnId)(row.provider_turn_id);
+            inputHash = parse(Sha256)(row.input_hash);
+          } catch {
+            return yield* failCorrupt(
+              "pre-intent P3 source contains malformed ProviderTurn or input hash",
+            );
+          }
+          if (
+            episodeBinding === undefined ||
+            row.project_id !== input.projectId ||
+            row.workspace_id !== input.workspaceId ||
+            row.execution_id !== input.executionId ||
+            !Number.isSafeInteger(row.episode_revision) ||
+            row.episode_revision < 0 ||
+            !Number.isSafeInteger(row.logical_step_no) ||
+            row.logical_step_no < 0 ||
+            !Number.isSafeInteger(row.repair_attempt) ||
+            row.repair_attempt < 0 ||
+            !Number.isSafeInteger(row.next_action_index) ||
+            row.next_action_index < 0 ||
+            row.action_index !== row.next_action_index ||
+            !Number.isSafeInteger(row.action_revision) ||
+            row.action_revision < 0 ||
+            row.action_state !== "Pending" ||
+            row.action_route_kind !== "Executable" ||
+            row.action_kind !== "shell" ||
+            row.approval_expires_at === null ||
+            !isIsoTimestamp(row.approval_expires_at)
+          ) {
+            return yield* failCorrupt(
+              "pre-intent P3/P4 identity or revision is malformed or inconsistent",
+            );
+          }
+          return Option.some({
+            _tag: "SandboxPolicyPreIntentRequirementV1" as const,
+            version: 1 as const,
+            projectId: row.project_id as ProjectId,
+            workspaceId: row.workspace_id as WorkspaceId,
+            executionId: row.execution_id as ExecutionId,
+            episodeBinding,
+            expectedEpisodeRevision: row.episode_revision,
+            providerTurnId,
+            logicalStepNo: row.logical_step_no,
+            repairAttempt: row.repair_attempt,
+            logicalActionId: row.logical_action_id,
+            actionIndex: row.action_index,
+            callRef: row.call_ref,
+            actionRevision: row.action_revision,
+            inputHash,
+            toolName: row.action_kind,
+            toolVersion: row.approval_tool_version,
+            approvalId: row.approval_id,
+            approvalState: "Pending" as const,
+            approvalRevision: row.approval_revision,
+            approvalConsumedBy: null,
+            approvalExpiresAt: row.approval_expires_at,
+          } satisfies SandboxPolicyPreIntentRequirementV1);
+        });
+
       const findPendingByExecution: SandboxPolicyRequirementReadPortService["findPendingByExecution"] =
         (input) =>
           Effect.gen(function* () {
@@ -150,7 +355,8 @@ const makeLayer = () =>
                 [input.executionId, input.projectId, input.workspaceId],
               ),
             );
-            if (rows.length === 0) return Option.none();
+            if (rows.length === 0)
+              return yield* findPreIntentRequirement(input);
 
             const candidates: RequirementRow[] = [];
             for (const row of rows) {
@@ -180,7 +386,8 @@ const makeLayer = () =>
               if (!isPolicyBearing) continue;
               candidates.push(row);
             }
-            if (candidates.length === 0) return Option.none();
+            if (candidates.length === 0)
+              return yield* findPreIntentRequirement(input);
             if (candidates.length !== 1) {
               return yield* failCorrupt(
                 "multiple or ambiguous active sandbox-policy requirements were found",

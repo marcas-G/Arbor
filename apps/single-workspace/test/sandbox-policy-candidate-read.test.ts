@@ -19,6 +19,7 @@ import {
 } from "@arbor/domain";
 import type {
   SandboxPolicyCandidateBoundarySnapshotV1,
+  SandboxPolicyPreIntentRequirementV1,
   SandboxPolicyRequirementV1,
 } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
@@ -148,11 +149,14 @@ const read = (
     osBuild: "qualified-build",
   },
   authoritySnapshot = authority,
+  sourceRequirement:
+    | SandboxPolicyRequirementV1
+    | SandboxPolicyPreIntentRequirementV1 = requirement,
 ) =>
   buildSandboxPolicyCandidateReadV2({
     reason: "InitialDecision",
     execution,
-    requirement,
+    requirement: sourceRequirement,
     latestCommittedPolicyRevision: 0,
     expectedEpisodeRevision: 0,
     boundary: {
@@ -176,6 +180,40 @@ const read = (
   });
 
 describe("V6 per-candidate P4 binding digest projection", () => {
+  it("builds the unchanged public candidate DTO from a pre-intent approval proof", () => {
+    const preIntent = {
+      _tag: "SandboxPolicyPreIntentRequirementV1",
+      version: 1,
+      projectId,
+      workspaceId,
+      executionId,
+      episodeBinding,
+      expectedEpisodeRevision: 0,
+      providerTurnId: requirement.providerTurnId,
+      logicalStepNo: 1,
+      repairAttempt: 0,
+      logicalActionId: requirement.logicalActionId,
+      actionIndex: 0,
+      callRef: requirement.callRef,
+      actionRevision: 4,
+      inputHash: parse(Sha256)("b".repeat(64)),
+      toolName: "shell",
+      toolVersion: "shell-v1",
+      approvalId: "approval-v6",
+      approvalState: "Pending",
+      approvalRevision: 0,
+      approvalConsumedBy: null,
+      approvalExpiresAt: "2026-10-21T12:00:00.000Z",
+    } satisfies SandboxPolicyPreIntentRequirementV1;
+    const result = read([], undefined, authority, preIntent);
+    expect(result._tag).toBe("Ready");
+    if (result._tag !== "Ready") return;
+    expect(result.value.reason).toBe("InitialDecision");
+    expect(result.value.candidates).toHaveLength(3);
+    expect(JSON.stringify(result.value)).not.toContain("approval-v6");
+    expect(JSON.stringify(result.value)).not.toContain("action-v6");
+  });
+
   it("emits distinct candidates for Supported rows differing only by capabilityRevision", () => {
     const secondCapability = {
       ...providerEntry,
