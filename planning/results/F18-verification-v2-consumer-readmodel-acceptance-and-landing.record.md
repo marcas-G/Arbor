@@ -37,7 +37,7 @@ semantic choice. The post-edit SHA-256 of each owning document is frozen here:
 | P9 recovery | `docs/design/implementation/P9/07-agent-loop-step-recovery.md` | `E120850DA12131B9927596D449542AC918FC5836325246EF6D3CF9A4CD56EE1D` |
 | P10 Attention | `docs/design/implementation/P10/02-attention-readmodel.md` | `82F78CEC41D221815D6B9B85AF740FECC77E62FD871FA1D2C7A406D95A0E3C8B` |
 | P10 rebuild | `docs/design/implementation/P10/04-rebuild-atscale.md` | `71D1AA94A2ACFDAA6FFD59DC25B81E2DEFF9F5A5991E59C6979A08DE9798AF91` |
-| P13 rendering | `docs/design/implementation/P13/03-view-rendering.md` | `A8F9DEEA30A5AFAD7473B69B64862EDDD7F70F0190BA663168872987BBE2E151` |
+| P13 rendering | `docs/design/implementation/P13/03-view-rendering.md` | `30BA3CF14994571AFD63D313602EC5E6E7179653A335C1F54430D0D2E7325336` |
 
 The landing fixes the exact P1 writer/reader pair registry, P8 explicit-null
 and receipt binding including the bounded legacy tuple, P9 durable reconciliation
