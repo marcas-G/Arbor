@@ -112,6 +112,8 @@ export type CommandRejection =
       readonly _tag: "StaleSandboxPolicyInputs";
       readonly safeDetails: {
         readonly field:
+          | "ActionRevision"
+          | "ExecutableApprovalRevision"
           | "EpisodeRevision"
           | "PolicyRevision"
           | "WorkspaceRevision"

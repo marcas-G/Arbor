@@ -179,7 +179,7 @@ import {
   resolveModelBinding,
   type SandboxPolicyCandidateBoundaryReadPort,
   SandboxPolicyDecisionStore,
-  type SandboxPolicyRequirementReadPort,
+  SandboxPolicyRequirementReadPort,
   SandboxProcessPort,
   SecretMaterial,
   type SecretRef,
@@ -945,6 +945,8 @@ export const buildSingleWorkspaceLayer = (
     Layer.unwrap(
       Effect.gen(function* () {
         const authoritySnapshot = yield* SandboxAuthoritySnapshot;
+        const sandboxPolicyRequirements =
+          yield* SandboxPolicyRequirementReadPort;
         const preparation =
           config.sandboxPolicyDecisionPreparation ??
           makeSandboxPolicyDecisionPreparation({
@@ -952,6 +954,7 @@ export const buildSingleWorkspaceLayer = (
             workspaces: yield* WorkspaceRepository,
             executions: yield* ExecutionRepository,
             decisions: yield* SandboxPolicyDecisionStore,
+            requirements: sandboxPolicyRequirements,
             ownership: yield* ResourceOwnershipRepository,
             worktrees: yield* WorktreeStore,
             environmentResolver: yield* EnvironmentResolverPort,

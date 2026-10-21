@@ -28,6 +28,8 @@ import type {
   ResourceOwnershipRepositoryError,
   SandboxPolicyDecisionStoreError,
   SandboxPolicyDecisionStoreService,
+  SandboxPolicyPreIntentStaleField,
+  ToolObservationEvidenceStoreError,
   TransactionOperationalFailure,
   TransactionScope,
   WorkspaceRepositoryError,
@@ -112,6 +114,16 @@ export interface DecideSandboxPolicyPreparation {
     | SandboxPolicyDecisionStoreError
     | ResourceOwnershipRepositoryError
     | WorktreeStoreError,
+    TransactionScope
+  >;
+  /** Final transaction source CAS; called before common revision CAS so
+   * Action/approval stale precedence remains deterministic. */
+  readonly preIntentSourceStaleField: (
+    payload: DecideSandboxPolicyPayload,
+    trustedNow: string,
+  ) => Effect.Effect<
+    SandboxPolicyPreIntentStaleField | undefined,
+    ToolObservationEvidenceStoreError,
     TransactionScope
   >;
 }
@@ -336,6 +348,31 @@ export const makeDecideSandboxPolicyHandler = (
           reason: "sandbox decision issuer provenance changed",
         });
       }
+      if (
+        grant.value.state !== "Active" ||
+        grant.value.capability !== "DecideSandboxPolicy" ||
+        grant.value.target !== payload.executionId ||
+        grant.value.subject?._tag !== "HumanPrincipal" ||
+        grant.value.subject.principal !== authority.principal ||
+        grant.value.validFrom === undefined ||
+        !isIsoTimestamp(grant.value.validFrom) ||
+        Date.parse(currentNow) < Date.parse(grant.value.validFrom) ||
+        grant.value.expiresAt == null ||
+        !isIsoTimestamp(grant.value.expiresAt) ||
+        Date.parse(currentNow) >= Date.parse(grant.value.expiresAt)
+      ) {
+        return commandErr({
+          _tag: "AuthorityDenied",
+          reason: "sandbox decision Grant is not active",
+        });
+      }
+      const preIntentSourceStaleField =
+        yield* dependencies.preparation.preIntentSourceStaleField(
+          payload,
+          currentNow,
+        );
+      if (preIntentSourceStaleField !== undefined)
+        return commandErr(stale(preIntentSourceStaleField));
       const execution = yield* dependencies.executions.findById(
         payload.executionId,
       );
@@ -356,24 +393,6 @@ export const makeDecideSandboxPolicyHandler = (
       ) {
         return commandErr(stale("EpisodeRevision"));
       }
-      if (
-        grant.value.state !== "Active" ||
-        grant.value.capability !== "DecideSandboxPolicy" ||
-        grant.value.target !== payload.executionId ||
-        grant.value.subject?._tag !== "HumanPrincipal" ||
-        grant.value.subject.principal !== authority.principal ||
-        grant.value.validFrom === undefined ||
-        !isIsoTimestamp(grant.value.validFrom) ||
-        Date.parse(currentNow) < Date.parse(grant.value.validFrom) ||
-        grant.value.expiresAt == null ||
-        !isIsoTimestamp(grant.value.expiresAt) ||
-        Date.parse(currentNow) >= Date.parse(grant.value.expiresAt)
-      ) {
-        return commandErr({
-          _tag: "AuthorityDenied",
-          reason: "sandbox decision Grant is not active",
-        });
-      }
       const latest = yield* dependencies.decisions.findCurrentForExecution(
         payload.projectId,
         payload.workspaceId,
@@ -382,13 +401,21 @@ export const makeDecideSandboxPolicyHandler = (
       const currentRevision = Option.isSome(latest)
         ? latest.value.decision.policyRevision
         : 0;
-      const current =
+      const currentPreconditions =
         yield* dependencies.preparation.currentPreconditions(payload);
-      const mismatch = preconditionMismatch(payload, currentRevision, current);
+      const mismatch = preconditionMismatch(
+        payload,
+        currentRevision,
+        currentPreconditions,
+      );
       if (mismatch !== undefined) return commandErr(mismatch);
       if (
-        !sameEpisode(current.episodeBinding, payload.episodeBinding) ||
-        current.expectedEpisodeRevision !== payload.expectedEpisodeRevision
+        !sameEpisode(
+          currentPreconditions.episodeBinding,
+          payload.episodeBinding,
+        ) ||
+        currentPreconditions.expectedEpisodeRevision !==
+          payload.expectedEpisodeRevision
       )
         return commandErr(stale("EpisodeRevision"));
 
@@ -433,33 +460,39 @@ export const makeDecideSandboxPolicyHandler = (
             payload.providerId !== "TrustedLocal")
       )
         return commandErr({ _tag: "SandboxAuthorityUnavailable" });
-      if (snapshot.workspaceRevision !== current.workspaceRevision)
+      if (snapshot.workspaceRevision !== currentPreconditions.workspaceRevision)
         return commandErr(stale("WorkspaceRevision"));
       if (
-        snapshot.resourceBoundaryRevision !== current.resourceBoundaryRevision
+        snapshot.resourceBoundaryRevision !==
+        currentPreconditions.resourceBoundaryRevision
       )
         return commandErr(stale("ResourceBoundaryRevision"));
       if (
         snapshot.sandboxHandleBindingDigest !==
-        current.sandboxHandleBindingDigest
+        currentPreconditions.sandboxHandleBindingDigest
       )
         return commandErr(stale("SandboxHandleBindingDigest"));
       if (
-        snapshot.authorityBundleRevision !== current.authorityBundleRevision ||
-        snapshot.authorityBundleDigest !== current.authorityBundleDigest
+        snapshot.authorityBundleRevision !==
+          currentPreconditions.authorityBundleRevision ||
+        snapshot.authorityBundleDigest !==
+          currentPreconditions.authorityBundleDigest
       )
         return commandErr(stale("AuthorityBundleRevision"));
       if (
-        snapshot.operatorConfigRevision !== current.operatorConfigRevision ||
-        snapshot.operatorConfigDigest !== current.operatorConfigDigest
+        snapshot.operatorConfigRevision !==
+          currentPreconditions.operatorConfigRevision ||
+        snapshot.operatorConfigDigest !==
+          currentPreconditions.operatorConfigDigest
       )
         return commandErr(stale("OperatorConfigRevision"));
       if (
         snapshot.kind === "OsEnforced" &&
-        (current.kind !== "OsEnforced" ||
+        (currentPreconditions.kind !== "OsEnforced" ||
           snapshot.providerRegistryRevision !==
-            current.providerRegistryRevision ||
-          snapshot.providerRegistryDigest !== current.providerRegistryDigest)
+            currentPreconditions.providerRegistryRevision ||
+          snapshot.providerRegistryDigest !==
+            currentPreconditions.providerRegistryDigest)
       )
         return commandErr(stale("ProviderRegistryRevision"));
 

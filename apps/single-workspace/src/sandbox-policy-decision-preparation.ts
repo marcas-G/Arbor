@@ -33,6 +33,8 @@ import {
   type ResourceOwnershipRepositoryService,
   type SandboxPolicyDecisionStoreError,
   type SandboxPolicyDecisionStoreService,
+  type SandboxPolicyPreIntentRequirementV1,
+  type SandboxPolicyRequirementReadPortService,
   sha256Hex,
   type TransactionOperationalFailure,
   type TransactionPortService,
@@ -100,6 +102,10 @@ export interface SandboxPolicyDecisionPreparationDependencies {
     SandboxPolicyDecisionStoreService,
     "findCurrentForExecution"
   >;
+  readonly requirements: Pick<
+    SandboxPolicyRequirementReadPortService,
+    "findPendingByExecution" | "comparePreIntentSource"
+  >;
   readonly ownership: Pick<
     ResourceOwnershipRepositoryService,
     "listActiveByWorkspace"
@@ -155,6 +161,7 @@ interface PreparedInputs {
   readonly summary: EffectivePolicySummaryV1;
   readonly kind: SandboxPolicyPreconditionsV1["kind"];
   readonly profile: SandboxProfile;
+  readonly preIntentRequirement?: SandboxPolicyPreIntentRequirementV1;
 }
 
 const operationalFailure = (cause: string): TransactionOperationalFailure => ({
@@ -449,6 +456,26 @@ export const makeSandboxPolicyDecisionPreparation = (
           Effect.tapError((error) => probe("Capture", "Failure", error)),
           Effect.tap(() => probe("Capture", "Pass")),
         );
+        const sourceRequirement = yield* dependencies.transaction.transact(
+          dependencies.requirements
+            .findPendingByExecution({
+              projectId: payload.projectId,
+              workspaceId: payload.workspaceId,
+              executionId: payload.executionId,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                operationalFailure(
+                  `P4 pre-intent source read failed: ${errorMessage(error)}`,
+                ),
+              ),
+            ),
+        );
+        const preIntentRequirement =
+          Option.isSome(sourceRequirement) &&
+          sourceRequirement.value._tag === "SandboxPolicyPreIntentRequirementV1"
+            ? sourceRequirement.value
+            : undefined;
         const workspace = captured.workspace;
         const execution = captured.execution;
         const authoritySnapshot = dependencies.authoritySnapshot;
@@ -882,10 +909,23 @@ export const makeSandboxPolicyDecisionPreparation = (
           summary,
           kind: policyKind,
           profile,
+          ...(preIntentRequirement === undefined
+            ? {}
+            : { preIntentRequirement }),
         };
         preparedByPayload.set(payload, prepared);
         return summary;
       }),
+
+    preIntentSourceStaleField: (payload, trustedNow) => {
+      const expected = preparedByPayload.get(payload)?.preIntentRequirement;
+      return expected === undefined
+        ? Effect.succeed(undefined)
+        : dependencies.requirements.comparePreIntentSource({
+            expected,
+            trustedNow,
+          });
+    },
 
     currentPreconditions: (payload) =>
       readCurrentSourceRows(dependencies, payload).pipe(

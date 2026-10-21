@@ -45,7 +45,10 @@ const committed = (commandId = "cmd_server_1") =>
     { status: 200, headers: { "content-type": "application/json" } },
   );
 
-const terminalRejected = (rejection: string) =>
+const terminalRejected = (
+  rejection: string,
+  safeDetails?: Readonly<Record<string, unknown>>,
+) =>
   new Response(
     JSON.stringify({
       ok: true,
@@ -54,6 +57,7 @@ const terminalRejected = (rejection: string) =>
         commandId: "cmd_server_rej",
         resolution: "TerminalRejected",
         rejection,
+        ...(safeDetails === undefined ? {} : { safeDetails }),
       },
     }),
     { status: 200, headers: { "content-type": "application/json" } },
@@ -1010,32 +1014,38 @@ describe("DecideSandboxPolicyForm", () => {
     expect(payload).not.toHaveProperty("candidateId");
   });
 
-  it("signals a stale receipt once and never auto-retries or reuses the old candidate", async () => {
-    const onStaleReceipt = vi.fn();
-    const fetchMock = stubFetch(() =>
-      Promise.resolve(terminalRejected("StaleSandboxPolicyInputs")),
-    );
-    render(
-      <DecideSandboxPolicyForm {...props} onStaleReceipt={onStaleReceipt} />,
-    );
-    fireEvent.change(
-      screen.getByLabelText("策略过期时间（ISO 8601，需包含时区）"),
-      {
-        target: { value: "2099-10-12T08:30:00Z" },
-      },
-    );
-    fireEvent.click(
-      screen.getByRole("radio", { name: /工作区写入隔离.*linux-bwrap/u }),
-    );
-    fireEvent.change(
-      screen.getByLabelText("Restricted 网络目的地（每行一个 HTTPS origin）"),
-      { target: { value: "https://a.example" } },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "明确提交此策略" }));
-    await waitFor(() => expect(onStaleReceipt).toHaveBeenCalledTimes(1));
-    expect(
-      fetchMock.mock.calls.filter(([url]) => url === "/commands"),
-    ).toHaveLength(1);
-    expect(screen.getByRole("status").textContent).toContain("正在重新读取");
-  });
+  it.each(["ActionRevision", "ExecutableApprovalRevision"] as const)(
+    "maps %s stale receipts to the generic refetch state without auto-retry",
+    async (field) => {
+      const onStaleReceipt = vi.fn();
+      const fetchMock = stubFetch(() =>
+        Promise.resolve(
+          terminalRejected("StaleSandboxPolicyInputs", { field }),
+        ),
+      );
+      render(
+        <DecideSandboxPolicyForm {...props} onStaleReceipt={onStaleReceipt} />,
+      );
+      fireEvent.change(
+        screen.getByLabelText("策略过期时间（ISO 8601，需包含时区）"),
+        {
+          target: { value: "2099-10-12T08:30:00Z" },
+        },
+      );
+      fireEvent.click(
+        screen.getByRole("radio", { name: /工作区写入隔离.*linux-bwrap/u }),
+      );
+      fireEvent.change(
+        screen.getByLabelText("Restricted 网络目的地（每行一个 HTTPS origin）"),
+        { target: { value: "https://a.example" } },
+      );
+      fireEvent.click(screen.getByRole("button", { name: "明确提交此策略" }));
+      await waitFor(() => expect(onStaleReceipt).toHaveBeenCalledTimes(1));
+      expect(
+        fetchMock.mock.calls.filter(([url]) => url === "/commands"),
+      ).toHaveLength(1);
+      expect(screen.getByRole("status").textContent).toContain("正在重新读取");
+      expect(screen.getByRole("status").textContent).not.toContain(field);
+    },
+  );
 });

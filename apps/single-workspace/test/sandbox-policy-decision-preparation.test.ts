@@ -444,6 +444,10 @@ const fixture = (
               }),
         ),
     } as never,
+    requirements: {
+      findPendingByExecution: () => Effect.succeed(Option.none()),
+      comparePreIntentSource: () => Effect.succeed(undefined),
+    } as never,
     ownership: {
       listActiveByWorkspace: () => Effect.succeed(state.claims),
     } as never,
