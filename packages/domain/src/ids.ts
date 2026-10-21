@@ -75,9 +75,42 @@ export const EvidenceId = makeIdSchema(ID_PREFIXES.EvidenceId, "EvidenceId");
 export const MemoryId = makeIdSchema(ID_PREFIXES.MemoryId, "MemoryId");
 export const CommandId = makeIdSchema(ID_PREFIXES.CommandId, "CommandId");
 export const EventId = makeIdSchema(ID_PREFIXES.EventId, "EventId");
-export const ProviderTurnId = makeIdSchema(
-  ID_PREFIXES.ProviderTurnId,
-  "ProviderTurnId",
+const PROVIDER_TURN_V2_RE =
+  /^ptn_(exe_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})_(0|[1-9][0-9]*)(?:_r([1-9][0-9]*)|_compact_(0|[1-9][0-9]*)|_native_compact_(0|[1-9][0-9]*)|_conversation_compact_(0|[1-9][0-9]*)|_conversation_native_compact_(0|[1-9][0-9]*)|_overflow_0)?$/iu;
+
+const isCanonicalSafeDecimal = (value: string | undefined): boolean => {
+  if (value === undefined) return true;
+  const parsed = Number(value);
+  return (
+    Number.isSafeInteger(parsed) && parsed >= 0 && String(parsed) === value
+  );
+};
+
+const isProviderTurnId = (value: string): value is string => {
+  if (
+    /^ptn_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      value,
+    )
+  ) {
+    return true;
+  }
+  const match = PROVIDER_TURN_V2_RE.exec(value);
+  return (
+    match !== null &&
+    isCanonicalSafeDecimal(match[2]) &&
+    isCanonicalSafeDecimal(match[3]) &&
+    isCanonicalSafeDecimal(match[4]) &&
+    isCanonicalSafeDecimal(match[5]) &&
+    isCanonicalSafeDecimal(match[6]) &&
+    isCanonicalSafeDecimal(match[7])
+  );
+};
+
+export const ProviderTurnId = Schema.String.pipe(
+  Schema.refine(isProviderTurnId, {
+    message: "expected a closed ProviderTurnId V2 value or UUIDv7 replay value",
+  }),
+  Schema.brand("ProviderTurnId"),
 );
 export const ToolInvocationId = makeIdSchema(
   ID_PREFIXES.ToolInvocationId,
@@ -147,6 +180,100 @@ export type FormationProposalId = Schema.Schema.Type<
   typeof FormationProposalId
 >;
 export type PluginId = Schema.Schema.Type<typeof PluginId>;
+
+const providerTurnIdFromV2Parts = (
+  executionId: ExecutionId,
+  stepNo: number,
+  suffix = "",
+): ProviderTurnId => {
+  const decodedExecutionId = parse(ExecutionId)(executionId);
+  if (!Number.isSafeInteger(stepNo) || stepNo < 0) {
+    throw new RangeError(
+      "ProviderTurnId stepNo must be a non-negative safe integer",
+    );
+  }
+  return parse(ProviderTurnId)(`ptn_${decodedExecutionId}_${stepNo}${suffix}`);
+};
+
+const safePositiveOrdinal = (value: number, name: string): number => {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`${name} must be a positive safe integer`);
+  }
+  return value;
+};
+
+const safeNonNegativeOrdinal = (value: number, name: string): number => {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative safe integer`);
+  }
+  return value;
+};
+
+export const providerTurnInferenceId = (
+  executionId: ExecutionId,
+  stepNo: number,
+): ProviderTurnId => providerTurnIdFromV2Parts(executionId, stepNo);
+
+export const providerTurnRepairInferenceId = (
+  executionId: ExecutionId,
+  stepNo: number,
+  repairAttempt: number,
+): ProviderTurnId =>
+  providerTurnIdFromV2Parts(
+    executionId,
+    stepNo,
+    `_r${safePositiveOrdinal(repairAttempt, "repairAttempt")}`,
+  );
+
+export const providerTurnSummaryCompactionId = (
+  executionId: ExecutionId,
+  stepNo: number,
+  contextEpoch: number,
+): ProviderTurnId =>
+  providerTurnIdFromV2Parts(
+    executionId,
+    stepNo,
+    `_compact_${safeNonNegativeOrdinal(contextEpoch, "contextEpoch")}`,
+  );
+
+export const providerTurnNativeCompactionId = (
+  executionId: ExecutionId,
+  stepNo: number,
+  contextEpoch: number,
+): ProviderTurnId =>
+  providerTurnIdFromV2Parts(
+    executionId,
+    stepNo,
+    `_native_compact_${safeNonNegativeOrdinal(contextEpoch, "contextEpoch")}`,
+  );
+
+export const providerTurnConversationSummaryCompactionId = (
+  executionId: ExecutionId,
+  stepNo: number,
+  contextEpoch: number,
+): ProviderTurnId =>
+  providerTurnIdFromV2Parts(
+    executionId,
+    stepNo,
+    `_conversation_compact_${safeNonNegativeOrdinal(contextEpoch, "contextEpoch")}`,
+  );
+
+export const providerTurnConversationNativeCompactionId = (
+  executionId: ExecutionId,
+  stepNo: number,
+  contextEpoch: number,
+): ProviderTurnId =>
+  providerTurnIdFromV2Parts(
+    executionId,
+    stepNo,
+    `_conversation_native_compact_${safeNonNegativeOrdinal(contextEpoch, "contextEpoch")}`,
+  );
+
+export const providerTurnOverflowReplacementId = (
+  executionId: ExecutionId,
+  stepNo: number,
+): ProviderTurnId =>
+  providerTurnIdFromV2Parts(executionId, stepNo, "_overflow_0");
 
 export const PREFIX_TO_ID: Record<string, IdTypeName> = Object.fromEntries(
   Object.entries(ID_PREFIXES).map(([name, prefix]) => [

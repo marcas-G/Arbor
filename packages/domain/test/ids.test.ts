@@ -4,15 +4,34 @@ import {
   generate,
   ID_PREFIXES,
   ID_SCHEMAS,
+  ExecutionId,
   PermissionGrantId,
   PREFIX_TO_ID,
+  ProviderTurnId,
   ProjectId,
   parse,
+  providerTurnConversationNativeCompactionId,
+  providerTurnConversationSummaryCompactionId,
+  providerTurnInferenceId,
+  providerTurnNativeCompactionId,
+  providerTurnOverflowReplacementId,
+  providerTurnRepairInferenceId,
+  providerTurnSummaryCompactionId,
   WorkId,
   WorkspaceId,
 } from "../src/index.js";
 
 const UUID_V7_SAMPLE = "018f2b3c-4d5e-7abc-8def-0123456789ab";
+const EXECUTION_ID = parse(ExecutionId)(`exe_${UUID_V7_SAMPLE}`);
+const PROVIDER_TURN_V2_FAMILIES = [
+  `ptn_${EXECUTION_ID}_0`,
+  `ptn_${EXECUTION_ID}_0_r1`,
+  `ptn_${EXECUTION_ID}_0_compact_0`,
+  `ptn_${EXECUTION_ID}_0_native_compact_0`,
+  `ptn_${EXECUTION_ID}_0_conversation_compact_0`,
+  `ptn_${EXECUTION_ID}_0_conversation_native_compact_0`,
+  `ptn_${EXECUTION_ID}_0_overflow_0`,
+];
 
 const EXPECTED_IDS = [
   "ProjectId",
@@ -119,5 +138,90 @@ describe("typed ids", () => {
     void wrongWorkspace;
 
     void PermissionGrantId;
+  });
+});
+
+describe("ProviderTurnId V2 closed codec", () => {
+  it("decodes all seven deterministic families and preserves exact spelling", () => {
+    expect(
+      PROVIDER_TURN_V2_FAMILIES.map((value) => parse(ProviderTurnId)(value)),
+    ).toEqual(PROVIDER_TURN_V2_FAMILIES);
+    const historical = "ptn_018f2b3c-4d5e-7abc-8def-0123456789ab";
+    expect(parse(ProviderTurnId)(historical)).toBe(historical);
+  });
+
+  it("constructs only the frozen V2 family strings", () => {
+    expect(providerTurnInferenceId(EXECUTION_ID, 0)).toBe(
+      PROVIDER_TURN_V2_FAMILIES[0],
+    );
+    expect(providerTurnRepairInferenceId(EXECUTION_ID, 0, 1)).toBe(
+      PROVIDER_TURN_V2_FAMILIES[1],
+    );
+    expect(providerTurnSummaryCompactionId(EXECUTION_ID, 0, 0)).toBe(
+      PROVIDER_TURN_V2_FAMILIES[2],
+    );
+    expect(providerTurnNativeCompactionId(EXECUTION_ID, 0, 0)).toBe(
+      PROVIDER_TURN_V2_FAMILIES[3],
+    );
+    expect(
+      providerTurnConversationSummaryCompactionId(EXECUTION_ID, 0, 0),
+    ).toBe(PROVIDER_TURN_V2_FAMILIES[4]);
+    expect(providerTurnConversationNativeCompactionId(EXECUTION_ID, 0, 0)).toBe(
+      PROVIDER_TURN_V2_FAMILIES[5],
+    );
+    expect(providerTurnOverflowReplacementId(EXECUTION_ID, 0)).toBe(
+      PROVIDER_TURN_V2_FAMILIES[6],
+    );
+  });
+
+  it("accepts safe epoch boundaries and rejects malformed or ambiguous forms", () => {
+    for (const family of [
+      "compact",
+      "native_compact",
+      "conversation_compact",
+      "conversation_native_compact",
+    ]) {
+      expect(() =>
+        parse(ProviderTurnId)(
+          `ptn_${EXECUTION_ID}_0_${family}_${Number.MAX_SAFE_INTEGER}`,
+        ),
+      ).not.toThrow();
+      for (const epoch of ["-1", "00", String(Number.MAX_SAFE_INTEGER + 1)]) {
+        expect(() =>
+          parse(ProviderTurnId)(`ptn_${EXECUTION_ID}_0_${family}_${epoch}`),
+        ).toThrow();
+      }
+    }
+
+    for (const value of [
+      `ptn_${EXECUTION_ID}_00`,
+      `ptn_${EXECUTION_ID}_0_r0`,
+      `ptn_${EXECUTION_ID}_0_r01`,
+      `ptn_${EXECUTION_ID}_0_unknown_1`,
+      `ptn_${EXECUTION_ID}_0_overflow_1`,
+      `ptn_${EXECUTION_ID}_0_compact_1_native_compact_1`,
+      `ptn_${EXECUTION_ID}_0_conversation_native_compact_01`,
+      "ptn_exe_not-an-execution_0",
+      "ptn_exe_018f2b3c-4d5e-4abc-8def-0123456789ab_0",
+      "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789ab_9007199254740992",
+      "ptn_forged",
+      "ptn_018f2b3c-4d5e-4abc-8def-0123456789ab",
+    ]) {
+      expect(() => parse(ProviderTurnId)(value), value).toThrow();
+    }
+  });
+
+  it("rejects invalid constructor ordinals and execution identities", () => {
+    for (const ordinal of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => providerTurnInferenceId(EXECUTION_ID, ordinal)).toThrow();
+    }
+    for (const attempt of [0, -1, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() =>
+        providerTurnRepairInferenceId(EXECUTION_ID, 0, attempt),
+      ).toThrow();
+    }
+    expect(() =>
+      providerTurnInferenceId("exe_bad" as ExecutionId, 0),
+    ).toThrow();
   });
 });
