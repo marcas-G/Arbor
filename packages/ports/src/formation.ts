@@ -128,6 +128,19 @@ export interface InboxProjectionStoreService {
     InboxProjectionStoreError,
     TransactionScope
   >;
+  /** P10 F18 exact-row read that includes consumed state without exposing it
+   * through the ordinary Inbox projection. */
+  readonly findStoredByKey?: (
+    workspaceId: WorkspaceId,
+    entryKey: string,
+  ) => Effect.Effect<
+    Option.Option<{
+      readonly entry: InboxEntry;
+      readonly consumedAt: string | null;
+    }>,
+    InboxProjectionStoreError,
+    TransactionScope
+  >;
   readonly markConsumed: (
     workspaceId: WorkspaceId,
     entryKey: string,

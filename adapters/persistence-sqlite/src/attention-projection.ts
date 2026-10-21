@@ -922,6 +922,72 @@ export const makeAttentionProjectionStoreLive = (
             );
             return rows.map(deliverReplayRowFromDb);
           }),
+        listVerificationSignalReconciliationFailures: (projectId) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const rows = yield* run(
+              sql.unsafe<{
+                readonly project_id: string;
+                readonly event_sequence: number;
+                readonly attention_fact_id: string;
+                readonly event_id: string | null;
+                readonly failure_code: string;
+                readonly target_workspace_id: string;
+                readonly root_workspace_id: string;
+                readonly first_detected_at: string;
+                readonly phase: string;
+              }>(
+                `SELECT fact.project_id, fact.event_sequence,
+                        fact.attention_fact_id, fact.event_id,
+                        fact.failure_code, fact.target_workspace_id,
+                        project.root_workspace_id, fact.first_detected_at,
+                        reconciliation.phase
+                   FROM verification_signal_reconciliation_attention_rows AS marker
+                   JOIN verification_signal_reconciliation_attention_facts AS fact
+                     ON fact.attention_fact_id = marker.attention_fact_id
+                    AND fact.project_id = marker.project_id
+                   JOIN projects AS project ON project.project_id = fact.project_id
+                   JOIN verification_signal_reconciliations AS reconciliation
+                     ON reconciliation.consumer_id = fact.consumer_id
+                    AND reconciliation.project_id = fact.project_id
+                    AND reconciliation.event_sequence = fact.event_sequence
+                  WHERE marker.project_id = ?
+                  ORDER BY fact.first_detected_at, fact.event_sequence`,
+                [projectId],
+              ),
+            );
+            const result: Array<
+              import("@arbor/ports").VerificationSignalReconciliationAttentionProjectionRow
+            > = [];
+            for (const row of rows) {
+              if (
+                row.target_workspace_id !== row.root_workspace_id ||
+                row.phase !== "Attention"
+              ) {
+                return yield* Effect.fail<AttentionProjectionStoreError>(
+                  persistenceCorruption(
+                    "AttentionProjectionStore",
+                    "f18-reconciliation-attention-binding",
+                    "P10 F18 marker does not resolve to an Attention fact targeted at the exact Project root",
+                  ),
+                );
+              }
+              result.push({
+                projectId: row.project_id as ProjectId,
+                dedupKey: `f18-verification-v2-reconciliation:${row.project_id}:${row.event_sequence}`,
+                source: "F18VerificationSignalReconciliation" as const,
+                severity: "ActionRequired" as const,
+                targetWorkspaceId: row.target_workspace_id as never,
+                summary:
+                  "A verified result delivery could not be reconciled; recovery is paused." as const,
+                failureCode: row.failure_code,
+                occurredAt: row.first_detected_at,
+                sourceEventId: row.event_id as never,
+                sourceFactId: row.attention_fact_id,
+              });
+            }
+            return result;
+          }),
         listAssignWorkBindingFailures: (projectId) =>
           Effect.map(
             run(
@@ -1804,6 +1870,95 @@ export const makeAttentionProjectionStoreLive = (
                   [projectId],
                 ),
               );
+            }
+            const f18MarkerTable = yield* run(
+              sql.unsafe<{ readonly name: string }>(
+                `SELECT name FROM sqlite_master WHERE type='table'
+                  AND name='verification_signal_reconciliation_attention_rows'`,
+              ),
+            );
+            if (f18MarkerTable.length > 0) {
+              yield* run(
+                sql.unsafe(
+                  `DELETE FROM verification_signal_reconciliation_attention_rows
+                    WHERE project_id = ?`,
+                  [projectId],
+                ),
+              );
+              const facts = yield* run(
+                sql.unsafe<{
+                  readonly attention_fact_id: string;
+                  readonly project_id: string;
+                  readonly target_workspace_id: string;
+                  readonly root_workspace_id: string;
+                  readonly phase: string;
+                  readonly first_detected_at: string;
+                }>(
+                  `SELECT fact.attention_fact_id, fact.project_id,
+                          fact.target_workspace_id, project.root_workspace_id,
+                          reconciliation.phase, fact.first_detected_at
+                     FROM verification_signal_reconciliation_attention_facts AS fact
+                     JOIN projects AS project ON project.project_id = fact.project_id
+                     JOIN verification_signal_reconciliations AS reconciliation
+                       ON reconciliation.consumer_id = fact.consumer_id
+                      AND reconciliation.project_id = fact.project_id
+                      AND reconciliation.event_sequence = fact.event_sequence
+                    WHERE fact.project_id = ?
+                    ORDER BY fact.first_detected_at, fact.event_sequence`,
+                  [projectId],
+                ),
+              );
+              for (const fact of facts) {
+                if (
+                  fact.target_workspace_id !== fact.root_workspace_id ||
+                  fact.phase !== "Attention"
+                ) {
+                  return yield* Effect.fail<AttentionProjectionStoreError>(
+                    persistenceCorruption(
+                      "AttentionProjectionStore",
+                      "f18-attention-rebuild-binding",
+                      "F18 Attention fact does not bind to its reconciliation and exact Project root",
+                    ),
+                  );
+                }
+                yield* run(
+                  sql.unsafe(
+                    `INSERT INTO verification_signal_reconciliation_attention_rows
+                      (attention_fact_id, project_id) VALUES (?,?)
+                      ON CONFLICT(attention_fact_id) DO NOTHING`,
+                    [fact.attention_fact_id, fact.project_id],
+                  ),
+                );
+                const marker = yield* run(
+                  sql.unsafe<{ readonly project_id: string }>(
+                    `SELECT project_id FROM verification_signal_reconciliation_attention_rows
+                      WHERE attention_fact_id = ?`,
+                    [fact.attention_fact_id],
+                  ),
+                );
+                if (marker[0]?.project_id !== fact.project_id) {
+                  return yield* Effect.fail<AttentionProjectionStoreError>(
+                    persistenceCorruption(
+                      "AttentionProjectionStore",
+                      "f18-attention-rebuild-marker",
+                      "F18 marker identity conflicts with its immutable fact",
+                    ),
+                  );
+                }
+                yield* run(
+                  sql.unsafe(
+                    `UPDATE verification_signal_reconciliation_attention_queue
+                        SET state = 'Projected', lease_owner = NULL,
+                            lease_expires_at = NULL, projected_at = COALESCE(projected_at, ?)
+                      WHERE project_id = ? AND attention_fact_id = ?`,
+                    [
+                      fact.first_detected_at,
+                      fact.project_id,
+                      fact.attention_fact_id,
+                    ],
+                  ),
+                );
+              }
             }
           }),
       });

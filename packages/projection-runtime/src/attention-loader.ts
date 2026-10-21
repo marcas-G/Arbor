@@ -22,6 +22,7 @@ import type {
   SubmittedDecisionBindingAttentionFact,
   SubmittedDecisionBindingAttentionProjectionRow,
   ToolObservationReplayAttentionProjectionRow,
+  VerificationSignalReconciliationAttentionProjectionRow,
   WorkspaceResourceActivationAttentionProjectionRow,
 } from "@arbor/ports";
 import {
@@ -226,6 +227,12 @@ export interface AttentionReadDeps {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<ToolObservationReplayAttentionProjectionRow>,
+    ProjectionReadError
+  >;
+  readonly listProjectedVerificationSignalReconciliationFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<VerificationSignalReconciliationAttentionProjectionRow>,
     ProjectionReadError
   >;
   readonly listProjectedSandboxProviderUnavailableFailures?: (
@@ -1303,6 +1310,28 @@ export const deriveProjectAttention = (
           dedupKey: row.dedupKey,
           summary: row.summary,
           occurredAt: row.occurredAt,
+        })),
+      ];
+    }
+    if (
+      deps.listProjectedVerificationSignalReconciliationFailures !== undefined
+    ) {
+      const reconciliation =
+        yield* deps.listProjectedVerificationSignalReconciliationFailures(
+          projectId,
+        );
+      rows = [
+        ...rows.filter(
+          (row) => row.source !== "F18VerificationSignalReconciliation",
+        ),
+        ...reconciliation.map((row) => ({
+          source: row.source,
+          severity: row.severity,
+          targetWorkspaceId: row.targetWorkspaceId,
+          dedupKey: row.dedupKey,
+          summary: row.summary,
+          occurredAt: row.occurredAt,
+          failureCode: row.failureCode,
         })),
       ];
     }

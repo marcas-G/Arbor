@@ -59,6 +59,7 @@ export * from "./tool-observation-evidence.js";
 export * from "./tool-observation-replay-attention-facts.js";
 export * from "./tool-reconciliation-store.js";
 export * from "./transaction.js";
+export * from "./verification-signal-reconciliation-store.js";
 export * from "./verification-store.js";
 export * from "./work-blocker.js";
 export * from "./work-plan.js";

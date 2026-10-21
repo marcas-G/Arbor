@@ -28,6 +28,7 @@ export type AttentionSource =
   | "SandboxProviderUnavailable"
   | "SandboxRecoveryBindingFailure"
   | "SandboxPolicyDecisionRequired"
+  | "F18VerificationSignalReconciliation"
   | "WorkEpisodeBlocked"
   | "VerifierOrphan"
   | "WaitingOnVacantProducer";

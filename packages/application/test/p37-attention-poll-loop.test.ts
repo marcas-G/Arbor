@@ -156,6 +156,49 @@ const makeDeps = (
 };
 
 describe("P37 P10 Attention poll coordinator", () => {
+  it("projects the retained F18 queue independently of the journal offset", async () => {
+    const trace: Array<string> = [];
+    const claim = {
+      projectId,
+      attentionFactId: "f18-fact",
+      leaseOwner: policy.leaseOwner,
+      leaseGeneration: 2,
+      leaseExpiresAt: "2026-10-11T00:00:31.000Z",
+    };
+    const result = await Effect.runPromise(
+      runAttentionPollOnce(
+        "p10-rebuild:attention",
+        policy,
+        makeDeps(trace, {
+          journal: {
+            readAfterRaw: () => {
+              trace.push("read-raw");
+              return Effect.succeed([]);
+            },
+            decodeRaw: () => Effect.die("empty journal has no events"),
+          },
+          verificationReconciliationQueue: {
+            claimAttentionQueue: () => {
+              trace.push("claim-f18-queue");
+              return Effect.succeed([claim]);
+            },
+            projectAttentionClaim: () => {
+              trace.push("project-f18-marker-and-queue");
+              return Effect.succeed(true);
+            },
+          },
+        }),
+      ),
+    );
+    expect(result.lastSequence).toBe(0);
+    expect(trace).toContain("claim-f18-queue");
+    expect(trace).toContain("project-f18-marker-and-queue");
+    expect(trace).not.toContain("advance:1");
+    expect(trace.indexOf("claim-f18-queue")).toBeLessThan(
+      trace.indexOf("read-raw"),
+    );
+  });
+
   it("uses raw event identity first and commits projection, queue ACK, offset and claim together", async () => {
     const trace: Array<string> = [];
     await Effect.runPromise(

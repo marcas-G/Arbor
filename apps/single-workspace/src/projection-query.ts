@@ -599,6 +599,19 @@ const projectionQueryService = (
         inTx(attentionProjection.listAssignWorkBindingFailures(projectId)),
       listProjectedDeliverReplayFailures: (projectId) =>
         inTx(attentionProjection.listDeliverReplayFailures(projectId)),
+      ...(attentionProjection.listVerificationSignalReconciliationFailures ===
+      undefined
+        ? {}
+        : {
+            listProjectedVerificationSignalReconciliationFailures: (
+              projectId,
+            ) =>
+              inTx(
+                attentionProjection.listVerificationSignalReconciliationFailures?.(
+                  projectId,
+                ) ?? Effect.succeed([]),
+              ),
+          }),
       ...(attentionProjection.listSubmittedDecisionBindingFailures === undefined
         ? {}
         : {

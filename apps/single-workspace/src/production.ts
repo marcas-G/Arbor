@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +22,7 @@ import {
   runConversationResponseSettlementSweep,
   runConversationResponseTrigger,
   runVerificationConsumer,
+  runVerificationSignalReconciliationSweep,
   type SnapshotPruningResult,
   type SnapshotRetentionError,
   type SnapshotRetentionPlan,
@@ -57,6 +59,7 @@ import {
   BlobStorePort,
   Clock,
   type CommandStore,
+  CommandStore as CommandStoreService,
   ConsumerDeadLetterStore,
   ConsumerOffsetStore,
   ControlApprovalStore,
@@ -70,7 +73,7 @@ import {
   ExecutableApprovalStore,
   type ExecutionDriverPort,
   ExecutionRepository,
-  type ExecutionScheduler,
+  ExecutionScheduler,
   FormationFulfillmentStore,
   FormationProposalStore,
   IdGenerator,
@@ -96,10 +99,12 @@ import {
   ToolObservationReplayAttentionFactStore,
   TransactionPort,
   VerificationRepository,
+  VerificationSignalReconciliationStore,
   type WorkerDispatchPort,
   WorkRepository,
   WorkspaceRepository,
   WorkspaceResourceActivationStore,
+  WorkWaitStore,
 } from "@arbor/ports";
 import { reconcileProjectActivationAttention } from "@arbor/projection-runtime";
 import { Context, Effect, Layer, Option } from "effect";
@@ -323,6 +328,7 @@ export type ProductionDaemonServices =
   | SqlClient
   | Clock
   | CommandGateway
+  | CommandStoreService
   | TransactionPort
   | DomainEventJournal
   | ConsumerOffsetStore
@@ -349,6 +355,7 @@ export type ProductionDaemonServices =
   | DependencyRepository
   | DeliverableRepository
   | WorkRepository
+  | WorkWaitStore
   | WorkspaceRepository
   | WorkspaceResourceActivationStore
   | FormationProposalStore
@@ -366,7 +373,9 @@ export type ProductionDaemonServices =
   | ControlApprovalStore
   | ConversationAttemptStore
   | ProviderDeploymentBreaker
-  | ProjectRepository;
+  | ProjectRepository
+  | RetryVerificationOriginRepository
+  | VerificationSignalReconciliationStore;
 
 /** The production daemon assembly. `start` = migrations -> T1 startup recovery
  * -> mark readiness; `recoveryTick` = T2/T3 sweep; `pollConsumers` = one
@@ -378,6 +387,7 @@ export const ProductionDaemonServiceLive = (
     ProductionDaemonService,
     Effect.gen(function* () {
       const tx = yield* TransactionPort;
+      const sql = yield* SqlClient;
       const clock = yield* Clock;
       const executableApprovals = yield* ExecutableApprovalStore;
       const ids = yield* IdGenerator;
@@ -390,6 +400,9 @@ export const ProductionDaemonServiceLive = (
       const activationIntents = yield* WorkspaceResourceActivationStore;
       const ownershipWrite = yield* OwnershipWriteService;
       const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
+      const verificationSignalReconciliation = yield* Effect.serviceOption(
+        VerificationSignalReconciliationStore,
+      );
       const sandboxUnavailableQueue = yield* Effect.serviceOption(
         SandboxProviderUnavailableAttentionQueue,
       );
@@ -411,12 +424,50 @@ export const ProductionDaemonServiceLive = (
       const workspaces = yield* WorkspaceRepository;
       const executions = yield* ExecutionRepository;
       const workflowSignals = yield* WorkflowSignalConsumer;
+      const commandStore = yield* CommandStoreService;
+      const retryOrigins = yield* RetryVerificationOriginRepository;
+      const waitStore = yield* WorkWaitStore;
+      const scheduler = yield* ExecutionScheduler;
+      const projectRepository = yield* ProjectRepository;
       const gateway = yield* CommandGateway;
       const t1 = yield* T1RecoveryState;
       const resolver = yield* EnvironmentResolverPort;
       const changes = yield* RecordEnvironmentChange;
       const revisions = yield* EnvironmentRevisionStore;
       const blobs = yield* BlobStorePort;
+
+      const f18ReconciliationLeaseOwner = `f18-reconciliation:${randomUUID()}`;
+      const reconcileVerificationSignals = Effect.gen(function* () {
+        if (Option.isNone(verificationSignalReconciliation)) return;
+        const configuredProjects = yield* sql.unsafe<{
+          readonly project_id: string;
+        }>("SELECT project_id FROM projects ORDER BY project_id");
+        for (const project of configuredProjects) {
+          yield* runVerificationSignalReconciliationSweep(
+            project.project_id as ProjectId,
+            {
+              tx,
+              store: verificationSignalReconciliation.value,
+              journal,
+              commands: commandStore,
+              retryOrigins,
+              verifications,
+              works,
+              workspaces,
+              projects: projectRepository,
+              waits: waitStore,
+              scheduler,
+              inbox,
+              clock,
+            },
+            {
+              leaseOwner: f18ReconciliationLeaseOwner,
+              leaseTtlMs: config.attentionPollPolicy?.leaseTtlMs ?? 30_000,
+              batchSize: config.batchSize ?? 50,
+            },
+          );
+        }
+      });
 
       const expireExecutableApprovals = Effect.gen(function* () {
         const now = yield* clock.now();
@@ -764,6 +815,12 @@ export const ProductionDaemonServiceLive = (
             pollStore: attentionPoll,
             recoveryFacts: recoveryAttentionFacts,
             attentionRows: attentionProjection,
+            ...(Option.isNone(verificationSignalReconciliation)
+              ? {}
+              : {
+                  verificationReconciliationQueue:
+                    verificationSignalReconciliation.value,
+                }),
             ...(Option.isNone(sandboxUnavailableQueue)
               ? {}
               : { sandboxUnavailableQueue: sandboxUnavailableQueue.value }),
@@ -871,6 +928,7 @@ export const ProductionDaemonServiceLive = (
       const recovery: RecoveryDaemon<ProductionDaemonServices> = {
         startup: Effect.gen(function* () {
           yield* expireExecutableApprovals;
+          yield* reconcileVerificationSignals;
           yield* Effect.sync(() => {
             try {
               config.startupDiagnosticProbe?.("daemon.startup-recovery.before");
@@ -893,12 +951,14 @@ export const ProductionDaemonServiceLive = (
           yield* t1.markComplete;
         }),
         sweep: Effect.asVoid(
-          Effect.flatMap(expireExecutableApprovals, () =>
-            sweepRecovery(
+          Effect.gen(function* () {
+            yield* expireExecutableApprovals;
+            yield* reconcileVerificationSignals;
+            yield* sweepRecovery(
               config.principal,
               config.submittedDecisionRecoveryQualificationProbe,
-            ),
-          ),
+            );
+          }),
         ),
       };
 
