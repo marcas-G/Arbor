@@ -2,8 +2,8 @@
 
 Date: 2026-10-21
 
-Status: **IMPLEMENTED; targeted qualification passed. Independent code review
-is pending.**
+Status: **IMPLEMENTED; targeted qualification passed. Independent review
+passed with B0=0 / B1=0 / B2=0.**
 
 ## Authorization and fixed sources
 
@@ -56,6 +56,8 @@ and proves recovery admits one effect.
 - `a555b753` — exact ProviderTurnId decoding for Session source references.
 - `fb6a6c65` — public P38 pre-intent CandidateRead/P1/approval qualification.
 - `b9fa0d0d` — import organization after the complete Biome scan.
+- `5a58edd2` — canonical lowercase tokens and expanded CandidateRead read-only
+  oracle.
 
 ## Verification
 
@@ -85,10 +87,15 @@ and proves recovery admits one effect.
 - `pnpm typecheck`: **PASS**.
 - `pnpm architecture`: **PASS**, 37 files / 194 tests.
 - `git diff --check`: **PASS**.
+- Independent implementation review: **B0=0 / B1=0 / B2=0**. The reviewer
+  confirmed lowercase fixed tokens with existing UUID hex case compatibility,
+  and the P38 CandidateRead oracle's command/event/decision/invocation/recovery/
+  provider-call equality checks around the public read.
 
 The full `pnpm check` sequence and full `pnpm test:functional` release batch
-were not run. The coordinating root requested integration/review before those
-broader gates; individual lint, typecheck and architecture gates were run.
+were not run. The coordinating root requested integration into the unified
+branch before those broader gates; individual lint, typecheck and architecture
+gates were run on this implementation branch.
 
 ## Scope and limits
 
@@ -98,4 +105,10 @@ terminal/no-later-action change. UUIDv7 values remain read/replay-only. This
 result does not close unrelated AH7/AH10/AH14 gaps or make a full release
 readiness claim.
 
-Independent implementation review: pending.
+The initial review found two P2 evidence/contract gaps: uppercase fixed codec
+tokens were accepted because the regex flag was case-insensitive, and the
+CandidateRead oracle did not compare provider-call or global command/event
+counts. Commit `5a58edd2` closes both: only UUID hex remains case-insensitive,
+and the read oracle compares command, event, decision, invocation, recovery,
+provider-call and P4 snapshot values around the public read. The reviewer
+inspected that commit read-only and confirmed no remaining issues.
