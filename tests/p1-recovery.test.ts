@@ -296,15 +296,33 @@ describe("P1-014 recovery matrix — consumer / projection", () => {
       const tx = yield* TransactionPort;
       const journal = yield* DomainEventJournal;
       const offsets = yield* ConsumerOffsetStore;
-      yield* tx.transact(
-        journal.append([
-          draft("ProjectCreated", 1),
-          draft("WorkspaceCreated", 2),
-        ]),
+      yield* tx.transact(journal.append([draft("ProjectCreated", 1)]));
+      const rejectedUnsupportedWrite = yield* Effect.result(
+        tx.transact(journal.append([draft("WorkspaceCreated", 2)])),
+      );
+      expect(rejectedUnsupportedWrite._tag).toBe("Failure");
+      const sql = yield* SqlClient;
+      // Reader poison qualification injects an unsupported historical row
+      // below the writer boundary; production writers must reject the pair.
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql.unsafe(
+            `INSERT INTO domain_events (
+              event_id,project_id,sequence,event_type,event_version,occurred_at,
+              aggregate_ref,actor,caused_by_command_id,caused_by_event_id,
+              correlation_ref,payload_json
+            ) VALUES ('evt_018f2b3c-4d5e-7abc-8def-0123456789f1',?,2,
+              'WorkspaceCreated',2,'t',?,'user:test',NULL,NULL,NULL,'{}')`,
+            [projectA, projectA],
+          );
+          yield* sql.unsafe(
+            "UPDATE project_event_sequences SET last_sequence = 2 WHERE project_id = ?",
+            [projectA],
+          );
+        }),
       );
       const batch = yield* runConsumerBatch(consumerId, projectA, 10);
       const offset = yield* tx.transact(offsets.read(consumerId, projectA));
-      const sql = yield* SqlClient;
       const dead = yield* sql.unsafe<{ sequence: number }>(
         "SELECT sequence FROM consumer_dead_letters WHERE consumer_id = ?",
         [consumerId],

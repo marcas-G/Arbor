@@ -705,7 +705,13 @@ const BOUNDARY = JSON.stringify({
 });
 const MISSION = JSON.stringify({
   goal: "g",
-  criteria: [],
+  criteria: [
+    {
+      criterionId: "p10-fixture-criterion",
+      requirement: "fixture criterion passes",
+      required: true,
+    },
+  ],
   riskRequirements: [],
 });
 
