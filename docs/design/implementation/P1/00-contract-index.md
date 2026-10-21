@@ -116,6 +116,14 @@ also covers trusted-time expiry. P1 wire, semantic fingerprint, handler
 schema 2, receipt-first replay and SQLite schema remain unchanged. See
 P1/01/03/04/06 and the accepted bootstrap manifest.
 
+The internal P4 `SandboxPolicyPreIntentRequirementV1` source tuple is compared
+structurally field-by-field and is not serialized, hashed, persisted or added
+to the command fingerprint. P1 resolves the pinned action through existing
+P11 rules outside the transaction and rechecks only the existing
+Workspace/ResourceBoundary/selected-profile handle and P5 source CAS inside;
+no target digest is added. See P4/06, P1/03 and the source-proof correction
+decision.
+
 ## Accepted candidate profile binding digest V6
 
 P1/01 keeps the existing profile-specific
