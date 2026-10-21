@@ -749,6 +749,192 @@ describe("P10-006 Verification view (01 §1 ⑤)", () => {
       makeP10App(),
     );
   });
+
+  it("renders an Available snapshot's exact ordered criterion verdicts", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        const evidenceA = "evd_00000000-0000-7000-8000-0000000000d2";
+        const evidenceB = "evd_00000000-0000-7000-8000-0000000000d3";
+        const requiredCriterion = {
+          criterionId: "c-required",
+          requirement: "tests pass",
+          required: true,
+        };
+        const optionalCriterion = {
+          criterionId: "c-optional",
+          requirement: "style clean",
+          required: false,
+        };
+        const mission = [requiredCriterion, optionalCriterion];
+        yield* seedCanonical(
+          Effect.gen(function* () {
+            yield* insertVerificationRow({
+              verificationId: "ver_available",
+              workId: W_PEND,
+              targetWorkRevision: 1,
+              ownerWorkspaceId: p10Root,
+              executionIds: [],
+              criteria: mission,
+              state: "Concluded",
+              verdict: "Pass",
+              snapshotStatus: "Available",
+              criteriaResults: [
+                {
+                  ...requiredCriterion,
+                  verdict: "Pass",
+                  evidenceRefs: [evidenceA],
+                },
+                {
+                  ...optionalCriterion,
+                  verdict: "Fail",
+                  evidenceRefs: [evidenceB],
+                },
+              ],
+            });
+            yield* insertEvidenceRow({
+              evidenceId: evidenceA,
+              verificationId: "ver_available",
+              criterionId: "c-required",
+              kind: "Observation",
+              recordedByExecutionId: EXE_ROOT,
+              recordedAt: "t1",
+            });
+            yield* insertEvidenceRow({
+              evidenceId: evidenceB,
+              verificationId: "ver_available",
+              criterionId: "c-optional",
+              kind: "Observation",
+              recordedByExecutionId: EXE_ROOT,
+              recordedAt: "t2",
+            });
+          }),
+        );
+
+        const view = yield* deriveVerificationView(
+          W_PEND,
+          deps.verificationView,
+        );
+        expect(view.verificationId).toBe("ver_available");
+        expect(view.verdict).toBe("Pass");
+        expect(view.criteriaResults).toEqual([
+          {
+            criterionId: "c-required",
+            requirement: "tests pass",
+            required: true,
+            verdict: "Pass",
+          },
+          {
+            criterionId: "c-optional",
+            requirement: "style clean",
+            required: false,
+            verdict: "Fail",
+          },
+        ]);
+        expect(view.evidenceRefs).toEqual([evidenceA, evidenceB]);
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("renders NotApplicableOrphaned as an exact empty criterion list", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        yield* seedCanonical(
+          insertVerificationRow({
+            verificationId: "ver_orphaned",
+            workId: W_PEND,
+            targetWorkRevision: 1,
+            ownerWorkspaceId: p10Root,
+            executionIds: [],
+            criteria: [
+              {
+                criterionId: "c-orphan",
+                requirement: "owner review",
+                required: true,
+              },
+            ],
+            state: "Concluded",
+            verdict: "Unknown",
+            conclusionReason: "Orphaned",
+            snapshotStatus: "NotApplicableOrphaned",
+            criteriaResults: [],
+          }),
+        );
+        const view = yield* deriveVerificationView(
+          W_PEND,
+          deps.verificationView,
+        );
+        expect(view.verdict).toBe("Unknown");
+        expect(view.criteriaResults).toEqual([]);
+        expect(view.evidenceRefs).toEqual([]);
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("fails with typed ProjectionIntegrityFailure for corrupt Available evidence ownership", async () => {
+    await expect(
+      runP10(
+        Effect.gen(function* () {
+          yield* migrate;
+          yield* seedDetail;
+          const deps = yield* makeP10Deps();
+          const evidenceId = "evd_00000000-0000-7000-8000-0000000000d4";
+          const criterion = {
+            criterionId: "c1",
+            requirement: "tests pass",
+            required: true,
+          };
+          const mission = [criterion];
+          yield* seedCanonical(
+            Effect.gen(function* () {
+              yield* insertVerificationRow({
+                verificationId: "ver_corrupt_available",
+                workId: W_PEND,
+                targetWorkRevision: 1,
+                ownerWorkspaceId: p10Root,
+                executionIds: [],
+                criteria: mission,
+                state: "Concluded",
+                verdict: "Pass",
+                snapshotStatus: "Available",
+                criteriaResults: [
+                  {
+                    ...criterion,
+                    verdict: "Pass",
+                    evidenceRefs: [evidenceId],
+                  },
+                ],
+              });
+              yield* insertEvidenceRow({
+                evidenceId,
+                verificationId: "ver_corrupt_available",
+                criterionId: "some-other-criterion",
+                kind: "Observation",
+                recordedByExecutionId: EXE_ROOT,
+                recordedAt: "t1",
+              });
+            }),
+          );
+          return yield* deriveVerificationView(W_PEND, deps.verificationView);
+        }),
+        makeP10App(),
+      ),
+    ).rejects.toMatchObject({
+      _tag: "ProjectionIntegrityFailure",
+      code: "projection/unavailable",
+      safeDetails: {
+        view: "verification",
+        reasonCode: "AvailableCriterionSnapshotInvalid",
+      },
+    });
+  });
 });
 
 describe("P10-006 Dependency view (01 §1; projectId|workspaceId scoping)", () => {

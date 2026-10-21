@@ -14,7 +14,9 @@ import {
   makeAttentionProjectionStoreLive,
   makeRecoveryAttentionFactStoreLive,
   P8_MIGRATIONS,
+  P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
   runMigrations,
+  splitStatements,
   TransactionPortLive,
   VerificationRepositoryLive,
   WorkRepositoryLive,
@@ -946,6 +948,20 @@ export const insertVerificationRow = (input: {
   readonly executionIds: ReadonlyArray<string>;
   readonly state?: "Open" | "Concluded";
   readonly verdict?: "Pass" | "Fail" | "Unknown";
+  readonly conclusionReason?: "Orphaned" | null;
+  readonly summaryRef?: string | null;
+  readonly snapshotStatus?:
+    | "Pending"
+    | "Available"
+    | "NotApplicableOrphaned"
+    | "UnavailableLegacy";
+  readonly criteriaResults?: ReadonlyArray<{
+    readonly criterionId: string;
+    readonly requirement: string;
+    readonly required: boolean;
+    readonly verdict: "Pass" | "Fail" | "Unknown";
+    readonly evidenceRefs: ReadonlyArray<string>;
+  }> | null;
   readonly criteria?: ReadonlyArray<{
     readonly criterionId: string;
     readonly requirement: string;
@@ -959,8 +975,18 @@ export const insertVerificationRow = (input: {
       criteria: unknown[];
       riskRequirements: string[];
     };
+    const state = input.state ?? "Open";
+    const snapshotStatus =
+      input.snapshotStatus ??
+      (state === "Open" ? "Pending" : "UnavailableLegacy");
+    const summaryRef =
+      input.summaryRef ??
+      (snapshotStatus === "Available" ||
+      snapshotStatus === "NotApplicableOrphaned"
+        ? "sha256:p10-fixture-summary"
+        : null);
     yield* sql.unsafe(
-      "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, summary_ref, criteria_results, snapshot_status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         input.verificationId,
         p10Project,
@@ -976,9 +1002,14 @@ export const insertVerificationRow = (input: {
         null,
         null,
         JSON.stringify(input.executionIds),
-        input.state ?? "Open",
+        state,
         input.verdict ?? null,
-        null,
+        input.conclusionReason ?? null,
+        summaryRef,
+        input.criteriaResults === undefined || input.criteriaResults === null
+          ? null
+          : JSON.stringify(input.criteriaResults),
+        snapshotStatus,
         "t0",
         "t0",
       ],
@@ -1193,6 +1224,18 @@ export const insertProposalRow = (input: {
 export const migrate = Effect.gen(function* () {
   yield* runMigrations(P8_MIGRATIONS);
   const sql = yield* SqlClient;
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql.unsafe(
+        "ALTER TABLE verifications ADD COLUMN summary_ref TEXT",
+      );
+      for (const statement of splitStatements(
+        P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION.sql,
+      )) {
+        yield* sql.unsafe(statement);
+      }
+    }),
+  );
   const columns = yield* sql.unsafe<{ readonly name: string }>(
     "PRAGMA table_info(agent_execution_state)",
   );

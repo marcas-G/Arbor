@@ -32,6 +32,44 @@ const tools = (call: CapturedProviderCall): ReadonlySet<string> =>
       .filter((name): name is string => name !== undefined),
   );
 
+const waitForF18PublicStage = async <T>(
+  fixture: ProductionFixture,
+  projectId: string,
+  stage: string,
+  run: () => Promise<T>,
+): Promise<T> => {
+  try {
+    return await run();
+  } catch (error) {
+    const database = new DatabaseSync(fixture.databaseFile, { readOnly: true });
+    let facts: unknown;
+    try {
+      const reconciliations = database
+        .prepare(
+          `SELECT event_sequence, phase, lease_generation, failure_code
+             FROM verification_signal_reconciliations
+            WHERE project_id = ? ORDER BY event_sequence DESC LIMIT 3`,
+        )
+        .all(projectId);
+      const offset = database
+        .prepare(
+          `SELECT last_sequence FROM consumer_offsets
+            WHERE consumer_id = 'workflow-signals' AND project_id = ?`,
+        )
+        .get(projectId) as { last_sequence: number } | undefined;
+      facts = { reconciliations, offset: offset?.last_sequence ?? null };
+    } catch {
+      facts = { databaseFacts: "unavailable" };
+    } finally {
+      database.close();
+    }
+    throw new Error(
+      `F18 public wait failed at ${stage}; facts=${JSON.stringify(facts)}`,
+      { cause: error },
+    );
+  }
+};
+
 describe("release-functional long-lived responsibility", () => {
   it("F18 proposes, approves, runs and parent-accepts a child result", async () => {
     const marker = `F18-CHILD-${crypto.randomUUID().slice(0, 8)}`;
@@ -145,21 +183,27 @@ describe("release-functional long-lived responsibility", () => {
       project,
       `请为独立长期职责 ${marker} 提议一个子工作区，并附带首个工作。`,
     );
-    const governance = await waitForPublic(
+    const governance = await waitForF18PublicStage(
+      fixture,
+      project.projectId,
+      "governance-entry",
       () =>
-        client.view<{
-          unconsumed: Array<{
-            entryKey: string;
-            kind: string;
-            summary: string;
-          }>;
-        }>("inbox-view", { workspaceId: project.rootWorkspaceId }),
-      (value) =>
-        value.unconsumed.some(
-          (entry) =>
-            entry.kind === "Governance" &&
-            entry.summary.includes(marker) &&
-            /^gov:fpr_[^:]+:\d+$/u.test(entry.entryKey),
+        waitForPublic(
+          () =>
+            client.view<{
+              unconsumed: Array<{
+                entryKey: string;
+                kind: string;
+                summary: string;
+              }>;
+            }>("inbox-view", { workspaceId: project.rootWorkspaceId }),
+          (value) =>
+            value.unconsumed.some(
+              (entry) =>
+                entry.kind === "Governance" &&
+                entry.summary.includes(marker) &&
+                /^gov:fpr_[^:]+:\d+$/u.test(entry.entryKey),
+            ),
         ),
     );
     const entry = governance.unconsumed.find(
@@ -183,24 +227,30 @@ describe("release-functional long-lived responsibility", () => {
       outcome: { _tag: "Approve" },
     });
 
-    const childWithWork = await waitForPublic(
+    const childWithWork = await waitForF18PublicStage(
+      fixture,
+      project.projectId,
+      "child-work-created",
       () =>
-        client.view<{
-          nodes: Array<{
-            workspaceId: string;
-            parentWorkspaceId: string | null;
-            name: string;
-            currentWork?: { workId?: string; objective: string };
-          }>;
-        }>("responsibility-tree", { projectId: project.projectId }),
-      (tree) =>
-        tree.nodes.some(
-          (node) =>
-            node.parentWorkspaceId === project.rootWorkspaceId &&
-            node.name === `child-${marker}` &&
-            node.currentWork?.workId !== undefined,
+        waitForPublic(
+          () =>
+            client.view<{
+              nodes: Array<{
+                workspaceId: string;
+                parentWorkspaceId: string | null;
+                name: string;
+                currentWork?: { workId?: string; objective: string };
+              }>;
+            }>("responsibility-tree", { projectId: project.projectId }),
+          (tree) =>
+            tree.nodes.some(
+              (node) =>
+                node.parentWorkspaceId === project.rootWorkspaceId &&
+                node.name === `child-${marker}` &&
+                node.currentWork?.workId !== undefined,
+            ),
+          45_000,
         ),
-      45_000,
     );
     const child = childWithWork.nodes.find(
       (node) => node.parentWorkspaceId === project.rootWorkspaceId,
@@ -210,12 +260,35 @@ describe("release-functional long-lived responsibility", () => {
       throw new Error("child initial Work is not publicly visible");
     }
 
-    const verification = await waitForPublic(
-      () => client.view<{ verdict?: string }>("verification", { workId }),
-      (value) => value.verdict === "Pass",
-      30_000,
+    const verification = await waitForF18PublicStage(
+      fixture,
+      project.projectId,
+      "initial-verification-snapshot",
+      () =>
+        waitForPublic(
+          () =>
+            client.view<{
+              verdict?: string;
+              criteriaResults?: Array<{ criterionId: string; verdict: string }>;
+            }>("verification", { workId }),
+          (value) =>
+            value.verdict === "Pass" &&
+            value.criteriaResults?.some(
+              (result) =>
+                result.criterionId === "functional-criterion" &&
+                result.verdict === "Pass",
+            ) === true,
+          30_000,
+        ),
     );
     expect(verification.verdict).toBe("Pass");
+    expect(verification.criteriaResults).toHaveLength(1);
+    expect(verification.criteriaResults?.[0]).toMatchObject({
+      criterionId: "functional-criterion",
+      required: true,
+      verdict: "Pass",
+    });
+    expect(verification.criteriaResults?.[0]?.requirement).toContain(marker);
 
     await fixture.crash();
     const database = new DatabaseSync(fixture.databaseFile);
@@ -396,27 +469,47 @@ describe("release-functional long-lived responsibility", () => {
       competed.close();
     }
     await additionalDaemon.crash();
-    const accepted = await waitForPublic(
+    const accepted = await waitForF18PublicStage(
+      fixture,
+      project.projectId,
+      "parent-acceptance",
       () =>
-        client.view<{
-          verdict?: string;
-          acceptance?: { acceptanceId: string };
-        }>("verification", { workId }),
-      (value) => value.verdict === "Pass" && value.acceptance !== undefined,
-      60_000,
+        waitForPublic(
+          () =>
+            client.view<{
+              verdict?: string;
+              criteriaResults?: Array<{ criterionId: string; verdict: string }>;
+              acceptance?: { acceptanceId: string };
+            }>("verification", { workId }),
+          (value) =>
+            value.verdict === "Pass" &&
+            value.acceptance !== undefined &&
+            value.criteriaResults?.some(
+              (result) =>
+                result.criterionId === "functional-criterion" &&
+                result.verdict === "Pass",
+            ) === true,
+          60_000,
+        ),
     );
     expect(accepted.acceptance?.acceptanceId).toBeTruthy();
-    const completed = await waitForPublic(
+    const completed = await waitForF18PublicStage(
+      fixture,
+      project.projectId,
+      "child-work-completion",
       () =>
-        client.view<{
-          nodes: Array<{
-            workspaceId: string;
-            currentWork?: { workId?: string };
-          }>;
-        }>("responsibility-tree", { projectId: project.projectId }),
-      (tree) =>
-        tree.nodes.find((node) => node.workspaceId === child.workspaceId)
-          ?.currentWork === undefined,
+        waitForPublic(
+          () =>
+            client.view<{
+              nodes: Array<{
+                workspaceId: string;
+                currentWork?: { workId?: string };
+              }>;
+            }>("responsibility-tree", { projectId: project.projectId }),
+          (tree) =>
+            tree.nodes.find((node) => node.workspaceId === child.workspaceId)
+              ?.currentWork === undefined,
+        ),
     );
     expect(
       completed.nodes.find((node) => node.workspaceId === child.workspaceId)
