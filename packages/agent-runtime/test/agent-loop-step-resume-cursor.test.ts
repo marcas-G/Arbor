@@ -1,5 +1,11 @@
 import type { ProviderTurnId } from "@arbor/domain";
-import { ExecutionId, parse, SessionId } from "@arbor/domain";
+import {
+  ExecutionId,
+  parse,
+  providerTurnInferenceId,
+  providerTurnRepairInferenceId,
+  SessionId,
+} from "@arbor/domain";
 import type { AgentLoopStepRecord } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
 import {
@@ -19,7 +25,13 @@ const step = (
 ): AgentLoopStepRecord => ({
   identity: { executionId, logicalStepNo, repairAttempt },
   providerTurnId:
-    `ptn_${executionId}_${logicalStepNo}_r${repairAttempt}` as ProviderTurnId,
+    repairAttempt === 0
+      ? providerTurnInferenceId(executionId, logicalStepNo)
+      : providerTurnRepairInferenceId(
+          executionId,
+          logicalStepNo,
+          repairAttempt,
+        ),
   state: "Prepared",
   nextActionIndex: 0,
   revision: 0,
@@ -167,7 +179,7 @@ describe("P9 AgentLoopStep resume cursor", () => {
             executionId,
             logicalStepNo: 1,
             repairAttempt: 0,
-            providerTurnId: "ptn_contradictory" as ProviderTurnId,
+            providerTurnId: providerTurnInferenceId(executionId, 1),
           },
         }),
       ],
@@ -189,7 +201,7 @@ describe("P9 AgentLoopStep resume cursor", () => {
             executionId,
             logicalStepNo: 1,
             repairAttempt: 0,
-            providerTurnId: `ptn_${executionId}_1_r0` as ProviderTurnId,
+            providerTurnId: providerTurnInferenceId(executionId, 1),
           },
         }),
         step(1, 0, {
@@ -199,7 +211,7 @@ describe("P9 AgentLoopStep resume cursor", () => {
             executionId,
             logicalStepNo: 3,
             repairAttempt: 0,
-            providerTurnId: `ptn_${executionId}_3_r0` as ProviderTurnId,
+            providerTurnId: providerTurnInferenceId(executionId, 3),
           },
         }),
         step(2, 0, {
