@@ -14,7 +14,7 @@ import {
 } from "@arbor/domain";
 import {
   type SandboxPolicyCandidateBoundarySnapshotV1,
-  type SandboxPolicyRequirementV1,
+  type SandboxPolicyRequirement,
   sha256Hex,
 } from "@arbor/ports";
 
@@ -42,7 +42,7 @@ const produceBoundary = (
 export const buildSandboxPolicyCandidateReadV2 = (input: {
   readonly reason: SandboxPolicyCandidateReadV2["reason"];
   readonly execution: Execution;
-  readonly requirement: SandboxPolicyRequirementV1;
+  readonly requirement: SandboxPolicyRequirement;
   readonly latestCommittedPolicyRevision: number;
   readonly expectedEpisodeRevision: number;
   readonly boundary: SandboxPolicyCandidateBoundarySnapshotV1;

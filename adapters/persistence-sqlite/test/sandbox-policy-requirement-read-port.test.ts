@@ -106,6 +106,15 @@ const makeApp = () => {
 
 const seedSchema = (sql: SqlClientService) =>
   Effect.gen(function* () {
+    yield* sql.unsafe(`CREATE TABLE action_approvals (
+      approval_id TEXT NOT NULL, route_kind TEXT NOT NULL,
+      project_id TEXT, workspace_id TEXT, execution_id TEXT,
+      logical_step_no INTEGER, repair_attempt INTEGER, action_index INTEGER,
+      logical_action_id TEXT, call_ref TEXT, tool_invocation_id TEXT,
+      stable_action_id TEXT, action_version TEXT, arguments_json TEXT,
+      binding_proven INTEGER, state TEXT, revision INTEGER,
+      expires_at TEXT, consumed_by TEXT
+    )`);
     yield* sql.unsafe(`CREATE TABLE executions (
       project_id TEXT NOT NULL, execution_id TEXT NOT NULL,
       workspace_id TEXT NOT NULL, episode_revision INTEGER NOT NULL,
@@ -138,7 +147,8 @@ const seedSchema = (sql: SqlClientService) =>
       repair_attempt INTEGER NOT NULL, action_index INTEGER NOT NULL,
       logical_action_id TEXT NOT NULL, call_ref TEXT NOT NULL,
       route_kind TEXT NOT NULL, action_kind TEXT NOT NULL,
-      input_hash TEXT NOT NULL, state TEXT NOT NULL
+      input_hash TEXT NOT NULL, state TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0
     )`);
     yield* sql.unsafe(`CREATE TABLE agent_loop_steps (
       execution_id TEXT NOT NULL, logical_step_no INTEGER NOT NULL,
@@ -190,7 +200,7 @@ const seedSchema = (sql: SqlClientService) =>
       ],
     );
     yield* sql.unsafe(
-      `INSERT INTO agent_loop_step_actions VALUES (?,?,?,?,?,?,'Executable','shell',?,'Pending')`,
+      `INSERT INTO agent_loop_step_actions VALUES (?,?,?,?,?,?,'Executable','shell',?,'Pending',0)`,
       [
         executionId,
         binding.logicalStepNo,
@@ -203,7 +213,236 @@ const seedSchema = (sql: SqlClientService) =>
     );
   });
 
+const seedPreIntentSchema = (sql: SqlClientService) =>
+  Effect.gen(function* () {
+    yield* sql.unsafe(`CREATE TABLE executions (
+      project_id TEXT NOT NULL, execution_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL, episode_revision INTEGER NOT NULL,
+      settled_at TEXT, stop_requested_at TEXT
+    )`);
+    yield* sql.unsafe(`CREATE TABLE agent_execution_state (
+      execution_id TEXT NOT NULL, episode_json TEXT NOT NULL
+    )`);
+    yield* sql.unsafe(`CREATE TABLE agent_loop_steps (
+      execution_id TEXT NOT NULL, logical_step_no INTEGER NOT NULL,
+      repair_attempt INTEGER NOT NULL, provider_turn_id TEXT NOT NULL,
+      state TEXT NOT NULL, next_action_index INTEGER NOT NULL
+    )`);
+    yield* sql.unsafe(`CREATE TABLE agent_loop_step_actions (
+      execution_id TEXT NOT NULL, logical_step_no INTEGER NOT NULL,
+      repair_attempt INTEGER NOT NULL, action_index INTEGER NOT NULL,
+      logical_action_id TEXT NOT NULL, call_ref TEXT NOT NULL,
+      route_kind TEXT NOT NULL, action_kind TEXT NOT NULL,
+      input_hash TEXT NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL
+    )`);
+    yield* sql.unsafe(`CREATE TABLE action_approvals (
+      approval_id TEXT NOT NULL, route_kind TEXT NOT NULL,
+      project_id TEXT, workspace_id TEXT, execution_id TEXT,
+      logical_step_no INTEGER, repair_attempt INTEGER, action_index INTEGER,
+      logical_action_id TEXT, call_ref TEXT, tool_invocation_id TEXT,
+      stable_action_id TEXT, action_version TEXT, arguments_json TEXT,
+      binding_proven INTEGER, state TEXT, revision INTEGER,
+      expires_at TEXT, consumed_by TEXT
+    )`);
+    yield* sql.unsafe(`CREATE TABLE tool_invocations (
+      invocation_id TEXT NOT NULL, execution_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL, intent_at TEXT NOT NULL,
+      recovery_binding_state TEXT NOT NULL, recovery_binding_sha256 TEXT,
+      effect_admission_state TEXT NOT NULL, settled_at TEXT,
+      tool_name TEXT NOT NULL, tool_version TEXT NOT NULL,
+      side_effect_semantics TEXT NOT NULL, arguments_json TEXT NOT NULL,
+      resolved_regions_json TEXT NOT NULL
+    )`);
+    yield* sql.unsafe(`CREATE TABLE tool_invocation_recovery_bindings (
+      invocation_id TEXT NOT NULL, binding_version INTEGER NOT NULL,
+      canonical_binding_json TEXT NOT NULL, binding_sha256 TEXT NOT NULL
+    )`);
+    yield* sql.unsafe(`CREATE TABLE tool_invocation_effect_attempts (
+      invocation_id TEXT NOT NULL, attempt_no INTEGER NOT NULL,
+      admission_state TEXT NOT NULL, side_effect_semantics TEXT NOT NULL,
+      profile_id TEXT, profile_version TEXT, profile_hash TEXT,
+      profile_protocol TEXT, effect_key TEXT, binding_sha256 TEXT
+    )`);
+    yield* sql.unsafe(`INSERT INTO executions VALUES (?,?,?,?,NULL,NULL)`, [
+      projectId,
+      executionId,
+      workspaceId,
+      6,
+    ]);
+    yield* sql.unsafe(`INSERT INTO agent_execution_state VALUES (?,?)`, [
+      executionId,
+      episodeJson,
+    ]);
+    yield* sql.unsafe(
+      `INSERT INTO agent_loop_steps VALUES (?,?,?,?,'ActionsInProgress',1)`,
+      [executionId, 2, 0, providerTurnId],
+    );
+    yield* sql.unsafe(
+      `INSERT INTO agent_loop_step_actions VALUES (?,?,?,?,?,?,?,?,?,'Pending',3)`,
+      [
+        executionId,
+        2,
+        0,
+        1,
+        logicalActionId,
+        callRef,
+        "Executable",
+        "shell",
+        sha256Hex(argumentsJson),
+      ],
+    );
+    yield* sql.unsafe(
+      `INSERT INTO action_approvals VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'Pending',0,?,NULL)`,
+      [
+        "approval-exact",
+        "Executable",
+        projectId,
+        workspaceId,
+        executionId,
+        2,
+        0,
+        1,
+        logicalActionId,
+        callRef,
+        invocationId,
+        "shell",
+        "shell-v1",
+        argumentsJson,
+        "2026-10-21T12:00:00.000Z",
+      ],
+    );
+  });
+
 describe("P4 SandboxPolicyRequirementReadPort", () => {
+  it("returns the exact Pending P3 Action and P4 approval before intent, read-only", async () => {
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          yield* seedPreIntentSchema(sql);
+          const before = yield* sql.unsafe<{ readonly count: number }>(
+            "SELECT total_changes() AS count",
+          );
+          const transactions = yield* TransactionPort;
+          const port = yield* SandboxPolicyRequirementReadPort;
+          const requirement = yield* transactions.transact(
+            port.findPendingByExecution({
+              projectId,
+              workspaceId,
+              executionId,
+            }),
+          );
+          const after = yield* sql.unsafe<{ readonly count: number }>(
+            "SELECT total_changes() AS count",
+          );
+          return {
+            requirement,
+            changes: (after[0]?.count ?? -1) - (before[0]?.count ?? -1),
+          };
+        }),
+        makeApp(),
+      ),
+    );
+    expect(result.requirement).toEqual(
+      Option.some({
+        _tag: "SandboxPolicyPreIntentRequirementV1",
+        version: 1,
+        projectId,
+        workspaceId,
+        executionId,
+        episodeBinding: episode,
+        expectedEpisodeRevision: 6,
+        providerTurnId,
+        logicalStepNo: 2,
+        repairAttempt: 0,
+        logicalActionId,
+        actionIndex: 1,
+        callRef,
+        actionRevision: 3,
+        inputHash: sha256Hex(argumentsJson),
+        toolName: "shell",
+        toolVersion: "shell-v1",
+        approvalId: "approval-exact",
+        approvalState: "Pending",
+        approvalRevision: 0,
+        approvalConsumedBy: null,
+        approvalExpiresAt: "2026-10-21T12:00:00.000Z",
+      }),
+    );
+    expect(result.changes).toBe(0);
+  });
+
+  it("does not expose a pre-intent requirement for an already Approved approval", async () => {
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          yield* seedPreIntentSchema(sql);
+          yield* sql.unsafe(
+            "UPDATE action_approvals SET state = 'Approved', revision = 1 WHERE approval_id = ?",
+            ["approval-exact"],
+          );
+          const transactions = yield* TransactionPort;
+          const port = yield* SandboxPolicyRequirementReadPort;
+          return yield* transactions.transact(
+            port.findPendingByExecution({
+              projectId,
+              workspaceId,
+              executionId,
+            }),
+          );
+        }),
+        makeApp(),
+      ),
+    );
+    expect(result).toEqual(Option.none());
+  });
+
+  it("fails closed on duplicate or mismatched pre-intent P4 source evidence", async () => {
+    const duplicate = Effect.provide(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        yield* seedPreIntentSchema(sql);
+        yield* sql.unsafe(
+          `INSERT INTO action_approvals SELECT 'approval-duplicate', route_kind,
+             project_id, workspace_id, execution_id, logical_step_no,
+             repair_attempt, action_index, logical_action_id, call_ref,
+             tool_invocation_id, stable_action_id, action_version,
+             arguments_json, binding_proven, state, revision, expires_at,
+             consumed_by FROM action_approvals WHERE approval_id = ?`,
+          ["approval-exact"],
+        );
+        const transactions = yield* TransactionPort;
+        const port = yield* SandboxPolicyRequirementReadPort;
+        return yield* transactions.transact(
+          port.findPendingByExecution({ projectId, workspaceId, executionId }),
+        );
+      }),
+      makeApp(),
+    );
+    const duplicateResult = await Effect.runPromiseExit(duplicate);
+    expect(duplicateResult._tag).toBe("Failure");
+
+    const mismatched = Effect.provide(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        yield* seedPreIntentSchema(sql);
+        yield* sql.unsafe(
+          "UPDATE action_approvals SET arguments_json = ? WHERE approval_id = ?",
+          ['{"command":"different"}', "approval-exact"],
+        );
+        const transactions = yield* TransactionPort;
+        const port = yield* SandboxPolicyRequirementReadPort;
+        return yield* transactions.transact(
+          port.findPendingByExecution({ projectId, workspaceId, executionId }),
+        );
+      }),
+      makeApp(),
+    );
+    const mismatchResult = await Effect.runPromiseExit(mismatched);
+    expect(mismatchResult._tag).toBe("Failure");
+  });
+
   it("returns exact active NotAdmitted P3/P4 evidence read-only in caller's transaction", async () => {
     const result = await Effect.runPromise(
       Effect.provide(

@@ -36,9 +36,10 @@ import {
   RunnableWorkSource,
   SandboxPolicyCandidateBoundaryReadPort,
   SandboxPolicyDecisionStore,
+  type SandboxPolicyRequirement,
   SandboxPolicyRequirementReadPort,
-  type SandboxPolicyRequirementV1,
   SandboxProviderUnavailableStore,
+  sameSandboxPolicyPreIntentRequirement,
   sha256Hex,
   ToolCatalogPort,
   TransactionPort,
@@ -136,23 +137,37 @@ const responseStatusOf = (
 };
 
 const sameSandboxPolicyRequirement = (
-  left: SandboxPolicyRequirementV1,
-  right: SandboxPolicyRequirementV1,
-): boolean =>
-  left.projectId === right.projectId &&
-  left.workspaceId === right.workspaceId &&
-  left.executionId === right.executionId &&
-  encodeExecutionEpisodeBinding(left.episodeBinding) ===
-    encodeExecutionEpisodeBinding(right.episodeBinding) &&
-  left.expectedEpisodeRevision === right.expectedEpisodeRevision &&
-  left.invocationId === right.invocationId &&
-  left.providerTurnId === right.providerTurnId &&
-  left.logicalStepNo === right.logicalStepNo &&
-  left.repairAttempt === right.repairAttempt &&
-  left.logicalActionId === right.logicalActionId &&
-  left.actionIndex === right.actionIndex &&
-  left.callRef === right.callRef &&
-  left.recoveryBindingDigest === right.recoveryBindingDigest;
+  left: SandboxPolicyRequirement,
+  right: SandboxPolicyRequirement,
+): boolean => {
+  if (left._tag !== right._tag) return false;
+  if (
+    left._tag === "SandboxPolicyPreIntentRequirementV1" &&
+    right._tag === "SandboxPolicyPreIntentRequirementV1"
+  )
+    return sameSandboxPolicyPreIntentRequirement(left, right);
+  if (
+    left._tag !== "SandboxPolicyRequirementV1" ||
+    right._tag !== "SandboxPolicyRequirementV1"
+  )
+    return false;
+  return (
+    left.projectId === right.projectId &&
+    left.workspaceId === right.workspaceId &&
+    left.executionId === right.executionId &&
+    encodeExecutionEpisodeBinding(left.episodeBinding) ===
+      encodeExecutionEpisodeBinding(right.episodeBinding) &&
+    left.expectedEpisodeRevision === right.expectedEpisodeRevision &&
+    left.invocationId === right.invocationId &&
+    left.providerTurnId === right.providerTurnId &&
+    left.logicalStepNo === right.logicalStepNo &&
+    left.repairAttempt === right.repairAttempt &&
+    left.logicalActionId === right.logicalActionId &&
+    left.actionIndex === right.actionIndex &&
+    left.callRef === right.callRef &&
+    left.recoveryBindingDigest === right.recoveryBindingDigest
+  );
+};
 
 /**
  * B-7 — the production `ProjectionQueryPort` wiring.

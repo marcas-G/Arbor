@@ -418,7 +418,10 @@ export const runExecution = (
         }),
       );
       let policyMustWaitForHuman = false;
-      if (Option.isSome(pendingRequirement)) {
+      if (
+        Option.isSome(pendingRequirement) &&
+        pendingRequirement.value._tag === "SandboxPolicyRequirementV1"
+      ) {
         const currentAuthority = Option.isSome(currentAuthoritySnapshotPort)
           ? yield* currentAuthoritySnapshotPort.value.loadCurrentVerifiedV2()
           : { _tag: "Unavailable" as const, failure: "SourceMissing" as const };
@@ -433,7 +436,11 @@ export const runExecution = (
                 workspaceId: execution.value.workspaceId,
                 executionId,
               });
-            if (Option.isNone(requirement)) return false;
+            if (
+              Option.isNone(requirement) ||
+              requirement.value._tag !== "SandboxPolicyRequirementV1"
+            )
+              return false;
             if (
               currentAuthority._tag !== "Available" ||
               Option.isNone(sandboxPolicyDecisions)
