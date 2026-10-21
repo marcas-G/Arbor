@@ -104,6 +104,183 @@ const makeApp = () => {
   );
 };
 
+const preIntentStaleMutations = [
+  {
+    name: "Action projectId",
+    sql: "UPDATE executions SET project_id = 'prj-changed' WHERE execution_id = ?",
+    params: [executionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action workspaceId",
+    sql: "UPDATE executions SET workspace_id = 'ws-changed' WHERE execution_id = ?",
+    params: [executionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action EpisodeBinding",
+    sql: "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = ?",
+    params: [
+      JSON.stringify({
+        ...episode,
+        workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789a2",
+      }),
+      executionId,
+    ],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action logicalActionId",
+    sql: "UPDATE agent_loop_step_actions SET logical_action_id = 'action-changed' WHERE logical_action_id = ?",
+    params: [logicalActionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action callRef",
+    sql: "UPDATE agent_loop_step_actions SET call_ref = 'call-changed' WHERE logical_action_id = ?",
+    params: [logicalActionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action routeKind",
+    sql: "UPDATE agent_loop_step_actions SET route_kind = 'Control' WHERE logical_action_id = ?",
+    params: [logicalActionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action toolName",
+    sql: "UPDATE agent_loop_step_actions SET action_kind = 'read' WHERE logical_action_id = ?",
+    params: [logicalActionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action inputHash",
+    sql: "UPDATE agent_loop_step_actions SET input_hash = ? WHERE logical_action_id = ?",
+    params: ["f".repeat(64), logicalActionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action revision",
+    sql: "UPDATE agent_loop_step_actions SET revision = revision + 1 WHERE logical_action_id = ?",
+    params: [logicalActionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action state",
+    sql: "UPDATE agent_loop_step_actions SET state = 'Applied' WHERE logical_action_id = ?",
+    params: [logicalActionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action ProviderTurnId",
+    sql: "UPDATE agent_loop_steps SET provider_turn_id = 'ptn_changed' WHERE execution_id = ?",
+    params: [executionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action step state",
+    sql: "UPDATE agent_loop_steps SET state = 'OutputAccepted' WHERE execution_id = ?",
+    params: [executionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Action cursor",
+    sql: "UPDATE agent_loop_steps SET next_action_index = 2 WHERE execution_id = ?",
+    params: [executionId],
+    field: "ActionRevision",
+  },
+  {
+    name: "Approval identity",
+    sql: "UPDATE action_approvals SET approval_id = 'approval-changed' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval routeKind",
+    sql: "UPDATE action_approvals SET route_kind = 'Control' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval projectId",
+    sql: "UPDATE action_approvals SET project_id = 'prj-changed' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval workspaceId",
+    sql: "UPDATE action_approvals SET workspace_id = 'ws-changed' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval ExecutionId",
+    sql: "UPDATE action_approvals SET execution_id = 'exe-changed' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval actionIndex",
+    sql: "UPDATE action_approvals SET action_index = 2 WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval logicalActionId",
+    sql: "UPDATE action_approvals SET logical_action_id = 'action-changed' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval callRef",
+    sql: "UPDATE action_approvals SET call_ref = 'call-changed' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval toolName",
+    sql: "UPDATE action_approvals SET stable_action_id = 'read' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval toolVersion",
+    sql: "UPDATE action_approvals SET action_version = 'shell-v2' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval arguments hash binding",
+    sql: 'UPDATE action_approvals SET arguments_json = \'{"command":"different"}\' WHERE approval_id = ?',
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval state",
+    sql: "UPDATE action_approvals SET state = 'Approved' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval revision",
+    sql: "UPDATE action_approvals SET revision = revision + 1 WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval consumedBy",
+    sql: "UPDATE action_approvals SET consumed_by = 'tin_018f2b3c-4d5e-7abc-8def-0123456789a2' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+  {
+    name: "Approval expiresAt",
+    sql: "UPDATE action_approvals SET expires_at = '2026-10-21T12:30:00.000Z' WHERE approval_id = ?",
+    params: ["approval-exact"],
+    field: "ExecutableApprovalRevision",
+  },
+] as const;
+
 const seedSchema = (sql: SqlClientService) =>
   Effect.gen(function* () {
     yield* sql.unsafe(`CREATE TABLE action_approvals (
@@ -552,6 +729,43 @@ describe("P4 SandboxPolicyRequirementReadPort", () => {
       timeExpired: "ExecutableApprovalRevision",
     });
   });
+
+  it.each(preIntentStaleMutations)(
+    "classifies $name drift at its accepted source boundary",
+    async ({ sql: mutation, params, field }) => {
+      const result = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* seedPreIntentSchema(sql);
+            const transactions = yield* TransactionPort;
+            const port = yield* SandboxPolicyRequirementReadPort;
+            const requirement = yield* transactions.transact(
+              port.findPendingByExecution({
+                projectId,
+                workspaceId,
+                executionId,
+              }),
+            );
+            if (
+              Option.isNone(requirement) ||
+              requirement.value._tag !== "SandboxPolicyPreIntentRequirementV1"
+            )
+              throw new Error("pre-intent requirement fixture missing");
+            yield* sql.unsafe(mutation, [...params]);
+            return yield* transactions.transact(
+              port.comparePreIntentSource({
+                expected: requirement.value,
+                trustedNow: "2026-10-21T11:59:59.999Z",
+              }),
+            );
+          }),
+          makeApp(),
+        ),
+      );
+      expect(result).toBe(field);
+    },
+  );
 
   it("returns exact active NotAdmitted P3/P4 evidence read-only in caller's transaction", async () => {
     const result = await Effect.runPromise(
