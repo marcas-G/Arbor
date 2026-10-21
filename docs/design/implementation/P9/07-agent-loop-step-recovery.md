@@ -257,6 +257,13 @@ decoder version or a governed legacy-decoder mapping
 action/effect disposition (or proof that no action exists)
 ```
 
+All ProviderTurn identity comparison and legacy adoption uses DID §2.2.1's
+closed codec. New recovery successors use only deterministic V2 constructors;
+an existing UUIDv7 value is read/replay-only and must match the exact stored
+Manifest, ProviderTurn/Attempt, Step, Session source and P20 link. Unknown or
+malformed spellings follow the existing typed fail-closed recovery path. P9
+never normalizes the ID or manufactures a replacement from partial evidence.
+
 Disposition:
 
 - existing sourced ModelOutput → bind its sequence and adopt at
@@ -304,6 +311,11 @@ Kill before and after every commit boundary, restart on the same durable DB:
 AH18 uses the DID v1.23 ordinal-0 ProviderTurn chain. Recovery ensures links
 idempotently and never rewrites the failed inference Manifest. A replacement
 overflow creates no second ordinal.
+
+Each chain ID and predecessor in the accepted chain is the exact closed
+ProviderTurnId V2 value from DID §2.2.1 (or an exact recognized legacy value
+already persisted in the chain). Recovery performs exact-string binding and
+does not re-encode either source.
 
 The AH7-DG-03 supplement in P9 `02` qualifies both sides of the fenced
 intent+approval claim, no-effect Denied and Interrupted terminal records, and

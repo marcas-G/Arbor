@@ -46,6 +46,12 @@ CREATE INDEX idx_provider_turns_execution ON provider_turns(execution_id);
 The Turn intent + Manifest row is written **before** the provider request
 (DID §9.10), so a crash can always answer which context was used.
 
+`provider_turns.provider_turn_id`, Attempt and Manifest foreign keys retain
+the exact DID §2.2.1 ProviderTurnId V2 string. UUIDv7 values remain readable
+for historical replay only; existing rows and foreign-key references are not
+rewritten. The existing `TEXT` identity columns are sufficient: this contract
+adds no SQL format check, migration, or backfill.
+
 ### 3.2 provider_attempts
 
 ```sql

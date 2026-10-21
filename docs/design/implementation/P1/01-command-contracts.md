@@ -619,6 +619,14 @@ absent                                                  -> execute
 `result_json` / `terminal_error_json` are JSON keyed by the stored
 `schema_version` (see `04-sqlite-schema.md`).
 
+For any registered result schema that carries a `ProviderTurnId`—including
+P2's `Completed(Blocked).failedActionRefs`—the strict result decoder uses the
+closed DID §2.2.1 codec. Decoding does not rewrite or normalize stored JSON.
+Existing UUIDv7 or V2 composite result bytes replay exactly under their
+stored command tuple; this does not bump result/handler/receipt schema,
+CommandId, semantic fingerprint, or require a migration. New result writes
+carry only V2 IDs supplied by the exact P3/P9 source.
+
 ## 9. Out of scope / Must Not Decide
 
 - Exact payloads for non-P1 commands.

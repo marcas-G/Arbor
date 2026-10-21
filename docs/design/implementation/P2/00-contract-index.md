@@ -10,6 +10,12 @@ atomic Blocked settlement, current WorkBlocker ledger writes, exact
 Manual+InboxAdvanced Wait registration, and the transaction-scoped blocker
 store. It does not infer blockers from legacy rows or add a Work lifecycle.
 
+**Accepted ProviderTurnId V2 codec amendment (DID v1.58):** P2 `01` validates
+`failedActionRefs[].providerTurnId` through the closed DID §2.2.1 codec and
+binds it to the exact P3 source; P2 `04` preserves the exact value in the
+existing TEXT Step key. Legacy UUIDv7 values are read/replay-only. No P2 DDL,
+backfill, or identifier rewrite is added.
+
 > **MAC successor (DID v1.31):** generic durable Execution, Lease/Fencing,
 > Wait and recovery contracts remain. Active new-write temporary parallel Agent
 > semantics and MAC phase gates are owned by `docs/design/implementation/MAC/**`.

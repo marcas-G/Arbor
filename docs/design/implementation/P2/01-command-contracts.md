@@ -390,6 +390,15 @@ denial evidence rejects the settlement. P2 does not consult Plan status.
 revision so the durable `ExecutionSettled` event deterministically drives
 `StartVerification` (P8); the consumer never bypasses the Command handler.
 
+`failedActionRefs[].providerTurnId` uses the closed DID §2.2.1 codec. New P2
+Blocked results can reference only the exact current P3 Action/Step source and
+therefore use its V2 identity. The external action-reference decoder may read
+a legacy UUIDv7 only when P2's existing source binding proves that exact
+persisted reference; caller text never allocates or rebinds a ProviderTurn.
+The resulting `CommandReceipt` retains the original encoded value for exact
+same-CommandId replay. Unknown ProviderTurnId formats fail the existing strict
+command/source validation.
+
 ### Events
 
 ```text

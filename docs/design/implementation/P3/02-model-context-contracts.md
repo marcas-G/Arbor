@@ -192,6 +192,12 @@ compiledRequestHash, and `ControlBasis { projectPolicyRevision,
 workspacePolicyRevision, responsibilityRevision, resourceBoundaryRevision,
 workId?/workRevision?, authorizationDigest, environmentRevision }`.
 
+`providerTurnId` is the exact DID §2.2.1 ProviderTurnId V2 value. Manifest
+creation, ProviderTurn intent, ProviderResult/Attempt evidence, Session source
+refs and replay use that same byte-for-byte value. A new Manifest never
+normalizes a legacy UUIDv7 source or reconstructs a ProviderTurnId from its
+Execution/Step/Session text.
+
 Every effectful invocation is associated by trusted Runtime context with this
 Manifest/ControlBasis; the model-authored payload does not carry the binding.
 A stale relevant control basis yields `DecisionStale` (`06` §4; DID v1.18

@@ -1,10 +1,22 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.57\
+**Version:** 1.58\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.56\
-**Date:** 2026-10-19\
+**Supersedes:** v1.57\
+**Date:** 2026-10-21\
 **Depends on:** `Arbor System Design Specification v1.21`
+
+**Governance changes (v1.57 → v1.58): ProviderTurnId V2 closed encoding**
+
+`ACCEPT_P10_P1_PROVIDER_TURN_ID_CODEC_V1` accepts the versioned closed
+ProviderTurnId codec in §2.2.1. New writes use only the deterministic
+composite V2 families; UUIDv7 ProviderTurnIds remain read/replay-only legacy
+values. Exact existing IDs are preserved in SQLite, Manifests, source refs,
+receipts, public progress frames, P3 Actions, RecoveryBindings and P20 links.
+Unknown formats fail closed. No DDL, migration, backfill, receipt rewrite, P1
+payload/fingerprint change, or P9 terminal-semantics change is introduced.
+Acceptance source SHA-256:
+`5794DD19BA3BF1BDF58C0878863F1F51EA154CBF541E893CFA1CC63758108D2E`.
 
 **Governance changes (v1.51 → v1.52): F23 P6 operator rebuild and v1 route-command qualification**
 
@@ -2367,13 +2379,16 @@ runtime semantic identity；它们不替代 `CommandId`。
 
 ## 2.2 ID 规则
 
-- 底层采用 UUIDv7 类可时间排序随机标识；
+- 底层采用 UUIDv7 类可时间排序随机标识；`ProviderTurnId` 按 §2.2.1 的
+  独立闭合编码规则处理；
 - deterministic runtime semantic identities（`LogicalActionId` /
   `LogicalSettlementId`）例外：使用版本化 canonical serialization + SHA-256
   派生，并保留 Appendix A prefix；
 - 增加 `prj_ / ws_ / wrk_ / exe_ / ses_ ...` prefix 便于运行时校验和调试；
 - TypeScript 使用 nominal/branded type，运行时使用 Schema codec；
-- ID 不编码名称、父子路径、业务 location 或 sequence；
+- ID 通常不编码名称、父子路径、业务 location 或 sequence；`ProviderTurnId`
+  按 §2.2.1 的显式例外编码 scoped Execution/Step/repair/compaction ordinal，
+  用于唯一标识可恢复的模型操作，不表示 Work/责任位置或业务顺序；
 - Entity state evolution 不改变 Identity；
 - Human-friendly `W-42` 等仅是 projection/display code。
 
@@ -2382,6 +2397,46 @@ runtime semantic identity；它们不替代 `CommandId`。
 ```text
 Identity != Name != Location != Order
 ```
+
+### 2.2.1 ProviderTurnId V2 codec
+
+`ProviderTurnId` has one strict versioned codec. V2 composite forms are the
+only forms written for new ProviderTurns; the UUIDv7 form is a legacy
+read/replay variant only. V2 has no version marker in its string: the codec
+version is the validation rule, not another identity segment.
+
+Every V2 composite starts with `ptn_<ExecutionId>_<stepNo>`. `<ExecutionId>`
+must satisfy the existing exact `exe_<UUIDv7>` codec. `<stepNo>` is a
+canonical non-negative safe decimal integer (`0` or a non-zero digit followed
+by decimal digits, with no leading zeroes and not above
+`Number.MAX_SAFE_INTEGER`). The only accepted suffixes are:
+
+| V2 family | Exact suffix | Value rule |
+|---|---|---|
+| Inference | none | the Step's inference ProviderTurn |
+| Repair inference | `_r<repairAttempt>` | positive canonical safe decimal integer |
+| Summary compaction | `_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
+| Provider Native compaction | `_native_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
+| Conversation Summary checkpoint compaction | `_conversation_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
+| Conversation Native checkpoint compaction | `_conversation_native_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
+| P20 overflow replacement | `_overflow_0` | ordinal is exactly `0` in v1 |
+
+The existing `OverflowCompaction` P20 link uses the exact Summary or Provider
+Native compaction ProviderTurn for that Step/context epoch; its link role and
+predecessor are separately persisted by migration 0020. It does not add a
+second compaction spelling. No other suffix, free-form string, alternate
+Execution binding, leading-zero ordinal, or non-zero overflow ordinal is a
+ProviderTurnId.
+
+The legacy read/replay variant is exactly `ptn_<UUIDv7>` under the existing
+UUIDv7 validator. It may be decoded only to verify or replay already persisted
+evidence. It is not a new-write form. New ProviderTurn constructors use the
+V2 families above. Decoding preserves the original string byte-for-byte; no
+normalization, re-encoding, or reconstruction from Session text is permitted.
+Blocked result/command references, provider and conversation progress frames,
+P3 Actions, RecoveryBindings, Manifests, SQLite keys and P20 links all use the
+same closed decoder and retain the exact source spelling. Unknown or malformed
+IDs fail at the existing typed decode/recovery boundary.
 
 ## 2.3 Event ordering 与 local ordinal
 
@@ -5352,6 +5407,10 @@ ControlBasis {
 }
 ```
 
+`providerTurnId` is validated by the closed codec in §2.2.1. A Manifest,
+ProviderTurn intent/result, and every sourced Session item retain the same exact
+string; recovery never rewrites a legacy UUIDv7 or V2 composite spelling.
+
 For a Work ProviderTurn before its first typed checkpoint,
 `InputFrontier(firstSequence,lastSequence)` identifies the latest-64 considered
 Session-local row range; it does not assert that every selected row became a
@@ -6217,6 +6276,11 @@ Inference | CompactionSummary | CompactionNative
 Artifact 或等价耐久 carrier；ProviderTurn/Session 只保存 ref + binding fingerprint，
 raw credential 不得进入 opaque item metadata。
 
+New inference, repair and compaction IDs use only the ProviderTurnId V2
+constructors in §2.2.1. The provider adapter and public progress projections
+echo the exact ID; the adapter does not generate, normalize or re-encode it.
+UUIDv7 IDs remain available only to read/replay already persisted Turns.
+
 ## 9.11 ProviderTurn / ProviderAttempt
 
 `ProviderTurn` 表示一次逻辑模型决策，绑定唯一 `ModelContextManifest`；transport 层的 safe retry 记录为该 Turn 下的 `provider_attempts`：
@@ -6290,6 +6354,13 @@ The existing `agent_loop_steps.provider_turn_id` remains the original Inference
 Turn for compatibility. Chain ensure is idempotent; binding mismatch is an
 invariant conflict/Attention. Ordinary transport attempts and output repair do
 not enter this chain.
+
+Every Step and P20 link uses the exact closed ProviderTurnId V2 codec from
+§2.2.1. The Inference, OverflowCompaction, and OverflowReplacement roles keep
+their existing deterministic IDs and predecessor bindings; recovery retains
+the stored strings byte-for-byte. UUIDv7 ProviderTurnIds are accepted only in
+legacy read/replay evidence. This contract adds no schema constraint,
+migration, or backfill.
 
 Exact DDL/check constraints and forward-only legacy adoption are frozen in P2
 `04`, P3 `08`, and P9 `07`. Every AgentLoopStep/action transition is a short
