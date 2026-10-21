@@ -7,11 +7,11 @@ import {
   Principal,
   ProjectId,
   parse,
+  providerTurnInferenceId,
   SemanticRequestFingerprint,
   SessionId,
   WorkId,
   WorkspaceId,
-  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   Clock,

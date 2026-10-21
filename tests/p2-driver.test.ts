@@ -42,6 +42,7 @@ import {
   ProjectId,
   ProviderTurnId,
   parse,
+  providerTurnInferenceId,
   type SandboxAuthorityBundleSnapshotV2,
   type SandboxPolicyDecision,
   type SandboxPolicyDecisionCommittedInternalV1,
@@ -50,7 +51,6 @@ import {
   ToolInvocationId,
   WorkId,
   WorkspaceId,
-  providerTurnInferenceId,
 } from "../packages/domain/dist/index.js";
 import {
   type AdmitExecutionPayload,

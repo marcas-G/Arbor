@@ -1,9 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  ExecutionId,
-  parse,
-  providerTurnInferenceId,
-} from "@arbor/domain";
+import { ExecutionId, parse, providerTurnInferenceId } from "@arbor/domain";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { makeExecutableToolHandler } from "../src/executable-tool-handler.js";

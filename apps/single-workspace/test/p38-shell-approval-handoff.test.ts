@@ -3,9 +3,9 @@ import {
   Principal,
   ProjectId,
   parse,
+  providerTurnInferenceId,
   SessionId,
   WorkspaceId,
-  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   type ClockService,

@@ -8,11 +8,11 @@ import {
   Principal,
   ProjectId,
   parse,
+  providerTurnInferenceId,
   SessionId,
   WorkId,
   WorkRevision,
   WorkspaceId,
-  providerTurnInferenceId,
 } from "@arbor/domain";
 import {
   Clock,
