@@ -1050,8 +1050,13 @@ describe("I0 executable/control vertical slice", () => {
     expect([...result.verificationTables].sort()).toEqual([
       "retry_verification_legacy_dispositions",
       "retry_verification_origins",
+      "verification_conclusion_v2_activation_highwaters",
       "verification_evidence",
       "verification_executions",
+      "verification_signal_reconciliation_attention_facts",
+      "verification_signal_reconciliation_attention_queue",
+      "verification_signal_reconciliation_attention_rows",
+      "verification_signal_reconciliations",
       "verifications",
     ]);
   }, 120_000);
