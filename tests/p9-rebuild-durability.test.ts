@@ -114,6 +114,50 @@ const appendEvents = (drafts: ReadonlyArray<PendingDomainEvent>) =>
     yield* tx.transact(journal.append(drafts));
   });
 
+const appendRawUnsupportedEvent = (draft: PendingDomainEvent) =>
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const journal = yield* DomainEventJournal;
+    const writerResult = yield* Effect.result(
+      tx.transact(journal.append([draft])),
+    );
+    expect(writerResult._tag).toBe("Failure");
+    const sql = yield* SqlClient;
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql.unsafe(
+          `INSERT INTO project_event_sequences (project_id,last_sequence)
+             VALUES (?,1)
+             ON CONFLICT(project_id) DO UPDATE SET last_sequence = last_sequence + 1`,
+          [draft.projectId],
+        );
+        const rows = yield* sql.unsafe<{ last_sequence: number }>(
+          "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
+          [draft.projectId],
+        );
+        const sequence = Number(rows[0]?.last_sequence ?? 0);
+        yield* sql.unsafe(
+          `INSERT INTO domain_events (
+            event_id,project_id,sequence,event_type,event_version,occurred_at,
+            aggregate_ref,actor,caused_by_command_id,caused_by_event_id,
+            correlation_ref,payload_json
+          ) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)`,
+          [
+            `evt_018f2b3c-4d5e-7abc-8def-${String(sequence).padStart(12, "0")}`,
+            draft.projectId,
+            sequence,
+            draft.eventType,
+            draft.eventVersion,
+            draft.occurredAt,
+            draft.aggregateRef,
+            draft.actor,
+            JSON.stringify(draft.payload),
+          ],
+        );
+      }),
+    );
+  });
+
 const offsetOf = (consumerId: string) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
@@ -292,7 +336,9 @@ describe("p9-rebuild (RB-1..RB-5 / PR1–PR4 — generic face, GQ2)", () => {
         Effect.provide(
           Effect.gen(function* () {
             yield* migrate;
-            yield* appendEvents([draft(1), draft(2, 2), draft(3)]);
+            yield* appendEvents([draft(1)]);
+            yield* appendRawUnsupportedEvent(draft(2, 2));
+            yield* appendEvents([draft(3)]);
             // Establish the consumer position first (a fresh offset 0
             // under floor 1 is the RB-1 refusal, not this row's fixture).
             const consumed = yield* runConsumerBatch("rb3", projectA, 10);
