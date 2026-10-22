@@ -4,7 +4,8 @@
 分支：`codex/native-sandbox-preintent-final-20261021`  
 组合基线：`31d2ce4c15a1c8e5816f7f6841e10bc15db4b116`  
 当前检查点提交：见本文件所在提交。  
-状态：**AH19 定向续跑进行中；全量 release qualification 未通过/未完成。**
+AH19 测试代码基线：`b51f7c740906ae2379afd494ee19a6912414f0b2`。
+状态：**AH19 指定 functional 文件 44/44 PASS；全量 release qualification 仍未完成。**
 
 ## 组合来源与审阅状态
 
@@ -41,8 +42,8 @@ functional Vitest 阶段失败，Playwright 因前置阶段失败没有启动：
    source ProviderTurn 已落库但 Execution 未结算。测试 fixture 曾以字符串拼接构造
    第二个 ProviderTurn/Manifest ID，违反当前冻结的 V2 identity/manifest 合同；本检查点
    的 `0ea1e513` 将其改为从 Execution、下一 logical step 与 epoch 使用 V2 构造器，
-   并通过 `functionalId("mft")` 生成合法 ManifestId。此原因对应 fixture 问题，仍需
-   在修复后的完整 functional run 中验证。
+   并通过 `functionalId("mft")` 生成合法 ManifestId。后续本文件全量运行中该 case
+   通过，支持这是 V2 fixture 身份不合法导致的测试超时。
 
 ## AH19 续跑与停止点
 
@@ -53,22 +54,20 @@ exitCode=1，`killed=false`；该日志没有 Vitest 断言、最终 runner mani
 退出码。因此只能确定最后活跃场景，无法断定是测试断言失败还是外部 runner 退出。
 
 本续跑先确认该 worktree 没有遗留 AH19/Vitest/daemon 进程，并提交纯测试 fixture 修复
-`0ea1e513a59ab8ee63194618db3674c9c8dfd455`。随后完整 AH19 文件以单 worker、无文件并行
-启动。以下 11 个测试依次显示 PASS：
+`0ea1e513a59ab8ee63194618db3674c9c8dfd455`。在 `b51f7c740906ae2379afd494ee19a6912414f0b2`
+上，用以下配置运行完整文件：
 
-- 3 个 Root Work fake 回归；
-- startup diagnostic payload exclusion；
-- 公共 Work Session history 进入 Native compaction；
-- pre-checkpoint restart 重建 latest-64 Work frontier；
-- `AH17Before` / `AH17After` 两个边界下 filtered HumanConversation frontier；
-- `AH17Before` / `AH17After` 两个边界下真实 ProviderNative checkpoint；
-- `AH17Before` source identity restart recovery。
+```text
+pnpm exec vitest run --config vitest.functional.config.ts --no-cache --maxWorkers=1 --no-file-parallelism --retry=0 --bail=1 --reporter=verbose tests/functional/process/ah19-provider-native-binding-recovery.functional.test.ts
+```
 
-在此之后 Vitest 自动启动了 `AH17AfterCheckpointEpochCommit` source identity case。
-为了设备切换，整文件 runner 被 Ctrl-C；该次完整文件运行没有最终汇总，未完成项不计 PASS。
-被中断 case 随后以精确 testNamePattern 单独重跑并通过（1 passed / 43 skipped，78.85 秒）。
-因此当前可报告的是 **11 个完整文件运行中的已观察 PASS，加 1 个精确隔离 PASS**；
-其余 case 仍须在后续设备续跑。被中断 runner 的最新日志仍保留在 `.test-results/`。
+结果：**1 file passed；44/44 tests passed；duration 2008.31s（tests 100%）**。
+包括此前失败的双同 epoch Native candidate case、Work/Conversation checkpoint-owner
+负例、binding A→B portable rebase、半空 frontier、manifest/source-link 篡改 fail-closed、
+StepEffectsCommitted successor recovery、terminal ConversationResponse、Native success
+receipt 本地结算与完整的 Summary fallback。新运行的 startup 事件保留在
+`.test-results/ah19-startup-22140.jsonl`。Vitest 正常输出最终汇总后退出；结束检查没有
+AH19、Vitest 或 daemon 子进程，也没有 worktree 下 schema44 fixture 残留目录。
 
 测试运行生成的两个未跟踪 schema44 fixture 目录在核对绝对路径位于本 worktree 内、
 `LinkType` 和 `Target` 为空后，移动到
@@ -83,8 +82,7 @@ AH19 qualification 使用 test-only Native-capable Provider adapter；stock prov
 Native provider restart/continuation 资格受外部 provider/platform 能力限制；本地模拟
 适配器的过程资格不能替代它。
 
-后续设备应在本分支最新提交上先检查 status、构建与端口，再按默认串行配置补跑该 AH19
-文件尚未完成的用例，随后执行当前 HEAD 的 `pnpm check`、`pnpm test:functional`
-（包含完整功能 Vitest、Playwright 与 clean-checkout journey），并单独记录
-`pnpm test:functional:ui` / `pnpm test:package` 所需结果及任何真实生产 provider/restart
-资格。不要把上面分批/定向 PASS 合并成全量门禁结论。
+后续设备无需重复 AH19 文件；应在当前分支继续运行尚缺的当前 HEAD 全量门禁：
+`pnpm check`、`pnpm test:functional`（包含完整功能 Vitest、Playwright 与 clean-checkout
+journey）。另外记录 `pnpm test:functional:ui` / `pnpm test:package` 的独立结果，以及任何
+真实生产 provider/restart 资格。AH19 文件通过不等于全量 functional 或 release gate 通过。
