@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
+  mkdirSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
@@ -75,6 +76,19 @@ const projectResourceProfiles = makeProjectResourceProfilePort(
   projectResourceProfilesFromEnvironment(),
 );
 const gateDirectory = join(dirname(databaseFile), "ah10-gates");
+const reconciliationSourceReturnsFile = join(
+  gateDirectory,
+  "reconciliation-source-returns.jsonl",
+);
+
+const appendReconciliationSourceRecord = (record) => {
+  mkdirSync(gateDirectory, { recursive: true });
+  appendFileSync(
+    reconciliationSourceReturnsFile,
+    `${JSON.stringify(record)}\n`,
+    { encoding: "utf8" },
+  );
+};
 const recoveryProbeEvents = new Set();
 const reconciliationMode = process.env.ARBOR_AH7_TEST_RECONCILIATION_MODE;
 const reconciliationProfileDrift = process.env.ARBOR_AH7_TEST_PROFILE_DRIFT;
@@ -179,11 +193,13 @@ if (reconciliationMode !== undefined) {
     return proof;
   };
   const testReconciliationPort = {
-    reconcile: (request) =>
-      Effect.tryPromise({
+    reconcile: (request) => {
+      let stage = "open-source-database";
+      return Effect.tryPromise({
         try: async () => {
           const source = new DatabaseSync(databaseFile);
           try {
+            stage = "read-source-state-and-prepare-result";
             source.exec(`CREATE TABLE IF NOT EXISTS ah7_test_reconciliation_calls (
             call_no INTEGER PRIMARY KEY AUTOINCREMENT,
             invocation_id TEXT NOT NULL,
@@ -216,13 +232,105 @@ if (reconciliationMode !== undefined) {
                 role,
                 observedEffect,
               );
+            stage = "wait-for-source-gate";
+            const callNo = Number(call.lastInsertRowid);
             const event = {
               boundary: "AH7ReconciliationSourceIO",
               invocationId: request.invocationId,
               attemptNo: request.attemptNo,
               role,
-              callNo: Number(call.lastInsertRowid),
+              callNo,
               observedEffect,
+            };
+            const notOccurredResult =
+              reconciliationMode === "NotOccurred" &&
+              effect === undefined &&
+              evidenceArtifact !== undefined
+                ? {
+                    _tag: "NotOccurred",
+                    proof: proofForRequest(request, evidenceArtifact),
+                  }
+                : undefined;
+            const recordSourceReturn = () => {
+              stage = "append-source-return-side-channel";
+              const returnedAt = new Date().toISOString();
+              const gatePath = join(
+                gateDirectory,
+                `${role}-reconciliation-io.release`,
+              );
+              const sourceReturnRecord = {
+                kind: "returned",
+                pid: process.pid,
+                role,
+                callNo,
+                invocationId: request.invocationId,
+                attemptNo: request.attemptNo,
+                observedEffect,
+                timestamp: returnedAt,
+                gatePath,
+              };
+              try {
+                appendReconciliationSourceRecord(sourceReturnRecord);
+              } catch (cause) {
+                try {
+                  process.stderr.write(
+                    `AH7 source-return side-channel append failed: ${cause instanceof Error ? (cause.stack ?? cause.message) : String(cause)}\n`,
+                  );
+                } catch {
+                  // Preserve the source-return append failure.
+                }
+                try {
+                  appendReconciliationSourceRecord({
+                    kind: "error",
+                    pid: process.pid,
+                    role,
+                    callNo,
+                    invocationId: request.invocationId,
+                    attemptNo: request.attemptNo,
+                    observedEffect,
+                    stage: "append-source-return-side-channel",
+                    error:
+                      cause instanceof Error ? cause.message : String(cause),
+                    gatePath,
+                    timestamp: new Date().toISOString(),
+                  });
+                } catch {
+                  // Preserve the original side-channel write failure.
+                }
+                throw cause;
+              }
+              setImmediate(() => {
+                let returnedAtDb;
+                try {
+                  returnedAtDb = new DatabaseSync(databaseFile);
+                  returnedAtDb
+                    .prepare(
+                      "UPDATE ah7_test_reconciliation_calls SET returned_at = ? WHERE call_no = ?",
+                    )
+                    .run(returnedAt, callNo);
+                } catch (cause) {
+                  try {
+                    appendReconciliationSourceRecord({
+                      kind: "error",
+                      pid: process.pid,
+                      role,
+                      callNo,
+                      invocationId: request.invocationId,
+                      attemptNo: request.attemptNo,
+                      observedEffect,
+                      stage: "best-effort-returned-at-update",
+                      error:
+                        cause instanceof Error ? cause.message : String(cause),
+                      gatePath,
+                      timestamp: new Date().toISOString(),
+                    });
+                  } catch {
+                    // The test adapter must not delay its already-recorded result.
+                  }
+                } finally {
+                  returnedAtDb?.close();
+                }
+              });
             };
             if (
               process.env.ARBOR_AH7_TEST_TRACE_RECONCILIATION_IO === "1" ||
@@ -239,11 +347,17 @@ if (reconciliationMode !== undefined) {
               );
               await waitForGate("reconciliation-io", event);
             }
-            source
-              .prepare(
-                "UPDATE ah7_test_reconciliation_calls SET returned_at = ? WHERE call_no = ?",
-              )
-              .run(new Date().toISOString(), Number(call.lastInsertRowid));
+            const reconciliationDrift =
+              process.env.ARBOR_AH7_TEST_DRIFT_ON_RECONCILE;
+            const hasPostGateMutation =
+              process.env.ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE === "1" ||
+              ["authority", "approval", "stop"].includes(reconciliationDrift);
+            if (notOccurredResult !== undefined && !hasPostGateMutation) {
+              stage = "append-source-return-side-channel";
+              recordSourceReturn();
+              return notOccurredResult;
+            }
+            stage = "apply-post-gate-reconciliation-mutation";
             if (
               process.env.ARBOR_AH7_TEST_RESOURCE_CHANGE_ON_RECONCILE === "1"
             ) {
@@ -300,8 +414,6 @@ if (reconciliationMode !== undefined) {
                   .run(request.invocationId, new Date().toISOString());
               }
             }
-            const reconciliationDrift =
-              process.env.ARBOR_AH7_TEST_DRIFT_ON_RECONCILE;
             if (
               reconciliationMode === "NotOccurred" &&
               ["authority", "approval", "stop"].includes(reconciliationDrift)
@@ -351,7 +463,11 @@ if (reconciliationMode !== undefined) {
                   .run(request.invocationId, new Date().toISOString());
               }
             }
+            if (hasPostGateMutation) {
+              stage = "prepare-reconciliation-result";
+            }
             if (reconciliationMode === "StillUnknown") {
+              recordSourceReturn();
               return {
                 _tag: "StillUnknown",
                 reasonCode: "AttemptNotFinal",
@@ -360,12 +476,14 @@ if (reconciliationMode !== undefined) {
             }
             if (reconciliationMode === "Occurred" && effect?.result_ref) {
               if (evidenceArtifact === undefined) {
+                recordSourceReturn();
                 return {
                   _tag: "StillUnknown",
                   reasonCode: "ResultEvidenceUnavailable",
                   evidenceRef: null,
                 };
               }
+              recordSourceReturn();
               return {
                 _tag: "Occurred",
                 proof: {
@@ -395,11 +513,16 @@ if (reconciliationMode !== undefined) {
               effect === undefined &&
               evidenceArtifact !== undefined
             ) {
-              return {
-                _tag: "NotOccurred",
-                proof: proofForRequest(request, evidenceArtifact),
-              };
+              const result = notOccurredResult;
+              if (result === undefined) {
+                throw new Error(
+                  "AH7 NotOccurred result was not prepared before source return",
+                );
+              }
+              recordSourceReturn();
+              return result;
             }
+            recordSourceReturn();
             return {
               _tag: "StillUnknown",
               reasonCode: "AttemptNotFinal",
@@ -409,8 +532,36 @@ if (reconciliationMode !== undefined) {
             source.close();
           }
         },
-        catch: (cause) => ({ _tag: "ToolReconciliationError", cause }),
-      }),
+        catch: (cause) => {
+          try {
+            process.stderr.write(
+              `AH7 reconciliation adapter failed at ${stage}: ${cause instanceof Error ? (cause.stack ?? cause.message) : String(cause)}\n`,
+            );
+          } catch {
+            // Preserve the original adapter failure.
+          }
+          try {
+            appendReconciliationSourceRecord({
+              kind: "error",
+              pid: process.pid,
+              role,
+              invocationId: request.invocationId,
+              attemptNo: request.attemptNo,
+              stage,
+              error: cause instanceof Error ? cause.message : String(cause),
+              gatePath: join(
+                gateDirectory,
+                `${role}-reconciliation-io.release`,
+              ),
+              timestamp: new Date().toISOString(),
+            });
+          } catch {
+            // Preserve the original adapter failure if diagnostics also fail.
+          }
+          return { _tag: "ToolReconciliationError", cause };
+        },
+      });
+    },
   };
   const shell = BUILTIN_EXECUTORS.find((executor) => executor.name === "shell");
   if (shell === undefined)
