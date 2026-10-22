@@ -18,6 +18,7 @@ import {
   ProjectId,
   ProviderTurnId,
   parse,
+  providerTurnNativeCompactionId,
   SessionId,
   WorkspaceId,
 } from "../../../packages/domain/src/index.js";
@@ -2079,12 +2080,27 @@ const appendSecondOrdinaryNativeCandidate = (
     if (turn === undefined || manifest === undefined) {
       throw new Error("AH19 source Native candidate rows missing");
     }
-    const secondTurnId = `${providerTurnId}_ambiguous`;
-    const secondManifestId = `${String(manifest.manifest_id)}_ambiguous`;
     const secondManifestJson = JSON.parse(
       String(manifest.manifest_json),
     ) as Record<string, unknown>;
+    const sourceStepNo = secondManifestJson.logicalStepNo;
+    if (
+      typeof sourceStepNo !== "number" ||
+      !Number.isSafeInteger(sourceStepNo) ||
+      sourceStepNo < 0 ||
+      !Number.isSafeInteger(sourceStepNo + 1)
+    ) {
+      throw new Error("AH19 source Native candidate step was not canonical");
+    }
+    const secondStepNo = sourceStepNo + 1;
+    const secondTurnId = providerTurnNativeCompactionId(
+      parse(ExecutionId)(String(manifest.execution_id)),
+      secondStepNo,
+      Number(manifest.context_epoch),
+    );
+    const secondManifestId = functionalId("mft");
     secondManifestJson.providerTurnId = secondTurnId;
+    secondManifestJson.logicalStepNo = secondStepNo;
     const turnCopy = {
       ...turn,
       provider_turn_id: secondTurnId,
@@ -2143,7 +2159,11 @@ const appendSecondOrdinaryNativeCandidate = (
         "AH19 second Native candidate was not a valid same-epoch row",
       );
     }
-    return { secondTurnId, candidateCount: candidates.length };
+    return {
+      secondTurnId,
+      secondManifestId,
+      candidateCount: candidates.length,
+    };
   } finally {
     db.close();
   }
@@ -5008,6 +5028,13 @@ describe("AH19 restart binding qualification", () => {
       native.providerTurnId,
     );
     expect(appended.candidateCount).toBe(2);
+    expect(parse(ProviderTurnId)(appended.secondTurnId)).toBe(
+      appended.secondTurnId,
+    );
+    expect(appended.secondTurnId).not.toBe(native.providerTurnId);
+    expect(appended.secondManifestId).toMatch(
+      /^mft_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
     const beforeRestart = readSnapshot(fixture.databaseFile, ids);
     const requestsBeforeRestart = providerRequests.length;
     await fixture
