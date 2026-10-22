@@ -1,14 +1,29 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { newUuid7 } from "../../../packages/application/src/formation-plan.js";
+import {
+  makeP39PrivateTestDirectory,
+  removeP39PrivateTestDirectory,
+} from "../../support/p39-windows-deployment-test.js";
 import {
   copySchema44RowsIntoP38Seed,
   createP32HistoricalTestImage,
   createP32MigrationBaseline,
   createSchema42TestDatabase,
+  createSchema44TestDatabase,
   upgradeSchema44TestDatabase,
+  upgradeSchema44ToCurrentTestDatabase,
 } from "../../support/schema44-database.js";
 import {
   expireExecutionLeaseAfterOwnerExitForQualification,
@@ -39,6 +54,8 @@ interface Probe {
   readonly executionId: string;
   readonly fencingGeneration?: number;
   readonly pauseRequested?: boolean;
+  readonly workerId?: string;
+  readonly workerIncarnationId?: string;
   readonly providerTurnId?: string;
   readonly logicalActionId?: string;
   readonly actionKind?: string;
@@ -299,61 +316,338 @@ const schemaSnapshot = (db: DatabaseSync) => {
   };
 };
 
+/**
+ * Build a disposable frozen-v44 image from the real current-v51 fixture.
+ * The destination's schema is produced only by the trusted migration chain;
+ * its table/column contract drives this explicit projection. In particular,
+ * this does not lower user_version or infer a column intersection. P45 inbox
+ * rows are projected to the seven frozen v44 fields (P45 will rebuild them),
+ * P46 verification snapshot columns are omitted (they do not exist in v44),
+ * and P49 grant-provenance columns are omitted while the pre-P49 grant values
+ * are retained.
+ */
+const projectSchema51IntoSchema44Image = (
+  sourceFilename: string,
+  targetFilename: string,
+  committedCommandId: string,
+): void => {
+  const source = new DatabaseSync(sourceFilename, { readOnly: true });
+  const target = new DatabaseSync(targetFilename);
+  try {
+    const sourceVersion = Number(
+      (source.prepare("PRAGMA user_version").get() as { user_version: number })
+        .user_version,
+    );
+    const targetVersion = Number(
+      (target.prepare("PRAGMA user_version").get() as { user_version: number })
+        .user_version,
+    );
+    if (sourceVersion !== 51 || targetVersion !== 44) {
+      throw new Error(
+        `Legacy projection requires exact schema 51 -> 44; got ${sourceVersion} -> ${targetVersion}`,
+      );
+    }
+
+    target.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE");
+    try {
+      const tables = target
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+        )
+        .all() as Array<{ name: string }>;
+      const sourceTables = new Set(
+        (
+          source
+            .prepare(
+              `SELECT name FROM sqlite_master
+               WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`,
+            )
+            .all() as Array<{ name: string }>
+        ).map(({ name }) => name),
+      );
+      for (const { name } of tables) {
+        if (!sourceTables.has(name)) continue;
+        const columns = target
+          .prepare(`PRAGMA table_info("${name.replaceAll('"', '""')}")`)
+          .all() as Array<{ name: string }>;
+        if (columns.length === 0) continue;
+        // This exact v44 destination column list intentionally acts as the
+        // audited projection; selecting a generic source/target intersection
+        // would silently reinterpret migration-added fields.
+        const names = columns.map(({ name: column }) => column);
+        const quotedColumns = names
+          .map((column) => `"${column.replaceAll('"', '""')}"`)
+          .join(", ");
+        const quotedTable = `"${name.replaceAll('"', '""')}"`;
+        const rows = source
+          .prepare(`SELECT ${quotedColumns} FROM ${quotedTable}`)
+          .all() as Array<Record<string, unknown>>;
+        if (rows.length === 0) continue;
+        if (name === "p10_attention_dispatch_state") {
+          const existing = target
+            .prepare("SELECT singleton FROM p10_attention_dispatch_state")
+            .all() as Array<{ singleton: number }>;
+          if (
+            names.length < 2 ||
+            existing.length !== 1 ||
+            rows.length !== 1 ||
+            existing[0]?.singleton !== 1 ||
+            rows[0]?.singleton !== 1
+          ) {
+            throw new Error("v44 P10 singleton projection was not exact");
+          }
+          const mutable = names.filter((column) => column !== "singleton");
+          const update = target.prepare(
+            `UPDATE ${quotedTable} SET ${mutable
+              .map((column) => `"${column}" = ?`)
+              .join(", ")} WHERE singleton = 1`,
+          );
+          if (
+            Number(
+              update.run(
+                ...(mutable.map((column) => rows[0]?.[column]) as Parameters<
+                  typeof update.run
+                >),
+              ).changes,
+            ) !== 1
+          ) {
+            throw new Error("v44 P10 singleton projection updated no row");
+          }
+          continue;
+        }
+        const placeholders = names.map(() => "?").join(", ");
+        const insert = target.prepare(
+          `INSERT INTO ${quotedTable} (${quotedColumns}) VALUES (${placeholders})`,
+        );
+        for (const row of rows) {
+          insert.run(
+            ...(names.map((column) => row[column]) as Parameters<
+              typeof insert.run
+            >),
+          );
+        }
+      }
+      const committed = target
+        .prepare(
+          `SELECT resolution, result_json FROM commands WHERE command_id = ?`,
+        )
+        .get(committedCommandId) as
+        | { resolution: string; result_json: string | null }
+        | undefined;
+      if (
+        committed?.resolution !== "Committed" ||
+        committed.result_json === null
+      ) {
+        throw new Error("v44 projection omitted the exact committed receipt");
+      }
+      const bindingCount = Number(
+        (
+          target
+            .prepare(
+              "SELECT COUNT(*) AS count FROM assign_work_target_bindings WHERE command_id = ?",
+            )
+            .get(committedCommandId) as { count: number }
+        ).count,
+      );
+      if (bindingCount !== 1) {
+        throw new Error("v44 projection omitted the exact binding row");
+      }
+      const violations = target
+        .prepare("PRAGMA foreign_key_check")
+        .all() as Array<Record<string, unknown>>;
+      if (violations.length !== 0) {
+        throw new Error(
+          `v44 projection has foreign-key violations: ${JSON.stringify(violations.slice(0, 8))}`,
+        );
+      }
+      target.exec("COMMIT");
+    } catch (error) {
+      if (target.isTransaction) target.exec("ROLLBACK");
+      throw error;
+    }
+    const integrity = target.prepare("PRAGMA integrity_check").all() as Array<{
+      integrity_check: string;
+    }>;
+    if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok") {
+      throw new Error(
+        `v44 projection integrity check failed: ${JSON.stringify(integrity)}`,
+      );
+    }
+  } finally {
+    target.close();
+    source.close();
+  }
+};
+
+const qualifyLegacyP39ShortPaths = (input: {
+  readonly root: string;
+  readonly databaseFilename: string;
+  readonly p39ReportFilename: string;
+}) => {
+  const root = resolve(input.root);
+  const cwd = resolve(process.cwd());
+  const systemTemp = resolve(tmpdir());
+  const rootInfo = lstatSync(root);
+  const rootReal = realpathSync.native(root);
+  const cwdReal = realpathSync.native(cwd);
+  const normalize = (value: string) =>
+    process.platform === "win32" ? value.toLowerCase() : value;
+  const relativeToCwd = relative(cwd, root);
+  const relativeToSystemTemp = relative(systemTemp, root);
+  const directCwdChild =
+    relativeToCwd !== "" &&
+    relativeToCwd !== ".." &&
+    !relativeToCwd.startsWith("..\\") &&
+    !relativeToCwd.startsWith("../") &&
+    !relativeToCwd.includes("\\") &&
+    !relativeToCwd.includes("/");
+  const outsideSystemTemp =
+    relativeToSystemTemp === ".." ||
+    relativeToSystemTemp.startsWith("..\\") ||
+    relativeToSystemTemp.startsWith("../") ||
+    /^[a-z]:/iu.test(relativeToSystemTemp) ||
+    relativeToSystemTemp.startsWith("\\\\");
+  const underRoot = (filename: string) => {
+    const rel = relative(root, resolve(filename));
+    return (
+      rel !== "" &&
+      rel !== ".." &&
+      !rel.startsWith(`..\\`) &&
+      !rel.startsWith(`../`)
+    );
+  };
+  if (
+    rootInfo.isSymbolicLink() ||
+    !rootInfo.isDirectory() ||
+    !directCwdChild ||
+    !outsideSystemTemp ||
+    normalize(cwdReal) !== normalize(cwd) ||
+    normalize(rootReal) !== normalize(root) ||
+    !underRoot(input.databaseFilename) ||
+    !underRoot(input.p39ReportFilename)
+  ) {
+    throw new Error(
+      `P39 short-path root must be a private non-reparse direct repository child outside system temp: ${JSON.stringify({ root, cwd, cwdReal, systemTemp, rootReal, databaseFilename: input.databaseFilename, p39ReportFilename: input.p39ReportFilename })}`,
+    );
+  }
+  const databaseInfo = statSync(input.databaseFilename, { bigint: true });
+  const lockIdentity = createHash("sha256")
+    .update(`${databaseInfo.dev}:${databaseInfo.ino}`)
+    .digest("hex");
+  const lockFilename = join(
+    dirname(input.databaseFilename),
+    `.arbor-p39-writer-${lockIdentity}.sqlite`,
+  );
+  if (lstatSync(input.databaseFilename).isSymbolicLink()) {
+    throw new Error(
+      `P39 primary database is a reparse point: ${input.databaseFilename}`,
+    );
+  }
+  const paths = {
+    primary: resolve(input.databaseFilename),
+    primaryJournal: `${resolve(input.databaseFilename)}-journal`,
+    p39Report: resolve(input.p39ReportFilename),
+    p39Lock: resolve(lockFilename),
+    p39LockJournal: `${resolve(lockFilename)}-journal`,
+  };
+  const pathLengths = Object.fromEntries(
+    Object.entries(paths).map(([name, filename]) => [name, filename.length]),
+  );
+  console.info(
+    `[AH10 legacy P39 path qualification] ${JSON.stringify({ root, rootReal, directCwdChild: relativeToCwd, outsideSystemTemp, pathLengths, paths })}`,
+  );
+  if (paths.primary === paths.p39Report || paths.primary === paths.p39Lock) {
+    throw new Error(
+      `P39 primary/report/lock paths alias: ${JSON.stringify({ root, rootReal, pathLengths, paths })}`,
+    );
+  }
+  for (const filename of Object.values(paths)) {
+    if (!underRoot(filename) || filename.length > 240) {
+      throw new Error(
+        `P39 legacy path is outside its short private root or exceeds the 240-character budget: ${JSON.stringify({ root, rootReal, pathLengths, paths })}`,
+      );
+    }
+  }
+};
+
 const makePreBindingP32Copy = async (
   currentSource: string,
   target: string,
   priorCommittedCommandId: string,
 ): Promise<string> => {
-  const schema42 = await createSchema42TestDatabase({
-    parentDirectory: dirname(target),
-    prefix: "ah10-p32-schema42-source-",
-    seedP38: (p38Filename) =>
-      copySchema44RowsIntoP38Seed(currentSource, p38Filename),
-  });
+  const shortTempRoot = makeP39PrivateTestDirectory(process.cwd(), ".arb-p39-");
   try {
-    const schema42Db = new DatabaseSync(schema42.databaseFilename, {
-      readOnly: true,
+    const schema44 = await createSchema44TestDatabase({
+      parentDirectory: shortTempRoot,
+      prefix: "v44-",
+      beforeP39Maintenance: (paths) =>
+        qualifyLegacyP39ShortPaths({ root: shortTempRoot, ...paths }),
     });
     try {
-      const version = Number(
-        (
-          schema42Db.prepare("PRAGMA user_version").get() as {
-            user_version: number;
-          }
-        ).user_version,
+      projectSchema51IntoSchema44Image(
+        currentSource,
+        schema44.databaseFilename,
+        priorCommittedCommandId,
       );
-      if (version !== 42) {
-        throw new Error(
-          `P32 historical source must be a real schema-42 fixture; got ${version}`,
-        );
-      }
-      const committed = schema42Db
-        .prepare("SELECT resolution FROM commands WHERE command_id = ?")
-        .get(priorCommittedCommandId) as { resolution: string } | undefined;
-      if (committed?.resolution !== "Committed") {
-        throw new Error(
-          "schema-42 source omitted the exact committed AssignWork receipt",
-        );
-      }
-      const bindings = schema42Db
-        .prepare(
-          "SELECT command_id FROM assign_work_target_bindings WHERE command_id = ?",
-        )
-        .all(priorCommittedCommandId);
-      if (bindings.length !== 1) {
-        throw new Error(
-          "schema-42 source omitted the exact AssignWork binding row",
-        );
+      const schema42 = await createSchema42TestDatabase({
+        parentDirectory: shortTempRoot,
+        prefix: "v42-",
+        beforeP39Maintenance: (paths) =>
+          qualifyLegacyP39ShortPaths({ root: shortTempRoot, ...paths }),
+        seedP38: (p38Filename) =>
+          copySchema44RowsIntoP38Seed(schema44.databaseFilename, p38Filename),
+      });
+      try {
+        const schema42Db = new DatabaseSync(schema42.databaseFilename, {
+          readOnly: true,
+        });
+        try {
+          const version = Number(
+            (
+              schema42Db.prepare("PRAGMA user_version").get() as {
+                user_version: number;
+              }
+            ).user_version,
+          );
+          if (version !== 42) {
+            throw new Error(
+              `P32 historical source must be a real schema-42 fixture; got ${version}`,
+            );
+          }
+          const committed = schema42Db
+            .prepare("SELECT resolution FROM commands WHERE command_id = ?")
+            .get(priorCommittedCommandId) as { resolution: string } | undefined;
+          if (committed?.resolution !== "Committed") {
+            throw new Error(
+              "schema-42 source omitted the exact committed AssignWork receipt",
+            );
+          }
+          const bindings = schema42Db
+            .prepare(
+              "SELECT command_id FROM assign_work_target_bindings WHERE command_id = ?",
+            )
+            .all(priorCommittedCommandId);
+          if (bindings.length !== 1) {
+            throw new Error(
+              "schema-42 source omitted the exact AssignWork binding row",
+            );
+          }
+        } finally {
+          schema42Db.close();
+        }
+        await createP32HistoricalTestImage({
+          sourceFilename: schema42.databaseFilename,
+          targetFilename: target,
+        });
+      } finally {
+        schema42.cleanup();
       }
     } finally {
-      schema42Db.close();
+      schema44.cleanup();
     }
-    await createP32HistoricalTestImage({
-      sourceFilename: schema42.databaseFilename,
-      targetFilename: target,
-    });
   } finally {
-    schema42.cleanup();
+    removeP39PrivateTestDirectory(shortTempRoot);
   }
 
   const p32Db = new DatabaseSync(target, { readOnly: true });
@@ -399,10 +693,13 @@ const readRows = (databaseFile: string) => {
       ),
       leases: db
         .prepare(
-          "SELECT execution_id, generation, expires_at FROM execution_leases",
+          `SELECT execution_id, worker_id, worker_incarnation_id, generation,
+                  expires_at FROM execution_leases`,
         )
         .all() as Array<{
         execution_id: string;
+        worker_id: string;
+        worker_incarnation_id: string;
         generation: number;
         expires_at: string;
       }>,
@@ -1164,6 +1461,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         daemonEnvironment: {
           ARBOR_AH10_ROLE: "old",
           ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
+          ARBOR_AH10_DELAY_LEASE_RENEWAL_PAUSE:
+            crashSide === "approval-fencing-before" ? "1" : "0",
           ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
             crashSide === "before" ? "1" : "0",
           ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN:
@@ -1285,6 +1584,10 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       });
 
       let liveOwnerPauseEvidence: LiveOwnerLeasePauseEvidence | undefined;
+      let oldLeaseOwner: Probe | undefined;
+      let oldLeaseOwnerWorkerId: string | undefined;
+      let oldLeaseOwnerIncarnationId: string | undefined;
+      let assignWorkAuthorizedPause: Probe | undefined;
 
       // The old daemon is held at the exact Agent ActionIntent boundary. The
       // target is the wref recovered from its persisted successful
@@ -1615,7 +1918,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           decision: "Approve",
           reason: "qualify fenced CAPA non-consumption",
         });
-        const authorized = await waitForPublic(
+        assignWorkAuthorizedPause = await waitForPublic(
           async () =>
             events.find(
               (event) =>
@@ -1635,7 +1938,16 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             `AssignWork authorization pre-command probe absent: ${error instanceof Error ? error.message : String(error)}; events=${JSON.stringify(events.filter((event) => event.executionId === oldAction.executionId))}; approvals=${JSON.stringify(snapshot.approvals)}; controls=${JSON.stringify(snapshot.controlResults.map((row) => JSON.parse(row.payload_json)))}; actions=${JSON.stringify(snapshot.actions.filter((entry) => entry.execution_id === oldAction.executionId))}; provider=${JSON.stringify(providerTrace)}; daemon=${fixture.daemonErrors.join(" | ")}`,
           );
         });
-        expect(authorized).toBeDefined();
+        if (assignWorkAuthorizedPause === undefined) {
+          throw new Error(
+            "AssignWork authorization pre-command pause was absent",
+          );
+        }
+
+        writeFileSync(
+          resolve(fixture.directory, "ah10-gates", "old-lease-renewal.pause"),
+          "pause old owner renewal after AssignWork authorization",
+        );
         const renewal = await waitForPublic(
           async () =>
             events.find(
@@ -1643,7 +1955,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
                 event.role === "old" &&
                 event.boundary === "AH10BeforeLeaseRenewal" &&
                 event.executionId === oldAction.executionId &&
-                event.fencingGeneration === 1,
+                event.fencingGeneration === 1 &&
+                event.pauseRequested === true,
             ),
           (event) => event !== undefined,
           20_000,
@@ -1652,6 +1965,23 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         if (renewal === undefined) {
           throw new Error(
             "AssignWork live-owner renewal pause evidence absent",
+          );
+        }
+        oldLeaseOwner = events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH10AfterLeaseAcquired" &&
+            event.executionId === oldAction.executionId &&
+            event.fencingGeneration === 1,
+        );
+        oldLeaseOwnerWorkerId = oldLeaseOwner?.workerId;
+        oldLeaseOwnerIncarnationId = oldLeaseOwner?.workerIncarnationId;
+        if (
+          oldLeaseOwnerWorkerId === undefined ||
+          oldLeaseOwnerIncarnationId === undefined
+        ) {
+          throw new Error(
+            "AssignWork live-owner lease identity probe was absent",
           );
         }
         liveOwnerPauseEvidence = {
@@ -1689,13 +2019,123 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             `live-owner branch ${crashSide} omitted pause evidence`,
           );
         }
+        if (
+          oldLeaseOwnerWorkerId === undefined ||
+          oldLeaseOwnerIncarnationId === undefined
+        ) {
+          throw new Error(
+            `live-owner branch ${crashSide} omitted exact lease identity`,
+          );
+        }
+        const exactOldLeaseOwner = {
+          workerId: oldLeaseOwnerWorkerId,
+          workerIncarnationId: oldLeaseOwnerIncarnationId,
+        };
+        const assertApprovalFencingBeforeCommandBlocked = () => {
+          const currentRows = readRows(recoveryDatabaseFile);
+          const liveLease = currentRows.leases.find(
+            (lease) => lease.execution_id === oldAction.executionId,
+          );
+          expect(liveLease).toMatchObject({
+            execution_id: oldAction.executionId,
+            worker_id: exactOldLeaseOwner.workerId,
+            worker_incarnation_id: exactOldLeaseOwner.workerIncarnationId,
+            generation: 1,
+          });
+          expect(
+            existsSync(
+              resolve(
+                fixture.directory,
+                "ah10-gates",
+                "old-assign-work-authorized.release",
+              ),
+            ),
+          ).toBe(false);
+          expect(
+            existsSync(
+              resolve(
+                fixture.directory,
+                "ah10-gates",
+                "old-lease-renewal.release",
+              ),
+            ),
+          ).toBe(false);
+          expect(
+            events.filter(
+              (event) =>
+                event.role === "old" &&
+                event.boundary ===
+                  "AH10AfterAssignWorkAuthorizedBeforeCommandSubmission" &&
+                event.executionId === oldAction.executionId &&
+                event.logicalActionId === logicalActionId &&
+                event.callRef === callRef,
+            ),
+          ).toEqual([assignWorkAuthorizedPause]);
+          expect(
+            events.some(
+              (event) =>
+                event.role === "old" &&
+                (event.boundary === "AH10BeforeFencedReceiptCommit" ||
+                  event.boundary ===
+                    "AH10AfterControlHandlerReturnBeforeObservationCommit") &&
+                event.executionId === oldAction.executionId &&
+                event.logicalActionId === logicalActionId &&
+                event.callRef === callRef,
+            ),
+          ).toBe(false);
+          expect(
+            currentRows.assignWorkTargetBindings.filter(
+              (binding) =>
+                binding.execution_id === oldAction.executionId &&
+                binding.logical_action_id === logicalActionId &&
+                binding.call_ref === callRef,
+            ),
+          ).toEqual([]);
+          expect(
+            currentRows.controlResults.filter((result) => {
+              try {
+                const payload = JSON.parse(result.payload_json) as {
+                  callRef?: string;
+                  actionKind?: string;
+                };
+                return (
+                  payload.callRef === callRef &&
+                  payload.actionKind === "assign_work"
+                );
+              } catch {
+                return false;
+              }
+            }),
+          ).toEqual([]);
+          expect(targetWorks(currentRows, targetObjective)).toHaveLength(0);
+        };
+        assertApprovalFencingBeforeCommandBlocked();
+        const liveLeaseBeforeQualification = readRows(
+          recoveryDatabaseFile,
+        ).leases.find((lease) => lease.execution_id === oldAction.executionId);
+        if (liveLeaseBeforeQualification === undefined) {
+          throw new Error(
+            "AssignWork live lease tuple absent before qualification",
+          );
+        }
         await waitForLiveOwnerLeaseExpiryForQualification({
           databaseFile: recoveryDatabaseFile,
           executionId: oldAction.executionId,
           pauseEvidence: liveOwnerPauseEvidence,
-          expected: { generation: liveOwnerPauseEvidence.fencingGeneration },
+          expected: {
+            workerId: exactOldLeaseOwner.workerId,
+            workerIncarnationId: exactOldLeaseOwner.workerIncarnationId,
+            generation: 1,
+            expiresAt: liveLeaseBeforeQualification.expires_at,
+          },
           daemon: { snapshot: fixture.daemonProcessSnapshot },
         });
+        expect(
+          readRows(recoveryDatabaseFile).leases.find(
+            (lease) => lease.execution_id === oldAction.executionId,
+          ),
+        ).toEqual(liveLeaseBeforeQualification);
+        assertApprovalFencingBeforeCommandBlocked();
       } else {
         await expireExecutionLeaseAfterOwnerExitForQualification({
           databaseFile: recoveryDatabaseFile,
@@ -1755,6 +2195,119 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             "p32-upgrade-p39-report.db",
           ),
         });
+        const schema44 = new DatabaseSync(recoveryDatabaseFile, {
+          readOnly: true,
+        });
+        let v44ReceiptJson: string | null = null;
+        try {
+          expect(
+            Number(
+              (
+                schema44.prepare("PRAGMA user_version").get() as {
+                  user_version: number;
+                }
+              ).user_version,
+            ),
+          ).toBe(44);
+          const receipt = schema44
+            .prepare(
+              "SELECT resolution, result_json FROM commands WHERE command_id = ?",
+            )
+            .get(priorCommittedCommandId ?? "") as
+            | { resolution: string; result_json: string | null }
+            | undefined;
+          expect(receipt?.resolution).toBe("Committed");
+          expect(receipt?.result_json).not.toBeNull();
+          v44ReceiptJson = receipt?.result_json ?? null;
+          expect(
+            schema44
+              .prepare(
+                "SELECT command_id FROM assign_work_target_bindings WHERE command_id = ?",
+              )
+              .all(priorCommittedCommandId ?? ""),
+          ).toHaveLength(0);
+          const inboxColumns = (
+            schema44
+              .prepare("PRAGMA table_info(inbox_entries)")
+              .all() as Array<{
+              name: string;
+            }>
+          ).map(({ name }) => name);
+          expect(inboxColumns).toEqual([
+            "workspace_id",
+            "entry_key",
+            "kind",
+            "summary",
+            "correlation_id",
+            "admitted_at",
+            "consumed_at",
+          ]);
+          const verificationColumns = (
+            schema44
+              .prepare("PRAGMA table_info(verifications)")
+              .all() as Array<{
+              name: string;
+            }>
+          ).map(({ name }) => name);
+          expect(verificationColumns).not.toContain("criteria_results");
+          expect(verificationColumns).not.toContain("snapshot_status");
+          expect(
+            schema44
+              .prepare(
+                `SELECT name, sql FROM sqlite_master WHERE type = 'trigger'
+                   AND name IN ('tool_invocations_observation_insert_guard',
+                                'tool_invocations_observation_update_guard')
+                   ORDER BY name`,
+              )
+              .all(),
+          ).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                name: "tool_invocations_observation_insert_guard",
+                sql: expect.stringContaining("ApprovalRejected"),
+              }),
+              expect.objectContaining({
+                name: "tool_invocations_observation_update_guard",
+                sql: expect.stringContaining("ApprovalRejected"),
+              }),
+            ]),
+          );
+        } finally {
+          schema44.close();
+        }
+        await upgradeSchema44ToCurrentTestDatabase({
+          databaseFilename: recoveryDatabaseFile,
+        });
+        const schema51 = new DatabaseSync(recoveryDatabaseFile, {
+          readOnly: true,
+        });
+        try {
+          expect(
+            Number(
+              (
+                schema51.prepare("PRAGMA user_version").get() as {
+                  user_version: number;
+                }
+              ).user_version,
+            ),
+          ).toBe(51);
+          expect(
+            schema51
+              .prepare(
+                "SELECT resolution, result_json FROM commands WHERE command_id = ?",
+              )
+              .get(priorCommittedCommandId ?? ""),
+          ).toEqual({ resolution: "Committed", result_json: v44ReceiptJson });
+          expect(
+            schema51
+              .prepare(
+                "SELECT command_id FROM assign_work_target_bindings WHERE command_id = ?",
+              )
+              .all(priorCommittedCommandId ?? ""),
+          ).toHaveLength(0);
+        } finally {
+          schema51.close();
+        }
       }
 
       const newDaemon = await fixture.startAdditionalDaemon({
@@ -1795,7 +2348,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       }
       if (crashSide === "legacy-p32-upgrade") {
         const upgraded = readRows(recoveryDatabaseFile);
-        expect(upgraded.schemaVersion).toBe(44);
+        expect(upgraded.schemaVersion).toBe(51);
         expect(upgraded.assignWorkTargetBindings).toHaveLength(0);
         expect(
           upgraded.commands.find(

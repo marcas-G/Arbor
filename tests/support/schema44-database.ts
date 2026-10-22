@@ -5,6 +5,7 @@ import { Cause, Effect, Exit, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   CURRENT_SCHEMA_VERSION,
+  makeP51ActivationHighwaterFact,
   P32_MIGRATIONS,
   P38_MIGRATIONS,
   P43_MIGRATION,
@@ -22,6 +23,7 @@ import {
   splitStatements,
   layer as sqliteLayer,
 } from "../../adapters/persistence-sqlite/src/index.js";
+import { backfillRetryVerificationOrigins } from "../../apps/single-workspace/src/retry-verification-origin-backfill.js";
 import {
   createP39PrivateTestFile,
   removeP39PrivateTestDirectory,
@@ -59,6 +61,11 @@ export interface Schema42TestDatabaseOptions {
   readonly prefix?: string;
   /** Optional private parent used by invocation-wide functional templates. */
   readonly parentDirectory?: string;
+  /** Test-only pre-P39 path qualification hook for unusually constrained fixtures. */
+  readonly beforeP39Maintenance?: (input: {
+    readonly databaseFilename: string;
+    readonly p39ReportFilename: string;
+  }) => void;
   /** Internal target selector for a current schema-44 runtime fixture. */
   readonly targetSchemaVersion?: 42 | 44 | 45 | 46 | 47 | 48 | 50 | 51;
 }
@@ -124,6 +131,7 @@ const upgradeSchema44Suffix = async (
 export const upgradeSchema44TestDatabase = async (input: {
   readonly databaseFilename: string;
   readonly p39ReportFilename: string;
+  readonly beforeP39Maintenance?: Schema42TestDatabaseOptions["beforeP39Maintenance"];
 }): Promise<void> => {
   await upgradeSchema42TestDatabase(input);
   await upgradeSchema44Suffix(input.databaseFilename);
@@ -132,14 +140,40 @@ export const upgradeSchema44TestDatabase = async (input: {
 const upgradeSchema45Suffix = async (
   databaseFilename: string,
 ): Promise<void> => {
-  await runPrimary(
-    databaseFilename,
-    Effect.gen(function* () {
-      yield* runMigrations([P45_RETRY_VERIFICATION_ORIGIN_MIGRATION], {
-        allowOfflineOnly: true,
-      });
-    }),
-  );
+  const database = new DatabaseSync(databaseFilename);
+  try {
+    database.exec("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE");
+    const version = Number(
+      (
+        database.prepare("PRAGMA user_version").get() as {
+          user_version: number;
+        }
+      ).user_version,
+    );
+    if (version !== 44) {
+      throw new Error(`Schema-45 migration requires 44, found ${version}.`);
+    }
+    for (const statement of splitStatements(
+      P45_RETRY_VERIFICATION_ORIGIN_MIGRATION.sql,
+    )) {
+      database.exec(statement);
+    }
+    backfillRetryVerificationOrigins(database);
+    database.exec("PRAGMA user_version = 45");
+    if (database.prepare("PRAGMA foreign_key_check").all().length > 0) {
+      throw new Error("Schema-45 migration produced foreign-key violations.");
+    }
+    database.exec("COMMIT");
+  } catch (cause) {
+    try {
+      if (database.isTransaction) database.exec("ROLLBACK");
+    } catch {
+      // Closing the connection also rolls back an interrupted transaction.
+    }
+    throw cause;
+  } finally {
+    database.close();
+  }
   const version = await readUserVersion(databaseFilename);
   if (version !== 45) {
     throw new Schema42TestDatabaseSetupError(
@@ -149,6 +183,97 @@ const upgradeSchema45Suffix = async (
     );
   }
   await checkpointSqlite(databaseFilename);
+};
+
+/** Strictly upgrades a disposable, already-qualified schema-44 image through
+ * the same offline suffix used by current-schema test fixtures. */
+export const upgradeSchema44ToCurrentTestDatabase = async (input: {
+  readonly databaseFilename: string;
+}): Promise<void> => {
+  const sourceVersion = await readUserVersion(input.databaseFilename);
+  if (sourceVersion !== 44) {
+    throw new Error(
+      `Schema-44-to-current fixture upgrade requires exact source 44; found ${sourceVersion}.`,
+    );
+  }
+  await upgradeSchema45Suffix(input.databaseFilename);
+  await upgradeSchema46Suffix(input.databaseFilename);
+  await upgradeSchema47Suffix(input.databaseFilename);
+  await upgradeSchema48Suffix(input.databaseFilename);
+  await upgradeSchema50Suffix(input.databaseFilename);
+  await upgradeSchema51Suffix(input.databaseFilename);
+
+  const database = new DatabaseSync(input.databaseFilename, { readOnly: true });
+  try {
+    const version = Number(
+      (
+        database.prepare("PRAGMA user_version").get() as {
+          user_version: number;
+        }
+      ).user_version,
+    );
+    if (version !== CURRENT_SCHEMA_VERSION) {
+      throw new Error(
+        `Schema-44-to-current fixture upgrade ended at ${version}, expected ${CURRENT_SCHEMA_VERSION}.`,
+      );
+    }
+    const violations = database
+      .prepare("PRAGMA foreign_key_check")
+      .all() as Array<Record<string, unknown>>;
+    if (violations.length > 0) {
+      throw new Error(
+        `Schema-current fixture has foreign-key violations: ${JSON.stringify(violations.slice(0, 8))}`,
+      );
+    }
+    const projects = database
+      .prepare(
+        `SELECT p.project_id, COALESCE(s.last_sequence, 0) AS max_event_sequence
+           FROM projects p LEFT JOIN project_event_sequences s USING (project_id)
+           ORDER BY p.project_id`,
+      )
+      .all() as Array<{ project_id: string; max_event_sequence: number }>;
+    const highwaters = database
+      .prepare(
+        `SELECT project_id, max_event_sequence, captured_at, fact_digest
+           FROM verification_conclusion_v2_activation_highwaters ORDER BY project_id`,
+      )
+      .all() as Array<{
+      project_id: string;
+      max_event_sequence: number;
+      captured_at: string;
+      fact_digest: string;
+    }>;
+    if (
+      highwaters.length !== projects.length ||
+      highwaters.some((highwater, index) => {
+        const project = projects[index];
+        const expectedFact =
+          project === undefined
+            ? undefined
+            : makeP51ActivationHighwaterFact(
+                project.project_id,
+                Number(project.max_event_sequence),
+                highwater.captured_at,
+              );
+        return (
+          project === undefined ||
+          highwater.project_id !== project.project_id ||
+          Number(highwater.max_event_sequence) !==
+            Number(project.max_event_sequence) ||
+          highwater.captured_at.length !== 24 ||
+          !/^[0-9a-f]{64}$/u.test(highwater.fact_digest) ||
+          highwater.fact_digest !== expectedFact?.factDigest
+        );
+      })
+    ) {
+      throw new Error(
+        `P51 highwater facts do not match the schema-51 project/event frontier: ${JSON.stringify({ projects, highwaters })}`,
+      );
+    }
+  } finally {
+    database.close();
+  }
+  await checkpointSqlite(input.databaseFilename);
 };
 
 const upgradeSchema46Suffix = async (
@@ -602,6 +727,7 @@ const isUnsupportedP39Deployment = (value: unknown) =>
 export const upgradeSchema42TestDatabase = async (input: {
   readonly databaseFilename: string;
   readonly p39ReportFilename: string;
+  readonly beforeP39Maintenance?: Schema42TestDatabaseOptions["beforeP39Maintenance"];
 }): Promise<void> => {
   await runPrimary(
     input.databaseFilename,
@@ -617,6 +743,11 @@ export const upgradeSchema42TestDatabase = async (input: {
       version38,
     );
   }
+
+  input.beforeP39Maintenance?.({
+    databaseFilename: input.databaseFilename,
+    p39ReportFilename: input.p39ReportFilename,
+  });
 
   const p39 = await Effect.runPromiseExit(
     runP39SqliteMaintenance({
@@ -726,41 +857,41 @@ export const createSchema42TestDatabase = async (
       await upgradeSchema44TestDatabase({
         databaseFilename,
         p39ReportFilename,
+        beforeP39Maintenance: options.beforeP39Maintenance,
       });
-      await upgradeSchema45Suffix(databaseFilename);
-      if (options.targetSchemaVersion === 46)
-        await upgradeSchema46Suffix(databaseFilename);
-      if (options.targetSchemaVersion === 47) {
-        await upgradeSchema46Suffix(databaseFilename);
-        await upgradeSchema47Suffix(databaseFilename);
-      }
-      if (options.targetSchemaVersion === 48) {
-        await upgradeSchema46Suffix(databaseFilename);
-        await upgradeSchema47Suffix(databaseFilename);
-        await upgradeSchema48Suffix(databaseFilename);
-      }
-      if (options.targetSchemaVersion === 50) {
-        await upgradeSchema46Suffix(databaseFilename);
-        await upgradeSchema47Suffix(databaseFilename);
-        await upgradeSchema48Suffix(databaseFilename);
-        await upgradeSchema50Suffix(databaseFilename);
-      }
       if (options.targetSchemaVersion === 51) {
-        await upgradeSchema46Suffix(databaseFilename);
-        await upgradeSchema47Suffix(databaseFilename);
-        await upgradeSchema48Suffix(databaseFilename);
-        await upgradeSchema50Suffix(databaseFilename);
-        await upgradeSchema51Suffix(databaseFilename);
+        await upgradeSchema44ToCurrentTestDatabase({ databaseFilename });
+      } else {
+        await upgradeSchema45Suffix(databaseFilename);
+        if (options.targetSchemaVersion === 46)
+          await upgradeSchema46Suffix(databaseFilename);
+        if (options.targetSchemaVersion === 47) {
+          await upgradeSchema46Suffix(databaseFilename);
+          await upgradeSchema47Suffix(databaseFilename);
+        }
+        if (options.targetSchemaVersion === 48) {
+          await upgradeSchema46Suffix(databaseFilename);
+          await upgradeSchema47Suffix(databaseFilename);
+          await upgradeSchema48Suffix(databaseFilename);
+        }
+        if (options.targetSchemaVersion === 50) {
+          await upgradeSchema46Suffix(databaseFilename);
+          await upgradeSchema47Suffix(databaseFilename);
+          await upgradeSchema48Suffix(databaseFilename);
+          await upgradeSchema50Suffix(databaseFilename);
+        }
       }
     } else if (options.targetSchemaVersion === 44)
       await upgradeSchema44TestDatabase({
         databaseFilename,
         p39ReportFilename,
+        beforeP39Maintenance: options.beforeP39Maintenance,
       });
     else
       await upgradeSchema42TestDatabase({
         databaseFilename,
         p39ReportFilename,
+        beforeP39Maintenance: options.beforeP39Maintenance,
       });
     const expectedVersion = options.targetSchemaVersion ?? 42;
     const version = await readUserVersion(databaseFilename);
