@@ -480,6 +480,7 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
         daemonEnvironment: {
           ARBOR_AH10_ROLE: "old",
           ARBOR_AH10_GATE_ACTION_KIND: "select_current_work",
+          ARBOR_AH10_DELAY_LEASE_RENEWAL_PAUSE: "1",
           ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
             crashSide === "before" ? "1" : "0",
         },
@@ -527,6 +528,10 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
           "Scheduler did not produce the target selection action",
         );
       }
+      writeFileSync(
+        resolve(fixture.directory, "ah10-gates", "old-lease-renewal.pause"),
+        "pause old SelectCurrentWork lease renewal after ActionIntent",
+      );
 
       const staged = await waitForPublic(
         async () => readRows(fixture.databaseFile),
@@ -581,7 +586,8 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
             (event) =>
               event.role === "old" &&
               event.boundary === "AH10BeforeLeaseRenewal" &&
-              event.executionId === oldAction.executionId,
+              event.executionId === oldAction.executionId &&
+              event.pauseRequested === true,
           ),
         (event) => event !== undefined,
         20_000,

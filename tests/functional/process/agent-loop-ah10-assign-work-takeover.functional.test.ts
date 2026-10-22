@@ -387,6 +387,7 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
         daemonEnvironment: {
           ARBOR_AH10_ROLE: "old",
           ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
+          ARBOR_AH10_DELAY_LEASE_RENEWAL_PAUSE: "1",
           ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
             crashSide === "before" ? "1" : "0",
         },
@@ -417,6 +418,10 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
       if (oldAction === undefined) {
         throw new Error("AH10 old AssignWork ActionIntent probe was absent");
       }
+      writeFileSync(
+        resolve(fixture.directory, "ah10-gates", "old-lease-renewal.pause"),
+        "pause old AssignWork lease renewal after ActionIntent",
+      );
       const providerTurnId = oldAction.providerTurnId;
       const logicalActionId = oldAction.logicalActionId;
       const callRef = oldAction.callRef;
@@ -436,7 +441,8 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
             (event) =>
               event.role === "old" &&
               event.boundary === "AH10BeforeLeaseRenewal" &&
-              event.executionId === oldAction.executionId,
+              event.executionId === oldAction.executionId &&
+              event.pauseRequested === true,
           ),
         (event) => event !== undefined,
         20_000,

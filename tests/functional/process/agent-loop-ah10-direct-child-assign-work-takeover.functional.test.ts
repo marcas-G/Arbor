@@ -589,6 +589,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         daemonEnvironment: {
           ARBOR_AH10_ROLE: "old",
           ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
+          ARBOR_AH10_DELAY_LEASE_RENEWAL_PAUSE:
+            crashSide === "committed" ? "0" : "1",
           ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
             crashSide === "before" ? "1" : "0",
           ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN:
@@ -663,6 +665,12 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       expect(assignWorkCalls).toHaveLength(1);
       expect(targetWorkspaceRef).toMatch(/^wref_[a-f0-9]{64}$/u);
       expect(targetWorkspaceRef).not.toContain(childWorkspaceId);
+      if (crashSide !== "committed") {
+        writeFileSync(
+          resolve(fixture.directory, "ah10-gates", "old-lease-renewal.pause"),
+          "pause old direct-child AssignWork lease renewal after ActionIntent",
+        );
+      }
 
       const listControlRows = readRows(
         fixture.databaseFile,
@@ -813,7 +821,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
               (event) =>
                 event.role === "old" &&
                 event.boundary === "AH10BeforeLeaseRenewal" &&
-                event.executionId === oldAction.executionId,
+                event.executionId === oldAction.executionId &&
+                event.pauseRequested === true,
             ),
           (event) => event !== undefined,
           20_000,
