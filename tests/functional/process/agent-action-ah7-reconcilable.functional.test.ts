@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SHELL_DEFINITION } from "../../../packages/tool-runtime/src/catalog.js";
@@ -22,6 +30,7 @@ import {
   waitForExecutableApproval,
   waitForPublic,
 } from "../support/public-client.js";
+import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
 import {
   commitTrustedLocalP11Policy,
   createTrustedLocalP11FixtureEnvironment,
@@ -30,6 +39,14 @@ import {
 } from "../support/trusted-local-p11-fixture.js";
 
 const fixtures: ProductionFixture[] = [];
+const preservedTakeoverFailureFixtures = new Set<ProductionFixture>();
+const takeoverFailureDiagnostic = new Map<
+  ProductionFixture,
+  () => Readonly<Record<string, unknown>>
+>();
+// This bounds the test's wait for a paused child-process source call to return;
+// it is not the duration or acceptance deadline for a reconciliation result.
+const AH7_CROSS_PROCESS_SOURCE_IO_OBSERVATION_BUDGET_MS = 60_000;
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
 const reconciliationChild = resolve(
   "tests/functional/support/ah10-process-child.mjs",
@@ -479,8 +496,462 @@ const readTestReconciliationCallCount = (
   }
 };
 
-afterEach(async () => {
-  for (const fixture of fixtures.splice(0)) await fixture.stop();
+const readTestReconciliationCalls = (
+  databaseFile: string,
+  invocationId: string,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        `SELECT call_no, invocation_id, attempt_no, role, observed_effect
+           FROM ah7_test_reconciliation_calls
+          WHERE invocation_id = ? ORDER BY call_no`,
+      )
+      .all(invocationId) as Array<Readonly<Record<string, unknown>>>;
+  } finally {
+    db.close();
+  }
+};
+
+const readTestReconciliationSourceReturns = (
+  gateDirectory: string,
+  invocationId: string,
+) => {
+  const sourceReturnsFile = join(
+    gateDirectory,
+    "reconciliation-source-returns.jsonl",
+  );
+  if (!existsSync(sourceReturnsFile)) return [];
+  return readFileSync(sourceReturnsFile, "utf8")
+    .split(/\r?\n/u)
+    .flatMap((line, index) => {
+      if (line.length === 0) return [];
+      let record: Readonly<Record<string, unknown>>;
+      try {
+        record = JSON.parse(line) as Readonly<Record<string, unknown>>;
+      } catch (error) {
+        throw new Error(
+          `Invalid AH7 reconciliation JSONL record at line ${index + 1}: ${line}`,
+          { cause: error },
+        );
+      }
+      return record.invocationId === invocationId ? [record] : [];
+    });
+};
+
+const findExactSourceReturn = (
+  gateDirectory: string,
+  invocationId: string,
+  role: "old" | "new",
+  attemptNo: number,
+  observedEffect: number,
+) =>
+  readTestReconciliationSourceReturns(gateDirectory, invocationId).filter(
+    (row) => {
+      const expectedGatePath = join(
+        gateDirectory,
+        `${role}-reconciliation-io.release`,
+      );
+      return (
+        row.kind === "returned" &&
+        row.invocationId === invocationId &&
+        row.role === role &&
+        Number(row.attemptNo) === attemptNo &&
+        Number(row.observedEffect) === observedEffect &&
+        typeof row.pid === "number" &&
+        typeof row.callNo === "number" &&
+        typeof row.timestamp === "string" &&
+        row.gatePath === expectedGatePath
+      );
+    },
+  );
+
+const waitForReconciliationSourceReturn = async (
+  gateDirectory: string,
+  databaseFile: string,
+  invocationId: string,
+  role: "old" | "new",
+  attemptNo: number,
+  observedEffect: number,
+) => {
+  const startedAt = Date.now();
+  let records: Array<Readonly<Record<string, unknown>>>;
+  const expectedGatePath = join(
+    gateDirectory,
+    `${role}-reconciliation-io.release`,
+  );
+  try {
+    records = await waitForPublic(
+      async () =>
+        readTestReconciliationSourceReturns(gateDirectory, invocationId),
+      (rows) =>
+        rows.some(
+          (row) =>
+            row.kind === "returned" &&
+            row.invocationId === invocationId &&
+            row.role === role &&
+            Number(row.attemptNo) === attemptNo &&
+            Number(row.observedEffect) === observedEffect &&
+            typeof row.pid === "number" &&
+            typeof row.callNo === "number" &&
+            typeof row.timestamp === "string" &&
+            row.gatePath === expectedGatePath,
+        ),
+      AH7_CROSS_PROCESS_SOURCE_IO_OBSERVATION_BUDGET_MS,
+    );
+  } catch (error) {
+    let lastDatabaseRows: Array<Readonly<Record<string, unknown>>> | string;
+    try {
+      lastDatabaseRows = readTestReconciliationCalls(
+        databaseFile,
+        invocationId,
+      );
+    } catch (readError) {
+      lastDatabaseRows =
+        readError instanceof Error ? readError.message : String(readError);
+    }
+    throw new Error(
+      `AH7 ${role} source-I/O side-channel observation exceeded ${AH7_CROSS_PROCESS_SOURCE_IO_OBSERVATION_BUDGET_MS}ms; elapsedMs=${Date.now() - startedAt}; invocationId=${invocationId}; sideChannel=${JSON.stringify(readTestReconciliationSourceReturns(gateDirectory, invocationId))}; auxiliaryDatabaseRows=${JSON.stringify(lastDatabaseRows)}`,
+      { cause: error },
+    );
+  }
+  const elapsedMs = Date.now() - startedAt;
+  const matchedReturns = records.filter(
+    (row) =>
+      row.kind === "returned" &&
+      row.invocationId === invocationId &&
+      row.role === role &&
+      Number(row.attemptNo) === attemptNo &&
+      Number(row.observedEffect) === observedEffect &&
+      typeof row.pid === "number" &&
+      typeof row.callNo === "number" &&
+      typeof row.timestamp === "string" &&
+      row.gatePath === expectedGatePath,
+  );
+  process.stdout.write(
+    `${JSON.stringify({
+      tag: "AH7_SOURCE_IO_RETURN_OBSERVED",
+      invocationId,
+      role,
+      elapsedMs,
+      observationBudgetMs: AH7_CROSS_PROCESS_SOURCE_IO_OBSERVATION_BUDGET_MS,
+      sourceReturns: matchedReturns,
+      sideChannel: records,
+    })}\n`,
+  );
+  expect(matchedReturns).toHaveLength(1);
+  return { records, sourceReturn: matchedReturns[0], elapsedMs };
+};
+
+const waitForOldReconciliationCallReturn = (
+  gateDirectory: string,
+  databaseFile: string,
+  invocationId: string,
+) =>
+  waitForReconciliationSourceReturn(
+    gateDirectory,
+    databaseFile,
+    invocationId,
+    "old",
+    0,
+    0,
+  );
+
+const readAh7FailureSnapshot = (
+  databaseFile: string,
+  identity: {
+    readonly projectId: string;
+    readonly workspaceId: string;
+    readonly executionId: string;
+    readonly invocationId: string;
+  },
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  const snapshotReadErrors: string[] = [];
+  const rows = (
+    sql: string,
+    ...parameters: Array<string | number | null>
+  ): Array<Readonly<Record<string, unknown>>> => {
+    try {
+      return db.prepare(sql).all(...parameters) as Array<
+        Readonly<Record<string, unknown>>
+      >;
+    } catch (error) {
+      snapshotReadErrors.push(
+        `${sql}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    }
+  };
+  try {
+    db.exec("BEGIN");
+    const snapshot = {
+      executions: rows(
+        "SELECT * FROM executions WHERE execution_id = ?",
+        identity.executionId,
+      ),
+      leases: rows(
+        "SELECT * FROM execution_leases WHERE execution_id = ?",
+        identity.executionId,
+      ),
+      agentExecutionState: rows(
+        "SELECT * FROM agent_execution_state WHERE execution_id = ?",
+        identity.executionId,
+      ),
+      providerTurns: rows(
+        "SELECT * FROM provider_turns WHERE execution_id = ? ORDER BY provider_turn_id",
+        identity.executionId,
+      ),
+      providerAttempts: rows(
+        `SELECT * FROM provider_attempts
+          WHERE provider_turn_id IN (
+            SELECT provider_turn_id FROM provider_turns WHERE execution_id = ?
+          ) ORDER BY provider_turn_id, attempt_no`,
+        identity.executionId,
+      ),
+      steps: rows(
+        "SELECT * FROM agent_loop_steps WHERE execution_id = ? ORDER BY logical_step_no, repair_attempt",
+        identity.executionId,
+      ),
+      actionInvocations: rows(
+        "SELECT * FROM agent_loop_step_actions WHERE execution_id = ? ORDER BY logical_step_no, repair_attempt, action_index",
+        identity.executionId,
+      ),
+      p4InvocationIntentsAndSettlements: rows(
+        "SELECT * FROM tool_invocations WHERE execution_id = ? AND invocation_id = ?",
+        identity.executionId,
+        identity.invocationId,
+      ),
+      p39RecoveryBindings: rows(
+        "SELECT * FROM tool_invocation_recovery_bindings WHERE invocation_id = ?",
+        identity.invocationId,
+      ),
+      p4EffectAttempts: rows(
+        "SELECT * FROM tool_invocation_effect_attempts WHERE invocation_id = ? ORDER BY attempt_no",
+        identity.invocationId,
+      ),
+      p4ReconciliationFacts: rows(
+        "SELECT * FROM tool_reconciliation_facts WHERE invocation_id = ? ORDER BY attempt_no, fact_id",
+        identity.invocationId,
+      ),
+      p4ReconciliationSourceCalls: rows(
+        "SELECT * FROM ah7_test_reconciliation_calls WHERE invocation_id = ? ORDER BY call_no",
+        identity.invocationId,
+      ),
+      sessionResultsAndObservations: rows(
+        `SELECT * FROM session_entries
+          WHERE session_id = (
+            SELECT session_id FROM executions WHERE execution_id = ?
+          ) AND item_type IN ('ToolCall','ToolResult','Observation','ControlResult')
+          ORDER BY sequence`,
+        identity.executionId,
+      ),
+      executableApprovals: rows(
+        "SELECT * FROM action_approvals WHERE execution_id = ?",
+        identity.executionId,
+      ),
+      inboxEntries: rows(
+        "SELECT * FROM inbox_entries WHERE workspace_id = ? ORDER BY admitted_at, entry_key",
+        identity.workspaceId,
+      ),
+      commandReceipts: rows(
+        "SELECT * FROM commands WHERE project_id = ? ORDER BY created_at, command_id",
+        identity.projectId,
+      ),
+      commandAttempts: rows(
+        `SELECT * FROM command_attempts
+          WHERE command_id IN (SELECT command_id FROM commands WHERE project_id = ?)
+          ORDER BY command_id, attempt_no`,
+        identity.projectId,
+      ),
+      domainEvents: rows(
+        `SELECT * FROM domain_events
+          WHERE project_id = ? AND (aggregate_ref = ? OR aggregate_ref = ?)
+          ORDER BY sequence`,
+        identity.projectId,
+        identity.executionId,
+        identity.invocationId,
+      ),
+      snapshotReadErrors,
+      attentionTables: (() => {
+        const tableNames = rows(
+          `SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name LIKE '%attention%' ORDER BY name`,
+        ).map((row) => String(row.name));
+        return tableNames.map((tableName) => {
+          const escapedTable = tableName.replaceAll('"', '""');
+          const columns = rows(`PRAGMA table_info("${escapedTable}")`)
+            .map((row) => String(row.name))
+            .filter((name) =>
+              [
+                "project_id",
+                "workspace_id",
+                "execution_id",
+                "invocation_id",
+              ].includes(name),
+            );
+          const filters = columns
+            .map((column) => {
+              const value =
+                column === "project_id"
+                  ? identity.projectId
+                  : column === "workspace_id"
+                    ? identity.workspaceId
+                    : column === "execution_id"
+                      ? identity.executionId
+                      : identity.invocationId;
+              return { column, value };
+            })
+            .filter(({ value }) => value !== undefined);
+          if (filters.length === 0) return { tableName, rows: [] };
+          const where = filters
+            .map(({ column }) => `"${column}" = ?`)
+            .join(" OR ");
+          return {
+            tableName,
+            rows: rows(
+              `SELECT * FROM "${escapedTable}" WHERE ${where}`,
+              ...filters.map(({ value }) => value),
+            ),
+          };
+        });
+      })(),
+      externalEffects: rows(
+        "SELECT * FROM ah7_test_external_effects ORDER BY effect_key",
+      ),
+    };
+    db.exec("COMMIT");
+    return snapshot;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Preserve the read failure as the diagnostic result.
+    }
+    return {
+      snapshotError: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    db.close();
+  }
+};
+
+afterEach(async ({ task }) => {
+  const testFailed = (task.result?.errors?.length ?? 0) > 0;
+  for (const fixture of fixtures.splice(0)) {
+    const preserveOnFailure = preservedTakeoverFailureFixtures.delete(fixture);
+    let stopError: unknown;
+    try {
+      await fixture.stop();
+    } catch (error) {
+      stopError = error;
+    }
+    const diagnostic = takeoverFailureDiagnostic.get(fixture);
+    takeoverFailureDiagnostic.delete(fixture);
+    if (preserveOnFailure) {
+      if (testFailed || stopError !== undefined) {
+        const resultDirectory = process.env.ARBOR_TEST_RESULT_DIRECTORY;
+        if (resultDirectory === undefined) {
+          throw new Error(
+            `AH7 takeover failure evidence cannot be archived without ARBOR_TEST_RESULT_DIRECTORY; fixture=${fixture.directory}`,
+            { cause: stopError },
+          );
+        }
+        const repositoryRoot = resolve(process.cwd());
+        const resultsRoot = resolve(repositoryRoot, ".test-results");
+        const resolvedResultDirectory = resolve(resultDirectory);
+        const resultsRootStat = lstatSync(resultsRoot);
+        const resultDirectoryStat = lstatSync(resolvedResultDirectory);
+        if (
+          !resultsRootStat.isDirectory() ||
+          resultsRootStat.isSymbolicLink() ||
+          !resultDirectoryStat.isDirectory() ||
+          resultDirectoryStat.isSymbolicLink()
+        ) {
+          throw new Error(
+            `AH7 takeover archive destination contains a non-directory or reparse path: ${resolvedResultDirectory}`,
+            { cause: stopError },
+          );
+        }
+        const relativeResultsPath = relative(
+          resultsRoot,
+          resolvedResultDirectory,
+        );
+        if (
+          relativeResultsPath === "" ||
+          relativeResultsPath === ".." ||
+          relativeResultsPath.startsWith(`..${sep}`) ||
+          relativeResultsPath.startsWith(`${sep}`)
+        ) {
+          throw new Error(
+            `AH7 takeover failure evidence directory is outside .test-results: ${resolvedResultDirectory}`,
+            { cause: stopError },
+          );
+        }
+        const resolvedFixtureDirectory = resolve(fixture.directory);
+        const schemaRoot = dirname(resolvedFixtureDirectory);
+        const schemaRootName = basename(schemaRoot);
+        const relativeSchemaRoot = relative(repositoryRoot, schemaRoot);
+        const schemaRootStat = lstatSync(schemaRoot);
+        const fixtureStat = lstatSync(resolvedFixtureDirectory);
+        if (
+          relativeSchemaRoot !== schemaRootName ||
+          !schemaRootName.startsWith(".arbor-functional-schema44-") ||
+          !basename(resolvedFixtureDirectory).startsWith("fixture-") ||
+          !schemaRootStat.isDirectory() ||
+          schemaRootStat.isSymbolicLink() ||
+          !fixtureStat.isDirectory() ||
+          fixtureStat.isSymbolicLink()
+        ) {
+          throw new Error(
+            `AH7 takeover fixture is outside the expected schema44 fixture root: ${fixture.directory}`,
+            { cause: stopError },
+          );
+        }
+        const archivedDirectory = join(
+          resolvedResultDirectory,
+          `ah7-reconcilable-takeover-${crypto.randomUUID()}`,
+        );
+        const archivedRelativePath = relative(
+          resolvedResultDirectory,
+          archivedDirectory,
+        );
+        if (
+          archivedRelativePath !== basename(archivedDirectory) ||
+          existsSync(archivedDirectory)
+        ) {
+          throw new Error(
+            `AH7 takeover archive target is not a new direct result child: ${archivedDirectory}`,
+            { cause: stopError },
+          );
+        }
+        const captured = diagnostic?.() ?? null;
+        renameSync(fixture.directory, archivedDirectory);
+        const afterStop = {
+          test: task.name,
+          archivedDirectory,
+          databaseFile: join(archivedDirectory, basename(fixture.databaseFile)),
+          fixtureDirectory: join(archivedDirectory, "workspace"),
+          primaryDaemon: fixture.daemonProcessSnapshot(),
+          primaryDaemonStderr: fixture.daemonErrors,
+          captured,
+          cleanupError: stopError instanceof Error ? stopError.message : null,
+        };
+        writeFileSync(
+          join(archivedDirectory, "ah7-after-stop-diagnostic.json"),
+          `${JSON.stringify(afterStop, null, 2)}\n`,
+          { flag: "wx" },
+        );
+        process.stdout.write(
+          `[AH7_FAILURE_ARTIFACT] ${JSON.stringify({ test: task.name, archivedDirectory, databaseFile: afterStop.databaseFile, primaryDaemon: afterStop.primaryDaemon, primaryDaemonStderr: afterStop.primaryDaemonStderr, additionalDaemon: (afterStop.captured as { additionalDaemon?: unknown } | null)?.additionalDaemon })}\n`,
+        );
+      } else {
+        removeFunctionalFixtureDirectory(fixture.directory);
+      }
+    }
+    if (stopError !== undefined) throw stopError;
+  }
 });
 
 describe("AH7 Reconcilable tool intent after process crash", () => {
@@ -642,6 +1113,8 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
               : boundary === "AH7AfterToolIntentCommit"
                 ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
                 : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
+    const preserveTakeoverFixtureOnFailure =
+      takeoverDuringReconciliationIo === true;
     const noEffectRetryDenied =
       reconciliationMode === "NotOccurred" &&
       (resourceChangeDuringReconcile || reconciliationDrift !== undefined);
@@ -659,6 +1132,8 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       const hits: AhProbeHit[] = [];
       const runtimeProbeEvents: Array<Readonly<Record<string, unknown>>> = [];
       const processEvents: Array<Readonly<Record<string, unknown>>> = [];
+      const additionalDaemonStdout: string[] = [];
+      const providerReplyOperations: string[] = [];
       let targetProviderCalls = 0;
       let workProviderCalls = 0;
       let manualWaitCalls = 0;
@@ -670,6 +1145,22 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       let observeSteeredShellRequest!: () => void;
       let steeredShellResponseGated = false;
       let sandboxPolicyGrantExpiresAt = "";
+      let failureIdentity:
+        | {
+            readonly projectId: string;
+            readonly workspaceId: string;
+            readonly executionId: string;
+            readonly invocationId: string;
+            readonly callRef: string;
+          }
+        | undefined;
+      let oldLeaseGeneration: number | undefined;
+      let newLeaseGeneration: number | undefined;
+      let oldSourceReturnElapsedMs: number | null = null;
+      let oldSourceReturnRows: Array<Readonly<Record<string, unknown>>> = [];
+      let gen1DaemonForDiagnostic:
+        | Awaited<ReturnType<ProductionFixture["startAdditionalDaemon"]>>
+        | undefined;
       const steeredShellResponseGate = new Promise<void>((resolveGate) => {
         releaseSteeredShellResponse = resolveGate;
       });
@@ -741,6 +1232,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                   const path =
                     preseedReadCalls === 0 ? evidenceFile : resultFile;
                   preseedReadCalls += 1;
+                  providerReplyOperations.push("read");
                   return {
                     _tag: "ToolCall",
                     name: "read",
@@ -750,6 +1242,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                   };
                 }
                 manualWaitCalls += 1;
+                providerReplyOperations.push("wait");
                 return {
                   _tag: "ToolCall",
                   name: "wait",
@@ -781,24 +1274,30 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                 };
               }
               if (targetProviderCalls > 5) {
+                providerReplyOperations.push("http_error_429");
                 return { _tag: "HttpError", status: 429 };
               }
-              return targetProviderCalls === 1
-                ? {
-                    _tag: "ToolCall",
-                    name: "shell",
-                    arguments: {
-                      command,
-                      cwd: { mount: "workspace", path: "." },
-                      timeoutMs: 5_000,
-                    },
-                  }
-                : { _tag: "Text", text: `Observed ${marker}` };
+              if (targetProviderCalls === 1) {
+                providerReplyOperations.push("shell");
+                return {
+                  _tag: "ToolCall",
+                  name: "shell",
+                  arguments: {
+                    command,
+                    cwd: { mount: "workspace", path: "." },
+                    timeoutMs: 5_000,
+                  },
+                };
+              }
+              providerReplyOperations.push("text");
+              return { _tag: "Text", text: `Observed ${marker}` };
             }
+            providerReplyOperations.push("text");
             return { _tag: "Text", text: `Waiting ${marker}` };
           },
           firstDaemonEntry: crashChild,
           daemonEnvironment,
+          preserveDirectoryOnStop: preserveTakeoverFixtureOnFailure,
           setupProbe: p11Fixture.setupProbe,
           onDaemonStdout: (line) => {
             startupStdout.push(line);
@@ -838,6 +1337,98 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           "AH7 P11 sandbox authority fixture was not initialized",
         );
       fixtures.push(fixture);
+      if (preserveTakeoverFixtureOnFailure) {
+        preservedTakeoverFailureFixtures.add(fixture);
+        takeoverFailureDiagnostic.set(fixture, () => {
+          const identity = failureIdentity;
+          const gateFile = join(
+            fixture.directory,
+            "ah10-gates",
+            "old-reconciliation-io.release",
+          );
+          const gateStat = existsSync(gateFile)
+            ? statSync(gateFile)
+            : undefined;
+          const reconciliationRows =
+            identity === undefined
+              ? []
+              : readTestReconciliationCalls(
+                  fixture.databaseFile,
+                  identity.invocationId,
+                );
+          return {
+            testName,
+            fixtureDirectory: fixture.directory,
+            databaseFile: fixture.databaseFile,
+            identity,
+            generations: {
+              old: oldLeaseGeneration,
+              new: newLeaseGeneration,
+            },
+            oldSourceReturnElapsedMs,
+            oldSourceReturnRows,
+            primaryDaemon: fixture.daemonProcessSnapshot(),
+            primaryDaemonStderr: fixture.daemonErrors,
+            additionalDaemon:
+              gen1DaemonForDiagnostic?.daemonProcessSnapshot() ?? null,
+            additionalDaemonStderr: gen1DaemonForDiagnostic?.daemonErrors ?? [],
+            releaseGate: {
+              path: gateFile,
+              exists: gateStat !== undefined,
+              modifiedAt: gateStat?.mtime.toISOString() ?? null,
+              size: gateStat?.size ?? null,
+            },
+            reconciliationSourceRows: {
+              old: reconciliationRows.filter((row) => row.role === "old"),
+              new: reconciliationRows.filter((row) => row.role === "new"),
+            },
+            reconciliationSourceReturns: readTestReconciliationSourceReturns(
+              join(fixture.directory, "ah10-gates"),
+              identity?.invocationId ?? "",
+            ),
+            daemonStdout: {
+              primary: startupStdout.slice(-80),
+              additional: additionalDaemonStdout.slice(-80),
+            },
+            provider: {
+              requestCount: fixture.providerCalls.length,
+              requests: fixture.providerCalls.map((call) => ({
+                messageRoles: call.messages.map(
+                  (message) => message.role ?? null,
+                ),
+                offeredTools: call.tools
+                  .map((tool) => tool.function?.name)
+                  .filter((name): name is string => name !== undefined),
+              })),
+              replyOperations: providerReplyOperations,
+              counters: {
+                targetProviderCalls,
+                workProviderCalls,
+                manualWaitCalls,
+                preseedReadCalls,
+              },
+            },
+            processEvents: processEvents.filter(
+              (event) =>
+                (identity !== undefined &&
+                  (event.executionId === identity.executionId ||
+                    event.invocationId === identity.invocationId)) ||
+                event.boundary === "AH7ReconciliationSourceIO" ||
+                event.boundary === "AH7ReconciliationResultFenceRejected",
+            ),
+            runtimeProbeEvents: runtimeProbeEvents.filter(
+              (event) =>
+                identity === undefined ||
+                event.executionId === identity.executionId ||
+                event.invocationId === identity.invocationId,
+            ),
+            consistentDatabaseSnapshot:
+              identity === undefined
+                ? null
+                : readAh7FailureSnapshot(fixture.databaseFile, identity),
+          };
+        });
+      }
       const client = makePublicClient(fixture.baseUrl);
       const project = await createFunctionalProject(
         client,
@@ -1168,6 +1759,15 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       const targetExecutionId = hit.executionId;
       const targetCallRef = hit.callRef;
       const targetInvocationId = hit.invocationId;
+      if (preserveTakeoverFixtureOnFailure) {
+        failureIdentity = {
+          projectId: project.projectId,
+          workspaceId: project.rootWorkspaceId,
+          executionId: targetExecutionId,
+          invocationId: targetInvocationId,
+          callRef: targetCallRef,
+        };
+      }
       const bindingBeforeRecovery = readP39RecoveryBinding(
         fixture.databaseFile,
         targetInvocationId,
@@ -1566,7 +2166,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           ]);
           const sourceCall = sourcePauseDb
             .prepare(
-              `SELECT attempt_no, role, observed_effect, returned_at
+              `SELECT attempt_no, role, observed_effect
                  FROM ah7_test_reconciliation_calls WHERE invocation_id = ?`,
             )
             .get(invocationId);
@@ -1574,8 +2174,16 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             attempt_no: 0,
             role: "old",
             observed_effect: 0,
-            returned_at: null,
           });
+          expect(
+            findExactSourceReturn(
+              join(fixture.directory, "ah10-gates"),
+              invocationId,
+              "old",
+              0,
+              0,
+            ),
+          ).toEqual([]);
         } finally {
           sourcePauseDb.close();
         }
@@ -1746,13 +2354,21 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
               action.call_ref === hit?.callRef,
           ),
         ).toHaveLength(1);
+        await waitForReconciliationSourceReturn(
+          join(fixture.directory, "ah10-gates"),
+          fixture.databaseFile,
+          invocationId,
+          "new",
+          0,
+          0,
+        );
         const callsAfterRestartDb = new DatabaseSync(fixture.databaseFile, {
           readOnly: true,
         });
         try {
           const calls = callsAfterRestartDb
             .prepare(
-              `SELECT attempt_no, role, observed_effect, returned_at
+              `SELECT attempt_no, role, observed_effect
                  FROM ah7_test_reconciliation_calls WHERE invocation_id = ?
                 ORDER BY call_no`,
             )
@@ -1762,13 +2378,11 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
               attempt_no: 0,
               role: "old",
               observed_effect: 0,
-              returned_at: null,
             }),
             expect.objectContaining({
               attempt_no: 0,
               role: "new",
               observed_effect: 0,
-              returned_at: expect.any(String),
             }),
           ]);
         } finally {
@@ -1829,6 +2443,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             throw new Error("AH7 old owner lease row is absent");
           }
           gen0Generation = Number(gen0Lease.generation);
+          oldLeaseGeneration = gen0Generation;
           const expiredAt = "1970-01-01T00:00:00.000Z";
           const update = leaseDb
             .prepare(
@@ -1861,6 +2476,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ARBOR_AH7_TEST_TRACE_RECONCILIATION_IO: "1",
           },
           onStdout: (line) => {
+            additionalDaemonStdout.push(line);
             recordAhProbeLine(hits, line);
             try {
               processEvents.push(JSON.parse(line) as Record<string, unknown>);
@@ -1869,6 +2485,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             }
           },
         });
+        gen1DaemonForDiagnostic = gen1Daemon;
         const gen1Lease = await waitForPublic(
           async () =>
             processEvents.find(
@@ -1880,6 +2497,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           (event) => event !== undefined,
           45_000,
         );
+        newLeaseGeneration = Number(gen1Lease?.fencingGeneration);
         expect(gen1Lease?.fencingGeneration).toBe(gen0Generation + 1);
         expect(gen1Daemon.daemonProcessSnapshot().pid).not.toBe(
           fixture.daemonProcessSnapshot()?.pid,
@@ -2098,17 +2716,94 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ),
             "release stale gen0 source result",
           );
-          const staleResultFence = await waitForPublic(
-            async () =>
-              processEvents.find(
-                (event) =>
-                  event.boundary === "AH7ReconciliationResultFenceRejected" &&
-                  event.role === "old" &&
-                  event.invocationId === targetInvocationId,
+          let staleResultFence: Readonly<Record<string, unknown>> | undefined;
+          let waitingFor: "old-source-returned" | "old-result-fence" =
+            "old-source-returned";
+          try {
+            const oldSourceReturn = await waitForOldReconciliationCallReturn(
+              join(fixture.directory, "ah10-gates"),
+              fixture.databaseFile,
+              targetInvocationId,
+            );
+            oldSourceReturnElapsedMs = oldSourceReturn.elapsedMs;
+            oldSourceReturnRows = oldSourceReturn.records;
+            waitingFor = "old-result-fence";
+            staleResultFence = await waitForPublic(
+              async () =>
+                processEvents.find(
+                  (event) =>
+                    event.boundary === "AH7ReconciliationResultFenceRejected" &&
+                    event.role === "old" &&
+                    event.invocationId === targetInvocationId,
+                ),
+              (event) => event !== undefined,
+              20_000,
+            );
+          } catch (error) {
+            const diagnostic: Record<string, unknown> = {
+              stage: waitingFor,
+              fixtureDirectory: fixture.directory,
+              databaseFile: fixture.databaseFile,
+              identity: failureIdentity,
+              oldGeneration: oldLeaseGeneration,
+              newGeneration: newLeaseGeneration,
+              gateFile: join(
+                fixture.directory,
+                "ah10-gates",
+                "old-reconciliation-io.release",
               ),
-            (event) => event !== undefined,
-            20_000,
-          );
+              releaseGate: (() => {
+                const gateFile = join(
+                  fixture.directory,
+                  "ah10-gates",
+                  "old-reconciliation-io.release",
+                );
+                const gateStat = existsSync(gateFile)
+                  ? statSync(gateFile)
+                  : undefined;
+                return {
+                  path: gateFile,
+                  exists: gateStat !== undefined,
+                  modifiedAt: gateStat?.mtime.toISOString() ?? null,
+                  size: gateStat?.size ?? null,
+                };
+              })(),
+              reconciliationSourceRows: failureIdentity
+                ? readTestReconciliationCalls(
+                    fixture.databaseFile,
+                    failureIdentity.invocationId,
+                  )
+                : [],
+              reconciliationSourceReturns: failureIdentity
+                ? readTestReconciliationSourceReturns(
+                    join(fixture.directory, "ah10-gates"),
+                    failureIdentity.invocationId,
+                  )
+                : [],
+              state: takeoverFailureDiagnostic.get(fixture)?.() ?? null,
+              failure: error instanceof Error ? error.message : String(error),
+            };
+            const diagnosticPath = join(
+              fixture.directory,
+              "ah7-g0-g1-fence-diagnostic.json",
+            );
+            try {
+              writeFileSync(
+                diagnosticPath,
+                `${JSON.stringify(diagnostic, null, 2)}\n`,
+                { flag: "wx" },
+              );
+            } catch (writeError) {
+              diagnostic.snapshotWriteError =
+                writeError instanceof Error
+                  ? writeError.message
+                  : String(writeError);
+            }
+            throw new Error(
+              `AH7 G0/G1 ${proofMismatch ?? "NotOccurred"} takeover failed while waiting for ${waitingFor}; diagnosticFile=${diagnosticPath}; diagnostic=${JSON.stringify(diagnostic)}`,
+              { cause: error },
+            );
+          }
           expect(staleResultFence).toMatchObject({
             boundary: "AH7ReconciliationResultFenceRejected",
             role: "old",
@@ -2123,11 +2818,16 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             expect(
               staleCallDb
                 .prepare(
-                  `SELECT returned_at FROM ah7_test_reconciliation_calls
+                  `SELECT attempt_no, role, observed_effect
+                     FROM ah7_test_reconciliation_calls
                     WHERE invocation_id = ? AND role = 'old'`,
                 )
                 .get(targetInvocationId),
-            ).toMatchObject({ returned_at: expect.any(String) });
+            ).toMatchObject({
+              attempt_no: 0,
+              role: "old",
+              observed_effect: 0,
+            });
           } finally {
             staleCallDb.close();
           }
@@ -2260,34 +2960,20 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ),
             "release stale gen0 source result",
           );
-          await waitForPublic(
-            async () => {
-              const sourceDb = new DatabaseSync(fixture.databaseFile, {
-                readOnly: true,
-              });
-              try {
-                return sourceDb
-                  .prepare(
-                    `SELECT returned_at FROM ah7_test_reconciliation_calls
-                    WHERE invocation_id = ? AND role = 'old'`,
-                  )
-                  .get(targetInvocationId) as
-                  | { returned_at: string | null }
-                  | undefined;
-              } finally {
-                sourceDb.close();
-              }
-            },
-            (row) => row?.returned_at !== null && row !== undefined,
-            20_000,
+          const oldSourceReturn = await waitForOldReconciliationCallReturn(
+            join(fixture.directory, "ah10-gates"),
+            fixture.databaseFile,
+            targetInvocationId,
           );
+          oldSourceReturnElapsedMs = oldSourceReturn.elapsedMs;
+          oldSourceReturnRows = oldSourceReturn.records;
           const takeoverDb = new DatabaseSync(fixture.databaseFile, {
             readOnly: true,
           });
           try {
             const calls = takeoverDb
               .prepare(
-                `SELECT attempt_no, role, observed_effect, returned_at
+                `SELECT call_no, invocation_id, attempt_no, role, observed_effect
                  FROM ah7_test_reconciliation_calls WHERE invocation_id = ?
                  ORDER BY call_no`,
               )
@@ -2302,7 +2988,6 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                 attempt_no: 0,
                 role: "new",
                 observed_effect: 0,
-                returned_at: expect.any(String),
               }),
             ]);
             expect(
