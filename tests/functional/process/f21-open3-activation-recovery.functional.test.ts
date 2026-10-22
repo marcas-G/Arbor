@@ -848,6 +848,8 @@ test("P12 startup restores Pending Attention below retention floor and clears it
     reply: () => ({ _tag: "Text", text: "No model call expected" }),
   });
   const db = new DatabaseSync(fixture.databaseFile);
+  let bodyFailed = false;
+  let bodyError: unknown;
   try {
     const { client, projectId, workspaceId, commandId, envelope } =
       await makeEnvelope(fixture);
@@ -948,7 +950,27 @@ test("P12 startup restores Pending Attention below retention floor and clears it
         .get(projectId, workspaceId),
     ).toEqual({ status: "Pending" });
 
-    db.exec("DROP TRIGGER IF EXISTS fail_resource_activation");
+    // Stop the live daemon before changing the fault trigger. Startup then
+    // retries the same Pending intent; the exact command replay below proves
+    // the committed receipt remains idempotent after recovery.
+    await fixture.restart({
+      beforeStart: () =>
+        db.exec("DROP TRIGGER IF EXISTS fail_resource_activation"),
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT status FROM workspace_resource_activation_intents WHERE project_id = ? AND workspace_id = ?",
+        )
+        .get(projectId, workspaceId),
+    ).toEqual({ status: "Active" });
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM workspace_resource_activation_attention_rows WHERE project_id = ? AND workspace_id = ?",
+        )
+        .get(projectId, workspaceId),
+    ).toEqual({ count: 0 });
     const replay = await fetch(`${fixture.baseUrl}/commands`, {
       method: "POST",
       headers: {
@@ -994,10 +1016,28 @@ test("P12 startup restores Pending Attention below retention floor and clears it
       }),
     );
     expect(fixture.providerCalls).toHaveLength(0);
-  } finally {
-    db.exec("DROP TRIGGER IF EXISTS fail_resource_activation");
+  } catch (error) {
+    bodyFailed = true;
+    bodyError = error;
+  }
+  const cleanupErrors: unknown[] = [];
+  try {
     db.close();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  try {
     await fixture.stop();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  if (bodyFailed) {
+    throw bodyError;
+  }
+  if (cleanupErrors.length > 0) {
+    throw cleanupErrors.length === 1
+      ? cleanupErrors[0]
+      : new AggregateError(cleanupErrors, "F21 fixture cleanup failed");
   }
 });
 
@@ -1007,6 +1047,8 @@ test("P12 keeps one Pending Attention across repeated failed restarts then exact
     reply: () => ({ _tag: "Text", text: "No model call expected" }),
   });
   const db = new DatabaseSync(fixture.databaseFile);
+  let bodyFailed = false;
+  let bodyError: unknown;
   try {
     const { client, projectId, workspaceId, commandId, envelope } =
       await makeEnvelope(fixture);
@@ -1172,7 +1214,32 @@ test("P12 keeps one Pending Attention across repeated failed restarts then exact
       expect(afterRestart.dedupKey).toBe(beforeRestart.dedupKey);
     }
 
-    db.exec("DROP TRIGGER IF EXISTS fail_resource_activation");
+    // Keep Attention Pending through both failed restarts, then remove the
+    // fault only after the current daemon is stopped. Startup recovery clears
+    // Attention; exact replay below confirms the original receipt still wins.
+    await fixture.restart({
+      beforeStart: () =>
+        db.exec("DROP TRIGGER IF EXISTS fail_resource_activation"),
+    });
+    const recoveredBeforeReplay = readFacts();
+    expect(recoveredBeforeReplay.intent).toMatchObject({
+      status: "Active",
+      resource_boundary_revision: 0,
+      activated_at: expect.any(String),
+    });
+    expect(recoveredBeforeReplay.claims).toEqual({ count: 1 });
+    expect(recoveredBeforeReplay.attentionProjectionCount).toEqual({
+      count: 0,
+    });
+    const attentionAfterRecovery = await client.view<{
+      rows: ReadonlyArray<Record<string, unknown>>;
+    }>("attention", { projectId });
+    expect(attentionAfterRecovery.rows).not.toContainEqual(
+      expect.objectContaining({
+        source: "WorkspaceResourceActivationPending",
+        targetWorkspaceId: workspaceId,
+      }),
+    );
     const replay = await fetch(`${fixture.baseUrl}/commands`, {
       method: "POST",
       headers: {
@@ -1251,9 +1318,27 @@ test("P12 keeps one Pending Attention across repeated failed restarts then exact
         targetWorkspaceId: workspaceId,
       }),
     );
-  } finally {
-    db.exec("DROP TRIGGER IF EXISTS fail_resource_activation");
+  } catch (error) {
+    bodyFailed = true;
+    bodyError = error;
+  }
+  const cleanupErrors: unknown[] = [];
+  try {
     db.close();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  try {
     await fixture.stop();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  if (bodyFailed) {
+    throw bodyError;
+  }
+  if (cleanupErrors.length > 0) {
+    throw cleanupErrors.length === 1
+      ? cleanupErrors[0]
+      : new AggregateError(cleanupErrors, "F21 fixture cleanup failed");
   }
 });

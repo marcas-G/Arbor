@@ -221,6 +221,53 @@ describe("production fixture port-zero startup handshake", () => {
     ]);
   }, 180_000);
 
+  it("runs the restart hook after the old daemon exits and before the new daemon starts", async () => {
+    const lines: string[] = [];
+    const fixture = await startFixture((line) => lines.push(line));
+    fixtures.push(fixture);
+    const originalPid = fixture.daemonProcessSnapshot()?.pid;
+
+    await fixture.restart({
+      beforeStart: () => {
+        expect(fixture.daemonProcessSnapshot()?.alive).toBe(false);
+      },
+    });
+
+    expect(fixture.daemonProcessSnapshot()?.alive).toBe(true);
+    expect(fixture.daemonProcessSnapshot()?.pid).not.toBe(originalPid);
+    expect(
+      lifecycleReports(lines).filter(
+        (report) => report.tag === "FUNCTIONAL_DAEMON_STARTED",
+      ),
+    ).toHaveLength(2);
+  }, 180_000);
+
+  it("does not start a daemon when the restart hook fails and remains stoppable", async () => {
+    const lines: string[] = [];
+    const fixture = await startFixture((line) => lines.push(line));
+    fixtures.push(fixture);
+    let hookCalls = 0;
+
+    await expect(
+      fixture.restart({
+        beforeStart: async () => {
+          hookCalls += 1;
+          throw new Error("test hook failure");
+        },
+      }),
+    ).rejects.toThrow("test hook failure");
+
+    expect(hookCalls).toBe(1);
+    expect(fixture.daemonProcessSnapshot()?.alive).toBe(false);
+    expect(
+      lifecycleReports(lines).filter(
+        (report) => report.tag === "FUNCTIONAL_DAEMON_STARTED",
+      ),
+    ).toHaveLength(1);
+    await expect(fixture.stop()).resolves.toBeUndefined();
+    expect(fixture.daemonErrors).toEqual([]);
+  }, 180_000);
+
   it("rejects and stops a custom restart child bound to a different port", async () => {
     const lines: string[] = [];
     const fixture = await startFixture((line) => lines.push(line));
