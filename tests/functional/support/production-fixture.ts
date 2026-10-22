@@ -96,6 +96,8 @@ export interface ProductionFixture {
     /** Custom entries must emit the PID/nonce/listening handshake. */
     readonly entry?: string;
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
+    /** Test-only quiescent seam between stopping and starting the daemon. */
+    readonly beforeStart?: () => void | Promise<void>;
   }) => Promise<void>;
   readonly startAdditionalDaemon: (options: {
     /** Custom entries must emit the PID/nonce/listening handshake. */
@@ -727,6 +729,7 @@ export const startProductionFixture = async (input: {
     crash: () => stopChild(daemon),
     restart: async (override) => {
       await stopChild(daemon);
+      await override?.beforeStart?.();
       await startDaemon(override);
     },
     startAdditionalDaemon: async (options) => {
