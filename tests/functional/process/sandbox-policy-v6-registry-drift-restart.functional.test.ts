@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer } from "effect";
@@ -34,6 +34,7 @@ import {
   makePublicClient,
   submitHumanMessage,
   waitForApproval,
+  waitForExecutableApproval,
   waitForPublic,
 } from "../support/public-client.js";
 import {
@@ -345,7 +346,7 @@ afterEach(async () => {
 
 describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
   it.skipIf(process.platform !== "win32")(
-    "publicly bootstraps the first P1 candidate, then preserves P9 terminal semantics",
+    "preserves P9 terminal semantics and reapproves a fresh root candidate after registry drift",
     async () => {
       let sourceFilename: string | undefined;
       const daemonEnvironment: Record<string, string> = {};
@@ -813,9 +814,329 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           ),
         ).toHaveLength(committedProbeCount);
         expect(providerCalls).toBe(1);
-        // DID P4/06 makes P9 terminal for this Step. The drift-after-second-
-        // intent qualification cannot proceed until governance supplies a
-        // pre-intent candidate source; do not fake a second ProviderTurn.
+        // Keep the P9 terminal proof intact. Qualify drift through a separate
+        // public root Work with its own pre-intent CandidateRead; never mint a
+        // second ProviderTurn for this terminal Step.
+        const freshProject = await createFunctionalProject(
+          client,
+          fixture.workspaceDirectory,
+          "V6 E fresh candidate after registry drift",
+          { resourceSelection: "Profile" },
+        );
+        const freshWorktreePath = resolve(
+          fixture.workspaceDirectory,
+          `fresh-${crypto.randomUUID()}`,
+        );
+        mkdirSync(freshWorktreePath, { recursive: true });
+        writeFileSync(resolve(freshWorktreePath, "proof.txt"), marker);
+        execFileSync("git", ["init", "--quiet"], {
+          cwd: freshWorktreePath,
+          stdio: "ignore",
+        });
+        execFileSync("git", ["config", "user.name", "Arbor Test"], {
+          cwd: freshWorktreePath,
+          stdio: "ignore",
+        });
+        execFileSync(
+          "git",
+          ["config", "user.email", "arbor-test@example.invalid"],
+          { cwd: freshWorktreePath, stdio: "ignore" },
+        );
+        execFileSync("git", ["add", "proof.txt"], {
+          cwd: freshWorktreePath,
+          stdio: "ignore",
+        });
+        execFileSync("git", ["commit", "--quiet", "-m", "fresh sandbox fixture"], {
+          cwd: freshWorktreePath,
+          stdio: "ignore",
+        });
+        await insertProductionPrimaryWorktree({
+          databaseFile: fixture.databaseFile,
+          projectId: freshProject.projectId,
+          workspaceId: freshProject.rootWorkspaceId,
+          path: freshWorktreePath,
+        });
+        await client.command(freshProject.projectId, "GrantPermission", {
+          permissionGrantId: functionalId("pgr"),
+          issuer: "user:local",
+          subject: {
+            _tag: "WorkspaceAgent",
+            workspaceId: freshProject.rootWorkspaceId,
+          },
+          capability: "shell:exec",
+          target: freshProject.rootWorkspaceId,
+          expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+        });
+        await submitHumanMessage(
+          client,
+          freshProject,
+          `请为 ${marker} 创建一个工作并运行一次 sandbox shell 命令。`,
+        );
+        const freshControlApproval = await waitForApproval(
+          client,
+          freshProject,
+          marker,
+        );
+        await client.command(freshProject.projectId, "ResolveControlApproval", {
+          approvalId: freshControlApproval.approvalId,
+          expectedRevision: freshControlApproval.revision,
+          decision: "Approve",
+          reason: "V6 registry drift fresh root Work admission",
+        });
+        const freshWork = await waitForPublic(
+          () =>
+            client.view<{
+              readonly workId?: string;
+              readonly activeExecution?: { readonly executionId: string };
+            } | null>("current-work", {
+              workspaceId: freshProject.rootWorkspaceId,
+            }),
+          (work) =>
+            work?.workId !== undefined &&
+            work.activeExecution?.executionId !== undefined,
+        );
+        if (freshWork === null)
+          throw new Error("fresh public Current Work was absent");
+        const freshExecutionId = freshWork.activeExecution?.executionId;
+        if (freshExecutionId === undefined)
+          throw new Error("fresh public Work omitted its Execution");
+        const freshExecutableApproval = await waitForExecutableApproval(
+          client,
+          freshProject.rootWorkspaceId,
+          `${marker} fresh Work`,
+        );
+        const freshPreDriftDetail = await waitForPublic(
+          () =>
+            client.view<WorkspaceDetailForSandbox>("workspace-detail", {
+              workspaceId: freshProject.rootWorkspaceId,
+            }),
+          (detail) => detail.sandboxPolicyCandidateRead !== undefined,
+        );
+        const freshPreDriftRead = freshPreDriftDetail.sandboxPolicyCandidateRead;
+        if (freshPreDriftRead === undefined)
+          throw new Error("fresh public CandidateRead was absent before drift");
+        const preDriftCandidate = freshPreDriftRead.candidates.find(
+          (candidate) =>
+            candidate.kind === "OsEnforced" &&
+            candidate.providerId === "windows-restricted-appcontainer-job" &&
+            candidate.profile === "ReadOnly" &&
+            candidate.networkMode === "Disabled",
+        );
+        if (preDriftCandidate?.kind !== "OsEnforced")
+          throw new Error("fresh pre-drift Supported candidate was absent");
+        expect(preDriftCandidate.providerRegistryRevision).toBe(1);
+        const p1GrantExpiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+        await client.command(freshProject.projectId, "GrantPermission", {
+          permissionGrantId: functionalId("pgr"),
+          issuer: "user:local",
+          subject: {
+            _tag: "HumanPrincipal",
+            principal: "user:operator",
+          },
+          capability: "DecideSandboxPolicy",
+          target: freshExecutionId,
+          expiresAt: p1GrantExpiresAt,
+        });
+        const freshOldPayload = policyPayload({
+          read: freshPreDriftRead,
+          projectId: freshProject.projectId,
+          workspaceId: freshProject.rootWorkspaceId,
+          executionId: freshExecutionId,
+          expiresAt: p1GrantExpiresAt,
+        });
+        const freshApprovalStore = new DatabaseSync(fixture.databaseFile, {
+          readOnly: true,
+        });
+        try {
+          const approvalBeforeDrift = freshApprovalStore
+            .prepare(
+              `SELECT state, revision, consumed_by, execution_id
+                 FROM action_approvals
+                WHERE approval_id = ? AND route_kind = 'Executable'`,
+            )
+            .get(freshExecutableApproval.approvalId);
+          expect(approvalBeforeDrift).toMatchObject({
+            state: "Pending",
+            revision: freshExecutableApproval.revision,
+            consumed_by: null,
+            execution_id: freshExecutionId,
+          });
+        } finally {
+          freshApprovalStore.close();
+        }
+
+        const driftPid = fixture.daemonProcessSnapshot()?.pid;
+        await fixture.crash();
+        if (sourceFilename === undefined)
+          throw new Error("schema-50 V3 source path disappeared before drift");
+        const driftedPair = sandboxPolicyV3TestPair({
+          bundleRevision: 2,
+          registryRevision: 2,
+          includeRegistryDrift: true,
+        });
+        writeSandboxPolicyV3SourceFirst(sourceFilename, driftedPair);
+        const sourceFirstPair = JSON.parse(
+          readFileSync(sourceFilename, "utf8"),
+        ) as {
+          readonly sourceIdentity: string;
+          readonly bundleCanonicalJson: string;
+          readonly highWaterCanonicalJson: string;
+        };
+        const sourceFirst = await Effect.runPromise(
+          loadSandboxAuthorityBundleSnapshotCurrent(
+            {
+              readVerifiedSandboxAuthorityBundle: () =>
+                Effect.succeed({
+                  sourceIdentity: sourceFirstPair.sourceIdentity,
+                  canonicalJson: sourceFirstPair.bundleCanonicalJson,
+                }),
+              readSandboxAuthorityHighWater: () =>
+                Effect.succeed(sourceFirstPair.highWaterCanonicalJson),
+              commitSandboxAuthorityHighWater: () => Effect.succeed(false),
+              appendSandboxAuthorityAudit: () => Effect.succeed(true),
+            },
+            new Date().toISOString(),
+            SANDBOX_ENV_ALLOWLIST,
+          ),
+        );
+        expect(sourceFirst).toMatchObject({ _tag: "Unavailable" });
+        commitSandboxPolicyV3HighWater(sourceFilename, driftedPair);
+        await fixture.restart({
+          entry: child,
+          daemonEnvironment: {
+            ARBOR_AH_BOUNDARY: "disabled",
+            ARBOR_TICK_INTERVAL_MS: "60000",
+            ARBOR_SCHEDULER_PROBE: "1",
+          },
+        });
+        expect(fixture.daemonProcessSnapshot()?.pid).not.toBe(driftPid);
+
+        const refreshedFreshDetail = await waitForPublic(
+          () =>
+            client.view<WorkspaceDetailForSandbox>("workspace-detail", {
+              workspaceId: freshProject.rootWorkspaceId,
+            }),
+          (detail) =>
+            detail.sandboxPolicyCandidateRead?.commonPreconditions
+              .authorityBundleRevision === 2,
+        );
+        const refreshedFreshRead =
+          refreshedFreshDetail.sandboxPolicyCandidateRead;
+        if (refreshedFreshRead === undefined)
+          throw new Error("fresh CandidateRead was absent after restart");
+        expect(
+          refreshedFreshRead.commonPreconditions.authorityBundleDigest,
+        ).not.toBe(freshPreDriftRead.commonPreconditions.authorityBundleDigest);
+        const refreshedCandidate = refreshedFreshRead.candidates.find(
+          (candidate) =>
+            candidate.kind === "OsEnforced" &&
+            candidate.providerId === "windows-restricted-appcontainer-job" &&
+            candidate.profile === "ReadOnly" &&
+            candidate.networkMode === "Disabled",
+        );
+        if (refreshedCandidate?.kind !== "OsEnforced")
+          throw new Error("fresh post-drift Supported candidate was absent");
+        expect(refreshedCandidate.providerRegistryRevision).toBe(2);
+        expect(refreshedCandidate.providerRegistryDigest).not.toBe(
+          preDriftCandidate.providerRegistryDigest,
+        );
+        expect(refreshedCandidate.profile).toBe(preDriftCandidate.profile);
+        expect(refreshedCandidate.networkMode).toBe(
+          preDriftCandidate.networkMode,
+        );
+        expect(refreshedCandidate.providerVersion).toBe(
+          preDriftCandidate.providerVersion,
+        );
+        expect(refreshedCandidate.capabilityRevision).toBe(
+          preDriftCandidate.capabilityRevision,
+        );
+
+        const staleFreshCommandId = functionalId("cmd");
+        const staleFresh = await operatorCommand(
+          fixture.baseUrl,
+          freshProject.projectId,
+          "DecideSandboxPolicy",
+          freshOldPayload,
+          staleFreshCommandId,
+        );
+        expect(staleFresh).toMatchObject({
+          body: {
+            resolution: "TerminalRejected",
+            rejection: "StaleSandboxPolicyInputs",
+          },
+        });
+        const untouchedFresh = durableSandboxRead(
+          fixture.databaseFile,
+          freshExecutionId,
+        );
+        expect(untouchedFresh.decisions).toEqual({ count: 0 });
+        expect(untouchedFresh.decisionEvents).toEqual({ count: 0 });
+        expect(untouchedFresh.actions).toHaveLength(1);
+        expect(untouchedFresh.actions[0]).toMatchObject({
+          state: "Pending",
+          action_index: 0,
+        });
+        expect(untouchedFresh.invocation).toBeUndefined();
+
+        const freshPayload = policyPayload({
+          read: refreshedFreshRead,
+          projectId: freshProject.projectId,
+          workspaceId: freshProject.rootWorkspaceId,
+          executionId: freshExecutionId,
+          expiresAt: p1GrantExpiresAt,
+        });
+        expect(freshPayload.profile).toBe(preDriftCandidate.profile);
+        expect(freshPayload.networkPolicy).toEqual({
+          kind: "OsEnforced",
+          policy: { version: 1, mode: "Disabled", destinations: [] },
+        });
+        const acceptedFresh = await operatorCommand(
+          fixture.baseUrl,
+          freshProject.projectId,
+          "DecideSandboxPolicy",
+          freshPayload,
+        );
+        expect(acceptedFresh).toMatchObject({ body: { resolution: "Committed" } });
+        const acceptedFreshState = durableSandboxRead(
+          fixture.databaseFile,
+          freshExecutionId,
+        );
+        expect(acceptedFreshState.decisions).toEqual({ count: 1 });
+        expect(acceptedFreshState.decisionEvents).toEqual({ count: 1 });
+        expect(acceptedFreshState.actions).toEqual(untouchedFresh.actions);
+        expect(acceptedFreshState.invocation).toBeUndefined();
+        const approvalAfterFreshDecision = new DatabaseSync(
+          fixture.databaseFile,
+          { readOnly: true },
+        );
+        try {
+          expect(
+            approvalAfterFreshDecision
+              .prepare(
+                `SELECT state, revision, consumed_by, execution_id
+                   FROM action_approvals
+                  WHERE approval_id = ? AND route_kind = 'Executable'`,
+              )
+              .get(freshExecutableApproval.approvalId),
+          ).toMatchObject({
+            state: "Pending",
+            revision: freshExecutableApproval.revision,
+            consumed_by: null,
+            execution_id: freshExecutionId,
+          });
+        } finally {
+          approvalAfterFreshDecision.close();
+        }
+        const freshDecision = sandboxDecisionDebug(
+          fixture.databaseFile,
+          freshExecutionId,
+        );
+        expect(freshDecision).toMatchObject({
+          profile_id: preDriftCandidate.profile,
+          provider_id: preDriftCandidate.providerId,
+        });
+        expect(providerCalls).toBe(providerCallsAtPending + 1);
+        expect(fixture.daemonErrors).toEqual([]);
         return;
       }
 
