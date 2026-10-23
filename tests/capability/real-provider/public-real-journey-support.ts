@@ -15,6 +15,7 @@ import { findArborConfigFile } from "../../../apps/single-workspace/src/provider
 import { archiveProductionFixtureFailure } from "../../functional/support/fixture-failure-evidence.js";
 import {
   type ProductionFixture,
+  type ProductionFixtureSetupProbeEvent,
   startProductionFixture,
 } from "../../functional/support/production-fixture.js";
 import { makePublicClient } from "../../functional/support/public-client.js";
@@ -103,6 +104,177 @@ export interface WorkspaceFileSnapshot {
     >
   >;
 }
+
+export interface CapturedProviderToolCall {
+  readonly name: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+}
+
+export const createRealProviderFixtureDaemonSetup = (input: {
+  readonly baseDaemonEnvironment: Readonly<Record<string, string>>;
+  /** Mutable by design: setupProbe may add fixture-private paths after clone,
+   * and startProductionFixture reuses this object for every daemon restart. */
+  readonly requiredDaemonEnvironment?: Record<string, string>;
+  readonly setupProbe?: (
+    event: ProductionFixtureSetupProbeEvent,
+  ) => void | Promise<void>;
+}) => {
+  const requiredDaemonEnvironment = input.requiredDaemonEnvironment ?? {};
+  const allowedKeys = new Set([
+    "ARBOR_AUTH_TOKENS",
+    "ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE",
+  ]);
+  const assertRequiredEnvironmentSafe = (fixtureDirectory?: string) => {
+    const unexpectedKey = Object.keys(requiredDaemonEnvironment).find(
+      (key) => !allowedKeys.has(key),
+    );
+    if (unexpectedKey !== undefined) {
+      throw new Error(
+        `required test daemon environment is not allowlisted: ${unexpectedKey}`,
+      );
+    }
+    const authTokens = requiredDaemonEnvironment.ARBOR_AUTH_TOKENS;
+    if (
+      authTokens !== undefined &&
+      authTokens !== "local=user:local,operator=user:operator"
+    ) {
+      throw new Error(
+        "P11 fixture auth tokens differ from the local test pair",
+      );
+    }
+    const authoritySourceFile =
+      requiredDaemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE;
+    if (authoritySourceFile !== undefined) {
+      if (fixtureDirectory === undefined || !isAbsolute(authoritySourceFile)) {
+        throw new Error(
+          "P11 authority source must be an absolute path inside the private fixture",
+        );
+      }
+      const authorityRelativePath = relative(
+        resolve(fixtureDirectory),
+        resolve(authoritySourceFile),
+      );
+      if (
+        authorityRelativePath.length === 0 ||
+        authorityRelativePath === ".." ||
+        authorityRelativePath.startsWith(`..${sep}`) ||
+        isAbsolute(authorityRelativePath)
+      ) {
+        throw new Error(
+          "P11 authority source must be an absolute path inside the private fixture",
+        );
+      }
+    }
+  };
+  assertRequiredEnvironmentSafe();
+  const daemonEnvironment: Record<string, string> = {
+    ...input.baseDaemonEnvironment,
+    ...requiredDaemonEnvironment,
+  };
+  return {
+    daemonEnvironment,
+    setupProbe: async (event: ProductionFixtureSetupProbeEvent) => {
+      await input.setupProbe?.(event);
+      assertRequiredEnvironmentSafe(event.directory);
+      Object.assign(daemonEnvironment, requiredDaemonEnvironment);
+    },
+  };
+};
+
+/** Decode only complete provider-captured SSE tool calls. The response gate
+ * returns a real upstream body; this parser neither creates nor modifies it. */
+export const decodeCapturedProviderToolCalls = (
+  responseBodyBase64: string,
+): ReadonlyArray<CapturedProviderToolCall> => {
+  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(responseBodyBase64)) {
+    throw new Error("captured Provider response is not valid base64");
+  }
+  const responseText = Buffer.from(responseBodyBase64, "base64").toString(
+    "utf8",
+  );
+  const fragments = new Map<string, { name: string; argumentsText: string }>();
+  const absorb = (value: unknown) => {
+    if (typeof value !== "object" || value === null) return;
+    const choices = (value as { choices?: unknown }).choices;
+    if (!Array.isArray(choices)) return;
+    for (const [choiceOffset, rawChoice] of choices.entries()) {
+      if (typeof rawChoice !== "object" || rawChoice === null) continue;
+      const choice = rawChoice as {
+        index?: unknown;
+        delta?: { tool_calls?: unknown };
+        message?: { tool_calls?: unknown };
+      };
+      const choiceIndex =
+        typeof choice.index === "number" && Number.isInteger(choice.index)
+          ? choice.index
+          : choiceOffset;
+      const calls = choice.delta?.tool_calls ?? choice.message?.tool_calls;
+      if (!Array.isArray(calls)) continue;
+      for (const [callOffset, rawCall] of calls.entries()) {
+        if (typeof rawCall !== "object" || rawCall === null) continue;
+        const call = rawCall as {
+          index?: unknown;
+          function?: { name?: unknown; arguments?: unknown };
+        };
+        const callIndex =
+          typeof call.index === "number" && Number.isInteger(call.index)
+            ? call.index
+            : callOffset;
+        const key = `${choiceIndex}:${callIndex}`;
+        const fragment = fragments.get(key) ?? {
+          name: "",
+          argumentsText: "",
+        };
+        if (typeof call.function?.name === "string") {
+          fragment.name += call.function.name;
+        }
+        if (typeof call.function?.arguments === "string") {
+          fragment.argumentsText += call.function.arguments;
+        } else if (call.function?.arguments !== undefined) {
+          fragment.argumentsText += JSON.stringify(call.function.arguments);
+        }
+        fragments.set(key, fragment);
+      }
+    }
+  };
+
+  for (const line of responseText.split(/\r?\n/u)) {
+    if (!line.startsWith("data: ")) continue;
+    const data = line.slice(6);
+    if (data === "[DONE]") continue;
+    try {
+      absorb(JSON.parse(data) as unknown);
+    } catch {
+      throw new Error("captured Provider SSE contains invalid JSON data");
+    }
+  }
+  return [...fragments.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, fragment]) => {
+      if (fragment.name.length === 0 || fragment.argumentsText.length === 0) {
+        throw new Error("captured Provider tool call is incomplete");
+      }
+      let parsedArguments: unknown;
+      try {
+        parsedArguments = JSON.parse(fragment.argumentsText) as unknown;
+      } catch {
+        throw new Error("captured Provider tool-call arguments are invalid");
+      }
+      if (
+        typeof parsedArguments !== "object" ||
+        parsedArguments === null ||
+        Array.isArray(parsedArguments)
+      ) {
+        throw new Error(
+          "captured Provider tool-call arguments are not an object",
+        );
+      }
+      return {
+        name: fragment.name,
+        arguments: parsedArguments as Readonly<Record<string, unknown>>,
+      };
+    });
+};
 
 const CONFIG_PATH_ENV = "ARBOR_PUBLIC_S1_CONFIG";
 const CAPTURE_FILE_ENV = "ARBOR_PUBLIC_S1_CAPTURE_FILE";
@@ -295,6 +467,10 @@ export const startRealProviderFixture = async (input: {
   readonly evidenceRoot: string;
   readonly journeyId: string;
   readonly responseGate?: boolean;
+  readonly requiredDaemonEnvironment?: Record<string, string>;
+  readonly setupProbe?: (
+    event: ProductionFixtureSetupProbeEvent,
+  ) => void | Promise<void>;
   readonly onProviderStarted?: (fixture: ProductionFixture) => void;
 }): Promise<StartedRealProviderFixture> => {
   const evidenceRoot = validateRealJourneyEvidenceRoot(input.evidenceRoot);
@@ -331,6 +507,24 @@ export const startRealProviderFixture = async (input: {
   createP39PrivateTestFile(captureFile);
   const previousCapturePath = process.env[CAPTURE_FILE_ENV];
   let fixture: ProductionFixture | undefined;
+  const daemonSetup = createRealProviderFixtureDaemonSetup({
+    baseDaemonEnvironment: {
+      ARBOR_CONFIG: input.config.path,
+      ARBOR_MODEL_BASE_URL: "",
+      ARBOR_MODEL_NAME: "",
+      ARBOR_MODEL_API_KEY_VAR: "",
+      [CAPTURE_ENDPOINT_ENV]: safeEndpoint(input.config.endpoint),
+      ...(responseGateDirectory === undefined
+        ? {}
+        : { ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR: responseGateDirectory }),
+      NODE_OPTIONS:
+        `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(fetchHook).href}`.trim(),
+    },
+    ...(input.requiredDaemonEnvironment === undefined
+      ? {}
+      : { requiredDaemonEnvironment: input.requiredDaemonEnvironment }),
+    ...(input.setupProbe === undefined ? {} : { setupProbe: input.setupProbe }),
+  });
   try {
     process.env[CAPTURE_FILE_ENV] = captureFile;
     fixture = await startProductionFixture({
@@ -341,18 +535,8 @@ export const startRealProviderFixture = async (input: {
           "REAL NOT QUALIFIED: scripted provider endpoint received a request",
         );
       },
-      daemonEnvironment: {
-        ARBOR_CONFIG: input.config.path,
-        ARBOR_MODEL_BASE_URL: "",
-        ARBOR_MODEL_NAME: "",
-        ARBOR_MODEL_API_KEY_VAR: "",
-        [CAPTURE_ENDPOINT_ENV]: safeEndpoint(input.config.endpoint),
-        ...(responseGateDirectory === undefined
-          ? {}
-          : { ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR: responseGateDirectory }),
-        NODE_OPTIONS:
-          `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(fetchHook).href}`.trim(),
-      },
+      daemonEnvironment: daemonSetup.daemonEnvironment,
+      setupProbe: daemonSetup.setupProbe,
     });
   } catch (error) {
     const safeError = redactRealProviderDiagnostic(

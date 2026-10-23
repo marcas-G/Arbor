@@ -11,6 +11,8 @@ import {
 import { providerResponseMatchesSelector } from "./provider-response-gate.mjs";
 import {
   armProviderResponseGate,
+  createRealProviderFixtureDaemonSetup,
+  decodeCapturedProviderToolCalls,
   releaseProviderResponse,
   type StartedRealProviderFixture,
   updateProviderResponseGateSelector,
@@ -54,6 +56,193 @@ const hasActionCall = (bodyBase64: string): boolean =>
   );
 
 describe("real Provider response gate capture contract", () => {
+  it("wires setup-probe authority env into the reusable restart daemon environment", async () => {
+    const requiredDaemonEnvironment: Record<string, string> = {
+      ARBOR_AUTH_TOKENS: "local=user:local,operator=user:operator",
+    };
+    const setupStages: Array<string> = [];
+    const setup = createRealProviderFixtureDaemonSetup({
+      baseDaemonEnvironment: {
+        ARBOR_CONFIG: "C:\\private-fixture\\no-provider-config.json",
+        ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR: "C:\\private-evidence\\gate",
+        NODE_OPTIONS: "--import=file:///private/hook.mjs",
+      },
+      requiredDaemonEnvironment,
+      setupProbe: (event) => {
+        setupStages.push(event.stage);
+        if (event.stage === "after-clone") {
+          requiredDaemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE = `${event.directory}\\sandbox-policy-v2-source\\authority.json`;
+        }
+      },
+    });
+
+    await setup.setupProbe({
+      stage: "after-clone",
+      directory: "C:\\private-fixture",
+    });
+    const firstDaemonEnvironment = { ...setup.daemonEnvironment };
+    const restartDaemonEnvironment = {
+      ...setup.daemonEnvironment,
+      ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR: "",
+    };
+
+    expect(setupStages).toEqual(["after-clone"]);
+    expect(firstDaemonEnvironment).toMatchObject({
+      ARBOR_CONFIG: "C:\\private-fixture\\no-provider-config.json",
+      ARBOR_AUTH_TOKENS: "local=user:local,operator=user:operator",
+      ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE:
+        "C:\\private-fixture\\sandbox-policy-v2-source\\authority.json",
+    });
+    expect(restartDaemonEnvironment).toMatchObject({
+      ARBOR_AUTH_TOKENS: firstDaemonEnvironment.ARBOR_AUTH_TOKENS,
+      ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE:
+        firstDaemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE,
+      ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR: "",
+    });
+    for (const fixtureOwnedKey of [
+      "ARBOR_CONFIG",
+      "ARBOR_DB",
+      "ARBOR_HTTP_PORT",
+      "ARBOR_HTTP_HOST",
+      "ARBOR_PROJECT_ROOT",
+      "ARBOR_MODEL_BASE_URL",
+      "ARBOR_PROVIDER_DEPLOYMENT_ID",
+      "ARBOR_SERVER_PORT",
+      "ARBOR_WORKSPACE_ID",
+      "ARBOR_PROJECT_ID",
+      "ARBOR_MODEL_POLICY_JSON",
+      "ARBOR_PUBLIC_S1_CAPTURE_FILE",
+      "ARBOR_PUBLIC_S1_CAPTURE_ENDPOINT",
+      "ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR",
+      "NODE_OPTIONS",
+    ]) {
+      expect(() =>
+        createRealProviderFixtureDaemonSetup({
+          baseDaemonEnvironment: { [fixtureOwnedKey]: "fixture-owned" },
+          requiredDaemonEnvironment: { [fixtureOwnedKey]: "must-not-override" },
+        }),
+      ).toThrow(`not allowlisted: ${fixtureOwnedKey}`);
+    }
+    expect(() =>
+      createRealProviderFixtureDaemonSetup({
+        baseDaemonEnvironment: {},
+        requiredDaemonEnvironment: {
+          ARBOR_AUTH_TOKENS: "user-supplied-token-value",
+        },
+      }),
+    ).toThrow("P11 fixture auth tokens differ");
+    const outsideAuthorityRequiredEnvironment: Record<string, string> = {};
+    const outsideAuthoritySetup = createRealProviderFixtureDaemonSetup({
+      baseDaemonEnvironment: {},
+      requiredDaemonEnvironment: outsideAuthorityRequiredEnvironment,
+      setupProbe: (event) => {
+        if (event.stage === "after-clone") {
+          outsideAuthorityRequiredEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE =
+            "C:\\outside-fixture\\authority.json";
+        }
+      },
+    });
+    await expect(
+      outsideAuthoritySetup.setupProbe({
+        stage: "after-clone",
+        directory: "C:\\private-fixture",
+      }),
+    ).rejects.toThrow("inside the private fixture");
+  });
+
+  it("decodes one authentic shell Get-Date response and rejects extra or different tool calls", () => {
+    const event = (name: string, argumentsText: string) =>
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                { index: 0, function: { name, arguments: argumentsText } },
+              ],
+            },
+          },
+        ],
+      })}\n`;
+    const heldBody = Buffer.from(
+      [
+        event("sh", '{"command":"Get-'),
+        event(
+          "ell",
+          'Date","cwd":{"mount":"workspace","path":"."},"timeoutMs":5000}',
+        ),
+        "data: [DONE]\n",
+      ].join(""),
+    ).toString("base64");
+
+    const decodedCall = decodeCapturedProviderToolCalls(heldBody);
+    expect(decodedCall).toEqual([
+      {
+        name: "shell",
+        arguments: {
+          command: "Get-Date",
+          cwd: { mount: "workspace", path: "." },
+          timeoutMs: 5_000,
+        },
+      },
+    ]);
+    expect(decodedCall).toHaveLength(1);
+
+    const twoCalls = Buffer.from(
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  function: {
+                    name: "shell",
+                    arguments:
+                      '{"command":"Get-Date","cwd":{"mount":"workspace","path":"."}}',
+                  },
+                },
+                {
+                  index: 1,
+                  function: {
+                    name: "patch",
+                    arguments:
+                      '{"target":{"mount":"workspace","path":"x"},"unifiedDiff":""}',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      })}\n`,
+    ).toString("base64");
+    expect(decodeCapturedProviderToolCalls(twoCalls)).toHaveLength(2);
+
+    const differentCall = Buffer.from(
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  function: {
+                    name: "shell",
+                    arguments:
+                      '{"command":"Set-Content x y","cwd":{"mount":"workspace","path":"."}}',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      })}\n`,
+    ).toString("base64");
+    expect(decodeCapturedProviderToolCalls(differentCall)).toMatchObject([
+      { name: "shell", arguments: { command: "Set-Content x y" } },
+    ]);
+  });
+
   it("waits for the exact corrected Work held-response body and releases its request id", async () => {
     const run = makeRun();
     const workSelector = {

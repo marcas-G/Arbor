@@ -1,9 +1,12 @@
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { isAbsolute, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 import { afterEach, expect, it } from "vitest";
-import type { ProductionFixture } from "../../functional/support/production-fixture.js";
+import type {
+  ProductionFixture,
+  ProductionFixtureSetupProbeEvent,
+} from "../../functional/support/production-fixture.js";
 import {
   admitRootWorkThroughPublicConversation,
   createFunctionalProject,
@@ -13,14 +16,26 @@ import {
   waitForPublic,
 } from "../../functional/support/public-client.js";
 import {
+  commitTrustedLocalP11Policy,
+  createTrustedLocalP11FixtureEnvironment,
+  grantTrustedLocalP11Permission,
+  initializeTrustedLocalP11Worktree,
+  readCommittedTrustedLocalP11Snapshot,
+} from "../../functional/support/trusted-local-p11-fixture.js";
+import {
   armProviderResponseGate,
   type BoundProviderRequestEvidence,
+  type CapturedProviderToolCall,
+  captureWorkspaceSnapshot,
+  decodeCapturedProviderToolCalls,
   discoverProductionProviderConfig,
   finishRealProviderFixture,
   makeDeadlinePublicClient,
+  type ProviderCapture,
   type ProviderRequestEvidence,
   providerRequestsMatching,
   readProviderCaptures,
+  releaseProviderResponse,
   repositoryBuildAssets,
   type StartedRealProviderFixture,
   startedProviderRequests,
@@ -115,6 +130,26 @@ const entryKey = (entry: TranscriptEntry): string =>
 const requestText = (request: Record<string, unknown>): string =>
   JSON.stringify(request);
 
+const workspaceWorkProviderRequestIds = (
+  captures: ReadonlyArray<ProviderCapture>,
+  marker: string,
+): ReadonlyArray<string> =>
+  [
+    ...new Set(
+      captures
+        .filter(
+          (capture) =>
+            capture.event === "response-complete" &&
+            capture.request !== undefined &&
+            requestText(capture.request).includes(marker) &&
+            requestText(capture.request).includes(
+              "In a WorkspaceWork turn bound to a current Work",
+            ),
+        )
+        .map((capture) => capture.requestId),
+    ),
+  ].sort();
+
 const requireBoundProviderRequests = (
   evidence: ReadonlyArray<ProviderRequestEvidence>,
   context: string,
@@ -156,6 +191,10 @@ const sanitizeErrorKind = (error: unknown): string =>
 const withRealFixture = async <A>(input: {
   readonly caseId: string;
   readonly responseGate?: boolean;
+  readonly requiredDaemonEnvironment?: Record<string, string>;
+  readonly setupProbe?: (
+    event: ProductionFixtureSetupProbeEvent,
+  ) => void | Promise<void>;
   readonly body: (
     run: StartedRealProviderFixture,
     deadlineAt: number,
@@ -171,6 +210,10 @@ const withRealFixture = async <A>(input: {
     evidenceRoot: evidenceRootReadiness.path,
     journeyId: input.caseId,
     ...(input.responseGate === true ? { responseGate: true } : {}),
+    ...(input.requiredDaemonEnvironment === undefined
+      ? {}
+      : { requiredDaemonEnvironment: input.requiredDaemonEnvironment }),
+    ...(input.setupProbe === undefined ? {} : { setupProbe: input.setupProbe }),
   });
   activeFixtures.push(run.fixture);
   const deadlineAt = Date.now() + JOURNEY_BUDGET_MS;
@@ -230,8 +273,10 @@ const publicWorkDetail = async (
 
 interface ApprovalBinding {
   readonly approvalId: string;
+  readonly routeKind: string;
   readonly executionId: string;
   readonly workId: string;
+  readonly episodeKind: string;
   readonly logicalStepNo: number;
   readonly repairAttempt: number;
   readonly actionIndex: number;
@@ -240,6 +285,10 @@ interface ApprovalBinding {
   readonly toolInvocationId: string;
   readonly approvalState: string;
   readonly approvalRevision: number;
+  readonly toolName: string;
+  readonly sideEffectSemantics: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
   readonly stepState: string;
   readonly actionState: string;
   readonly invocationCount: number;
@@ -253,9 +302,12 @@ const readPendingApprovalBinding = (
   try {
     const row = database
       .prepare(
-        `SELECT a.approval_id, a.execution_id, e.episode_ref AS work_id,
+        `SELECT a.approval_id, a.route_kind, a.execution_id,
+                e.episode_kind, e.episode_ref AS work_id,
                 a.logical_step_no, a.repair_attempt, a.action_index,
                 a.logical_action_id, a.call_ref, a.tool_invocation_id,
+                a.stable_action_id, a.side_effect_semantics,
+                a.arguments_json, a.target_resource_space_ids_json,
                 a.state AS approval_state, a.revision AS approval_revision,
                 s.state AS step_state, x.state AS action_state,
                 (SELECT COUNT(*) FROM tool_invocations i
@@ -277,7 +329,9 @@ const readPendingApprovalBinding = (
       .get(approvalId) as
       | {
           approval_id: string;
+          route_kind: string;
           execution_id: string;
+          episode_kind: string;
           work_id: string;
           logical_step_no: number;
           repair_attempt: number;
@@ -285,6 +339,10 @@ const readPendingApprovalBinding = (
           logical_action_id: string;
           call_ref: string;
           tool_invocation_id: string;
+          stable_action_id: string;
+          side_effect_semantics: string;
+          arguments_json: string;
+          target_resource_space_ids_json: string;
           approval_state: string;
           approval_revision: number;
           step_state: string;
@@ -296,7 +354,9 @@ const readPendingApprovalBinding = (
       throw new Error("public approval has no exact durable binding");
     const binding: ApprovalBinding = {
       approvalId: row.approval_id,
+      routeKind: row.route_kind,
       executionId: row.execution_id,
+      episodeKind: row.episode_kind,
       workId: row.work_id,
       logicalStepNo: row.logical_step_no,
       repairAttempt: row.repair_attempt,
@@ -306,6 +366,12 @@ const readPendingApprovalBinding = (
       toolInvocationId: row.tool_invocation_id,
       approvalState: row.approval_state,
       approvalRevision: row.approval_revision,
+      toolName: row.stable_action_id,
+      sideEffectSemantics: row.side_effect_semantics,
+      arguments: JSON.parse(row.arguments_json) as Record<string, unknown>,
+      targetResourceSpaceIds: JSON.parse(
+        row.target_resource_space_ids_json,
+      ) as ReadonlyArray<string>,
       stepState: row.step_state,
       actionState: row.action_state,
       invocationCount: row.invocation_count,
@@ -322,6 +388,143 @@ const readPendingApprovalBinding = (
     return binding;
   } finally {
     database.close();
+  }
+};
+
+const readSuccessfulShellInvocation = (input: {
+  readonly databaseFile: string;
+  readonly executionId: string;
+  readonly approvalId: string;
+  readonly toolInvocationId: string;
+  readonly callRef: string;
+}) => {
+  const database = new DatabaseSync(input.databaseFile, { readOnly: true });
+  database.exec("BEGIN");
+  try {
+    const invocationRows = database
+      .prepare(
+        `SELECT invocation_id, execution_id, tool_name, side_effect_semantics,
+                approval_id, effect_admission_state, settlement_kind,
+                settled_at, observation_json, result_ref
+           FROM tool_invocations
+          WHERE invocation_id = ? AND execution_id = ?`,
+      )
+      .all(input.toolInvocationId, input.executionId) as Array<{
+      invocation_id: string;
+      execution_id: string;
+      tool_name: string;
+      side_effect_semantics: string;
+      approval_id: string | null;
+      effect_admission_state: string;
+      settlement_kind: string | null;
+      settled_at: string | null;
+      observation_json: string | null;
+      result_ref: string | null;
+    }>;
+    const executionInvocations = database
+      .prepare(
+        `SELECT invocation_id, tool_name, approval_id, settlement_kind
+           FROM tool_invocations WHERE execution_id = ?
+          ORDER BY intent_at, invocation_id`,
+      )
+      .all(input.executionId) as Array<{
+      invocation_id: string;
+      tool_name: string;
+      approval_id: string | null;
+      settlement_kind: string | null;
+    }>;
+    const effectAttempts = database
+      .prepare(
+        `SELECT attempt_no, admission_state FROM tool_invocation_effect_attempts
+          WHERE invocation_id = ? ORDER BY attempt_no`,
+      )
+      .all(input.toolInvocationId) as Array<{
+      attempt_no: number;
+      admission_state: string;
+    }>;
+    const approvalRows = database
+      .prepare(
+        `SELECT approval_id, route_kind, execution_id, state, revision,
+                consumed_by, tool_invocation_id
+           FROM action_approvals WHERE approval_id = ?`,
+      )
+      .all(input.approvalId) as Array<{
+      approval_id: string;
+      route_kind: string;
+      execution_id: string;
+      state: string;
+      revision: number;
+      consumed_by: string | null;
+      tool_invocation_id: string;
+    }>;
+    const sessionIdRow = database
+      .prepare("SELECT session_id FROM executions WHERE execution_id = ?")
+      .get(input.executionId) as { session_id: string } | undefined;
+    if (sessionIdRow === undefined) {
+      throw new Error("approved Work Execution has no Session");
+    }
+    const toolResults = database
+      .prepare(
+        `SELECT sequence, payload_json FROM session_entries
+          WHERE session_id = ? AND item_type = 'ToolResult'
+          ORDER BY sequence`,
+      )
+      .all(sessionIdRow.session_id) as Array<{
+      sequence: number;
+      payload_json: string;
+    }>;
+    const exactToolResults = toolResults.filter((row) => {
+      try {
+        const payload = JSON.parse(row.payload_json) as {
+          invocationId?: unknown;
+          callRef?: unknown;
+        };
+        return (
+          payload.invocationId === input.toolInvocationId &&
+          payload.callRef === input.callRef
+        );
+      } catch {
+        return false;
+      }
+    });
+    const approvalsForInvocation = database
+      .prepare(
+        `SELECT approval_id FROM action_approvals
+          WHERE execution_id = ? AND route_kind = 'Executable'
+            AND binding_proven = 1 AND tool_invocation_id = ?`,
+      )
+      .all(input.executionId, input.toolInvocationId) as Array<{
+      approval_id: string;
+    }>;
+    const executionApprovals = database
+      .prepare(
+        `SELECT approval_id, state, tool_invocation_id
+           FROM action_approvals
+          WHERE execution_id = ? AND route_kind = 'Executable'
+            AND binding_proven = 1
+          ORDER BY requested_at, approval_id`,
+      )
+      .all(input.executionId) as Array<{
+      approval_id: string;
+      state: string;
+      tool_invocation_id: string;
+    }>;
+    return {
+      invocationRows,
+      executionInvocations,
+      effectAttempts,
+      approvalRows,
+      approvalsForInvocation,
+      executionApprovals,
+      executionToolResultCount: toolResults.length,
+      exactToolResults,
+    };
+  } finally {
+    try {
+      database.exec("ROLLBACK");
+    } finally {
+      database.close();
+    }
   }
 };
 
@@ -778,6 +981,104 @@ const readFailClosedConversationSnapshot = (input: {
 
 const publicStateOracle = "PublicCommandsAndViewsAndWorkspaceArtifact" as const;
 
+const requireSingleShellGetDateToolCall = (
+  responseBodyBase64: string,
+): CapturedProviderToolCall => {
+  const calls = decodeCapturedProviderToolCalls(responseBodyBase64);
+  if (calls.length !== 1) {
+    throw new Error(
+      "held Provider response must contain exactly one tool call",
+    );
+  }
+  const call = calls[0];
+  if (call?.name !== "shell" || call.arguments.command !== "Get-Date") {
+    throw new Error(
+      "held Provider response is not the exact shell Get-Date call",
+    );
+  }
+  const cwd = call.arguments.cwd;
+  if (
+    typeof cwd !== "object" ||
+    cwd === null ||
+    Array.isArray(cwd) ||
+    !isDeepStrictEqual(cwd, { mount: "workspace", path: "." })
+  ) {
+    throw new Error("shell Get-Date must target the current workspace mount");
+  }
+  if (
+    Object.keys(call.arguments).some(
+      (key) => !["command", "cwd", "timeoutMs"].includes(key),
+    ) ||
+    (call.arguments.timeoutMs !== undefined &&
+      (typeof call.arguments.timeoutMs !== "number" ||
+        !Number.isInteger(call.arguments.timeoutMs) ||
+        call.arguments.timeoutMs < 1 ||
+        call.arguments.timeoutMs > 5_000))
+  ) {
+    throw new Error(
+      "shell Get-Date arguments exceed the bounded read-only call",
+    );
+  }
+  return call;
+};
+
+it("S4-B gate requires exactly one bounded shell Get-Date call", () => {
+  const stream = [
+    `data: ${JSON.stringify({
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  name: "shell",
+                  arguments:
+                    '{"command":"Get-Date","cwd":{"mount":"workspace","path":"."},"timeoutMs":5000}',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    })}\n`,
+    "data: [DONE]\n",
+  ].join("");
+  const response = Buffer.from(stream).toString("base64");
+  expect(requireSingleShellGetDateToolCall(response)).toMatchObject({
+    name: "shell",
+    arguments: {
+      command: "Get-Date",
+      cwd: { mount: "workspace", path: "." },
+      timeoutMs: 5_000,
+    },
+  });
+  const extraTool = Buffer.from(
+    `data: ${JSON.stringify({
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: { name: "shell", arguments: "{}" },
+              },
+              {
+                index: 1,
+                function: { name: "patch", arguments: "{}" },
+              },
+            ],
+          },
+        },
+      ],
+    })}\n`,
+  ).toString("base64");
+  expect(() => requireSingleShellGetDateToolCall(extraTool)).toThrow(
+    "exactly one tool call",
+  );
+});
+
 it.skipIf(skipReason !== undefined)(
   skipReason === undefined
     ? "REAL S4-A: unknown Provider outcome after hard restart is surfaced as NeedsAttention without replay"
@@ -1167,17 +1468,20 @@ it.skipIf(skipReason !== undefined)(
 
 it.skipIf(skipReason !== undefined)(
   skipReason === undefined
-    ? "REAL S4-B: the same Work resumes after an Executable Approval survives hard restart"
+    ? "REAL S4-B: exact shell EAP and TrustedLocal P1 policy survive same-DB hard restart"
     : `REAL NOT QUALIFIED: ${skipReason}`,
   async () => {
+    const p11Fixture = createTrustedLocalP11FixtureEnvironment();
     await withRealFixture({
       caseId: "s4-b-work-approval-hard-restart",
+      responseGate: true,
+      requiredDaemonEnvironment: p11Fixture.daemonEnvironment,
+      setupProbe: p11Fixture.setupProbe,
       body: async (run, deadlineAt) => {
         assertPrivateFixturePaths(run.fixture);
         const client = makeDeadlinePublicClient(run.fixture, deadlineAt);
         const marker = `S4B-${randomUUID().replaceAll("-", "").slice(0, 10).toUpperCase()}`;
-        const fileName = `s4-approval-${marker.toLowerCase()}.txt`;
-        const fileContent = `S4-APPROVED-ARTIFACT:${marker}`;
+        const expiresAt = new Date(deadlineAt).toISOString();
         const resourceCatalog = await client.projectResources();
         const availableProfiles = resourceCatalog.profiles.filter(
           (profile) => profile.available,
@@ -1193,6 +1497,25 @@ it.skipIf(skipReason !== undefined)(
           `Real public S4 approval ${marker}`,
           { resourceSelection: "Profile" },
         );
+        await initializeTrustedLocalP11Worktree({
+          databaseFile: run.fixture.databaseFile,
+          projectId: project.projectId,
+          workspaceId: project.rootWorkspaceId,
+          path: run.fixture.workspaceDirectory,
+        });
+        const authoritySourceFile =
+          p11Fixture.daemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE;
+        if (authoritySourceFile === undefined) {
+          throw new Error(
+            "P11 setupProbe did not add its private authority source",
+          );
+        }
+        expect(
+          isStrictlyInside(run.fixture.directory, authoritySourceFile),
+        ).toBe(true);
+        const workspaceBaseline = captureWorkspaceSnapshot(
+          run.fixture.workspaceDirectory,
+        );
         await client.command(project.projectId, "GrantPermission", {
           permissionGrantId: functionalId("pgr"),
           issuer: "user:local",
@@ -1200,20 +1523,28 @@ it.skipIf(skipReason !== undefined)(
             _tag: "WorkspaceAgent",
             workspaceId: project.rootWorkspaceId,
           },
-          capability: "fs:write",
+          capability: "shell:exec",
           target: project.rootWorkspaceId,
-          expiresAt: new Date(deadlineAt).toISOString(),
+          expiresAt,
         });
+        const gateSelector = {
+          requiredAdvertisedToolName: "shell",
+          requiredMessageText: marker,
+        } as const;
+        armProviderResponseGate(run, gateSelector);
+        const startsBeforeWork = startedProviderRequests(
+          readProviderCaptures(run.captureFile),
+        ).length;
         const admittedWork = await admitRootWorkThroughPublicConversation(
           client,
           project,
           marker,
-          `Please complete ${marker}: create only ${fileName} in this workspace with the exact single-line content ${fileContent}, then read it back. Ask for any required execution approval before writing.`,
+          `Please create a Work for ${marker}. Its only executable action must be exactly one shell call running Get-Date in the current workspace. Do not use patch, read, another tool, or any file/network effect. Ask for the required approval before that call, then report the timestamp without claiming Work completion.`,
         );
         const workId = admittedWork.workId;
         const workBefore = await waitWithinDeadline({
           deadlineAt,
-          label: "approved Work detail",
+          label: "same Open Work before its shell action",
           read: () =>
             publicWorkDetail(
               client,
@@ -1224,6 +1555,57 @@ it.skipIf(skipReason !== undefined)(
           predicate: (value) =>
             value.workId === workId && value.lifecycle === "Open",
         });
+        const held = await waitForHeldProviderResponse(run, {
+          afterSequence: startsBeforeWork,
+          deadlineAt,
+          selector: gateSelector,
+        });
+        const shellCall = requireSingleShellGetDateToolCall(
+          held.responseBodyBase64,
+        );
+        expect(shellCall.arguments.command).toBe("Get-Date");
+        expect(JSON.stringify(held.request)).toContain(
+          "In a WorkspaceWork turn bound to a current Work",
+        );
+        expect(JSON.stringify(held.request)).toContain(marker);
+        const heldStartEvidence = requireBoundProviderRequests(
+          providerRequestsMatching(
+            readProviderCaptures(run.captureFile),
+            (request) => requestText(request).includes(marker),
+          ),
+          "held WorkspaceWork shell call",
+        ).find((evidence) => evidence.requestId === held.requestId);
+        expect(heldStartEvidence?.requestStart.processId).toBe(
+          run.fixture.daemonProcessSnapshot()?.pid,
+        );
+        const currentWorkAtGate = await waitWithinDeadline({
+          deadlineAt,
+          label: "active Execution while exact shell response is held",
+          read: () =>
+            client.view<{
+              readonly workId?: string;
+              readonly revision: number;
+              readonly activeExecution?: { readonly executionId?: string };
+            } | null>("current-work", {
+              workspaceId: project.rootWorkspaceId,
+            }),
+          predicate: (value) =>
+            value?.workId === workId &&
+            value.activeExecution?.executionId !== undefined,
+        });
+        const executionId = currentWorkAtGate?.activeExecution?.executionId;
+        if (executionId === undefined) {
+          throw new Error(
+            "current Work omitted exact active Execution at held gate",
+          );
+        }
+        await grantTrustedLocalP11Permission({
+          client,
+          projectId: project.projectId,
+          executionId,
+          expiresAt,
+        });
+        releaseProviderResponse(run, held.requestId);
         const approval = await waitForExecutableApproval(
           client,
           project.rootWorkspaceId,
@@ -1234,40 +1616,138 @@ it.skipIf(skipReason !== undefined)(
           run.fixture.databaseFile,
           approval.approvalId,
         );
-        expect(bindingBefore.workId).toBe(workId);
-        expect(bindingBefore.approvalId).toBe(approval.approvalId);
         expect(bindingBefore.approvalRevision).toBe(approval.revision);
-        expect(bindingBefore.executionId).toBeTruthy();
-        expect(bindingBefore.toolInvocationId).toBeTruthy();
-        expect(existsSync(join(run.fixture.workspaceDirectory, fileName))).toBe(
-          false,
+        expect(bindingBefore).toMatchObject({
+          workId,
+          approvalId: approval.approvalId,
+          routeKind: "Executable",
+          executionId,
+          episodeKind: "WorkEpisode",
+          toolName: "shell",
+          sideEffectSemantics: "NonIdempotent",
+          arguments: {
+            command: "Get-Date",
+            cwd: { mount: "workspace", path: "." },
+          },
+          targetResourceSpaceIds: ["filesystem"],
+          approvalState: "Pending",
+          approvalRevision: 0,
+          actionState: "Pending",
+          invocationCount: 0,
+        });
+        expect(
+          readCommittedTrustedLocalP11Snapshot(
+            run.fixture.databaseFile,
+            executionId,
+          ),
+        ).toBeUndefined();
+        expect(
+          captureWorkspaceSnapshot(run.fixture.workspaceDirectory),
+        ).toEqual(workspaceBaseline);
+
+        // The public P1 policy is committed while this exact P4 EAP remains
+        // pending. P1 supplies the process context; it is not the EAP source.
+        const { snapshot: sandboxPolicySnapshot } =
+          await commitTrustedLocalP11Policy({
+            client,
+            baseUrl: run.fixture.baseUrl,
+            databaseFile: run.fixture.databaseFile,
+            projectId: project.projectId,
+            workspaceId: project.rootWorkspaceId,
+            executionId,
+            expiresAt,
+          });
+        expect(sandboxPolicySnapshot).toMatchObject({
+          kind: "TrustedLocalUnconfinedV1",
+          projectId: project.projectId,
+          workspaceId: project.rootWorkspaceId,
+          executionId,
+          profile: "FullAccess",
+          trustedRuntimeIdentity: "TrustedLocal",
+        });
+        expect(
+          readPendingApprovalBinding(
+            run.fixture.databaseFile,
+            approval.approvalId,
+          ),
+        ).toEqual(bindingBefore);
+        expect(
+          captureWorkspaceSnapshot(run.fixture.workspaceDirectory),
+        ).toEqual(workspaceBaseline);
+        const pendingInvocationBeforeRestart = readSuccessfulShellInvocation({
+          databaseFile: run.fixture.databaseFile,
+          executionId,
+          approvalId: approval.approvalId,
+          toolInvocationId: bindingBefore.toolInvocationId,
+          callRef: bindingBefore.callRef,
+        });
+        expect(pendingInvocationBeforeRestart.executionInvocations).toEqual([]);
+        expect(pendingInvocationBeforeRestart.executionToolResultCount).toBe(0);
+        expect(pendingInvocationBeforeRestart.executionApprovals).toEqual([
+          {
+            approval_id: approval.approvalId,
+            state: "Pending",
+            tool_invocation_id: bindingBefore.toolInvocationId,
+          },
+        ]);
+        const workRequestIdsBeforeRestart = workspaceWorkProviderRequestIds(
+          readProviderCaptures(run.captureFile),
+          marker,
         );
+        expect(workRequestIdsBeforeRestart).toContain(held.requestId);
 
         const oldDaemonPid = run.fixture.daemonProcessSnapshot()?.pid;
         await run.fixture.crash();
         expect(run.fixture.daemonsExited()).toBe(true);
         await run.fixture.restart({
-          daemonEnvironment: { [CAPTURE_FILE_ENV]: run.captureFile },
+          daemonEnvironment: {
+            [CAPTURE_FILE_ENV]: run.captureFile,
+            [RESPONSE_GATE_DIRECTORY_ENV]: "",
+          },
         });
         const newDaemonPid = run.fixture.daemonProcessSnapshot()?.pid;
         expect(newDaemonPid).toBeDefined();
         expect(newDaemonPid).not.toBe(oldDaemonPid);
+        const restartedEnvironmentKeys =
+          run.fixture.daemonProcessSnapshot()?.environmentKeys ?? [];
+        expect(restartedEnvironmentKeys).toContain(
+          "ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE",
+        );
+        expect(restartedEnvironmentKeys).toContain("ARBOR_AUTH_TOKENS");
 
         const resumedWork = await waitWithinDeadline({
           deadlineAt,
-          label: "same Work after restart",
+          label: "same active Work and Execution after restart",
           read: () =>
-            publicWorkDetail(
-              client,
-              project.projectId,
-              project.rootWorkspaceId,
-              workId,
-            ),
+            client.view<{
+              readonly workId?: string;
+              readonly revision: number;
+              readonly activeExecution?: { readonly executionId?: string };
+            } | null>("current-work", {
+              workspaceId: project.rootWorkspaceId,
+            }),
           predicate: (value) =>
-            value.workId === workId && value.lifecycle === "Open",
+            value?.workId === workId &&
+            value.activeExecution?.executionId === executionId,
         });
-        expect(resumedWork.workspaceId).toBe(project.rootWorkspaceId);
+        if (resumedWork === null || resumedWork.workId !== workId) {
+          throw new Error(
+            "same Work disappeared from Current Work after restart",
+          );
+        }
         expect(resumedWork.revision).toBe(workBefore.revision);
+        const resumedWorkDetail = await publicWorkDetail(
+          client,
+          project.projectId,
+          project.rootWorkspaceId,
+          workId,
+        );
+        expect(resumedWorkDetail).toMatchObject({
+          workId,
+          workspaceId: project.rootWorkspaceId,
+          lifecycle: "Open",
+          revision: workBefore.revision,
+        });
         const resumedApproval = await waitForExecutableApproval(
           client,
           project.rootWorkspaceId,
@@ -1280,12 +1760,37 @@ it.skipIf(skipReason !== undefined)(
           approval.approvalId,
         );
         expect(bindingAfter).toEqual(bindingBefore);
-        expect(existsSync(join(run.fixture.workspaceDirectory, fileName))).toBe(
-          false,
-        );
-        const startsWhileApprovalWaits = startedProviderRequests(
-          readProviderCaptures(run.captureFile),
-        ).length;
+        expect(
+          readCommittedTrustedLocalP11Snapshot(
+            run.fixture.databaseFile,
+            executionId,
+          ),
+        ).toEqual(sandboxPolicySnapshot);
+        const pendingInvocation = readSuccessfulShellInvocation({
+          databaseFile: run.fixture.databaseFile,
+          executionId,
+          approvalId: approval.approvalId,
+          toolInvocationId: bindingBefore.toolInvocationId,
+          callRef: bindingBefore.callRef,
+        });
+        expect(pendingInvocation.invocationRows).toEqual([]);
+        expect(pendingInvocation.effectAttempts).toEqual([]);
+        expect(pendingInvocation.approvalsForInvocation).toEqual([
+          { approval_id: approval.approvalId },
+        ]);
+        expect(pendingInvocation.executionApprovals).toEqual([
+          {
+            approval_id: approval.approvalId,
+            state: "Pending",
+            tool_invocation_id: bindingBefore.toolInvocationId,
+          },
+        ]);
+        expect(pendingInvocation.executionInvocations).toEqual([]);
+        expect(pendingInvocation.executionToolResultCount).toBe(0);
+        expect(pendingInvocation.exactToolResults).toEqual([]);
+        expect(
+          captureWorkspaceSnapshot(run.fixture.workspaceDirectory),
+        ).toEqual(workspaceBaseline);
         const quietWindowMs = Math.min(1_500, deadlineAt - Date.now());
         if (quietWindowMs <= 0) {
           throw new Error(
@@ -1303,34 +1808,163 @@ it.skipIf(skipReason !== undefined)(
         );
         expect(stillPending).toEqual(approval);
         expect(
-          startedProviderRequests(readProviderCaptures(run.captureFile)),
-        ).toHaveLength(startsWhileApprovalWaits);
-        const providerRequestIdsBeforeApproval = new Set(
-          requireBoundProviderRequests(
-            providerRequestsMatching(
-              readProviderCaptures(run.captureFile),
-              (request) => requestText(request).includes(marker),
-            ),
-            "pending approval wait",
-          ).map((evidence) => evidence.requestId),
-        );
+          readPendingApprovalBinding(
+            run.fixture.databaseFile,
+            approval.approvalId,
+          ),
+        ).toEqual(bindingBefore);
+        const capturesWhilePending = readProviderCaptures(run.captureFile);
+        expect(
+          workspaceWorkProviderRequestIds(capturesWhilePending, marker),
+        ).toEqual(workRequestIdsBeforeRestart);
+        expect(
+          startedProviderRequests(capturesWhilePending).filter(
+            (capture) => capture.processId === newDaemonPid,
+          ),
+        ).toEqual([]);
+        expect(
+          captureWorkspaceSnapshot(run.fixture.workspaceDirectory),
+        ).toEqual(workspaceBaseline);
 
-        await client.command(project.projectId, "ResolveExecutableApproval", {
-          approvalId: approval.approvalId,
-          expectedRevision: approval.revision,
-          decision: "Approve",
-          reason: `approve the exact ${marker} workspace file action after restart`,
-        });
-        const artifactPath = join(run.fixture.workspaceDirectory, fileName);
-        await waitWithinDeadline({
+        expect(
+          await client.command(project.projectId, "ResolveExecutableApproval", {
+            approvalId: approval.approvalId,
+            expectedRevision: approval.revision,
+            decision: "Approve",
+            reason: `approve the exact shell Get-Date action for ${marker} after restart`,
+          }),
+        ).toMatchObject({ body: { resolution: "Committed" } });
+        const successfulInvocation = await waitWithinDeadline({
           deadlineAt,
-          label: "approved real workspace artifact",
-          read: async () => readFileSync(artifactPath, "utf8"),
-          predicate: (content) => content === fileContent,
+          label: "same shell ToolInvocation and ToolResult succeed once",
+          read: async () =>
+            readSuccessfulShellInvocation({
+              databaseFile: run.fixture.databaseFile,
+              executionId,
+              approvalId: approval.approvalId,
+              toolInvocationId: bindingBefore.toolInvocationId,
+              callRef: bindingBefore.callRef,
+            }),
+          predicate: (snapshot) =>
+            snapshot.invocationRows.length === 1 &&
+            snapshot.invocationRows[0]?.settlement_kind === "Success" &&
+            snapshot.exactToolResults.length === 1,
         });
+        expect(successfulInvocation.invocationRows).toMatchObject([
+          {
+            invocation_id: bindingBefore.toolInvocationId,
+            execution_id: executionId,
+            tool_name: "shell",
+            side_effect_semantics: "NonIdempotent",
+            approval_id: approval.approvalId,
+            settlement_kind: "Success",
+            result_ref: null,
+          },
+        ]);
+        expect(successfulInvocation.invocationRows[0]?.settled_at).toBeTruthy();
+        const rawObservation =
+          successfulInvocation.invocationRows[0]?.observation_json;
+        if (rawObservation === undefined || rawObservation === null) {
+          throw new Error(
+            "successful shell ToolInvocation lacks observation JSON",
+          );
+        }
+        const canonicalObservation = JSON.parse(rawObservation) as {
+          readonly _tag?: unknown;
+          readonly observation?: {
+            readonly text?: unknown;
+            readonly truncated?: unknown;
+          };
+          readonly resultRef?: unknown;
+        };
+        expect(canonicalObservation._tag).toBe("Success");
+        expect(canonicalObservation.resultRef).toBeNull();
+        const boundedObservation = canonicalObservation.observation;
+        if (
+          typeof boundedObservation?.text !== "string" ||
+          typeof boundedObservation.truncated !== "boolean"
+        ) {
+          throw new Error("successful shell observation is not bounded text");
+        }
+        expect(boundedObservation.text.length).toBeLessThanOrEqual(2_000);
+        expect(boundedObservation.truncated).toBe(false);
+        expect(successfulInvocation.effectAttempts).toEqual([
+          { attempt_no: 0, admission_state: "MayHaveStarted" },
+        ]);
+        expect(successfulInvocation.approvalRows).toMatchObject([
+          {
+            approval_id: approval.approvalId,
+            route_kind: "Executable",
+            execution_id: executionId,
+            state: "Consumed",
+            consumed_by: bindingBefore.toolInvocationId,
+            tool_invocation_id: bindingBefore.toolInvocationId,
+          },
+        ]);
+        expect(successfulInvocation.executionApprovals).toEqual([
+          {
+            approval_id: approval.approvalId,
+            state: "Consumed",
+            tool_invocation_id: bindingBefore.toolInvocationId,
+          },
+        ]);
+        expect(
+          successfulInvocation.executionApprovals.filter(
+            (row) => row.state === "Pending",
+          ),
+        ).toEqual([]);
+        expect(successfulInvocation.executionInvocations).toEqual([
+          {
+            invocation_id: bindingBefore.toolInvocationId,
+            tool_name: "shell",
+            approval_id: approval.approvalId,
+            settlement_kind: "Success",
+          },
+        ]);
+        expect(successfulInvocation.executionToolResultCount).toBe(1);
+        expect(successfulInvocation.approvalsForInvocation).toEqual([
+          { approval_id: approval.approvalId },
+        ]);
+        expect(successfulInvocation.exactToolResults).toHaveLength(1);
+        const releasedCaptures = readProviderCaptures(run.captureFile).filter(
+          (capture) =>
+            capture.event === "response-released" &&
+            capture.requestId === held.requestId,
+        );
+        expect(releasedCaptures).toHaveLength(1);
+        expect(
+          readProviderCaptures(run.captureFile).filter(
+            (capture) =>
+              capture.event === "response-held" &&
+              capture.processId === newDaemonPid,
+          ),
+        ).toEqual([]);
+        expect(
+          captureWorkspaceSnapshot(run.fixture.workspaceDirectory),
+        ).toEqual(workspaceBaseline);
+        const successQuietWindowMs = Math.min(1_500, deadlineAt - Date.now());
+        if (successQuietWindowMs <= 0) {
+          throw new Error(
+            "S4 deadline expired before bounded post-approval stability window",
+          );
+        }
+        await new Promise((resolveWait) =>
+          setTimeout(resolveWait, successQuietWindowMs),
+        );
+        const stableSuccessfulInvocation = readSuccessfulShellInvocation({
+          databaseFile: run.fixture.databaseFile,
+          executionId,
+          approvalId: approval.approvalId,
+          toolInvocationId: bindingBefore.toolInvocationId,
+          callRef: bindingBefore.callRef,
+        });
+        expect(stableSuccessfulInvocation).toEqual(successfulInvocation);
+        expect(
+          captureWorkspaceSnapshot(run.fixture.workspaceDirectory),
+        ).toEqual(workspaceBaseline);
         const continuedWork = await waitWithinDeadline({
           deadlineAt,
-          label: "same Work remains publicly inspectable after approval",
+          label: "same Work remains publicly inspectable after approved action",
           read: () =>
             publicWorkDetail(
               client,
@@ -1341,19 +1975,6 @@ it.skipIf(skipReason !== undefined)(
           predicate: (value) => value.workId === workId,
         });
         expect(continuedWork.workspaceId).toBe(project.rootWorkspaceId);
-        const postApprovalEvidence = requireBoundProviderRequests(
-          providerRequestsMatching(
-            readProviderCaptures(run.captureFile),
-            (request) => requestText(request).includes(marker),
-          ),
-          "post-approval Work",
-        );
-        const postApprovalRequests = postApprovalEvidence.filter(
-          (evidence) =>
-            evidence.requestStart.processId === newDaemonPid &&
-            !providerRequestIdsBeforeApproval.has(evidence.requestId),
-        );
-        expect(postApprovalRequests.length).toBeGreaterThan(0);
         expect(run.fixture.providerCalls).toHaveLength(0);
         expect(run.fixture.daemonErrors).toEqual([]);
 
@@ -1367,6 +1988,8 @@ it.skipIf(skipReason !== undefined)(
           workRevisionBeforeRestart: workBefore.revision,
           workRevisionAfterRestartBeforeApproval: resumedWork.revision,
           executableApprovalId: approval.approvalId,
+          shellResponseRequestId: held.requestId,
+          shellResponseProcessId: held.processId,
           executionId: bindingBefore.executionId,
           toolInvocationId: bindingBefore.toolInvocationId,
           logicalStepNo: bindingBefore.logicalStepNo,
@@ -1375,14 +1998,13 @@ it.skipIf(skipReason !== undefined)(
           logicalActionId: bindingBefore.logicalActionId,
           callRef: bindingBefore.callRef,
           sameApprovalAndActionBindingSurvivedRestart: true,
+          sameToolInvocationSucceededOnce: true,
+          exactToolResultCount: successfulInvocation.exactToolResults.length,
           approvalWaitQuietWindowMs: quietWindowMs,
           oldDaemonPid,
           newDaemonPid,
-          artifactPath,
-          artifactSha256: createHash("sha256")
-            .update(fileContent)
-            .digest("hex"),
-          postApprovalProviderRequests: postApprovalRequests.length,
+          p1TrustedLocalPolicySnapshot: sandboxPolicySnapshot,
+          workspaceBaselineUnchanged: true,
           fixtureDatabase: run.fixture.databaseFile,
           captureFile: run.captureFile,
         };
