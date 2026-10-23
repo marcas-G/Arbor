@@ -75,10 +75,14 @@ SD §7.3 冻结语义的 P6 接线（机制 P2 拥有，P6 是发起方）：
 
 ```text
 Critical Steer 提交
-  = 同一可靠提交边界内：
-    1) SteerWork(severity=Critical)   → WorkSteered（治理事实）
-    2) StopExecution(当前 active main) → 禁止新 ProviderTurn / ToolInvocation /
-       Execution-originated canonical Command / Specialist spawn
+  = 同一外层 SteerWork 可靠提交边界内：
+    1) SteerWork(severity=Critical) → WorkSteered（治理事实）+ HumanInput Inbox
+    2) 在该事务内按目标 Workspace 读取当前 active main（不按 WorkId 筛选）
+       ├─ 存在 → StopExecution(该 active main)，禁止新 ProviderTurn /
+       │          ToolInvocation / Execution-originated canonical Command /
+       │          Specialist spawn
+       └─ 不存在 → Stop 无目标；不发起 StopExecution，不产生
+                  ExecutionStopRequested；仍提交 SteerWork 与 HumanInput
   ↓
 in-flight 副作用按 SideEffectSemantics cancel/confirm/reconcile（P4）
 无法确认 → Execution 只能 OutcomeUnknown(ReconciliationRequired)（P2）
@@ -87,6 +91,16 @@ Work 保持 Open；纠错内容已在 Inbox；下次 admission 的 bootstrap Con
 按 DID §8.13 Control Reinjection 从 Canonical State 重注入（Steer 属 Constraints/Current Work 面）
 ```
 
+- A pre-transaction active-main lookup is only preparation, not the decision:
+  the current Workspace active main is re-read inside the outer SteerWork
+  transaction. If a main Execution becomes active after preparation, the
+  transaction resolves StopExecution authority for that exact Execution and
+  stops it in the same transaction; it must not commit the no-target branch
+  based on the stale preparation result. If the transaction-time read finds no
+  active main, commit only SteerWork and HumanInput, with no Stop request or
+  `ExecutionStopRequested` event. If the exact Stop authority or Stop handler
+  cannot be applied for a transaction-time active main, the composite does not
+  commit a partial steer.
 - `CancelWork` 与 Stop 分离（SD §7.3）：P6 的 steer 永不隐式 Cancel Work。
 - Safety Envelope 触发的中断是另一通道（SD §7.7），不与 human steer 混用 Attention 归因。
 
@@ -95,7 +109,16 @@ Work 保持 Open；纠错内容已在 Inbox；下次 admission 的 bootstrap Con
 ```text
 - 用户可对树上任意 Workspace 的 Open Work 发 Normal Steer，不产生执行中断
 - Normal Steer 后的下一次 Execution Context 含 guidance（bounded）
-- Critical Steer：当前 active main 进入 quiescence，WorkSteered + Execution 不再新增动作
+- Critical Steer 且事务内存在 active main：同一外层 SteerWork receipt/事务提交
+  WorkSteered + HumanInput + 对该 Workspace 当前 active main 的 Stop；该
+  Execution 进入 quiescence，无新动作
+- Critical Steer 且事务内没有 active main：同一外层 SteerWork receipt/事务仍提交
+  WorkSteered + HumanInput；不调用 StopExecution，不产生
+  ExecutionStopRequested，Work 保持 Open
+- 若事务内 active main 与事务外准备结果不同（包括准备时无 active main、事务内
+  新 admission 已 active），必须以事务内当前 active main 为准并为其解析精确
+  Stop authority；不得因准备结果为无目标而漏停
+- Active main Stop authority/handler 失败：SteerWork、Inbox 与事件无部分提交
 - 纠错后恢复自治：无需人工重启 Work；reevaluation 自行再admission
 - Sibling/Child 不能 steer（R3 权限拒绝，typed rejection 可测）
 ```
