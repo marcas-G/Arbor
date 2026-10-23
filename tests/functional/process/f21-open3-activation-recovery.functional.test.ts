@@ -910,7 +910,8 @@ test("P12 exact replay activates restored path online in the same daemon", async
 
     const pending = db
       .prepare(
-        `SELECT c.resolution, c.result_json, i.status AS intent_status,
+        `SELECT c.command_id, c.resolution, c.result_json,
+                i.status AS intent_status,
                 (SELECT COUNT(*) FROM resource_ownership
                  WHERE workspace_id = ? AND released_at IS NULL) AS claim_count,
                 (SELECT COUNT(*) FROM workspace_resource_activation_attention_rows
@@ -929,6 +930,7 @@ test("P12 exact replay activates restored path online in the same daemon", async
         commandId,
       ) as
       | {
+          command_id: string;
           resolution: string;
           result_json: string;
           intent_status: string;
@@ -937,6 +939,7 @@ test("P12 exact replay activates restored path online in the same daemon", async
         }
       | undefined;
     expect(pending).toMatchObject({
+      command_id: commandId,
       resolution: "Committed",
       intent_status: "Pending",
       claim_count: 0,
@@ -944,7 +947,11 @@ test("P12 exact replay activates restored path online in the same daemon", async
     });
     expect(pending).toBeDefined();
     if (pending === undefined) throw new Error("committed receipt missing");
-    const originalReceipt = JSON.parse(pending.result_json);
+    const originalReceipt = {
+      commandId: pending.command_id,
+      resolution: pending.resolution,
+      result: JSON.parse(pending.result_json),
+    };
     const pendingAttention = await client.view<{
       rows: ReadonlyArray<Record<string, unknown>>;
     }>("attention", { projectId });
@@ -966,13 +973,15 @@ test("P12 exact replay activates restored path online in the same daemon", async
       },
       body: JSON.stringify(envelope),
     });
-    const replayBody = (await replay.json()) as Record<string, unknown>;
+    const replayEnvelope = (await replay.json()) as Record<string, unknown>;
     expect(replay.status).toBe(200);
-    expect(replayBody).toMatchObject({ ok: true, body: originalReceipt });
+    expect(replayEnvelope.ok).toBe(true);
+    expect(replayEnvelope.body).toEqual(originalReceipt);
 
     const completed = db
       .prepare(
-        `SELECT c.resolution, c.result_json, i.status AS intent_status,
+        `SELECT c.command_id, c.resolution, c.result_json,
+                i.status AS intent_status,
                 (SELECT COUNT(*) FROM resource_ownership
                  WHERE workspace_id = ? AND released_at IS NULL) AS claim_count,
                 (SELECT COUNT(*) FROM workspace_resource_activation_attention_rows
@@ -992,6 +1001,7 @@ test("P12 exact replay activates restored path online in the same daemon", async
         workspaceId,
         commandId,
       ) as {
+      command_id: string;
       resolution: string;
       result_json: string;
       intent_status: string;
@@ -1000,6 +1010,7 @@ test("P12 exact replay activates restored path online in the same daemon", async
       command_count: number;
     };
     expect(completed).toMatchObject({
+      command_id: commandId,
       resolution: "Committed",
       intent_status: "Active",
       claim_count: 1,
@@ -1007,7 +1018,7 @@ test("P12 exact replay activates restored path online in the same daemon", async
       command_count: 1,
       result_json: pending.result_json,
     });
-    expect(JSON.parse(completed.result_json)).toEqual(originalReceipt);
+    expect(JSON.parse(completed.result_json)).toEqual(originalReceipt.result);
     const activationStatuses = db
       .prepare(
         `SELECT json_extract(payload_json, '$.status') AS status
