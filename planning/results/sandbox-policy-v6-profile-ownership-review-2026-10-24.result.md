@@ -1,6 +1,6 @@
 # V6 Fresh Profile Ownership Review — 2026-10-24
 
-Status: **E50 PROFILE FIX REVIEWED; POST-INTENT REPLAY MISMATCH CONFIRMED AS P4/06 FAIL-CLOSED; FRESH TEST REFACTORED TO P10/P1 PRE-INTENT EAP; FULL PROCESS NOT RERUN**
+Status: **E50 PROFILE FIX REVIEWED; PRE-INTENT V6 PROCESS REACHED CANONICAL P9 NO-EFFECT TERMINAL; LAST FULLFILE WAS A TEST-ORACLE FALSE RED; ORACLE FIXED, NO RERUN YET**
 
 ## E50 fixture review
 
@@ -190,3 +190,45 @@ outside this review.
   `organization.functional.test.ts:740` missing `ProductionFixture.httpPort`
   member; no V6 or fixture-support type errors remain. Targeted Biome passes,
   and the two oracle unit cases pass (2/2; process case filtered).
+- The authorized pre-intent fullfile run at
+  `.test-results/2026-10-24-v6-preintent-final/vitest.json` advanced through
+  drift/restart, stale-P1 rejection, fresh P1 commit, and approval of the same
+  pending EAP. Its archived DB is
+  `.test-results/2026-10-24-v6-preintent-final/sandbox-policy-v6-fresh-work-4d2d9a5e-f3e1-4b76-b32f-e59280fd5d0e/arbor-functional.db`
+  (SHA-256 `4F065A4EED27E781EF2452A4B14C756A392CAB08A433035EE4CBBABE2F8A60B7`);
+  Vitest JSON SHA-256 is
+  `CFB238022DDD783C5D0B76ACBFCE1A76C24128789F65F9DBE787257AFF8D7821`.
+  Read-only DB evidence shows the fresh P1 receipt is Committed and its
+  effective-summary digest recomputes exactly; the current source/high-water
+  and effective tuple remain the refreshed CandidateRead values. Before P1,
+  the exact Action was Pending with an unconsumed EAP and no invocation or
+  RecoveryBinding. After approving that same EAP, the exact invocation is
+  settled `ExpectedFailure`, `MayHaveStarted`, `RecoveryBinding=Bound`, and has
+  no invocation result/artifact. The same invocation has exactly one attempt
+  0 `MayHaveStarted/P39Admission` whose immutable binding hash matches the
+  invocation. Its typed observation carries
+  `sandboxProviderUnavailable.failureCode=ProviderVersionMismatch`,
+  `effectDisposition=NoEffect`, and “execution did not start”; the matching P9
+  fact is linked from the exact `TerminalRejected` Action, and its source Step
+  reached a legal committed/successor state. This is synthetic-provider
+  no-effect evidence only, not an OS-supported-provider claim.
+- That fullfile was reported failed only because the old post-approval waiter
+  still required `effect_admission_state=NotAdmitted`. This predicate was an
+  invalid oracle: canonical P39 admission is `MayHaveStarted`, and the durable
+  typed `NoEffect` disposition plus matching attempt/fact is the accepted
+  proof. The test now permits that canonical state but requires all exact
+  settlement, typed observation, immutable P9 fact/attempt, terminal Action,
+  and no-artifact conditions. It no longer treats the text alone as proof.
+  Pure oracles reject a missing/wrong `effectDisposition`, mismatched binding
+  or fact, and any artifact; a canonical `MayHaveStarted + NoEffect` fixture
+  is explicitly accepted. The earlier post-intent RecoveryBinding mismatch
+  remains separate expected P4/06 fail-closed evidence for the invalid test
+  ordering. No fullfile has been rerun after this oracle correction.
+- Lightweight verification after the oracle correction: **9 passed, 1 process
+  case skipped** (including current-schema-51 preparation of all 49 static
+  SQL statements and the canonical P9 positive/negative oracles); targeted
+  Biome and `git diff --check` pass. Test TypeScript checking still reports
+  only the pre-existing unrelated
+  `tests/functional/process/organization.functional.test.ts:740`
+  `ProductionFixture.httpPort` error. No daemon was started by the filtered
+  run; the process case remains NOT rerun pending independent review.
