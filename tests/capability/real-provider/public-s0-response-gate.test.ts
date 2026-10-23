@@ -41,6 +41,15 @@ const makeRun = (): StartedRealProviderFixture => {
   };
 };
 
+const actionCallBody =
+  'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"read","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n';
+const plainResponseBody =
+  'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n';
+const hasActionCall = (bodyBase64: string): boolean =>
+  /"(?:tool_calls|function_call)"\s*:/u.test(
+    Buffer.from(bodyBase64, "base64").toString("utf8"),
+  );
+
 describe("real Provider response gate capture contract", () => {
   it("waits for the exact corrected Work held-response body and releases its request id", async () => {
     const run = makeRun();
@@ -97,6 +106,7 @@ describe("real Provider response gate capture contract", () => {
         path: "/v1/chat/completions",
         request: initialWorkRequest,
         status: 200,
+        responseBodyBase64: Buffer.from(actionCallBody).toString("base64"),
       },
       {
         event: "response-held",
@@ -172,6 +182,7 @@ describe("real Provider response gate capture contract", () => {
         path: "/v1/chat/completions",
         request: selectedRequest,
         status: 200,
+        responseBodyBase64: Buffer.from(actionCallBody).toString("base64"),
       },
       {
         event: "response-held",
@@ -192,6 +203,7 @@ describe("real Provider response gate capture contract", () => {
         flag: "a",
       },
     );
+    expect(correctionCaptures[1]).not.toHaveProperty("responseBodyBase64");
 
     const held = await waitForHeldProviderResponse(run, {
       afterSequence: 2,
@@ -200,6 +212,10 @@ describe("real Provider response gate capture contract", () => {
     });
     expect(held.requestId).toBe(selectedWorkId);
     expect(held.event).toBe("response-held");
+    expect(held.responseBodyBase64).toBe(
+      Buffer.from(actionCallBody).toString("base64"),
+    );
+    expect(hasActionCall(held.responseBodyBase64)).toBe(true);
     releaseProviderResponse(run, held.requestId);
     expect(
       readFileSync(
@@ -208,4 +224,145 @@ describe("real Provider response gate capture contract", () => {
       ),
     ).toBe("");
   });
+
+  it("returns a correlated plain-text response body without fabricating an action call", async () => {
+    const run = makeRun();
+    const requestId = randomUUID();
+    const request = {
+      messages: [{ role: "user", content: "continue the bounded task" }],
+      tools: [{ type: "function", function: { name: "read" } }],
+    };
+    writeFileSync(
+      run.captureFile,
+      `${[
+        {
+          event: "response-complete",
+          requestId,
+          processId: 1,
+          sequence: 9,
+          method: "POST",
+          path: "/v1/chat/completions",
+          request,
+          status: 200,
+          responseBodyBase64: Buffer.from(plainResponseBody).toString("base64"),
+        },
+        {
+          event: "response-held",
+          requestId,
+          processId: 1,
+          sequence: 9,
+          method: "POST",
+          path: "/v1/chat/completions",
+          request,
+          status: 200,
+        },
+      ]
+        .map((capture) => JSON.stringify(capture))
+        .join("\n")}\n`,
+      { encoding: "utf8" },
+    );
+
+    const held = await waitForHeldProviderResponse(run, {
+      afterSequence: 8,
+      deadlineAt: Date.now() + 1_000,
+    });
+    expect(held.event).toBe("response-held");
+    expect(held.status).toBe(200);
+    expect(held.responseBodyBase64).toBe(
+      Buffer.from(plainResponseBody).toString("base64"),
+    );
+    expect(hasActionCall(held.responseBodyBase64)).toBe(false);
+  });
+
+  it.each([
+    [
+      "sequence",
+      {
+        heldSequence: 10,
+        completeSequence: 11,
+        heldStatus: 200,
+        completeStatus: 200,
+        heldContent: "same",
+        completeContent: "same",
+      },
+    ],
+    [
+      "status",
+      {
+        heldSequence: 10,
+        completeSequence: 10,
+        heldStatus: 200,
+        completeStatus: 201,
+        heldContent: "same",
+        completeContent: "same",
+      },
+    ],
+    [
+      "request",
+      {
+        heldSequence: 10,
+        completeSequence: 10,
+        heldStatus: 200,
+        completeStatus: 200,
+        heldContent: "held request",
+        completeContent: "complete request",
+      },
+    ],
+  ])(
+    "fails closed when held and complete captures disagree on %s",
+    async (_kind, mismatch) => {
+      const run = makeRun();
+      const requestId = randomUUID();
+      const capture = (
+        event: "response-complete" | "response-held",
+        sequence: number,
+        status: number,
+        content: string,
+      ) => ({
+        event,
+        requestId,
+        processId: 1,
+        sequence,
+        method: "POST",
+        path: "/v1/chat/completions",
+        request: { messages: [{ role: "user", content }] },
+        status,
+        ...(event === "response-complete"
+          ? {
+              responseBodyBase64:
+                Buffer.from(actionCallBody).toString("base64"),
+            }
+          : {}),
+      });
+      writeFileSync(
+        run.captureFile,
+        `${[
+          capture(
+            "response-complete",
+            mismatch.completeSequence,
+            mismatch.completeStatus,
+            mismatch.completeContent,
+          ),
+          capture(
+            "response-held",
+            mismatch.heldSequence,
+            mismatch.heldStatus,
+            mismatch.heldContent,
+          ),
+        ]
+          .map((value) => JSON.stringify(value))
+          .join("\n")}\n`,
+        { encoding: "utf8" },
+      );
+
+      await expect(
+        waitForHeldProviderResponse(run, {
+          afterSequence: 9,
+          deadlineAt: Date.now() + 1_000,
+        }),
+      ).rejects.toThrow(
+        "REAL NOT QUALIFIED: held Provider response does not match its exact completion capture",
+      );
+    },
+  );
 });

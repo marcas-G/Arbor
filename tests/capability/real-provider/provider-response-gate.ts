@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { providerResponseMatchesSelector } from "./provider-response-gate.mjs";
 import type {
+  CorrelatedHeldProviderResponseCapture,
   ProviderCapture,
   ProviderResponseGateSelector,
   StartedRealProviderFixture,
@@ -33,7 +34,7 @@ export const waitForHeldProviderResponse = async (
     readonly deadlineAt: number;
     readonly selector?: ProviderResponseGateSelector;
   },
-): Promise<ProviderCapture> => {
+): Promise<CorrelatedHeldProviderResponseCapture> => {
   while (Date.now() < input.deadlineAt) {
     const captures = readProviderCaptures(run.captureFile);
     const held = captures.find(
@@ -41,15 +42,58 @@ export const waitForHeldProviderResponse = async (
         capture.event === "response-held" &&
         capture.sequence > input.afterSequence &&
         (input.selector === undefined ||
-          providerCaptureMatchesSelector(capture, input.selector)) &&
-        captures.some(
-          (completed) =>
-            completed.event === "response-complete" &&
-            completed.requestId === capture.requestId &&
-            completed.sequence === capture.sequence,
-        ),
+          providerCaptureMatchesSelector(capture, input.selector)),
     );
-    if (held !== undefined) return held;
+    if (held !== undefined) {
+      const completed = captures.filter(
+        (capture) =>
+          capture.event === "response-complete" &&
+          capture.requestId === held.requestId,
+      );
+      if (completed.length === 0) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+        continue;
+      }
+      if (completed.length !== 1) {
+        throw new Error(
+          "REAL NOT QUALIFIED: held Provider response has duplicate completion captures",
+        );
+      }
+      const response = completed[0];
+      const requestEvidenceMatches =
+        response !== undefined &&
+        held.sequence !== undefined &&
+        held.processId !== undefined &&
+        held.method !== undefined &&
+        held.path !== undefined &&
+        held.request !== undefined &&
+        response.sequence === held.sequence &&
+        response.processId === held.processId &&
+        response.method === held.method &&
+        response.path === held.path &&
+        response.request !== undefined &&
+        JSON.stringify(response.request) === JSON.stringify(held.request);
+      if (
+        response === undefined ||
+        !requestEvidenceMatches ||
+        held.status === undefined ||
+        response.status === undefined ||
+        response.responseBodyBase64 === undefined ||
+        held.status !== response.status ||
+        (held.responseBodyBase64 !== undefined &&
+          held.responseBodyBase64 !== response.responseBodyBase64)
+      ) {
+        throw new Error(
+          "REAL NOT QUALIFIED: held Provider response does not match its exact completion capture",
+        );
+      }
+      return {
+        ...held,
+        event: "response-held",
+        status: response.status,
+        responseBodyBase64: response.responseBodyBase64,
+      };
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 50));
   }
   throw new Error(
@@ -63,4 +107,7 @@ export const providerCaptureMatchesSelector = (
 ): boolean =>
   providerResponseMatchesSelector(capture.request ?? {}, selector);
 
-export type { ProviderCapture } from "./public-real-journey-support.js";
+export type {
+  CorrelatedHeldProviderResponseCapture,
+  ProviderCapture,
+} from "./public-real-journey-support.js";
