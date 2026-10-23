@@ -224,7 +224,7 @@ outside this review.
   is explicitly accepted. The earlier post-intent RecoveryBinding mismatch
   remains separate expected P4/06 fail-closed evidence for the invalid test
   ordering. No fullfile has been rerun after this oracle correction.
-- Lightweight verification after the oracle correction: **9 passed, 1 process
+- Lightweight verification after the oracle correction: **10 passed, 1 process
   case skipped** (including current-schema-51 preparation of all 49 static
   SQL statements and the canonical P9 positive/negative oracles); targeted
   Biome and `git diff --check` pass. Test TypeScript checking still reports
