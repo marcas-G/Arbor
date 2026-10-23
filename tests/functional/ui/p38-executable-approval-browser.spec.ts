@@ -533,6 +533,17 @@ test("P38 browser approval resumes the same action under explicitly configured T
   const daemonStdout: string[] = [];
   const trustedLocalP11 = createTrustedLocalP11FixtureEnvironment();
   trustedLocalP11.daemonEnvironment.ARBOR_TICK_INTERVAL_MS = "25";
+  const trustedLocalPolicyExpiresAt = new Date(
+    Date.now() + 60 * 60_000,
+  ).toISOString();
+  let releaseShellAction!: () => void;
+  let markShellActionRequested!: () => void;
+  const shellActionGate = new Promise<void>((resolveGate) => {
+    releaseShellAction = resolveGate;
+  });
+  const shellActionRequested = new Promise<void>((resolveRequest) => {
+    markShellActionRequested = resolveRequest;
+  });
   let diagnosticPhase = "fixture-started";
   let diagnosticContext: P38BrowserDiagnosticContext | undefined;
   let approveCommandEvidence: Readonly<Record<string, unknown>> | undefined;
@@ -545,6 +556,17 @@ test("P38 browser approval resumes the same action under explicitly configured T
     firstDaemonEntry: resolve(
       "tests/functional/support/sandbox-policy-v2-daemon-child.mjs",
     ),
+    beforeResponse: async (call) => {
+      const names = new Set(
+        call.tools
+          .map((tool) => tool.function?.name)
+          .filter((name): name is string => name !== undefined),
+      );
+      if (names.has("shell")) {
+        markShellActionRequested();
+        await shellActionGate;
+      }
+    },
     reply: (call) => {
       const availableToolNames = call.tools
         .map((tool) => tool.function?.name)
@@ -658,6 +680,26 @@ test("P38 browser approval resumes the same action under explicitly configured T
     decision: "Approve",
     reason: "start the Work before its separately gated shell action",
   });
+  diagnosticPhase = "waiting-for-trusted-local-shell-provider-request";
+  await shellActionRequested;
+  const activeWork = await waitForPublic(
+    () =>
+      client.view<{
+        readonly activeExecution?: { readonly executionId: string };
+      } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+    (work) => work?.activeExecution?.executionId !== undefined,
+  );
+  const trustedLocalExecutionId = activeWork?.activeExecution?.executionId;
+  if (trustedLocalExecutionId === undefined)
+    throw new Error("P38 Work has no active Execution for P1 grant setup");
+  diagnosticPhase = "granting-trusted-local-policy-authority";
+  await grantTrustedLocalP11Permission({
+    client,
+    projectId: project.projectId,
+    executionId: trustedLocalExecutionId,
+    expiresAt: trustedLocalPolicyExpiresAt,
+  });
+  releaseShellAction();
   const approvalInbox = await waitForPublic(
     () =>
       client.view<{
@@ -710,6 +752,7 @@ test("P38 browser approval resumes the same action under explicitly configured T
     );
   }
   const executableTarget = approvalEntry.target;
+  expect(executableTarget.executionId).toBe(trustedLocalExecutionId);
   diagnosticPhase = "executable-approval-visible";
   diagnosticContext = {
     marker,
@@ -743,16 +786,6 @@ test("P38 browser approval resumes the same action under explicitly configured T
 
   // This journey explicitly tests the P38 browser approval surface under a
   // configured TrustedLocal P11 policy. It does not qualify an OS sandbox.
-  const trustedLocalPolicyExpiresAt = new Date(
-    Date.now() + 60 * 60_000,
-  ).toISOString();
-  diagnosticPhase = "granting-trusted-local-policy-authority";
-  await grantTrustedLocalP11Permission({
-    client,
-    projectId: project.projectId,
-    executionId: executableTarget.executionId,
-    expiresAt: trustedLocalPolicyExpiresAt,
-  });
   diagnosticPhase = "committing-trusted-local-p1-policy";
   await commitTrustedLocalP11Policy({
     client,
