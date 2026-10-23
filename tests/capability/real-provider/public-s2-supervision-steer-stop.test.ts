@@ -171,6 +171,42 @@ const readInvocationFacts = (
   }
 };
 
+interface ExecutionStopSnapshot {
+  readonly executionId: string;
+  readonly stop_requested_at: string | null;
+  readonly settlement_kind: string | null;
+  readonly settlement_json: string | null;
+  readonly settled_at: string | null;
+  readonly providerTurnCount: number;
+}
+
+const readExecutionStopSnapshot = (
+  databaseFile: string,
+  executionId: string,
+): ExecutionStopSnapshot => {
+  const database = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const execution = database
+      .prepare(
+        "SELECT execution_id, stop_requested_at, settlement_kind, settlement_json, settled_at FROM executions WHERE execution_id = ?",
+      )
+      .get(executionId) as
+      | Omit<ExecutionStopSnapshot, "providerTurnCount">
+      | undefined;
+    if (execution === undefined) {
+      throw new Error("read-only stop oracle found no exact Execution");
+    }
+    const providerTurns = database
+      .prepare(
+        "SELECT COUNT(*) AS count FROM provider_turns WHERE execution_id = ?",
+      )
+      .get(executionId) as { count: number };
+    return { ...execution, providerTurnCount: providerTurns.count };
+  } finally {
+    database.close();
+  }
+};
+
 const heldResponseContainsActionCall = (capture: ProviderCapture): boolean => {
   if (capture.responseBodyBase64 === undefined) return false;
   const response = Buffer.from(capture.responseBodyBase64, "base64").toString(
@@ -274,7 +310,7 @@ const runJourney = async (input: {
   readonly config: RealProviderConfig;
   readonly evidenceRoot: string;
   readonly marker: string;
-  readonly mode: "normal-steer" | "critical-stop";
+  readonly mode: "normal-steer" | "immediate-stop";
 }): Promise<void> => {
   const deadlineAt = Date.now() + JOURNEY_BUDGET_MS;
   const run = await startRealProviderFixture({
@@ -639,7 +675,7 @@ const runJourney = async (input: {
             current.activeExecution === undefined
           ) {
             throw new Error(
-              "REAL NOT QUALIFIED: Work settled or stopped before a second genuine response gate could establish the Critical Stop boundary",
+              "REAL NOT QUALIFIED: Work settled or stopped before a second genuine response gate could establish the StopExecution boundary",
             );
           }
         }
@@ -670,12 +706,20 @@ const runJourney = async (input: {
         active.activeExecution?.executionId === undefined
       )
         throw new Error(
-          "REAL NOT QUALIFIED: no active execution at Critical Stop boundary",
+          "REAL NOT QUALIFIED: no active execution at StopExecution boundary",
         );
+      const targetExecutionId = active.activeExecution.executionId;
+      expect(active.revision).toBe(work.revision);
       const toolFactsAtStop = readInvocationFacts(
         fixture.databaseFile,
-        active.activeExecution.executionId,
+        targetExecutionId,
       );
+      const executionAtStop = readExecutionStopSnapshot(
+        fixture.databaseFile,
+        targetExecutionId,
+      );
+      expect(executionAtStop.stop_requested_at).toBeNull();
+      expect(executionAtStop.settlement_kind).toBeNull();
       expect(
         toolFactsAtStop.some(
           (fact) =>
@@ -685,59 +729,86 @@ const runJourney = async (input: {
       expect(
         toolFactsAtStop.every((fact) => fact.settlement_kind !== null),
       ).toBe(true);
-      const criticalMarker = `S2-CRITICAL-${input.marker}`;
-      await client.command(project.projectId, "SteerWork", {
-        workId: active.workId,
-        workspaceId: project.rootWorkspaceId,
-        expectedWorkRevision: active.revision,
-        steer: {
-          severity: "Critical",
-          guidance: `立即停止当前执行。方向已经不安全；不要继续发起动作，保留已发生的真实结果。${criticalMarker}`,
-        },
-        provenance: { source: "HumanInput" },
-      });
-      state.criticalSteerMarker = criticalMarker;
+      const stopReceipt = await client.command(
+        project.projectId,
+        "StopExecution",
+        { executionId: targetExecutionId },
+      );
+      const stopRequestedSnapshot = readExecutionStopSnapshot(
+        fixture.databaseFile,
+        targetExecutionId,
+      );
+      expect(stopRequestedSnapshot.stop_requested_at).not.toBeNull();
+      expect(stopRequestedSnapshot.settlement_kind).toBeNull();
+      state.publicStopCommand = {
+        commandType: "StopExecution",
+        executionId: targetExecutionId,
+        resolution: "Committed",
+      };
+      state.stopScope =
+        "StopExecution fences this exact Execution; the Work remains Open at the same revision. This does not qualify the currently unwired CriticalSteer composite or assert a permanent Work pause; any future distinct Execution/revision is not counted as activity by this stopped execution.";
       state.auxiliaryOracle =
-        "ReadOnlySQLiteToolInvocationSettlementSnapshot; primary assertions remain public commands and views";
-      state.criticalSteerCommittedAt = new Date().toISOString();
+        "ExactExecutionReadOnlySQLiteStop/ProviderTurn/ToolInvocationSnapshot; primary outcome read from public Work/Workspace views";
+      state.stopCommandReceipt = stopReceipt;
+      state.executionAfterStopCommit = stopRequestedSnapshot;
       state.heldActualProviderResponse = {
         requestId: heldAfterEffect.requestId,
         sequence: heldAfterEffect.sequence,
         status: heldAfterEffect.status,
         actualUpstreamBodyCapturedBeforeStop: true,
-        responseReleasedAfterStop: true,
+        responseReleasedAfterStopCommit: true,
       };
-      const startsAtStop = startedProviderRequests(
-        readProviderCaptures(captureFile),
-      ).length;
       releaseProviderResponse(run, heldAfterEffect.requestId);
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
-      const startsAfterQuiescence = startedProviderRequests(
-        readProviderCaptures(captureFile),
-      ).length;
-      expect(startsAfterQuiescence).toBe(startsAtStop);
-      expect(captureWorkspaceSnapshot(fixture.workspaceDirectory)).toEqual(
-        workspaceAtStop,
+      const quiesced = await waitForPublic(
+        async () => {
+          const current = await client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", { workspaceId: project.rootWorkspaceId });
+          return {
+            current,
+            execution: readExecutionStopSnapshot(
+              fixture.databaseFile,
+              targetExecutionId,
+            ),
+          };
+        },
+        ({ current, execution }) =>
+          execution.stop_requested_at !== null &&
+          execution.settlement_kind === "Interrupted" &&
+          current?.activeExecution?.executionId !== targetExecutionId,
+        Math.max(1, deadlineAt - Date.now()),
       );
-      expect(readFileSync(proofPath, "utf8")).toBe(initialContent);
+      const currentAfterStop = quiesced.current;
+      expect(quiesced.execution.stop_requested_at).not.toBeNull();
+      expect(quiesced.execution.settlement_kind).toBe("Interrupted");
       expect(
-        readInvocationFacts(
-          fixture.databaseFile,
-          active.activeExecution.executionId,
-        ),
+        JSON.parse(quiesced.execution.settlement_json ?? "{}"),
+      ).toMatchObject({
+        _tag: "Interrupted",
+        result: { _tag: "StopRequested" },
+      });
+      expect(quiesced.execution.providerTurnCount).toBe(
+        executionAtStop.providerTurnCount,
+      );
+      expect(
+        readInvocationFacts(fixture.databaseFile, targetExecutionId),
       ).toEqual(toolFactsAtStop);
-      const currentAfterStop = await client.view<{
-        workId?: string;
-        revision: number;
-        status: string;
-        activeExecution?: { executionId: string };
-      } | null>("current-work", { workspaceId: project.rootWorkspaceId });
+      expect(readFileSync(proofPath, "utf8")).toBe(initialContent);
+      state.executionAtStop = executionAtStop;
+      state.executionAfterQuiescence = quiesced.execution;
+      state.workspaceSnapshotAtStop = workspaceAtStop;
       expect(currentAfterStop?.workId).toBe(active.workId);
-      expect(currentAfterStop?.revision).toBe(active.revision + 1);
+      expect(currentAfterStop?.revision).toBe(active.revision);
       expect(currentAfterStop?.status).toBe("Open");
-      expect(currentAfterStop?.activeExecution).toBeUndefined();
+      expect(currentAfterStop?.activeExecution?.executionId).not.toBe(
+        targetExecutionId,
+      );
       const stoppedWork = await client.view<{
         lifecycle: string;
+        revision: number;
         acceptedResult?: unknown;
       }>("work-detail", {
         projectId: project.projectId,
@@ -745,6 +816,7 @@ const runJourney = async (input: {
         workId: active.workId,
       });
       expect(stoppedWork.lifecycle).toBe("Open");
+      expect(stoppedWork.revision).toBe(active.revision);
       expect(stoppedWork.acceptedResult).toBeUndefined();
       await fixture.restart({
         daemonEnvironment: {
@@ -758,14 +830,22 @@ const runJourney = async (input: {
         { workspaceId: project.rootWorkspaceId },
       );
       expect(afterRestart?.workId).toBe(active.workId);
-      expect(afterRestart?.activeExecution).toBeUndefined();
+      expect(afterRestart?.revision).toBe(active.revision);
+      expect(afterRestart?.activeExecution?.executionId).not.toBe(
+        targetExecutionId,
+      );
+      const executionAfterRestart = readExecutionStopSnapshot(
+        fixture.databaseFile,
+        targetExecutionId,
+      );
+      expect(executionAfterRestart).toEqual(quiesced.execution);
       expect(
-        startedProviderRequests(readProviderCaptures(captureFile)),
-      ).toHaveLength(startsAtStop);
+        readInvocationFacts(fixture.databaseFile, targetExecutionId),
+      ).toEqual(toolFactsAtStop);
       state.afterStop = currentAfterStop;
       state.afterRestart = afterRestart;
-      state.providerStartsAtAndAfterStop = startsAtStop;
-      state.workspaceSnapshotRetainedAfterStop = true;
+      state.executionAfterRestart = executionAfterRestart;
+      state.proofFileRetainedAfterStop = true;
     }
     expect(fixture.providerCalls).toHaveLength(0);
     expect(fixture.daemonErrors).toEqual([]);
@@ -806,7 +886,7 @@ const runJourney = async (input: {
 };
 
 const runOptedInScenario = async (
-  mode: "normal-steer" | "critical-stop",
+  mode: "normal-steer" | "immediate-stop",
 ): Promise<void> => {
   if (buildMissing.length > 0)
     throw new Error(
@@ -836,7 +916,7 @@ it.skipIf(skipReason !== undefined)(
 
 it.skipIf(skipReason !== undefined)(
   skipReason === undefined
-    ? "REAL public S2 Critical Stop quiescence and restart"
+    ? "REAL public S2 exact StopExecution quiescence and restart"
     : `REAL NOT QUALIFIED: ${skipReason}`,
-  () => runOptedInScenario("critical-stop"),
+  () => runOptedInScenario("immediate-stop"),
 );
