@@ -11,11 +11,28 @@ Audit scope: read-only review of frozen design, current source/test inventory, a
 This is the current delivery index. The module matrix, S1–S4 disposition, and
 open-gate list below are the historical 2026-10-20 audit of
 `e94a204a7988417eead9bc0fc6a301140d2f7ca9`; read them as history, not as
-current status. The current audited candidate is `68ff989f`. It includes the
+current status. The current audited candidate is `bba9ba84`. It includes the
 reviewed P38 UX, Critical Steer option A, bounded P39 writer lock, S2 Wait
 eligibility, real S2/S3/S4 harnesses, S3 non-Work safety Attention handling,
 failure-fixture retention, the corrected and reviewed S4-B public oracle, and
 the synthetic V6 policy-drift qualification.
+
+Four governance gaps now have fixed packages with independent reviews at
+Blocking = 0. Their implementation plans are integrated but remain gated:
+manual acceptance, exact owner-document landing and landing review, then a
+separate implementation authorization are still required. No code
+implementation for these four gaps has started.
+
+| Governance gap | Integrated plan | Manual acceptance token | Conditional implementation authorization |
+|---|---|---|---|
+| S2-RDG-01 — SteerWork revision contract | `d1523c17`; [fixed-package review](S2-steer-work-revision-fixed-package.review.md), Blocking = 0 | `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1` | Separate explicit authorization after acceptance and owner landing review; the plan does not specify or issue an implementation-authorization token. |
+| S3 — AnyProducer settled-wait eligibility | `218b3de3` / `1b13acac`; [fixed-package review](S3-any-producer-wait-fixed-package.review.md), Blocking = 0 | `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1` (acceptance authorizes design landing only) | Separate explicit implementation authorization after owner landing; the plan does not specify or issue an implementation-authorization token. |
+| S4-CONTEXT-DG-01 — assistant-message projection | `bba9ba84`; [Option A review](S4-CONTEXT-DG-01-option-a-independent-review-20261024.result.md), Blocking = 0 | `ACCEPT_S4_CONTEXT_DG_01_ASSISTANT_MESSAGE_PROJECTION_OPTION_A` | Separate explicit authorization after acceptance and owner landing review; real S4-B qualification also requires separate authorization. The plan does not specify or issue an implementation-authorization token. |
+| P12-DG-01 — D2/D4 progress convergence | `869a4b2f` / `390a0cf0`; [revision-2 review](P12-DG-01-d2-d4-progress-convergence-independent-review-rev2-20261024.result.md), Blocking = 0 | `ACCEPT_P12_DG_01_D2_D4_PROGRESS_CONVERGENCE` | Separate explicit P12 implementation authorization after acceptance; the plan does not specify or issue an implementation-authorization token. **Implementation has not started.** |
+
+The proposed acceptance tokens have not been exercised. These reviews close
+package-review blockers only; they do not accept the semantics, authorize
+source changes, close S2/S3/S4/P12, or change release readiness.
 
 The evidence remains segmented across SHAs. No one SHA has a complete passing
 `pnpm check`, `pnpm test:functional` release profile, and
