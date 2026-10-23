@@ -29,7 +29,10 @@ import {
   TransactionPort,
   WorkspaceResourceActivationStore,
 } from "../../../packages/ports/src/index.js";
-import { upgradeSchema44TestDatabase } from "../../support/schema44-database.js";
+import {
+  upgradeSchema44TestDatabase,
+  upgradeSchema44ToCurrentTestDatabase,
+} from "../../support/schema44-database.js";
 import {
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
@@ -324,6 +327,19 @@ const makeDirectory = () => createFunctionalFixtureDirectory();
 const pinnedPathFor = (databaseFile: string) =>
   join(dirname(databaseFile), "pinned-tree");
 
+const upgradeHistoricalRebuildFixtureToCurrentSchema = async (
+  databaseFile: string,
+  directory: string,
+) => {
+  await upgradeSchema44TestDatabase({
+    databaseFilename: databaseFile,
+    p39ReportFilename: join(directory, "p39-report.sqlite"),
+  });
+  await upgradeSchema44ToCurrentTestDatabase({
+    databaseFilename: databaseFile,
+  });
+};
+
 const readPublicActivationAttention = async (databaseFile: string) => {
   const app = buildSingleWorkspaceLayer({ databaseFile, projectId });
   const program = Effect.gen(function* () {
@@ -351,10 +367,10 @@ test("P10 Story L rebuild rolls back snapshot/offset rewind on kill and lineariz
       databaseFile,
       pinnedPathFor(databaseFile),
     );
-    await upgradeSchema44TestDatabase({
-      databaseFilename: databaseFile,
-      p39ReportFilename: join(directory, "p39-report.sqlite"),
-    });
+    await upgradeHistoricalRebuildFixtureToCurrentSchema(
+      databaseFile,
+      directory,
+    );
     expect(originalOffset.last_sequence).toBe(3);
     p10 = startWorker(databaseFile, "hold-before-commit", markerFile);
     const before = JSON.parse(await waitForMarker(markerFile, p10)) as {
@@ -447,10 +463,10 @@ test("P10 Story L after-commit kill preserves snapshot and restarted consumer ca
       databaseFile,
       pinnedPathFor(databaseFile),
     );
-    await upgradeSchema44TestDatabase({
-      databaseFilename: databaseFile,
-      p39ReportFilename: join(directory, "p39-report.sqlite"),
-    });
+    await upgradeHistoricalRebuildFixtureToCurrentSchema(
+      databaseFile,
+      directory,
+    );
     expect(originalOffset.last_sequence).toBe(3);
     child = startWorker(databaseFile, "hold-after-commit", markerFile);
     const committedMarker = JSON.parse(
