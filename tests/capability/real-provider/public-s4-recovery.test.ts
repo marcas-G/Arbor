@@ -8,10 +8,10 @@ import type {
   ProductionFixtureSetupProbeEvent,
 } from "../../functional/support/production-fixture.js";
 import {
-  admitRootWorkThroughPublicConversation,
   createFunctionalProject,
   functionalId,
   submitHumanMessage,
+  waitForApproval,
   waitForExecutableApproval,
   waitForPublic,
 } from "../../functional/support/public-client.js";
@@ -386,6 +386,31 @@ const readPendingApprovalBinding = (
       );
     }
     return binding;
+  } finally {
+    database.close();
+  }
+};
+
+const readWorkEpisodeBinding = (databaseFile: string, executionId: string) => {
+  const database = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return database
+      .prepare(
+        `SELECT execution_id, project_id, workspace_id, episode_kind,
+                episode_ref, episode_revision, session_id
+           FROM executions WHERE execution_id = ?`,
+      )
+      .get(executionId) as
+      | {
+          execution_id: string;
+          project_id: string;
+          workspace_id: string;
+          episode_kind: string | null;
+          episode_ref: string | null;
+          episode_revision: number;
+          session_id: string;
+        }
+      | undefined;
   } finally {
     database.close();
   }
@@ -1497,6 +1522,11 @@ it.skipIf(skipReason !== undefined)(
           `Real public S4 approval ${marker}`,
           { resourceSelection: "Profile" },
         );
+        const currentWorkBeforeSubmission = await client.view<{
+          readonly workId?: string;
+          readonly revision: number;
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId });
+        expect(currentWorkBeforeSubmission).toBeNull();
         await initializeTrustedLocalP11Worktree({
           databaseFile: run.fixture.databaseFile,
           projectId: project.projectId,
@@ -1529,19 +1559,50 @@ it.skipIf(skipReason !== undefined)(
         });
         const gateSelector = {
           requiredAdvertisedToolName: "shell",
-          requiredMessageText: marker,
+          requiredResponseToolCall: {
+            name: "shell",
+            requiredArguments: {
+              command: "Get-Date",
+              cwd: { mount: "workspace", path: "." },
+            },
+            allowedAdditionalArguments: ["timeoutMs"],
+            numericArgumentMaximums: { timeoutMs: 5_000 },
+          },
         } as const;
         armProviderResponseGate(run, gateSelector);
         const startsBeforeWork = startedProviderRequests(
           readProviderCaptures(run.captureFile),
         ).length;
-        const admittedWork = await admitRootWorkThroughPublicConversation(
+        await submitHumanMessage(
           client,
           project,
-          marker,
           `Please create a Work for ${marker}. Its only executable action must be exactly one shell call running Get-Date in the current workspace. Do not use patch, read, another tool, or any file/network effect. Ask for the required approval before that call, then report the timestamp without claiming Work completion.`,
         );
-        const workId = admittedWork.workId;
+        const rootApproval = await waitForApproval(client, project, marker);
+        await client.command(project.projectId, "ResolveControlApproval", {
+          approvalId: rootApproval.approvalId,
+          expectedRevision: rootApproval.revision,
+          decision: "Approve",
+          reason: `public Root Work admission for ${marker}`,
+        });
+        const admittedWork = await waitWithinDeadline({
+          deadlineAt,
+          label: "new public Current Work after Root approval",
+          read: () =>
+            client.view<{
+              readonly workId?: string;
+              readonly revision: number;
+            } | null>("current-work", {
+              workspaceId: project.rootWorkspaceId,
+            }),
+          predicate: (value) => value?.workId !== undefined,
+        });
+        const workId = admittedWork?.workId;
+        if (workId === undefined) {
+          throw new Error(
+            "Root approval did not expose the new public Work id",
+          );
+        }
         const workBefore = await waitWithinDeadline({
           deadlineAt,
           label: "same Open Work before its shell action",
@@ -1560,18 +1621,34 @@ it.skipIf(skipReason !== undefined)(
           deadlineAt,
           selector: gateSelector,
         });
+        const heldRequest = held.request;
+        if (heldRequest === undefined) {
+          throw new Error("held real Provider response lacks its request body");
+        }
         const shellCall = requireSingleShellGetDateToolCall(
           held.responseBodyBase64,
         );
         expect(shellCall.arguments.command).toBe("Get-Date");
-        expect(JSON.stringify(held.request)).toContain(
+        expect(JSON.stringify(heldRequest)).toContain(
           "In a WorkspaceWork turn bound to a current Work",
         );
-        expect(JSON.stringify(held.request)).toContain(marker);
+        const heldMessages = heldRequest.messages;
+        const exactWorkAssignmentInHeldRequest =
+          Array.isArray(heldMessages) &&
+          heldMessages.some(
+            (message) =>
+              typeof message === "object" &&
+              message !== null &&
+              (message as { role?: unknown }).role === "tool" &&
+              (message as { content?: unknown }).content ===
+                `WorkAssigned(${workId}, ${project.rootWorkspaceId})`,
+          );
+        expect(exactWorkAssignmentInHeldRequest).toBe(true);
         const heldStartEvidence = requireBoundProviderRequests(
           providerRequestsMatching(
             readProviderCaptures(run.captureFile),
-            (request) => requestText(request).includes(marker),
+            (request) =>
+              JSON.stringify(request) === JSON.stringify(heldRequest),
           ),
           "held WorkspaceWork shell call",
         ).find((evidence) => evidence.requestId === held.requestId);
@@ -1599,6 +1676,15 @@ it.skipIf(skipReason !== undefined)(
             "current Work omitted exact active Execution at held gate",
           );
         }
+        expect(
+          readWorkEpisodeBinding(run.fixture.databaseFile, executionId),
+        ).toMatchObject({
+          execution_id: executionId,
+          project_id: project.projectId,
+          workspace_id: project.rootWorkspaceId,
+          episode_kind: "WorkEpisode",
+          episode_ref: workId,
+        });
         await grantTrustedLocalP11Permission({
           client,
           projectId: project.projectId,

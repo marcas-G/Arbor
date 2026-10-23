@@ -42,7 +42,7 @@ export const waitForHeldProviderResponse = async (
         capture.event === "response-held" &&
         capture.sequence > input.afterSequence &&
         (input.selector === undefined ||
-          providerCaptureMatchesSelector(capture, input.selector)),
+          providerCaptureMatchesSelector(capture, input.selector, captures)),
     );
     if (candidateHeld !== undefined) {
       const matchingHeld = captures.filter(
@@ -120,7 +120,24 @@ export const waitForHeldProviderResponse = async (
 export const providerCaptureMatchesSelector = (
   capture: ProviderCapture,
   selector: ProviderResponseGateSelector,
-): boolean => providerResponseMatchesSelector(capture.request ?? {}, selector);
+  captures: ReadonlyArray<ProviderCapture> = [],
+): boolean => {
+  const matchingCompletion = captures.filter(
+    (candidate) =>
+      candidate.event === "response-complete" &&
+      candidate.requestId === capture.requestId,
+  );
+  const responseBodyBase64 =
+    capture.responseBodyBase64 ??
+    (matchingCompletion.length === 1
+      ? matchingCompletion[0]?.responseBodyBase64
+      : undefined);
+  return providerResponseMatchesSelector(
+    capture.request ?? {},
+    selector,
+    responseBodyBase64,
+  );
+};
 
 export type {
   CorrelatedHeldProviderResponseCapture,
