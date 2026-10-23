@@ -72,8 +72,11 @@ source but not qualified by a real S4-B run:
    functional case validates the existing TrustedLocal P11/EAP fixture route
    with a scripted local Provider. S4 reuses `trusted-local-p11-fixture.ts`;
    it does not copy the long P38 setup.
-2. Keep the response gate transparent. The real Work Agent must call only
-   `shell` with `Get-Date` (no external effect), whose shell policy is
+2. Keep the response gate transparent. Request selection uses advertised
+   `shell`; response selection parses the authentic upstream body and holds
+   only the exact call. Nonmatching bodies pass through unchanged. The real
+   Work Agent must call only `shell` with `Get-Date` (no external effect),
+   whose shell policy is
    `RequireApproval`. Setup selects `project-root`, initializes the isolated
    TrustedLocal P11 worktree/authority, captures the workspace baseline, and
    grants `shell:exec` before the Work. The selector holds only that exact
@@ -130,6 +133,8 @@ pnpm exec vitest run --config vitest.public-real.config.ts tests/capability/real
   10 passed, 2 REAL S4 cases skipped
 pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts --testNamePattern 'resumes a NotAdmitted shell intent from its persisted ProviderTurn' --maxWorkers=1 --retry=0 --no-file-parallelism
   1 passed, 24 skipped (isolated functional daemon + scripted local Provider)
+pnpm exec vitest run --config vitest.config.ts tests/capability/support/provider-fetch-capture-hook.test.ts --maxWorkers=1 --retry=0 --no-file-parallelism
+  2 passed (stub fetch; nonmatching text passed through, exact fragmented SSE call held)
 git diff --check                                                 PASS
 ```
 
@@ -184,13 +189,16 @@ This run identifies two narrow test-oracle gaps, not a production defect:
    empty, resolve the exact public Root control approval, then take the newly
    returned public `current-work.workId` and validate its public Work detail
    and active Execution. No Work objective substring is needed.
-2. The current response-gate selector matches request advertisement/text, so
-   it can hold a non-tool text response. Extend the selector to inspect the
-   authentic upstream response body and hold only exactly one `shell` call
-   whose arguments are bounded workspace `Get-Date`; nonmatching real
-   responses pass through unchanged. The existing strict decoder remains the
-   independent assertion on the held body. The gate must not fabricate or
-   rewrite a Provider response.
+2. The response-gate selector previously matched request advertisement/text,
+   so it could hold a non-tool text response. This is now fixed in the
+   test-only MJS selector: it decodes the authentic upstream body, supports
+   fragmented SSE tool-call fields, and holds only one matching bounded
+   workspace `shell Get-Date`; nonmatching real responses pass through
+   unchanged. The TypeScript assertion aliases the same decoder, and the held
+   request is independently tied to the exact public Work via its structured
+   `WorkAssigned(workId, workspaceId)` result plus a read-only
+   `WorkEpisode/episode_ref` binding. Admission no longer compares the
+   model-authored objective with a marker.
 
 Do not run another real S4-B until these changes pass provider-light tests and
 independent review and the user/root explicitly authorizes another attempt.
