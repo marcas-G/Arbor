@@ -20,20 +20,6 @@ version/capability revision and Disabled network mode, and commits while the
 Executable approval remains Pending and unconsumed. The assertions require no
 ToolInvocation, so this case makes no claim that a provider or OS sandbox ran.
 
-The stale request boundary records one transactionally consistent before/after
-snapshot of the exact P1-owned domain facts: decision rows, decision events,
-invocations, the exact Executable approval state/revision/consumer, Actions and
-Steps. Lease expiry is intentionally excluded because normal lease renewal may
-occur. The public CandidateRead common preconditions and selected candidate
-are also compared across the stale receipt. After the fresh commit, the test
-decodes the persisted P1 result, binds its policyDigest to the decision row,
-checks the persisted effective summary's full selected tuple/registry/bundle/
-handle fields, and compares that tuple to both the public committed summary and
-the fresh CandidateRead. The public DTO intentionally does not expose
-policyDigest; the test recomputes it from the canonical persisted effective
-summary and checks that the public candidate's exposed tuple and CAS bindings
-match that same summary.
-
 ## Contract basis
 
 The scenario uses the accepted P10/P1 pre-intent CandidateRead bootstrap,
@@ -48,12 +34,11 @@ qualification.
 
 - Functional process test: **NOT RUN** (requested; main-tree sweep owns test
   resources).
-- Typecheck/build/full gates: **NOT RUN**.
+- Typecheck/build/Biome/full gates: **NOT RUN**.
 - Static review: reviewed the isolated diff and confirms that it changes only
   the functional test and this result record; no production or design files
   are touched.
 - `git diff --check`: PASS.
-- Targeted Biome format/lint: PASS (test file only).
 
 Pending focused run pattern:
 
