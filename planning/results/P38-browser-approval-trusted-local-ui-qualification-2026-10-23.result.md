@@ -2,6 +2,29 @@
 
 Status: **TARGETED PASS — TrustedLocal-only P38 Queue UI case; not OS sandbox qualification**.
 
+## Integrated-candidate requalification (2026-10-24)
+
+- Source SHA: `8291199821ed8082aac7011c7d4b24fc996bb1b2`.
+- Run directory: `.test-results/p38-main-20261024/`.
+- Playwright JSON: `.test-results/p38-main-20261024/playwright.json`.
+- The same exact P38 approval/resume case passed 1/1 with retry 0 on the
+  integrated candidate after the approval-status UX and cross-project
+  receipt-binding changes. Playwright reported one expected result, zero
+  unexpected, zero flaky, and zero skipped; the case body took 16.419 seconds
+  and the runner took 46.5 seconds.
+- The candidate's Web typecheck, Web production build, targeted Queue and
+  Problem rendering tests (27/27), targeted Biome, and the exact browser case
+  all passed. The root TypeScript build/test typecheck and Critical Steer
+  targeted tests also passed on this candidate.
+- An earlier CLI invocation failed before test collection because PowerShell
+  parsed the two reporter names as one module. It is not counted as a test
+  attempt or retry; the successful invocation used the supported Playwright
+  `list,json` reporter pair.
+
+This remains a targeted TrustedLocal fixture qualification. It does not claim
+that the Native OS sandbox is available or that the complete browser/release
+suite passes.
+
 ## Final run
 
 - Source SHA: `f68d1efc978ced735608d9118a12208269936e36`.

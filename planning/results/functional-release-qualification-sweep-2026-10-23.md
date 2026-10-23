@@ -48,6 +48,7 @@ had not changed.
 | `.test-results/2026-10-23T09-40-36Z-46d811b7-f21-v6/` | `46d811b7b2db87d02d3a1fe462c2d83392a377f3` | F21 online replay exact case failed its response-shape assertion. V6 fresh-root drift failed while waiting for executable approval. |
 | `.test-results/2026-10-23T10-02-49Z-0dd274-port-f21/` | `0dd2742136feece736688844f4c819a825ce1d40` | Port-handshake full file 33/33 passed; F21 online replay exact case passed 1/1. |
 | `.test-results/2026-10-23T10-10-28Z-0dd274-ui-desktop/` | `0dd2742136feece736688844f4c819a825ce1d40` | Six desktop Playwright files, 10 tests total: 9 passed, 1 failed. |
+| `.test-results/2026-10-23T11-10-52Z-44f3cc39-f18-org-full/` | `44f3cc39ab7fc1e272ec87dd6f0b2d0e0c6d981f` | Full F18 organization module: 12/12 passed in 543.32 seconds; 89 live stage snapshots captured. |
 | `.test-results/2026-10-23T07-54-30Z-ae2630-ah7-case6/` | `ae2630eadd138881479ac735f697d8886afd7fdc` | AH7 `AH7BeforeActionResultCommit` exact case passed 1/1; the other seven cases in that file were skipped by name pattern. |
 
 The exact case paths and failures below should be read together with these
@@ -117,6 +118,12 @@ passed the full F21 rebuild file (2/2). The final `0dd274` port-handshake file
 passed 33/33; the F21 online exact replay case passed 1/1. Those are the latest
 complete-file and targeted replay results respectively.
 
+On `44f3cc39`, the full `organization.functional.test.ts` completed all 12 F18
+crash-boundary cases successfully. Its case budget remained 665.5 seconds and
+the file finished in 543.32 seconds. The stage watcher copied 89 snapshots
+across all 12 boundaries to `f18-stage-snapshots/`, with a line-oriented index
+in `stage-index.jsonl`.
+
 The `0dd274` desktop browser run used the existing Playwright configuration:
 headless Microsoft Edge on Windows, one worker, retries zero, default desktop
 viewport, and the schema-44 Playwright global setup. It passed F14/F15,
@@ -146,9 +153,10 @@ project conversation, and both route/session cases (9/10 total).
   `F18_TEST_CRASH` marker but the wrapper's generic startup message did not
   include the expected stderr. The `d89103` full organization file then passed
   its first case but timed out in `AfterReconciliationLeaseClaimCommit` at
-  90 seconds. That exact case passed on `46d811b` in 40.1 seconds, within its
-  665.5-second case budget; stage progress is retained in
-  `f18-stage-progress-observed.json`.
+  90 seconds. That exact case passed on `46d811b` in 40.1 seconds within its
+  665.5-second case budget. The full 12-case F18 module then passed on
+  `44f3cc39` within that same case budget; stage progress is retained in
+  `f18-stage-progress-observed.json` and the full-run snapshots directory.
 - The `P9 direct Control effects` file on `ae2630` had 9 passing cases and one
   failure: gen1 did not reach `AH10AfterLeaseAcquired` for stale `update_plan`.
   The exact case failed again on `d89103` with a public wait timeout, then
@@ -191,5 +199,5 @@ The remaining process file inventory was exercised across the recorded SHA
 segments, but several tests were skipped after file-level `--bail=1` failures,
 and the evidence spans multiple commits. Later fixes received targeted or
 file-level qualification only. There is no complete `pnpm test:functional`
-result with `completeCoverage: true` on `0dd2742136feece736688844f4c819a825ce1d40`;
+result with `completeCoverage: true` on `44f3cc39ab7fc1e272ec87dd6f0b2d0e0c6d981f`;
 therefore release readiness remains open.

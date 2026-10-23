@@ -10,12 +10,16 @@ import type {
   AuthorityResolverPortService,
   CanonicalAuthorityFacts,
   CommandGatewayService,
+  CommandHandlerError,
   CommandHandlerRegistryService,
   CommandRejection,
+  CriticalSteerActiveMain,
+  CriticalSteerPreparation,
   DecodedExternalCommandEnvelope,
   GatewayEnvelope,
   ParentUserGovernanceFacts,
   RegisteredCommandType,
+  SteerWorkPayload,
 } from "@arbor/application";
 import {
   AuthorityResolverPort,
@@ -668,6 +672,11 @@ export interface ExternalSubmissionDeps {
   readonly loadInputs: (
     envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<AuthorityInputs, never>;
+  /** Read-only active-main selector used only after the Gateway's advisory
+   * receipt miss for Critical Steer preparation. */
+  readonly findActiveMainByWorkspace?: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<CriticalSteerActiveMain | null, never>;
   readonly afterCommitted?: (
     envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<void, unknown>;
@@ -761,7 +770,7 @@ export const makeExternalSubmission = (
           }),
         );
       }
-      const gatewayEnvelope: GatewayEnvelope<unknown> = {
+      const gatewayEnvelopeBase: GatewayEnvelope<unknown> = {
         commandType: envelope.commandType,
         commandId: envelope.commandId,
         projectId: envelope.projectId,
@@ -790,10 +799,146 @@ export const makeExternalSubmission = (
         );
       }
       const inputs = yield* deps.loadInputs(envelope);
+      const prepareCriticalSteerStop =
+        envelope.commandType === "SteerWork" &&
+        envelope.payload.steer.severity === "Critical"
+          ? (
+              payload: SteerWorkPayload,
+              context: typeof submissionContext,
+              selectedMain?: CriticalSteerActiveMain,
+            ): Effect.Effect<CriticalSteerPreparation, CommandHandlerError> =>
+              Effect.gen(function* () {
+                let activeMain: CriticalSteerActiveMain | null | undefined =
+                  selectedMain;
+                if (activeMain === undefined) {
+                  const findActiveMain = deps.findActiveMainByWorkspace;
+                  if (findActiveMain === undefined) {
+                    return {
+                      _tag: "Unavailable",
+                    } satisfies CriticalSteerPreparation;
+                  }
+                  activeMain = yield* findActiveMain(payload.workspaceId);
+                }
+                if (activeMain === null || activeMain === undefined) {
+                  return {
+                    _tag: "NoActiveMain",
+                  } satisfies CriticalSteerPreparation;
+                }
+                if (
+                  activeMain.projectId !== envelope.projectId ||
+                  activeMain.workspaceId !== payload.workspaceId
+                ) {
+                  return {
+                    _tag: "AuthorityDenied",
+                    reason:
+                      "StopExecution target is not the current Workspace active main",
+                  } satisfies CriticalSteerPreparation;
+                }
+                const stopPayload = { executionId: activeMain.executionId };
+                const stopEnvelope: GatewayEnvelope<typeof stopPayload> = {
+                  commandType: "StopExecution",
+                  commandId: envelope.commandId,
+                  projectId: envelope.projectId,
+                  actor: envelope.actor,
+                  issuedAt: envelope.issuedAt,
+                  payload: stopPayload,
+                };
+                const stopHandler = deps.registry.lookup("StopExecution");
+                if (Option.isNone(stopHandler)) {
+                  return {
+                    _tag: "Unavailable",
+                  } satisfies CriticalSteerPreparation;
+                }
+                const stopFingerprint = semanticRequestFingerprint({
+                  commandType: "StopExecution",
+                  projectId: envelope.projectId,
+                  actor: envelope.actor,
+                  schemaVersion: stopHandler.value.schemaVersion,
+                  payload: stopPayload,
+                });
+                const stopDecision: AuthorityDecisionInput = {
+                  principal,
+                  submissionContext: context,
+                  envelope: stopEnvelope,
+                  semanticRequestFingerprint: stopFingerprint,
+                  canonicalFacts: {
+                    ...inputs.canonicalFacts,
+                    execution: {
+                      executionId: activeMain.executionId,
+                      projectId: activeMain.projectId,
+                      workspaceId: activeMain.workspaceId,
+                      status: "Active",
+                    },
+                  },
+                  grants: inputs.grants,
+                  governance: inputs.governance,
+                  policy: inputs.policy,
+                  ...(inputs.sandboxPolicyGrantIssuerConfigSnapshot ===
+                  undefined
+                    ? {}
+                    : {
+                        sandboxPolicyGrantIssuerConfigSnapshot:
+                          inputs.sandboxPolicyGrantIssuerConfigSnapshot,
+                      }),
+                  ...(inputs.sandboxPolicyAuthorityNow === undefined
+                    ? {}
+                    : {
+                        sandboxPolicyAuthorityNow:
+                          inputs.sandboxPolicyAuthorityNow,
+                      }),
+                  ...(inputs.sandboxPolicyGrantIssuerProvenance === undefined
+                    ? {}
+                    : {
+                        sandboxPolicyGrantIssuerProvenance:
+                          inputs.sandboxPolicyGrantIssuerProvenance,
+                      }),
+                };
+                const stopResolved = yield* Effect.match(
+                  deps.resolver.resolve(stopDecision),
+                  {
+                    onFailure: (error) => ({ _tag: "denied" as const, error }),
+                    onSuccess: (fact) => ({ _tag: "fact" as const, fact }),
+                  },
+                );
+                if (stopResolved._tag === "denied") {
+                  return {
+                    _tag: "AuthorityDenied",
+                    reason: `${stopResolved.error._tag}:StopExecution`,
+                  } satisfies CriticalSteerPreparation;
+                }
+                const authority = stopResolved.fact;
+                if (
+                  authority._tag !== "StopExecutionAuthority" ||
+                  authority.submissionOrigin !== "External" ||
+                  authority.principal !== principal ||
+                  authority.commandId !== envelope.commandId ||
+                  authority.semanticRequestFingerprint !== stopFingerprint ||
+                  authority.projectId !== envelope.projectId ||
+                  authority.executionId !== activeMain.executionId
+                ) {
+                  return {
+                    _tag: "AuthorityDenied",
+                    reason:
+                      "StopExecution authority did not bind the selected active main",
+                  } satisfies CriticalSteerPreparation;
+                }
+                return {
+                  _tag: "Ready",
+                  executionId: activeMain.executionId,
+                  authority,
+                } satisfies CriticalSteerPreparation;
+              })
+          : undefined;
+      const gatewayEnvelope: GatewayEnvelope<unknown> = {
+        ...gatewayEnvelopeBase,
+        ...(prepareCriticalSteerStop === undefined
+          ? {}
+          : { prepareCriticalSteerStop }),
+      };
       const decision: AuthorityDecisionInput = {
         principal,
         submissionContext,
-        envelope: gatewayEnvelope,
+        envelope: gatewayEnvelopeBase,
         semanticRequestFingerprint: fingerprint,
         canonicalFacts: inputs.canonicalFacts,
         grants: inputs.grants,
@@ -917,6 +1062,21 @@ export const makeExternalSubmissionFromServices = (
       governance,
       sandboxPolicyGrantIssuerConfigSnapshot,
     );
+    const tx = yield* TransactionPort;
+    const executions = yield* ExecutionRepository;
+    const findActiveMainByWorkspace = (workspaceId: WorkspaceId) =>
+      tx.transact(executions.findActiveMainByWorkspace(workspaceId)).pipe(
+        Effect.map((execution) =>
+          Option.isSome(execution)
+            ? {
+                executionId: execution.value.executionId,
+                projectId: execution.value.projectId,
+                workspaceId: execution.value.workspaceId,
+              }
+            : null,
+        ),
+        Effect.orDie,
+      );
     const afterGatewayCommitBeforeCreateProjectActivation =
       postCommitBeforeActivationProbe === undefined
         ? undefined
@@ -932,7 +1092,6 @@ export const makeExternalSubmissionFromServices = (
                   }),
                 );
           };
-    const tx = yield* TransactionPort;
     const workspaces = yield* WorkspaceRepository;
     const works = yield* WorkRepository;
     const activationIntentsOption = yield* Effect.serviceOption(
@@ -970,6 +1129,7 @@ export const makeExternalSubmissionFromServices = (
         gateway,
         registry,
         loadInputs,
+        findActiveMainByWorkspace,
         ...(afterGatewayCommitBeforeCreateProjectActivation !== undefined
           ? { afterGatewayCommitBeforeCreateProjectActivation }
           : {}),
@@ -1145,6 +1305,7 @@ export const makeExternalSubmissionFromServices = (
       gateway,
       registry,
       loadInputs,
+      findActiveMainByWorkspace,
       ...(afterGatewayCommitBeforeCreateProjectActivation !== undefined
         ? { afterGatewayCommitBeforeCreateProjectActivation }
         : {}),

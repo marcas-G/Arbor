@@ -20,9 +20,9 @@ import {
 } from "../human-intervention.js";
 
 /** P6 `04` §2. Human steer payload; the guidance ContentRef enters the
- * target Workspace Inbox (bounded view), never a Session write. `severity`
- * is persisted as declared — the Critical quiescence wiring is a separate
- * task (P6-012); this handler treats Normal and Critical identically. */
+ * target Workspace Inbox (bounded view), never a Session write. The base
+ * handler applies the declared severity to WorkSteered; production wraps it
+ * with the Gateway-owned Critical Steer/StopExecution composite. */
 export interface SteerWorkPayload {
   readonly workId: WorkId;
   readonly workspaceId: WorkspaceId;

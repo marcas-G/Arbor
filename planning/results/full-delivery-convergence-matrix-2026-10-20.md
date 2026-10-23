@@ -6,66 +6,44 @@ Audited code baseline: `e94a204a7988417eead9bc0fc6a301140d2f7ca9`
 
 Audit scope: read-only review of frozen design, current source/test inventory, and committed qualification records. No tests were run for this audit.
 
-## Current integration snapshot (2026-10-23)
+## Current integration snapshot (reviewed 2026-10-23)
 
-This convergence matrix is the current delivery-status index. The rows below
-under the original module and S1–S4 matrices remain the historical 2026-10-20
-audit of `e94a204a`; this addendum records the later integrated candidate and
-supersedes older statements about its current gates. The v19 provenance ledger
-[`full-delivery-integration-ledger.md`](full-delivery-integration-ledger.md)
-and the 2026-10-12 planning matrix
-[`full-delivery-gap-and-acceptance-matrix.md`](../release/full-delivery-gap-and-acceptance-matrix.md)
-remain supporting history, not a second current index.
+This is the current delivery index. The module matrix, S1–S4 disposition, and
+open-gate list below are the historical 2026-10-20 audit of
+`e94a204a7988417eead9bc0fc6a301140d2f7ca9`; read them as history, not as
+current status. The current audited code source is `1732dba7`, which adds the
+reviewed P38 TrustedLocal browser fixture, approval-status UX, exact
+cross-project receipt binding, and active-main Critical Steer wiring on top of
+the `44f3cc39` code candidate.
 
-Current candidate: `adcb524f0eebb7e4ea40166dc00da8dfd3fc5e4d`.
-The root build and Web build were reported PASS for this candidate. The
-release-manifest runner segment is partial: it selected 23 process files and
-has exact per-file JSON outcomes for 14 files (12 all-pass files, 2 failing
-files), plus one explicit P39 hang-abort artifact; eight selected process
-files were not attempted.
-`segment.json` still marks the segment `ready-to-run`, so these artifacts are
-not a segment-completion record. The segment explicitly deferred the package
-and all six browser files. No full `pnpm check`, complete
-`pnpm test:functional`, UI suite, or `pnpm test:package` PASS is established
-here.
+The evidence remains segmented across SHAs. No one SHA has a complete passing
+`pnpm check`, `pnpm test:functional` release profile, and
+`pnpm test:package` record. The full functional release gate remains open.
 
-The runner record and raw per-file JSON are external ignored artifacts under
-`C:\Users\ThinkPad\.codex\worktrees\native-sandbox-preintent-integration\Arbor\.test-results\2026-10-23T07-09-08Z-adcb524f-sweep\`.
-The segment metadata is `segment.json`; the two failure artifacts are exactly
-`tests_functional_process_f21-open3-p10-full-rebuild.functional.test.ts.json`
-and `tests_functional_process_organization.functional.test.ts.json`. No
-`*-progress.json` checkpoint was counted as a test result. The preceding
-segment ran against `16a1709b`, and its metadata says results do not carry
-forward to `adcb524f`.
+| Area | Verified evidence | Current limit |
+|---|---|---|
+| Real-provider S1 | One bounded single-Workspace lifecycle slice passed 1/1: public Answered → Work → effect → independent Verification PASS → Parent Acceptance → Completed → restart/read. Fourteen real-provider requests returned HTTP 200. Record: [real-public-s1-lifecycle-qualification-20261023.result.md](real-public-s1-lifecycle-qualification-20261023.result.md). | The test and runtime sources were separate SHAs (`c69e87c7` and `53c36a77`). This is one S1 slice, not S1–S4 closure or qualification of all tasks/providers. |
+| F18 organization recovery | Full organization file passed 12/12 on `44f3cc39` in 543.32s, inside the 665.5s case budget. The run kept all original stage waits and recorded 89 live stage snapshots. Evidence: `.test-results/2026-10-23T11-10-52Z-44f3cc39-f18-org-full/`. | This is a module qualification on that SHA, not a complete release run. |
+| Functional process sweep | The sweep report lists per-file results by exact SHA, including 16a, adcb, d891, 46d, and 0dd segments. | Results from different SHAs are not combined into a release pass. In the historical adcb sweep, P39 writer-exclusion was HUNG/ABORTED rather than an ordinary assertion failure; the later focused qualification below does not retroactively convert that sweep result. See [functional-release-qualification-sweep-2026-10-23.md](functional-release-qualification-sweep-2026-10-23.md). |
+| P39 maintenance writer exclusion | The bounded writer-lock implementation is integrated at `cd1a2845`; after rebuilding the adapter package, the complete focused process file passed 11/11 with retry 0 in 97.50 seconds. Record: [P39-writer-lock-contention-deadline.result.md](P39-writer-lock-contention-deadline.result.md). | The focused pass qualifies the current module but does not reproduce or establish the root cause of the historical 931106 ms sweep hang. That historical common-cause audit remains open. |
+| Desktop browser UI | On `0dd2742136feece736688844f4c819a825ce1d40`, six browser files ran as 10 tests: 9 passed, 1 failed. The formerly failing P38 approve/resume case later passed 1/1 in isolation and again 1/1 with retry 0 on integrated source `82911998` after the approval-status UX and cross-project receipt binding. Record: [P38-browser-approval-trusted-local-ui-qualification-2026-10-23.result.md](P38-browser-approval-trusted-local-ui-qualification-2026-10-23.result.md). | The exact P38 case is now qualified on the integrated candidate, but separate targeted runs do not turn the old six-file 9/10 batch into a same-SHA full browser-suite pass. The original batch remains at `.test-results/2026-10-23T10-10-28Z-0dd274-ui-desktop/`. |
+| Port handshake and online F21 replay | On `0dd274`, port-handshake passed 33/33 and the F21 online replay case passed 1/1. On `d89103`, F21 full-rebuild passed 2/2. | These are separate file/case runs, not a complete functional suite. |
+| Critical Steer | Option A is accepted and integrated on `1732dba7`: one external SteerWork receipt owns the same-transaction Work correction and exact StopExecution. If the transaction has no active main, Steer and HumanInput commit without a Stop event; if a main appears or changes after preparation, P12 authority is re-resolved for the transaction-time current Execution. Targeted integration tests passed 17/17, including concurrent advisory-miss convergence, exact stale-target rebinding, no-active replay, and complete rollback when Stop rejects. Root/test TypeScript typecheck passed. | The design/implementation gap is closed at the targeted layer, but no daemon/process or full release qualification has yet run for Critical Steer. |
+| Real-provider S2 | The response-gate harness defects are fixed and its unit-only suite passes 11/11. A real Normal Steer run completed 45/45 real Provider responses with zero failures; the producer applied the correction and an independent Verifier read the real file. The self-wait root fix is integrated and its three targeted files passed 26 tests with 2 pre-existing skips. After that fix and strict held/complete correlation, the real immediate-Stop slice passed 1/1 with retry 0: exact StopExecution committed, the target Execution became `Interrupted/StopRequested`, ProviderTurn stayed 3→3, tool/file facts froze, Work remained Open at revision 0, and restart preserved the result. Record: [S2-real-immediate-stop-qualification-2026-10-24.result.md](S2-real-immediate-stop-qualification-2026-10-24.result.md). | Normal remains blocked by `S2-RDG-01`: the Verifier correctly concluded Fail because canonical CompletionExpectation/VerificationMission still required pre-steer bytes. Its fixed package is reviewed Blocking=0 and awaits human acceptance. The Stop qualification is one real configured slice; it does not independently assert session transcript/action-ledger counts and is not a full S2 or release-suite pass. |
+| Native OS sandbox | Providers remain Experimental/Unavailable; no Supported or usable real OS sandbox provider is established. A Windows 10 LPAC opt-out A/B probe reproduced regular-AppContainer outside-file access and denied it under LPAC. | The same LPAC arm failed required Workspace write/read and Temp positive controls; regular AppContainer also failed rename/delete and Temp checks. LPAC therefore remains a design/primitive candidate, not runnable production. Synthetic V6 tests do not establish real OS enforcement, and V6 post-intent CandidateRead qualification remains open. |
 
-The eight selected process files without a per-file outcome are
-`agent-loop-p9-direct-control-effects.functional.test.ts`,
-`p9-dense-sse-lease-renewal.functional.test.ts`,
-`production-fixture-startup-cleanup.functional.test.ts`,
-`production-fixture-port-handshake.functional.test.ts`,
-`provider-failure-ah4.functional.test.ts`,
-`provider-success-ah1-ah3.functional.test.ts`,
-`rai-readmission-hold.functional.test.ts`, and
-`recovery-verdicts.functional.test.ts`.
+The release manifest has 62 entries: 56 Vitest files and 6 browser files
+(SHA-256 `d5e4a686275c268fa3f59ebc6531e19b71fcb6fdd869ebd8395067c4bb9beb24`).
+The six browser files have the 9/10 result above. The clean-checkout package
+test `tests/functional/package/clean-checkout.functional.test.ts` was deferred.
 
-| Area | Integrated / isolated status at `adcb524f` | Measured on this candidate | Untested or unresolved | Next acceptance |
-|---|---|---|---|---|
-| Candidate and build boundary | Integrated candidate; root and Web builds reported PASS by the segment runner. | `segment.json` records a clean start at the exact SHA and the two build outcomes. | This is not `pnpm check` or a complete release run. | Finish all manifest process files, then run `pnpm check` on one clean committed candidate. |
-| Agent Loop, checkpoint and provider handoff | Code is integrated; the sweep measured selected crash boundaries only. | AH17 checkpoint 2/2, AH19 Conversation checkpoint owner 2/2, Native owner match 1/1 and mismatch 1/1, P4 tool-settlement fencing 1/1, model-output AH5/AH6 1/1, and command-input validation 3/3. Exact JSONs: `tests_functional_process_ah17-checkpoint-epoch-crash.functional.test.ts.json`, `tests_functional_process_ah19-conversation-checkpoint-owner-crash.functional.test.ts.json`, `tests_functional_process_ah19-conversation-native-owner-match.functional.test.ts.json`, `tests_functional_process_ah19-conversation-native-owner-mismatch.functional.test.ts.json`, `tests_functional_process_p4-ah7-tool-settlement-lease-fencing.functional.test.ts.json`, `tests_functional_process_model-output-ah5-ah6.functional.test.ts.json`, and `tests_functional_process_command-input-validation.functional.test.ts.json`. | AH7/AH10 are not closed by these files. Eight selected process files were not attempted; full recovery and full functional gates remain unmeasured. | Resume the eight remaining process files with no retry, then reconcile remaining AH7/AH10 cells and run the complete functional inventory. |
-| P39 maintenance writer exclusion | Integrated test/helper path; selected case is **HUNG_ABORTED**, not a normal assertion failure. | `p39-writer-exclusion-hang.json` classifies a self-deadlock wait cycle. Authorized operator termination targeted Vitest PID 28580, worker PID 23976, and lock-holder PID 11548; all three exited. The SQLite evidence file was preserved. | No Vitest JSON/pass exists for this case. The deadlock wait ordering remains to be corrected; do not count this as a pass or ordinary red assertion. | Break the wait cycle, then rerun the single P39 writer-exclusion case and capture a complete JSON result. |
-| Project, resource activation and P10 rebuild | Integrated implementation; a current process fixture is red. | F21 Story L full-rebuild JSON has one failed assertion and one pending assertion. The worker exited because its schema-44 database required offline upgrade to schema 51 before reaching the marker. | The failed case does not qualify the full-rebuild path; remaining assertion and broader F21 journey are not accepted from this partial result. | Repair or explicitly disposition the fixture’s 44→51 upgrade path, then obtain a same-file 2/2 process result and browser/resource journey. |
-| Cross-Work delivery and wake | Integrated public-process paths; focused current-candidate cases passed. | `tests_functional_process_cross-work-delivery.functional.test.ts.json` and `tests_functional_process_cross-work-wake.functional.test.ts.json` each report 1/1. | No complete S3 journey, full process run, or UI qualification follows from these focused files. | Run the remaining delivery/dependency process cells and UI acceptance as part of the complete functional inventory. |
-| Receipt, replay and P41 recovery | P41 repair code is integrated. Its four named process boundary cells have **segmented pass evidence**, not a single-file 4/4 result or final suite qualification. | F23 receipt tuple ordering 5/5 in `tests_functional_process_f23-receipt-tuple-ordering.functional.test.ts.json`. [`P41-manifest-recovery-order-fix.result.md`](P41-manifest-recovery-order-fix.result.md) records three of four cells passing in one run and the fourth passing 1/1 in a separate run at source `15a25677757f1b06e309faf165d07a74dc91def7`. | All four cells have pass observations across those two runs; the fourth was not reached in the first file run. No uninterrupted 4/4 file or final release suite qualification is established. | Preserve segmented four-boundary evidence. If single-run qualification is required, run all four cells together with retry 0 on one fixed candidate; complete release gates separately. |
-| Organization and F18 recovery | Integrated code; current process oracle/harness is red. | `tests_functional_process_organization.functional.test.ts.json` records the exact-boundary case failing: the child exited 86 with `F18_TEST_CRASH:AfterSourceValidationBeforeClaim`; the assertion did not accept the observed startup-handshake failure wrapper. Other assertions in this file are pending in the JSON. | This is not evidence of a successful F18 qualification or a proven production recovery defect; the observed boundary and the test oracle need reconciliation. | Reproduce the assertion on a clean candidate, preserve the exact child marker and result JSON, then pass the complete organization file without retry. |
-| Native OS sandbox | T2 provider identities are integrated but remain **Experimental**; production execution is unavailable and no Supported provider is claimed. Windows D2 V3 operator-positive work is isolated in its own branch/result and is not integrated qualification. | No Native provider qualification was selected by this runner segment. Current source reports empty capability tuples and `Unavailable` execution; the unified checkpoint and provider-specific T2/T3 records are supporting scoped evidence only. | Signed production helper launch, Supported capability, filesystem/network/resource enforcement, broker/stop behavior, and cross-process qualification are still open. | Keep production claims disabled until the signed helper and all T3 enforcement and recovery gates are integrated and qualified. |
-| Real-provider S1 and product acceptance | **NOT ACCEPTED as release qualification.** A bounded real-provider S1 lifecycle slice passed on exact source pair runtime `53c36a77` / test `c69e87c7`; it does not qualify current main `d89103d`, candidate `d89103d` or full S1–S4. | [`real-public-s1-lifecycle-qualification-20261023.result.md`](real-public-s1-lifecycle-qualification-20261023.result.md) records one Vitest case PASS (1/1; retry 0), fourteen real-provider requests/responses (all HTTP 200), public `Answered`→Work→effect→independent Verification PASS→Parent Acceptance→Completed, and restart with no additional Provider request. Private evidence and sanitized capture remain at the ACL-protected location recorded there. The WorkEpisode role guidance uses BaseLoop v2 only for WorkspaceWork. The earlier d5 failure remains historical: Vitest **1 failed, 499.8s**, public interaction reached `Answered` but no Work approval; only a private JSON with public Q/A and two HTTP 200 observations survived after fixture/capture loss. The de8 self-wait attempt was early-aborted and motivated the WorkEpisode guidance; it is not counted as a normal failure. | The passing run is a bounded slice at the separate runtime/test source pair above, not a same-SHA qualification of main `d89103d` and not a full S1–S4, `pnpm check`, complete functional, browser, or package gate. The record's Web static build carries forward from `166c2341`; it is not a Web build of `d89103d`. | On one exact intended release candidate, preserve the completed real-provider result record, run applicable full gates on that same candidate, and complete representative S1–S4 journeys before changing the release disposition. |
-| Browser UI and package boundary | Integrated Web implementation; release qualification deferred. | None in this runner segment. All six browser files and `tests/functional/package/clean-checkout.functional.test.ts` are listed as deferred by `segment.json`. | No current browser suite, clean checkout/package result, or UI restart acceptance. | Run the six browser files and clean-checkout package test against the same clean release candidate; retain their exact artifacts. |
-| Schema and full release gates | Current schema target is 51; no full release gate is established. | The manifest segment’s root/Web builds passed. The F21 failure above independently demonstrates a current consumer rejecting schema 44 until offline upgrade to 51. `AH10-P10-attention-schema51-fixture-checkpoint-2026-10-23.md` documents scoped 4/4 and 14/14 results at its earlier baseline. | No exact-`adcb524f` cumulative migration qualification, `pnpm check`, complete functional run, or package/UI run is recorded. | Qualify disposable cumulative offline migration to schema 51, then pass `pnpm check`, full `pnpm test:functional` (process + six browser files), and `pnpm test:package` on one clean commit. |
-
-**Release disposition at this snapshot: OPEN / NOT RELEASE QUALIFIED.** Green
-focused JSONs and successful builds do not offset the two current failing file
-reports, the HUNG_ABORTED P39 case, eight unattempted process files, deferred
-UI/package files, or the missing complete release gates.
+| Final gate | Status |
+|---|---|
+| `pnpm check` on one current candidate | OPEN |
+| Complete `pnpm test:functional` with `completeCoverage: true` on one SHA | OPEN |
+| `pnpm test:package` on the same candidate | OPEN |
+| Representative real-provider S1–S4 journey and restart qualification on that candidate | OPEN |
+| Supported Native OS sandbox provider | OPEN; none is currently claimed |
 
 ## Decision rules
 

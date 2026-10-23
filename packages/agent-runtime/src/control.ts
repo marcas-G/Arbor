@@ -105,7 +105,7 @@ export const makeControlToolRegistry = (
   const blockedWorkEpisodeEnabled = handlers.some(
     (handler) => handler.action === "ResolveWorkBlocker",
   );
-  const waitHandler: AgentActionHandler = {
+  const defaultWaitHandler: AgentActionHandler = {
     action: "Wait",
     handle: ({ action, execution }) => {
       if (action._tag !== "Wait") {
@@ -152,6 +152,12 @@ export const makeControlToolRegistry = (
       });
     },
   };
+  // The generic registry owns the default Wait wire/action contract. A
+  // composition may explicitly override that action with a source-aware
+  // application policy (for example, a durable Work Wait eligibility check)
+  // without injecting repositories or product semantics into this package.
+  const waitHandler =
+    handlers.find((handler) => handler.action === "Wait") ?? defaultWaitHandler;
   const allHandlers = [
     waitHandler,
     ...handlers.filter((handler) => handler.action !== "Wait"),

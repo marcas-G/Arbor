@@ -10,6 +10,7 @@ export * from "./completion-consumer.js";
 export * from "./consumer-loop.js";
 export * from "./conversation-recovery.js";
 export * from "./conversation-response-runtime.js";
+export * from "./critical-steer.js";
 export * from "./dependency-coordinator.js";
 export * from "./durability.js";
 export * from "./environment-drift.js";
