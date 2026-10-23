@@ -314,6 +314,12 @@ describe("external command composition boundary", () => {
         if (input.envelope.commandType === "StopExecution") {
           expect(input.envelope.commandId).toBe(commandId);
           expect(input.envelope.payload).toEqual({ executionId });
+          expect(input.canonicalFacts.execution).toEqual({
+            executionId,
+            projectId,
+            workspaceId,
+            status: "Active",
+          });
           return Effect.succeed({
             _tag: "StopExecutionAuthority",
             submissionOrigin: "External",
@@ -349,6 +355,11 @@ describe("external command composition boundary", () => {
               prepareCriticalSteerStop?: (
                 payload: never,
                 context: Parameters<CommandGatewayService["execute"]>[1],
+                activeMain?: {
+                  readonly executionId: string;
+                  readonly projectId: string;
+                  readonly workspaceId: string;
+                },
               ) => Effect.Effect<unknown>;
             }
           ).prepareCriticalSteerStop;
@@ -359,7 +370,16 @@ describe("external command composition boundary", () => {
                 new Error("Critical Steer prep missing"),
               );
             }
-            prepared = yield* prepare(envelope.payload as never, context);
+            const preparation = yield* prepare(
+              envelope.payload as never,
+              context,
+            );
+            expect(preparation).toMatchObject({ _tag: "NoActiveMain" });
+            prepared = yield* prepare(envelope.payload as never, context, {
+              executionId,
+              projectId,
+              workspaceId,
+            });
             return {
               commandId,
               resolution: {
@@ -385,7 +405,7 @@ describe("external command composition boundary", () => {
       },
       findActiveMainByWorkspace: (targetWorkspaceId) => {
         calls.push(`active:${targetWorkspaceId}`);
-        return Effect.succeed(executionId as never);
+        return Effect.succeed(null);
       },
     });
     const response = await Effect.runPromise(
@@ -413,7 +433,6 @@ describe("external command composition boundary", () => {
       "resolver:SteerWork",
       "gateway",
       `active:${workspaceId}`,
-      "load-inputs:StopExecution",
       "resolver:StopExecution",
     ]);
     expect(prepared).toMatchObject({

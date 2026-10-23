@@ -24,6 +24,7 @@ import {
   type SteerWorkResult,
 } from "../packages/application/src/commands/steer-work.js";
 import {
+  type CriticalSteerActiveMain,
   type CriticalSteerCommitted,
   type CriticalSteerPreparation,
   makeCriticalSteerCommandHandler,
@@ -43,6 +44,7 @@ import {
 } from "../packages/application/src/index.js";
 import {
   CommandId,
+  type CommandSubmissionContext,
   type ExecutionId,
   ExecutionId as ExeId,
   parse,
@@ -91,6 +93,9 @@ const commitSteerCommandId = parse(CommandId)(
 );
 const noActiveSteerCommandId = parse(CommandId)(
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789d5",
+);
+const lateActiveSteerCommandId = parse(CommandId)(
+  "cmd_018f2b3c-4d5e-7abc-8def-0123456789d8",
 );
 const concurrentSteerCommandId = parse(CommandId)(
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789d6",
@@ -769,11 +774,12 @@ describe("p6-critical-steer", () => {
     expect(result.events[0]?.count).toBe(0);
   });
 
-  it("keeps no-active-main Critical Steer fail-closed pending the P6 owner decision", async () => {
+  it("commits Critical Steer without Stop when the transaction has no active main; replay does not reselect", async () => {
     const program = Effect.gen(function* () {
       yield* seedWork;
       const gateway = yield* CommandGateway;
       const payload = criticalPayload();
+      let preparationCalls = 0;
       const context = { _tag: "External" as const, principal: p6TestPrincipal };
       const authority = {
         _tag: "SteerWorkAuthority" as const,
@@ -790,25 +796,25 @@ describe("p6-critical-steer", () => {
         targetWorkspaceId: p6RootWorkspace,
         workId,
       };
-      const exit = yield* Effect.exit(
-        gateway.execute(
-          {
-            commandType: "SteerWork",
-            commandId: noActiveSteerCommandId,
-            projectId: p6Project,
-            actor: p6TestActor,
-            issuedAt: "t",
-            payload,
-            prepareCriticalSteerStop: () =>
-              Effect.succeed({ _tag: "NoActiveMain" }),
-          },
-          context,
-          authority,
-        ),
-      );
+      const envelope = {
+        commandType: "SteerWork",
+        commandId: noActiveSteerCommandId,
+        projectId: p6Project,
+        actor: p6TestActor,
+        issuedAt: "t",
+        payload,
+        prepareCriticalSteerStop: () => {
+          preparationCalls += 1;
+          return Effect.succeed({ _tag: "NoActiveMain" as const });
+        },
+      };
+      const first = yield* gateway.execute(envelope, context, authority);
+      const replay = yield* gateway.execute(envelope, context, authority);
       const sql = yield* SqlClient;
       return {
-        exit,
+        first,
+        replay,
+        preparationCalls,
         work: yield* workRow,
         entries: yield* inboxEntries,
         receipt: yield* sql.unsafe<{ readonly count: number }>(
@@ -819,19 +825,131 @@ describe("p6-critical-steer", () => {
           "SELECT COUNT(*) AS count FROM domain_events WHERE caused_by_command_id = ?",
           [noActiveSteerCommandId],
         ),
+        eventTypes: yield* sql.unsafe<{ readonly event_type: string }>(
+          "SELECT event_type FROM domain_events WHERE caused_by_command_id = ? ORDER BY sequence",
+          [noActiveSteerCommandId],
+        ),
+        execution: yield* sql.unsafe<{ readonly execution_id: string }>(
+          "SELECT execution_id FROM executions WHERE execution_id = ?",
+          [mainExecutionId],
+        ),
       };
     });
     const result = await runCriticalSteer(program, makeCriticalSteerApp());
-    expect(Exit.isFailure(result.exit)).toBe(true);
-    if (Exit.isFailure(result.exit)) {
-      expect(
-        result.exit.cause.reasons.some((reason) => Cause.isDieReason(reason)),
-      ).toBe(true);
-    }
-    expect(result.work[0]).toMatchObject({ lifecycle: "Open", revision: 0 });
-    expect(result.entries).toHaveLength(0);
-    expect(result.receipt[0]?.count).toBe(0);
-    expect(result.events[0]?.count).toBe(0);
+    expect(result.first.resolution._tag).toBe("Committed");
+    expect(result.replay).toEqual(result.first);
+    expect(result.preparationCalls).toBe(1);
+    expect(result.work[0]).toMatchObject({ lifecycle: "Open", revision: 1 });
+    expect(result.entries).toHaveLength(1);
+    expect(result.receipt[0]?.count).toBe(1);
+    expect(result.events[0]?.count).toBe(2);
+    expect(result.eventTypes.map(({ event_type }) => event_type)).toEqual([
+      "WorkSteered",
+      "HumanInterventionApplied",
+    ]);
+    expect(result.execution).toHaveLength(0);
+  });
+
+  it("stops a main admitted after no-active preparation but before the outer transaction", async () => {
+    const program = Effect.gen(function* () {
+      yield* seedWork;
+      const gateway = yield* CommandGateway;
+      const payload = criticalPayload();
+      const context = { _tag: "External" as const, principal: p6TestPrincipal };
+      const authority = {
+        _tag: "SteerWorkAuthority" as const,
+        principal: p6TestPrincipal,
+        commandId: lateActiveSteerCommandId,
+        semanticRequestFingerprint: semanticRequestFingerprint({
+          commandType: "SteerWork",
+          projectId: p6Project,
+          actor: p6TestActor,
+          schemaVersion: "1",
+          payload,
+        }),
+        projectId: p6Project,
+        targetWorkspaceId: p6RootWorkspace,
+        workId,
+      };
+      let preparationCalls = 0;
+      const envelope = {
+        commandType: "SteerWork",
+        commandId: lateActiveSteerCommandId,
+        projectId: p6Project,
+        actor: p6TestActor,
+        issuedAt: "t",
+        payload,
+        prepareCriticalSteerStop: ((
+          _payload: SteerWorkPayload,
+          _context: CommandSubmissionContext,
+          activeMain?: CriticalSteerActiveMain,
+        ) =>
+          Effect.gen(function* () {
+            preparationCalls += 1;
+            if (activeMain === undefined) {
+              // Simulate a main admission after the preparation observed none
+              // but before Gateway begins the SteerWork transaction.
+              yield* admitMainExecution;
+              return { _tag: "NoActiveMain" } as const;
+            }
+            expect(activeMain).toEqual({
+              executionId: mainExecutionId,
+              projectId: p6Project,
+              workspaceId: p6RootWorkspace,
+            });
+            const stopPayload = { executionId: activeMain.executionId };
+            return {
+              _tag: "Ready",
+              executionId: activeMain.executionId,
+              authority: {
+                _tag: "StopExecutionAuthority",
+                submissionOrigin: "External",
+                principal: p6TestPrincipal,
+                commandId: lateActiveSteerCommandId,
+                semanticRequestFingerprint: semanticRequestFingerprint({
+                  commandType: "StopExecution",
+                  projectId: p6Project,
+                  actor: p6TestActor,
+                  schemaVersion: "1",
+                  payload: stopPayload,
+                }),
+                projectId: p6Project,
+                commandKind: "StopExecution",
+                executionId: activeMain.executionId,
+              },
+            } satisfies CriticalSteerPreparation;
+          })) as never,
+      };
+      const receipt = yield* gateway.execute(envelope, context, authority);
+      const sql = yield* SqlClient;
+      return {
+        receipt,
+        preparationCalls,
+        work: yield* workRow,
+        execution: yield* executionRow,
+        entries: yield* inboxEntries,
+        eventTypes: yield* sql.unsafe<{ readonly event_type: string }>(
+          "SELECT event_type FROM domain_events WHERE caused_by_command_id = ? ORDER BY sequence",
+          [lateActiveSteerCommandId],
+        ),
+        receiptCount: yield* sql.unsafe<{ readonly count: number }>(
+          "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+          [lateActiveSteerCommandId],
+        ),
+      };
+    });
+    const result = await runCriticalSteer(program, makeCriticalSteerApp());
+    expect(result.receipt.resolution._tag).toBe("Committed");
+    expect(result.preparationCalls).toBe(2);
+    expect(result.work[0]).toMatchObject({ lifecycle: "Open", revision: 1 });
+    expect(result.execution[0]?.stop_requested_at).toBe("t");
+    expect(result.entries).toHaveLength(1);
+    expect(result.receiptCount[0]?.count).toBe(1);
+    expect(result.eventTypes.map(({ event_type }) => event_type)).toEqual([
+      "WorkSteered",
+      "HumanInterventionApplied",
+      "ExecutionStopRequested",
+    ]);
   });
 
   it("commits WorkSteered and stopRequestedAt in the same transaction (04 §4)", async () => {
