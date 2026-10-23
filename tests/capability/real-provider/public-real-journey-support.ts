@@ -401,6 +401,154 @@ export const startedProviderRequests = (
 ): ReadonlyArray<ProviderCapture> =>
   captures.filter((capture) => capture.event === "request-start");
 
+export type ProviderRequestBodyEvent = Extract<
+  ProviderCapture["event"],
+  | "response-complete"
+  | "response-held"
+  | "response-released"
+  | "response-capture-failed"
+  | "request-failed"
+>;
+
+export interface BoundProviderRequestEvidence {
+  readonly _tag: "Bound";
+  readonly requestId: string;
+  readonly request: Record<string, unknown>;
+  readonly requestStart: ProviderCapture & { readonly event: "request-start" };
+  readonly bodyEvents: ReadonlyArray<
+    ProviderCapture & {
+      readonly event: ProviderRequestBodyEvent;
+      readonly request: Record<string, unknown>;
+    }
+  >;
+}
+
+export interface InvalidProviderRequestEvidence {
+  readonly _tag: "Invalid";
+  readonly requestId: string;
+  readonly reason:
+    | "MissingRequestStart"
+    | "DuplicateRequestStart"
+    | "RequestStartContainsBody"
+    | "MissingRequestBody"
+    | "DuplicateBodyEvent"
+    | "ConflictingRequestBody"
+    | "ConflictingRequestMetadata";
+}
+
+export type ProviderRequestEvidence =
+  | BoundProviderRequestEvidence
+  | InvalidProviderRequestEvidence;
+
+const PROVIDER_REQUEST_BODY_EVENTS = new Set<ProviderRequestBodyEvent>([
+  "response-complete",
+  "response-held",
+  "response-released",
+  "response-capture-failed",
+  "request-failed",
+]);
+
+/** Joins body-bearing Provider evidence to one exact bodyless request-start.
+ * Ambiguous, duplicate, or conflicting evidence is returned as Invalid. */
+export const providerRequestEvidence = (
+  captures: ReadonlyArray<ProviderCapture>,
+  requestId: string,
+): ProviderRequestEvidence => {
+  const matching = captures.filter(
+    (capture) => capture.requestId === requestId,
+  );
+  const starts = matching.filter(
+    (
+      capture,
+    ): capture is ProviderCapture & { readonly event: "request-start" } =>
+      capture.event === "request-start",
+  );
+  if (starts.length === 0) {
+    return { _tag: "Invalid", requestId, reason: "MissingRequestStart" };
+  }
+  if (starts.length !== 1) {
+    return { _tag: "Invalid", requestId, reason: "DuplicateRequestStart" };
+  }
+  const requestStart = starts[0];
+  if (requestStart === undefined || requestStart.request !== undefined) {
+    return { _tag: "Invalid", requestId, reason: "RequestStartContainsBody" };
+  }
+
+  const bodyRecords = matching.filter((capture) =>
+    PROVIDER_REQUEST_BODY_EVENTS.has(capture.event as ProviderRequestBodyEvent),
+  );
+  if (bodyRecords.some((capture) => capture.request === undefined)) {
+    return { _tag: "Invalid", requestId, reason: "MissingRequestBody" };
+  }
+  if (bodyRecords.length === 0) {
+    return { _tag: "Invalid", requestId, reason: "MissingRequestBody" };
+  }
+  const bodyEventCounts = new Map<string, number>();
+  for (const capture of bodyRecords) {
+    const count = (bodyEventCounts.get(capture.event) ?? 0) + 1;
+    bodyEventCounts.set(capture.event, count);
+    if (count > 1) {
+      return { _tag: "Invalid", requestId, reason: "DuplicateBodyEvent" };
+    }
+  }
+
+  const firstBody = bodyRecords[0];
+  if (firstBody?.request === undefined) {
+    return { _tag: "Invalid", requestId, reason: "MissingRequestBody" };
+  }
+  const canonicalBody = JSON.stringify(firstBody.request);
+  for (const capture of bodyRecords) {
+    if (
+      capture.request === undefined ||
+      JSON.stringify(capture.request) !== canonicalBody
+    ) {
+      return { _tag: "Invalid", requestId, reason: "ConflictingRequestBody" };
+    }
+    if (
+      capture.processId !== requestStart.processId ||
+      capture.sequence !== requestStart.sequence ||
+      capture.method !== requestStart.method ||
+      capture.path !== requestStart.path
+    ) {
+      return {
+        _tag: "Invalid",
+        requestId,
+        reason: "ConflictingRequestMetadata",
+      };
+    }
+  }
+  return {
+    _tag: "Bound",
+    requestId,
+    request: firstBody.request,
+    requestStart,
+    bodyEvents: bodyRecords as BoundProviderRequestEvidence["bodyEvents"],
+  };
+};
+
+/** Identifies request IDs only from body-bearing event payloads, then requires
+ * an exact, unambiguous request-start join for every selected Provider call. */
+export const providerRequestsMatching = (
+  captures: ReadonlyArray<ProviderCapture>,
+  predicate: (request: Record<string, unknown>) => boolean,
+): ReadonlyArray<ProviderRequestEvidence> => {
+  const requestIds = new Set(
+    captures
+      .filter(
+        (capture) =>
+          PROVIDER_REQUEST_BODY_EVENTS.has(
+            capture.event as ProviderRequestBodyEvent,
+          ) &&
+          capture.request !== undefined &&
+          predicate(capture.request),
+      )
+      .map((capture) => capture.requestId),
+  );
+  return [...requestIds].map((requestId) =>
+    providerRequestEvidence(captures, requestId),
+  );
+};
+
 export const armProviderResponseGate = (
   run: StartedRealProviderFixture,
   selector?: ProviderResponseGateSelector,
