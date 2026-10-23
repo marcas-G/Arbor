@@ -48,3 +48,18 @@ S4-A's post-restart check also compares the public transcript again after a
 bounded 1.5-second quiet window. These changes address the RED but have not
 been qualified by another real Provider run. This result remains a failed
 pre-fix qualification, not S4-A PASS evidence.
+
+The stub-only response-gate regression passed **1/1** under the default root
+Vitest configuration with bounded serial execution:
+
+```text
+pnpm exec vitest run --config vitest.config.ts tests/capability/support/provider-fetch-capture-hook.test.ts --maxWorkers=1 --retry=0 --no-file-parallelism
+```
+
+The test replaces `globalThis.fetch` in its short-lived Node helper with an
+in-memory `Response`; the `.invalid` endpoint is never contacted. It verifies
+the bodyless start event, matching body-bearing completion/held events,
+body-to-start identity checks including duplicate/conflict rejection, explicit
+release, and that a new process with an empty gate path does not inherit the
+old held gate. This is harness evidence only, not a daemon, model, or S4
+recovery qualification.
