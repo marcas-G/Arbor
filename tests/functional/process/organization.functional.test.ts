@@ -3,6 +3,11 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  f18ProcessCrashMarker,
+  hasExpectedF18ProcessCrash,
+  unexpectedF18DaemonErrors,
+} from "../support/f18-process-crash-oracle.js";
+import {
   type CapturedProviderCall,
   type ProductionFixture,
   type ScriptedProviderResponse,
@@ -19,6 +24,7 @@ import { makeWorkProvider } from "../support/work-provider.js";
 const fixtures: ProductionFixture[] = [];
 const F18_PROCESS_CRASH_CASES: ReadonlyArray<{
   readonly boundary: string;
+  readonly expectedLeaseGeneration: 0 | 1;
   readonly phase: string | null;
   readonly inboxRows: number;
   readonly completed: boolean;
@@ -26,66 +32,77 @@ const F18_PROCESS_CRASH_CASES: ReadonlyArray<{
 }> = [
   {
     boundary: "AfterSourceValidationBeforeClaim",
+    expectedLeaseGeneration: 0,
     phase: null,
     inboxRows: 0,
     completed: false,
   },
   {
     boundary: "AfterReconciliationLeaseClaimCommit",
+    expectedLeaseGeneration: 1,
     phase: "Pending",
     inboxRows: 0,
     completed: false,
   },
   {
     boundary: "AfterVerificationWakeEffectBeforeDisposition",
+    expectedLeaseGeneration: 1,
     phase: "Pending",
     inboxRows: 0,
     completed: false,
   },
   {
     boundary: "AfterVerificationWakeDispositionCommit",
+    expectedLeaseGeneration: 1,
     phase: "VerificationWakeDelivered",
     inboxRows: 0,
     completed: false,
   },
   {
     boundary: "BeforeParentInboxDispositionCommit",
+    expectedLeaseGeneration: 1,
     phase: "VerificationWakeDelivered",
     inboxRows: 0,
     completed: false,
   },
   {
     boundary: "AfterParentInboxDispositionCommit",
+    expectedLeaseGeneration: 1,
     phase: "ParentInboxCommitted",
     inboxRows: 1,
     completed: false,
   },
   {
     boundary: "AfterParentWakeEffectBeforeDisposition",
+    expectedLeaseGeneration: 1,
     phase: "ParentInboxCommitted",
     inboxRows: 1,
     completed: false,
   },
   {
     boundary: "AfterParentWakeDispositionCommit",
+    expectedLeaseGeneration: 1,
     phase: "ParentWakeDelivered",
     inboxRows: 1,
     completed: false,
   },
   {
     boundary: "BeforeCompletedDispositionCommit",
+    expectedLeaseGeneration: 1,
     phase: "ParentWakeDelivered",
     inboxRows: 1,
     completed: false,
   },
   {
     boundary: "AfterCompletedDispositionCommit",
+    expectedLeaseGeneration: 1,
     phase: "Completed",
     inboxRows: 1,
     completed: true,
   },
   {
     boundary: "BeforeAttentionCommit",
+    expectedLeaseGeneration: 0,
     phase: null,
     inboxRows: 0,
     completed: false,
@@ -93,6 +110,7 @@ const F18_PROCESS_CRASH_CASES: ReadonlyArray<{
   },
   {
     boundary: "AfterAttentionCommit",
+    expectedLeaseGeneration: 0,
     phase: "Attention",
     inboxRows: 0,
     completed: false,
@@ -157,6 +175,7 @@ describe("release-functional long-lived responsibility", () => {
     "F18 reconciles and recovers after $boundary",
     async ({
       boundary,
+      expectedLeaseGeneration,
       phase: expectedPhase,
       inboxRows,
       completed: wasCompleted,
@@ -469,9 +488,20 @@ describe("release-functional long-lived responsibility", () => {
       } catch (error) {
         crashRestartError = error;
       }
+      const expectedCrashMarker = f18ProcessCrashMarker({
+        boundary,
+        projectId: project.projectId,
+        eventSequence,
+        leaseGeneration: expectedLeaseGeneration,
+      });
+      const crashProcess = fixture.daemonProcessSnapshot();
       if (
         !(crashRestartError instanceof Error) ||
-        !crashRestartError.message.includes(`F18_TEST_CRASH:${boundary}`)
+        !hasExpectedF18ProcessCrash({
+          exitCode: crashProcess?.exitCode,
+          daemonErrors: fixture.daemonErrors,
+          marker: expectedCrashMarker,
+        })
       ) {
         const diagnostic = new DatabaseSync(fixture.databaseFile, {
           readOnly: true,
@@ -490,7 +520,7 @@ describe("release-functional long-lived responsibility", () => {
           diagnostic.close();
         }
         throw new Error(
-          `expected the exact F18 commit-boundary crash ${boundary}; actual=${String(crashRestartError)}; reconciliation=${JSON.stringify(reconciliationRows)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+          `expected exit 86 and exact F18 crash marker ${expectedCrashMarker}; actual=${String(crashRestartError)}; process=${JSON.stringify(crashProcess)}; reconciliation=${JSON.stringify(reconciliationRows)}; daemon=${fixture.daemonErrors.join(" | ")}`,
           { cause: crashRestartError },
         );
       }
@@ -790,9 +820,7 @@ describe("release-functional long-lived responsibility", () => {
           ?.currentWork,
       ).toBeUndefined();
       expect(
-        fixture.daemonErrors.filter(
-          (message) => !message.includes(`F18_TEST_CRASH:${boundary}`),
-        ),
+        unexpectedF18DaemonErrors(fixture.daemonErrors, expectedCrashMarker),
       ).toEqual([]);
     },
     90_000,
