@@ -90,3 +90,27 @@ retried.
 - `pnpm typecheck`: PASS after the final source and test updates.
 - `pnpm test:functional` and daemon/bootstrap suites: NOT RUN (the main sweep
   owns the heavy test slot).
+
+## Effect lifecycle follow-up
+
+Follow-up review of the exposed adapter service identified three Effect
+construction-time hazards in the initial implementation: the deadline was
+captured before the returned acquire Effect ran, a zero wait budget skipped
+the first SQLite attempt entirely, and constructing (without running) a
+release Effect removed the permit before cleanup was registered. The follow-up
+places acquire state inside `Effect.suspend`, always makes one attempt (with
+zero SQLite busy timeout meaning no wait/retry), and defers permit removal
+until an uninterruptible rollback/close finalizer runs. Internal acquisition
+typing now explicitly retains `SqlError`; contention is narrowed and
+normalized at the outer retry boundary without a cast that masks it.
+
+Focused lifecycle regressions pass: deferred/repeated acquire Effect 1/1,
+zero-budget free acquire 1/1, zero-budget contention refusal 1/1, and
+constructed-but-unrun release followed by layer shutdown 1/1. They were run
+with an isolated Vitest config and the SQLite adapter package build; no
+functional global setup was loaded. The original implementation was not
+re-run with these new regressions to collect a separate red log. After this
+follow-up, `pnpm typecheck` and the adapter package build pass; the broader P39
+focused cases were not rerun in this follow-up. Zero budget means one
+non-waiting SQLite attempt, not a hard zero-millisecond wall-clock bound;
+one-time setup and event-loop scheduling can still consume time.
