@@ -584,7 +584,7 @@ export const controlToolDefinitions =
         stableId: "core.control.assign-work",
         name: "assign_work",
         description:
-          "Assign a new bounded Work outcome to the current Workspace or one of its direct child Workspaces. Runtime binds identity, revisions, authority, and predecessor provenance.",
+          "Assign a new bounded Work outcome to the current Workspace or one of its direct child Workspaces. Use this in RootConversation when the goal needs executable tools that RootConversation does not expose; the WorkEpisode is the Workspace execution route. Runtime binds identity, revisions, authority, and predecessor provenance.",
         schemaJson: ASSIGN_WORK_SCHEMA,
         version: "1",
         requiredCapability: "agent:assign-work",

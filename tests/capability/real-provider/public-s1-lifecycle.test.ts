@@ -7,7 +7,6 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,13 +26,18 @@ import {
   waitForPublic,
 } from "../../functional/support/public-client.js";
 import { removeFunctionalFixtureDirectory } from "../../functional/support/schema44-bootstrap.js";
-import { makeP39PrivateTestDirectory } from "../../support/p39-windows-deployment-test.js";
+import {
+  createP39PrivateTestFile,
+  makeP39PrivateTestDirectory,
+} from "../../support/p39-windows-deployment-test.js";
 
 const OPT_IN_ENV = "ARBOR_RUN_REAL_PUBLIC_S1";
 const CONFIG_PATH_ENV = "ARBOR_PUBLIC_S1_CONFIG";
+const EVIDENCE_ROOT_ENV = "ARBOR_PUBLIC_S1_EVIDENCE_ROOT";
 const CAPTURE_FILE_ENV = "ARBOR_PUBLIC_S1_CAPTURE_FILE";
 const CAPTURE_ENDPOINT_ENV = "ARBOR_PUBLIC_S1_CAPTURE_ENDPOINT";
 const JOURNEY_TIMEOUT_MS = 8 * 60_000;
+const JOURNEY_BUDGET_MS = 20 * 60_000;
 const repositoryRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../..",
@@ -88,6 +92,16 @@ const completedProviderRequestIds = (
       )
       .map((capture) => capture.requestId),
   );
+
+const remainingJourneyTime = (deadlineAt: number): number => {
+  const remaining = deadlineAt - Date.now();
+  if (remaining <= 0) {
+    throw new Error(
+      "REAL NOT QUALIFIED: 20-minute public S1 deadline exceeded",
+    );
+  }
+  return Math.min(JOURNEY_TIMEOUT_MS, remaining);
+};
 
 interface PublicScenarioState {
   readonly project?: FunctionalProject;
@@ -436,7 +450,10 @@ const skipReason =
   process.env[OPT_IN_ENV] !== "1"
     ? `set ${OPT_IN_ENV}=1 to explicitly opt in`
     : readinessAtLoad.ready
-      ? undefined
+      ? process.env[EVIDENCE_ROOT_ENV] === undefined ||
+        !existsSync(process.env[EVIDENCE_ROOT_ENV])
+        ? `set ${EVIDENCE_ROOT_ENV} to an existing private .test-results run directory`
+        : undefined
       : readinessAtLoad.reason;
 
 const writeEvidence = (input: {
@@ -528,34 +545,110 @@ const waitForExactWorkApproval = async (
   client: PublicClient,
   project: FunctionalProject,
   marker: string,
+  deadlineAt: number,
 ) => {
-  const inbox = await waitForPublic(
-    () =>
-      client.view<{
-        unconsumed: Array<{ entryKey: string; kind: string; summary: string }>;
-      }>("inbox-view", { workspaceId: project.rootWorkspaceId }),
-    (value) =>
-      value.unconsumed.some(
-        (entry) =>
-          entry.kind === "Governance" &&
-          entry.summary.includes(marker) &&
-          /^cap:cap_[^:]+:\d+$/u.test(entry.entryKey),
-      ),
-    JOURNEY_TIMEOUT_MS,
+  const terminalGraceMs = 1_500;
+  let terminalFingerprint: string | undefined;
+  let terminalObservedAt: number | undefined;
+  let lastPublicState: unknown;
+  while (Date.now() < deadlineAt) {
+    try {
+      const [inbox, transcript] = await Promise.all([
+        client.view<{
+          unconsumed: Array<{
+            entryKey: string;
+            kind: string;
+            summary: string;
+          }>;
+        }>("inbox-view", { workspaceId: project.rootWorkspaceId }),
+        client.view<{
+          entries: Array<{
+            kind: string;
+            body?: string;
+            messageId?: string;
+            responseStatus?: {
+              state: string;
+              revision: number;
+              executionId?: string;
+            };
+          }>;
+        }>("transcript", {
+          workspaceId: project.rootWorkspaceId,
+          limit: 20,
+          conversationOnly: true,
+        }),
+      ]);
+      const entry = inbox.unconsumed.find(
+        (candidate) =>
+          candidate.kind === "Governance" &&
+          candidate.summary.includes(marker) &&
+          /^cap:cap_[^:]+:\d+$/u.test(candidate.entryKey),
+      );
+      const match =
+        entry === undefined
+          ? null
+          : /^cap:(cap_[^:]+):(\d+)$/u.exec(entry.entryKey);
+      if (match !== null) {
+        return {
+          approvalId: match[1] as string,
+          revision: Number(match[2]),
+        };
+      }
+
+      const human = [...transcript.entries]
+        .reverse()
+        .find(
+          (candidate) =>
+            candidate.kind === "HumanConversationTurn" &&
+            candidate.body?.includes(marker) === true,
+        );
+      const assistant = transcript.entries.find(
+        (candidate) =>
+          candidate.kind === "AssistantConversationTurn" &&
+          candidate.messageId === human?.messageId,
+      );
+      const status = human?.responseStatus;
+      const terminal =
+        status !== undefined &&
+        ["Answered", "NeedsAttention", "Cancelled"].includes(status.state);
+      const fingerprint = terminal
+        ? `${status.state}:${status.revision}:${status.executionId ?? ""}`
+        : undefined;
+      if (fingerprint === undefined) {
+        terminalFingerprint = undefined;
+        terminalObservedAt = undefined;
+      } else if (fingerprint !== terminalFingerprint) {
+        terminalFingerprint = fingerprint;
+        terminalObservedAt = Date.now();
+      }
+      lastPublicState = {
+        responseStatus: status ?? null,
+        assistantResponse: assistant?.body ?? null,
+        inboxUnconsumed: inbox.unconsumed,
+      };
+      if (
+        terminalFingerprint !== undefined &&
+        terminalObservedAt !== undefined &&
+        Date.now() - terminalObservedAt >= terminalGraceMs
+      ) {
+        throw new Error(
+          `REAL public S1 terminal conversation without exact Work approval for ${marker}; public=${JSON.stringify(lastPublicState)}`,
+        );
+      }
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith("REAL public S1 terminal conversation")
+      ) {
+        throw error;
+      }
+      // Public projections may be briefly unavailable during lifecycle updates.
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error(
+    `REAL NOT QUALIFIED: no exact Work approval before deadline for ${marker}; public=${JSON.stringify(lastPublicState)}`,
   );
-  const entry = inbox.unconsumed.find(
-    (candidate) =>
-      candidate.kind === "Governance" &&
-      candidate.summary.includes(marker) &&
-      /^cap:cap_[^:]+:\d+$/u.test(candidate.entryKey),
-  );
-  const match =
-    entry === undefined
-      ? null
-      : /^cap:(cap_[^:]+):(\d+)$/u.exec(entry.entryKey);
-  if (match === null)
-    throw new Error(`Inbox has no exact Work approval for ${marker}`);
-  return { approvalId: match[1] as string, revision: Number(match[2]) };
 };
 
 const approveExactPatchIfRequired = async (input: {
@@ -565,8 +658,9 @@ const approveExactPatchIfRequired = async (input: {
   readonly marker: string;
   readonly proofPath: string;
   readonly proofContent: string;
+  readonly deadlineAt: number;
 }) => {
-  const deadline = Date.now() + JOURNEY_TIMEOUT_MS;
+  const deadline = Math.min(input.deadlineAt, Date.now() + JOURNEY_TIMEOUT_MS);
   while (Date.now() < deadline) {
     const [inbox, current] = await Promise.all([
       input.client.view<{
@@ -671,6 +765,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
     );
   }
   const config = readinessAtLoad.config;
+  const journeyDeadlineAt = Date.now() + JOURNEY_BUDGET_MS;
   const marker = `REAL-S1-${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
   const proofName = `proof-${marker.toLowerCase()}.txt`;
   const proofContent = `S1-PUBLIC-REAL-PROOF:${marker}`;
@@ -682,9 +777,15 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
   let result: "PASS" | "FAIL" = "FAIL";
   let errorDetail: string | undefined;
   try {
+    const evidenceRoot = process.env[EVIDENCE_ROOT_ENV];
+    if (evidenceRoot === undefined || !existsSync(evidenceRoot)) {
+      throw new Error(
+        `REAL NOT QUALIFIED: ${EVIDENCE_ROOT_ENV} must name the existing private run directory`,
+      );
+    }
     privateEvidenceDirectory = makeP39PrivateTestDirectory(
-      tmpdir(),
-      "arbor-public-s1-evidence-",
+      evidenceRoot,
+      "evidence-",
     );
     const previousCapturePath = process.env[CAPTURE_FILE_ENV];
     try {
@@ -707,11 +808,14 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
         },
         setupProbe: (event) => {
           if (event.stage !== "after-clone") return;
-          captureFile = join(event.directory, "provider-captures.jsonl");
-          writeFileSync(captureFile, "", {
-            encoding: "utf8",
-            mode: 0o600,
-          });
+          if (privateEvidenceDirectory === undefined) {
+            throw new Error("private evidence directory was not prepared");
+          }
+          captureFile = join(
+            privateEvidenceDirectory,
+            "provider-captures.jsonl",
+          );
+          createP39PrivateTestFile(captureFile);
           process.env[CAPTURE_FILE_ENV] = captureFile;
         },
       });
@@ -738,7 +842,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
         captureFile,
         evidenceDirectory: privateEvidenceDirectory,
         failureCleanup:
-          "Journey failures after daemon start retain the P39-private fixture directory/database/capture and private evidence directory until human review. Fixture startup failures follow bounded helper cleanup and retain the private evidence record.",
+          "Journey failures after daemon start retain the P39-private fixture directory/database and run-local P39-private capture/evidence directory until human review. Provider capture is written directly to the run-local private directory; fixture startup failures follow bounded helper cleanup and retain the private evidence record.",
         passCleanup:
           "After pass, afterEach removes the fixture directory/database/capture; the private evidence directory is retained for qualification review.",
       },
@@ -770,9 +874,14 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
     await submitHumanMessage(
       client,
       project,
-      `请完成目标 ${marker}。只在当前项目工作区创建文件 ${proofName}，唯一一行内容严格为 ${proofContent}。使用工作区文件工具创建并读回后调用 claim_completion，说明观察到的内容。不要调用 shell、网络工具或访问其他工作区。完成标准是该文件精确匹配并由独立 Verification 验证。`,
+      `请完成目标 ${marker}：只在当前项目工作区创建文件 ${proofName}，唯一一行内容严格为 ${proofContent}，并读回核对。完成标准是文件内容精确匹配且经独立核验；如果需要我的批准，请先提出明确的审批请求。不得调用 shell、网络工具或访问其他工作区。`,
     );
-    const approval = await waitForExactWorkApproval(client, project, marker);
+    const approval = await waitForExactWorkApproval(
+      client,
+      project,
+      marker,
+      journeyDeadlineAt,
+    );
     await client.command(project.projectId, "ResolveControlApproval", {
       approvalId: approval.approvalId,
       expectedRevision: approval.revision,
@@ -790,7 +899,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       (value) =>
         value?.workId !== undefined &&
         value.objective?.includes(marker) === true,
-      JOURNEY_TIMEOUT_MS,
+      remainingJourneyTime(journeyDeadlineAt),
     );
     if (currentWork?.workId === undefined) {
       throw new Error(`public current-work did not expose Work ${marker}`);
@@ -803,13 +912,14 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       marker,
       proofPath: join(fixture.workspaceDirectory, proofName),
       proofContent,
+      deadlineAt: journeyDeadlineAt,
     });
 
     const proofPath = join(fixture.workspaceDirectory, proofName);
     await waitForPublic(
       async () => readFileSync(proofPath, "utf8"),
       (content) => content === proofContent,
-      JOURNEY_TIMEOUT_MS,
+      remainingJourneyTime(journeyDeadlineAt),
     );
     const workspaceAfterWork = captureWorkspaceFileSnapshot(
       fixture.workspaceDirectory,
@@ -837,7 +947,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
         verification.verdict === "Pass" &&
         verification.verificationId !== undefined &&
         verification.evidenceRefs.length > 0,
-      JOURNEY_TIMEOUT_MS,
+      remainingJourneyTime(journeyDeadlineAt),
     );
     const verificationId = verified.verification.verificationId;
     const targetWorkRevision = verified.verification.targetWorkRevision;
@@ -884,7 +994,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       () => currentState(client, project, currentWork.workId as string),
       ({ verification, work }) =>
         verification.acceptance !== undefined && work.lifecycle === "Completed",
-      JOURNEY_TIMEOUT_MS,
+      remainingJourneyTime(journeyDeadlineAt),
     );
     if (accepted.verification.acceptance === undefined) {
       throw new Error("public Acceptance did not appear after commit");
@@ -912,7 +1022,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
           starts.every((start) => finished.has(start.requestId))
         );
       },
-      60_000,
+      Math.min(60_000, remainingJourneyTime(journeyDeadlineAt)),
     );
     const startsBeforeRestart = startedProviderRequests(capturesBeforeRestart);
     const completedBeforeRestart = capturesBeforeRestart.filter(
@@ -947,7 +1057,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
         verification.acceptance?.acceptanceId ===
           accepted.verification.acceptance?.acceptanceId &&
         work.lifecycle === "Completed",
-      JOURNEY_TIMEOUT_MS,
+      remainingJourneyTime(journeyDeadlineAt),
     );
     expect(restarted.verification).toMatchObject({
       verificationId,
