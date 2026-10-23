@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const captureFile = process.env.ARBOR_PUBLIC_S1_CAPTURE_FILE;
 const endpointValue = process.env.ARBOR_PUBLIC_S1_CAPTURE_ENDPOINT;
+const responseGateDirectory = process.env.ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR;
 const originalFetch = globalThis.fetch.bind(globalThis);
 
 const safeValue = (value, key = "") => {
@@ -52,6 +54,39 @@ const append = (record) => {
   });
 };
 
+const responseGateMatches = (request) => {
+  if (
+    !responseGateDirectory ||
+    !existsSync(join(responseGateDirectory, "armed"))
+  )
+    return false;
+  const selectorPath = join(responseGateDirectory, "selector.json");
+  if (!existsSync(selectorPath)) return true;
+  try {
+    const selector = JSON.parse(readFileSync(selectorPath, "utf8"));
+    const serialized = JSON.stringify(request ?? {});
+    if (
+      typeof selector.requiredMessageText === "string" &&
+      !serialized.includes(selector.requiredMessageText)
+    )
+      return false;
+    if (typeof selector.requiredAdvertisedToolName === "string") {
+      const tools = request?.tools;
+      const names = Array.isArray(tools)
+        ? tools.flatMap((tool) =>
+            typeof tool?.function?.name === "string"
+              ? [tool.function.name]
+              : [],
+          )
+        : [];
+      if (!names.includes(selector.requiredAdvertisedToolName)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 globalThis.fetch = async (input, init) => {
   const url =
     typeof input === "string"
@@ -93,6 +128,44 @@ globalThis.fetch = async (input, init) => {
         .filter((entry) => entry[1] !== null),
     );
     const clone = response.clone();
+    if (responseGateMatches(request)) {
+      const bytes = await clone.arrayBuffer();
+      const bodyText = safeValue(new TextDecoder().decode(bytes));
+      append({
+        ...requestEvidence,
+        event: "response-complete",
+        status: response.status,
+        responseHeaders: headers,
+        responseBodyBase64: Buffer.from(bodyText).toString("base64"),
+      });
+      append({
+        ...requestEvidence,
+        event: "response-held",
+        status: response.status,
+      });
+      const releasePath = join(
+        responseGateDirectory,
+        `release-${base.requestId}`,
+      );
+      const gateDeadline = Date.now() + 5 * 60_000;
+      while (!existsSync(releasePath) && Date.now() < gateDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      if (!existsSync(releasePath)) {
+        append({
+          ...requestEvidence,
+          event: "request-failed",
+          error: "ResponseGateDeadline",
+        });
+        throw new Error("real provider response gate deadline exceeded");
+      }
+      append({
+        ...requestEvidence,
+        event: "response-released",
+        status: response.status,
+      });
+      return response;
+    }
     void clone
       .arrayBuffer()
       .then((bytes) => {
