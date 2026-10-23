@@ -48,10 +48,13 @@ written before assertions. The single rerun's raw structured artifact is
 `.test-results/lpac-p39-raw-sSvh58/probe-result.json` (artifact ID
 `47b974f9-430c-4f7a-85c9-07fe27b358f3`, SHA-256
 `F49E064DD83BEFE596EE23B72A0C94BD97E36A8CC97FDC71425E5FDEE6C47E1A`). Its
-schema is `Arbor.WindowsLpacOptOutProbeRawV1`; it records the test source hash,
-host/limits, native process status and an allowlisted set of scalar probe and
-cleanup fields. It intentionally excludes stdout/stderr, paths, environment
-values, secrets and driver error payloads. The file ACL was verified to grant
+schema is `Arbor.WindowsLpacOptOutProbeRawV1`; its `driverSourceSha256` is the
+native driver source hash. The artifact records host/limits, native process
+status and an allowlisted set of scalar probe and cleanup fields. It does not
+hash the TypeScript field extractor, compiled PE, or runner, so it is
+field-observation evidence rather than an end-to-end tamper-evident chain. It
+intentionally excludes stdout/stderr, paths, environment values, secrets and
+driver error payloads. The file ACL was verified to grant
 FullControl only to the current user, SYSTEM and Administrators. The test
 assertions remain unchanged and still fail on this result.
 The test is now opt-in for future runs via the test-only environment variable
