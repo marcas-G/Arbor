@@ -683,11 +683,13 @@ export const startProductionFixture = async (input: {
     | undefined;
   let signalSafeCleanup: ReturnType<typeof createSignalSafeCleanup> | undefined;
   let daemonStarts = 0;
+  let lastSafeHandshakeFailure: string | undefined;
 
   const startDaemon = async (override?: {
     readonly entry?: string;
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
   }) => {
+    lastSafeHandshakeFailure = undefined;
     const isFirstDaemon = daemonStarts === 0;
     const requestedPort = isFirstDaemon ? 0 : httpPort;
     const daemonEnv: NodeJS.ProcessEnv = {
@@ -771,8 +773,10 @@ export const startProductionFixture = async (input: {
       lastP39ReasonCode = extractP39ReasonCode(diagnosticText);
       lastP39FailureCode = extractP39FailureCode(diagnosticText);
       lastTypedError = extractSafeTypedError(diagnosticText);
+      const handshakeFailure = safeHandshakeFailure(error);
+      lastSafeHandshakeFailure = handshakeFailure;
       throw new Error(
-        `functional daemon startup handshake failed: ${safeHandshakeFailure(error)}; exitCode=${String(daemon.exitCode)}; signal=${String(daemon.signalCode)}; typedError=${JSON.stringify(lastTypedError)}; p39FailureCode=${lastP39FailureCode}; p39ReasonCode=${lastP39ReasonCode}; startupPhases=${JSON.stringify(startupPhaseEvents)}`,
+        `functional daemon startup handshake failed: ${handshakeFailure}; exitCode=${String(daemon.exitCode)}; signal=${String(daemon.signalCode)}; typedError=${JSON.stringify(lastTypedError)}; p39FailureCode=${lastP39FailureCode}; p39ReasonCode=${lastP39ReasonCode}; startupPhases=${JSON.stringify(startupPhaseEvents)}`,
         { cause: error },
       );
     }
@@ -794,8 +798,10 @@ export const startProductionFixture = async (input: {
       lastP39ReasonCode = extractP39ReasonCode(diagnosticText);
       lastP39FailureCode = extractP39FailureCode(diagnosticText);
       lastTypedError = extractSafeTypedError(diagnosticText);
+      const handshakeFailure = safeHandshakeFailure(error);
+      lastSafeHandshakeFailure = handshakeFailure;
       throw new Error(
-        `functional daemon startup failed: ${safeHandshakeFailure(error)}; exitCode=${String(daemon?.exitCode)}; signal=${String(daemon?.signalCode)}; webStaticIndex=${lastWebStaticIndex}; startupHint=${lastWebStaticIndex === "missing" ? "web dist not built" : "none"}; typedError=${JSON.stringify(lastTypedError)}; p39FailureCode=${lastP39FailureCode}; p39ReasonCode=${lastP39ReasonCode}; startupPhases=${JSON.stringify(startupPhaseEvents)}`,
+        `functional daemon startup failed: ${handshakeFailure}; exitCode=${String(daemon?.exitCode)}; signal=${String(daemon?.signalCode)}; webStaticIndex=${lastWebStaticIndex}; startupHint=${lastWebStaticIndex === "missing" ? "web dist not built" : "none"}; typedError=${JSON.stringify(lastTypedError)}; p39FailureCode=${lastP39FailureCode}; p39ReasonCode=${lastP39ReasonCode}; startupPhases=${JSON.stringify(startupPhaseEvents)}`,
         { cause: error },
       );
     }
@@ -831,7 +837,8 @@ export const startProductionFixture = async (input: {
             {
               startupFailure: true,
               phase: "initial-daemon-startup",
-              handshakeFailure: safeHandshakeFailure(error),
+              handshakeFailure:
+                lastSafeHandshakeFailure ?? safeHandshakeFailure(error),
               errorName:
                 error instanceof Error
                   ? sanitizeDiagnosticValue(error.name)
