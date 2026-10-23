@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -11,6 +12,7 @@ import {
   ClockLive,
   ConsumerDeadLetterStoreLive,
   ConsumerOffsetStoreLive,
+  CURRENT_SCHEMA_VERSION,
   DomainEventJournalLive,
   IdGeneratorLive,
   layer,
@@ -23,6 +25,7 @@ import {
   runMigrations,
   TransactionPortLive,
 } from "../../../adapters/persistence-sqlite/src/index.js";
+import { makeP51ActivationHighwaterFact } from "../../../adapters/persistence-sqlite/src/p51-verification-v2-consumer-reconciliation-migration.js";
 import { buildSingleWorkspaceLayer } from "../../../apps/single-workspace/src/index.js";
 import type {
   AttentionReq,
@@ -55,7 +58,10 @@ import { subtreeAttentionAggregate } from "../../../packages/projection-runtime/
 import type { AttentionReadDeps } from "../../../packages/projection-runtime/src/attention-loader.js";
 import { deriveProjectAttention } from "../../../packages/projection-runtime/src/attention-loader.js";
 import { projectionReadError } from "../../../packages/projection-runtime/src/errors.js";
-import { upgradeSchema44TestDatabase } from "../../support/schema44-database.js";
+import {
+  upgradeSchema44TestDatabase,
+  upgradeSchema44ToCurrentTestDatabase,
+} from "../../support/schema44-database.js";
 import {
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
@@ -120,6 +126,88 @@ const makeApp = (filename = ":memory:") => {
     ),
   );
   return Layer.mergeAll(infra, stores);
+};
+
+const upgradeHistoricalAttentionFixtureToSchema51 = async (
+  databaseFile: string,
+  directory: string,
+) => {
+  await upgradeSchema44TestDatabase({
+    databaseFilename: databaseFile,
+    p39ReportFilename: join(directory, "p39-report.sqlite"),
+  });
+  const schema44 = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    expect(
+      Number(
+        (
+          schema44.prepare("PRAGMA user_version").get() as {
+            user_version: number;
+          }
+        ).user_version,
+      ),
+    ).toBe(44);
+  } finally {
+    schema44.close();
+  }
+
+  await upgradeSchema44ToCurrentTestDatabase({
+    databaseFilename: databaseFile,
+  });
+  const schema51 = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    expect(CURRENT_SCHEMA_VERSION).toBe(51);
+    expect(
+      Number(
+        (
+          schema51.prepare("PRAGMA user_version").get() as {
+            user_version: number;
+          }
+        ).user_version,
+      ),
+    ).toBe(51);
+    expect(schema51.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+
+    const projects = schema51
+      .prepare(
+        `SELECT project.project_id,
+                COALESCE(sequence.last_sequence, 0) AS max_event_sequence
+           FROM projects AS project
+           LEFT JOIN project_event_sequences AS sequence USING (project_id)
+          ORDER BY project.project_id`,
+      )
+      .all() as Array<{ project_id: string; max_event_sequence: number }>;
+    const highwaters = schema51
+      .prepare(
+        `SELECT project_id, max_event_sequence, captured_at, fact_digest
+           FROM verification_conclusion_v2_activation_highwaters
+          ORDER BY project_id`,
+      )
+      .all() as Array<{
+      project_id: string;
+      max_event_sequence: number;
+      captured_at: string;
+      fact_digest: string;
+    }>;
+    expect(highwaters).toHaveLength(projects.length);
+    for (const project of projects) {
+      const highwater = highwaters.find(
+        (candidate) => candidate.project_id === project.project_id,
+      );
+      expect(highwater).toBeDefined();
+      if (highwater === undefined) continue;
+      expect(highwater).toMatchObject({
+        max_event_sequence: Number(project.max_event_sequence),
+        fact_digest: makeP51ActivationHighwaterFact(
+          project.project_id,
+          Number(project.max_event_sequence),
+          highwater.captured_at,
+        ).factDigest,
+      });
+    }
+  } finally {
+    schema51.close();
+  }
 };
 
 const seedSourceOwner = (fixture: typeof firstFixture | typeof secondFixture) =>
@@ -450,18 +538,40 @@ const startDaemonChildUntilMarker = async (
   const child = spawn(
     process.execPath,
     [p10DaemonChild, databaseFile, targetProjectId, mode, markerFile],
-    { cwd: repositoryRoot, stdio: "ignore" },
+    { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let stdout = "";
+  let stderr = "";
+  const retainTail = (current: string, chunk: string) =>
+    `${current}${chunk}`.slice(-16_384);
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    stdout = retainTail(stdout, chunk);
+  });
+  child.stderr?.on("data", (chunk: string) => {
+    stderr = retainTail(stderr, chunk);
+  });
+  const closed = new Promise<{
+    readonly code: number | null;
+    readonly signal: NodeJS.Signals | null;
+  }>((resolve) =>
+    child.once("close", (code, signal) => resolve({ code, signal })),
   );
   const startedAt = Date.now();
   while (!existsSync(markerFile)) {
     if (child.exitCode !== null || child.signalCode !== null) {
+      const status = await closed;
       throw new Error(
-        `daemon child exited before marker (${String(child.exitCode)}/${String(child.signalCode)})`,
+        `daemon child exited before marker (${String(status.code)}/${String(status.signal)})\nstdout:\n${stdout}\nstderr:\n${stderr}`,
       );
     }
     if (Date.now() - startedAt > 60_000) {
       child.kill("SIGKILL");
-      throw new Error(`timed out waiting for daemon marker ${markerFile}`);
+      const status = await closed;
+      throw new Error(
+        `timed out waiting for daemon marker ${markerFile} (exit ${String(status.code)}/${String(status.signal)})\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -559,7 +669,6 @@ describe("AH10/P10 Attention materialization", () => {
       value: "evt_018f2b3c-4d5e-7abc-8def-0123456789ff",
     },
     { field: "actor", value: "user:forged" },
-    { field: "event_version", value: 2 },
     { field: "occurred_at", value: "2026-10-10T00:00:00.000Z-mismatch" },
   ])(
     "fails closed when P9 event envelope field $field conflicts with its fact",
@@ -603,9 +712,7 @@ describe("AH10/P10 Attention materialization", () => {
       const result = await Effect.runPromise(
         Effect.provide(program, makeApp()),
       );
-      if (field !== "event_version") {
-        expect(Exit.isFailure(result.failed)).toBe(true);
-      }
+      expect(Exit.isFailure(result.failed)).toBe(true);
       expect(Exit.isFailure(result.queryFailure)).toBe(true);
       if (Exit.isFailure(result.queryFailure)) {
         expect(Cause.squash(result.queryFailure.cause)).toMatchObject({
@@ -615,10 +722,76 @@ describe("AH10/P10 Attention materialization", () => {
         });
       }
       expect(Exit.isFailure(result.directApplyFailed)).toBe(true);
-      expect(result.offset).toBe(field === "event_version" ? 1 : 0);
+      expect(result.offset).toBe(0);
       expect(result.rows).toEqual([]);
     },
   );
+
+  it("quarantines an unsupported event version while typed P10 reads fail closed", async () => {
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P37_MIGRATIONS);
+      yield* seedSourceOwner(firstFixture);
+      const fact = yield* seedP9FailureFactAndEvent(firstFixture);
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "UPDATE domain_events SET event_version = 2 WHERE event_id = ?",
+        [fact.eventId],
+      );
+
+      const poll = yield* runP10AttentionPoll();
+      const tx = yield* TransactionPort;
+      const journal = yield* DomainEventJournal;
+      const typedJournalRead = yield* Effect.exit(
+        tx.transact(journal.readAfter(projectId, 0, 10)),
+      );
+      const publicAttentionRead = yield* Effect.exit(
+        readMaterializedAttentionView(),
+      );
+      const deadLetters = yield* sql.unsafe<{ readonly reason: string }>(
+        `SELECT reason FROM consumer_dead_letters
+         WHERE consumer_id = ? AND project_id = ? AND sequence = 1`,
+        [consumerId, projectId],
+      );
+      return {
+        poll,
+        typedJournalRead,
+        publicAttentionRead,
+        deadLetterReason: deadLetters[0]?.reason,
+        offset: yield* readOffset(),
+        rows: yield* readAttentionRows(),
+      };
+    });
+
+    const result = await Effect.runPromise(Effect.provide(program, makeApp()));
+    expect(result.poll).toMatchObject({
+      fromSequence: 0,
+      lastSequence: 1,
+      applied: 0,
+      quarantined: 1,
+    });
+    expect(result.deadLetterReason).toBe("unsupported eventVersion 2");
+    expect(result.offset).toBe(1);
+    expect(result.rows).toEqual([]);
+    expect(Exit.isFailure(result.typedJournalRead)).toBe(true);
+    if (Exit.isFailure(result.typedJournalRead)) {
+      expect(Cause.squash(result.typedJournalRead.cause)).toMatchObject({
+        _tag: "PersistenceCorruption",
+        repository: "DomainEventJournal",
+        operation: "read-event-version-pair",
+      });
+    }
+    expect(Exit.isFailure(result.publicAttentionRead)).toBe(true);
+    if (Exit.isFailure(result.publicAttentionRead)) {
+      expect(Cause.squash(result.publicAttentionRead.cause)).toMatchObject({
+        _tag: "ProjectionReadFailure",
+        cause: {
+          _tag: "PersistenceCorruption",
+          repository: "DomainEventJournal",
+          operation: "read-event-version-pair",
+        },
+      });
+    }
+  });
 
   it("rolls back the row and offset together when the projection apply aborts", async () => {
     const program = Effect.gen(function* () {
@@ -750,10 +923,20 @@ describe("AH10/P10 Attention materialization", () => {
     const directory = createFunctionalFixtureDirectory();
     const databaseFile = join(directory, "arbor.sqlite");
     try {
-      const program = Effect.gen(function* () {
+      const seedProgram = Effect.gen(function* () {
         yield* runMigrations(P37_MIGRATIONS);
         yield* seedSourceOwner(firstFixture);
-        const fact = yield* seedP9DeliverReplayFailure();
+        return yield* seedP9DeliverReplayFailure();
+      });
+      const fact = await Effect.runPromise(
+        Effect.provide(seedProgram, makeApp(databaseFile)),
+      );
+      await upgradeHistoricalAttentionFixtureToSchema51(
+        databaseFile,
+        directory,
+      );
+
+      const program = Effect.gen(function* () {
         const poll = yield* runP37AttentionPoll();
         const firstRows = yield* readDeliverAttentionRows();
         const firstView = yield* readMaterializedAttentionView();
@@ -792,10 +975,6 @@ describe("AH10/P10 Attention materialization", () => {
       const result = await Effect.runPromise(
         Effect.provide(program, makeApp(databaseFile)),
       );
-      await upgradeSchema44TestDatabase({
-        databaseFilename: databaseFile,
-        p39ReportFilename: join(directory, "p39-report.sqlite"),
-      });
       const publicBeforePrune = await queryPublicAttentionAndTree(databaseFile);
       const rebuildAfterPrune = Effect.gen(function* () {
         const sql = yield* SqlClient;
@@ -879,11 +1058,21 @@ describe("AH10/P10 Attention materialization", () => {
     const directory = createFunctionalFixtureDirectory();
     const databaseFile = join(directory, "arbor.sqlite");
     try {
-      const program = Effect.gen(function* () {
+      const seedProgram = Effect.gen(function* () {
         yield* runMigrations(P37_MIGRATIONS);
         yield* seedSourceOwner(firstFixture);
         yield* seedP9FailureFactAndEvent(firstFixture);
         yield* seedP9DeliverReplayFailure();
+      });
+      await Effect.runPromise(
+        Effect.provide(seedProgram, makeApp(databaseFile)),
+      );
+      await upgradeHistoricalAttentionFixtureToSchema51(
+        databaseFile,
+        directory,
+      );
+
+      const program = Effect.gen(function* () {
         yield* runP37AttentionPoll();
         const before = yield* readMaterializedAttentionView();
         const tx = yield* TransactionPort;
@@ -952,10 +1141,6 @@ describe("AH10/P10 Attention materialization", () => {
       expect(result.rowsAfterRebuild).toEqual([]);
       expect(result.deliverRowsAfterRebuild).toEqual([]);
 
-      await upgradeSchema44TestDatabase({
-        databaseFilename: databaseFile,
-        p39ReportFilename: join(directory, "p39-report.sqlite"),
-      });
       const afterReopen = await queryPublicAttention(databaseFile);
       expect(afterReopen.rows).toEqual([]);
     } finally {
@@ -964,59 +1149,77 @@ describe("AH10/P10 Attention materialization", () => {
   });
 
   it("rebuilds the fact-backed row without clearing another project's rows", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P37_MIGRATIONS);
-      yield* seedSourceOwner(firstFixture);
-      yield* seedSourceOwner(secondFixture);
-      yield* seedP9FailureFactAndEvent(firstFixture);
-      yield* seedP9FailureFactAndEvent(secondFixture);
-      yield* runP10AttentionPoll(firstFixture.projectId);
-      yield* runP10AttentionPoll(secondFixture.projectId);
-      const incremental = yield* readAttentionRows();
-      const otherProjectBeforeRebuild = yield* readAttentionRows(
-        secondFixture.projectId,
+    const directory = createFunctionalFixtureDirectory();
+    const databaseFile = join(directory, "arbor.sqlite");
+    try {
+      const seedProgram = Effect.gen(function* () {
+        yield* runMigrations(P37_MIGRATIONS);
+        yield* seedSourceOwner(firstFixture);
+        yield* seedSourceOwner(secondFixture);
+        yield* seedP9FailureFactAndEvent(firstFixture);
+        yield* seedP9FailureFactAndEvent(secondFixture);
+      });
+      await Effect.runPromise(
+        Effect.provide(seedProgram, makeApp(databaseFile)),
       );
-      const tx = yield* TransactionPort;
-      const journal = yield* DomainEventJournal;
-      const genericProjection = yield* ProjectionStore;
-      const secondProjectEvents = yield* tx.transact(
-        journal.readAfter(secondFixture.projectId, 0, 10),
+      await upgradeHistoricalAttentionFixtureToSchema51(
+        databaseFile,
+        directory,
       );
-      yield* tx.transact(genericProjection.apply(secondProjectEvents));
-      yield* rebuildP10Attention(firstFixture.projectId);
-      const sql = yield* SqlClient;
-      return {
-        offset: yield* readOffset(firstFixture.projectId),
-        otherProjectOffset: yield* readOffset(secondFixture.projectId),
-        incremental,
-        rebuilt: yield* readAttentionRows(),
-        otherProjectBeforeRebuild,
-        otherProjectAfterRebuild: yield* readAttentionRows(
-          secondFixture.projectId,
-        ),
-        otherProjectP1Markers: yield* sql.unsafe(
-          "SELECT sequence FROM projection_state WHERE project_id = ? ORDER BY sequence",
-          [secondFixture.projectId],
-        ),
-      };
-    });
 
-    const {
-      offset,
-      otherProjectOffset,
-      incremental,
-      rebuilt,
-      otherProjectBeforeRebuild,
-      otherProjectAfterRebuild,
-      otherProjectP1Markers,
-    } = await Effect.runPromise(Effect.provide(program, makeApp()));
-    expect(offset).toBe(1);
-    expect(otherProjectOffset).toBe(1);
-    expect(rebuilt).toEqual(incremental);
-    expect(rebuilt).toHaveLength(1);
-    expect(otherProjectAfterRebuild).toEqual(otherProjectBeforeRebuild);
-    expect(otherProjectAfterRebuild).toHaveLength(1);
-    expect(otherProjectP1Markers).toHaveLength(1);
+      const program = Effect.gen(function* () {
+        yield* runP10AttentionPoll(firstFixture.projectId);
+        yield* runP10AttentionPoll(secondFixture.projectId);
+        const incremental = yield* readAttentionRows();
+        const otherProjectBeforeRebuild = yield* readAttentionRows(
+          secondFixture.projectId,
+        );
+        const tx = yield* TransactionPort;
+        const journal = yield* DomainEventJournal;
+        const genericProjection = yield* ProjectionStore;
+        const secondProjectEvents = yield* tx.transact(
+          journal.readAfter(secondFixture.projectId, 0, 10),
+        );
+        yield* tx.transact(genericProjection.apply(secondProjectEvents));
+        yield* rebuildP10Attention(firstFixture.projectId);
+        const sql = yield* SqlClient;
+        return {
+          offset: yield* readOffset(firstFixture.projectId),
+          otherProjectOffset: yield* readOffset(secondFixture.projectId),
+          incremental,
+          rebuilt: yield* readAttentionRows(),
+          otherProjectBeforeRebuild,
+          otherProjectAfterRebuild: yield* readAttentionRows(
+            secondFixture.projectId,
+          ),
+          otherProjectP1Markers: yield* sql.unsafe(
+            "SELECT sequence FROM projection_state WHERE project_id = ? ORDER BY sequence",
+            [secondFixture.projectId],
+          ),
+        };
+      });
+
+      const {
+        offset,
+        otherProjectOffset,
+        incremental,
+        rebuilt,
+        otherProjectBeforeRebuild,
+        otherProjectAfterRebuild,
+        otherProjectP1Markers,
+      } = await Effect.runPromise(
+        Effect.provide(program, makeApp(databaseFile)),
+      );
+      expect(offset).toBe(1);
+      expect(otherProjectOffset).toBe(1);
+      expect(rebuilt).toEqual(incremental);
+      expect(rebuilt).toHaveLength(1);
+      expect(otherProjectAfterRebuild).toEqual(otherProjectBeforeRebuild);
+      expect(otherProjectAfterRebuild).toHaveLength(1);
+      expect(otherProjectP1Markers).toHaveLength(1);
+    } finally {
+      removeFunctionalFixtureDirectory(directory);
+    }
   });
 
   it("retains the exact projected row and offset after a database close/reopen", async () => {
@@ -1061,6 +1264,17 @@ describe("AH10/P10 Attention materialization", () => {
         yield* seedSourceOwner(secondFixture);
         const firstFact = yield* seedP9FailureFactAndEvent(firstFixture);
         const secondFact = yield* seedP9FailureFactAndEvent(secondFixture);
+        return { firstFact, secondFact };
+      });
+      const seeded = await Effect.runPromise(
+        Effect.scoped(Effect.provide(seed, makeApp(databaseFile))),
+      );
+      await upgradeHistoricalAttentionFixtureToSchema51(
+        databaseFile,
+        directory,
+      );
+
+      const prime = Effect.gen(function* () {
         // Prime only Project B through P10, and put a P1 marker there. The
         // real daemon must later discover B's second pending event from the
         // Open-project scan while configured only for Project A.
@@ -1076,15 +1290,11 @@ describe("AH10/P10 Attention materialization", () => {
           journal.readAfter(secondFixture.projectId, 0, 1),
         );
         yield* tx.transact(p1Projection.apply(secondEvents));
-        return { firstFact, secondFact, secondPendingFact };
+        return { ...seeded, secondPendingFact };
       });
       const facts = await Effect.runPromise(
-        Effect.scoped(Effect.provide(seed, makeApp(databaseFile))),
+        Effect.scoped(Effect.provide(prime, makeApp(databaseFile))),
       );
-      await upgradeSchema44TestDatabase({
-        databaseFilename: databaseFile,
-        p39ReportFilename: join(directory, "p39-report.sqlite"),
-      });
 
       const beforeCommitMarker = join(directory, "before-commit.marker");
       const beforeCommit = await startDaemonChildUntilMarker(
