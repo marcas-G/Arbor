@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
 import {
+  archiveProductionFixtureFailure,
+  writeProductionFixtureArchiveSkipped,
+} from "../support/fixture-failure-evidence.js";
+import {
   type ProductionFixture,
   startProductionFixture,
 } from "../support/production-fixture.js";
@@ -14,14 +18,363 @@ import {
   waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
+import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
 
 let fixture: ProductionFixture | undefined;
+let fixtureFailureEvidence: (() => unknown) | undefined;
+let preserveFixtureForFailure = false;
 const EXECUTABLE_APPROVAL_ENTRY_KEY = /^eap:.+:\d+$/u;
 
-test.afterEach(async () => {
-  await fixture?.stop();
+test.afterEach(async (_fixtures, testInfo) => {
+  const currentFixture = fixture;
+  const captureFailureEvidence = fixtureFailureEvidence;
+  const preserveForFailure = preserveFixtureForFailure;
+  fixtureFailureEvidence = undefined;
+  preserveFixtureForFailure = false;
+  if (currentFixture === undefined) return;
+
+  const failed = testInfo.status !== testInfo.expectedStatus;
+  const beforeStop = failed ? captureFailureEvidence?.() : undefined;
+  let stopError: unknown;
+  try {
+    await currentFixture.stop();
+  } catch (error) {
+    stopError = error;
+  }
+  const afterStop = failed ? captureFailureEvidence?.() : undefined;
   fixture = undefined;
+
+  if (preserveForFailure) {
+    if (failed) {
+      const resultDirectory = process.env.ARBOR_TEST_RESULT_DIRECTORY;
+      const evidence = {
+        testName: testInfo.title,
+        status: testInfo.status,
+        expectedStatus: testInfo.expectedStatus,
+        beforeStop,
+        afterStop,
+        stopError: stopError instanceof Error ? stopError.message : null,
+        daemonErrors: currentFixture.daemonErrors,
+        daemon: currentFixture.daemonProcessSnapshot(),
+      };
+      if (currentFixture.daemonsExited() && resultDirectory !== undefined) {
+        try {
+          const archivedDirectory = archiveProductionFixtureFailure({
+            fixture: currentFixture,
+            resultDirectory,
+            artifactPrefix: "p38-browser-approval",
+            evidence,
+          });
+          process.stderr.write(
+            `[P38_BROWSER_FAILURE_ARTIFACT] ${JSON.stringify({ archivedDirectory })}\n`,
+          );
+        } catch (archiveError) {
+          try {
+            writeProductionFixtureArchiveSkipped({
+              fixture: currentFixture,
+              resultDirectory,
+              evidence: {
+                ...evidence,
+                archiveError:
+                  archiveError instanceof Error
+                    ? archiveError.message
+                    : String(archiveError),
+              },
+            });
+          } catch (fallbackError) {
+            process.stderr.write(
+              `[P38_BROWSER_FAILURE_ARCHIVE_ERROR] ${JSON.stringify({ archiveError: String(archiveError), fallbackError: String(fallbackError), fixtureDirectory: currentFixture.directory })}\n`,
+            );
+          }
+        }
+      } else {
+        process.stderr.write(
+          `[P38_BROWSER_FAILURE_FIXTURE_RETAINED] ${JSON.stringify({ fixtureDirectory: currentFixture.directory, databaseFile: currentFixture.databaseFile, daemonsExited: currentFixture.daemonsExited(), resultDirectory: resultDirectory ?? null })}\n`,
+        );
+      }
+    } else {
+      removeFunctionalFixtureDirectory(currentFixture.directory);
+    }
+  }
+
+  if (stopError !== undefined) {
+    throw new Error("P38 browser approval fixture cleanup failed", {
+      cause: stopError,
+    });
+  }
 });
+
+interface P38BrowserDiagnosticContext {
+  readonly marker: string;
+  readonly secretCanary: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly executionId: string;
+  readonly approvalId: string;
+  readonly approvalRevision: number;
+  readonly effectLog: string;
+  readonly providerRoutes: ReadonlyArray<Readonly<Record<string, unknown>>>;
+  readonly daemonStdout: ReadonlyArray<string>;
+  readonly approveCommand?: Readonly<Record<string, unknown>>;
+}
+
+const readP38BrowserFailureSnapshot = (
+  databaseFile: string,
+  workspaceDirectory: string,
+  context: P38BrowserDiagnosticContext,
+): Record<string, unknown> => {
+  let db: DatabaseSync | undefined;
+  const redactCanary = (value: unknown): unknown => {
+    if (typeof value === "string")
+      return value.split(context.secretCanary).join("[redacted-canary]");
+    if (value instanceof Uint8Array)
+      return redactCanary(new TextDecoder().decode(value));
+    if (Array.isArray(value)) return value.map(redactCanary);
+    if (typeof value === "object" && value !== null)
+      return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [key, redactCanary(entry)]),
+      );
+    return value;
+  };
+  try {
+    db = new DatabaseSync(databaseFile, { readOnly: true });
+    db.exec("BEGIN");
+    const execution = db
+      .prepare(
+        `SELECT execution_id, project_id, workspace_id, session_id,
+                episode_kind, episode_ref, episode_revision,
+                stop_requested_at, settled_at,
+                settlement_kind, settlement_json
+           FROM executions WHERE execution_id = ? AND project_id = ?`,
+      )
+      .get(context.executionId, context.projectId) as
+      | { readonly session_id: string }
+      | undefined;
+    const lease = db
+      .prepare(
+        `SELECT execution_id, worker_id, worker_incarnation_id,
+                generation, expires_at, updated_at
+           FROM execution_leases WHERE execution_id = ?`,
+      )
+      .get(context.executionId);
+    const approval = db
+      .prepare(
+        `SELECT approval_id, route_kind, binding_proven, execution_id,
+                project_id, workspace_id, state, revision, consumed_at,
+                consumed_by, logical_step_no, repair_attempt, action_index,
+                logical_action_id, call_ref, tool_invocation_id,
+                tool_name, tool_version, action_digest, expires_at
+           FROM action_approvals
+          WHERE approval_id = ? AND route_kind = 'Executable'`,
+      )
+      .get(context.approvalId);
+    const actionIdentity = approval as
+      | {
+          readonly execution_id: string;
+          readonly logical_step_no: number;
+          readonly repair_attempt: number;
+          readonly action_index: number;
+          readonly logical_action_id: string;
+          readonly tool_invocation_id: string;
+          readonly call_ref: string;
+        }
+      | undefined;
+    const steps = db
+      .prepare(
+        `SELECT logical_step_no, repair_attempt, provider_turn_id, state,
+                revision, next_action_index, settlement_json
+           FROM agent_loop_steps WHERE execution_id = ?
+          ORDER BY logical_step_no, repair_attempt`,
+      )
+      .all(context.executionId);
+    const action =
+      actionIdentity === undefined
+        ? undefined
+        : db
+            .prepare(
+              `SELECT logical_step_no, repair_attempt, action_index,
+                      logical_action_id, call_ref, route_kind, action_kind,
+                      state, result_ref, settlement_ref, disposition_json,
+                      observation_source_ref, revision
+                 FROM agent_loop_step_actions
+                WHERE execution_id = ? AND logical_step_no = ?
+                  AND repair_attempt = ? AND action_index = ?
+                  AND logical_action_id = ? AND call_ref = ?`,
+            )
+            .get(
+              actionIdentity.execution_id,
+              actionIdentity.logical_step_no,
+              actionIdentity.repair_attempt,
+              actionIdentity.action_index,
+              actionIdentity.logical_action_id,
+              actionIdentity.call_ref,
+            );
+    const invocations = db
+      .prepare(
+        `SELECT invocation_id, tool_name, tool_version, approval_id,
+                effect_admission_state, recovery_binding_state,
+                recovery_binding_sha256, settled_at, settlement_kind,
+                settlement_json, result_ref, observation_json
+           FROM tool_invocations WHERE execution_id = ? AND approval_id = ?
+          ORDER BY intent_at`,
+      )
+      .all(context.executionId, context.approvalId) as Array<{
+      readonly invocation_id: string;
+    }>;
+    const recoveryBindings = db
+      .prepare(
+        `SELECT i.invocation_id, i.recovery_binding_state,
+                i.recovery_binding_sha256, b.binding_version,
+                b.canonical_binding_json, b.binding_sha256
+           FROM tool_invocations i
+           LEFT JOIN tool_invocation_recovery_bindings b
+             ON b.invocation_id = i.invocation_id
+          WHERE i.execution_id = ? AND i.approval_id = ?
+          ORDER BY i.intent_at`,
+      )
+      .all(context.executionId, context.approvalId);
+    const attempts = db
+      .prepare(
+        `SELECT a.invocation_id, a.attempt_no, a.admission_state,
+                a.admission_source, a.admission_time_precision,
+                a.binding_sha256, a.admitted_at
+           FROM tool_invocation_effect_attempts a
+           JOIN tool_invocations i ON i.invocation_id = a.invocation_id
+          WHERE i.execution_id = ? AND i.approval_id = ?
+          ORDER BY a.invocation_id, a.attempt_no`,
+      )
+      .all(context.executionId, context.approvalId);
+    const toolResults =
+      execution === undefined
+        ? []
+        : db
+            .prepare(
+              `SELECT sequence, source_kind, source_ref, payload_json
+                 FROM session_entries
+                WHERE session_id = ? AND item_type = 'ToolResult'
+                ORDER BY sequence`,
+            )
+            .all(execution.session_id)
+            .flatMap((row) => {
+              const entry = row as {
+                readonly sequence: number;
+                readonly source_kind: string;
+                readonly source_ref: string;
+                readonly payload_json: string;
+              };
+              try {
+                const payload = JSON.parse(entry.payload_json) as Record<
+                  string,
+                  unknown
+                >;
+                if (payload.callRef !== actionIdentity?.call_ref) return [];
+                return [
+                  {
+                    sequence: entry.sequence,
+                    sourceKind: entry.source_kind,
+                    sourceRef: entry.source_ref,
+                    callRef: payload.callRef,
+                    payloadTag: payload._tag ?? null,
+                  },
+                ];
+              } catch {
+                return [];
+              }
+            });
+    const unavailableFacts = db
+      .prepare(
+        `SELECT provider_id, provider_version, failure_code,
+                probe_evidence_ref, attention_fact_id
+           FROM sandbox_provider_unavailable_facts
+          WHERE execution_id = ? ORDER BY policy_revision`,
+      )
+      .all(context.executionId);
+    const unavailableQueue = db
+      .prepare(
+        `SELECT q.attention_fact_id, q.state
+           FROM sandbox_provider_unavailable_attention_queue q
+           JOIN sandbox_provider_unavailable_facts f
+             ON f.attention_fact_id = q.attention_fact_id
+            AND f.project_id = q.project_id
+          WHERE f.execution_id = ? ORDER BY q.attention_fact_id`,
+      )
+      .all(context.executionId);
+    const inbox = db
+      .prepare(
+        `SELECT entry_key, consumed_at
+           FROM inbox_entries WHERE workspace_id = ? AND entry_key IN (?, ?)
+          ORDER BY entry_key`,
+      )
+      .all(
+        context.workspaceId,
+        `eap:${context.approvalId}:${context.approvalRevision}`,
+        `eap:${context.approvalId}:${context.approvalRevision + 1}`,
+      );
+    db.exec("COMMIT");
+
+    const effectPath = join(workspaceDirectory, context.effectLog);
+    const proofPath = join(workspaceDirectory, "proof.txt");
+    const effectText = existsSync(effectPath)
+      ? readFileSync(effectPath, "utf8")
+      : "";
+    const result = {
+      phase: "post-browser-approval-effect-wait",
+      publicIdentity: {
+        projectId: context.projectId,
+        workspaceId: context.workspaceId,
+        executionId: context.executionId,
+        approvalId: context.approvalId,
+        approvalRevision: context.approvalRevision,
+        approveCommand: context.approveCommand,
+      },
+      execution,
+      lease,
+      approval,
+      steps,
+      action,
+      invocations,
+      recoveryBindings,
+      attempts,
+      toolResults,
+      sandboxProviderUnavailableFacts: unavailableFacts,
+      sandboxProviderUnavailableQueue: unavailableQueue,
+      inbox,
+      providerRoutes: context.providerRoutes,
+      providerCallCount: context.providerRoutes.length,
+      daemonStdoutTail: context.daemonStdout.slice(-100),
+      effectFiles: {
+        effectLogExists: existsSync(effectPath),
+        effectLogBytes: Buffer.byteLength(effectText, "utf8"),
+        effectLogLineCount: effectText
+          .split(/\r?\n/u)
+          .filter((line) => line.length > 0).length,
+        effectLogContainsExpectedCanary: effectText.includes(
+          context.secretCanary,
+        ),
+        proofExists: existsSync(proofPath),
+      },
+    };
+    return redactCanary(result) as Record<string, unknown>;
+  } catch (error) {
+    try {
+      if (db?.isTransaction) db.exec("ROLLBACK");
+    } catch {
+      // Preserve the snapshot failure as the reported diagnostic.
+    }
+    return {
+      snapshotError: error instanceof Error ? error.message : String(error),
+      projectId: context.projectId,
+      executionId: context.executionId,
+      approvalId: context.approvalId,
+    };
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // Keep the original diagnostic result/error primary.
+    }
+  }
+};
 
 const startQueueApproval = async (marker: string) => {
   const effectLog = `p38-browser-${marker}.log`;
@@ -160,20 +513,50 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
     process.platform === "win32"
       ? `if (Test-Path -LiteralPath 'proof.txt') { Add-Content -LiteralPath '${effectLog}' -Value '${secretCanary}'; mv -LiteralPath 'proof.txt' -Destination '${destination}' }`
       : `if [ -f proof.txt ]; then printf '%s\\n' '${secretCanary}' >> '${effectLog}' && mv proof.txt '${destination}'; fi`;
+  const providerRoutes: Array<Readonly<Record<string, unknown>>> = [];
+  const daemonStdout: string[] = [];
+  let diagnosticContext: P38BrowserDiagnosticContext | undefined;
+  let approveCommandEvidence: Readonly<Record<string, unknown>> | undefined;
   fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
+    preserveDirectoryOnStop: true,
+    onDaemonStdout: (line) => daemonStdout.push(line),
     reply: (call) => {
-      const tools = new Set(
-        call.tools
-          .map((tool) => tool.function?.name)
-          .filter((name): name is string => name !== undefined),
-      );
+      const availableToolNames = call.tools
+        .map((tool) => tool.function?.name)
+        .filter((name): name is string => name !== undefined);
+      const tools = new Set(availableToolNames);
       const context = JSON.stringify(call.messages);
-      if (
+      const rootAssignment =
         tools.has("assign_work") &&
         !tools.has("claim_completion") &&
-        context.includes(marker)
-      ) {
+        context.includes(marker);
+      const workspaceShell =
+        tools.has("shell") &&
+        tools.has("claim_completion") &&
+        context.includes(marker);
+      const effectReturned = call.messages.some(
+        (message) =>
+          message.role === "tool" && message.content?.includes(marker),
+      );
+      const selectedBranch = rootAssignment
+        ? context.includes("WorkAssigned(")
+          ? "root-work-already-assigned"
+          : "root-assign-work"
+        : workspaceShell
+          ? effectReturned
+            ? "workspace-observed-effect"
+            : "workspace-shell"
+          : "fallback-text";
+      providerRoutes.push({
+        requestNo: providerRoutes.length + 1,
+        availableToolNames,
+        markerPresent: context.includes(marker),
+        workAssignedLiteralPresent: context.includes("WorkAssigned("),
+        effectReturned,
+        selectedBranch,
+      });
+      if (rootAssignment) {
         return context.includes("WorkAssigned(")
           ? { _tag: "Text", text: `Work admitted for ${marker}` }
           : {
@@ -200,15 +583,7 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
               },
             };
       }
-      if (
-        tools.has("shell") &&
-        tools.has("claim_completion") &&
-        context.includes(marker)
-      ) {
-        const effectReturned = call.messages.some(
-          (message) =>
-            message.role === "tool" && message.content?.includes(marker),
-        );
+      if (workspaceShell) {
         return effectReturned
           ? { _tag: "Text", text: `Observed ${marker}` }
           : {
@@ -224,6 +599,7 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
       return { _tag: "Text", text: `Waiting for ${marker}` };
     },
   });
+  preserveFixtureForFailure = true;
 
   const client = makePublicClient(fixture.baseUrl);
   const project = await createFunctionalProject(
@@ -304,6 +680,34 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
     );
   }
   const executableTarget = approvalEntry.target;
+  diagnosticContext = {
+    marker,
+    secretCanary,
+    projectId: project.projectId,
+    workspaceId: project.rootWorkspaceId,
+    executionId: executableTarget.executionId,
+    approvalId: executableTarget.approvalId,
+    approvalRevision: executableTarget.revision,
+    effectLog,
+    providerRoutes,
+    daemonStdout,
+  };
+  fixtureFailureEvidence = () => {
+    const activeFixture = fixture;
+    const context = diagnosticContext;
+    if (activeFixture === undefined || context === undefined)
+      return { diagnosticContextAvailable: false };
+    return readP38BrowserFailureSnapshot(
+      activeFixture.databaseFile,
+      activeFixture.workspaceDirectory,
+      {
+        ...context,
+        ...(approveCommandEvidence === undefined
+          ? {}
+          : { approveCommand: approveCommandEvidence }),
+      },
+    );
+  };
   expect(JSON.stringify(executableTarget)).not.toContain(secretCanary);
   expect(executableTarget.validatedArgumentsPreview).not.toContain(
     secretCanary,
@@ -331,8 +735,52 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
     executableTarget.sideEffectSemantics,
   );
   await expect(approvalDetails).not.toContainText(secretCanary);
+  const approveResponsePromise = page.waitForResponse((response) => {
+    const request = response.request();
+    return (
+      new URL(response.url()).pathname === "/commands" &&
+      request.method() === "POST"
+    );
+  });
   await page.getByLabel("审批决定").selectOption("Approve");
   await page.getByRole("button", { name: "批准并继续" }).click();
+  const approveResponse = await approveResponsePromise;
+  const approveRequest = approveResponse.request().postDataJSON() as {
+    readonly commandType?: string;
+    readonly payload?: Record<string, unknown>;
+  };
+  const approveReceipt = (await approveResponse.json()) as Record<
+    string,
+    unknown
+  >;
+  approveCommandEvidence = {
+    status: approveResponse.status(),
+    commandType: approveRequest.commandType,
+    payload: approveRequest.payload,
+    receipt: approveReceipt,
+  };
+  expect(approveResponse.status()).toBe(200);
+  expect(approveRequest).toMatchObject({
+    commandType: "ResolveExecutableApproval",
+    payload: {
+      approvalId: executableTarget.approvalId,
+      expectedRevision: executableTarget.revision,
+      decision: "Approve",
+    },
+  });
+  expect(approveReceipt).toMatchObject({
+    ok: true,
+    status: 200,
+    body: {
+      resolution: "Committed",
+      result: {
+        approvalId: executableTarget.approvalId,
+        executionId: executableTarget.executionId,
+        state: "Approved",
+        revision: executableTarget.revision + 1,
+      },
+    },
+  });
 
   await expect
     .poll(
@@ -343,6 +791,92 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
       { timeout: 45_000 },
     )
     .toBe(1);
+  if (diagnosticContext === undefined)
+    throw new Error(
+      "P38 browser approval diagnostic identity was not captured",
+    );
+  const completedSnapshot = readP38BrowserFailureSnapshot(
+    fixture.databaseFile,
+    fixture.workspaceDirectory,
+    {
+      ...diagnosticContext,
+      approveCommand: approveCommandEvidence,
+    },
+  );
+  const completedApproval = completedSnapshot.approval as {
+    readonly approval_id: string;
+    readonly execution_id: string;
+    readonly logical_step_no: number;
+    readonly repair_attempt: number;
+    readonly action_index: number;
+    readonly logical_action_id: string;
+    readonly call_ref: string;
+    readonly tool_invocation_id: string;
+  };
+  const completedSteps = completedSnapshot.steps as Array<{
+    readonly logical_step_no: number;
+    readonly repair_attempt: number;
+    readonly provider_turn_id: string;
+  }>;
+  const completedStep = completedSteps.find(
+    (step) =>
+      step.logical_step_no === completedApproval.logical_step_no &&
+      step.repair_attempt === completedApproval.repair_attempt,
+  );
+  expect(completedSnapshot.approval).toMatchObject({
+    approval_id: executableTarget.approvalId,
+    execution_id: executableTarget.executionId,
+    state: "Consumed",
+    consumed_by: expect.any(String),
+  });
+  expect(completedSnapshot.action).toMatchObject({
+    state: "Applied",
+    logical_step_no: completedApproval.logical_step_no,
+    repair_attempt: completedApproval.repair_attempt,
+    action_index: completedApproval.action_index,
+    logical_action_id: completedApproval.logical_action_id,
+    call_ref: completedApproval.call_ref,
+  });
+  expect(completedStep?.provider_turn_id).toMatch(/^ptn_/u);
+  expect(completedSnapshot.invocations).toHaveLength(1);
+  expect(completedSnapshot.invocations).toMatchObject([
+    {
+      invocation_id: completedApproval.tool_invocation_id,
+      approval_id: executableTarget.approvalId,
+      settlement_kind: "Success",
+    },
+  ]);
+  expect(completedSnapshot.recoveryBindings).toHaveLength(1);
+  const completedBindingRows = completedSnapshot.recoveryBindings as Array<{
+    readonly canonical_binding_json: string | null;
+    readonly binding_sha256: string | null;
+    readonly recovery_binding_sha256: string | null;
+  }>;
+  const completedBinding = completedBindingRows[0];
+  if (
+    completedBinding?.canonical_binding_json === null ||
+    completedBinding?.canonical_binding_json === undefined
+  )
+    throw new Error("P38 browser approval RecoveryBinding was absent");
+  expect(JSON.parse(completedBinding.canonical_binding_json)).toMatchObject({
+    executionId: executableTarget.executionId,
+    invocationId: completedApproval.tool_invocation_id,
+    providerTurnId: completedStep?.provider_turn_id,
+    logicalStepNo: completedApproval.logical_step_no,
+    repairAttempt: completedApproval.repair_attempt,
+    logicalActionId: completedApproval.logical_action_id,
+    actionIndex: completedApproval.action_index,
+    callRef: completedApproval.call_ref,
+    approvalId: executableTarget.approvalId,
+  });
+  expect(completedBinding.binding_sha256).toBe(
+    completedBinding.recovery_binding_sha256,
+  );
+  expect(completedSnapshot.effectFiles).toMatchObject({
+    effectLogExists: true,
+    effectLogLineCount: 1,
+    proofExists: false,
+  });
   await expect.poll(() => fixture?.daemonErrors ?? []).toEqual([]);
 });
 
