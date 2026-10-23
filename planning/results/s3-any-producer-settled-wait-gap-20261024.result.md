@@ -43,10 +43,14 @@ fixed, unaccepted draft proposing a closed producer-evidence set for new
 model-authored waits, a `ModelUsable` rejection when evidence is absent, and
 read-only Attention for legacy settled idle waits. It also defines how a
 known future Workspace or information-only external input should be expressed.
-Draft SHA-256: `893E37EC5028B75F511890E82C97EB6E9DB66690F84E6C3F22B95C3CA263FCF3`.
-Independent read-only review by p41 passed with 0 blocking findings.
+Suggested decision token: `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`.
+The proposal's current SHA-256 and the package/file manifest are recorded in
+`planning/manifests/s3-any-producer-settled-wait-governance-package.manifest.json`.
+Independent read-only review by p41 passed with 0 blocking findings on the
+reviewed semantic package; the final manifest is the acceptance identity.
 The proposal changes no files under `docs/design/**` and authorizes no
-implementation. Manual acceptance is pending.
+implementation. If accepted, authority is design landing only; implementation
+requires separate authorization. Manual acceptance is pending.
 
 S3 remains **unqualified**. No daemon or real Provider was run during this
 design-gap investigation; no schema migration, API label, receipt/replay,
