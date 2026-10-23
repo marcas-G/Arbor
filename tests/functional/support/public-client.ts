@@ -62,8 +62,30 @@ export interface PublicClient {
   readonly projectResources: () => Promise<PublicProjectResourceCatalog>;
 }
 
-export const makePublicClient = (baseUrl: string): PublicClient => {
+export interface PublicClientOptions {
+  /**
+   * Optional absolute deadline shared by every request made through this
+   * client. Used by bounded qualification journeys; ordinary functional
+   * clients retain their existing request semantics.
+   */
+  readonly deadlineAt?: number;
+}
+
+export const makePublicClient = (
+  baseUrl: string,
+  options: PublicClientOptions = {},
+): PublicClient => {
+  const requestSignal = (): AbortSignal | undefined => {
+    if (options.deadlineAt === undefined) return undefined;
+    const remainingMs = options.deadlineAt - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error("public client overall request deadline exceeded");
+    }
+    return AbortSignal.timeout(Math.ceil(remainingMs));
+  };
+
   const post = async (path: string, body: unknown) => {
+    const signal = requestSignal();
     const response = await fetch(`${baseUrl}${path}`, {
       method: "POST",
       headers: {
@@ -71,6 +93,7 @@ export const makePublicClient = (baseUrl: string): PublicClient => {
         authorization: "Bearer local",
       },
       body: JSON.stringify(body),
+      ...(signal === undefined ? {} : { signal }),
     });
     const text = await response.text();
     if (text.length === 0) {
@@ -83,8 +106,10 @@ export const makePublicClient = (baseUrl: string): PublicClient => {
     return parsed;
   };
   const get = async (path: string) => {
+    const signal = requestSignal();
     const response = await fetch(`${baseUrl}${path}`, {
       headers: { authorization: "Bearer local" },
+      ...(signal === undefined ? {} : { signal }),
     });
     const text = await response.text();
     if (text.length === 0) {
@@ -100,8 +125,9 @@ export const makePublicClient = (baseUrl: string): PublicClient => {
     projectId: string,
     commandType: string,
     payload: unknown,
-  ) =>
-    fetch(`${baseUrl}/commands`, {
+  ) => {
+    const signal = requestSignal();
+    return fetch(`${baseUrl}/commands`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -115,10 +141,12 @@ export const makePublicClient = (baseUrl: string): PublicClient => {
         issuedAt: new Date().toISOString(),
         payload,
       }),
+      ...(signal === undefined ? {} : { signal }),
     }).then(async (response) => ({
       status: response.status,
       payload: (await response.json()) as Record<string, unknown>,
     }));
+  };
   return {
     rawCommand,
     command: async (projectId, commandType, payload) => {
