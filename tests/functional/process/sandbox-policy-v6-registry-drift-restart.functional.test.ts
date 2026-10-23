@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
@@ -29,6 +29,7 @@ import {
   WorktreeStore,
 } from "../../../packages/ports/src/index.js";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
+import { archiveProductionFixtureFailure } from "../support/fixture-failure-evidence.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -49,6 +50,7 @@ import {
   writeSandboxPolicyV3SourceFirst,
   writeSandboxPolicyV3TestPair,
 } from "../support/sandbox-policy-v3-source.js";
+import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
 
 interface SandboxCandidate {
   readonly kind: string;
@@ -96,6 +98,7 @@ const child = resolve(
 );
 const fixtures: ProductionFixture[] = [];
 const artifactFixtureCleanups: Array<() => void> = [];
+const fixtureDiagnostics = new Map<ProductionFixture, () => unknown>();
 
 const decodeToolObservation = (value: unknown): Record<string, unknown> => {
   if (typeof value === "string")
@@ -237,6 +240,100 @@ const p1OwnedDomainSnapshot = (
             ORDER BY logical_step_no, repair_attempt`,
         )
         .all(executionId),
+    };
+    db.exec("COMMIT");
+    return snapshot;
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.close();
+  }
+};
+
+const freshExecutionDiagnosticSnapshot = (
+  databaseFile: string,
+  executionId: string,
+  messageId?: string,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    db.exec("BEGIN");
+    const snapshot = {
+      execution: db
+        .prepare(
+          `SELECT execution_id, project_id, workspace_id, episode_kind,
+                  episode_ref, episode_revision, settled_at, settlement_kind,
+                  settlement_json
+             FROM executions WHERE execution_id = ?`,
+        )
+        .get(executionId),
+      steps: db
+        .prepare(
+          `SELECT logical_step_no, repair_attempt, provider_turn_id, state,
+                  revision, next_action_index, settlement_json,
+                  successor_json, next_step_reason
+             FROM agent_loop_steps WHERE execution_id = ?
+            ORDER BY logical_step_no, repair_attempt`,
+        )
+        .all(executionId),
+      actions: db
+        .prepare(
+          `SELECT logical_step_no, repair_attempt, action_index,
+                  logical_action_id, call_ref, route_kind, action_kind,
+                  input_hash, state, result_ref, settlement_ref,
+                  disposition_json, observation_source_ref, revision
+             FROM agent_loop_step_actions WHERE execution_id = ?
+            ORDER BY logical_step_no, repair_attempt, action_index`,
+        )
+        .all(executionId),
+      executableApprovals: db
+        .prepare(
+          `SELECT approval_id, execution_id, state, revision, consumed_by,
+                  logical_step_no, repair_attempt, action_index,
+                  logical_action_id, call_ref, tool_invocation_id
+             FROM action_approvals
+            WHERE execution_id = ? AND route_kind = 'Executable'
+            ORDER BY approval_id`,
+        )
+        .all(executionId),
+      invocations: db
+        .prepare(
+          `SELECT invocation_id, tool_name, side_effect_semantics,
+                  effect_admission_state, recovery_binding_state,
+                  recovery_binding_sha256, settled_at, settlement_kind,
+                  settlement_json, observation_json
+             FROM tool_invocations WHERE execution_id = ?
+            ORDER BY intent_at`,
+        )
+        .all(executionId),
+      sandboxDecisions: db
+        .prepare(
+          `SELECT policy_revision, policy_digest, profile_id, provider_id,
+                  network_policy_json, decision_command_id
+             FROM sandbox_policy_decisions WHERE execution_id = ?
+            ORDER BY policy_revision`,
+        )
+        .all(executionId),
+      providerUnavailableFacts: db
+        .prepare(
+          `SELECT policy_revision, policy_digest, profile_id, provider_id,
+                  provider_version, failure_code, attention_fact_id
+             FROM sandbox_provider_unavailable_facts WHERE execution_id = ?
+            ORDER BY policy_revision`,
+        )
+        .all(executionId),
+      conversationResponseJob:
+        messageId === undefined
+          ? undefined
+          : db
+              .prepare(
+                `SELECT message_id, state, revision, active_execution_id,
+                        next_attempt_no, attention_reason,
+                        response_execution_id
+                   FROM conversation_response_jobs WHERE message_id = ?`,
+              )
+              .get(messageId),
     };
     db.exec("COMMIT");
     return snapshot;
@@ -411,13 +508,63 @@ const operatorCommand = async (
   return body;
 };
 
-afterEach(async () => {
+afterEach(async ({ task }) => {
   const cleanupErrors: unknown[] = [];
+  const failed = (task.result?.errors?.length ?? 0) > 0;
   for (const fixture of fixtures.splice(0)) {
+    let stopError: unknown;
     try {
       await fixture.stop();
     } catch (error) {
-      cleanupErrors.push(error);
+      stopError = error;
+    }
+    const diagnostic = fixtureDiagnostics.get(fixture)?.();
+    fixtureDiagnostics.delete(fixture);
+    if (!fixture.daemonsExited()) {
+      cleanupErrors.push(
+        new Error(
+          `V6 failure fixture cannot be archived while daemon remains active; database=${fixture.databaseFile}`,
+          { cause: stopError },
+        ),
+      );
+    } else if (failed || stopError !== undefined) {
+      const resultDirectory = process.env.ARBOR_TEST_RESULT_DIRECTORY;
+      if (resultDirectory === undefined) {
+        cleanupErrors.push(
+          new Error(
+            `V6 failure evidence cannot be archived without ARBOR_TEST_RESULT_DIRECTORY; fixture=${fixture.directory}`,
+            { cause: stopError },
+          ),
+        );
+      } else {
+        try {
+          const archivedDirectory = archiveProductionFixtureFailure({
+            fixture,
+            resultDirectory,
+            artifactPrefix: "sandbox-policy-v6-fresh-work",
+            evidence: {
+              testName: task.name,
+              daemonErrors: fixture.daemonErrors,
+              primaryDaemon: fixture.daemonProcessSnapshot(),
+              providerCalls: fixture.providerCalls,
+              diagnostics: diagnostic,
+              cleanupError:
+                stopError instanceof Error ? stopError.message : undefined,
+            },
+          });
+          process.stdout.write(
+            `[V6_FAILURE_ARTIFACT] ${JSON.stringify({ testName: task.name, archivedDirectory, databaseFile: resolve(archivedDirectory, basename(fixture.databaseFile)) })}\n`,
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+    } else {
+      try {
+        removeFunctionalFixtureDirectory(fixture.directory);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
     }
   }
   for (const cleanup of artifactFixtureCleanups.splice(0).reverse()) {
@@ -451,6 +598,11 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
       const preparationProbeLines: Record<string, unknown>[] = [];
       const schedulerProbeLines: Record<string, unknown>[] = [];
       const stdoutLines: string[] = [];
+      const scriptedProviderTrace: Array<Record<string, unknown>> = [];
+      const diagnosticState: Record<string, unknown> = {
+        phase: "fixture-started",
+        marker,
+      };
       let providerCalls = 0;
       let shellResponseRelease!: () => void;
       let shellRequestResolve!: (value: Record<string, unknown>) => void;
@@ -465,21 +617,43 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
       const fixture = await startProductionFixture({
         firstDaemonEntry: child,
         admitWorkspaceDirectory: true,
+        preserveDirectoryOnStop: true,
         daemonEnvironment,
         reply: (call) => {
           const context = JSON.stringify(call.messages);
-          const available = new Set(
-            call.tools
-              .map((tool) => tool.function?.name)
-              .filter((name): name is string => name !== undefined),
-          );
+          const availableNames = call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined);
+          const available = new Set(availableNames);
           const targetWorkTurn = available.has("shell");
-          if (
+          const rootAssignmentPredicate =
             context.includes(marker) &&
             available.has("assign_work") &&
             !targetWorkTurn &&
-            !context.includes("WorkAssigned(")
-          ) {
+            !context.includes("WorkAssigned(");
+          const shellPredicate =
+            context.includes(marker) && available.has("shell");
+          const selectedBranch = rootAssignmentPredicate
+            ? "root-assign-work"
+            : shellPredicate
+              ? "workspace-shell"
+              : "fallback-text";
+          scriptedProviderTrace.push({
+            requestNo: scriptedProviderTrace.length + 1,
+            inferredProfileFromTools: targetWorkTurn
+              ? "WorkspaceWork/tool-capable"
+              : available.has("assign_work")
+                ? "RootConversation/assign-capable"
+                : "other",
+            availableToolNames: availableNames,
+            markerPresent: context.includes(marker),
+            workAssignedLiteralPresent: context.includes("WorkAssigned("),
+            rootAssignmentPredicate,
+            shellPredicate,
+            selectedBranch,
+            messages: call.messages,
+          });
+          if (rootAssignmentPredicate) {
             return {
               _tag: "ToolCall",
               name: "assign_work",
@@ -503,7 +677,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
               },
             };
           }
-          if (context.includes(marker) && available.has("shell")) {
+          if (shellPredicate) {
             providerCalls += 1;
             return {
               _tag: "ToolCall",
@@ -605,6 +779,15 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         },
       });
       fixtures.push(fixture);
+      fixtureDiagnostics.set(fixture, () => ({
+        ...diagnosticState,
+        scriptedProviderTrace,
+        p4IntentProbes: probeLines,
+        executableProbes: executableProbeLines,
+        p1PreparationProbes: preparationProbeLines,
+        schedulerProbes: schedulerProbeLines,
+        daemonStdoutTail: stdoutLines.slice(-80),
+      }));
       if (sourceFilename === undefined)
         throw new Error("schema-50 V3 source fixture setup was incomplete");
       const client = makePublicClient(fixture.baseUrl);
@@ -614,6 +797,9 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         "V6 E registry drift",
         { resourceSelection: "Profile" },
       );
+      diagnosticState.phase = "primary-project-created";
+      diagnosticState.primaryProjectId = project.projectId;
+      diagnosticState.primaryWorkspaceId = project.rootWorkspaceId;
       execFileSync("git", ["init", "--quiet"], {
         cwd: fixture.workspaceDirectory,
         stdio: "ignore",
@@ -823,7 +1009,21 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           ),
         (state) =>
           state.invocation?.settled_at !== null &&
-          state.invocation !== undefined,
+          state.invocation !== undefined &&
+          (
+            state.actions as
+              | ReadonlyArray<{ readonly state?: string }>
+              | undefined
+          )?.some(
+            (action) =>
+              action.state === "Applied" || action.state === "TerminalRejected",
+          ) === true &&
+          state.step?.state === "StepEffectsCommitted" &&
+          executableProbeLines.some(
+            (event) =>
+              event.boundary === "P4ExecutableToolRuntimeOutcome" &&
+              event.invocationId === firstInvocationId,
+          ),
         45_000,
       ).catch((error: unknown) => {
         const durable = durableSnapshot(fixture.databaseFile);
@@ -915,6 +1115,9 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           "V6 E fresh candidate after registry drift",
           { resourceSelection: "Profile" },
         );
+        diagnosticState.phase = "fresh-project-created";
+        diagnosticState.freshProjectId = freshProject.projectId;
+        diagnosticState.freshWorkspaceId = freshProject.rootWorkspaceId;
         const freshWorktreePath = resolve(
           fixture.workspaceDirectory,
           `fresh-${crypto.randomUUID()}`,
@@ -968,6 +1171,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           freshProject,
           `请为 ${marker} 创建一个工作并运行一次 sandbox shell 命令。`,
         );
+        diagnosticState.phase = "fresh-human-message-submitted";
         const freshControlApproval = await waitForApproval(
           client,
           freshProject,
@@ -979,6 +1183,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           decision: "Approve",
           reason: "V6 registry drift fresh root Work admission",
         });
+        diagnosticState.phase = "fresh-root-control-approval-resolved";
         const freshWork = await waitForPublic(
           () =>
             client.view<{
@@ -996,11 +1201,113 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         const freshExecutionId = freshWork.activeExecution?.executionId;
         if (freshExecutionId === undefined)
           throw new Error("fresh public Work omitted its Execution");
-        const freshExecutableApproval = await waitForExecutableApproval(
-          client,
-          freshProject.rootWorkspaceId,
-          `${marker} fresh Work`,
-        );
+        diagnosticState.phase = "fresh-current-work-active";
+        diagnosticState.freshWorkId = freshWork.workId;
+        diagnosticState.freshExecutionId = freshExecutionId;
+        let freshExecutableApproval: Awaited<
+          ReturnType<typeof waitForExecutableApproval>
+        >;
+        try {
+          diagnosticState.phase = "waiting-for-fresh-executable-approval";
+          freshExecutableApproval = await waitForExecutableApproval(
+            client,
+            freshProject.rootWorkspaceId,
+            `${marker} fresh Work`,
+          );
+          diagnosticState.phase = "fresh-executable-approval-observed";
+        } catch (error) {
+          const [inboxResult, currentWorkResult, transcriptResult] =
+            await Promise.all([
+              client
+                .view("inbox-view", {
+                  workspaceId: freshProject.rootWorkspaceId,
+                })
+                .then((value) => ({ value }))
+                .catch((readError: unknown) => ({ error: String(readError) })),
+              client
+                .view("current-work", {
+                  workspaceId: freshProject.rootWorkspaceId,
+                })
+                .then((value) => ({ value }))
+                .catch((readError: unknown) => ({ error: String(readError) })),
+              client
+                .view("transcript", {
+                  workspaceId: freshProject.rootWorkspaceId,
+                })
+                .then((value) => ({ value }))
+                .catch((readError: unknown) => ({ error: String(readError) })),
+            ]);
+          const transcriptEntries =
+            "value" in transcriptResult &&
+            typeof transcriptResult.value === "object" &&
+            transcriptResult.value !== null &&
+            "entries" in transcriptResult.value &&
+            Array.isArray(transcriptResult.value.entries)
+              ? (transcriptResult.value.entries as Array<{
+                  readonly kind?: string;
+                  readonly messageId?: string;
+                  readonly body?: string;
+                  readonly responseStatus?: unknown;
+                }>)
+              : [];
+          const matchingHumanTurn = transcriptEntries.find(
+            (entry) =>
+              entry.kind === "HumanConversationTurn" &&
+              entry.body?.includes(marker),
+          );
+          let storeSnapshot: unknown;
+          try {
+            storeSnapshot = freshExecutionDiagnosticSnapshot(
+              fixture.databaseFile,
+              freshExecutionId,
+              matchingHumanTurn?.messageId,
+            );
+          } catch (snapshotError) {
+            storeSnapshot = {
+              snapshotError:
+                snapshotError instanceof Error
+                  ? snapshotError.message
+                  : String(snapshotError),
+            };
+          }
+          const publicFailureSnapshot = {
+            inbox: inboxResult,
+            currentWork: currentWorkResult,
+            transcript: transcriptResult,
+            matchingHumanTurn: matchingHumanTurn ?? null,
+            responseStatus: matchingHumanTurn?.responseStatus ?? null,
+          };
+          diagnosticState.failureCapture = {
+            point: "waitForExecutableApproval",
+            publicFailureSnapshot,
+            storeSnapshot,
+            providerRequestToolProfiles: scriptedProviderTrace.map(
+              ({
+                requestNo,
+                inferredProfileFromTools,
+                availableToolNames,
+                markerPresent,
+                workAssignedLiteralPresent,
+                rootAssignmentPredicate,
+                shellPredicate,
+                selectedBranch,
+              }) => ({
+                requestNo,
+                inferredProfileFromTools,
+                availableToolNames,
+                markerPresent,
+                workAssignedLiteralPresent,
+                rootAssignmentPredicate,
+                shellPredicate,
+                selectedBranch,
+              }),
+            ),
+          };
+          throw new Error(
+            `fresh executable approval timeout; public=${JSON.stringify(publicFailureSnapshot)}; store=${JSON.stringify(storeSnapshot)}; providerRoutes=${JSON.stringify(diagnosticState.failureCapture.providerRequestToolProfiles)}; providerCallCount=${fixture.providerCalls.length}; daemonErrors=${fixture.daemonErrors.join(" | ")}`,
+            { cause: error },
+          );
+        }
         const freshPreDriftDetail = await waitForPublic(
           () =>
             client.view<WorkspaceDetailForSandbox>("workspace-detail", {
