@@ -1,4 +1,5 @@
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Effect } from "effect";
 import {
@@ -19,6 +20,7 @@ import {
   BUILTIN_TOOLS,
   SHELL_DEFINITION,
 } from "../../../packages/tool-runtime/dist/catalog.js";
+import { BUILTIN_EXECUTORS } from "../../../packages/tool-runtime/dist/index.js";
 import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
 
 const onWebTransportListening = createFunctionalDaemonListenReporter();
@@ -104,10 +106,89 @@ const waitForGate = async (name, event) => {
   }
 };
 
-if (process.env.ARBOR_P4_FENCE_NON_IDEMPOTENT === "1") {
+const nonIdempotentProfile = process.env.ARBOR_P4_FENCE_NON_IDEMPOTENT === "1";
+const reconcilableProfile = process.env.ARBOR_P4_FENCE_RECONCILABLE === "1";
+if (nonIdempotentProfile && reconcilableProfile) {
+  throw new Error(
+    "P4 fencing child cannot enable both test-only shell profiles",
+  );
+}
+if (nonIdempotentProfile) {
   SHELL_DEFINITION.hash = "shell-v2-p4-lease-fencing";
   SHELL_DEFINITION.sideEffectSemantics = "NonIdempotent";
 }
+if (reconcilableProfile) {
+  SHELL_DEFINITION.hash = "shell-v3-p4-fence-test-reconcilable";
+  SHELL_DEFINITION.sideEffectSemantics = "Reconcilable";
+}
+
+const reconciliationAuditPath = join(
+  gateDirectory,
+  "reconciliation-port-calls.jsonl",
+);
+if (reconcilableProfile) mkdirSync(gateDirectory, { recursive: true });
+const testOnlyToolReconciliation = reconcilableProfile
+  ? (() => {
+      const profile = {
+        toolName: "shell",
+        toolVersion: SHELL_DEFINITION.version,
+        toolDefinitionHash: SHELL_DEFINITION.hash,
+        profileId: "p4-fence-test-reconciliation",
+        profileVersion: "1",
+        profileHash: createHash("sha256")
+          .update("arbor-p4-fence-test-reconciliation-v1")
+          .digest("hex"),
+        profileProtocol: "p4-fence-test-reconciliation-v1",
+        effectKey: ({ invocationId }) => `p4-fence-test:${invocationId}`,
+        reconstructOccurred: () => null,
+      };
+      return {
+        profiles: [profile],
+        port: {
+          reconcile: (request) => {
+            appendFileSync(
+              reconciliationAuditPath,
+              `${JSON.stringify({
+                role,
+                invocationId: request.invocationId,
+                attemptNo: request.attemptNo,
+                result: "StillUnknown",
+                reasonCode: "AttemptNotFinal",
+              })}\n`,
+              { encoding: "utf8", mode: 0o600 },
+            );
+            return Effect.succeed({
+              _tag: "StillUnknown",
+              reasonCode: "AttemptNotFinal",
+              evidenceRef: null,
+            });
+          },
+        },
+        executors: BUILTIN_EXECUTORS,
+        snapshot: {
+          toolName: profile.toolName,
+          toolVersion: profile.toolVersion,
+          toolDefinitionHash: profile.toolDefinitionHash,
+          profileId: profile.profileId,
+          profileVersion: profile.profileVersion,
+          profileHash: profile.profileHash,
+          profileProtocol: profile.profileProtocol,
+          effectKey: profile.effectKey({
+            invocationId: "tinv_p4_fence_profile_probe",
+            argumentsJson: "{}",
+          }),
+        },
+      };
+    })()
+  : undefined;
+
+emit({
+  boundary: "P4TestReconciliationRegistrySnapshot",
+  registered: testOnlyToolReconciliation !== undefined,
+  ...(testOnlyToolReconciliation === undefined
+    ? {}
+    : { profile: testOnlyToolReconciliation.snapshot }),
+});
 
 emit({
   boundary: "P4ShellDefinitionSnapshot",
@@ -396,6 +477,9 @@ const config = {
   projectResourceProfiles: makeProjectResourceProfilePort(
     projectResourceProfilesFromEnvironment(),
   ),
+  ...(testOnlyToolReconciliation === undefined
+    ? {}
+    : { testOnlyToolReconciliation }),
   webTransport: {
     staticRoot: process.env.ARBOR_WEB_DIST,
     port,
