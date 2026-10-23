@@ -38,6 +38,7 @@ import {
   WorkspaceRepository,
   WorktreeStore,
 } from "../../../packages/ports/src/index.js";
+import { shellPolicy } from "../../../packages/tool-runtime/src/tools/shell.js";
 import {
   p39WindowsAclQualificationAvailable,
   p39WindowsTestEnvironment,
@@ -58,6 +59,7 @@ import {
   makePublicClient,
   submitHumanMessage,
   waitForApproval,
+  waitForExecutableApproval,
   waitForPublic,
 } from "../support/public-client.js";
 import {
@@ -113,6 +115,15 @@ interface WorkspaceDetailForSandbox {
 const child = resolve(
   "tests/functional/support/sandbox-policy-v2-daemon-child.mjs",
 );
+const freshWorkspacePurpose = "V6 E fresh candidate after registry drift";
+const safeInitialShellCommand = "git status --short";
+const shellCommandForWorkspacePurpose = (input: {
+  readonly context: string;
+  readonly safeCommand: string;
+}): string =>
+  input.context.includes(freshWorkspacePurpose)
+    ? "Get-Date"
+    : input.safeCommand;
 const fixtures: ProductionFixture[] = [];
 const artifactFixtureCleanups: Array<() => void> = [];
 const fixtureDiagnostics = new Map<ProductionFixture, () => unknown>();
@@ -287,6 +298,15 @@ const p1OwnedDomainSnapshot = (databaseFile: string, executionId: string) => {
             ORDER BY invocation_id`,
         )
         .all(executionId),
+      recoveryBindings: db
+        .prepare(
+          `SELECT b.invocation_id, b.binding_version,
+                  b.canonical_binding_json, b.binding_sha256
+             FROM tool_invocation_recovery_bindings b
+             JOIN tool_invocations i USING (invocation_id)
+            WHERE i.execution_id = ? ORDER BY b.invocation_id`,
+        )
+        .all(executionId),
       executableApprovals: db
         .prepare(
           `SELECT approval_id, route_kind, execution_id, state, revision,
@@ -385,6 +405,15 @@ const freshExecutionDiagnosticSnapshot = (
                   settlement_json, observation_json
              FROM tool_invocations WHERE execution_id = ?
             ORDER BY intent_at`,
+        )
+        .all(executionId),
+      recoveryBindings: db
+        .prepare(
+          `SELECT b.invocation_id, b.binding_version,
+                  b.canonical_binding_json, b.binding_sha256
+             FROM tool_invocation_recovery_bindings b
+             JOIN tool_invocations i USING (invocation_id)
+            WHERE i.execution_id = ? ORDER BY b.invocation_id`,
         )
         .all(executionId),
       sandboxDecisions: db
@@ -718,6 +747,23 @@ describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
         invocationId: probe.invocationId,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("V6 fresh Work uses the accepted pre-intent approval source", () => {
+  it("routes fresh Get-Date through EAP while preserving the safe terminal command", () => {
+    const initialCommand = shellCommandForWorkspacePurpose({
+      context: "V6 E registry drift",
+      safeCommand: safeInitialShellCommand,
+    });
+    const freshCommand = shellCommandForWorkspacePurpose({
+      context: `workspace purpose: ${freshWorkspacePurpose}`,
+      safeCommand: safeInitialShellCommand,
+    });
+    expect(initialCommand).toBe("git status --short");
+    expect(shellPolicy(initialCommand)).toBe("Allow");
+    expect(freshCommand).toBe("Get-Date");
+    expect(shellPolicy(freshCommand)).toBe("RequireApproval");
   });
 });
 
@@ -1232,7 +1278,10 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
               _tag: "ToolCall",
               name: "shell",
               arguments: {
-                command,
+                command: shellCommandForWorkspacePurpose({
+                  context,
+                  safeCommand: safeInitialShellCommand,
+                }),
                 cwd: { mount: "workspace", path: "." },
                 timeoutMs: 5_000,
               },
@@ -1378,7 +1427,6 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         cwd: fixture.workspaceDirectory,
         stdio: "ignore",
       });
-      const command = "git status --short";
       await insertProductionPrimaryWorktree({
         databaseFile: fixture.databaseFile,
         projectId: project.projectId,
@@ -1736,7 +1784,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         const freshProject = await createFunctionalProject(
           client,
           freshProjectRootDirectory,
-          "V6 E fresh candidate after registry drift",
+          freshWorkspacePurpose,
           { resourceSelection: "Profile" },
         );
         diagnosticState.phase = "fresh-project-created";
@@ -1838,8 +1886,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         diagnosticState.freshExecutionId = freshExecutionId;
         let freshPreDriftDetail: WorkspaceDetailForSandbox;
         try {
-          diagnosticState.phase =
-            "waiting-for-fresh-post-intent-candidate-read";
+          diagnosticState.phase = "waiting-for-fresh-pre-intent-candidate-read";
           freshPreDriftDetail = await waitForPublic(
             () =>
               client.view<WorkspaceDetailForSandbox>("workspace-detail", {
@@ -1847,7 +1894,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
               }),
             (detail) => detail.sandboxPolicyCandidateRead !== undefined,
           );
-          diagnosticState.phase = "fresh-post-intent-candidate-read-observed";
+          diagnosticState.phase = "fresh-pre-intent-candidate-read-observed";
         } catch (error) {
           const [
             inboxResult,
@@ -1944,13 +1991,13 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
             }),
           );
           diagnosticState.failureCapture = {
-            point: "fresh post-intent workspace-detail CandidateRead",
+            point: "fresh pre-intent workspace-detail CandidateRead",
             publicFailureSnapshot,
             storeSnapshot,
             providerRequestToolProfiles,
           };
           throw new Error(
-            `fresh post-intent CandidateRead timeout; public=${JSON.stringify(publicFailureSnapshot)}; store=${JSON.stringify(storeSnapshot)}; providerRoutes=${JSON.stringify(providerRequestToolProfiles)}; providerCallCount=${fixture.providerCalls.length}; daemonErrors=${fixture.daemonErrors.join(" | ")}`,
+            `fresh pre-intent CandidateRead timeout; public=${JSON.stringify(publicFailureSnapshot)}; store=${JSON.stringify(storeSnapshot)}; providerRoutes=${JSON.stringify(providerRequestToolProfiles)}; providerCallCount=${fixture.providerCalls.length}; daemonErrors=${fixture.daemonErrors.join(" | ")}`,
             { cause: error },
           );
         }
@@ -1958,6 +2005,13 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           freshPreDriftDetail.sandboxPolicyCandidateRead;
         if (freshPreDriftRead === undefined)
           throw new Error("fresh public CandidateRead was absent before drift");
+        const freshExecutableApproval = await waitForExecutableApproval(
+          client,
+          freshProject.rootWorkspaceId,
+          marker,
+        );
+        diagnosticState.freshExecutableApprovalId =
+          freshExecutableApproval.approvalId;
         const preDriftCandidate = freshPreDriftRead.candidates.find(
           (candidate) =>
             candidate.kind === "OsEnforced" &&
@@ -1968,11 +2022,11 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         if (preDriftCandidate?.kind !== "OsEnforced")
           throw new Error("fresh pre-drift Supported candidate was absent");
         expect(preDriftCandidate.providerRegistryRevision).toBe(1);
-        const freshPostIntentState = freshExecutionDiagnosticSnapshot(
+        const freshPreIntentState = freshExecutionDiagnosticSnapshot(
           fixture.databaseFile,
           freshExecutionId,
         );
-        expect(freshPostIntentState.execution).toMatchObject({
+        expect(freshPreIntentState.execution).toMatchObject({
           execution_id: freshExecutionId,
           episode_kind: "WorkEpisode",
           episode_ref: freshWork.workId,
@@ -1981,31 +2035,22 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           settled_at: null,
           settlement_kind: null,
         });
-        expect(freshPostIntentState.invocations).toHaveLength(1);
-        expect(freshPostIntentState.invocations[0]).toMatchObject({
-          tool_name: "shell",
-          effect_admission_state: "NotAdmitted",
-          recovery_binding_state: "Bound",
-          settled_at: null,
-          settlement_kind: null,
-        });
-        expect(
-          freshPostIntentState.invocations[0]?.recovery_binding_sha256,
-        ).toMatch(/^[0-9a-f]{64}$/u);
-        expect(freshPostIntentState.actions).toHaveLength(1);
-        expect(freshPostIntentState.actions[0]).toMatchObject({
+        expect(freshPreIntentState.invocations).toEqual([]);
+        expect(freshPreIntentState.recoveryBindings).toEqual([]);
+        expect(freshPreIntentState.actions).toHaveLength(1);
+        expect(freshPreIntentState.actions[0]).toMatchObject({
           route_kind: "Executable",
           action_kind: "shell",
           state: "Pending",
           action_index: 0,
         });
-        const freshSourceAction = freshPostIntentState.actions[0] as {
+        const freshSourceAction = freshPreIntentState.actions[0] as {
           readonly logical_step_no: number;
           readonly repair_attempt: number;
           readonly action_index: number;
         };
         expect(
-          freshPostIntentState.steps.find(
+          freshPreIntentState.steps.find(
             (step) =>
               step.logical_step_no === freshSourceAction.logical_step_no &&
               step.repair_attempt === freshSourceAction.repair_attempt,
@@ -2014,17 +2059,27 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           state: "ActionsInProgress",
           next_action_index: freshSourceAction.action_index,
         });
-        expect(freshPostIntentState.executableApprovals).toEqual([]);
-        expect(freshPostIntentState.sandboxDecisions).toEqual([]);
+        expect(freshPreIntentState.executableApprovals).toHaveLength(1);
+        const freshPreIntentApproval =
+          freshPreIntentState.executableApprovals[0];
+        expect(freshPreIntentApproval).toMatchObject({
+          approval_id: freshExecutableApproval.approvalId,
+          execution_id: freshExecutionId,
+          state: "Pending",
+          revision: freshExecutableApproval.revision,
+          consumed_by: null,
+        });
+        expect(freshPreIntentApproval?.tool_invocation_id).toMatch(/^tin_/u);
+        expect(freshPreIntentState.sandboxDecisions).toEqual([]);
         expect(
           freshPreDriftRead.commonPreconditions.latestCommittedPolicyRevision,
         ).toBe(0);
         expect(
           JSON.parse(
-            String(freshPostIntentState.agentExecutionState?.episode_json),
+            String(freshPreIntentState.agentExecutionState?.episode_json),
           ),
         ).toEqual(freshPreDriftRead.commonPreconditions.episodeBinding);
-        expect(freshPostIntentState.execution).toMatchObject({
+        expect(freshPreIntentState.execution).toMatchObject({
           episode_kind: "WorkEpisode",
           episode_ref:
             freshPreDriftRead.commonPreconditions.episodeBinding.workId,
@@ -2146,16 +2201,19 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         );
         expect(beforeStaleOwnedSnapshot.decisions).toEqual([]);
         expect(beforeStaleOwnedSnapshot.decisionEvents).toEqual([]);
-        expect(beforeStaleOwnedSnapshot.invocations).toHaveLength(1);
-        expect(beforeStaleOwnedSnapshot.invocations[0]).toMatchObject({
-          invocation_id: freshPostIntentState.invocations[0]?.invocation_id,
-          effect_admission_state: "NotAdmitted",
-          recovery_binding_state: "Bound",
-          settled_at: null,
-          settlement_kind: null,
+        expect(beforeStaleOwnedSnapshot.invocations).toEqual([]);
+        expect(beforeStaleOwnedSnapshot.recoveryBindings).toEqual([]);
+        expect(beforeStaleOwnedSnapshot.executableApprovals).toHaveLength(1);
+        expect(beforeStaleOwnedSnapshot.executableApprovals[0]).toMatchObject({
+          approval_id: freshExecutableApproval.approvalId,
+          route_kind: "Executable",
+          execution_id: freshExecutionId,
+          state: "Pending",
+          revision: freshExecutableApproval.revision,
+          consumed_by: null,
         });
         expect(beforeStaleOwnedSnapshot.actions).toEqual(
-          freshPostIntentState.actions.map((action) => ({
+          freshPreIntentState.actions.map((action) => ({
             logical_step_no: action.logical_step_no,
             repair_attempt: action.repair_attempt,
             action_index: action.action_index,
@@ -2170,7 +2228,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           })),
         );
         expect(beforeStaleOwnedSnapshot.steps).toEqual(
-          freshPostIntentState.steps.map((step) => ({
+          freshPreIntentState.steps.map((step) => ({
             logical_step_no: step.logical_step_no,
             repair_attempt: step.repair_attempt,
             provider_turn_id: step.provider_turn_id,
@@ -2180,7 +2238,6 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
             settlement_json: step.settlement_json,
           })),
         );
-        expect(beforeStaleOwnedSnapshot.executableApprovals).toEqual([]);
         const staleFreshCommandId = functionalId("cmd");
         const staleFresh = await operatorCommand(
           fixture.baseUrl,
@@ -2227,14 +2284,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           state: "Pending",
           action_index: 0,
         });
-        expect(untouchedFresh.invocation).toMatchObject({
-          invocation_id: freshPostIntentState.invocations[0]?.invocation_id,
-          effect_admission_state: "NotAdmitted",
-          recovery_binding_state: "Bound",
-          settled_at: null,
-          settlement_kind: null,
-          observation_json: null,
-        });
+        expect(untouchedFresh.invocation).toBeUndefined();
 
         const freshPayload = policyPayload({
           read: refreshedFreshRead,
@@ -2248,7 +2298,6 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           kind: "OsEnforced",
           policy: { version: 1, mode: "Disabled", destinations: [] },
         });
-        const freshP4ProbeStartIndex = executableProbeLines.length;
         const acceptedFresh = await operatorCommand(
           fixture.baseUrl,
           freshProject.projectId,
@@ -2258,11 +2307,39 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         expect(acceptedFresh).toMatchObject({
           body: { resolution: "Committed" },
         });
-        const postP1SchedulerProbeStartIndex = schedulerProbeLines.length;
+        const afterFreshP1State = freshExecutionDiagnosticSnapshot(
+          fixture.databaseFile,
+          freshExecutionId,
+        );
+        expect(afterFreshP1State.sandboxDecisions).toHaveLength(1);
+        expect(afterFreshP1State.invocations).toEqual([]);
+        expect(afterFreshP1State.recoveryBindings).toEqual([]);
+        expect(afterFreshP1State.executableApprovals).toHaveLength(1);
+        expect(afterFreshP1State.executableApprovals[0]).toMatchObject({
+          approval_id: freshExecutableApproval.approvalId,
+          state: "Pending",
+          revision: freshExecutableApproval.revision,
+          consumed_by: null,
+        });
         const freshInvocationId = String(
-          freshPostIntentState.invocations[0]?.invocation_id ?? "",
+          freshPreIntentApproval?.tool_invocation_id ?? "",
         );
         expect(freshInvocationId).toMatch(/^tin_/u);
+        const freshP4ProbeStartIndex = executableProbeLines.length;
+        const freshApprovalResolution = await client.command(
+          freshProject.projectId,
+          "ResolveExecutableApproval",
+          {
+            approvalId: freshExecutableApproval.approvalId,
+            expectedRevision: freshExecutableApproval.revision,
+            decision: "Approve",
+            reason: "V6 fresh P1 committed before exact shell approval",
+          },
+        );
+        expect(freshApprovalResolution).toMatchObject({
+          body: { resolution: "Committed" },
+        });
+        const postApprovalSchedulerProbeStartIndex = schedulerProbeLines.length;
         const acceptedFreshP4Outcome = await waitForPublic(
           async () => {
             const probeRecord = postDecisionExpectedFailureProbeForInvocation({
@@ -2271,8 +2348,8 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
               executionId: freshExecutionId,
               invocationId: freshInvocationId,
             });
-            const postP1SchedulerDispatchObserved = schedulerProbeLines
-              .slice(postP1SchedulerProbeStartIndex)
+            const postApprovalSchedulerDispatchObserved = schedulerProbeLines
+              .slice(postApprovalSchedulerProbeStartIndex)
               .some(
                 (event) =>
                   event.boundary === "PreDispatchLeaseCheck" &&
@@ -2280,7 +2357,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
                   event.dispatchable === true,
               );
             return {
-              postP1SchedulerDispatchObserved,
+              postApprovalSchedulerDispatchObserved,
               probe: probeRecord,
               source:
                 probeRecord === undefined
@@ -2292,7 +2369,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
             };
           },
           (value) =>
-            value?.postP1SchedulerDispatchObserved === true &&
+            value?.postApprovalSchedulerDispatchObserved === true &&
             value.probe !== undefined &&
             value.source !== undefined &&
             value.source.invocation?.settled_at !== null &&
@@ -2340,6 +2417,13 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           fixture.databaseFile,
           freshExecutionId,
         );
+        expect(postDecisionP9Evidence.executableApprovals).toHaveLength(1);
+        expect(postDecisionP9Evidence.executableApprovals[0]).toMatchObject({
+          approval_id: freshExecutableApproval.approvalId,
+          state: "Consumed",
+          consumed_by: freshInvocationId,
+          tool_invocation_id: freshInvocationId,
+        });
         expect(postDecisionP9Evidence.providerUnavailableFacts).toHaveLength(1);
         expect(
           postDecisionP9Evidence.providerUnavailableFacts[0],

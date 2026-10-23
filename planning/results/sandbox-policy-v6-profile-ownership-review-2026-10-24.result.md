@@ -1,6 +1,6 @@
 # V6 Fresh Profile Ownership Review — 2026-10-24
 
-Status: **E50 PROFILE FIX REVIEWED; P1 CURRENT DECISION DURABLE; FINAL P4 REPLAY FAILED CLOSED ON RECOVERY-BINDING MISMATCH AFTER EXACT P1 GRANT; DESIGN/IMPLEMENTATION DISPOSITION REQUIRED**
+Status: **E50 PROFILE FIX REVIEWED; POST-INTENT REPLAY MISMATCH CONFIRMED AS P4/06 FAIL-CLOSED; FRESH TEST REFACTORED TO P10/P1 PRE-INTENT EAP; FULL PROCESS NOT RERUN**
 
 ## E50 fixture review
 
@@ -143,16 +143,28 @@ outside this review.
   The invocation remains NotAdmitted/Bound and unsettled, with no observation;
   the Action is `TerminalRejected` and Step `SettlementProposed`. No sandbox
   effect or P9 provider-unavailable fact was produced.
-- This is not the earlier 60-second scheduler timing issue: the 25-ms run
-  proves a post-P1 predispatch and exact P4 replay. The remaining conflict is
-  whether RecoveryBinding should treat a newly committed, non-shell
-  `DecideSandboxPolicy` grant as changing the shell invocation's authority
-  source. The current evidence localizes the failure to that immutable-source
-  comparison; it does not establish whether the intended resolution is an
-  implementation correction or a manually governed contract clarification.
-  No production or design changes were made. The original independent P9
-  terminal proof remains intact; this fresh invocation did not reach a P9
+- This is distinct from the earlier 60-second scheduler timing issue: the
+  25-ms run proves a post-P1 predispatch and exact P4 replay. This branch had
+  already created the shell's post-intent RecoveryBinding before adding the P1
+  `DecideSandboxPolicy` grant. P4/02's accepted pre-intent path instead keeps
+  the action at `ApprovalRequired` with no ToolInvocation/RecoveryBinding;
+  P4/06 requires that a created RecoveryBinding remain immutable and fail
+  closed when its active-grant source changes. Thus this observed mismatch is
+  expected fail-closed evidence for the incorrectly ordered post-intent test
+  branch, not a production defect or a new Design Gap. The original independent
+  P9 terminal proof remains intact; this fresh invocation did not reach a P9
   terminal result. No OS-supported-provider qualification is claimed.
+- The fresh branch is now aligned with the accepted pre-intent order: retain
+  the normal `shell:exec` authority grant, route its `Get-Date` shell action
+  through EAP (`shellPolicy=RequireApproval`), and observe the public
+  pre-intent CandidateRead plus exact Pending Executable approval. Before and
+  after stale P1 rejection it asserts no ToolInvocation/RecoveryBinding, a
+  Pending Action and unconsumed EAP. It then commits fresh P1 and only
+  afterwards resolves that same EAP, so P4 creates the intent/binding with the
+  complete current grant source. The 45-second post-approval waiter retains its
+  exact invocation, scheduler dispatch, no-effect, and P9 terminal assertions.
+  This refactor has only lightweight coverage so far; no full process run has
+  been performed after it.
 - The archive-hook cause is diagnosed and fixed in test infrastructure:
   `validateResultDirectory` creates a missing, lexically validated direct child
   after validating the real `.test-results` root and immediately applies the
@@ -161,12 +173,14 @@ outside this review.
   private ACL on archive-skipped JSON; non-Windows verifies 0700/0600 modes.
 - The earlier wrong-column failure and obsolete EAP-oracle failure remain
   separately classified harness/oracle issues, not evidence of a production
-  defect. No further process run was performed.
+  defect. The post-intent RecoveryBinding mismatch is separately classified
+  above as expected P4/06 fail-closed behavior for the invalid test ordering.
+  No process run has been performed after the current pre-intent EAP refactor.
 - Post-fix lightweight verification: the V6 P9 exact-Step oracles, fresh-P4
-  selector oracle, missing private-ACL archive-directory regression, and
-  current-schema SQL microtest pass together (**5 passed, 1 process case
-  skipped**); the microtest
-  creates schema 51 through the current-schema test helper, prepares all 44
+  selector oracle, pure fresh-command approval-route oracle, missing
+  private-ACL archive-directory regression, and current-schema SQL microtest
+  pass together (**6 passed, 1 process case skipped**); the microtest creates
+  schema 51 through the current-schema test helper, prepares all 46
   static queries, and does not start a daemon. Targeted Biome and
   `git diff --check` pass.
   `pnpm exec tsc -p tsconfig.test.json --noEmit` reports only the
