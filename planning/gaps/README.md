@@ -45,6 +45,7 @@ CLOSED   — disposed by a later phase / governance ruling (see file)
 | TOOL-AUTH-DG-01 | Execution tool capability source | DID §8 / P4 invocation authority | Executable Tool Calling | RESOLVED |
 | SCRC-DG-01 | Session / Context Runtime convergence | System Design v1.4; DID v1.22; landing `75589c5` | Session timeline, inbox promotion, typed tool items, compaction | RESOLVED |
 | SCRC-DG-02 | Context overflow successor ProviderTurn identity | DID v1.23 OVS-1…OVS-7; migration 0020 | SCRC-007/008 | RESOLVED |
+| S4-CONTEXT-DG-01 | WorkspaceWork AssistantMessage is persisted but omitted from next Provider context; text-only Stop may continue on unchanged input | DID §9.8 / v1.50 AH19; P3 `02` / `03` / `08`; P2 Session timeline | S4-B response-loop qualification; P3 Model Context / Agent Loop | OPEN |
 | WSC-DG-01 | DependencySatisfied revision-stable transition cannot clear strict revision wait | DID WSC-1; P7 `06`/`07` | WorkflowSignalConsumer DependencySatisfied route | RESOLVED |
 | EEB-DG-01 | `Coordination` catch-all mixes unrelated Execution Episodes | System Design v1.6 EGP-1…10; DID v1.28 | Execution Domain, Scheduler, Agent Runtime, Model Context, SQLite, Conversation | RESOLVED |
 | CRAC-DG-01 | Root Conversation zero-tool profile blocks governed Arbor actions | System Design v1.7 / DID v1.29 / P17 TurnProfile | Root conversation, child Workspace proposal | RESOLVED |
