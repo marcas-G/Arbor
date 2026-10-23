@@ -6,6 +6,7 @@ import {
   makeCancelConversationResponseHandler,
   makeCompleteWorkHandler,
   makeConcludeVerificationHandler,
+  makeCriticalSteerCommandHandler,
   makeDecideSandboxPolicyHandler,
   makeDeclareDependencyHandler,
   makeDeliverMessageHandler,
@@ -239,6 +240,32 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         works,
         ...(Option.isSome(journal) ? { journal: journal.value } : {}),
       };
+      const p2Handlers = makeP2CommandHandlers({
+        projects,
+        workspaces,
+        sessions,
+        executions,
+        workWaits,
+        ...(Option.isSome(readmissionGate)
+          ? { readmissionGate: readmissionGate.value }
+          : {}),
+        executableApprovals,
+      });
+      const stopHandler = p2Handlers.find(
+        (candidate) => candidate.commandType === "StopExecution",
+      );
+      if (stopHandler === undefined) {
+        return yield* Effect.die(new Error("P2 StopExecution handler missing"));
+      }
+      const steerHandler = makeSteerWorkHandler({
+        works,
+        inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+      });
+      const criticalSteerHandler = makeCriticalSteerCommandHandler({
+        steerHandler,
+        stopHandler: stopHandler as never,
+        executions,
+      }) as unknown as CommandHandler<unknown, unknown>;
       const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
         ...makeP1CommandHandlers({
           ...(Option.isSome(clock) ? { clock: clock.value } : {}),
@@ -279,17 +306,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
           works,
           executions,
         }) as unknown as CommandHandler<unknown, unknown>,
-        ...makeP2CommandHandlers({
-          projects,
-          workspaces,
-          sessions,
-          executions,
-          workWaits,
-          ...(Option.isSome(readmissionGate)
-            ? { readmissionGate: readmissionGate.value }
-            : {}),
-          executableApprovals,
-        }),
+        ...p2Handlers,
         makeSendMessageHandler({
           workspaces,
           messages: messages as Pick<
@@ -363,10 +380,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
             ? clock.value.now
             : () => Effect.sync(() => new Date().toISOString()),
         }) as unknown as CommandHandler<unknown, unknown>,
-        makeSteerWorkHandler({
-          works,
-          inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
-        }) as unknown as CommandHandler<unknown, unknown>,
+        criticalSteerHandler,
         makeAcceptWorkOutcomeHandler({
           works,
           verifications: verifications as Pick<
