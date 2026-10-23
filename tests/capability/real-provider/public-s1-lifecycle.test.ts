@@ -1,14 +1,15 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { findArborConfigFile } from "../../../apps/single-workspace/src/provider-config.js";
@@ -26,18 +27,16 @@ import {
   waitForPublic,
 } from "../../functional/support/public-client.js";
 import { removeFunctionalFixtureDirectory } from "../../functional/support/schema44-bootstrap.js";
+import { makeP39PrivateTestDirectory } from "../../support/p39-windows-deployment-test.js";
 
 const OPT_IN_ENV = "ARBOR_RUN_REAL_PUBLIC_S1";
 const CONFIG_PATH_ENV = "ARBOR_PUBLIC_S1_CONFIG";
 const CAPTURE_FILE_ENV = "ARBOR_PUBLIC_S1_CAPTURE_FILE";
 const CAPTURE_ENDPOINT_ENV = "ARBOR_PUBLIC_S1_CAPTURE_ENDPOINT";
 const JOURNEY_TIMEOUT_MS = 8 * 60_000;
-const currentFile = fileURLToPath(import.meta.url);
-const repositoryRoot = resolve(dirname(currentFile), "../../..");
-const evidenceDirectory = resolve(
-  repositoryRoot,
-  process.env.ARBOR_CAPABILITY_EVIDENCE_DIR?.trim() ||
-    "planning/testing/core-capability/evidence/real-provider",
+const repositoryRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../..",
 );
 const fetchHook = fileURLToPath(
   new URL("./provider-fetch-capture-hook.mjs", import.meta.url),
@@ -53,6 +52,13 @@ interface ProductionProviderConfig {
 }
 
 interface ProviderCapture {
+  readonly event:
+    | "request-start"
+    | "response-complete"
+    | "response-capture-failed"
+    | "request-failed";
+  readonly requestId: string;
+  readonly processId: number;
   readonly sequence: number;
   readonly method: string;
   readonly path: string;
@@ -64,6 +70,25 @@ interface ProviderCapture {
   readonly error?: string;
 }
 
+const startedProviderRequests = (
+  captures: ReadonlyArray<ProviderCapture>,
+): ReadonlyArray<ProviderCapture> =>
+  captures.filter((capture) => capture.event === "request-start");
+
+const completedProviderRequestIds = (
+  captures: ReadonlyArray<ProviderCapture>,
+): ReadonlySet<string> =>
+  new Set(
+    captures
+      .filter(
+        (capture) =>
+          capture.event === "response-complete" ||
+          capture.event === "request-failed" ||
+          capture.event === "response-capture-failed",
+      )
+      .map((capture) => capture.requestId),
+  );
+
 interface PublicScenarioState {
   readonly project?: FunctionalProject;
   readonly workId?: string;
@@ -71,6 +96,50 @@ interface PublicScenarioState {
   readonly acceptedWork?: unknown;
   readonly restartRead?: unknown;
   readonly providerCallCountBeforeRestart?: number;
+  readonly workspaceBaseline?: WorkspaceFileSnapshot;
+  readonly workspaceAfterWork?: WorkspaceFileSnapshot;
+  readonly verifierObservationOracle?: VerifierObservationOracle;
+  readonly retainedPaths?: {
+    readonly fixtureDirectory: string;
+    readonly databaseFile: string;
+    readonly workspaceDirectory: string;
+    readonly captureFile: string;
+    readonly evidenceDirectory: string;
+    readonly failureCleanup: string;
+    readonly passCleanup: string;
+  };
+}
+
+interface WorkspaceFileSnapshot {
+  readonly entries: Readonly<
+    Record<
+      string,
+      {
+        readonly kind: "file" | "directory";
+        readonly size?: number;
+        readonly sha256?: string;
+        readonly bytesBase64?: string;
+      }
+    >
+  >;
+}
+
+interface VerifierObservationOracle {
+  readonly oracleLayer: "ReadOnlySQLiteAuxiliary";
+  readonly primaryJourneyLayer: "PublicCommandsAndViews";
+  readonly producerExecutionId: string;
+  readonly verifierExecutionId: string;
+  readonly observations: ReadonlyArray<{
+    readonly evidenceId: string;
+    readonly toolInvocationId: string;
+    readonly callRef: string;
+    readonly observationRef: string;
+    readonly toolName: string;
+    readonly settlementKind: string;
+    readonly toolResultStatus: string;
+    readonly sourceKind: string | null;
+    readonly itemType: string;
+  }>;
 }
 
 type ConfigReadiness =
@@ -96,6 +165,168 @@ const safeEndpoint = (endpoint: string): string => {
   return parsed.toString();
 };
 
+const captureWorkspaceFileSnapshot = (
+  workspaceDirectory: string,
+): WorkspaceFileSnapshot => {
+  const entries: Record<string, WorkspaceFileSnapshot["entries"][string]> = {};
+  const visit = (directory: string, relativeDirectory: string): void => {
+    for (const name of readdirSync(directory).sort()) {
+      const absolutePath = join(directory, name);
+      const relativePath =
+        relativeDirectory.length === 0 ? name : `${relativeDirectory}/${name}`;
+      const stat = lstatSync(absolutePath);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`workspace snapshot refuses symlink ${relativePath}`);
+      }
+      if (stat.isDirectory()) {
+        entries[relativePath] = { kind: "directory" };
+        visit(absolutePath, relativePath);
+        continue;
+      }
+      if (!stat.isFile()) {
+        throw new Error(
+          `workspace snapshot refuses non-file entry ${relativePath}`,
+        );
+      }
+      const bytes = readFileSync(absolutePath);
+      entries[relativePath] = {
+        kind: "file",
+        size: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytesBase64: bytes.toString("base64"),
+      };
+    }
+  };
+  visit(workspaceDirectory, "");
+  return { entries };
+};
+
+const readVerifierObservationOracle = (input: {
+  readonly databaseFile: string;
+  readonly workId: string;
+  readonly verificationId: string;
+}): VerifierObservationOracle => {
+  const database = new DatabaseSync(input.databaseFile, { readOnly: true });
+  try {
+    const producer = database
+      .prepare(
+        "SELECT execution_id FROM executions WHERE episode_kind = 'WorkEpisode' AND episode_ref = ? ORDER BY admitted_at DESC LIMIT 1",
+      )
+      .get(input.workId) as { execution_id?: string } | undefined;
+    if (producer?.execution_id === undefined) {
+      throw new Error(
+        "read-only verifier oracle found no producer WorkEpisode",
+      );
+    }
+    const verifierRows = database
+      .prepare(
+        "SELECT execution_id FROM verification_executions WHERE verification_id = ? ORDER BY bound_at",
+      )
+      .all(input.verificationId) as Array<{ execution_id: string }>;
+    const verifierExecutionId = verifierRows.find(
+      (row) => row.execution_id !== producer.execution_id,
+    )?.execution_id;
+    if (verifierExecutionId === undefined) {
+      throw new Error(
+        "read-only verifier oracle found no distinct bound verifier Execution",
+      );
+    }
+    const rows = database
+      .prepare(
+        `SELECT ve.evidence_id, ve.kind, ve.tool_invocation_id, ve.observation_ref,
+              ve.call_ref, ve.recorded_by_execution_id,
+              i.execution_id AS invocation_execution_id, i.tool_name,
+              i.settlement_kind, i.result_ref, e.session_id,
+              s.item_type, s.source_kind, s.source_ref, s.payload_json
+       FROM verification_evidence ve
+       JOIN tool_invocations i ON i.invocation_id = ve.tool_invocation_id
+       JOIN verification_executions vx
+         ON vx.verification_id = ve.verification_id
+        AND vx.execution_id = ve.recorded_by_execution_id
+       JOIN executions e ON e.execution_id = ve.recorded_by_execution_id
+       JOIN session_entries s
+         ON s.session_id = e.session_id
+        AND s.source_ref = ve.observation_ref
+        AND s.item_type = 'ToolResult'
+       WHERE ve.verification_id = ? AND ve.kind = 'ToolObservation'
+         AND ve.recorded_by_execution_id = ?
+       ORDER BY ve.recorded_at, ve.evidence_id`,
+      )
+      .all(input.verificationId, verifierExecutionId) as Array<{
+      evidence_id: string;
+      kind: string;
+      tool_invocation_id: string;
+      observation_ref: string;
+      call_ref: string;
+      recorded_by_execution_id: string;
+      invocation_execution_id: string;
+      tool_name: string;
+      settlement_kind: string | null;
+      result_ref: string | null;
+      item_type: string;
+      source_kind: string | null;
+      source_ref: string;
+      payload_json: string;
+    }>;
+    const observations = rows.map((row) => {
+      const payload = JSON.parse(row.payload_json) as {
+        readonly _tag?: string;
+        readonly callRef?: string;
+        readonly toolName?: string;
+        readonly observationRef?: string;
+        readonly status?: string;
+      };
+      if (
+        row.kind !== "ToolObservation" ||
+        row.recorded_by_execution_id !== verifierExecutionId ||
+        row.invocation_execution_id !== verifierExecutionId ||
+        row.item_type !== "ToolResult" ||
+        row.source_kind !== "AgentLoopAction" ||
+        row.source_ref !== row.observation_ref ||
+        payload._tag !== "ToolResult" ||
+        payload.toolName !== row.tool_name ||
+        payload.observationRef !== row.observation_ref ||
+        payload.callRef !== row.call_ref
+      ) {
+        throw new Error(
+          "read-only verifier oracle found mismatched ToolObservation bindings",
+        );
+      }
+      return {
+        evidenceId: row.evidence_id,
+        toolInvocationId: row.tool_invocation_id,
+        callRef: row.call_ref,
+        observationRef: row.observation_ref,
+        toolName: row.tool_name,
+        settlementKind: row.settlement_kind ?? "Unsettled",
+        toolResultStatus: payload.status ?? "MissingStatus",
+        sourceKind: row.source_kind,
+        itemType: row.item_type,
+      };
+    });
+    const successfulRead = observations.find(
+      (row) =>
+        row.toolName === "read" &&
+        row.settlementKind === "Success" &&
+        row.toolResultStatus === "Succeeded",
+    );
+    if (successfulRead === undefined) {
+      throw new Error(
+        "read-only verifier oracle found no successful exact read observation",
+      );
+    }
+    return {
+      oracleLayer: "ReadOnlySQLiteAuxiliary",
+      primaryJourneyLayer: "PublicCommandsAndViews",
+      producerExecutionId: producer.execution_id,
+      verifierExecutionId,
+      observations,
+    };
+  } finally {
+    database.close();
+  }
+};
+
 const productionProviderConfig = (): ConfigReadiness => {
   try {
     const configuredPath =
@@ -108,7 +339,7 @@ const productionProviderConfig = (): ConfigReadiness => {
     let found: ReturnType<typeof findArborConfigFile>;
     try {
       if (configuredPath !== undefined)
-        process.env.ARBOR_CONFIG = configuredPath;
+        process.env.ARBOR_CONFIG = resolve(configuredPath);
       found = findArborConfigFile();
     } finally {
       if (configuredPath !== undefined) {
@@ -169,7 +400,7 @@ const productionProviderConfig = (): ConfigReadiness => {
     return {
       ready: true,
       config: {
-        path: found.path,
+        path: resolve(found.path),
         deploymentId: provider.deploymentId,
         modelRef: provider.modelRef,
         endpoint,
@@ -187,6 +418,20 @@ const productionProviderConfig = (): ConfigReadiness => {
 };
 
 const readinessAtLoad = productionProviderConfig();
+const missingBuildAssets = (): ReadonlyArray<string> =>
+  [
+    [
+      "apps/single-workspace/dist/main.js",
+      resolve(repositoryRoot, "apps/single-workspace/dist/main.js"),
+    ],
+    [
+      "apps/web/dist/index.html",
+      resolve(repositoryRoot, "apps/web/dist/index.html"),
+    ],
+  ]
+    .filter(([, path]) => !existsSync(path as string))
+    .map(([label]) => label as string);
+const buildAssetsMissingAtLoad = missingBuildAssets();
 const skipReason =
   process.env[OPT_IN_ENV] !== "1"
     ? `set ${OPT_IN_ENV}=1 to explicitly opt in`
@@ -195,15 +440,16 @@ const skipReason =
       : readinessAtLoad.reason;
 
 const writeEvidence = (input: {
+  readonly evidenceDirectory: string;
   readonly config: ProductionProviderConfig;
   readonly captures: ReadonlyArray<ProviderCapture>;
   readonly publicScenario: PublicScenarioState;
   readonly result: "PASS" | "FAIL";
   readonly error?: string;
 }): string => {
-  mkdirSync(evidenceDirectory, { recursive: true });
+  mkdirSync(input.evidenceDirectory, { recursive: true });
   const output = join(
-    evidenceDirectory,
+    input.evidenceDirectory,
     `PUBLIC-S1-REAL-${new Date().toISOString().replaceAll(":", "-")}-${randomUUID()}.json`,
   );
   writeFileSync(
@@ -394,46 +640,53 @@ const approveExactPatchIfRequired = async (input: {
 };
 
 let activeFixture: ProductionFixture | undefined;
-let activeCaptureFile: string | undefined;
 
 afterEach(async (context) => {
   const fixture = activeFixture;
-  const captureFile = activeCaptureFile;
   activeFixture = undefined;
-  activeCaptureFile = undefined;
   await fixture?.stop();
   if (context.task.result?.state === "pass") {
     if (fixture !== undefined)
       removeFunctionalFixtureDirectory(fixture.directory);
-    if (captureFile !== undefined) rmSync(captureFile, { force: true });
   }
 });
 
-it.skipIf(skipReason !== undefined)(
-  skipReason === undefined
-    ? "REAL public S1: Work effect, independent Verification, human Acceptance, Completed, and restart"
-    : `REAL NOT QUALIFIED: ${skipReason}`,
-  async () => {
-    if (!readinessAtLoad.ready) {
-      throw new Error(
-        "REAL NOT QUALIFIED: production provider config disappeared after discovery",
-      );
-    }
-    const config = readinessAtLoad.config;
-    const marker = `REAL-S1-${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
-    const proofName = `proof-${marker.toLowerCase()}.txt`;
-    const proofContent = `S1-PUBLIC-REAL-PROOF:${marker}`;
-    const captureFile = join(
-      tmpdir(),
-      `arbor-public-s1-captures-${randomUUID()}.jsonl`,
+const realS1TestTitle =
+  skipReason !== undefined
+    ? `REAL NOT QUALIFIED: ${skipReason}`
+    : buildAssetsMissingAtLoad.length > 0
+      ? "REAL NOT QUALIFIED: build apps/single-workspace and apps/web before the real journey"
+      : "REAL public S1: Work effect, independent Verification, human Acceptance, Completed, and restart";
+
+it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
+  const missingAssets = missingBuildAssets();
+  if (missingAssets.length > 0) {
+    throw new Error(
+      `REAL NOT QUALIFIED: missing ${missingAssets.join(", ")}; run pnpm build and pnpm --filter @arbor/web build before starting the daemon or Provider request`,
     );
-    const hookUrl = pathToFileURL(fetchHook).href;
-    writeFileSync(captureFile, "", { encoding: "utf8", mode: 0o600 });
-    activeCaptureFile = captureFile;
-    let fixture: ProductionFixture | undefined;
-    let state: PublicScenarioState = {};
-    let result: "PASS" | "FAIL" = "FAIL";
-    let errorDetail: string | undefined;
+  }
+  if (!readinessAtLoad.ready) {
+    throw new Error(
+      "REAL NOT QUALIFIED: production provider config disappeared after discovery",
+    );
+  }
+  const config = readinessAtLoad.config;
+  const marker = `REAL-S1-${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+  const proofName = `proof-${marker.toLowerCase()}.txt`;
+  const proofContent = `S1-PUBLIC-REAL-PROOF:${marker}`;
+  const hookUrl = pathToFileURL(fetchHook).href;
+  let captureFile: string | undefined;
+  let privateEvidenceDirectory: string | undefined;
+  let fixture: ProductionFixture | undefined;
+  let state: PublicScenarioState = {};
+  let result: "PASS" | "FAIL" = "FAIL";
+  let errorDetail: string | undefined;
+  try {
+    privateEvidenceDirectory = makeP39PrivateTestDirectory(
+      tmpdir(),
+      "arbor-public-s1-evidence-",
+    );
+    const previousCapturePath = process.env[CAPTURE_FILE_ENV];
     try {
       fixture = await startProductionFixture({
         admitWorkspaceDirectory: true,
@@ -449,208 +702,335 @@ it.skipIf(skipReason !== undefined)(
           ARBOR_MODEL_NAME: "",
           ARBOR_MODEL_API_KEY_VAR: "",
           [CAPTURE_ENDPOINT_ENV]: safeEndpoint(config.endpoint),
-          [CAPTURE_FILE_ENV]: captureFile,
           NODE_OPTIONS:
             `${process.env.NODE_OPTIONS ?? ""} --import=${hookUrl}`.trim(),
         },
-      });
-      activeFixture = fixture;
-      const client = makePublicClient(fixture.baseUrl);
-      const project = await createFunctionalProject(
-        client,
-        fixture.workspaceDirectory,
-        `Real public S1 ${marker}`,
-        { resourceSelection: "Profile" },
-      );
-      state = { project };
-      const baselineEntries = new Set(readdirSync(fixture.workspaceDirectory));
-
-      await client.command(project.projectId, "GrantPermission", {
-        permissionGrantId: functionalId("pgr"),
-        issuer: "user:local",
-        subject: {
-          _tag: "WorkspaceAgent",
-          workspaceId: project.rootWorkspaceId,
+        setupProbe: (event) => {
+          if (event.stage !== "after-clone") return;
+          captureFile = join(event.directory, "provider-captures.jsonl");
+          writeFileSync(captureFile, "", {
+            encoding: "utf8",
+            mode: 0o600,
+          });
+          process.env[CAPTURE_FILE_ENV] = captureFile;
         },
-        capability: "fs:write",
-        target: project.rootWorkspaceId,
-        expiresAt: new Date(Date.now() + 20 * 60_000).toISOString(),
       });
-      await submitHumanMessage(
-        client,
-        project,
-        `请完成目标 ${marker}。只在当前项目工作区创建文件 ${proofName}，唯一一行内容严格为 ${proofContent}。使用工作区文件工具创建并读回后调用 claim_completion，说明观察到的内容。不要调用 shell、网络工具或访问其他工作区。完成标准是该文件精确匹配并由独立 Verification 验证。`,
-      );
-      const approval = await waitForExactWorkApproval(client, project, marker);
-      await client.command(project.projectId, "ResolveControlApproval", {
-        approvalId: approval.approvalId,
-        expectedRevision: approval.revision,
-        decision: "Approve",
-        reason: `approve exact public S1 Work for ${marker}`,
-      });
-      const currentWork = await waitForPublic(
-        () =>
-          client.view<{
-            workId?: string;
-            objective?: string;
-            revision: number;
-            status: string;
-          } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
-        (value) =>
-          value?.workId !== undefined &&
-          value.objective?.includes(marker) === true,
-        JOURNEY_TIMEOUT_MS,
-      );
-      if (currentWork?.workId === undefined) {
-        throw new Error(`public current-work did not expose Work ${marker}`);
-      }
-      state = { ...state, workId: currentWork.workId };
-      await approveExactPatchIfRequired({
-        client,
-        project,
-        workId: currentWork.workId,
-        marker,
-        proofPath: join(fixture.workspaceDirectory, proofName),
-        proofContent,
-      });
-
-      const proofPath = join(fixture.workspaceDirectory, proofName);
-      await waitForPublic(
-        async () => readFileSync(proofPath, "utf8"),
-        (content) => content === proofContent,
-        JOURNEY_TIMEOUT_MS,
-      );
-      const createdEntries = [
-        ...readdirSync(fixture.workspaceDirectory),
-      ].filter((entry) => !baselineEntries.has(entry));
-      expect(createdEntries).toHaveLength(1);
-      expect(createdEntries).toContain(proofName);
-
-      const verified = await waitForPublic(
-        () => currentState(client, project, currentWork.workId as string),
-        ({ verification }) =>
-          verification.verdict === "Pass" &&
-          verification.verificationId !== undefined &&
-          verification.evidenceRefs.length > 0,
-        JOURNEY_TIMEOUT_MS,
-      );
-      const verificationId = verified.verification.verificationId;
-      const targetWorkRevision = verified.verification.targetWorkRevision;
-      if (verificationId === undefined || targetWorkRevision === undefined) {
-        throw new Error(
-          "public Verification PASS omitted exact Work identity/revision",
-        );
-      }
-      state = { ...state, verificationId };
-      expect(verified.work.lifecycle).toBe("Open");
-      expect(verified.work.revision).toBe(targetWorkRevision);
-      expect(verified.verification.acceptance).toBeUndefined();
-
-      await client.command(project.projectId, "AcceptWorkOutcome", {
-        acceptanceId: functionalId("acc"),
-        workId: currentWork.workId,
-        targetWorkRevision,
-        verificationId,
-      });
-      const accepted = await waitForPublic(
-        () => currentState(client, project, currentWork.workId as string),
-        ({ verification, work }) =>
-          verification.acceptance !== undefined &&
-          work.lifecycle === "Completed",
-        JOURNEY_TIMEOUT_MS,
-      );
-      if (accepted.verification.acceptance === undefined) {
-        throw new Error("public Acceptance did not appear after commit");
-      }
-      expect(accepted.verification.acceptance.actor).toBe("user:local");
-      expect(accepted.work.acceptedResult).toMatchObject({
-        verificationId,
-        targetWorkRevision,
-        verdict: "Pass",
-      });
-      expect(
-        await client.view<unknown>("current-work", {
-          workspaceId: project.rootWorkspaceId,
-        }),
-      ).toBeNull();
-      state = { ...state, acceptedWork: accepted.work };
-
-      const callsBeforeRestart = readProviderCaptures(captureFile).length;
-      state = { ...state, providerCallCountBeforeRestart: callsBeforeRestart };
-      await fixture.restart();
-      const restartedClient = makePublicClient(fixture.baseUrl);
-      const restarted = await waitForPublic(
-        () =>
-          currentState(restartedClient, project, currentWork.workId as string),
-        ({ verification, work }) =>
-          verification.acceptance?.acceptanceId ===
-            accepted.verification.acceptance?.acceptanceId &&
-          work.lifecycle === "Completed",
-        JOURNEY_TIMEOUT_MS,
-      );
-      expect(restarted.verification).toMatchObject({
-        verificationId,
-        targetWorkRevision,
-        verdict: "Pass",
-      });
-      expect(restarted.work.acceptedResult).toEqual(
-        accepted.work.acceptedResult,
-      );
-      await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
-      const capturesAfterRestart = readProviderCaptures(captureFile);
-      expect(capturesAfterRestart.length).toBeGreaterThan(0);
-      expect(capturesAfterRestart).toHaveLength(callsBeforeRestart);
-      expect(
-        capturesAfterRestart.every(
-          (capture) =>
-            capture.status !== undefined &&
-            capture.status >= 200 &&
-            capture.status < 300 &&
-            capture.error === undefined,
-        ),
-      ).toBe(true);
-      expect(fixture.providerCalls).toHaveLength(0);
-      expect(fixture.daemonErrors).toEqual([]);
-
-      const bodies = capturesAfterRestart
-        .filter((capture) => capture.responseBodyBase64 !== undefined)
-        .map((capture) =>
-          Buffer.from(capture.responseBodyBase64 as string, "base64").toString(
-            "utf8",
-          ),
-        );
-      const wire = bodies.join("\n");
-      for (const action of [
-        "patch",
-        "claim_completion",
-        "record_verification_evidence",
-        "conclude_verification",
-      ]) {
-        expect(
-          wire,
-          `real provider response did not contain ${action}`,
-        ).toContain(action);
-      }
-      expect(wire).not.toMatch(/"name"\s*:\s*"shell"/u);
-      expect(
-        capturesAfterRestart.some(
-          (capture) => capture.request?.model === config.wireModelName,
-        ),
-      ).toBe(true);
-      state = { ...state, restartRead: restarted };
-      result = "PASS";
-    } catch (error) {
-      const diagnostics = {
-        capturedRealProviderCalls: readProviderCaptures(captureFile).length,
-        scriptedFallbackCalls: fixture?.providerCalls.length ?? 0,
-        daemonErrors: fixture?.daemonErrors.map(redactText) ?? [],
-        daemon: fixture?.daemonProcessSnapshot() ?? null,
-      };
-      errorDetail = `${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}\n${JSON.stringify(diagnostics)}`;
-      throw new Error(`REAL public S1 failed: ${redactText(errorDetail)}`);
     } finally {
-      const captures = readProviderCaptures(captureFile);
+      if (previousCapturePath === undefined)
+        delete process.env[CAPTURE_FILE_ENV];
+      else process.env[CAPTURE_FILE_ENV] = previousCapturePath;
+    }
+    if (captureFile === undefined) {
+      throw new Error(
+        "isolated fixture did not prepare the private provider capture file",
+      );
+    }
+    if (privateEvidenceDirectory === undefined) {
+      throw new Error("private evidence directory was not prepared");
+    }
+    const capturePath = captureFile;
+    activeFixture = fixture;
+    state = {
+      retainedPaths: {
+        fixtureDirectory: fixture.directory,
+        databaseFile: fixture.databaseFile,
+        workspaceDirectory: fixture.workspaceDirectory,
+        captureFile,
+        evidenceDirectory: privateEvidenceDirectory,
+        failureCleanup:
+          "Journey failures after daemon start retain the P39-private fixture directory/database/capture and private evidence directory until human review. Fixture startup failures follow bounded helper cleanup and retain the private evidence record.",
+        passCleanup:
+          "After pass, afterEach removes the fixture directory/database/capture; the private evidence directory is retained for qualification review.",
+      },
+    };
+    const client = makePublicClient(fixture.baseUrl);
+    const project = await createFunctionalProject(
+      client,
+      fixture.workspaceDirectory,
+      `Real public S1 ${marker}`,
+      { resourceSelection: "Profile" },
+    );
+    state = { ...state, project };
+    const workspaceBaseline = captureWorkspaceFileSnapshot(
+      fixture.workspaceDirectory,
+    );
+    state = { ...state, workspaceBaseline };
+
+    await client.command(project.projectId, "GrantPermission", {
+      permissionGrantId: functionalId("pgr"),
+      issuer: "user:local",
+      subject: {
+        _tag: "WorkspaceAgent",
+        workspaceId: project.rootWorkspaceId,
+      },
+      capability: "fs:write",
+      target: project.rootWorkspaceId,
+      expiresAt: new Date(Date.now() + 20 * 60_000).toISOString(),
+    });
+    await submitHumanMessage(
+      client,
+      project,
+      `请完成目标 ${marker}。只在当前项目工作区创建文件 ${proofName}，唯一一行内容严格为 ${proofContent}。使用工作区文件工具创建并读回后调用 claim_completion，说明观察到的内容。不要调用 shell、网络工具或访问其他工作区。完成标准是该文件精确匹配并由独立 Verification 验证。`,
+    );
+    const approval = await waitForExactWorkApproval(client, project, marker);
+    await client.command(project.projectId, "ResolveControlApproval", {
+      approvalId: approval.approvalId,
+      expectedRevision: approval.revision,
+      decision: "Approve",
+      reason: `approve exact public S1 Work for ${marker}`,
+    });
+    const currentWork = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          objective?: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (value) =>
+        value?.workId !== undefined &&
+        value.objective?.includes(marker) === true,
+      JOURNEY_TIMEOUT_MS,
+    );
+    if (currentWork?.workId === undefined) {
+      throw new Error(`public current-work did not expose Work ${marker}`);
+    }
+    state = { ...state, workId: currentWork.workId };
+    await approveExactPatchIfRequired({
+      client,
+      project,
+      workId: currentWork.workId,
+      marker,
+      proofPath: join(fixture.workspaceDirectory, proofName),
+      proofContent,
+    });
+
+    const proofPath = join(fixture.workspaceDirectory, proofName);
+    await waitForPublic(
+      async () => readFileSync(proofPath, "utf8"),
+      (content) => content === proofContent,
+      JOURNEY_TIMEOUT_MS,
+    );
+    const workspaceAfterWork = captureWorkspaceFileSnapshot(
+      fixture.workspaceDirectory,
+    );
+    state = { ...state, workspaceAfterWork };
+    for (const [path, baselineEntry] of Object.entries(
+      workspaceBaseline.entries,
+    )) {
+      expect(workspaceAfterWork.entries[path]).toEqual(baselineEntry);
+    }
+    const newEntries = Object.keys(workspaceAfterWork.entries)
+      .filter((path) => !Object.hasOwn(workspaceBaseline.entries, path))
+      .sort();
+    expect(newEntries).toEqual([proofName]);
+    expect(workspaceAfterWork.entries[proofName]).toMatchObject({
+      kind: "file",
+      size: Buffer.byteLength(proofContent, "utf8"),
+      sha256: createHash("sha256").update(proofContent, "utf8").digest("hex"),
+      bytesBase64: Buffer.from(proofContent, "utf8").toString("base64"),
+    });
+
+    const verified = await waitForPublic(
+      () => currentState(client, project, currentWork.workId as string),
+      ({ verification }) =>
+        verification.verdict === "Pass" &&
+        verification.verificationId !== undefined &&
+        verification.evidenceRefs.length > 0,
+      JOURNEY_TIMEOUT_MS,
+    );
+    const verificationId = verified.verification.verificationId;
+    const targetWorkRevision = verified.verification.targetWorkRevision;
+    if (verificationId === undefined || targetWorkRevision === undefined) {
+      throw new Error(
+        "public Verification PASS omitted exact Work identity/revision",
+      );
+    }
+    state = { ...state, verificationId };
+    expect(verified.work.lifecycle).toBe("Open");
+    expect(verified.work.revision).toBe(targetWorkRevision);
+    expect(verified.verification.acceptance).toBeUndefined();
+    const verifierObservationOracle = readVerifierObservationOracle({
+      databaseFile: fixture.databaseFile,
+      workId: currentWork.workId,
+      verificationId,
+    });
+    expect(verifierObservationOracle.oracleLayer).toBe(
+      "ReadOnlySQLiteAuxiliary",
+    );
+    expect(verifierObservationOracle.primaryJourneyLayer).toBe(
+      "PublicCommandsAndViews",
+    );
+    expect(verifierObservationOracle.verifierExecutionId).not.toBe(
+      verifierObservationOracle.producerExecutionId,
+    );
+    expect(
+      verifierObservationOracle.observations.some(
+        (observation) =>
+          observation.toolName === "read" &&
+          observation.settlementKind === "Success" &&
+          observation.toolResultStatus === "Succeeded",
+      ),
+    ).toBe(true);
+    state = { ...state, verifierObservationOracle };
+
+    await client.command(project.projectId, "AcceptWorkOutcome", {
+      acceptanceId: functionalId("acc"),
+      workId: currentWork.workId,
+      targetWorkRevision,
+      verificationId,
+    });
+    const accepted = await waitForPublic(
+      () => currentState(client, project, currentWork.workId as string),
+      ({ verification, work }) =>
+        verification.acceptance !== undefined && work.lifecycle === "Completed",
+      JOURNEY_TIMEOUT_MS,
+    );
+    if (accepted.verification.acceptance === undefined) {
+      throw new Error("public Acceptance did not appear after commit");
+    }
+    expect(accepted.verification.acceptance.actor).toBe("user:local");
+    expect(accepted.work.acceptedResult).toMatchObject({
+      verificationId,
+      targetWorkRevision,
+      verdict: "Pass",
+    });
+    expect(
+      await client.view<unknown>("current-work", {
+        workspaceId: project.rootWorkspaceId,
+      }),
+    ).toBeNull();
+    state = { ...state, acceptedWork: accepted.work };
+
+    const capturesBeforeRestart = await waitForPublic(
+      async () => readProviderCaptures(capturePath),
+      (captures) => {
+        const starts = startedProviderRequests(captures);
+        const finished = completedProviderRequestIds(captures);
+        return (
+          starts.length > 0 &&
+          starts.every((start) => finished.has(start.requestId))
+        );
+      },
+      60_000,
+    );
+    const startsBeforeRestart = startedProviderRequests(capturesBeforeRestart);
+    const completedBeforeRestart = capturesBeforeRestart.filter(
+      (capture) => capture.event === "response-complete",
+    );
+    expect(completedBeforeRestart).toHaveLength(startsBeforeRestart.length);
+    expect(
+      capturesBeforeRestart.some(
+        (capture) =>
+          capture.event === "request-failed" ||
+          capture.event === "response-capture-failed",
+      ),
+    ).toBe(false);
+    expect(
+      completedBeforeRestart.every(
+        (capture) =>
+          capture.status !== undefined &&
+          capture.status >= 200 &&
+          capture.status < 300,
+      ),
+    ).toBe(true);
+    const callsBeforeRestart = startsBeforeRestart.length;
+    state = { ...state, providerCallCountBeforeRestart: callsBeforeRestart };
+    await fixture.restart({
+      daemonEnvironment: { [CAPTURE_FILE_ENV]: capturePath },
+    });
+    const restartedClient = makePublicClient(fixture.baseUrl);
+    const restarted = await waitForPublic(
+      () =>
+        currentState(restartedClient, project, currentWork.workId as string),
+      ({ verification, work }) =>
+        verification.acceptance?.acceptanceId ===
+          accepted.verification.acceptance?.acceptanceId &&
+        work.lifecycle === "Completed",
+      JOURNEY_TIMEOUT_MS,
+    );
+    expect(restarted.verification).toMatchObject({
+      verificationId,
+      targetWorkRevision,
+      verdict: "Pass",
+    });
+    expect(restarted.work.acceptedResult).toEqual(accepted.work.acceptedResult);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
+    const capturesAfterRestart = readProviderCaptures(capturePath);
+    expect(capturesAfterRestart.length).toBeGreaterThan(0);
+    const startsAfterRestart = startedProviderRequests(capturesAfterRestart);
+    expect(startsAfterRestart).toHaveLength(callsBeforeRestart);
+    const finishedAfterRestart =
+      completedProviderRequestIds(capturesAfterRestart);
+    expect(
+      startsAfterRestart.every((start) =>
+        finishedAfterRestart.has(start.requestId),
+      ),
+    ).toBe(true);
+    expect(
+      capturesAfterRestart.every(
+        (capture) =>
+          capture.event !== "request-failed" &&
+          capture.event !== "response-capture-failed",
+      ),
+    ).toBe(true);
+    expect(fixture.providerCalls).toHaveLength(0);
+    expect(fixture.daemonErrors).toEqual([]);
+
+    const bodies = capturesAfterRestart
+      .filter(
+        (capture) =>
+          capture.event === "response-complete" &&
+          capture.responseBodyBase64 !== undefined,
+      )
+      .map((capture) =>
+        Buffer.from(capture.responseBodyBase64 as string, "base64").toString(
+          "utf8",
+        ),
+      );
+    const wire = bodies.join("\n");
+    for (const action of [
+      "patch",
+      "claim_completion",
+      "record_verification_evidence",
+      "conclude_verification",
+    ]) {
+      expect(
+        wire,
+        `real provider response did not contain ${action}`,
+      ).toContain(action);
+    }
+    expect(wire).not.toMatch(/"name"\s*:\s*"shell"/u);
+    expect(
+      capturesAfterRestart.some(
+        (capture) => capture.request?.model === config.wireModelName,
+      ),
+    ).toBe(true);
+    state = { ...state, restartRead: restarted };
+    result = "PASS";
+  } catch (error) {
+    const diagnostics = {
+      fixtureDirectory: fixture?.directory ?? null,
+      databaseFile: fixture?.databaseFile ?? null,
+      workspaceDirectory: fixture?.workspaceDirectory ?? null,
+      captureFile: captureFile ?? null,
+      evidenceDirectory: privateEvidenceDirectory ?? null,
+      capturedRequestStarts:
+        captureFile === undefined
+          ? 0
+          : startedProviderRequests(readProviderCaptures(captureFile)).length,
+      scriptedFallbackCalls: fixture?.providerCalls.length ?? 0,
+      daemonErrors: fixture?.daemonErrors.map(redactText) ?? [],
+      daemon: fixture?.daemonProcessSnapshot() ?? null,
+    };
+    errorDetail = `${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}\n${JSON.stringify(diagnostics)}`;
+    throw new Error(`REAL public S1 failed: ${redactText(errorDetail)}`);
+  } finally {
+    if (privateEvidenceDirectory !== undefined) {
+      const captures =
+        captureFile === undefined ? [] : readProviderCaptures(captureFile);
       const evidencePath = writeEvidence({
+        evidenceDirectory: privateEvidenceDirectory,
         config,
         captures,
         publicScenario: state,
@@ -659,8 +1039,8 @@ it.skipIf(skipReason !== undefined)(
       });
       console.info(`REAL public S1 evidence: ${evidencePath}`);
     }
-  },
-);
+  }
+});
 
 function readProviderCaptures(captureFile: string): Array<ProviderCapture> {
   let text: string;
