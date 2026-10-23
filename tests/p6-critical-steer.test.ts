@@ -36,6 +36,7 @@ import {
   CommandGatewayLive,
   type CommandHandler,
   CommandHandlerRegistry,
+  commandErr,
   FenceStopCheckInertLive,
   makeP1CommandHandlers,
   semanticRequestFingerprint,
@@ -91,6 +92,12 @@ const commitSteerCommandId = parse(CommandId)(
 const noActiveSteerCommandId = parse(CommandId)(
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789d5",
 );
+const concurrentSteerCommandId = parse(CommandId)(
+  "cmd_018f2b3c-4d5e-7abc-8def-0123456789d6",
+);
+const stopFailureSteerCommandId = parse(CommandId)(
+  "cmd_018f2b3c-4d5e-7abc-8def-0123456789d7",
+);
 const commitStopCommandId = parse(CommandId)(
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789d2",
 );
@@ -107,7 +114,11 @@ const normalStopCommandId = parse(CommandId)(
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789d4",
 );
 
-const CriticalSteerRegistryLive: Layer.Layer<
+const makeCriticalSteerRegistryLive = (
+  stopHandlerOverride?: (
+    handler: CommandHandler<StopExecutionPayload, StopExecutionResult>,
+  ) => CommandHandler<StopExecutionPayload, StopExecutionResult>,
+): Layer.Layer<
   CommandHandlerRegistry,
   never,
   | ProjectRepository
@@ -117,54 +128,60 @@ const CriticalSteerRegistryLive: Layer.Layer<
   | InboxProjectionStore
   | ExecutionRepository
   | WorkWaitStore
-> = Layer.effect(
-  CommandHandlerRegistry,
-  Effect.gen(function* () {
-    const projects = yield* ProjectRepository;
-    const workspaces = yield* WorkspaceRepository;
-    const sessions = yield* SessionRepository;
-    const works = yield* WorkRepository;
-    const inbox = yield* InboxProjectionStore;
-    const executions = yield* ExecutionRepository;
-    const workWaits = yield* WorkWaitStore;
-    const p2Handlers = makeP2CommandHandlers({
-      projects,
-      workspaces,
-      sessions,
-      executions,
-      workWaits,
-      readmissionGate: NoHoldWorkReadmissionGateStoreService,
-    }).filter((candidate) => candidate.commandType !== "StopExecution");
-    const stopHandler = makeStopExecutionHandler({
-      executions,
-      executableApprovals: { cancelForExecution: () => Effect.succeed([]) },
-    });
-    const steerHandler = makeSteerWorkHandler({ works, inbox });
-    const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
-      ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
-      ...p2Handlers,
-      stopHandler as unknown as CommandHandler<unknown, unknown>,
-      makeCriticalSteerCommandHandler({
-        steerHandler,
-        stopHandler,
+> =>
+  Layer.effect(
+    CommandHandlerRegistry,
+    Effect.gen(function* () {
+      const projects = yield* ProjectRepository;
+      const workspaces = yield* WorkspaceRepository;
+      const sessions = yield* SessionRepository;
+      const works = yield* WorkRepository;
+      const inbox = yield* InboxProjectionStore;
+      const executions = yield* ExecutionRepository;
+      const workWaits = yield* WorkWaitStore;
+      const p2Handlers = makeP2CommandHandlers({
+        projects,
+        workspaces,
+        sessions,
         executions,
-      }) as unknown as CommandHandler<unknown, unknown>,
-    ];
-    return CommandHandlerRegistry.of({
-      lookup: (commandType) => {
-        const handler = handlers.find(
-          (candidate) => candidate.commandType === commandType,
-        );
-        return handler === undefined ? Option.none() : Option.some(handler);
-      },
-    });
-  }),
-);
+        workWaits,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
+      }).filter((candidate) => candidate.commandType !== "StopExecution");
+      const defaultStopHandler = makeStopExecutionHandler({
+        executions,
+        executableApprovals: { cancelForExecution: () => Effect.succeed([]) },
+      });
+      const stopHandler =
+        stopHandlerOverride?.(defaultStopHandler) ?? defaultStopHandler;
+      const steerHandler = makeSteerWorkHandler({ works, inbox });
+      const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
+        ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
+        ...p2Handlers,
+        stopHandler as unknown as CommandHandler<unknown, unknown>,
+        makeCriticalSteerCommandHandler({
+          steerHandler,
+          stopHandler,
+          executions,
+        }) as unknown as CommandHandler<unknown, unknown>,
+      ];
+      return CommandHandlerRegistry.of({
+        lookup: (commandType) => {
+          const handler = handlers.find(
+            (candidate) => candidate.commandType === commandType,
+          );
+          return handler === undefined ? Option.none() : Option.some(handler);
+        },
+      });
+    }),
+  );
 
 /** Self-contained Critical Steer harness (p6-steer/p6-app assembly copied;
  * those files are frozen for this task). Fixed clock keeps issuedAt="t". */
 const makeCriticalSteerApp = (
   filename = ":memory:",
+  stopHandlerOverride?: (
+    handler: CommandHandler<StopExecutionPayload, StopExecutionResult>,
+  ) => CommandHandler<StopExecutionPayload, StopExecutionResult>,
 ): Layer.Layer<
   | CommandGateway
   | SqlClient
@@ -185,7 +202,10 @@ const makeCriticalSteerApp = (
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
   );
-  const registry = Layer.provide(CriticalSteerRegistryLive, storeDeps);
+  const registry = Layer.provide(
+    makeCriticalSteerRegistryLive(stopHandlerOverride),
+    storeDeps,
+  );
   const gatewayDeps = Layer.mergeAll(
     infra,
     registry,
@@ -541,6 +561,212 @@ describe("p6-critical-steer", () => {
       "HumanInterventionApplied",
       "ExecutionStopRequested",
     ]);
+  });
+
+  it("serializes concurrent same-command advisory misses into one receipt and one Steer+Stop fact set", async () => {
+    const program = Effect.gen(function* () {
+      yield* seedWork;
+      yield* admitMainExecution;
+      const gateway = yield* CommandGateway;
+      const payload = criticalPayload();
+      const stopPayload = { executionId: mainExecutionId };
+      let preparationCalls = 0;
+      let releasePreparations!: () => void;
+      const bothPrepared = new Promise<void>((resolve) => {
+        releasePreparations = resolve;
+      });
+      const envelope = {
+        commandType: "SteerWork",
+        commandId: concurrentSteerCommandId,
+        projectId: p6Project,
+        actor: p6TestActor,
+        issuedAt: "t",
+        payload,
+        prepareCriticalSteerStop: () =>
+          Effect.promise(async () => {
+            preparationCalls += 1;
+            if (preparationCalls === 2) releasePreparations();
+            await bothPrepared;
+            return {
+              _tag: "Ready",
+              executionId: mainExecutionId,
+              authority: {
+                _tag: "StopExecutionAuthority",
+                submissionOrigin: "External",
+                principal: p6TestPrincipal,
+                commandId: concurrentSteerCommandId,
+                semanticRequestFingerprint: semanticRequestFingerprint({
+                  commandType: "StopExecution",
+                  projectId: p6Project,
+                  actor: p6TestActor,
+                  schemaVersion: "1",
+                  payload: stopPayload,
+                }),
+                projectId: p6Project,
+                commandKind: "StopExecution",
+                executionId: mainExecutionId,
+              },
+            } satisfies CriticalSteerPreparation;
+          }),
+      };
+      const context = { _tag: "External" as const, principal: p6TestPrincipal };
+      const authority = {
+        _tag: "SteerWorkAuthority" as const,
+        principal: p6TestPrincipal,
+        commandId: concurrentSteerCommandId,
+        semanticRequestFingerprint: semanticRequestFingerprint({
+          commandType: "SteerWork",
+          projectId: p6Project,
+          actor: p6TestActor,
+          schemaVersion: "1",
+          payload,
+        }),
+        projectId: p6Project,
+        targetWorkspaceId: p6RootWorkspace,
+        workId,
+      };
+      const receipts = yield* Effect.all(
+        [
+          gateway.execute(envelope, context, authority),
+          gateway.execute(envelope, context, authority),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const sql = yield* SqlClient;
+      return {
+        receipts,
+        preparationCalls,
+        work: yield* workRow,
+        execution: yield* executionRow,
+        entries: yield* inboxEntries,
+        receiptCount: yield* sql.unsafe<{ readonly count: number }>(
+          "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+          [concurrentSteerCommandId],
+        ),
+        events: yield* sql.unsafe<{
+          readonly event_type: string;
+          readonly caused_by_command_id: string | null;
+        }>(
+          "SELECT event_type, caused_by_command_id FROM domain_events WHERE caused_by_command_id = ? ORDER BY sequence",
+          [concurrentSteerCommandId],
+        ),
+      };
+    });
+    const result = await runCriticalSteer(program, makeCriticalSteerApp());
+    expect(result.preparationCalls).toBe(2);
+    expect(result.receipts[0]).toEqual(result.receipts[1]);
+    expect(result.receipts[0]?.resolution._tag).toBe("Committed");
+    expect(result.receiptCount[0]?.count).toBe(1);
+    expect(result.work[0]).toMatchObject({ lifecycle: "Open", revision: 1 });
+    expect(result.execution[0]?.stop_requested_at).toBe("t");
+    expect(result.entries).toHaveLength(1);
+    expect(result.events.map((event) => event.event_type)).toEqual([
+      "WorkSteered",
+      "HumanInterventionApplied",
+      "ExecutionStopRequested",
+    ]);
+  });
+
+  it("rolls back Steer and its Inbox/event/receipt facts when the Stop child rejects", async () => {
+    const stopRejectsAfterSteer = (
+      handler: CommandHandler<StopExecutionPayload, StopExecutionResult>,
+    ): CommandHandler<StopExecutionPayload, StopExecutionResult> => ({
+      ...handler,
+      execute: (envelope) =>
+        Effect.succeed(
+          commandErr({
+            _tag: "ExecutionNotFound",
+            executionId: envelope.payload.executionId,
+          }),
+        ),
+    });
+    const program = Effect.gen(function* () {
+      yield* seedWork;
+      yield* admitMainExecution;
+      const gateway = yield* CommandGateway;
+      const payload = criticalPayload();
+      const context = { _tag: "External" as const, principal: p6TestPrincipal };
+      const authority = {
+        _tag: "SteerWorkAuthority" as const,
+        principal: p6TestPrincipal,
+        commandId: stopFailureSteerCommandId,
+        semanticRequestFingerprint: semanticRequestFingerprint({
+          commandType: "SteerWork",
+          projectId: p6Project,
+          actor: p6TestActor,
+          schemaVersion: "1",
+          payload,
+        }),
+        projectId: p6Project,
+        targetWorkspaceId: p6RootWorkspace,
+        workId,
+      };
+      const exit = yield* Effect.exit(
+        gateway.execute(
+          {
+            commandType: "SteerWork",
+            commandId: stopFailureSteerCommandId,
+            projectId: p6Project,
+            actor: p6TestActor,
+            issuedAt: "t",
+            payload,
+            prepareCriticalSteerStop: () =>
+              Effect.succeed({
+                _tag: "Ready",
+                executionId: mainExecutionId,
+                authority: {
+                  _tag: "StopExecutionAuthority",
+                  submissionOrigin: "External",
+                  principal: p6TestPrincipal,
+                  commandId: stopFailureSteerCommandId,
+                  semanticRequestFingerprint: semanticRequestFingerprint({
+                    commandType: "StopExecution",
+                    projectId: p6Project,
+                    actor: p6TestActor,
+                    schemaVersion: "1",
+                    payload: { executionId: mainExecutionId },
+                  }),
+                  projectId: p6Project,
+                  commandKind: "StopExecution",
+                  executionId: mainExecutionId,
+                },
+              } satisfies CriticalSteerPreparation),
+          },
+          context,
+          authority,
+        ),
+      );
+      const sql = yield* SqlClient;
+      return {
+        exit,
+        work: yield* workRow,
+        execution: yield* executionRow,
+        entries: yield* inboxEntries,
+        receiptCount: yield* sql.unsafe<{ readonly count: number }>(
+          "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+          [stopFailureSteerCommandId],
+        ),
+        events: yield* sql.unsafe<{ readonly count: number }>(
+          "SELECT COUNT(*) AS count FROM domain_events WHERE caused_by_command_id = ?",
+          [stopFailureSteerCommandId],
+        ),
+      };
+    });
+    const result = await runCriticalSteer(
+      program,
+      makeCriticalSteerApp(":memory:", stopRejectsAfterSteer),
+    );
+    expect(Exit.isFailure(result.exit)).toBe(true);
+    if (Exit.isFailure(result.exit)) {
+      expect(
+        result.exit.cause.reasons.some((reason) => Cause.isDieReason(reason)),
+      ).toBe(true);
+    }
+    expect(result.work[0]).toMatchObject({ lifecycle: "Open", revision: 0 });
+    expect(result.execution[0]?.stop_requested_at).toBeNull();
+    expect(result.entries).toHaveLength(0);
+    expect(result.receiptCount[0]?.count).toBe(0);
+    expect(result.events[0]?.count).toBe(0);
   });
 
   it("keeps no-active-main Critical Steer fail-closed pending the P6 owner decision", async () => {
