@@ -1,6 +1,6 @@
 # V6 Fresh Profile Ownership Review — 2026-10-24
 
-Status: **E50 PROFILE FIX REVIEWED; FRESH POST-INTENT CANDIDATEREAD PATH CORRECTED; FULL PROCESS REQUALIFICATION BLOCKED BY TEST-LOCAL SCHEMA QUERY, FIXED; PROCESS RETEST NOT RUN**
+Status: **E50 PROFILE FIX REVIEWED; SCHEMA-51 SQL MICROTEST PASS; FINAL SYNTHETIC PROCESS QUALIFICATION FAILED AT FRESH P4 RESUMPTION; P4 ROOT CAUSE NOT DIAGNOSABLE FROM RETAINED ARTIFACTS**
 
 ## E50 fixture review
 
@@ -79,9 +79,11 @@ outside this review.
   now reads those actual columns and checks both serialized and decomposed
   WorkEpisode identity against the public CandidateRead binding.
 - A prepare-once audit against the retained schema-version-51 database covered
-  all 30 static SQL statements in this V6 process test and all 13 in its
+  all 30 diagnostic SQL statements in this V6 process test and all 13 in its
   `ah-durable-snapshot.ts` helper: **43/43 prepared, 0 invalid columns or
-  aliases** after the fix. The test includes a test-local schema microtest that
+  aliases** after the fix. The test-local schema-version assertion adds one
+  static `PRAGMA user_version` query, so the current microtest prepares 44
+  statements total. It includes a schema microtest that
   uses `createCurrentSchemaTestDatabase`, asserts `PRAGMA user_version` equals
   `CURRENT_SCHEMA_VERSION` (51), then prepares this source-listed query set.
   This uses the production migration chain and does not start a daemon.
@@ -92,15 +94,49 @@ outside this review.
   including bundle revision/digest, provider registry revision/digest,
   provider version, capability revision, handle binding, profile and network
   policy. The canonical P39 digest qualification remains out of scope.
-- No process rerun has been performed after the schema-query correction. The
-  earlier wrong-column failure and the prior obsolete EAP-oracle failure are
-  both harness/test-oracle failures, not evidence of a production defect.
-- Post-fix lightweight verification: the V6 P9 exact-Step oracles and the new
-  current-schema SQL microtest pass together (**3 passed, 1 process case
-  skipped**); the microtest creates schema 51 through the current-schema test
-  helper, prepares all 43 static queries, and does not start a daemon. Targeted
-  Biome and `git diff --check`
-  pass. `pnpm exec tsc -p tsconfig.test.json --noEmit` reports only the
+- The one authorized post-review full-file run followed successful root and Web
+  builds. It used retry 0 / one worker and ended **3 passed, 1 failed**: both
+  P9 oracle tests and the schema-51 query microtest passed; the process case
+  failed while waiting for fresh P4 settlement. Its last captured exact
+  invocation probe was `SandboxPolicyRequiredInterruption`; the adjacent
+  SQLite source snapshot showed the same invocation `NotAdmitted` / `Bound`,
+  unsettled, with no observation, its Action `Pending`, and its Step
+  `ActionsInProgress`. The public fresh `DecideSandboxPolicy` receipt had
+  already matched `Committed`; the fresh payload was built from the post-restart
+  public CandidateRead. This is not an `ExpectedFailure`, P9 terminal result,
+  or OS-supported-provider qualification.
+- The run's failure-evidence archive also failed: the direct Vitest invocation
+  supplied `.test-results/2026-10-24-v6-schema51-final` before creating that
+  directory. `archiveProductionFixtureFailure` requires a real existing direct
+  `.test-results` child and threw `ENOENT` at its `lstat`; suite teardown then
+  removed the temporary fixture root. The retained
+  `.test-results/2026-10-24-v6-schema51-final/vitest.json` records the terminal
+  probe/source and both errors (SHA-256
+  `a141514fa05f9dc32d6f52362af6feff23470e51331d326f2445eb79ad074310`), but no
+  database/WAL/workspace for this run remains. The unrelated 2026-10-23
+  temporary fixture was not substituted. The Vitest process and matching
+  daemon process tree are terminal; no matching process remains.
+- The archive-hook cause is diagnosed and fixed in test infrastructure:
+  `validateResultDirectory` now creates a missing, lexically validated direct
+  child after validating the real `.test-results` root; a test-local regression
+  archives a disposable fixture into a missing destination and checks the
+  archive contents. However, the missing DB means the fresh persisted P1 row,
+  episode binding, effective summary/digest, and current CandidateRead cannot
+  be compared after commit. Therefore why P4 remained parked is **NOT
+  DIAGNOSABLE** from this run. The evidence does not distinguish a failure to
+  rematerialize the committed policy from failure to reschedule the exact
+  pending action; the captured P4 probe may also predate the fresh P1 commit
+  because the test selects the first exact-invocation probe. No production
+  defect or test-only cause is asserted for that P4 gap.
+- The earlier wrong-column failure and obsolete EAP-oracle failure remain
+  separately classified harness/oracle issues, not evidence of a production
+  defect. No further process run was performed.
+- Post-fix lightweight verification: the V6 P9 exact-Step oracles, the missing
+  archive-directory regression, and the current-schema SQL microtest pass
+  together (**4 passed, 1 process case skipped**); the microtest creates schema
+  51 through the current-schema test helper, prepares all 44 static queries,
+  and does not start a daemon. Targeted Biome and `git diff --check` pass.
+  `pnpm exec tsc -p tsconfig.test.json --noEmit` reports only the
   pre-existing unrelated `organization.functional.test.ts:740` missing
   `ProductionFixture.httpPort` member; no V6 or helper errors are reported.
 - Focused typecheck after this correction reports only the unrelated

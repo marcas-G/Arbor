@@ -1,6 +1,7 @@
 import {
   existsSync,
   lstatSync,
+  mkdirSync,
   realpathSync,
   renameSync,
   writeFileSync,
@@ -16,29 +17,18 @@ const validateResultDirectory = (resultDirectory: string) => {
   const resultsRoot = resolve(repositoryRoot, ".test-results");
   const resolvedResultDirectory = resolve(resultDirectory);
   const resultsStat = lstatSync(resultsRoot);
-  const resultStat = lstatSync(resolvedResultDirectory);
-  if (
-    !resultsStat.isDirectory() ||
-    resultsStat.isSymbolicLink() ||
-    !resultStat.isDirectory() ||
-    resultStat.isSymbolicLink()
-  ) {
+  if (!resultsStat.isDirectory() || resultsStat.isSymbolicLink()) {
     throw new Error(
-      `Fixture failure evidence destination is not a real directory: ${resolvedResultDirectory}`,
+      `Fixture failure evidence root is not a real directory: ${resultsRoot}`,
     );
   }
   const realResultsRoot = realpathSync.native(resultsRoot);
-  const realResultDirectory = realpathSync.native(resolvedResultDirectory);
-  if (
-    normalizedPath(realResultsRoot) !== normalizedPath(resultsRoot) ||
-    normalizedPath(realResultDirectory) !==
-      normalizedPath(resolvedResultDirectory)
-  ) {
+  if (normalizedPath(realResultsRoot) !== normalizedPath(resultsRoot)) {
     throw new Error(
-      `Fixture failure evidence destination traverses a reparse path: ${resolvedResultDirectory}`,
+      `Fixture failure evidence root traverses a reparse path: ${resultsRoot}`,
     );
   }
-  const relativeResult = relative(realResultsRoot, realResultDirectory);
+  const relativeResult = relative(realResultsRoot, resolvedResultDirectory);
   if (
     relativeResult === "" ||
     relativeResult === ".." ||
@@ -48,6 +38,24 @@ const validateResultDirectory = (resultDirectory: string) => {
   ) {
     throw new Error(
       `Fixture failure evidence destination must be a direct .test-results child: ${resolvedResultDirectory}`,
+    );
+  }
+  if (!existsSync(resolvedResultDirectory)) {
+    mkdirSync(resolvedResultDirectory);
+  }
+  const resultStat = lstatSync(resolvedResultDirectory);
+  if (!resultStat.isDirectory() || resultStat.isSymbolicLink()) {
+    throw new Error(
+      `Fixture failure evidence destination is not a real directory: ${resolvedResultDirectory}`,
+    );
+  }
+  const realResultDirectory = realpathSync.native(resolvedResultDirectory);
+  if (
+    normalizedPath(realResultDirectory) !==
+    normalizedPath(resolvedResultDirectory)
+  ) {
+    throw new Error(
+      `Fixture failure evidence destination traverses a reparse path: ${resolvedResultDirectory}`,
     );
   }
   return { repositoryRoot, resultDirectory: realResultDirectory };
