@@ -54,7 +54,7 @@ describe("DID v1.31 MAC-P1 Root Conversation work-initiation boundary", () => {
 
   it("versions the bounded-goal behavior and preserves user prohibitions", () => {
     const prompts = source("packages/agent-runtime/src/prompt-assets.ts");
-    expect(prompts).toContain('"prompt:root-conversation:goal-placement:v5"');
+    expect(prompts).toContain('"prompt:root-conversation:goal-placement:v7"');
     expect(prompts).toContain("never ask which external platform");
     expect(prompts).toContain("Call assign_work");
     expect(prompts).toContain("current Workspace");
