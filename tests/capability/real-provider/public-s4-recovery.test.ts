@@ -453,6 +453,21 @@ it.skipIf(skipReason !== undefined)(
         );
         expect(secondAssistant?.body).toContain(recallCode);
 
+        const recoveryQuietWindowMs = Math.min(1_500, deadlineAt - Date.now());
+        if (recoveryQuietWindowMs <= 0) {
+          throw new Error(
+            "S4 deadline expired before bounded recovery stability window",
+          );
+        }
+        await new Promise((resolveWait) =>
+          setTimeout(resolveWait, recoveryQuietWindowMs),
+        );
+        const stableTranscript = await transcript(
+          client,
+          project.rootWorkspaceId,
+        );
+        expect(stableTranscript.entries).toEqual(recoveredTranscript.entries);
+
         const finalCaptures = readProviderCaptures(run.captureFile);
         const starts = startedProviderRequests(finalCaptures);
         const firstTurnStarts = starts.filter(
@@ -491,6 +506,7 @@ it.skipIf(skipReason !== undefined)(
           recoveredTranscriptIdentities: finalIdentities,
           oldDaemonPid,
           newDaemonPid,
+          recoveryQuietWindowMs,
           completedTurnProviderRequestCount: firstTurnStarts.length,
           recoveredPendingTurnRequestObserved: true,
           fixtureDatabase: run.fixture.databaseFile,
