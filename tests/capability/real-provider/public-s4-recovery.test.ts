@@ -14,10 +14,12 @@ import {
 } from "../../functional/support/public-client.js";
 import {
   armProviderResponseGate,
+  type BoundProviderRequestEvidence,
   discoverProductionProviderConfig,
   finishRealProviderFixture,
   makeDeadlinePublicClient,
-  type ProviderCapture,
+  type ProviderRequestEvidence,
+  providerRequestsMatching,
   readProviderCaptures,
   repositoryBuildAssets,
   type StartedRealProviderFixture,
@@ -105,8 +107,24 @@ const waitWithinDeadline = async <A>(input: {
 const entryKey = (entry: TranscriptEntry): string =>
   `${entry.kind}:${entry.messageId ?? entry.body ?? "missing-identity"}`;
 
-const requestText = (capture: ProviderCapture): string =>
-  JSON.stringify(capture.request ?? {});
+const requestText = (request: Record<string, unknown>): string =>
+  JSON.stringify(request);
+
+const requireBoundProviderRequests = (
+  evidence: ReadonlyArray<ProviderRequestEvidence>,
+  context: string,
+): ReadonlyArray<BoundProviderRequestEvidence> => {
+  const invalid = evidence.find((candidate) => candidate._tag === "Invalid");
+  if (invalid !== undefined) {
+    throw new Error(
+      `S4 ${context} Provider request evidence is ambiguous: ${invalid.reason}`,
+    );
+  }
+  return evidence.filter(
+    (candidate): candidate is BoundProviderRequestEvidence =>
+      candidate._tag === "Bound",
+  );
+};
 
 const isStrictlyInside = (parent: string, child: string): boolean => {
   const rel = relative(resolve(parent), resolve(child));
@@ -347,24 +365,34 @@ it.skipIf(skipReason !== undefined)(
         const capturesAfterCompletedTurn = readProviderCaptures(
           run.captureFile,
         );
-        const completedTurnCapture = startedProviderRequests(
-          capturesAfterCompletedTurn,
-        ).find((capture) => requestText(capture).includes(firstPrompt));
-        if (completedTurnCapture === undefined) {
+        const completedTurnEvidence = requireBoundProviderRequests(
+          providerRequestsMatching(capturesAfterCompletedTurn, (request) =>
+            requestText(request).includes(firstPrompt),
+          ),
+          "completed turn",
+        );
+        if (completedTurnEvidence.length === 0) {
           throw new Error(
             "real Provider request for the completed turn was not captured",
           );
         }
-        expect(
-          capturesAfterCompletedTurn.some(
+        const completedTurnSuccess = completedTurnEvidence.find((evidence) =>
+          evidence.bodyEvents.some(
             (capture) =>
               capture.event === "response-complete" &&
-              capture.requestId === completedTurnCapture.requestId &&
               capture.status !== undefined &&
               capture.status >= 200 &&
               capture.status < 300,
           ),
-        ).toBe(true);
+        );
+        if (completedTurnSuccess === undefined) {
+          throw new Error(
+            "completed public turn has no captured successful Provider response",
+          );
+        }
+        const firstTurnRequestIdsBeforeRestart = completedTurnEvidence
+          .map((evidence) => evidence.requestId)
+          .sort();
         const secondPrompt = `What exact code did I ask you to remember? Return it unchanged. Marker: ${marker}.`;
         const startsBeforePendingTurn = startedProviderRequests(
           readProviderCaptures(run.captureFile),
@@ -377,7 +405,10 @@ it.skipIf(skipReason !== undefined)(
         });
         expect(held.status).toBeGreaterThanOrEqual(200);
         expect(held.status).toBeLessThan(300);
-        expect(requestText(held)).toContain(secondPrompt);
+        if (held.request === undefined) {
+          throw new Error("held Provider response lacks its request body");
+        }
+        expect(requestText(held.request)).toContain(secondPrompt);
         const pendingTranscript = await waitWithinDeadline({
           deadlineAt,
           label: "second user turn pending without an assistant answer",
@@ -469,20 +500,41 @@ it.skipIf(skipReason !== undefined)(
         expect(stableTranscript.entries).toEqual(recoveredTranscript.entries);
 
         const finalCaptures = readProviderCaptures(run.captureFile);
-        const starts = startedProviderRequests(finalCaptures);
-        const firstTurnStarts = starts.filter(
-          (capture) =>
-            requestText(capture).includes(firstPrompt) &&
-            !requestText(capture).includes(secondPrompt),
-        );
-        expect(firstTurnStarts).toHaveLength(1);
-        expect(
-          starts.some(
-            (capture) =>
-              requestText(capture).includes(secondPrompt) &&
-              capture.processId === newDaemonPid,
+        const firstTurnEvidenceAfterRestart = requireBoundProviderRequests(
+          providerRequestsMatching(
+            finalCaptures,
+            (request) =>
+              requestText(request).includes(firstPrompt) &&
+              !requestText(request).includes(secondPrompt),
           ),
-        ).toBe(true);
+          "completed turn after restart",
+        );
+        expect(
+          firstTurnEvidenceAfterRestart
+            .map((evidence) => evidence.requestId)
+            .sort(),
+        ).toEqual(firstTurnRequestIdsBeforeRestart);
+        const recoveredPendingEvidence = requireBoundProviderRequests(
+          providerRequestsMatching(finalCaptures, (request) =>
+            requestText(request).includes(secondPrompt),
+          ),
+          "pending turn after restart",
+        );
+        const recoveredPendingRequestsOnNewDaemon =
+          recoveredPendingEvidence.filter(
+            (evidence) => evidence.requestStart.processId === newDaemonPid,
+          );
+        const recoveredPendingRequest =
+          recoveredPendingRequestsOnNewDaemon.find((evidence) =>
+            evidence.bodyEvents.some(
+              (capture) =>
+                capture.event === "response-complete" &&
+                capture.status !== undefined &&
+                capture.status >= 200 &&
+                capture.status < 300,
+            ),
+          );
+        expect(recoveredPendingRequest).toBeDefined();
         expect(
           finalCaptures.some(
             (capture) =>
@@ -500,14 +552,18 @@ it.skipIf(skipReason !== undefined)(
           sessionId: project.rootSessionId,
           workspaceMode: "ConversationOnly",
           firstUserPromptMarker: marker,
-          completedTurnRequestId: completedTurnCapture.requestId,
+          completedTurnRequestIds: firstTurnRequestIdsBeforeRestart,
           heldPendingRequestId: held.requestId,
           pendingTranscriptIdentities: pendingIdentities,
           recoveredTranscriptIdentities: finalIdentities,
           oldDaemonPid,
           newDaemonPid,
           recoveryQuietWindowMs,
-          completedTurnProviderRequestCount: firstTurnStarts.length,
+          recoveredPendingRequestIds: recoveredPendingRequestsOnNewDaemon
+            .map((evidence) => evidence.requestId)
+            .sort(),
+          completedTurnProviderRequestCount:
+            firstTurnRequestIdsBeforeRestart.length,
           recoveredPendingTurnRequestObserved: true,
           fixtureDatabase: run.fixture.databaseFile,
           captureFile: run.captureFile,
@@ -658,6 +714,15 @@ it.skipIf(skipReason !== undefined)(
         expect(
           startedProviderRequests(readProviderCaptures(run.captureFile)),
         ).toHaveLength(startsWhileApprovalWaits);
+        const providerRequestIdsBeforeApproval = new Set(
+          requireBoundProviderRequests(
+            providerRequestsMatching(
+              readProviderCaptures(run.captureFile),
+              (request) => requestText(request).includes(marker),
+            ),
+            "pending approval wait",
+          ).map((evidence) => evidence.requestId),
+        );
 
         await client.command(project.projectId, "ResolveExecutableApproval", {
           approvalId: approval.approvalId,
@@ -685,12 +750,17 @@ it.skipIf(skipReason !== undefined)(
           predicate: (value) => value.workId === workId,
         });
         expect(continuedWork.workspaceId).toBe(project.rootWorkspaceId);
-        const postApprovalRequests = startedProviderRequests(
-          readProviderCaptures(run.captureFile),
-        ).filter(
-          (capture) =>
-            capture.processId === newDaemonPid &&
-            requestText(capture).includes(marker),
+        const postApprovalEvidence = requireBoundProviderRequests(
+          providerRequestsMatching(
+            readProviderCaptures(run.captureFile),
+            (request) => requestText(request).includes(marker),
+          ),
+          "post-approval Work",
+        );
+        const postApprovalRequests = postApprovalEvidence.filter(
+          (evidence) =>
+            evidence.requestStart.processId === newDaemonPid &&
+            !providerRequestIdsBeforeApproval.has(evidence.requestId),
         );
         expect(postApprovalRequests.length).toBeGreaterThan(0);
         expect(run.fixture.providerCalls).toHaveLength(0);

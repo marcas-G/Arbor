@@ -8,6 +8,8 @@ import { expect, it } from "vitest";
 import {
   type ProviderCapture,
   providerCaptureMatchesSelector,
+  providerRequestEvidence,
+  providerRequestsMatching,
   type StartedRealProviderFixture,
   waitForHeldProviderResponse,
 } from "../real-provider/public-real-journey-support.js";
@@ -192,6 +194,62 @@ it("captures the request body on response-held, matches that event, and releases
       providerCaptureMatchesSelector(start as ProviderCapture, selector),
     ).toBe(false);
     expect(providerCaptureMatchesSelector(held, selector)).toBe(true);
+    const correlated = providerRequestEvidence(captures, held.requestId);
+    expect(correlated._tag).toBe("Bound");
+    if (correlated._tag !== "Bound") {
+      throw new Error(`request evidence was not bound: ${correlated.reason}`);
+    }
+    expect(correlated.requestStart.request).toBeUndefined();
+    expect(correlated.requestStart.sequence).toBe(held.sequence);
+    expect(correlated.request).toEqual(held.request);
+    expect(
+      providerRequestsMatching(captures, (requestBody) =>
+        JSON.stringify(requestBody).includes(marker),
+      ),
+    ).toEqual([correlated]);
+
+    const duplicateStart = providerRequestEvidence(
+      [...captures, start as ProviderCapture],
+      held.requestId,
+    );
+    expect(duplicateStart).toMatchObject({
+      _tag: "Invalid",
+      reason: "DuplicateRequestStart",
+    });
+    const completedCapture = captures.find(
+      (capture) =>
+        capture.event === "response-complete" &&
+        capture.requestId === held.requestId,
+    );
+    if (
+      completedCapture === undefined ||
+      completedCapture.request === undefined
+    ) {
+      throw new Error("stubbed response-complete request evidence is missing");
+    }
+    expect(
+      providerRequestEvidence([...captures, completedCapture], held.requestId),
+    ).toMatchObject({
+      _tag: "Invalid",
+      reason: "DuplicateBodyEvent",
+    });
+    const conflictedCaptures = captures.map((capture) =>
+      capture === completedCapture
+        ? {
+            ...capture,
+            request: {
+              ...completedCapture.request,
+              messages: [{ role: "user", content: "conflicting-body" }],
+            },
+          }
+        : capture,
+    );
+    expect(
+      providerRequestEvidence(conflictedCaptures, held.requestId),
+    ).toMatchObject({
+      _tag: "Invalid",
+      reason: "ConflictingRequestBody",
+    });
 
     const helperRun = {
       captureFile,
