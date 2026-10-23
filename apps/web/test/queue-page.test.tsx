@@ -81,17 +81,29 @@ const renderQueue = () => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  render(
+  const view = render(
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={sessionValue as never}>
         <QueuePage route={{ name: "queue", projectId: "prj_1" } as never} />
       </SessionContext.Provider>
     </QueryClientProvider>,
   );
+  return {
+    rerenderProject: (projectId: string) =>
+      view.rerender(
+        <QueryClientProvider client={client}>
+          <SessionContext.Provider value={sessionValue as never}>
+            <QueuePage route={{ name: "queue", projectId } as never} />
+          </SessionContext.Provider>
+        </QueryClientProvider>,
+      ),
+  };
 };
 
 const installProjectQueue = (
-  nodes: ReadonlyArray<Record<string, unknown>>,
+  nodes:
+    | ReadonlyArray<Record<string, unknown>>
+    | ((projectId: string) => ReadonlyArray<Record<string, unknown>>),
   inboxFor: (
     workspaceId: string,
   ) => ReadonlyArray<Record<string, unknown>> | { readonly problem: string },
@@ -125,7 +137,10 @@ const installProjectQueue = (
       }
       const view = url.split("/views/")[1] ?? "";
       if (view === "responsibility-tree") {
-        return new Response(okBody({ nodes }), { status: 200 });
+        const projectId = (body as { readonly projectId: string }).projectId;
+        const projectNodes =
+          typeof nodes === "function" ? nodes(projectId) : nodes;
+        return new Response(okBody({ nodes: projectNodes }), { status: 200 });
       }
       if (view === "inbox-view") {
         const request = body as { readonly workspaceId: string };
@@ -449,6 +464,73 @@ describe("W-08 Governance Queue（待处理）", () => {
     await waitFor(() =>
       expect(window.location.pathname).toBe("/p/prj_1/workspace/ws_root"),
     );
+  });
+
+  it("hides an approved-action receipt after switching projects", async () => {
+    const approvalId =
+      "eap:prj_1:exe_project_one:0:0:0:la_project_one:call_project_one:tinv_project_one";
+    const executableEntry = {
+      entryKey: `eap:${approvalId}:0`,
+      kind: "Governance",
+      summary: "shell action awaits human approval",
+      watermark: 11,
+      target: {
+        kind: "ExecutableApproval",
+        approvalId,
+        revision: 0,
+        executionId: "exe_project_one",
+        toolName: "shell",
+        toolVersion: "1.0.0",
+        validatedArgumentsPreview: '{"command":"move proof.txt"}',
+        targetResourceSpaceIds: ["filesystem"],
+        capabilities: ["shell:exec"],
+        sideEffectSemantics: "NonIdempotent",
+        expiresAt: "2099-01-02T03:04:05.000Z",
+        actionDigest: "sha256:project-one-action",
+      },
+    };
+    let approved = false;
+    installProjectQueue(
+      (projectId) => [
+        {
+          ...(treeDto.nodes[0] as Record<string, unknown>),
+          workspaceId:
+            projectId === "prj_1" ? "ws_project_one" : "ws_project_two",
+        },
+      ],
+      (workspaceId) =>
+        workspaceId === "ws_project_one" && !approved ? [executableEntry] : [],
+      () => ({}),
+      (body) => {
+        expect(body.commandType).toBe("ResolveExecutableApproval");
+        approved = true;
+        return {
+          commandId: "cmd_project_one_approval",
+          resolution: "Committed",
+          result: {
+            approvalId,
+            executionId: "exe_project_one",
+            state: "Approved",
+            revision: 1,
+          },
+        };
+      },
+    );
+    const { rerenderProject } = renderQueue();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /shell · revision 0/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "批准并继续" }));
+    expect(
+      await screen.findByText(/审批回执仅表示这个精确工具动作获准继续/u),
+    ).toBeTruthy();
+
+    rerenderProject("prj_2");
+    await screen.findByText("没有等你处理的事项");
+    expect(screen.queryByText("工具动作审批已通过")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "查看对应工作区详情" }),
+    ).toBeNull();
   });
 
   it("shows an expired Executable approval without decision controls", async () => {
