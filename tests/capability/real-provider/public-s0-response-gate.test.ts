@@ -275,6 +275,65 @@ describe("real Provider response gate capture contract", () => {
   });
 
   it.each([
+    ["duplicate", 200, "same request"],
+    ["conflicting", 201, "different request"],
+  ])(
+    "fails closed on %s held captures sharing one request id",
+    async (_kind, duplicateStatus, duplicateContent) => {
+      const run = makeRun();
+      const requestId = randomUUID();
+      const request = {
+        messages: [{ role: "user", content: "same request" }],
+      };
+      const duplicateRequest = {
+        messages: [{ role: "user", content: duplicateContent }],
+      };
+      const complete = {
+        event: "response-complete",
+        requestId,
+        processId: 1,
+        sequence: 10,
+        method: "POST",
+        path: "/v1/chat/completions",
+        request,
+        status: 200,
+        responseBodyBase64: Buffer.from(actionCallBody).toString("base64"),
+      };
+      const held = {
+        event: "response-held",
+        requestId,
+        processId: 1,
+        sequence: 10,
+        method: "POST",
+        path: "/v1/chat/completions",
+        request,
+        status: 200,
+      };
+      const duplicateHeld = {
+        ...held,
+        request: duplicateRequest,
+        status: duplicateStatus,
+      };
+      writeFileSync(
+        run.captureFile,
+        `${[complete, held, duplicateHeld]
+          .map((capture) => JSON.stringify(capture))
+          .join("\n")}\n`,
+        { encoding: "utf8" },
+      );
+
+      await expect(
+        waitForHeldProviderResponse(run, {
+          afterSequence: 9,
+          deadlineAt: Date.now() + 1_000,
+        }),
+      ).rejects.toThrow(
+        "REAL NOT QUALIFIED: held Provider response has duplicate held captures",
+      );
+    },
+  );
+
+  it.each([
     [
       "sequence",
       {

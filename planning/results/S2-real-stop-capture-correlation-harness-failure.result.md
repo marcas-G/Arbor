@@ -57,7 +57,7 @@ held event itself has no body, and rejects sequence/status/request mismatches.
 
 Verification performed after the correction:
 
-- S0 unit-only configuration: 2 files, 9 tests passed; no daemon or provider.
+- S0 unit-only configuration: 2 files, 11 tests passed; no daemon or provider.
 - `pnpm exec tsc -p tsconfig.test.json --noEmit`: passed.
 - Biome on the changed source/test files: passed.
 - `git diff --check`: passed.
