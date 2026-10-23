@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "vitest";
 import {
@@ -849,21 +849,26 @@ test("P12 exact replay activates restored path online in the same daemon", async
   );
   const markerFile = join(markerDirectory, "activation.marker");
   const releaseFile = join(markerDirectory, "activation.release");
-  const movedWorkspaceDirectory = join(markerDirectory, "workspace-offline");
-  const fixture = await startProductionFixture({
-    admitWorkspaceDirectory: true,
-    firstDaemonEntry: activationDaemonChild,
-    daemonEnvironment: {
-      F21_ACTIVATION_PROBE_BOUNDARY:
-        "GatewayCommittedBeforeP11ActivationReleasable",
-      F21_ACTIVATION_MARKER: markerFile,
-      F21_ACTIVATION_RELEASE: releaseFile,
-    },
-    reply: () => ({ _tag: "Text", text: "No model call expected" }),
-  });
-  const db = new DatabaseSync(fixture.databaseFile);
+  let fixture: ProductionFixture | undefined;
+  let db: DatabaseSync | undefined;
+  let movedWorkspaceDirectory: string | undefined;
   let workspaceMoved = false;
+  let bodyFailed = false;
+  let bodyError: unknown;
   try {
+    fixture = await startProductionFixture({
+      admitWorkspaceDirectory: true,
+      firstDaemonEntry: activationDaemonChild,
+      daemonEnvironment: {
+        F21_ACTIVATION_PROBE_BOUNDARY:
+          "GatewayCommittedBeforeP11ActivationReleasable",
+        F21_ACTIVATION_MARKER: markerFile,
+        F21_ACTIVATION_RELEASE: releaseFile,
+      },
+      reply: () => ({ _tag: "Text", text: "No model call expected" }),
+    });
+    movedWorkspaceDirectory = join(fixture.directory, "workspace-offline");
+    db = new DatabaseSync(fixture.databaseFile);
     const { client, projectId, workspaceId, commandId, envelope } =
       await makeEnvelope(fixture);
     const initialProcess = fixture.daemonProcessSnapshot();
@@ -972,9 +977,7 @@ test("P12 exact replay activates restored path online in the same daemon", async
                  WHERE workspace_id = ? AND released_at IS NULL) AS claim_count,
                 (SELECT COUNT(*) FROM workspace_resource_activation_attention_rows
                  WHERE project_id = ? AND workspace_id = ?) AS attention_count,
-                (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS command_count,
-                (SELECT COUNT(*) FROM domain_events
-                 WHERE project_id = ? AND event_type = 'WorkspaceResourceActivationChanged') AS activation_event_count
+                (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS command_count
          FROM commands c
          JOIN workspace_resource_activation_intents i
            ON i.project_id = ? AND i.workspace_id = ?
@@ -986,7 +989,6 @@ test("P12 exact replay activates restored path online in the same daemon", async
         workspaceId,
         commandId,
         projectId,
-        projectId,
         workspaceId,
         commandId,
       ) as {
@@ -996,7 +998,6 @@ test("P12 exact replay activates restored path online in the same daemon", async
       claim_count: number;
       attention_count: number;
       command_count: number;
-      activation_event_count: number;
     };
     expect(completed).toMatchObject({
       resolution: "Committed",
@@ -1004,10 +1005,19 @@ test("P12 exact replay activates restored path online in the same daemon", async
       claim_count: 1,
       attention_count: 0,
       command_count: 1,
-      activation_event_count: 2,
       result_json: pending.result_json,
     });
     expect(JSON.parse(completed.result_json)).toEqual(originalReceipt);
+    const activationStatuses = db
+      .prepare(
+        `SELECT json_extract(payload_json, '$.status') AS status
+         FROM domain_events
+         WHERE project_id = ? AND event_type = 'WorkspaceResourceActivationChanged'
+         ORDER BY sequence`,
+      )
+      .all(projectId)
+      .map((row) => (row as { status: string }).status);
+    expect(activationStatuses).toEqual(["Pending", "Active"]);
     const finalProcess = fixture.daemonProcessSnapshot();
     expect(finalProcess?.pid).toBe(initialProcess?.pid);
     expect(finalProcess?.alive).toBe(true);
@@ -1021,13 +1031,117 @@ test("P12 exact replay activates restored path online in the same daemon", async
       }),
     );
     expect(fixture.providerCalls).toHaveLength(0);
-  } finally {
-    if (workspaceMoved && existsSync(movedWorkspaceDirectory)) {
+  } catch (error) {
+    bodyFailed = true;
+    bodyError = error;
+  }
+
+  const cleanupErrors: unknown[] = [];
+  if (workspaceMoved) {
+    try {
+      if (
+        movedWorkspaceDirectory === undefined ||
+        !existsSync(movedWorkspaceDirectory)
+      ) {
+        throw new Error("moved Workspace directory disappeared before cleanup");
+      }
+      if (fixture === undefined) {
+        throw new Error(
+          "fixture unavailable while restoring Workspace directory",
+        );
+      }
+      if (existsSync(fixture.workspaceDirectory)) {
+        throw new Error(
+          "Workspace restore skipped because the original target path already exists",
+        );
+      }
       renameSync(movedWorkspaceDirectory, fixture.workspaceDirectory);
+      workspaceMoved = false;
+    } catch (error) {
+      cleanupErrors.push(error);
     }
-    db.close();
-    await fixture.stop();
+  }
+
+  let unsafeToStopFixture = false;
+  if (workspaceMoved && movedWorkspaceDirectory !== undefined) {
+    try {
+      if (!existsSync(movedWorkspaceDirectory)) {
+        throw new Error(
+          "moved Workspace directory unavailable for preservation",
+        );
+      }
+      const preservationDirectory = mkdtempSync(
+        join(
+          dirname(fixture?.directory ?? markerDirectory),
+          "arbor-f21-preserved-",
+        ),
+      );
+      const preservedWorkspaceDirectory = join(
+        preservationDirectory,
+        "workspace-offline",
+      );
+      renameSync(movedWorkspaceDirectory, preservedWorkspaceDirectory);
+      workspaceMoved = false;
+      cleanupErrors.push(
+        new Error(
+          `Workspace directory was preserved at ${preservedWorkspaceDirectory} because its original target could not be safely restored`,
+        ),
+      );
+    } catch (error) {
+      cleanupErrors.push(error);
+      unsafeToStopFixture = true;
+    }
+  }
+
+  if (db !== undefined) {
+    try {
+      db.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  if (fixture !== undefined) {
+    if (unsafeToStopFixture) {
+      try {
+        await fixture.crash();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      cleanupErrors.push(
+        new Error(
+          "fixture.stop skipped because it could recursively delete an unrestored Workspace directory",
+        ),
+      );
+    } else {
+      try {
+        await fixture.stop();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+  }
+  try {
     rmSync(markerDirectory, { recursive: true, force: true });
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+
+  if (bodyFailed && cleanupErrors.length > 0) {
+    throw new AggregateError(
+      [bodyError, ...cleanupErrors],
+      "F21 online replay body and cleanup both failed",
+      { cause: bodyError },
+    );
+  }
+  if (bodyFailed) throw bodyError;
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(
+      cleanupErrors,
+      "F21 online replay cleanup failed",
+      {
+        cause: cleanupErrors[0],
+      },
+    );
   }
 });
 
