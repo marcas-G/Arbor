@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { Effect } from "effect";
 import {
   main,
@@ -14,10 +14,12 @@ const onWebTransportListening = createFunctionalDaemonListenReporter();
 
 const boundary = process.env.F21_ACTIVATION_PROBE_BOUNDARY;
 const markerFile = process.env.F21_ACTIVATION_MARKER;
+const releaseFile = process.env.F21_ACTIVATION_RELEASE;
 if (
   (boundary !== "P11BeforeActivationCommit" &&
     boundary !== "P11AfterActivationCommit" &&
-    boundary !== "GatewayCommittedBeforeP11Activation") ||
+    boundary !== "GatewayCommittedBeforeP11Activation" &&
+    boundary !== "GatewayCommittedBeforeP11ActivationReleasable") ||
   markerFile === undefined
 ) {
   throw new Error("expected F21 activation boundary and marker path");
@@ -45,7 +47,8 @@ const daemonConfig = {
 };
 const app = main({
   projectResourceProfiles: profiles,
-  ...(boundary === "GatewayCommittedBeforeP11Activation"
+  ...(boundary === "GatewayCommittedBeforeP11Activation" ||
+  boundary === "GatewayCommittedBeforeP11ActivationReleasable"
     ? {
         createProjectPostCommitBeforeActivationQualificationProbe: async (
           event,
@@ -58,9 +61,23 @@ const app = main({
             }),
             "utf8",
           );
-          await new Promise(() => {
-            setInterval(() => {}, 1_000);
-          });
+          if (boundary === "GatewayCommittedBeforeP11Activation") {
+            await new Promise(() => {
+              setInterval(() => {}, 1_000);
+            });
+          }
+          if (boundary === "GatewayCommittedBeforeP11ActivationReleasable") {
+            if (releaseFile === undefined) {
+              throw new Error("expected F21 activation release path");
+            }
+            const deadline = Date.now() + 60_000;
+            while (!existsSync(releaseFile)) {
+              if (Date.now() >= deadline) {
+                throw new Error("timed out waiting for F21 activation release");
+              }
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+          }
         },
       }
     : {
