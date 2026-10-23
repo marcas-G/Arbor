@@ -54,13 +54,20 @@ provider, or real journey was run for this correction.
 
 The fixture loss was a separate harness issue: `preserveDirectoryOnStop` kept
 the fixture only until Vitest's global schema-44 teardown removed its parent
-root. Shared real-provider teardown now moves a stopped failed fixture into the
-private run directory using `archiveProductionFixtureFailure`, records the
-archived DB/workspace paths in evidence, and still cleans successful fixtures.
-This is committed separately as
+root. Shared real-provider teardown now moves a stopped failed fixture into a
+P39-private, direct `.test-results` child using
+`archiveProductionFixtureFailure`, records the archived DB/workspace paths in
+evidence, and still cleans successful fixtures. When the configured evidence
+root is nested below `.test-results`, the archive uses a separate direct child;
+the original evidence/capture directory stays under the configured root. This
+is committed separately as
 `5f3cabf3edeb590da2b19efe66478a104cb0f79b`
-(`test(real-provider): retain failed public fixture evidence`). Its regression
-simulates schema-root teardown and confirms the archived DB/workspace survive.
+(`test(real-provider): retain failed public fixture evidence`) and
+`6e25b80bb66ccf07905fa4f446ba09864860ec2e`
+(`fix(real-provider): archive failures for nested evidence roots`). The
+regression simulates nested evidence roots and schema-root teardown, confirms
+the archived DB/workspace survive, and checks the public evidence JSON points
+at the archived paths.
 The retention/S0 unit batch passed 12/12; complete test TypeScript check,
 Biome, and `git diff --check` passed. The retention fix has **not** been
 requalified with a real S3 run.
