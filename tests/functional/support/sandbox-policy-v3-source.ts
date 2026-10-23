@@ -5,6 +5,7 @@ import {
   readFileSync,
   renameSync,
   rmdirSync,
+  type Stats,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -356,85 +357,132 @@ export const commitSandboxPolicyV3HighWater = (
     highWaterCanonicalJson: pair.highWaterCanonicalJson,
   });
 
-export const installSandboxPolicyV3SyntheticArtifacts = (
+export interface SandboxPolicyV3SyntheticArtifactPaths {
+  readonly source: string;
+  readonly binary: string;
+  readonly manifest: string;
+  readonly signature: string;
+  readonly compiler: string;
+  readonly control: string;
+  readonly testControlRoot: string;
+}
+
+const reparsePoint = (stats: Stats) =>
+  stats.isSymbolicLink() ||
+  (((stats as typeof stats & { readonly attributes?: number }).attributes ??
+    0) &
+    0x400) !==
+    0;
+
+const artifactError = (path: string, classification: string) =>
+  new Error(`synthetic D2 artifact ${path}: ${classification}`);
+
+const lstatArtifact = (path: string) => {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ENOENT"
+    )
+      return undefined;
+    throw artifactError(path, "LstatFailed");
+  }
+};
+
+/** Test seam for the fixed-path installer. Existing files are adopted only
+ * after exact-byte and file-kind checks; cleanup owns only newly created paths. */
+export const installSandboxPolicyV3SyntheticArtifactsAtPaths = (
   pair: SandboxPolicyV3TestPair,
+  paths: SandboxPolicyV3SyntheticArtifactPaths,
+  applyPrivateAcl: (path: string, kind: "file" | "directory") => void = () =>
+    undefined,
 ): (() => void) => {
-  const paths = fixedWindowsNativeProductionArtifactPaths();
-  const source = paths.source;
-  const binary = paths.binary;
-  const control = win32.join(paths.testControlRoot, "control-token.artifact");
-  const files = [source, binary, paths.manifest, paths.signature, control];
-  if (
-    files.some((path) => {
-      try {
-        readFileSync(path);
-        return true;
-      } catch {
-        return false;
-      }
-    })
-  )
-    throw new Error(
-      "synthetic D2 artifact target already exists; refusing overwrite",
-    );
-  const compilerBefore = readFileSync(paths.compiler);
-  if (!compilerBefore.equals(pair.compilerArtifactBytes))
-    throw new Error("fixed Windows compiler changed after manifest creation");
-  const createdDirectory = paths.testControlRoot;
+  const files = [
+    [paths.source, pair.sourceArtifactBytes],
+    [paths.binary, pair.binaryArtifactBytes],
+    [paths.manifest, pair.manifestBytes],
+    [paths.signature, pair.signatureBytes],
+    [paths.control, pair.controlArtifactBytes],
+  ] as const;
+  const existing = new Map<string, boolean>();
+
+  // Validate every target before making any filesystem change.
+  for (const [path, expected] of files) {
+    const stats = lstatArtifact(path);
+    if (stats === undefined) {
+      existing.set(path, false);
+      continue;
+    }
+    if (reparsePoint(stats) || !stats.isFile())
+      throw artifactError(path, "ExistingTargetNotRegularFile");
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(path);
+    } catch {
+      throw artifactError(path, "ExistingTargetUnreadable");
+    }
+    if (!bytes.equals(expected))
+      throw artifactError(path, "ExistingTargetBytesMismatch");
+    existing.set(path, true);
+  }
+  const compiler = lstatArtifact(paths.compiler);
+  if (compiler === undefined || reparsePoint(compiler) || !compiler.isFile())
+    throw artifactError(paths.compiler, "CompilerNotRegularFile");
+  let compilerBytes: Buffer;
+  try {
+    compilerBytes = readFileSync(paths.compiler);
+  } catch {
+    throw artifactError(paths.compiler, "CompilerUnreadable");
+  }
+  if (!compilerBytes.equals(pair.compilerArtifactBytes))
+    throw artifactError(paths.compiler, "CompilerBytesMismatch");
+
   const createdFiles: string[] = [];
   const createdDirectories: string[] = [];
   try {
-    const missingDirectories: string[] = [];
-    let cursor = createdDirectory;
-    while (true) {
-      let stats: ReturnType<typeof lstatSync> | undefined;
-      try {
-        stats = lstatSync(cursor);
-      } catch (error) {
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          error.code !== "ENOENT"
-        )
-          throw error;
+    const requiredDirectories = [
+      ...new Set(files.map(([path]) => dirname(path))),
+    ];
+    const missingDirectories = new Set<string>();
+    for (const required of requiredDirectories) {
+      let cursor = required;
+      while (true) {
+        const stats = lstatArtifact(cursor);
+        if (stats !== undefined) {
+          if (reparsePoint(stats) || !stats.isDirectory())
+            throw artifactError(cursor, "ParentNotRegularDirectory");
+          break;
+        }
+        missingDirectories.add(cursor);
+        const parent = dirname(cursor);
+        if (parent === cursor) throw artifactError(cursor, "NoExistingParent");
+        cursor = parent;
       }
-      if (stats !== undefined) {
-        if (!stats.isDirectory() || stats.isSymbolicLink())
-          throw new Error(
-            "synthetic D2 artifact path is not a fixed directory",
-          );
-        break;
-      }
-      missingDirectories.push(cursor);
-      const parent = dirname(cursor);
-      if (parent === cursor)
-        throw new Error("could not find an existing artifact parent");
-      cursor = parent;
     }
-    for (const directory of missingDirectories.reverse()) {
+    for (const directory of [...missingDirectories].sort(
+      (left, right) => left.length - right.length,
+    )) {
       mkdirSync(directory, { mode: 0o700 });
       createdDirectories.push(directory);
+      if (directory === paths.testControlRoot)
+        applyPrivateAcl(directory, "directory");
     }
-    setP39PrivateWindowsAcl(createdDirectory, "directory");
-    for (const [path, bytes] of [
-      [source, pair.sourceArtifactBytes],
-      [binary, pair.binaryArtifactBytes],
-      [paths.manifest, pair.manifestBytes],
-      [paths.signature, pair.signatureBytes],
-      [control, pair.controlArtifactBytes],
-    ] as const) {
+    for (const [path, bytes] of files) {
+      if (existing.get(path) === true) continue;
       writeFileSync(path, bytes, { flag: "wx", mode: 0o600 });
       createdFiles.push(path);
-      setP39PrivateWindowsAcl(path, "file");
+      applyPrivateAcl(path, "file");
     }
   } catch (error) {
-    for (const path of createdFiles) {
+    for (const path of createdFiles.reverse()) {
       try {
         unlinkSync(path);
       } catch {
-        // Preserve the original setup error; cleanup failure is diagnosed by
-        // the test runner's workspace cleanliness check.
+        // Keep the setup error primary; the fixture's final cleanup reports
+        // any path that could not be removed.
       }
     }
     for (const directory of createdDirectories.reverse()) {
@@ -447,7 +495,36 @@ export const installSandboxPolicyV3SyntheticArtifacts = (
     throw error;
   }
   return () => {
-    for (const path of createdFiles.reverse()) unlinkSync(path);
-    for (const directory of createdDirectories.reverse()) rmdirSync(directory);
+    const errors: unknown[] = [];
+    for (const path of createdFiles.reverse()) {
+      try {
+        unlinkSync(path);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    for (const directory of createdDirectories.reverse()) {
+      try {
+        rmdirSync(directory);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0)
+      throw new AggregateError(errors, "synthetic artifact cleanup failed");
   };
+};
+
+export const installSandboxPolicyV3SyntheticArtifacts = (
+  pair: SandboxPolicyV3TestPair,
+): (() => void) => {
+  const paths = fixedWindowsNativeProductionArtifactPaths();
+  return installSandboxPolicyV3SyntheticArtifactsAtPaths(
+    pair,
+    {
+      ...paths,
+      control: win32.join(paths.testControlRoot, "control-token.artifact"),
+    },
+    setP39PrivateWindowsAcl,
+  );
 };

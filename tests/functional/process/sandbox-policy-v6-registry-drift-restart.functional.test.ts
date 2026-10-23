@@ -83,6 +83,17 @@ const child = resolve(
 const fixtures: ProductionFixture[] = [];
 const artifactFixtureCleanups: Array<() => void> = [];
 
+const decodeToolObservation = (value: unknown): Record<string, unknown> => {
+  if (typeof value === "string")
+    return JSON.parse(value) as Record<string, unknown>;
+  if (value instanceof Uint8Array)
+    return JSON.parse(new TextDecoder().decode(value)) as Record<
+      string,
+      unknown
+    >;
+  throw new Error("durable tool observation is not encoded bytes or text");
+};
+
 const durableSandboxRead = (
   databaseFile: string,
   executionId: string,
@@ -309,8 +320,27 @@ const operatorCommand = async (
 };
 
 afterEach(async () => {
-  for (const fixture of fixtures.splice(0)) await fixture.stop();
-  for (const cleanup of artifactFixtureCleanups.splice(0).reverse()) cleanup();
+  const cleanupErrors: unknown[] = [];
+  for (const fixture of fixtures.splice(0)) {
+    try {
+      await fixture.stop();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  for (const cleanup of artifactFixtureCleanups.splice(0).reverse()) {
+    try {
+      cleanup();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  if (cleanupErrors.length > 0)
+    throw new AggregateError(
+      cleanupErrors,
+      "sandbox V6 fixture and synthetic artifact cleanup failed",
+      { cause: cleanupErrors[0] },
+    );
 });
 
 describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
@@ -711,17 +741,23 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         );
       });
       expect(firstSettled.invocation?.observation_json).not.toBeNull();
-      expect(
-        executableProbeLines.find(
-          (event) =>
-            event.boundary === "P4ExecutableToolRuntimeOutcome" &&
-            event.invocationId === firstInvocationId,
-        ),
-      ).toMatchObject({ outcomeTag: "ExpectedFailure" });
       const p9Terminal =
         Array.isArray(firstSettled.actions) &&
         firstSettled.actions[0]?.state === "TerminalRejected" &&
         firstSettled.step?.state === "StepEffectsCommitted";
+      expect(firstSettled.invocation?.settlement_kind).toBe("ExpectedFailure");
+      const firstObservation = decodeToolObservation(
+        firstSettled.invocation?.observation_json,
+      );
+      expect(firstObservation).toMatchObject({
+        _tag: "ExpectedFailure",
+        sandboxProviderUnavailable: {
+          providerId: "windows-restricted-appcontainer-job",
+          providerVersion: "t3d-v1",
+          failureCode: "ProviderVersionMismatch",
+          effectDisposition: "NoEffect",
+        },
+      });
       if (p9Terminal) {
         expect(firstSettled.actions).toMatchObject([
           { state: "TerminalRejected", action_index: 0, logical_step_no: 0 },
@@ -782,6 +818,14 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         // pre-intent candidate source; do not fake a second ProviderTurn.
         return;
       }
+
+      expect(
+        executableProbeLines.find(
+          (event) =>
+            event.boundary === "P4ExecutableToolRuntimeOutcome" &&
+            event.invocationId === firstInvocationId,
+        ),
+      ).toMatchObject({ outcomeTag: "ExpectedFailure" });
 
       const probesBeforeSecond = probeLines.length;
       const secondProbe = await waitForPublic(
