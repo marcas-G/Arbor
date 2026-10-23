@@ -175,8 +175,41 @@ Private run directory:
 The source correction removes the unsupported public `executionId` assumption
 and asserts `job.activeExecutionId === execution.executionId` from the
 read-only durable snapshot. This run does not qualify the revised oracle.
-Further real S4-A execution requires fresh authorization; no rerun is
-performed automatically.
+
+## Final authorized S4-A run — 2026-10-24
+
+- Candidate: `dc50a8866b96f9ebf1592621282f0513ed404cae`; independent final
+  review reported Blocking = 0.
+- The same command was run once more after explicit root authorization, with
+  fresh P39 evidence, explicit authorized config path, one worker, retry 0,
+  and only `REAL S4-A` selected.
+- Result: **PASS, 1 test; S4-B skipped.** The first completed turn remained
+  stable. The second real upstream response was held by the private hook on
+  the old daemon; the full daemon tree was hard-stopped and restarted on the
+  same fixture DB. The pending human message remained in the same session,
+  public transcript showed `NeedsAttention(UnknownFailure)`, and there was no
+  second assistant message. The read-only durable snapshot verified the same
+  ConversationResponse Execution failed, ProviderAttempt `TerminalFailure`,
+  recovery `ProcessLost / UnsafeReplay / Stop`, no durable Provider success or
+  `ProviderResultAvailable` handoff, and the exact active-job/Execution
+  binding. Lease generation advanced exactly once under a new incarnation;
+  consumer offsets were nonempty and caught up, scheduler timers were zero.
+  A 1.5-second public and durable reread was identical. Captures contained
+  only the original PID's two request starts/two HTTP 200 completions and one
+  held response, with no release marker or restarted-daemon request.
+- Cleanup completed successfully: the disposable fixture was removed after
+  PASS; no daemon process remained. Private P39 run evidence remains at
+  `.test-results/real-public-s4-a-conversation-hard-restart-mH1QGX/`.
+
+| File | SHA-256 |
+|---|---|
+| `evidence-ci4hsh/provider-captures.jsonl` | `83A447C326CFDBBEF31821CB78F96CE2E9FC5A92FB077D9427920643419F848E` |
+| `evidence-ci4hsh/s4-a-conversation-hard-restart-2026-10-23T19-21-18.425Z.json` | `42C75D57EEC1E9C0FEF040C01E89C233B329015EB0676E38013724FFC820975D` |
+| `evidence-ci4hsh/selector.json` | `DAB4E0A8C19A897D27187BF89382070A5973C7E521BFB0077143B78377FE41CF` |
+
+This qualifies only the bounded S4-A unknown-outcome/fail-closed hard-restart
+boundary. The quiet reread is 1.5 seconds, not a multi-day durability proof;
+S4-B's durable external Approval recovery was not run and is not claimed.
 
 Corrected-run private archive:
 `.test-results/real-public-s4-a-conversation-hard-restart-N7ABeJ/`, including
