@@ -83,6 +83,7 @@ type QueueItem =
 type ApprovedExecutableApprovalReceipt = {
   readonly approvalId: string;
   readonly executionId: string;
+  readonly projectId: string;
   readonly workspaceId: string;
   readonly commandId: string;
 };
@@ -304,6 +305,10 @@ export function QueuePage({
   );
   const [lastApprovedExecutableApproval, setLastApprovedExecutableApproval] =
     useState<ApprovedExecutableApprovalReceipt | null>(null);
+  const projectApprovedExecutableApproval =
+    lastApprovedExecutableApproval?.projectId === projectId
+      ? lastApprovedExecutableApproval
+      : null;
   const selectedItem =
     items.find((item) => item.id === selectedId) ?? items[0] ?? null;
   const mobileSheetOpen =
@@ -331,6 +336,7 @@ export function QueuePage({
       setLastApprovedExecutableApproval({
         approvalId: selectedItem.target.approvalId,
         executionId: selectedItem.target.executionId,
+        projectId,
         workspaceId: selectedItem.workspaceId,
         commandId: receipt.commandId,
       });
@@ -376,22 +382,24 @@ export function QueuePage({
   return (
     <div className={styles.page}>
       <QueueHeader />
-      {lastApprovedExecutableApproval === null ? null : (
+      {projectApprovedExecutableApproval === null ? null : (
         <Card title="工具动作审批已通过">
           <div className="arbor-view-stack">
             <p role="status">
               审批回执仅表示这个精确工具动作获准继续；它不证明动作已执行、产生效果或工作已完成。
             </p>
             <span>
-              <MonoText>{lastApprovedExecutableApproval.executionId}</MonoText>
+              <MonoText>
+                {projectApprovedExecutableApproval.executionId}
+              </MonoText>
             </span>
             <Button
               variant="quiet"
               onClick={() =>
                 navigate({
                   name: "workspace",
-                  projectId,
-                  workspaceId: lastApprovedExecutableApproval.workspaceId,
+                  projectId: projectApprovedExecutableApproval.projectId,
+                  workspaceId: projectApprovedExecutableApproval.workspaceId,
                   tab: "overview",
                 })
               }
