@@ -1,8 +1,8 @@
 # Real S2 Stop Attempt — Capture-Correlation Harness Failure
 
-Status: **NOT QUALIFIED; public Stop was not exercised**  
-Run: `real-public-s2-stop-302534ee21-PTpNiT`  
-Source tree at execution: `4a637c29`  
+Status: **NOT QUALIFIED; public Stop was not exercised**
+Run: `real-public-s2-stop-302534ee21-PTpNiT`
+Source tree at execution: `4a637c29`
 Date: 2026-10-24
 
 ## Boundary and outcome
