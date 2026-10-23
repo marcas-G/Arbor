@@ -1,6 +1,6 @@
 # P9 direct Control gen1 lease-timeout diagnosis
 
-状态：**根因未证实；诊断增强完成；NOT QUALIFIED**。
+状态：**已证实为测试续租竞态；测试编排修正待定向复测；NOT QUALIFIED**。
 
 ## 原 sweep 证据
 
@@ -17,6 +17,14 @@ provider 调用摘要或 gen1 PID 快照。该 run 的 schema44 失败 fixture �
 schema44 根目录的创建时间晚于本次 case，且不能归属该失败。没有据此判断运行时接管
 实现失败，也没有修改生产代码、45 秒等待或测试期望。
 
+后续精确复现归档 `.test-results/2026-10-23T08-47-24Z-d89103-priority-retests/`
+证实原等待失败的原因：old gen0 在测试将 lease `expires_at` 改为 epoch 后继续续租。
+归档中对精确 execution 的 `AH10BeforeLeaseRenewal` probe 共 5 次，均为
+`pauseRequested=false`；失败快照中 lease 仍是 `worker:local`、原 incarnation、
+generation 0，`updated_at=08:57:17.697Z`，`expires_at=08:57:47.697Z`。因此 gen1
+没有可接管的过期 lease，未发出 `AH10AfterLeaseAcquired` 是该旧租约仍有效时的预期
+结果；这不证明 Scheduler/Execution takeover 实现有缺陷。
+
 ## 诊断增强
 
 测试文件现在让 `update_plan` 与 `claim_completion` 共用同一个 gen1 lease wait
@@ -25,6 +33,12 @@ lease 和失败时 lease、ExecutionEpisode、Step/Action、P9 direct effect pro
 ProviderTurn/Attempt、项目事件、provider 调用摘要、旧/新 PID 状态、stderr/startup
 phase、AH10 probe 尾部和 gate 文件。SQLite rows 在单个只读事务内读取并精确限定
 project/execution；诊断不替代公开成功断言。超时仍为 45 秒，成功流程未改变。
+
+资格用例现仅在 test fixture 中打开旧 generation 的延迟 lease-renewal gate，观察到
+精确 execution 的 `AH10BeforeLeaseRenewal(pauseRequested=true)` 后才把 gen0 lease
+设为过期并等待 gen1 acquisition。旧 gen0 和旧 ActionIntent gate 保持存活；现有 gen1
+commit 与 gen0 stale-effect suppression 断言不变。该测试编排修改未运行 process case，
+尚待 root 排定的单 case复测。
 
 静态验证：目标文件 Biome 与 `pnpm exec tsc -p tsconfig.test.json --noEmit` PASS。
 未运行测试或 daemon。
