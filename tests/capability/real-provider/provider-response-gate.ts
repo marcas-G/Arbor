@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { providerResponseMatchesSelector } from "./provider-response-gate.mjs";
 import type {
   ProviderCapture,
   ProviderResponseGateSelector,
@@ -59,27 +60,7 @@ export const waitForHeldProviderResponse = async (
 export const providerCaptureMatchesSelector = (
   capture: ProviderCapture,
   selector: ProviderResponseGateSelector,
-): boolean => {
-  const serialized = JSON.stringify(capture.request ?? {});
-  if (
-    selector.requiredMessageText !== undefined &&
-    !serialized.includes(selector.requiredMessageText)
-  ) {
-    return false;
-  }
-  if (selector.requiredAdvertisedToolName !== undefined) {
-    const advertised = capture.request?.tools;
-    const names = Array.isArray(advertised)
-      ? advertised.flatMap((tool) => {
-          if (typeof tool !== "object" || tool === null) return [];
-          const functionName = (tool as { function?: { name?: unknown } })
-            .function?.name;
-          return typeof functionName === "string" ? [functionName] : [];
-        })
-      : [];
-    if (!names.includes(selector.requiredAdvertisedToolName)) return false;
-  }
-  return true;
-};
+): boolean =>
+  providerResponseMatchesSelector(capture.request ?? {}, selector);
 
 export type { ProviderCapture } from "./public-real-journey-support.js";
