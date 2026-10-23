@@ -80,3 +80,9 @@ Before changing production code, manual governance should either:
 Until resolved, the diagnostic expectation remains skipped/pending. No
 production code, frozen design, real Provider, daemon, or user database was
 changed or used for this reproduction.
+
+The P12 D4 durable-progress source discrepancy is tracked separately as
+[`P12-DG-01`](P12-DG-01-d4-durable-progress-owner-conflict.md). It is out of
+scope for this projection gap and does not block its implementation. This
+projection gap does not decide or alter RuntimeSafetyObservation generation or
+the P2 D2/D4 counter-update rules.
