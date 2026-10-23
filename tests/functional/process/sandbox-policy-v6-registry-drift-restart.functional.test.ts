@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -37,9 +38,16 @@ import {
   WorkspaceRepository,
   WorktreeStore,
 } from "../../../packages/ports/src/index.js";
+import {
+  p39WindowsAclQualificationAvailable,
+  p39WindowsTestEnvironment,
+} from "../../support/p39-windows-deployment-test.js";
 import { createCurrentSchemaTestDatabase } from "../../support/schema44-database.js";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
-import { archiveProductionFixtureFailure } from "../support/fixture-failure-evidence.js";
+import {
+  archiveProductionFixtureFailure,
+  writeProductionFixtureArchiveSkipped,
+} from "../support/fixture-failure-evidence.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -108,6 +116,41 @@ const child = resolve(
 const fixtures: ProductionFixture[] = [];
 const artifactFixtureCleanups: Array<() => void> = [];
 const fixtureDiagnostics = new Map<ProductionFixture, () => unknown>();
+
+interface FixtureArchiveAclSnapshot {
+  readonly protected: boolean;
+  readonly currentSid: string;
+  readonly rules: ReadonlyArray<{
+    readonly sid: string;
+    readonly rights: string;
+    readonly type: string;
+    readonly inherited: boolean;
+  }>;
+}
+
+const fixtureArchiveAclSnapshot = (path: string): FixtureArchiveAclSnapshot => {
+  const encodedPath = Buffer.from(path, "utf8").toString("base64");
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    `$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
+    "$item=Get-Item -LiteralPath $p -Force",
+    "$acl=$item.GetAccessControl()",
+    "$current=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+    "$rules=@($acl.Access | ForEach-Object { [pscustomobject]@{ sid=$_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value; rights=$_.FileSystemRights.ToString(); type=$_.AccessControlType.ToString(); inherited=$_.IsInherited } })",
+    "[pscustomobject]@{ protected=$acl.AreAccessRulesProtected; currentSid=$current; rules=$rules } | ConvertTo-Json -Depth 4 -Compress",
+  ].join(";");
+  return JSON.parse(
+    execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        env: p39WindowsTestEnvironment(),
+      },
+    ),
+  ) as FixtureArchiveAclSnapshot;
+};
 
 const staticPreparedSqlFrom = (filename: string): ReadonlyArray<string> => {
   const source = readFileSync(filename, "utf8");
@@ -665,6 +708,47 @@ describe("V6 diagnostic SQL follows current persistence schema", () => {
       expect(existsSync(join(archivedDirectory, "arbor-functional.db"))).toBe(
         true,
       );
+      const archiveSkippedPath = writeProductionFixtureArchiveSkipped({
+        fixture,
+        resultDirectory,
+        evidence: { testName: "private-result-directory" },
+      });
+      if (process.platform === "win32") {
+        expect(p39WindowsAclQualificationAvailable()).toBe(true);
+        const directoryAcl = fixtureArchiveAclSnapshot(resultDirectory);
+        const expectedSids = [
+          directoryAcl.currentSid,
+          "S-1-5-18",
+          "S-1-5-32-544",
+        ].sort();
+        expect(directoryAcl.protected).toBe(true);
+        expect(directoryAcl.rules.map((rule) => rule.sid).sort()).toEqual(
+          expectedSids,
+        );
+        expect(
+          directoryAcl.rules.every(
+            (rule) =>
+              rule.rights === "FullControl" &&
+              rule.type === "Allow" &&
+              !rule.inherited,
+          ),
+        ).toBe(true);
+        const fileAcl = fixtureArchiveAclSnapshot(archiveSkippedPath);
+        expect(fileAcl.rules.map((rule) => rule.sid).sort()).toEqual(
+          expectedSids,
+        );
+        expect(
+          fileAcl.rules.every(
+            (rule) =>
+              rule.rights === "FullControl" &&
+              rule.type === "Allow" &&
+              rule.inherited,
+          ),
+        ).toBe(true);
+      } else {
+        expect(statSync(resultDirectory).mode & 0o777).toBe(0o700);
+        expect(statSync(archiveSkippedPath).mode & 0o777).toBe(0o600);
+      }
     } finally {
       rmSync(schemaRoot, { recursive: true, force: true });
       if (existsSync(resultDirectory))

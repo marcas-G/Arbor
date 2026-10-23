@@ -118,9 +118,13 @@ outside this review.
   daemon process tree are terminal; no matching process remains.
 - The archive-hook cause is diagnosed and fixed in test infrastructure:
   `validateResultDirectory` now creates a missing, lexically validated direct
-  child after validating the real `.test-results` root; a test-local regression
-  archives a disposable fixture into a missing destination and checks the
-  archive contents. However, the missing DB means the fresh persisted P1 row,
+  child after validating the real `.test-results` root and immediately applies
+  the P39 private ACL. A test-local regression archives a disposable fixture
+  into a missing destination, verifies the protected directory has only the
+  current SID/SYSTEM/Administrators FullControl ACEs with no inherited or
+  broad principals, and verifies an archive-skipped JSON file inherits that
+  ACL. Non-Windows verification checks 0700 directory and 0600 JSON modes.
+  However, the missing DB means the fresh persisted P1 row,
   episode binding, effective summary/digest, and current CandidateRead cannot
   be compared after commit. Therefore why P4 remained parked is **NOT
   DIAGNOSABLE** from this run. The evidence does not distinguish a failure to
@@ -132,10 +136,11 @@ outside this review.
   separately classified harness/oracle issues, not evidence of a production
   defect. No further process run was performed.
 - Post-fix lightweight verification: the V6 P9 exact-Step oracles, the missing
-  archive-directory regression, and the current-schema SQL microtest pass
-  together (**4 passed, 1 process case skipped**); the microtest creates schema
-  51 through the current-schema test helper, prepares all 44 static queries,
-  and does not start a daemon. Targeted Biome and `git diff --check` pass.
+  private-ACL archive-directory regression, and the current-schema SQL
+  microtest pass together (**4 passed, 1 process case skipped**); the microtest
+  creates schema 51 through the current-schema test helper, prepares all 44
+  static queries, and does not start a daemon. Targeted Biome and
+  `git diff --check` pass.
   `pnpm exec tsc -p tsconfig.test.json --noEmit` reports only the
   pre-existing unrelated `organization.functional.test.ts:740` missing
   `ProductionFixture.httpPort` member; no V6 or helper errors are reported.
