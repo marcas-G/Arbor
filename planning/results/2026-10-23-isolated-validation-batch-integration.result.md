@@ -21,6 +21,8 @@
 | `9b19b224d444dc2bee0b6adae9a363715d91e9a8` | P9 delayed old-generation lease renewal test fixture | merge `8129e483` |
 | `55a7b89bf6996ad4479e1e7f5b864bd350b7a5f0` | 脱敏 real-public-S1 qualification record | merge `7643956e` |
 | `0721d984ee48094cc272a2a84e41702e8c2ef77e` + `b03ba50795c70b2b07a09bcbe64843f5885a1bde` | F18 per-case budget/deadline and late-write containment | merge `303820b4` |
+| `2b04cb75286eed7de717a9b310e7e557a84c1739` | F21 online replay canonical receipt assertion repair | `2b04cb75` |
+| `bf86b8848d87e6157fbe8fee8f289012ef466709` | safe handshake error cause normalization | merge `7ac920c2` |
 
 整合前逐项核对来源 commit 的父提交、文件路径和实际 diff。最初只 cherry-pick `adcb524f` 得到 `398efe4c`，它只包含 tip 的 P41 结果记录，不包含其祖先中的生产修复、诊断证据及 fixture 测试修正；该 tip-only 挑入不足以代表主线整合。随后按主线拓扑在 `7581d46d` 上执行 `git merge --no-edit adcb524f`，得到 merge commit `2f0779a7085b964f9b95f6304b16a378e469cc15`，父提交为 `7581d46d` 与 `adcb524f`。没有 merge conflict。完整可达的 P41 链为 `15a25677`、`6416295e`、`779ec803`、`15bbdb99`、`adcb524f`；`git merge-base --is-ancestor adcb524f HEAD` 返回 exit 0。最初的 tip-only commit 保留在历史以供审计，不再作为完整整合凭据。其余来源提交按上表各挑入一次，无重复改动。
 
@@ -39,6 +41,10 @@ P9 direct-control diagnostics `e70c423a` 的父提交为 `ae2630ea`；普通 mer
 Port-handshake diagnostics `bd7cd924` 的父提交为 `ae2630ea`；普通 merge `d2902411` 仅改 process test-support classifier/helper 并新增三条小单测，无 production runtime 改动。所有 `safeHandshakeFailure` 路径复用严格前缀分类；wrong-port 只保留 validated numeric ports，不序列化 error cause。拒绝/停止断言保持。独立 review **PASS，无阻断**；新增小单测尚未运行。
 
 F18 per-case budget/deadline 以完整 range 整合：`0721d984` 和 `b03ba507`，普通 merge `303820b4`，仅修改 `tests/functional/process/organization.functional.test.ts`。独立 review 确认 665.5s 外层耗时可由现有 setup/wait budget 解释，不是冻结业务 SLO；b03 将 PublicClient 和轮询绑定同一 case deadline，并将 `afterEach` 置为 closed 以阻止 late write，不改 lease、内层等待或业务断言。定向 Biome 与 diff PASS；F18 crash-oracle + public-client deadline unit 共 3/3 PASS。F18 第二 process case 保留给 `remaining_functional_sweep`。
+
+F21 在线 replay 的 `46d811b7` 首轮失败与修复已在候选整合。唯一失败是 raw JSON 命令成功后，对 canonical receipt 与 HTTP envelope 形状断言错配；命令仍 HTTP 200，持久结果 `result_json` 仅为 result。修复 `2b04cb75` 使用持久 `command_id`/resolution/result 构造 canonical receipt，只精确比较响应 `body`，并保留 same-command、receipt stability、同 PID、`[Pending, Active]` event、单 ownership、Attention 清除和 Provider 计数断言。result record 将首轮列为 oracle mismatch failed，修复后 online daemon case **NOT RUN**，留给 sweep；这不是资源恢复问题的失败证据。此改动仅 test 与 result record。
+
+Safe handshake error normalization `bf86b884` 以完整单提交范围整合（source base `46d811b7`），merge 为 `7ac920c2`，只改 functional test-support 与 handshake unit file。它沿 cause chain 限深查找最具体已知分类，仅保留经过校验的 port/readiness numeric 字段；不序列化 Error cause，不改变 lifecycle rejection/stop 逻辑。独立 review PASS 无阻断；`handshake-diagnostic.test.ts` 8/8 PASS。候选相对 `46d811b7` 无 production/runtime 路径改动。
 
 没有合入 nativehelper 分支；其安全红测仍待处理。S1 变更了 production prompt/control catalog assets，因此等待所有源码批次整合后才执行 build；native 实验已结束，build 结果见下节。
 
