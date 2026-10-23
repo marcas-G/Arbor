@@ -16,29 +16,33 @@ import {
   finishRealProviderFixture,
   makeDeadlinePublicClient,
   type ProviderCapture,
+  providerCaptureMatchesSelector,
   type RealProviderConfig,
   readProviderCaptures,
   releaseProviderResponse,
   repositoryBuildAssets,
   startedProviderRequests,
   startRealProviderFixture,
+  validateRealJourneyEvidenceRoot,
   waitForHeldProviderResponse,
   writeRealProviderEvidence,
 } from "./public-real-journey-support.js";
 
 const OPT_IN = "ARBOR_RUN_REAL_PUBLIC_S2";
-const EVIDENCE_ROOT = "ARBOR_PUBLIC_S2_EVIDENCE_ROOT";
+const EVIDENCE_ROOT = "ARBOR_PUBLIC_REAL_EVIDENCE_ROOT";
 const JOURNEY_BUDGET_MS = 20 * 60_000;
 const configReadiness = discoverProductionProviderConfig();
 const buildMissing = repositoryBuildAssets();
+const evidenceRootReadiness = validateRealJourneyEvidenceRoot(
+  process.env[EVIDENCE_ROOT],
+);
 const skipReason =
   process.env[OPT_IN] !== "1"
     ? `set ${OPT_IN}=1 to explicitly opt in`
     : !configReadiness.ready
       ? configReadiness.reason
-      : process.env[EVIDENCE_ROOT] === undefined ||
-          !existsSync(process.env[EVIDENCE_ROOT])
-        ? `set ${EVIDENCE_ROOT} to an existing private .test-results run directory`
+      : !evidenceRootReadiness.ready
+        ? evidenceRootReadiness.reason
         : buildMissing.length > 0
           ? `REAL NOT QUALIFIED: build ${buildMissing.join(" and ")}`
           : undefined;
@@ -324,7 +328,11 @@ const runJourney = async (input: {
       input.marker,
       deadlineAt,
     );
-    armProviderResponseGate(run);
+    const workGateSelector = {
+      requiredAdvertisedToolName: "patch",
+      requiredMessageText: input.marker,
+    } as const;
+    armProviderResponseGate(run, workGateSelector);
     await client.command(project.projectId, "ResolveControlApproval", {
       approvalId: approval.approvalId,
       expectedRevision: approval.revision,
@@ -348,6 +356,7 @@ const runJourney = async (input: {
     const firstHeldResponse = await waitForHeldProviderResponse(run, {
       afterSequence: rootStarts - 1,
       deadlineAt,
+      selector: workGateSelector,
     });
     expect(capturedSystemPrompt(firstHeldResponse)).toContain(
       "In a WorkspaceWork turn bound to a current Work, you are the executing agent responsible for advancing that Work",
@@ -441,6 +450,7 @@ const runJourney = async (input: {
             (capture) =>
               capture.event === "request-start" &&
               capture.sequence > lastSequence &&
+              providerCaptureMatchesSelector(capture, workGateSelector) &&
               JSON.stringify(capture.request?.messages ?? []).includes(
                 correctionMarker,
               ),
@@ -477,6 +487,7 @@ const runJourney = async (input: {
           const held = await waitForHeldProviderResponse(run, {
             afterSequence: lastSequence,
             deadlineAt: Math.min(deadlineAt, Date.now() + 1_000),
+            selector: workGateSelector,
           });
           lastSequence = held.sequence;
           releaseProviderResponse(run, held.requestId);
@@ -592,6 +603,7 @@ const runJourney = async (input: {
           const nextHeld = await waitForHeldProviderResponse(run, {
             afterSequence: lastSequence,
             deadlineAt: Math.min(deadlineAt, Date.now() + 1_000),
+            selector: workGateSelector,
           });
           lastSequence = nextHeld.sequence;
           releaseProviderResponse(run, nextHeld.requestId);
@@ -614,6 +626,7 @@ const runJourney = async (input: {
           heldAfterEffect = await waitForHeldProviderResponse(run, {
             afterSequence: lastSequence,
             deadlineAt: Math.min(deadlineAt, Date.now() + 3_000),
+            selector: workGateSelector,
           });
         } catch {
           const current = await client.view<{
@@ -792,37 +805,38 @@ const runJourney = async (input: {
     );
 };
 
+const runOptedInScenario = async (
+  mode: "normal-steer" | "critical-stop",
+): Promise<void> => {
+  if (buildMissing.length > 0)
+    throw new Error(
+      `REAL NOT QUALIFIED: missing build assets ${buildMissing.join(", ")}`,
+    );
+  if (!configReadiness.ready)
+    throw new Error(
+      "REAL NOT QUALIFIED: production provider config unavailable",
+    );
+  if (!evidenceRootReadiness.ready)
+    throw new Error(`REAL NOT QUALIFIED: ${evidenceRootReadiness.reason}`);
+  const marker = `S2-${mode === "normal-steer" ? "NORMAL" : "STOP"}-${randomUUID().replaceAll("-", "").slice(0, 10).toUpperCase()}`;
+  await runJourney({
+    config: configReadiness.config,
+    evidenceRoot: evidenceRootReadiness.path,
+    marker,
+    mode,
+  });
+};
+
 it.skipIf(skipReason !== undefined)(
   skipReason === undefined
-    ? "REAL public S2 global read, normal steer, and critical stop"
+    ? "REAL public S2 global read and Normal Steer correction"
     : `REAL NOT QUALIFIED: ${skipReason}`,
-  async () => {
-    if (buildMissing.length > 0)
-      throw new Error(
-        `REAL NOT QUALIFIED: missing build assets ${buildMissing.join(", ")}`,
-      );
-    if (!configReadiness.ready)
-      throw new Error(
-        "REAL NOT QUALIFIED: production provider config unavailable",
-      );
-    const evidenceRoot = process.env[EVIDENCE_ROOT];
-    if (evidenceRoot === undefined || !existsSync(evidenceRoot))
-      throw new Error(
-        `REAL NOT QUALIFIED: ${EVIDENCE_ROOT} must be an existing private directory`,
-      );
-    const normalMarker = `S2-NORMAL-${randomUUID().replaceAll("-", "").slice(0, 10).toUpperCase()}`;
-    const criticalMarker = `S2-STOP-${randomUUID().replaceAll("-", "").slice(0, 10).toUpperCase()}`;
-    await runJourney({
-      config: configReadiness.config,
-      evidenceRoot,
-      marker: normalMarker,
-      mode: "normal-steer",
-    });
-    await runJourney({
-      config: configReadiness.config,
-      evidenceRoot,
-      marker: criticalMarker,
-      mode: "critical-stop",
-    });
-  },
+  () => runOptedInScenario("normal-steer"),
+);
+
+it.skipIf(skipReason !== undefined)(
+  skipReason === undefined
+    ? "REAL public S2 Critical Stop quiescence and restart"
+    : `REAL NOT QUALIFIED: ${skipReason}`,
+  () => runOptedInScenario("critical-stop"),
 );
