@@ -27,25 +27,36 @@ public port change is in scope.
 | Provider D2 identity | `packages/agent-runtime/src/agent-loop-driver.ts` | Current fingerprint is `turn-${turn}` and admission happens before request preparation. Replace only after semantic request compilation and before the request can reach a provider adapter. |
 | Existing compiled request fingerprint | `packages/model-context/src/compiler.ts`; replay validation in `packages/agent-runtime/src/agent-loop-step-recovery.ts` | `PreparedModelTurn.manifest.compiledRequestHash` is available before `ProviderRuntime.runTurn`; inference uses the existing FNV-1a encoding over `JSON.stringify({ request, toolRoutes })`. Reuse it as the opaque D2 request identity only after tests prove turn-ordinal/ProviderTurnId independence and semantic request sensitivity. Do not call it SHA-256 or change its persisted manifest meaning. |
 | Provider request dispatch | `packages/agent-runtime/src/model-decision.ts` | Ordinary inference compiles before the existing direct `ProviderRuntime.runTurn`; place the gate at that compile/dispatch seam, not at a guessed loop ordinal. P9 settled-result replay must not dispatch a new request or be reported as progress. |
-| Other provider dispatch sites | `packages/agent-runtime/src/compaction-coordinator.ts`, `packages/agent-runtime/src/conversation-checkpoint-compaction.ts` | These build Summary/Native requests separately. The owner must decide whether P12 D2/D4 activity boundaries include each such ProviderTurn or only the outer AgentLoop inference boundary; see the blocking clarification below. Do not silently change D4 turn counts. |
+| Other provider dispatch sites | `packages/agent-runtime/src/compaction-coordinator.ts`, `packages/agent-runtime/src/conversation-checkpoint-compaction.ts` | These build Summary/Native requests separately. Each new Summary/Native, Conversation checkpoint, P20 overflow compaction/replacement ProviderTurn receives its own compile→gate→network boundary, with its existing operation-specific fingerprint source. |
 | AgentAction D2 identity | `packages/agent-runtime/src/agent-loop-actions.ts` | Current fingerprint is `tool:${toolName}:${callRef}`. Replace callRef-based identity with a semantic envelope containing resolved route kind, action/tool name, and canonical semantic arguments; callRef/ProviderTurnId/step ordinal are correlation identities, not action semantics. |
 | Progress producers | `packages/agent-runtime/src/agent-loop-actions.ts` | Several invalid-argument, authorization-denied, handler-rejected/model-usable, and persistence-fallback branches currently set `durableProgress=true` unconditionally. Inventory every assignment and make the signal depend on committed qualifying evidence. |
 | Progress aggregation | `packages/agent-runtime/src/agent-loop-driver.ts` | `progressedSinceBoundary` aggregates action progression and is reported at ProviderTurn admission. Keep one boolean shared by D2/D4; do not infer it from Session text, Provider success, step revisions, or P9 handoff. |
 | P9 recovery ordering | `packages/agent-runtime/src/model-decision.ts`, `packages/agent-runtime/src/agent-loop-step-recovery.ts`, `packages/agent-runtime/src/agent-loop-actions.ts` | Existing settled-result replay and reconciliation paths remain authoritative. A replay/handoff alone is false progress; `ReconciliationPending`/unknown external effects retain their existing gate precedence. |
 
-### Canonicalization decision
+### Fingerprint and canonicalization boundary
 
 No new provider-facing, persisted, or public codec is required by revision 2.
-For ProviderTurn, use the existing compiled-request identity field after
-proving its exact availability at the gate boundary. For AgentAction, add a
-small agent-runtime-internal pure canonicalizer for the parsed JSON argument
-value and hash a versioned envelope with the existing `sha256Hex` utility. The
-canonical rules should be: sort object keys recursively; preserve array order;
-preserve JSON primitive types; reject non-finite numbers and non-JSON values;
-include route kind and tool/action name; exclude callRef and other ephemeral
-identities. Invalid/unparseable argument JSON must produce a stable,
-domain-tagged invalid-input fingerprint rather than throw before D2 admission;
-it never counts as progress.
+Provider fingerprints are operation-kind namespaced and reuse each existing
+path's stable opaque hash; this plan does not claim a unified hash algorithm or
+authority hash. Inference uses the existing `compiledRequestHash` FNV-1a value
+over `{ request, toolRoutes }`; Summary/Native compaction paths use their
+existing SHA-256 of the compiled request. Conversation checkpoint and P20
+overflow/replacement turns use the existing producer's hash for their
+underlying operation kind. Keep these hashes as opaque D2 inputs and bind them
+to the corresponding `operationKind`; do not alter persisted manifests or
+recompute them with a new canonical wire codec.
+
+Action D2 requires an internal candidate semantic-argument fingerprint:
+canonicalize the parsed JSON argument value, include route kind and tool/action
+name, exclude callRef and other ephemeral identities, then digest with the
+existing SHA-256 utility. The implementation may use the existing sorted-key
+canonicalization pattern, but the exact AgentAction codec qualification remains
+**PENDING** until tests prove recursively reordered object keys equal and
+materially different arguments/route/name distinct. Do not reuse the P39
+closed-schema or AH14 safe-integer canonicalizer, and do not claim Action D2
+qualified while the pending property matrix is incomplete. Invalid/unparseable
+argument JSON must use a stable domain-tagged invalid-input key without
+throwing before D2 admission; that path never counts as progress.
 
 Existing canonicalization code is precedent, not a directly reusable general
 codec: `provider-extension.ts` has a private sorted-key helper but does not
@@ -57,37 +68,38 @@ revision-2 observable rules (for example schema-default expansion, Unicode
 normalization, or argument coercion), stop and seek owner clarification rather
 than inventing it.
 
-## Blocking owner clarification before implementation
+## P41-constrained implementation boundary
 
-Revision 2 does not identify whether a D2 `ProviderTurn` activity means:
+Apply one D2/D4 admission to every **new ProviderTurn** after its own request
+has been fully compiled and immediately before its `ProviderRuntime.runTurn`
+call. This includes Inference, Summary, Native, Conversation checkpoint
+Summary/Native, and P20 overflow compaction/replacement turns. Namespace the D2
+fingerprint by the request `operationKind` and reuse that path's existing
+stable opaque hash as described above. Each such new ProviderTurn is one D4
+boundary; it consumes the current shared `progressedSinceBoundary` value once
+and affects both D2 and D4 exactly as revision 2 specifies. Clear that
+accumulator immediately after each new-boundary admission; any qualifying
+action/effect committed afterward begins the value for the next new
+ProviderTurn. This deliberately does not count internal ProviderAttempt
+retries as new ProviderTurn admissions: the existing D1 retry observation
+and D5 end bracket reuse the admitted activity and do not increment D2/D4.
 
-1. only the outer AgentLoop inference decision; or
-2. every network-backed ProviderTurn, including Summary/Native compaction,
-   Conversation checkpoint compaction, and overflow replacement.
+A P9 settled-result replay is not a new ProviderTurn boundary: validate and
+consume the pinned result without another D2/D4 admission or ProviderRuntime
+call. Replayed ProviderResult/ModelOutput, old action result rows, Step/cursor
+transitions, and P9 handoff records alone remain false progress. If replay
+processing actually commits a **new** qualifying successful terminal action
+outcome or attributable authoritative mutation, accumulate that evidence in
+the existing `progressedSinceBoundary` boolean for the next new ProviderTurn;
+otherwise the next new turn receives false. ReconciliationPending/unknown
+effects remain ahead of any safety-stop settlement.
 
-The code has separate `ProviderRuntime.runTurn` call sites for these
-operations. Counting each one also makes each a D4 boundary and can change the
-no-progress count relative to the current outer-loop admission, despite
-preserving thresholds. Conversely, skipping an operation-kind is a narrower
-fingerprint scope. The owner package must choose the scope (or name the exact
-existing boundary to preserve) before implementation; the implementation must
-not guess. Recommended default for owner consideration: fingerprint each
-explicit ProviderTurn using its own compiled semantic request, but preserve
-the P12 logical turn boundary count if compaction is an internal continuation
-within that same logical turn. This may require separating D2 identity from
-D4 boundary semantics, which revision 2 currently describes as one shared
-ProviderTurn gate observation; no implementation may introduce a second
-progress boolean or new P2 port field without owner approval.
-
-The owner decision must also state the P9 replay boundary: a previously
-settled, exactly bound ProviderResult is consumed without another Provider
-request; recovery bookkeeping must not set progress. The plan below assumes a
-replay is evaluated once at the existing logical turn admission using its
-validated pinned manifest's semantic request identity, with
-`durableProgress=false`, and does not call the network. If the owner instead
-defines D2 only for newly dispatched network requests, D4 boundary behavior on
-a no-network P9 replay must be explicitly retained without accidentally
-double-counting D2 or D5.
+The revision-2 proposal remains `PROPOSED_NOT_ACCEPTED`; its acceptance token
+and a separate implementation authorization are still required before source
+changes. The boundary above records the implementation requirements from the
+P41-constrained owner direction and removes the former operation-scope/replay
+owner blockers; it does not manufacture governance acceptance or runtime
+authorization.
 
 ## Conditional TDD work DAG
 
@@ -95,8 +107,9 @@ double-counting D2 or D5.
 
 - Verify the accepted revision-2 proposal SHA/token and implementation
   authorization; stop if either is absent.
-- Record current gate behavior and all four `ProviderRuntime.runTurn` call
-  sites. Inventory every `durableProgress` assignment and categorize it as
+- Record current gate behavior and every `ProviderRuntime.runTurn` call site
+  (Inference, Summary/Native compaction, Conversation checkpoint compaction,
+  and P20 overflow/replacement). Inventory every `durableProgress` assignment and categorize it as
   successful action settlement, attributable authoritative mutation,
   unsuccessful model-visible outcome, persistence failure, P9 replay, or
   bookkeeping.
@@ -106,11 +119,14 @@ double-counting D2 or D5.
 
 ### Wave 1 — semantic fingerprint helpers
 
-- Provider fingerprint: use the compiled request hash from the exact prepared
-  turn and tag it by the accepted operation scope. Test that identical compiled
-  request + tool routes across different logical-step/ProviderTurn IDs yield
-  the same D2 key; changed input items, instructions, tool definitions/routes,
-  output contract, or operation kind yield a different key.
+- Provider fingerprint: after each operation-specific request is compiled,
+  form a D2 key from its `operationKind` and that path's existing stable
+  manifest hash. Test identical Inference request/tool routes across different
+  logical-step/ProviderTurn IDs yield the same FNV-based key; identical
+  Summary/Native request bytes yield the same existing SHA-based key; changed
+  input items, instructions, tool definitions/routes, output contract, or
+  operationKind yield a different namespaced key. Verify the request was
+  compiled before admission and admission completes before the network call.
 - AgentAction fingerprint: implement the internal canonical-argument envelope
   from the owner-approved rules. Test recursively reordered object keys as
   equal; changed values, action kind, route kind, array order, or JSON type as
@@ -120,23 +136,72 @@ double-counting D2 or D5.
 - Keep fingerprints in-memory only. Do not rewrite `AgentLoopStep.inputHash`,
   P4 recovery-binding hashes, P1 semantic fingerprints, or provider manifests.
 
-### Wave 2 — compile → gate → network ordering
+### Wave 2 — per-new-ProviderTurn compile → gate → network ordering
 
-- Refactor P3's inference dispatch seam so request preparation, tool-route
-  resolution and compiled-request identity complete before the ProviderTurn
-  gate; `ProviderRuntime.runTurn` must be the next effect after a Continue
-  decision, with no transport/network work before that decision.
+- Refactor each P3 dispatch seam so request/manifest construction and the
+  operation-specific existing fingerprint are complete before the ProviderTurn
+  gate; each corresponding `ProviderRuntime.runTurn` must be the next
+  provider-boundary effect after Continue, with no transport/network work
+  beforehand. Cover Inference (`model-decision.ts`), Summary/Native
+  compaction (`compaction-coordinator.ts`), Conversation checkpoint
+  compaction (`conversation-checkpoint-compaction.ts`), and P20
+  overflow/replacement paths. Use one shared admission helper so all callsites
+  apply the same operation-kind namespace, D4 signal, and D5 bracket.
+- Assert the ordered seam for every operation family:
+
+  ```text
+  build PortableModelRequest + exact manifest/source binding
+  → obtain that path's existing stable opaque hash
+  → construct ProviderTurn fingerprint = operationKind namespace + hash
+  → admitActivity(ProviderTurn, retryCount=0, durableProgress,
+      inFlight=begin, leaseGeneration, observedAt)
+  → on Continue only, call ProviderRuntime.runTurn
+  → admitActivity(same activity, real retryCount, inFlight=end, ...)
+  ```
+
+  The start admission must precede the first ProviderRuntime/adapter/network
+  effect, and the end bracket must run once when that new ProviderTurn call
+  finishes (including failure); it does not create another D2/D4 admission.
 - Ensure a Stop returns through the existing `RuntimeSafetyStop`/settlement
   path with **zero ProviderRuntime calls**, zero new ProviderAttempt/network
   requests, and no fabricated Provider result. P9 reconciliation/unknown
   side-effect guards continue to take precedence as today.
-- Preserve D1 retry ordinal and D5 begin/end brackets; `inFlight=end` remains
-  excluded from D2/D4 as existing gate code specifies. Do not count internal
-  transport retries as separate semantic Provider requests. Apply the owner
-  decision from the blocker above to compaction/checkpoint/overflow sites.
-- P9 replay must validate the exact persisted manifest/result binding, consume
-  the already settled result once, issue no new Provider request, and report
-  `durableProgress=false` unless a new qualifying action/effect commits.
+- Apply exactly one D2/D4 admission per new ProviderTurn. Preserve D1 retry
+  ordinal and D5 begin/end brackets; `inFlight=end` remains excluded from
+  D2/D4 as current gate code specifies. ProviderAttempt retries reuse their
+  existing admitted activity and never generate extra D2/D4 admissions.
+- Maintain one shared progress accumulator across nested model-decision and
+  compaction calls. Consume/clear it at each new ProviderTurn admission; a
+  compaction/checkpoint/ProviderResult/Step bookkeeping commit does not set it
+  again. Only a newly committed qualifying action/effect after that admission
+  can set it for the next ProviderTurn boundary.
+- P9 replay validates exact persisted manifest/result binding and consumes the
+  settled result once without a new ProviderRuntime call or D2/D4 admission.
+  Old ProviderResult, OutputAccepted, Step/cursor and recovery handoff facts
+  remain false progress; only a newly committed qualifying action/effect is
+  accumulated for the successor new ProviderTurn.
+
+### Wave 2 test order matrix
+
+Use a deterministic ProviderRuntime spy, with no network adapter, to verify the
+same exact sequence for each callsite family:
+
+| ProviderTurn family | Existing fingerprint source | Gate/network assertion |
+|---|---|---|
+| Inference | `compiledRequestHash` (FNV-1a over request + toolRoutes) | hash exists after `compileTurn`; gate is next; ProviderRuntime called only on Continue |
+| Summary compaction | existing SHA-256 of compiled request | request/manifest built before gate; no ProviderRuntime call on Stop |
+| Native compaction | existing SHA-256 of compiled request | same order; exact `CompactionNative` request hash is used |
+| Conversation Summary/Native checkpoint compaction | existing per-path SHA-256 | same order, exact conversation source/owner binding retained |
+| P20 OverflowCompaction | existing Summary/Native request hash | same order and P20 link/role remains exact |
+| P20 OverflowReplacement | existing Inference `compiledRequestHash` | same order and overflow link/ordinal remains exact |
+
+For each row, capture a call-order log and assert `compile < gate <
+ProviderRuntime`; gate Stop asserts ProviderRuntime call count `0`. A retrying
+ProviderRuntime stub asserts one D2/D4 start admission for the ProviderTurn,
+then its actual attempt ordinal is reported only through the end/D1 observation.
+Operation-kind namespace tests assert equal same-kind hashes compare equal,
+while distinct operation kinds remain distinct even if their opaque hash text
+matches.
 
 ### Wave 3 — AgentAction semantic fingerprint and shared progress producer
 
@@ -157,10 +222,10 @@ double-counting D2 or D5.
   transition, recovery link/receipt, or cursor advance alone is false.
 - Unknown or unresolved side effects remain false and reconciliation-blocked;
   no safety signal may downgrade `OutcomeUnknown` or skip existing P9 recovery.
-- At the next accepted ProviderTurn boundary, the one boolean resets both D2
-  and D4 only if true. D4 otherwise increments exactly once at the
-  owner-defined boundary; D2 fingerprints remain until that same true signal
-  or a genuinely new semantic fingerprint according to the existing gate.
+- At the next new ProviderTurn boundary, the one boolean resets both D2 and D4
+  only if true. D4 otherwise increments exactly once; D2 fingerprints remain
+  until that same true signal or a genuinely new operation-kind-scoped
+  semantic fingerprint according to the existing gate.
 
 ### Wave 4 — focused integration and process qualification
 
@@ -171,6 +236,13 @@ double-counting D2 or D5.
   D2 Stop yields zero stub calls; a callRef-only change repeats the action
   fingerprint; a semantic argument change does not; and gate stop preserves
   source/action identity and existing settlement behavior.
+- Parameterize the compile/gate/network order over all Wave 2 operation
+  families with a local fake Provider. Include an internal ProviderAttempt
+  retry and assert it does not cause another D2/D4 admission. Include a
+  P9-settled-result replay fixture that validates/replays without any new
+  D2/D4 admission or Provider call, then starts a genuine successor ProviderTurn
+  and asserts only newly committed qualifying action/effect evidence from the
+  replay path is accumulated into that successor's `durableProgress` input.
 - Add process-level coverage for the shared signal: repeated same semantic
   Provider request with no progress stops at the configured test threshold;
   a newly committed successful sourced action resets both D2 and D4; failed,
@@ -199,8 +271,6 @@ double-counting D2 or D5.
 - **Governance gate:** revision 2 remains `PROPOSED_NOT_ACCEPTED`; no source
   implementation until manual acceptance and separate implementation
   authorization are evidenced.
-- **Provider operation scope gate:** no implementation if inference vs
-  compaction/checkpoint/overflow D2/D4 boundary scope remains unspecified.
 - **Canonicalization gate:** do not claim Action D2 qualified if reordered
   object keys do not compare equal or if a new observable equivalence rule is
   needed beyond revision 2. Seek owner review instead of changing P1/P4/P9
