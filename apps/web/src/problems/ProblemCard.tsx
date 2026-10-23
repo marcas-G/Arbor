@@ -126,12 +126,26 @@ function UnavailableTreatment({
   readonly onRetry?: (() => void) | undefined;
 }) {
   const retryable = problem.retryDisposition === "retryable";
+  const sandboxPolicyAuthorityUnavailable =
+    problem.code === "projection/unavailable" &&
+    problem.safeDetails.sourceTag ===
+      "SandboxPolicyCandidateAuthorityUnavailable";
   return (
     <div className="arbor-problem" role="alert">
-      <h2 className="arbor-problem-title">服务不可用</h2>
+      <h2 className="arbor-problem-title">
+        {sandboxPolicyAuthorityUnavailable
+          ? "沙箱策略权威来源不可用"
+          : "服务不可用"}
+      </h2>
       <Badge tone={retryable ? "attention" : "muted"}>
         Network / Unavailable
       </Badge>
+      {sandboxPolicyAuthorityUnavailable ? (
+        <p>
+          当前无法验证沙箱策略候选。请先配置或恢复可信策略来源后重试；系统不会自动选择
+          TrustedLocal 或绕过权限。
+        </p>
+      ) : null}
       <p>
         <Badge tone={retryable ? "attention" : "muted"}>
           {problem.retryDisposition}
