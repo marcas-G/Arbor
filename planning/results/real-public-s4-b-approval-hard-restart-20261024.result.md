@@ -233,3 +233,63 @@ Latest failed-attempt private evidence hashes:
 | `retained-fixture-af296500-9a18-4877-9fd4-def97fa3101e/arbor-functional.db-shm` | `A541C1CB95B6B97605EC7089C174049F44C86371EFA8835D7E06592C3CFE2987` |
 | `retained-fixture-af296500-9a18-4877-9fd4-def97fa3101e/arbor-functional.db-wal` | `3E4FA5C784800FF6A898C29947531BD2DF53BC87A70E0CD97EF2BF34BAF06E98` |
 | `retained-fixture-af296500-9a18-4877-9fd4-def97fa3101e/workspace/v2-source.json` | `A087F7A5E0FAD2D769FF7FA12A39EB3275579D09C55D25B67A8F77BF82349509` |
+
+## Corrected-oracle real qualification — 2026-10-24
+
+- Candidate: `ac9625d99501781f4c787a2cab17319e220318b5`.
+- Before start, process inventory found no existing Arbor/Vitest functional
+  daemon. The configured Provider file path was passed through the test's
+  private-config environment variable; its contents and credentials were not
+  printed. Evidence root was the candidate's canonical `.test-results`.
+- The sole actual qualification command (retry 0, one worker, no file
+  parallelism; S4-B only) was:
+
+  ```text
+  $env:ARBOR_PUBLIC_S1_CONFIG='C:\Arbor\arbor.config.json'
+  $env:ARBOR_PUBLIC_REAL_EVIDENCE_ROOT=(Resolve-Path '.test-results').Path
+  $env:ARBOR_RUN_REAL_PUBLIC_S4='1'
+  pnpm exec vitest run --config vitest.public-real.config.ts tests/capability/real-provider/public-s4-recovery.test.ts --testNamePattern 'REAL S4-B' --maxWorkers=1 --retry=0 --no-file-parallelism
+  ```
+
+- Result: **FAIL / not qualified**. Vitest exit 1; the S4-B case ran for
+  `1,211,251 ms` and the complete process for `1,232.41 s` (1 failed, 2
+  skipped). The bounded failure was `REAL NOT QUALIFIED: deadline waiting for
+  a genuine held Provider response` at `waitForHeldProviderResponse`. S4-A
+  and the parser unit were skipped by the name filter. No EAP, P1 commit,
+  hard restart, approval, or effect was reached; this is not an approval
+  recovery result.
+- The response-gate/capture diagnosis is recorded separately in
+  [the S4-B provider-response diagnosis](real-public-s4-b-response-diagnosis-20261024.result.md).
+  In brief, shell was advertised on the WorkspaceWork requests, but no real
+  response contained the exact bounded `shell Get-Date` call. Of 25 captured
+  request starts, 21 completed HTTP 200 and 4 ended as aborted/ConnectTimeout;
+  there were zero `response-held` or `response-released` records. The captured
+  responses that completed had valid text/tool-call shapes; there is no
+  evidence that the shared fragmented-SSE decoder dropped a shell call.
+- Read-only DB inspection found one Open Work and its WorkEpisode executions;
+  one later Work Execution completed after repeated nonmatching model turns.
+  There was one consumed Root `Control` approval, but zero `Executable`
+  approvals, `tool_invocations`, or Sandbox Policy decisions. The human
+  request/job remained pending/answered according to their separate
+  conversation-response rows; no EAP or restart occurred. Failure evidence
+  reports `daemonExited=true` and zero daemon errors. Post-teardown process
+  inventory found no Node/Arbor/Vitest processes.
+- P39 retained this failed run at
+  `.test-results/real-public-s4-b-work-approval-hard-restart-rbuVST/`, including
+  the retained disposable DB/workspace, response captures, and failure
+  evidence. The capture/evidence and DB/WAL were hashed after teardown. The
+  untracked fixture `.arbor-functional-schema44-vkMFK7/` was not touched.
+- This is the first real attempt against the corrected S4-B oracle and it
+  **does not qualify S4-B**. There was no automatic retry or second real run.
+
+### Corrected-oracle private evidence hashes
+
+| File | SHA-256 |
+|---|---|
+| `evidence-ykygaj/provider-captures.jsonl` | `03BFD44005170136A3662E6E47114440FBE7C952C79A47DD0CB5F20974BA5A87` |
+| `evidence-ykygaj/s4-b-work-approval-hard-restart-2026-10-23T20-42-57.753Z.json` | `D887B0D9CB4D51B3C5D5620B25B8B1B0C7986BDAAA3F8A163E25168D8CDF97BA` |
+| `retained-fixture-226d4ea1-05e2-4046-8d2d-f7af8cbdc14c/failure-evidence.json` | `7D96527824C03164F6A1103D70F48B27A2C0A35597D6691DEDACDA97488F322C` |
+| `retained-fixture-226d4ea1-05e2-4046-8d2d-f7af8cbdc14c/arbor-functional.db` | `87C8D23E7C43E7C60FA421C9C8D9D08E05CB2BD3BC5D186E774F677D1B4485E1` |
+| `retained-fixture-226d4ea1-05e2-4046-8d2d-f7af8cbdc14c/arbor-functional.db-wal` | `57E03151297F89FD380D41B16F8FA515303C8C9089428B0A30B48143FF43A969` |
+| `retained-fixture-226d4ea1-05e2-4046-8d2d-f7af8cbdc14c/arbor-functional-p39-report.db` | `BF7EA8CAA43531682F6C75D95FCFAF21855361D73601DC20DBE1045C77784618` |
+| `retained-fixture-226d4ea1-05e2-4046-8d2d-f7af8cbdc14c/.arbor-p39-writer-229803429d7c1468cc4c38d684cb0c96758dfd4c955a7787f675370c5ece299b.sqlite` | `9E35DAA0E5EB81F6D0E9A88B1F9BA6DFAE6A5E92937C8796A9212B2F2833B1DB` |
