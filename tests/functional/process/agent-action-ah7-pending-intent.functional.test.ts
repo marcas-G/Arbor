@@ -28,7 +28,17 @@ import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.
 const fixtures: ProductionFixture[] = [];
 const fixturePhases = new Map<
   ProductionFixture,
-  { readonly boundary: Ah7PendingIntentBoundary; phase: string }
+  {
+    readonly boundary: Ah7PendingIntentBoundary;
+    projectId?: string;
+    workspaceId?: string;
+    executionId?: string;
+    callRef?: string;
+    providerTurnId?: string;
+    logicalActionId?: string;
+    readonly diagnosticState: () => Readonly<Record<string, unknown>>;
+    phase: string;
+  }
 >();
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
 const ah7PendingIntentBoundaries = [
@@ -40,6 +50,168 @@ const ah7PendingIntentBoundaries = [
   "AH7BeforeActionResultCommit",
   "AH7AfterActionResultCommit",
 ] as const;
+
+const readFailureProjectSnapshot = (input: {
+  readonly databaseFile: string;
+  readonly projectId: string;
+  readonly executionId?: string;
+  readonly callRef?: string;
+}) => {
+  const db = new DatabaseSync(input.databaseFile, { readOnly: true });
+  try {
+    db.exec("BEGIN");
+    const executionFilter = input.executionId ?? null;
+    const snapshot = {
+      projectId: input.projectId,
+      executionId: input.executionId ?? null,
+      executions: db
+        .prepare(
+          `SELECT execution_id, project_id, workspace_id, episode_kind,
+                  episode_ref, stop_requested_at, settled_at, settlement_kind,
+                  settlement_json
+             FROM executions WHERE project_id = ? ORDER BY admitted_at`,
+        )
+        .all(input.projectId),
+      workspaces: db
+        .prepare(
+          `SELECT workspace_id, parent_workspace_id, current_work_id, revision
+             FROM workspaces WHERE project_id = ? ORDER BY workspace_id`,
+        )
+        .all(input.projectId),
+      works: db
+        .prepare(
+          `SELECT w.work_id, w.workspace_id, w.lifecycle, w.revision
+             FROM works w JOIN workspaces ws ON ws.workspace_id = w.workspace_id
+            WHERE ws.project_id = ? ORDER BY w.created_at, w.work_id`,
+        )
+        .all(input.projectId),
+      decisions: db
+        .prepare(
+          `SELECT d.decision_id, d.workspace_id, d.candidate_work_ids_json,
+                  d.state, d.selected_work_id, d.revision
+             FROM work_selection_decision_requests d
+             JOIN workspaces ws ON ws.workspace_id = d.workspace_id
+            WHERE ws.project_id = ? ORDER BY d.created_at, d.decision_id`,
+        )
+        .all(input.projectId),
+      steps: db
+        .prepare(
+          `SELECT s.execution_id, s.logical_step_no, s.repair_attempt,
+                  s.provider_turn_id, s.manifest_id, s.state, s.revision,
+                  s.next_action_index, s.settlement_json
+             FROM agent_loop_steps s
+             JOIN executions e ON e.execution_id = s.execution_id
+            WHERE e.project_id = ?
+              AND (? IS NULL OR s.execution_id = ?)
+            ORDER BY s.execution_id, s.logical_step_no, s.repair_attempt`,
+        )
+        .all(input.projectId, executionFilter, executionFilter),
+      actions: db
+        .prepare(
+          `SELECT a.execution_id, a.logical_step_no, a.repair_attempt,
+                  a.action_index, a.logical_action_id, a.call_ref,
+                  a.action_kind, a.state, a.result_ref, a.observation_source_ref,
+                  a.disposition_json
+             FROM agent_loop_step_actions a
+             JOIN executions e ON e.execution_id = a.execution_id
+            WHERE e.project_id = ?
+              AND (? IS NULL OR a.execution_id = ?)
+            ORDER BY a.execution_id, a.logical_step_no, a.repair_attempt,
+                     a.action_index`,
+        )
+        .all(input.projectId, executionFilter, executionFilter),
+      toolInvocations: db
+        .prepare(
+          `SELECT t.invocation_id, t.execution_id, t.workspace_id,
+                  t.tool_name, t.tool_version, t.side_effect_semantics,
+                  t.arguments_json, t.resolved_regions_json, t.approval_id,
+                  t.effect_admission_state, t.recovery_binding_state,
+                  t.recovery_binding_sha256, t.settlement_provenance,
+                  t.selected_attempt_no, t.selected_fact_id, t.intent_at,
+                  t.settled_at, t.settlement_kind, t.settlement_json,
+                  t.result_ref, t.observation_format_version,
+                  t.observation_sha256
+             FROM tool_invocations t
+             JOIN executions e ON e.execution_id = t.execution_id
+            WHERE e.project_id = ?
+              AND (? IS NULL OR t.execution_id = ?)
+            ORDER BY t.execution_id, t.invocation_id`,
+        )
+        .all(input.projectId, executionFilter, executionFilter),
+      providerTurns: db
+        .prepare(
+          `SELECT p.provider_turn_id, p.execution_id, p.session_id,
+                  p.manifest_id, p.settled_at, p.finish_reason
+             FROM provider_turns p JOIN executions e
+               ON e.execution_id = p.execution_id
+            WHERE e.project_id = ?
+              AND (? IS NULL OR p.execution_id = ?)
+            ORDER BY p.provider_turn_id`,
+        )
+        .all(input.projectId, executionFilter, executionFilter),
+      attempts: db
+        .prepare(
+          `SELECT a.provider_turn_id, a.attempt_no, a.outcome, a.settled_at,
+                  a.success_evidence_version
+             FROM provider_attempts a JOIN provider_turns p
+               ON p.provider_turn_id = a.provider_turn_id
+             JOIN executions e ON e.execution_id = p.execution_id
+            WHERE e.project_id = ?
+              AND (? IS NULL OR p.execution_id = ?)
+            ORDER BY a.provider_turn_id, a.attempt_no`,
+        )
+        .all(input.projectId, executionFilter, executionFilter),
+      artifacts: db
+        .prepare(
+          `SELECT a.artifact_id, a.invocation_id, a.content_hash
+             FROM artifacts a JOIN tool_invocations t
+               ON t.invocation_id = a.invocation_id
+             JOIN executions e ON e.execution_id = t.execution_id
+            WHERE e.project_id = ?
+              AND (? IS NULL OR t.execution_id = ?)
+            ORDER BY a.artifact_id`,
+        )
+        .all(input.projectId, executionFilter, executionFilter),
+      toolResults: db
+        .prepare(
+          `SELECT se.sequence, se.session_id, se.payload_json, se.source_kind,
+                  se.source_ref
+             FROM session_entries se JOIN executions e
+               ON e.session_id = se.session_id
+            WHERE e.project_id = ?
+              AND (? IS NULL OR e.execution_id = ?)
+              AND se.item_type = 'ToolResult'
+              AND (? IS NULL OR se.payload_json LIKE '%' || ? || '%')
+            ORDER BY se.session_id, se.sequence`,
+        )
+        .all(
+          input.projectId,
+          executionFilter,
+          executionFilter,
+          input.callRef ?? null,
+          input.callRef ?? null,
+        ),
+      events: db
+        .prepare(
+          `SELECT event_id, project_id, sequence, event_type, aggregate_ref,
+                  payload_json, occurred_at
+             FROM domain_events WHERE project_id = ? ORDER BY sequence`,
+        )
+        .all(input.projectId),
+    };
+    db.exec("COMMIT");
+    return snapshot;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Preserve the original diagnostic snapshot error.
+    }
+    throw error;
+  } finally {
+    db.close();
+  }
+};
 type Ah7PendingIntentBoundary = (typeof ah7PendingIntentBoundaries)[number];
 type Ah7CrashSnapshotExpectation = {
   readonly actionState: "Pending" | "Applied";
@@ -238,7 +410,19 @@ afterEach(async ({ task }) => {
       }
       let snapshot: unknown;
       try {
-        snapshot = durableSnapshot(fixture.databaseFile);
+        snapshot =
+          phase?.projectId === undefined
+            ? { snapshotUnavailable: "project not yet created" }
+            : readFailureProjectSnapshot({
+                databaseFile: fixture.databaseFile,
+                projectId: phase.projectId,
+                ...(phase.callRef === undefined
+                  ? {}
+                  : { callRef: phase.callRef }),
+                ...(phase.executionId === undefined
+                  ? {}
+                  : { executionId: phase.executionId }),
+              });
       } catch (error) {
         snapshot = {
           snapshotError: error instanceof Error ? error.message : String(error),
@@ -252,6 +436,13 @@ afterEach(async ({ task }) => {
           testName: task.name,
           boundary: phase?.boundary ?? "unknown",
           phase: phase?.phase ?? "unknown",
+          projectId: phase?.projectId ?? null,
+          workspaceId: phase?.workspaceId ?? null,
+          executionId: phase?.executionId ?? null,
+          callRef: phase?.callRef ?? null,
+          providerTurnId: phase?.providerTurnId ?? null,
+          logicalActionId: phase?.logicalActionId ?? null,
+          diagnosticState: phase?.diagnosticState() ?? {},
           primaryDaemon: fixture.daemonProcessSnapshot(),
           startupDiagnostics: fixture.startupDiagnostics(),
           daemonErrors: fixture.daemonErrors,
@@ -395,7 +586,29 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           },
         });
         fixtures.push(fixture);
-        fixturePhases.set(fixture, { boundary, phase: "fixture-ready" });
+        fixturePhases.set(fixture, {
+          boundary,
+          phase: "fixture-ready",
+          diagnosticState: () => ({
+            marker,
+            targetProviderCalls,
+            targetReadToolCalls,
+            latestToolResult,
+            probeTail: hits.slice(-40),
+            providerCallCount: fixture.providerCalls.length,
+            providerCallTail: fixture.providerCalls.slice(-12).map((call) => ({
+              tools: call.tools
+                .map((tool) => tool.function?.name)
+                .filter((name): name is string => name !== undefined)
+                .sort(),
+              candidateIds: [
+                ...JSON.stringify(call.messages).matchAll(
+                  /wrk_[0-9a-f-]{36}/gu,
+                ),
+              ].map((match) => match[0]),
+            })),
+          }),
+        });
         activePhase = "fixture-ready";
         if (boundary === "AH7BeforeToolSettlementCommit") {
           activeDiagnosticTimer = setTimeout(() => {
@@ -446,6 +659,13 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           "AH7 Pending action intent",
           { resourceSelection: "Profile" },
         );
+        {
+          const phase = fixturePhases.get(fixture);
+          if (phase !== undefined) {
+            phase.projectId = project.projectId;
+            phase.workspaceId = project.rootWorkspaceId;
+          }
+        }
         await submitHumanMessage(
           client,
           project,
@@ -530,6 +750,19 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         );
         activeExecutionId = hit?.executionId;
         activePhase = "boundary-reached";
+        {
+          const phase = fixturePhases.get(fixture);
+          if (phase !== undefined) {
+            phase.phase = "boundary-reached";
+            if (hit?.executionId !== undefined)
+              phase.executionId = hit.executionId;
+            if (hit?.callRef !== undefined) phase.callRef = hit.callRef;
+            if (hit?.providerTurnId !== undefined)
+              phase.providerTurnId = hit.providerTurnId;
+            if (hit?.logicalActionId !== undefined)
+              phase.logicalActionId = hit.logicalActionId;
+          }
+        }
         expect(hit).toMatchObject({
           executionId: expect.stringMatching(/^exe_/u),
           callRef: expect.any(String),
