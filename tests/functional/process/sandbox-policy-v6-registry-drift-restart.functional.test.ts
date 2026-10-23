@@ -426,6 +426,7 @@ const freshExecutionDiagnosticSnapshot = (
 };
 
 interface P4OutcomeProbe {
+  readonly boundary?: string;
   readonly executionId: string;
   readonly invocationId: string;
   readonly callRef: string;
@@ -444,6 +445,22 @@ interface P4OutcomeProbe {
     readonly callRef: string;
   };
 }
+
+const postDecisionExpectedFailureProbeForInvocation = (input: {
+  readonly probes: ReadonlyArray<Record<string, unknown>>;
+  readonly startIndex: number;
+  readonly executionId: string;
+  readonly invocationId: string;
+}): P4OutcomeProbe | undefined =>
+  input.probes
+    .slice(input.startIndex)
+    .find(
+      (probe) =>
+        probe.boundary === "P4ExecutableToolRuntimeOutcome" &&
+        probe.executionId === input.executionId &&
+        probe.invocationId === input.invocationId &&
+        probe.outcomeTag === "ExpectedFailure",
+    ) as unknown as P4OutcomeProbe | undefined;
 
 interface P9ActionRow {
   readonly execution_id: string;
@@ -672,6 +689,35 @@ describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
         step: exact?.step,
       }),
     ).toBe(false);
+  });
+
+  it("ignores pre-decision policy parking and requires a fresh exact ExpectedFailure probe", () => {
+    const preDecisionPark = {
+      boundary: "P4ExecutableToolRuntimeOutcome",
+      executionId: probe.executionId,
+      invocationId: probe.invocationId,
+      outcomeTag: "SandboxPolicyRequiredInterruption",
+    };
+    const postDecisionFailure = {
+      ...preDecisionPark,
+      outcomeTag: "ExpectedFailure",
+    };
+    expect(
+      postDecisionExpectedFailureProbeForInvocation({
+        probes: [preDecisionPark, postDecisionFailure],
+        startIndex: 1,
+        executionId: probe.executionId,
+        invocationId: probe.invocationId,
+      }),
+    ).toMatchObject({ outcomeTag: "ExpectedFailure" });
+    expect(
+      postDecisionExpectedFailureProbeForInvocation({
+        probes: [preDecisionPark],
+        startIndex: 0,
+        executionId: probe.executionId,
+        invocationId: probe.invocationId,
+      }),
+    ).toBeUndefined();
   });
 });
 
@@ -2202,6 +2248,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           kind: "OsEnforced",
           policy: { version: 1, mode: "Disabled", destinations: [] },
         });
+        const freshP4ProbeStartIndex = executableProbeLines.length;
         const acceptedFresh = await operatorCommand(
           fixture.baseUrl,
           freshProject.projectId,
@@ -2217,17 +2264,19 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         expect(freshInvocationId).toMatch(/^tin_/u);
         const acceptedFreshP4Outcome = await waitForPublic(
           async () => {
-            const probeRecord = executableProbeLines.find(
-              (event) =>
-                event.boundary === "P4ExecutableToolRuntimeOutcome" &&
-                event.executionId === freshExecutionId &&
-                event.invocationId === freshInvocationId,
-            );
+            const probeRecord = postDecisionExpectedFailureProbeForInvocation({
+              probes: executableProbeLines,
+              startIndex: freshP4ProbeStartIndex,
+              executionId: freshExecutionId,
+              invocationId: freshInvocationId,
+            });
             if (probeRecord === undefined) return undefined;
-            const probe = probeRecord as unknown as P4OutcomeProbe;
             return {
-              probe,
-              source: readP9OutcomeSourceForProbe(fixture.databaseFile, probe),
+              probe: probeRecord,
+              source: readP9OutcomeSourceForProbe(
+                fixture.databaseFile,
+                probeRecord,
+              ),
             };
           },
           (value) =>
