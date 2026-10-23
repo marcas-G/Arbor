@@ -25,6 +25,89 @@ const NONCE_DAEMON_ENTRY = resolve(
 const WEB_DIST = resolve("apps/web/dist");
 const MAX_DAEMON_ERROR_CHARS = 12_000;
 
+const SAFE_STARTUP_PHASES = new Set([
+  "layer.construction.before",
+  "layer.construction.after",
+  "p39.layer-path-validation.before",
+  "p39.layer-path-validation.after",
+  "p39.schema-validation.before",
+  "p39.schema-validation.after",
+  "p39.runtime-path-validation.before",
+  "p39.runtime-path-validation.after",
+  "p39.writer-permit-acquire.before",
+  "p39.writer-permit-acquire.after",
+  "production-daemon-service.acquired",
+  "daemon.start.before",
+  "daemon.start.after",
+  "daemon.migrate.before",
+  "daemon.migrate.after",
+  "daemon.startup-recovery.before",
+  "daemon.startup-recovery.after",
+  "web-transport.bind.before",
+  "web-transport.bind.after",
+  "daemon.process.exit",
+]);
+
+const safeStartupPhaseEvent = (
+  line: string,
+): Readonly<Record<string, string | number>> | undefined => {
+  try {
+    const value = JSON.parse(line) as Record<string, unknown>;
+    if (
+      value.tag !== "AH19_STARTUP_PHASE" ||
+      typeof value.phase !== "string" ||
+      !SAFE_STARTUP_PHASES.has(value.phase)
+    ) {
+      return undefined;
+    }
+    return {
+      phase: value.phase,
+      ...(typeof value.elapsedMs === "number" &&
+      Number.isFinite(value.elapsedMs)
+        ? { elapsedMs: value.elapsedMs }
+        : {}),
+      ...(typeof value.pid === "number" && Number.isSafeInteger(value.pid)
+        ? { pid: value.pid }
+        : {}),
+      ...(typeof value.exitCode === "number" &&
+      Number.isSafeInteger(value.exitCode)
+        ? { exitCode: value.exitCode }
+        : {}),
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const extractP39ReasonCode = (text: string): string => {
+  const match = /\breasonCode\s*[:=]\s*["']?(P39_[A-Z0-9_]{1,80})["']?/u.exec(
+    text,
+  );
+  return match?.[1] ?? "unknown";
+};
+
+const extractP39FailureCode = (text: string): string => {
+  const match = /\bcode\s*:\s*["']?(P39_[A-Z0-9_]{1,80})["']?/u.exec(text);
+  return match?.[1] ?? "unknown";
+};
+
+const safeHandshakeFailure = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : "";
+  const prefixes = [
+    "functional daemon startup handshake timed out",
+    "functional daemon exited before listening report",
+    "duplicate functional daemon start marker",
+    "invalid functional daemon start identity",
+    "duplicate functional daemon listening marker",
+    "functional daemon listening identity mismatch",
+    "functional daemon bound unexpected port",
+  ];
+  return (
+    prefixes.find((prefix) => message.startsWith(prefix)) ??
+    "functional daemon startup handshake failed"
+  );
+};
+
 const redactDaemonText = (value: string): string =>
   value
     .replaceAll("test-only", "[REDACTED]")
@@ -79,6 +162,14 @@ export interface ProductionFixture {
   readonly workspaceDirectory: string;
   readonly providerCalls: ReadonlyArray<CapturedProviderCall>;
   readonly daemonErrors: ReadonlyArray<string>;
+  /** Safe allowlisted startup phases and the last structured P39 reason code. */
+  readonly startupDiagnostics: () => {
+    readonly p39FailureCode: string;
+    readonly p39ReasonCode: string;
+    readonly startupPhases: ReadonlyArray<
+      Readonly<Record<string, string | number>>
+    >;
+  };
   /** Sanitized state of the last primary daemon launcher (never env values). */
   readonly daemonProcessSnapshot: () => {
     readonly pid: number | undefined;
@@ -507,6 +598,10 @@ export const startProductionFixture = async (input: {
   let httpPort = 0;
   let baseUrl = `http://127.0.0.1:${httpPort}`;
   const daemonErrors: string[] = [];
+  const startupPhaseEvents: Array<Readonly<Record<string, string | number>>> =
+    [];
+  let lastP39ReasonCode = "unknown";
+  let lastP39FailureCode = "unknown";
   const recordDaemonError = (message: string) => {
     daemonErrors.push(redactDaemonText(message));
     if (daemonErrors.length > 24)
@@ -625,6 +720,11 @@ export const startProductionFixture = async (input: {
     try {
       httpPort = await waitForNonceBoundPort(daemon, requestedPort, {
         onStdoutLine: (line) => {
+          const safePhase = safeStartupPhaseEvent(line);
+          if (safePhase !== undefined) {
+            startupPhaseEvents.push({ ...safePhase, launch: daemonStarts });
+            if (startupPhaseEvents.length > 32) startupPhaseEvents.shift();
+          }
           input.onDaemonStdout?.(line);
         },
       });
@@ -633,8 +733,11 @@ export const startProductionFixture = async (input: {
         error,
         "functional daemon startup handshake",
       );
+      const diagnosticText = daemonErrorSummary();
+      lastP39ReasonCode = extractP39ReasonCode(diagnosticText);
+      lastP39FailureCode = extractP39FailureCode(diagnosticText);
       throw new Error(
-        `functional daemon startup handshake failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon.exitCode)}; signal=${String(daemon.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}`,
+        `functional daemon startup handshake failed: ${safeHandshakeFailure(error)}; exitCode=${String(daemon.exitCode)}; signal=${String(daemon.signalCode)}; p39FailureCode=${lastP39FailureCode}; p39ReasonCode=${lastP39ReasonCode}; startupPhases=${JSON.stringify(startupPhaseEvents)}`,
         { cause: error },
       );
     }
@@ -701,6 +804,11 @@ export const startProductionFixture = async (input: {
     workspaceDirectory,
     providerCalls: activeProvider.calls,
     daemonErrors,
+    startupDiagnostics: () => ({
+      p39FailureCode: lastP39FailureCode,
+      p39ReasonCode: lastP39ReasonCode,
+      startupPhases: [...startupPhaseEvents],
+    }),
     daemonProcessSnapshot: () => {
       const launch = lastDaemonLaunch;
       if (launch === undefined) return null;

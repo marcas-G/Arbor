@@ -1,14 +1,12 @@
 import { createHash } from "node:crypto";
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SHELL_DEFINITION } from "../../../packages/tool-runtime/src/catalog.js";
@@ -17,6 +15,7 @@ import {
   type AhProbeHit,
   recordAhProbeLine,
 } from "../support/ah-probe-line.js";
+import { archiveProductionFixtureFailure } from "../support/fixture-failure-evidence.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -858,93 +857,22 @@ afterEach(async ({ task }) => {
             { cause: stopError },
           );
         }
-        const repositoryRoot = resolve(process.cwd());
-        const resultsRoot = resolve(repositoryRoot, ".test-results");
-        const resolvedResultDirectory = resolve(resultDirectory);
-        const resultsRootStat = lstatSync(resultsRoot);
-        const resultDirectoryStat = lstatSync(resolvedResultDirectory);
-        if (
-          !resultsRootStat.isDirectory() ||
-          resultsRootStat.isSymbolicLink() ||
-          !resultDirectoryStat.isDirectory() ||
-          resultDirectoryStat.isSymbolicLink()
-        ) {
-          throw new Error(
-            `AH7 takeover archive destination contains a non-directory or reparse path: ${resolvedResultDirectory}`,
-            { cause: stopError },
-          );
-        }
-        const relativeResultsPath = relative(
-          resultsRoot,
-          resolvedResultDirectory,
-        );
-        if (
-          relativeResultsPath === "" ||
-          relativeResultsPath === ".." ||
-          relativeResultsPath.startsWith(`..${sep}`) ||
-          relativeResultsPath.startsWith(`${sep}`)
-        ) {
-          throw new Error(
-            `AH7 takeover failure evidence directory is outside .test-results: ${resolvedResultDirectory}`,
-            { cause: stopError },
-          );
-        }
-        const resolvedFixtureDirectory = resolve(fixture.directory);
-        const schemaRoot = dirname(resolvedFixtureDirectory);
-        const schemaRootName = basename(schemaRoot);
-        const relativeSchemaRoot = relative(repositoryRoot, schemaRoot);
-        const schemaRootStat = lstatSync(schemaRoot);
-        const fixtureStat = lstatSync(resolvedFixtureDirectory);
-        if (
-          relativeSchemaRoot !== schemaRootName ||
-          !schemaRootName.startsWith(".arbor-functional-schema44-") ||
-          !basename(resolvedFixtureDirectory).startsWith("fixture-") ||
-          !schemaRootStat.isDirectory() ||
-          schemaRootStat.isSymbolicLink() ||
-          !fixtureStat.isDirectory() ||
-          fixtureStat.isSymbolicLink()
-        ) {
-          throw new Error(
-            `AH7 takeover fixture is outside the expected schema44 fixture root: ${fixture.directory}`,
-            { cause: stopError },
-          );
-        }
-        const archivedDirectory = join(
-          resolvedResultDirectory,
-          `ah7-reconcilable-takeover-${crypto.randomUUID()}`,
-        );
-        const archivedRelativePath = relative(
-          resolvedResultDirectory,
-          archivedDirectory,
-        );
-        if (
-          archivedRelativePath !== basename(archivedDirectory) ||
-          existsSync(archivedDirectory)
-        ) {
-          throw new Error(
-            `AH7 takeover archive target is not a new direct result child: ${archivedDirectory}`,
-            { cause: stopError },
-          );
-        }
         const captured = diagnostic?.() ?? null;
-        renameSync(fixture.directory, archivedDirectory);
-        const afterStop = {
-          test: task.name,
-          archivedDirectory,
-          databaseFile: join(archivedDirectory, basename(fixture.databaseFile)),
-          fixtureDirectory: join(archivedDirectory, "workspace"),
-          primaryDaemon: fixture.daemonProcessSnapshot(),
-          primaryDaemonStderr: fixture.daemonErrors,
-          captured,
-          cleanupError: stopError instanceof Error ? stopError.message : null,
-        };
-        writeFileSync(
-          join(archivedDirectory, "ah7-after-stop-diagnostic.json"),
-          `${JSON.stringify(afterStop, null, 2)}\n`,
-          { flag: "wx" },
-        );
+        const archivedDirectory = archiveProductionFixtureFailure({
+          fixture,
+          resultDirectory,
+          artifactPrefix: "ah7-reconcilable-takeover",
+          evidence: {
+            testName: task.name,
+            primaryDaemon: fixture.daemonProcessSnapshot(),
+            primaryDaemonStderr: fixture.daemonErrors,
+            captured,
+            cleanupError:
+              stopError instanceof Error ? stopError.message : undefined,
+          },
+        });
         process.stdout.write(
-          `[AH7_FAILURE_ARTIFACT] ${JSON.stringify({ test: task.name, archivedDirectory, databaseFile: afterStop.databaseFile, primaryDaemon: afterStop.primaryDaemon, primaryDaemonStderr: afterStop.primaryDaemonStderr, additionalDaemon: (afterStop.captured as { additionalDaemon?: unknown } | null)?.additionalDaemon })}\n`,
+          `[AH7_FAILURE_ARTIFACT] ${JSON.stringify({ testName: task.name, archivedDirectory, primaryDaemon: fixture.daemonProcessSnapshot(), primaryDaemonStderr: fixture.daemonErrors, additionalDaemon: (captured as { additionalDaemon?: unknown } | null)?.additionalDaemon })}\n`,
         );
       } else {
         removeFunctionalFixtureDirectory(fixture.directory);
