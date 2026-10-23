@@ -7,12 +7,13 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProductionFixture } from "../../functional/support/production-fixture.js";
 import {
   finishRealProviderFixture,
   type StartedRealProviderFixture,
+  writeRealProviderEvidence,
 } from "./public-real-journey-support.js";
 
 const repositoryRoot = process.cwd();
@@ -30,10 +31,14 @@ describe("real public failed fixture retention", () => {
     const schemaRoot = mkdtempSync(
       join(repositoryRoot, ".arbor-functional-schema44-fixture-retention-"),
     );
-    const resultDirectory = mkdtempSync(
+    const evidenceRoot = mkdtempSync(
       join(resultsRoot, "real-public-fixture-retention-"),
     );
-    temporaryPaths.push(schemaRoot, resultDirectory);
+    const privateRunDirectory = mkdtempSync(join(evidenceRoot, "run-"));
+    const archiveResultDirectory = mkdtempSync(
+      join(resultsRoot, "real-public-fixture-archive-"),
+    );
+    temporaryPaths.push(schemaRoot, evidenceRoot, archiveResultDirectory);
     const fixtureDirectory = join(schemaRoot, `fixture-${randomUUID()}`);
     const workspaceDirectory = join(fixtureDirectory, "workspace");
     mkdirSync(workspaceDirectory, { recursive: true });
@@ -51,9 +56,11 @@ describe("real public failed fixture retention", () => {
 
     const run: StartedRealProviderFixture = {
       fixture,
-      captureFile: join(resultDirectory, "provider-captures.jsonl"),
-      evidenceDirectory: join(resultDirectory, "evidence"),
-      privateRunDirectory: resultDirectory,
+      captureFile: join(privateRunDirectory, "provider-captures.jsonl"),
+      evidenceDirectory: join(privateRunDirectory, "evidence"),
+      privateRunDirectory,
+      archiveResultDirectory,
+      ownsArchiveResultDirectory: true,
     };
     mkdirSync(run.evidenceDirectory);
     const completion = await finishRealProviderFixture(run, "FAIL");
@@ -74,11 +81,41 @@ describe("real public failed fixture retention", () => {
     expect(
       readFileSync(join(archiveDirectory, "workspace", "result.txt"), "utf8"),
     ).toBe("failed artifact");
+    const evidencePath = writeRealProviderEvidence({
+      run,
+      journeyId: "s3-retention-regression",
+      config: {
+        path: "provider-config.json",
+        deploymentId: "deployment",
+        modelRef: "model",
+        endpoint: "https://provider.invalid",
+        wireModelName: "wire-model",
+        secretKind: "env",
+      },
+      status: "FAIL",
+      state: {},
+    });
+    const recordedFixture = JSON.parse(readFileSync(evidencePath, "utf8"))
+      .fixture as {
+      directory: string;
+      databaseFile: string;
+      workspaceDirectory: string;
+    };
+    expect(recordedFixture).toEqual({
+      directory: archiveDirectory,
+      databaseFile: join(archiveDirectory, "arbor-functional.db"),
+      workspaceDirectory: join(archiveDirectory, "workspace"),
+      daemonExited: true,
+      daemonErrors: [],
+    });
     expect(
       JSON.parse(
         readFileSync(join(archiveDirectory, "failure-evidence.json"), "utf8"),
       ),
     ).toMatchObject({ status: "FAIL", archivedDirectory: archiveDirectory });
+    const archiveResultPath = relative(resultsRoot, dirname(archiveDirectory));
+    expect(archiveResultPath.includes("\\")).toBe(false);
+    expect(archiveResultPath.includes("/")).toBe(false);
 
     // schema44 global teardown deletes its whole root after test-file hooks.
     rmSync(schemaRoot, { recursive: true, force: true });
