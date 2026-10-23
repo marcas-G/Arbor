@@ -109,7 +109,12 @@ globalThis.fetch = async (input, init) => {
   };
   append({ ...base, event: "request-start" });
 
-  const body = typeof init?.body === "string" ? init.body : undefined;
+  const body =
+    typeof init?.body === "string"
+      ? init.body
+      : input instanceof Request
+        ? await input.clone().text()
+        : undefined;
   let request;
   if (body !== undefined) {
     try {
@@ -122,11 +127,6 @@ globalThis.fetch = async (input, init) => {
 
   try {
     const response = await originalFetch(input, init);
-    const headers = Object.fromEntries(
-      ["content-type", "server", "x-request-id"]
-        .map((name) => [name, response.headers.get(name)])
-        .filter((entry) => entry[1] !== null),
-    );
     const clone = response.clone();
     if (responseGateMatches(request)) {
       const bytes = await clone.arrayBuffer();
@@ -135,7 +135,6 @@ globalThis.fetch = async (input, init) => {
         ...requestEvidence,
         event: "response-complete",
         status: response.status,
-        responseHeaders: headers,
         responseBodyBase64: Buffer.from(bodyText).toString("base64"),
       });
       append({
@@ -174,7 +173,6 @@ globalThis.fetch = async (input, init) => {
           ...requestEvidence,
           event: "response-complete",
           status: response.status,
-          responseHeaders: headers,
           responseBodyBase64: Buffer.from(bodyText).toString("base64"),
         });
       })
@@ -183,7 +181,6 @@ globalThis.fetch = async (input, init) => {
           ...requestEvidence,
           event: "response-capture-failed",
           status: response.status,
-          responseHeaders: headers,
           captureError: error instanceof Error ? error.name : "CaptureError",
         }),
       );

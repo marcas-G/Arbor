@@ -4,9 +4,10 @@ import {
   lstatSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { findArborConfigFile } from "../../../apps/single-workspace/src/provider-config.js";
 import {
@@ -48,7 +49,6 @@ export interface ProviderCapture {
   readonly path: string;
   readonly request?: Record<string, unknown>;
   readonly status?: number;
-  readonly responseHeaders?: Readonly<Record<string, string>>;
   readonly responseBodyBase64?: string;
   readonly captureError?: string;
   readonly error?: string;
@@ -59,6 +59,11 @@ export interface StartedRealProviderFixture {
   readonly captureFile: string;
   readonly evidenceDirectory: string;
   readonly responseGateDirectory?: string;
+}
+
+export interface ProviderResponseGateSelector {
+  readonly requiredAdvertisedToolName?: string;
+  readonly requiredMessageText?: string;
 }
 
 export interface WorkspaceFileSnapshot {
@@ -78,6 +83,78 @@ export interface WorkspaceFileSnapshot {
 const CONFIG_PATH_ENV = "ARBOR_PUBLIC_S1_CONFIG";
 const CAPTURE_FILE_ENV = "ARBOR_PUBLIC_S1_CAPTURE_FILE";
 const CAPTURE_ENDPOINT_ENV = "ARBOR_PUBLIC_S1_CAPTURE_ENDPOINT";
+const EVIDENCE_ROOT_ENV = "ARBOR_PUBLIC_REAL_EVIDENCE_ROOT";
+const repositoryRoot = resolve(
+  fileURLToPath(new URL("../../..", import.meta.url)),
+);
+
+const isWithinDirectory = (parent: string, candidate: string): boolean => {
+  const rel = relative(parent, candidate);
+  return (
+    rel !== "" &&
+    rel !== ".." &&
+    !rel.startsWith(`..${sep}`) &&
+    !isAbsolute(rel)
+  );
+};
+
+export type EvidenceRootReadiness =
+  | { readonly ready: true; readonly path: string }
+  | { readonly ready: false; readonly reason: string };
+
+export const validateRealJourneyEvidenceRoot = (
+  configuredPath = process.env[EVIDENCE_ROOT_ENV],
+): EvidenceRootReadiness => {
+  if (configuredPath === undefined || configuredPath.trim().length === 0) {
+    return {
+      ready: false,
+      reason: `set ${EVIDENCE_ROOT_ENV} to this worktree's existing .test-results directory or a descendant; each journey creates a P39-private run directory`,
+    };
+  }
+  try {
+    const resultsRoot = resolve(repositoryRoot, ".test-results");
+    const requested = resolve(repositoryRoot, configuredPath);
+    if (
+      (requested !== resultsRoot &&
+        !isWithinDirectory(resultsRoot, requested)) ||
+      !existsSync(requested)
+    ) {
+      return {
+        ready: false,
+        reason:
+          "evidence root must be an existing descendant of this worktree's .test-results",
+      };
+    }
+    if (!lstatSync(requested).isDirectory()) {
+      return { ready: false, reason: "evidence root must be a directory" };
+    }
+    const relativeRoot = relative(repositoryRoot, requested);
+    let cursor = repositoryRoot;
+    for (const segment of relativeRoot.split(sep)) {
+      cursor = join(cursor, segment);
+      if (lstatSync(cursor).isSymbolicLink()) {
+        return {
+          ready: false,
+          reason: "evidence root may not traverse a symlink or reparse point",
+        };
+      }
+    }
+    const canonicalResultsRoot = realpathSync(resultsRoot);
+    const canonicalRequested = realpathSync(requested);
+    if (!isWithinDirectory(canonicalResultsRoot, canonicalRequested)) {
+      return {
+        ready: false,
+        reason: "evidence root resolves outside this worktree's .test-results",
+      };
+    }
+    return { ready: true, path: requested };
+  } catch {
+    return {
+      ready: false,
+      reason: "evidence root is unavailable or cannot be safely canonicalized",
+    };
+  }
+};
 
 export const discoverProductionProviderConfig = (): RealProviderReadiness => {
   try {
@@ -191,22 +268,30 @@ export const startRealProviderFixture = async (input: {
   readonly responseGate?: boolean;
   readonly onProviderStarted?: (fixture: ProductionFixture) => void;
 }): Promise<StartedRealProviderFixture> => {
-  if (!existsSync(input.evidenceRoot)) {
-    throw new Error(
-      "REAL NOT QUALIFIED: evidenceRoot must be an existing private run directory",
-    );
+  const evidenceRoot = validateRealJourneyEvidenceRoot(input.evidenceRoot);
+  if (!evidenceRoot.ready) {
+    throw new Error(`REAL NOT QUALIFIED: ${evidenceRoot.reason}`);
   }
+  const safeJourneyId = input.journeyId
+    .replace(/[^A-Za-z0-9_-]/gu, "-")
+    .slice(0, 80);
+  const privateRunDirectory = makeP39PrivateTestDirectory(
+    evidenceRoot.path,
+    `real-public-${safeJourneyId}-`,
+  );
   const evidenceDirectory = makeP39PrivateTestDirectory(
-    input.evidenceRoot,
-    `evidence-${input.journeyId}-`,
+    privateRunDirectory,
+    "evidence-",
   );
   const responseGateDirectory = input.responseGate
     ? makeP39PrivateTestDirectory(evidenceDirectory, "response-gate-")
     : undefined;
-  let captureFile: string | undefined;
+  const captureFile = join(evidenceDirectory, "provider-captures.jsonl");
+  createP39PrivateTestFile(captureFile);
   const previousCapturePath = process.env[CAPTURE_FILE_ENV];
-  let fixture: ProductionFixture;
+  let fixture: ProductionFixture | undefined;
   try {
+    process.env[CAPTURE_FILE_ENV] = captureFile;
     fixture = await startProductionFixture({
       admitWorkspaceDirectory: true,
       preserveDirectoryOnStop: true,
@@ -227,21 +312,30 @@ export const startRealProviderFixture = async (input: {
         NODE_OPTIONS:
           `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(fetchHook).href}`.trim(),
       },
-      setupProbe: (event) => {
-        if (event.stage !== "after-clone") return;
-        captureFile = join(evidenceDirectory, "provider-captures.jsonl");
-        createP39PrivateTestFile(captureFile);
-        process.env[CAPTURE_FILE_ENV] = captureFile;
-      },
     });
+  } catch (error) {
+    const safeError = redactRealProviderDiagnostic(
+      error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error),
+    );
+    const evidencePath = writeRealProviderStartupFailureEvidence({
+      evidenceDirectory,
+      captureFile,
+      journeyId: input.journeyId,
+      config: input.config,
+      error: safeError,
+    });
+    throw new Error(
+      `REAL NOT QUALIFIED: production fixture startup failed; private evidence retained at ${evidencePath}; ${safeError}`,
+    );
   } finally {
     if (previousCapturePath === undefined) delete process.env[CAPTURE_FILE_ENV];
     else process.env[CAPTURE_FILE_ENV] = previousCapturePath;
   }
-  if (captureFile === undefined) {
-    await fixture.stop();
+  if (fixture === undefined) {
     throw new Error(
-      "REAL NOT QUALIFIED: private Provider capture file was not initialized",
+      "REAL NOT QUALIFIED: production fixture returned no process handle",
     );
   }
   input.onProviderStarted?.(fixture);
@@ -285,10 +379,7 @@ export const startedProviderRequests = (
 
 export const armProviderResponseGate = (
   run: StartedRealProviderFixture,
-  selector?: {
-    readonly requiredAdvertisedToolName?: string;
-    readonly requiredMessageText?: string;
-  },
+  selector?: ProviderResponseGateSelector,
 ): void => {
   if (run.responseGateDirectory === undefined) {
     throw new Error(
@@ -323,7 +414,11 @@ export const releaseProviderResponse = (
 
 export const waitForHeldProviderResponse = async (
   run: StartedRealProviderFixture,
-  input: { readonly afterSequence: number; readonly deadlineAt: number },
+  input: {
+    readonly afterSequence: number;
+    readonly deadlineAt: number;
+    readonly selector?: ProviderResponseGateSelector;
+  },
 ): Promise<ProviderCapture> => {
   while (Date.now() < input.deadlineAt) {
     const captures = readProviderCaptures(run.captureFile);
@@ -331,6 +426,8 @@ export const waitForHeldProviderResponse = async (
       (capture) =>
         capture.event === "response-held" &&
         capture.sequence > input.afterSequence &&
+        (input.selector === undefined ||
+          providerCaptureMatchesSelector(capture, input.selector)) &&
         captures.some(
           (completed) =>
             completed.event === "response-complete" &&
@@ -343,6 +440,32 @@ export const waitForHeldProviderResponse = async (
   throw new Error(
     "REAL NOT QUALIFIED: deadline waiting for a genuine held Provider response",
   );
+};
+
+export const providerCaptureMatchesSelector = (
+  capture: ProviderCapture,
+  selector: ProviderResponseGateSelector,
+): boolean => {
+  const serialized = JSON.stringify(capture.request ?? {});
+  if (
+    selector.requiredMessageText !== undefined &&
+    !serialized.includes(selector.requiredMessageText)
+  ) {
+    return false;
+  }
+  if (selector.requiredAdvertisedToolName !== undefined) {
+    const advertised = capture.request?.tools;
+    const names = Array.isArray(advertised)
+      ? advertised.flatMap((tool) => {
+          if (typeof tool !== "object" || tool === null) return [];
+          const functionName = (tool as { function?: { name?: unknown } })
+            .function?.name;
+          return typeof functionName === "string" ? [functionName] : [];
+        })
+      : [];
+    if (!names.includes(selector.requiredAdvertisedToolName)) return false;
+  }
+  return true;
 };
 
 export const finishRealProviderFixture = async (
@@ -420,6 +543,48 @@ export const writeRealProviderEvidence = (input: {
         ...(input.error === undefined
           ? {}
           : { error: redactRealProviderDiagnostic(input.error) }),
+      },
+      null,
+      2,
+    )}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  return outputPath;
+};
+
+export const writeRealProviderStartupFailureEvidence = (input: {
+  readonly evidenceDirectory: string;
+  readonly captureFile: string;
+  readonly journeyId: string;
+  readonly config: RealProviderConfig;
+  readonly error: string;
+}): string => {
+  const outputPath = join(
+    input.evidenceDirectory,
+    `${input.journeyId}-startup-failure-${new Date().toISOString().replaceAll(":", "-")}.json`,
+  );
+  createP39PrivateTestFile(outputPath);
+  writeFileSync(
+    outputPath,
+    `${JSON.stringify(
+      {
+        schemaVersion: "arbor-real-public-journey-evidence-v1",
+        journeyId: input.journeyId,
+        recordedAt: new Date().toISOString(),
+        status: "FAIL",
+        providerMode: "REAL",
+        provider: {
+          configPath: input.config.path,
+          deploymentId: input.config.deploymentId,
+          modelRef: input.config.modelRef,
+          wireModelName: input.config.wireModelName,
+          secretStoreKind: input.config.secretKind,
+          credentialsRecorded: false,
+        },
+        fixture: null,
+        captureFile: input.captureFile,
+        captures: readProviderCaptures(input.captureFile),
+        error: redactRealProviderDiagnostic(input.error),
       },
       null,
       2,
