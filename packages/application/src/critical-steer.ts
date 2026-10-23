@@ -1,4 +1,9 @@
-import type { CommandSubmissionContext, ExecutionId } from "@arbor/domain";
+import type {
+  CommandSubmissionContext,
+  ExecutionId,
+  ProjectId,
+  WorkspaceId,
+} from "@arbor/domain";
 import type {
   ExecutionRepositoryService,
   TransactionScope,
@@ -53,9 +58,17 @@ export interface SubmitCriticalSteerArgs<StopPayload, StopResult> {
   };
 }
 
-/** The pre-transaction, P12-resolved half of a composite Critical Steer.
- * `NoActiveMain` remains an unresolved P6 contract case; production handling
- * fails closed without writing a receipt or either semantic fact. */
+/** Transaction-time identity used to refresh P12 Stop authority if active-main
+ * preparation became stale before the outer Gateway transaction. */
+export interface CriticalSteerActiveMain {
+  readonly executionId: ExecutionId;
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+}
+
+/** P12-resolved preparation for the composite Critical Steer. `NoActiveMain`
+ * is only a pre-transaction observation; the handler re-reads the Workspace
+ * inside the Gateway transaction before choosing the accepted P6 option A. */
 export type CriticalSteerPreparation =
   | {
       readonly _tag: "Ready";
@@ -206,35 +219,67 @@ export const makeCriticalSteerCommandHandler = <StopResult>(
       return args.steerHandler.execute(envelope, context);
     }
     return Effect.gen(function* () {
-      const preparation = prepared as CriticalSteerPreparation | undefined;
-      if (preparation === undefined || preparation._tag === "Unavailable") {
-        return yield* Effect.die(
-          new Error("CriticalSteerStopAuthorityPreparationUnavailable"),
-        );
-      }
-      if (preparation._tag === "AuthorityDenied") {
-        return commandErr({
-          _tag: "AuthorityDenied",
-          reason: preparation.reason,
-        });
-      }
-      if (preparation._tag === "NoActiveMain") {
-        return yield* Effect.die(
-          new Error("CriticalSteerNoActiveMainDesignDecisionRequired"),
-        );
-      }
-
       const activeMain = yield* args.executions.findActiveMainByWorkspace(
         envelope.payload.workspaceId,
       );
+      if (Option.isNone(activeMain)) {
+        // Accepted P6 option A: no Stop target exists at the transaction's
+        // current-state boundary, so commit the ordinary SteerWork effects.
+        return yield* args.steerHandler.execute(envelope, context);
+      }
+      const currentMain: CriticalSteerActiveMain = {
+        executionId: activeMain.value.executionId,
+        projectId: activeMain.value.projectId,
+        workspaceId: activeMain.value.workspaceId,
+      };
       if (
-        Option.isNone(activeMain) ||
-        activeMain.value.executionId !== preparation.executionId ||
-        activeMain.value.projectId !== envelope.projectId
+        currentMain.projectId !== envelope.projectId ||
+        currentMain.workspaceId !== envelope.payload.workspaceId
       ) {
         return yield* Effect.die(
-          new Error("CriticalSteerActiveMainChangedBeforeCommit"),
+          new Error("CriticalSteerActiveMainBindingChangedBeforeCommit"),
         );
+      }
+
+      const preparation = prepared as CriticalSteerPreparation | undefined;
+      let stopAuthority: VerifiedRuntimeCommandAuthority;
+      if (
+        preparation?._tag === "Ready" &&
+        preparation.executionId === currentMain.executionId &&
+        preparation.authority._tag === "StopExecutionAuthority" &&
+        preparation.authority.projectId === currentMain.projectId &&
+        preparation.authority.executionId === currentMain.executionId
+      ) {
+        stopAuthority = preparation.authority;
+      } else {
+        if (envelope.prepareCriticalSteerStop === undefined) {
+          return yield* Effect.die(
+            new Error("CriticalSteerStopAuthorityPreparationUnavailable"),
+          );
+        }
+        const refreshed = yield* envelope.prepareCriticalSteerStop(
+          envelope.payload,
+          context,
+          currentMain,
+        );
+        if (refreshed._tag === "AuthorityDenied") {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason: refreshed.reason,
+          });
+        }
+        if (
+          refreshed._tag !== "Ready" ||
+          refreshed.executionId !== currentMain.executionId ||
+          refreshed.authority._tag !== "StopExecutionAuthority" ||
+          refreshed.authority.projectId !== currentMain.projectId ||
+          refreshed.authority.executionId !== currentMain.executionId
+        ) {
+          return yield* Effect.die(
+            new Error("CriticalSteerStopAuthorityRefreshDidNotBindCurrentMain"),
+          );
+        }
+        stopAuthority = refreshed.authority;
       }
 
       const steerAuthority = envelope.resolvedAuthority as
@@ -245,12 +290,12 @@ export const makeCriticalSteerCommandHandler = <StopResult>(
           new Error("CriticalSteerOuterAuthorityUnavailable"),
         );
       }
-      const stopPayload = { executionId: preparation.executionId } as const;
+      const stopPayload = { executionId: currentMain.executionId } as const;
       const stopEnvelope: GatewayEnvelope<typeof stopPayload> = {
         ...envelope,
         commandType: "StopExecution",
         payload: stopPayload,
-        resolvedAuthority: preparation.authority,
+        resolvedAuthority: stopAuthority,
       };
       const committed = yield* submitCriticalSteer({
         steerEnvelope: envelope,
@@ -258,7 +303,7 @@ export const makeCriticalSteerCommandHandler = <StopResult>(
         steerAuthority: steerAuthority as VerifiedCommandAuthority,
         stopEnvelope,
         stopContext: context,
-        stopAuthority: preparation.authority,
+        stopAuthority,
         deps: {
           steerHandler: args.steerHandler,
           stopHandler: args.stopHandler,

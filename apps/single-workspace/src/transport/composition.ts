@@ -10,8 +10,10 @@ import type {
   AuthorityResolverPortService,
   CanonicalAuthorityFacts,
   CommandGatewayService,
+  CommandHandlerError,
   CommandHandlerRegistryService,
   CommandRejection,
+  CriticalSteerActiveMain,
   CriticalSteerPreparation,
   DecodedExternalCommandEnvelope,
   GatewayEnvelope,
@@ -674,7 +676,7 @@ export interface ExternalSubmissionDeps {
    * receipt miss for Critical Steer preparation. */
   readonly findActiveMainByWorkspace?: (
     workspaceId: WorkspaceId,
-  ) => Effect.Effect<ExecutionId | null, never>;
+  ) => Effect.Effect<CriticalSteerActiveMain | null, never>;
   readonly afterCommitted?: (
     envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<void, unknown>;
@@ -776,25 +778,63 @@ export const makeExternalSubmission = (
         issuedAt: envelope.issuedAt,
         payload: envelope.payload,
       };
+      const fingerprint = semanticRequestFingerprint({
+        commandType: envelope.commandType,
+        projectId: envelope.projectId,
+        actor: envelope.actor,
+        schemaVersion: handler.value.schemaVersion,
+        payload: envelope.payload,
+      });
+      if (String(envelope.actor) !== String(principal)) {
+        return failureResponse(
+          authorityDeniedProblem("principal/actor-mismatch"),
+        );
+      }
+      const inputContract = CommandInputContractRegistry.lookup(
+        envelope.commandType,
+      );
+      if (inputContract === undefined || !inputContract.externalOriginAllowed) {
+        return failureResponse(
+          authorityDeniedProblem(`UnsupportedOrigin:${envelope.commandType}`),
+        );
+      }
+      const inputs = yield* deps.loadInputs(envelope);
       const prepareCriticalSteerStop =
         envelope.commandType === "SteerWork" &&
         envelope.payload.steer.severity === "Critical"
-          ? (payload: SteerWorkPayload, context: typeof submissionContext) =>
+          ? (
+              payload: SteerWorkPayload,
+              context: typeof submissionContext,
+              selectedMain?: CriticalSteerActiveMain,
+            ): Effect.Effect<CriticalSteerPreparation, CommandHandlerError> =>
               Effect.gen(function* () {
-                if (deps.findActiveMainByWorkspace === undefined) {
-                  return {
-                    _tag: "Unavailable",
-                  } satisfies CriticalSteerPreparation;
+                let activeMain: CriticalSteerActiveMain | null | undefined =
+                  selectedMain;
+                if (activeMain === undefined) {
+                  const findActiveMain = deps.findActiveMainByWorkspace;
+                  if (findActiveMain === undefined) {
+                    return {
+                      _tag: "Unavailable",
+                    } satisfies CriticalSteerPreparation;
+                  }
+                  activeMain = yield* findActiveMain(payload.workspaceId);
                 }
-                const activeExecutionId = yield* deps.findActiveMainByWorkspace(
-                  payload.workspaceId,
-                );
-                if (activeExecutionId === null) {
+                if (activeMain === null || activeMain === undefined) {
                   return {
                     _tag: "NoActiveMain",
                   } satisfies CriticalSteerPreparation;
                 }
-                const stopPayload = { executionId: activeExecutionId };
+                if (
+                  activeMain.projectId !== envelope.projectId ||
+                  activeMain.workspaceId !== payload.workspaceId
+                ) {
+                  return {
+                    _tag: "AuthorityDenied",
+                    reason:
+                      "StopExecution target is not the current Workspace active main",
+                  } satisfies CriticalSteerPreparation;
+                }
+                const stopPayload = { executionId: activeMain.executionId };
                 const stopEnvelope: GatewayEnvelope<typeof stopPayload> = {
                   commandType: "StopExecution",
                   commandId: envelope.commandId,
@@ -816,43 +856,41 @@ export const makeExternalSubmission = (
                   schemaVersion: stopHandler.value.schemaVersion,
                   payload: stopPayload,
                 });
-                const stopDecoded = {
-                  commandType: "StopExecution",
-                  commandId: envelope.commandId,
-                  projectId: envelope.projectId,
-                  actor: envelope.actor,
-                  issuedAt: envelope.issuedAt,
-                  payload: stopPayload,
-                } as DecodedExternalCommandEnvelope;
-                const stopInputs = yield* deps.loadInputs(stopDecoded);
                 const stopDecision: AuthorityDecisionInput = {
                   principal,
                   submissionContext: context,
                   envelope: stopEnvelope,
                   semanticRequestFingerprint: stopFingerprint,
-                  canonicalFacts: stopInputs.canonicalFacts,
-                  grants: stopInputs.grants,
-                  governance: stopInputs.governance,
-                  policy: stopInputs.policy,
-                  ...(stopInputs.sandboxPolicyGrantIssuerConfigSnapshot ===
+                  canonicalFacts: {
+                    ...inputs.canonicalFacts,
+                    execution: {
+                      executionId: activeMain.executionId,
+                      projectId: activeMain.projectId,
+                      workspaceId: activeMain.workspaceId,
+                      status: "Active",
+                    },
+                  },
+                  grants: inputs.grants,
+                  governance: inputs.governance,
+                  policy: inputs.policy,
+                  ...(inputs.sandboxPolicyGrantIssuerConfigSnapshot ===
                   undefined
                     ? {}
                     : {
                         sandboxPolicyGrantIssuerConfigSnapshot:
-                          stopInputs.sandboxPolicyGrantIssuerConfigSnapshot,
+                          inputs.sandboxPolicyGrantIssuerConfigSnapshot,
                       }),
-                  ...(stopInputs.sandboxPolicyAuthorityNow === undefined
+                  ...(inputs.sandboxPolicyAuthorityNow === undefined
                     ? {}
                     : {
                         sandboxPolicyAuthorityNow:
-                          stopInputs.sandboxPolicyAuthorityNow,
+                          inputs.sandboxPolicyAuthorityNow,
                       }),
-                  ...(stopInputs.sandboxPolicyGrantIssuerProvenance ===
-                  undefined
+                  ...(inputs.sandboxPolicyGrantIssuerProvenance === undefined
                     ? {}
                     : {
                         sandboxPolicyGrantIssuerProvenance:
-                          stopInputs.sandboxPolicyGrantIssuerProvenance,
+                          inputs.sandboxPolicyGrantIssuerProvenance,
                       }),
                 };
                 const stopResolved = yield* Effect.match(
@@ -876,7 +914,7 @@ export const makeExternalSubmission = (
                   authority.commandId !== envelope.commandId ||
                   authority.semanticRequestFingerprint !== stopFingerprint ||
                   authority.projectId !== envelope.projectId ||
-                  authority.executionId !== activeExecutionId
+                  authority.executionId !== activeMain.executionId
                 ) {
                   return {
                     _tag: "AuthorityDenied",
@@ -886,7 +924,7 @@ export const makeExternalSubmission = (
                 }
                 return {
                   _tag: "Ready",
-                  executionId: activeExecutionId,
+                  executionId: activeMain.executionId,
                   authority,
                 } satisfies CriticalSteerPreparation;
               })
@@ -897,27 +935,6 @@ export const makeExternalSubmission = (
           ? {}
           : { prepareCriticalSteerStop }),
       };
-      const fingerprint = semanticRequestFingerprint({
-        commandType: envelope.commandType,
-        projectId: envelope.projectId,
-        actor: envelope.actor,
-        schemaVersion: handler.value.schemaVersion,
-        payload: envelope.payload,
-      });
-      if (String(envelope.actor) !== String(principal)) {
-        return failureResponse(
-          authorityDeniedProblem("principal/actor-mismatch"),
-        );
-      }
-      const inputContract = CommandInputContractRegistry.lookup(
-        envelope.commandType,
-      );
-      if (inputContract === undefined || !inputContract.externalOriginAllowed) {
-        return failureResponse(
-          authorityDeniedProblem(`UnsupportedOrigin:${envelope.commandType}`),
-        );
-      }
-      const inputs = yield* deps.loadInputs(envelope);
       const decision: AuthorityDecisionInput = {
         principal,
         submissionContext,
@@ -1050,7 +1067,13 @@ export const makeExternalSubmissionFromServices = (
     const findActiveMainByWorkspace = (workspaceId: WorkspaceId) =>
       tx.transact(executions.findActiveMainByWorkspace(workspaceId)).pipe(
         Effect.map((execution) =>
-          Option.isSome(execution) ? execution.value.executionId : null,
+          Option.isSome(execution)
+            ? {
+                executionId: execution.value.executionId,
+                projectId: execution.value.projectId,
+                workspaceId: execution.value.workspaceId,
+              }
+            : null,
         ),
         Effect.orDie,
       );
