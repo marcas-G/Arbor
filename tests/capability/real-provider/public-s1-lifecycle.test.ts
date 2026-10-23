@@ -30,6 +30,7 @@ import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
 } from "../../support/p39-windows-deployment-test.js";
+import { isChatCompletionsPath } from "./provider-capture-path.js";
 
 const OPT_IN_ENV = "ARBOR_RUN_REAL_PUBLIC_S1";
 const CONFIG_PATH_ENV = "ARBOR_PUBLIC_S1_CONFIG";
@@ -917,7 +918,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
         readProviderCaptures(capturePath).find(
           (capture) =>
             capture.event === "response-complete" &&
-            capture.path === "/chat/completions" &&
+            isChatCompletionsPath(capture.path) &&
             capture.request !== undefined,
         ) ?? null,
       (capture) => capture !== null,
