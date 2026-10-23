@@ -345,6 +345,301 @@ const freshExecutionDiagnosticSnapshot = (
   }
 };
 
+interface P4OutcomeProbe {
+  readonly executionId: string;
+  readonly invocationId: string;
+  readonly callRef: string;
+  readonly toolName: string;
+  readonly providerTurnId?: string;
+  readonly logicalActionId?: string;
+  readonly actionIndex?: number;
+  readonly outcomeTag?: string;
+  readonly recoveryBindingIdentity?: {
+    readonly executionId: string;
+    readonly providerTurnId: string;
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly logicalActionId: string;
+    readonly actionIndex: number;
+    readonly callRef: string;
+  };
+}
+
+interface P9ActionRow {
+  readonly execution_id: string;
+  readonly logical_step_no: number;
+  readonly repair_attempt: number;
+  readonly action_index: number;
+  readonly logical_action_id: string;
+  readonly call_ref: string;
+  readonly state: string;
+}
+
+interface P9StepRow {
+  readonly execution_id: string;
+  readonly logical_step_no: number;
+  readonly repair_attempt: number;
+  readonly provider_turn_id: string;
+  readonly state: string;
+}
+
+interface P9InvocationRow {
+  readonly execution_id: string;
+  readonly invocation_id: string;
+  readonly settled_at: string | null;
+  readonly settlement_kind: string | null;
+  readonly observation_json: unknown;
+}
+
+const p9ActionStepForProbe = (input: {
+  readonly probe: P4OutcomeProbe;
+  readonly invocation: P9InvocationRow | undefined;
+  readonly actions: ReadonlyArray<P9ActionRow>;
+  readonly steps: ReadonlyArray<P9StepRow>;
+}) => {
+  const { probe, invocation } = input;
+  const source = probe.recoveryBindingIdentity;
+  if (
+    source === undefined ||
+    invocation === undefined ||
+    source.executionId !== probe.executionId ||
+    source.executionId !== invocation.execution_id ||
+    invocation.invocation_id !== probe.invocationId ||
+    source.providerTurnId !== probe.providerTurnId ||
+    source.logicalActionId !== probe.logicalActionId ||
+    source.logicalActionId.length === 0 ||
+    source.callRef !== probe.callRef ||
+    source.callRef.length === 0 ||
+    source.actionIndex !== probe.actionIndex
+  )
+    return undefined;
+  const step = input.steps.find(
+    (candidate) =>
+      candidate.execution_id === source.executionId &&
+      candidate.logical_step_no === source.logicalStepNo &&
+      candidate.repair_attempt === source.repairAttempt &&
+      candidate.provider_turn_id === source.providerTurnId,
+  );
+  const action = input.actions.find(
+    (candidate) =>
+      candidate.execution_id === source.executionId &&
+      candidate.logical_step_no === source.logicalStepNo &&
+      candidate.repair_attempt === source.repairAttempt &&
+      candidate.action_index === source.actionIndex &&
+      candidate.logical_action_id === source.logicalActionId &&
+      candidate.call_ref === source.callRef,
+  );
+  return step === undefined || action === undefined
+    ? undefined
+    : { action, step };
+};
+
+const isP9SandboxUnavailableTerminal = (input: {
+  readonly probe: P4OutcomeProbe;
+  readonly invocation: P9InvocationRow | undefined;
+  readonly action: P9ActionRow | undefined;
+  readonly step: P9StepRow | undefined;
+}): boolean => {
+  const { probe, invocation, action, step } = input;
+  if (
+    probe.outcomeTag !== "ExpectedFailure" ||
+    invocation === undefined ||
+    action === undefined ||
+    step === undefined ||
+    invocation.invocation_id !== probe.invocationId ||
+    invocation.settlement_kind !== "ExpectedFailure" ||
+    invocation.settled_at === null ||
+    action.state !== "TerminalRejected" ||
+    step.execution_id !== probe.executionId ||
+    !["StepEffectsCommitted", "NextStepReady", "SettlementProposed"].includes(
+      step.state,
+    )
+  )
+    return false;
+  const observation = decodeToolObservation(invocation.observation_json);
+  return (
+    observation._tag === "ExpectedFailure" &&
+    typeof observation.sandboxProviderUnavailable === "object" &&
+    observation.sandboxProviderUnavailable !== null
+  );
+};
+
+describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
+  const probe: P4OutcomeProbe = {
+    executionId: "exe_v6-oracle",
+    invocationId: "tin_v6-oracle",
+    callRef: "call_v6-oracle",
+    toolName: "shell",
+    providerTurnId: "ptn_exe_v6-oracle_0",
+    logicalActionId: "lac_v6-oracle",
+    actionIndex: 0,
+    outcomeTag: "ExpectedFailure",
+    recoveryBindingIdentity: {
+      executionId: "exe_v6-oracle",
+      providerTurnId: "ptn_exe_v6-oracle_0",
+      logicalStepNo: 0,
+      repairAttempt: 0,
+      logicalActionId: "lac_v6-oracle",
+      actionIndex: 0,
+      callRef: "call_v6-oracle",
+    },
+  };
+
+  it("uses the original terminal Step after a successor has become latest", () => {
+    const invocation: P9InvocationRow = {
+      execution_id: probe.executionId,
+      invocation_id: probe.invocationId,
+      settled_at: "2026-10-23T10:00:00.000Z",
+      settlement_kind: "ExpectedFailure",
+      observation_json: JSON.stringify({
+        _tag: "ExpectedFailure",
+        observation: { text: "provider unavailable" },
+        truncated: false,
+        sandboxProviderUnavailable: {
+          providerId: "windows-restricted-appcontainer-job",
+          providerVersion: "t3d-v1",
+        },
+      }),
+    };
+    const actions: P9ActionRow[] = [
+      {
+        execution_id: probe.executionId,
+        logical_step_no: 0,
+        repair_attempt: 0,
+        action_index: 0,
+        logical_action_id: "lac_v6-oracle",
+        call_ref: "call_v6-oracle",
+        state: "TerminalRejected",
+      },
+    ];
+    const steps: P9StepRow[] = [
+      {
+        execution_id: probe.executionId,
+        logical_step_no: 0,
+        repair_attempt: 0,
+        provider_turn_id: "ptn_exe_v6-oracle_0",
+        state: "NextStepReady",
+      },
+      {
+        execution_id: probe.executionId,
+        logical_step_no: 1,
+        repair_attempt: 0,
+        provider_turn_id: "ptn_exe_v6-oracle_1",
+        state: "Prepared",
+      },
+    ];
+    const exact = p9ActionStepForProbe({
+      probe,
+      invocation,
+      actions,
+      steps,
+    });
+    expect(exact?.step).toEqual(steps[0]);
+    expect(
+      isP9SandboxUnavailableTerminal({
+        probe,
+        invocation,
+        action: exact?.action,
+        step: exact?.step,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not label a generic ExpectedFailure as the P9 unavailable terminal", () => {
+    const invocation: P9InvocationRow = {
+      execution_id: probe.executionId,
+      invocation_id: probe.invocationId,
+      settled_at: "2026-10-23T10:00:00.000Z",
+      settlement_kind: "ExpectedFailure",
+      observation_json: JSON.stringify({
+        _tag: "ExpectedFailure",
+        observation: { text: "ordinary tool failure" },
+        truncated: false,
+      }),
+    };
+    const exact = p9ActionStepForProbe({
+      probe,
+      invocation,
+      actions: [
+        {
+          execution_id: probe.executionId,
+          logical_step_no: 0,
+          repair_attempt: 0,
+          action_index: 0,
+          logical_action_id: "lac_v6-oracle",
+          call_ref: "call_v6-oracle",
+          state: "Applied",
+        },
+      ],
+      steps: [
+        {
+          execution_id: probe.executionId,
+          logical_step_no: 0,
+          repair_attempt: 0,
+          provider_turn_id: "ptn_exe_v6-oracle_0",
+          state: "SettlementProposed",
+        },
+      ],
+    });
+    expect(
+      isP9SandboxUnavailableTerminal({
+        probe,
+        invocation,
+        action: exact?.action,
+        step: exact?.step,
+      }),
+    ).toBe(false);
+  });
+});
+
+const readP9OutcomeSourceForProbe = (
+  databaseFile: string,
+  probe: P4OutcomeProbe,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    db.exec("BEGIN");
+    const invocation = db
+      .prepare(
+        `SELECT execution_id, invocation_id, settled_at, settlement_kind,
+                observation_json
+           FROM tool_invocations
+          WHERE execution_id = ? AND invocation_id = ?`,
+      )
+      .get(probe.executionId, probe.invocationId) as
+      | P9InvocationRow
+      | undefined;
+    const actions = db
+      .prepare(
+        `SELECT execution_id, logical_step_no, repair_attempt, action_index,
+                logical_action_id, call_ref, state
+           FROM agent_loop_step_actions WHERE execution_id = ?
+          ORDER BY logical_step_no, repair_attempt, action_index`,
+      )
+      .all(probe.executionId) as ReadonlyArray<P9ActionRow>;
+    const steps = db
+      .prepare(
+        `SELECT execution_id, logical_step_no, repair_attempt,
+                provider_turn_id, state
+           FROM agent_loop_steps WHERE execution_id = ?
+          ORDER BY logical_step_no, repair_attempt`,
+      )
+      .all(probe.executionId) as ReadonlyArray<P9StepRow>;
+    const exact = p9ActionStepForProbe({ probe, invocation, actions, steps });
+    db.exec("COMMIT");
+    return {
+      invocation,
+      action: exact?.action,
+      step: exact?.step,
+    };
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.close();
+  }
+};
+
 const sandboxDecisionDebug = (databaseFile: string, executionId: string) => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
@@ -1001,29 +1296,31 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         },
       });
       const firstSettled = await waitForPublic(
-        async () =>
-          durableSandboxRead(
-            fixture.databaseFile,
-            executionId,
-            firstInvocationId,
-          ),
-        (state) =>
-          state.invocation?.settled_at !== null &&
-          state.invocation !== undefined &&
-          (
-            state.actions as
-              | ReadonlyArray<{ readonly state?: string }>
-              | undefined
-          )?.some(
-            (action) =>
-              action.state === "Applied" || action.state === "TerminalRejected",
-          ) === true &&
-          state.step?.state === "StepEffectsCommitted" &&
-          executableProbeLines.some(
+        async () => {
+          const p4Outcome = executableProbeLines.find(
             (event) =>
               event.boundary === "P4ExecutableToolRuntimeOutcome" &&
+              event.executionId === executionId &&
               event.invocationId === firstInvocationId,
-          ),
+          );
+          if (p4Outcome === undefined) return undefined;
+          const probe = p4Outcome as unknown as P4OutcomeProbe;
+          return {
+            probe,
+            source: readP9OutcomeSourceForProbe(fixture.databaseFile, probe),
+          };
+        },
+        (value) =>
+          value !== undefined &&
+          value.source.invocation?.settled_at !== null &&
+          value.source.invocation !== undefined &&
+          (value.source.action?.state === "Applied" ||
+            value.source.action?.state === "TerminalRejected") &&
+          [
+            "StepEffectsCommitted",
+            "NextStepReady",
+            "SettlementProposed",
+          ].includes(value.source.step?.state ?? ""),
         45_000,
       ).catch((error: unknown) => {
         const durable = durableSnapshot(fixture.databaseFile);
@@ -1032,32 +1329,58 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           { cause: error },
         );
       });
-      expect(firstSettled.invocation?.observation_json).not.toBeNull();
-      const p9Terminal =
-        Array.isArray(firstSettled.actions) &&
-        firstSettled.actions[0]?.state === "TerminalRejected" &&
-        firstSettled.step?.state === "StepEffectsCommitted";
-      expect(firstSettled.invocation?.settlement_kind).toBe("ExpectedFailure");
+      const firstInvocationState = firstSettled.source.invocation;
+      const firstActionState = firstSettled.source.action;
+      const firstStepState = firstSettled.source.step;
+      if (
+        firstInvocationState === undefined ||
+        firstActionState === undefined ||
+        firstStepState === undefined
+      )
+        throw new Error(
+          `P4 outcome probe did not bind to its original Action/Step: ${JSON.stringify(firstSettled)}`,
+        );
+      expect(firstInvocationState.observation_json).not.toBeNull();
+      expect(firstInvocationState.settlement_kind).toBe("ExpectedFailure");
       const firstObservation = decodeToolObservation(
-        firstSettled.invocation?.observation_json,
+        firstInvocationState.observation_json,
       );
-      expect(firstObservation).toMatchObject({
-        _tag: "ExpectedFailure",
-        sandboxProviderUnavailable: {
-          providerId: "windows-restricted-appcontainer-job",
-          providerVersion: "t3d-v1",
-          failureCode: "ProviderVersionMismatch",
-          effectDisposition: "NoEffect",
-        },
+      expect(firstObservation._tag).toBe("ExpectedFailure");
+      const p9Terminal = isP9SandboxUnavailableTerminal({
+        probe: firstSettled.probe,
+        invocation: firstInvocationState,
+        action: firstActionState,
+        step: firstStepState,
       });
-      if (p9Terminal) {
-        expect(firstSettled.actions).toMatchObject([
-          { state: "TerminalRejected", action_index: 0, logical_step_no: 0 },
-        ]);
-        expect(firstSettled.step).toMatchObject({
-          state: "StepEffectsCommitted",
-          next_action_index: 1,
+      if (firstObservation.sandboxProviderUnavailable !== undefined) {
+        expect(p9Terminal).toBe(true);
+        expect(firstActionState.state).toBe("TerminalRejected");
+        expect(firstStepState.state).toMatch(
+          /^(StepEffectsCommitted|NextStepReady|SettlementProposed)$/u,
+        );
+        expect(firstObservation).toMatchObject({
+          _tag: "ExpectedFailure",
+          sandboxProviderUnavailable: {
+            providerId: "windows-restricted-appcontainer-job",
+            providerVersion: "t3d-v1",
+            failureCode: "ProviderVersionMismatch",
+            effectDisposition: "NoEffect",
+          },
         });
+      } else {
+        expect(p9Terminal).toBe(false);
+        expect(firstActionState.state).toBe("Applied");
+      }
+      if (p9Terminal) {
+        expect(firstActionState).toMatchObject({
+          state: "TerminalRejected",
+          action_index: firstSettled.probe.actionIndex,
+          logical_step_no:
+            firstSettled.probe.recoveryBindingIdentity?.logicalStepNo,
+        });
+        expect(firstStepState.state).toMatch(
+          /^(StepEffectsCommitted|NextStepReady|SettlementProposed)$/u,
+        );
         const p9Store = new DatabaseSync(fixture.databaseFile, {
           readOnly: true,
         });

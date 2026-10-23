@@ -33,7 +33,17 @@ failure fixture and SQLite database were archived through the existing helper:
   terminal state. The existing poll predicate waited only for invocation
   settlement, so it could enter the nonterminal branch on a partial P4/P3
   transition. The test now waits for the settled Action/Step pair and the
-  matching P4 probe before choosing that branch.
+  matching P4 probe before choosing that branch. Independent review found that
+  this still read the latest Step, which could be a legal successor. The
+  current oracle instead takes invocation, Actions and Steps in one read
+  transaction and selects the exact source Action/Step from the P4 probe's
+  recovery-binding identity. The source Step accepts `StepEffectsCommitted`,
+  `NextStepReady`, or `SettlementProposed`; a successor cannot replace it.
+  Only an exact P4 `ExpectedFailure` whose stored observation includes
+  `sandboxProviderUnavailable`, whose same Action is `TerminalRejected`, and
+  whose same source Step is in a legal post-action state is classified as the
+  P9 unavailable terminal. A generic `ExpectedFailure` with an Applied Action
+  remains nonterminal.
 - This run did not reach the new fresh-project/EAP section, so it does not
   explain the earlier fresh `waitForExecutableApproval` timeout. That earlier
   run retained no provider request capture or runtime database. The new
@@ -51,5 +61,9 @@ provider. No production or design file changed.
   before the test-only diagnostic patch; these built dist files were used by
   the diagnostic run.
 - Targeted Biome and `git diff --check` after the test-poll correction: PASS.
-- No run was performed after the correction.
+- Small oracle unit tests after the identity-bound correction: PASS, 2/2. One
+  simulates the source Step already at `NextStepReady` with a newer `Prepared`
+  successor; the other ensures a generic ExpectedFailure is not classified as
+  the P9 unavailable terminal.
+- The functional process file was not rerun after these corrections.
 
