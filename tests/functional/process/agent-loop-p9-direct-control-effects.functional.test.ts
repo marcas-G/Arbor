@@ -1,8 +1,12 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { p39WindowsTestEnvironment } from "../../support/p39-windows-deployment-test.js";
+import {
+  archiveProductionFixtureFailure,
+  writeProductionFixtureArchiveSkipped,
+} from "../support/fixture-failure-evidence.js";
 import { expireExecutionLeaseAfterOwnerExitForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
@@ -94,19 +98,285 @@ const waitForActionIntent = async (input: {
   return intent as Probe;
 };
 
+const readLiveTakeoverFailureSnapshot = (input: {
+  readonly databaseFile: string;
+  readonly projectId: string;
+  readonly executionId: string;
+  readonly workId: string;
+  readonly parentWorkspaceId: string;
+}) => {
+  const db = new DatabaseSync(input.databaseFile, { readOnly: true });
+  try {
+    db.exec("BEGIN");
+    const snapshot = {
+      projectId: input.projectId,
+      workspaceId: input.parentWorkspaceId,
+      workId: input.workId,
+      executionId: input.executionId,
+      execution: db
+        .prepare(
+          `SELECT execution_id, project_id, workspace_id, episode_kind,
+                  episode_ref, stop_requested_at, settled_at, settlement_kind,
+                  settlement_json
+             FROM executions
+            WHERE project_id = ? AND execution_id = ?`,
+        )
+        .get(input.projectId, input.executionId),
+      lease: db
+        .prepare(
+          `SELECT execution_id, worker_id, worker_incarnation_id, generation,
+                  expires_at, updated_at
+             FROM execution_leases WHERE execution_id = ?`,
+        )
+        .get(input.executionId),
+      executionState: db
+        .prepare(
+          `SELECT episode_json, wake_reason, current_mode, turn_no, updated_at
+             FROM agent_execution_state WHERE execution_id = ?`,
+        )
+        .get(input.executionId),
+      steps: db
+        .prepare(
+          `SELECT execution_id, logical_step_no, repair_attempt,
+                  provider_turn_id, manifest_id, state, revision,
+                  next_action_index, settlement_json
+             FROM agent_loop_steps WHERE execution_id = ?
+            ORDER BY logical_step_no, repair_attempt`,
+        )
+        .all(input.executionId),
+      actions: db
+        .prepare(
+          `SELECT execution_id, logical_step_no, repair_attempt,
+                  action_index, logical_action_id, call_ref, action_kind,
+                  state, result_ref, settlement_ref, disposition_json
+             FROM agent_loop_step_actions WHERE execution_id = ?
+            ORDER BY logical_step_no, repair_attempt, action_index`,
+        )
+        .all(input.executionId),
+      providerTurns: db
+        .prepare(
+          `SELECT provider_turn_id, execution_id, session_id, manifest_id,
+                  settled_at, finish_reason
+             FROM provider_turns WHERE execution_id = ?
+            ORDER BY provider_turn_id`,
+        )
+        .all(input.executionId),
+      attempts: db
+        .prepare(
+          `SELECT a.provider_turn_id, a.attempt_no, a.outcome, a.settled_at,
+                  a.success_evidence_version
+             FROM provider_attempts a JOIN provider_turns p
+               ON p.provider_turn_id = a.provider_turn_id
+            WHERE p.execution_id = ? ORDER BY a.provider_turn_id, a.attempt_no`,
+        )
+        .all(input.executionId),
+      workspace: db
+        .prepare(
+          `SELECT workspace_id, project_id, parent_workspace_id,
+                  current_work_id, revision
+             FROM workspaces WHERE workspace_id = ? AND project_id = ?`,
+        )
+        .get(input.parentWorkspaceId, input.projectId),
+      work: db
+        .prepare(
+          `SELECT work_id, workspace_id, objective, lifecycle, revision
+             FROM works WHERE work_id = ? AND workspace_id = ?`,
+        )
+        .get(input.workId, input.parentWorkspaceId),
+      plan: db
+        .prepare(
+          `SELECT work_id, target_work_revision, plan_revision, items_json,
+                  updated_at FROM work_plans WHERE work_id = ?`,
+        )
+        .get(input.workId),
+      wait: db
+        .prepare(
+          `SELECT work_id, wait_mode, conditions_json, registered_at, updated_at
+             FROM work_waits WHERE work_id = ?`,
+        )
+        .get(input.workId),
+      projectEvents: db
+        .prepare(
+          `SELECT event_id, sequence, event_type, aggregate_ref, payload_json,
+                  occurred_at FROM domain_events
+            WHERE project_id = ? ORDER BY sequence`,
+        )
+        .all(input.projectId),
+    };
+    db.exec("COMMIT");
+    return snapshot;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Preserve the original diagnostic snapshot error.
+    }
+    throw error;
+  } finally {
+    db.close();
+  }
+};
+
+const captureGen1TakeoverWaitFailure = async (input: {
+  readonly fixture: ProductionFixture;
+  readonly newDaemon: Awaited<
+    ReturnType<ProductionFixture["startAdditionalDaemon"]>
+  >;
+  readonly events: ReadonlyArray<Probe>;
+  readonly action: "update_plan" | "claim_completion";
+  readonly marker: string;
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly workId: string;
+  readonly oldIntent: Probe;
+  readonly oldLease: ReturnType<typeof expireLiveOwnerLeaseForStaleProbe>;
+  readonly targetCalls: number;
+  readonly armed: boolean;
+  readonly seedWaitIssued: boolean;
+  readonly startupPhases: ReadonlyArray<
+    Readonly<Record<string, string | number>>
+  >;
+  readonly oldStartupPhases: ReadonlyArray<
+    Readonly<Record<string, string | number>>
+  >;
+  readonly providerCalls: ProductionFixture["providerCalls"];
+  readonly gateFiles: ReadonlyArray<string>;
+  readonly waitError: unknown;
+}): Promise<never> => {
+  let snapshot: unknown;
+  let snapshotError: string | undefined;
+  try {
+    snapshot = readLiveTakeoverFailureSnapshot({
+      databaseFile: input.fixture.databaseFile,
+      projectId: input.projectId,
+      executionId: input.oldIntent.executionId,
+      workId: input.workId,
+      parentWorkspaceId: input.workspaceId,
+    });
+  } catch (error) {
+    snapshotError = error instanceof Error ? error.message : String(error);
+  }
+  const evidence = {
+    testCase: "P9 direct Control effect process takeover",
+    action: input.action,
+    marker: input.marker,
+    projectId: input.projectId,
+    workspaceId: input.workspaceId,
+    workId: input.workId,
+    executionId: input.oldIntent.executionId,
+    logicalActionId: input.oldIntent.logicalActionId ?? null,
+    providerTurnId: input.oldIntent.providerTurnId ?? null,
+    callRef: input.oldIntent.callRef ?? null,
+    actionIndex: input.oldIntent.actionIndex ?? null,
+    oldLeaseBeforeExpiry: input.oldLease,
+    testState: {
+      armed: input.armed,
+      seedWaitIssued: input.seedWaitIssued,
+      targetCalls: input.targetCalls,
+      gateFiles: input.gateFiles,
+    },
+    waitError:
+      input.waitError instanceof Error
+        ? input.waitError.message
+        : String(input.waitError),
+    processes: {
+      oldGen0: input.fixture.daemonProcessSnapshot(),
+      newGen1: input.newDaemon.daemonProcessSnapshot(),
+      newGen1StderrTail: input.newDaemon.daemonErrors.slice(-24),
+      fixtureStderrTail: input.fixture.daemonErrors.slice(-24),
+    },
+    startupPhases: {
+      oldGen0: input.oldStartupPhases,
+      newGen1: input.startupPhases,
+    },
+    probeTail: input.events.slice(-80),
+    providerCalls: input.providerCalls.slice(-12).map((call) => ({
+      toolNames: call.tools
+        .map((tool) => tool.function?.name)
+        .filter((name): name is string => name !== undefined)
+        .sort(),
+      mentionsMarker: JSON.stringify(call.messages).includes(input.marker),
+    })),
+    snapshot: snapshot ?? null,
+    snapshotError: snapshotError ?? null,
+  };
+
+  let stopError: string | undefined;
+  try {
+    await input.fixture.stop();
+  } catch (error) {
+    stopError = error instanceof Error ? error.message : String(error);
+  }
+
+  const resultDirectory = process.env.ARBOR_TEST_RESULT_DIRECTORY;
+  let artifactPath: string | undefined;
+  let archiveError: string | undefined;
+  if (resultDirectory === undefined || resultDirectory.length === 0) {
+    archiveError = "ARBOR_TEST_RESULT_DIRECTORY is unset";
+  } else {
+    try {
+      artifactPath = archiveProductionFixtureFailure({
+        fixture: input.fixture,
+        resultDirectory,
+        artifactPrefix: "p9-direct-control-gen1-lease-timeout",
+        evidence: { ...evidence, stopError: stopError ?? null },
+      });
+    } catch (error) {
+      archiveError = error instanceof Error ? error.message : String(error);
+      try {
+        writeProductionFixtureArchiveSkipped({
+          fixture: input.fixture,
+          resultDirectory,
+          evidence: { ...evidence, stopError: stopError ?? null, archiveError },
+        });
+      } catch (skipError) {
+        archiveError = `${archiveError}; archive-skip record: ${skipError instanceof Error ? skipError.message : String(skipError)}`;
+      }
+    }
+  }
+
+  throw new Error(
+    `gen1 did not emit AH10AfterLeaseAcquired for ${input.action}; project=${input.projectId}; execution=${input.oldIntent.executionId}; action=${input.oldIntent.logicalActionId ?? "unknown"}; artifact=${artifactPath ?? "archive skipped"}; archiveError=${archiveError ?? "none"}; waitError=${input.waitError instanceof Error ? input.waitError.message : String(input.waitError)}`,
+    { cause: input.waitError },
+  );
+};
+
 const qualifiesLiveStaleGenerationSuppression = (
   action: "update_plan" | "claim_completion",
 ) =>
   it(`${action} suppresses a live stale gen0 effect after gen1 commits the same action`, async () => {
     const marker = `P9-stale-${action}-${crypto.randomUUID().slice(0, 7)}`;
     const events: Probe[] = [];
+    const oldStartupPhases: Array<Readonly<Record<string, string | number>>> =
+      [];
+    const newStartupPhases: Array<Readonly<Record<string, string | number>>> =
+      [];
     const targetCalls = { count: 0 };
     let armed = false;
     let seedWaitIssued = false;
-    const captureProbe = (line: string) => {
+    const captureProbe = (
+      line: string,
+      startupPhases: Array<Readonly<Record<string, string | number>>>,
+    ) => {
       try {
-        const event = JSON.parse(line) as Probe;
-        if (event.tag === "AH10_PROBE") events.push(event);
+        const value = JSON.parse(line) as Record<string, unknown>;
+        if (value.tag === "AH10_PROBE") events.push(value as unknown as Probe);
+        if (
+          value.tag === "AH19_STARTUP_PHASE" &&
+          typeof value.phase === "string"
+        ) {
+          const phase = {
+            phase: value.phase,
+            ...(typeof value.pid === "number" ? { pid: value.pid } : {}),
+            ...(typeof value.exitCode === "number"
+              ? { exitCode: value.exitCode }
+              : {}),
+            ...(typeof value.elapsedMs === "number"
+              ? { elapsedMs: value.elapsedMs }
+              : {}),
+          };
+          startupPhases.push(phase);
+        }
       } catch {
         // The fixture retains stdout and stderr for failure diagnostics.
       }
@@ -115,6 +385,7 @@ const qualifiesLiveStaleGenerationSuppression = (
       isolatedPortHandshake: true,
       admitWorkspaceDirectory: true,
       preserveDirectoryOnStop: true,
+      daemonEnvironment: { ARBOR_AH19_STARTUP_TRACE: "1" },
       reply: (call) => {
         const context = JSON.stringify(call.messages);
         const available = new Set(
@@ -173,7 +444,7 @@ const qualifiesLiveStaleGenerationSuppression = (
         }
         return { _tag: "Text", text: `Observed ${marker}.` };
       },
-      onDaemonStdout: captureProbe,
+      onDaemonStdout: (line) => captureProbe(line, oldStartupPhases),
     });
     fixtures.push(fixture);
     mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
@@ -253,8 +524,9 @@ const qualifiesLiveStaleGenerationSuppression = (
         ARBOR_AH10_ROLE: "new",
         ARBOR_AH10_CONTROL_EFFECT_KIND: action,
         ARBOR_AH10_GATE_ACTION_KIND: action,
+        ARBOR_AH19_STARTUP_TRACE: "1",
       },
-      onStdout: captureProbe,
+      onStdout: (line) => captureProbe(line, newStartupPhases),
     });
     await waitForPublic(
       async () =>
@@ -266,11 +538,28 @@ const qualifiesLiveStaleGenerationSuppression = (
         ),
       (event) => event !== undefined,
       45_000,
-    ).catch((error: unknown) => {
-      throw new Error(
-        `gen1 could not take over live stale ${action}: ${error instanceof Error ? error.message : String(error)}; daemonErrors=${newDaemon.daemonErrors.join(" | ")}`,
-      );
-    });
+    ).catch((error: unknown) =>
+      captureGen1TakeoverWaitFailure({
+        fixture,
+        newDaemon,
+        events,
+        action,
+        marker,
+        projectId: project.projectId,
+        workspaceId: project.rootWorkspaceId,
+        workId: work.workId,
+        oldIntent,
+        oldLease,
+        targetCalls: targetCalls.count,
+        armed,
+        seedWaitIssued,
+        startupPhases: newStartupPhases,
+        oldStartupPhases,
+        providerCalls: fixture.providerCalls,
+        gateFiles: readdirSync(resolve(fixture.directory, "ah10-gates")),
+        waitError: error,
+      }),
+    );
     const newIntent = await releaseActionIntentGate({
       fixture,
       events,

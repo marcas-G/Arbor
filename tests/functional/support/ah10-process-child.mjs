@@ -22,7 +22,10 @@ import {
   BUILTIN_EXECUTORS,
   SHELL_DEFINITION,
 } from "../../../packages/tool-runtime/dist/index.js";
-import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
+import {
+  createAh19StartupDiagnosticProbe,
+  createFunctionalDaemonListenReporter,
+} from "./functional-daemon-lifecycle.mjs";
 
 const role = process.env.ARBOR_AH10_ROLE;
 if (role !== "old" && role !== "new") {
@@ -32,6 +35,9 @@ const databaseFile = process.env.ARBOR_DB;
 if (databaseFile === undefined)
   throw new Error("AH10 test child needs ARBOR_DB");
 const onWebTransportListening = createFunctionalDaemonListenReporter();
+const startupDiagnosticProbe = createAh19StartupDiagnosticProbe(
+  process.env.ARBOR_AH19_STARTUP_TRACE === "1",
+);
 const sandboxAuthoritySourceFile =
   process.env.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE;
 const trustedHostConfigurationSource =
@@ -855,6 +861,7 @@ const port = Number(process.env.ARBOR_HTTP_PORT);
 const config = {
   tickIntervalMs: 25,
   onWebTransportListening,
+  startupDiagnosticProbe,
   ...(trustedHostConfigurationSource === undefined
     ? {}
     : { trustedHostConfigurationSource }),
