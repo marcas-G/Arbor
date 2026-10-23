@@ -130,14 +130,22 @@ outside this review.
   DIAGNOSABLE** from this run. The evidence does not distinguish a failure to
   rematerialize the committed policy from failure to reschedule the exact
   pending action; the captured P4 probe may also predate the fresh P1 commit
-  because the test selects the first exact-invocation probe. No production
-  defect or test-only cause is asserted for that P4 gap.
+  because the test selected the first exact-invocation probe. A subsequent
+  source review confirmed this selector bug: a pre-P1
+  `SandboxPolicyRequiredInterruption` could mask a later post-P1
+  `ExpectedFailure`. The harness now records the executable-probe count before
+  the fresh P1 command and only accepts a later exact execution/invocation
+  `ExpectedFailure`; a pure oracle proves the old probe alone cannot pass.
+  This fixes test-oracle contamination but does not establish why the durable
+  invocation remained pending in the failed run. No production defect is
+  asserted for that P4 gap.
 - The earlier wrong-column failure and obsolete EAP-oracle failure remain
   separately classified harness/oracle issues, not evidence of a production
   defect. No further process run was performed.
-- Post-fix lightweight verification: the V6 P9 exact-Step oracles, the missing
-  private-ACL archive-directory regression, and the current-schema SQL
-  microtest pass together (**4 passed, 1 process case skipped**); the microtest
+- Post-fix lightweight verification: the V6 P9 exact-Step oracles, fresh-P4
+  selector oracle, missing private-ACL archive-directory regression, and
+  current-schema SQL microtest pass together (**5 passed, 1 process case
+  skipped**); the microtest
   creates schema 51 through the current-schema test helper, prepares all 44
   static queries, and does not start a daemon. Targeted Biome and
   `git diff --check` pass.
