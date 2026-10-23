@@ -9,9 +9,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { findArborConfigFile } from "../../../apps/single-workspace/src/provider-config.js";
+import { archiveProductionFixtureFailure } from "../../functional/support/fixture-failure-evidence.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -76,7 +77,9 @@ export interface StartedRealProviderFixture {
   readonly fixture: ProductionFixture;
   readonly captureFile: string;
   readonly evidenceDirectory: string;
+  readonly privateRunDirectory: string;
   readonly responseGateDirectory?: string;
+  fixtureArchiveDirectory?: string;
 }
 
 export interface ProviderResponseGateSelector {
@@ -366,6 +369,7 @@ export const startRealProviderFixture = async (input: {
     fixture,
     captureFile,
     evidenceDirectory,
+    privateRunDirectory,
     ...(responseGateDirectory === undefined ? {} : { responseGateDirectory }),
   };
 };
@@ -462,10 +466,37 @@ export const finishRealProviderFixture = async (
       failure instanceof Error ? failure.message : String(failure),
     );
   }
+  if (status === "FAIL" && run.fixture.daemonsExited()) {
+    try {
+      run.fixtureArchiveDirectory = archiveProductionFixtureFailure({
+        fixture: run.fixture,
+        resultDirectory: run.privateRunDirectory,
+        artifactPrefix: "retained-fixture",
+        evidence: {
+          schemaVersion: "arbor-real-public-fixture-failure-v1",
+          status: "FAIL",
+          captureFile: run.captureFile,
+          evidenceDirectory: run.evidenceDirectory,
+          daemonExited: run.fixture.daemonsExited(),
+          daemonErrors: run.fixture.daemonErrors.map(
+            redactRealProviderDiagnostic,
+          ),
+        },
+      });
+    } catch (failure) {
+      const archiveError = redactRealProviderDiagnostic(
+        failure instanceof Error ? failure.message : String(failure),
+      );
+      error = error === undefined ? archiveError : `${error}; ${archiveError}`;
+    }
+  }
   return {
     status,
     ...(error === undefined ? {} : { error }),
-    fixtureRetained: status === "FAIL",
+    fixtureRetained:
+      status === "FAIL" &&
+      run.fixtureArchiveDirectory !== undefined &&
+      existsSync(run.fixtureArchiveDirectory),
   };
 };
 
@@ -500,9 +531,20 @@ export const writeRealProviderEvidence = (input: {
           credentialsRecorded: false,
         },
         fixture: {
-          directory: input.run.fixture.directory,
-          databaseFile: input.run.fixture.databaseFile,
-          workspaceDirectory: input.run.fixture.workspaceDirectory,
+          directory:
+            input.run.fixtureArchiveDirectory ?? input.run.fixture.directory,
+          databaseFile: input.run.fixtureArchiveDirectory
+            ? join(
+                input.run.fixtureArchiveDirectory,
+                basename(input.run.fixture.databaseFile),
+              )
+            : input.run.fixture.databaseFile,
+          workspaceDirectory: input.run.fixtureArchiveDirectory
+            ? join(
+                input.run.fixtureArchiveDirectory,
+                basename(input.run.fixture.workspaceDirectory),
+              )
+            : input.run.fixture.workspaceDirectory,
           daemonExited: input.run.fixture.daemonsExited(),
           daemonErrors: input.run.fixture.daemonErrors.map(
             redactRealProviderDiagnostic,
