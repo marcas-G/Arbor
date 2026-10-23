@@ -2094,7 +2094,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           projectRootDirectory: freshProjectRootDirectory,
           daemonEnvironment: {
             ARBOR_AH_BOUNDARY: "disabled",
-            ARBOR_TICK_INTERVAL_MS: "60000",
+            ARBOR_TICK_INTERVAL_MS: "25",
             ARBOR_SCHEDULER_PROBE: "1",
           },
         });
@@ -2258,6 +2258,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         expect(acceptedFresh).toMatchObject({
           body: { resolution: "Committed" },
         });
+        const postP1SchedulerProbeStartIndex = schedulerProbeLines.length;
         const freshInvocationId = String(
           freshPostIntentState.invocations[0]?.invocation_id ?? "",
         );
@@ -2270,17 +2271,30 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
               executionId: freshExecutionId,
               invocationId: freshInvocationId,
             });
-            if (probeRecord === undefined) return undefined;
+            const postP1SchedulerDispatchObserved = schedulerProbeLines
+              .slice(postP1SchedulerProbeStartIndex)
+              .some(
+                (event) =>
+                  event.boundary === "PreDispatchLeaseCheck" &&
+                  event.executionId === freshExecutionId &&
+                  event.dispatchable === true,
+              );
             return {
+              postP1SchedulerDispatchObserved,
               probe: probeRecord,
-              source: readP9OutcomeSourceForProbe(
-                fixture.databaseFile,
-                probeRecord,
-              ),
+              source:
+                probeRecord === undefined
+                  ? undefined
+                  : readP9OutcomeSourceForProbe(
+                      fixture.databaseFile,
+                      probeRecord,
+                    ),
             };
           },
           (value) =>
-            value !== undefined &&
+            value?.postP1SchedulerDispatchObserved === true &&
+            value.probe !== undefined &&
+            value.source !== undefined &&
             value.source.invocation?.settled_at !== null &&
             value.source.invocation?.settlement_kind === "ExpectedFailure" &&
             value.source.invocation.effect_admission_state === "NotAdmitted" &&
@@ -2301,6 +2315,11 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         );
         if (acceptedFreshP4Outcome === undefined)
           throw new Error("fresh P4 no-effect settlement was absent");
+        if (
+          acceptedFreshP4Outcome.probe === undefined ||
+          acceptedFreshP4Outcome.source === undefined
+        )
+          throw new Error("fresh P4 probe source was incomplete");
         expect(acceptedFreshP4Outcome.probe).toMatchObject({
           outcomeTag: "ExpectedFailure",
           invocationId: freshInvocationId,

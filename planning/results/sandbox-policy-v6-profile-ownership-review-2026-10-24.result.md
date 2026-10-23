@@ -1,6 +1,6 @@
 # V6 Fresh Profile Ownership Review — 2026-10-24
 
-Status: **E50 PROFILE FIX REVIEWED; SCHEMA-51 SQL MICROTEST PASS; FINAL SYNTHETIC PROCESS QUALIFICATION FAILED AT FRESH P4 RESUMPTION; P4 ROOT CAUSE NOT DIAGNOSABLE FROM RETAINED ARTIFACTS**
+Status: **E50 PROFILE FIX REVIEWED; P1 CURRENT DECISION DURABLE; FINAL PROCESS WAITER EXPIRED BEFORE NEXT 60S SCHEDULER TICK; TEST TIMING FIXED, NOT FULL-RERUN**
 
 ## E50 fixture review
 
@@ -94,51 +94,65 @@ outside this review.
   including bundle revision/digest, provider registry revision/digest,
   provider version, capability revision, handle binding, profile and network
   policy. The canonical P39 digest qualification remains out of scope.
-- The one authorized post-review full-file run followed successful root and Web
-  builds. It used retry 0 / one worker and ended **3 passed, 1 failed**: both
-  P9 oracle tests and the schema-51 query microtest passed; the process case
-  failed while waiting for fresh P4 settlement. Its last captured exact
-  invocation probe was `SandboxPolicyRequiredInterruption`; the adjacent
-  SQLite source snapshot showed the same invocation `NotAdmitted` / `Bound`,
-  unsettled, with no observation, its Action `Pending`, and its Step
-  `ActionsInProgress`. The public fresh `DecideSandboxPolicy` receipt had
-  already matched `Committed`; the fresh payload was built from the post-restart
-  public CandidateRead. This is not an `ExpectedFailure`, P9 terminal result,
-  or OS-supported-provider qualification.
-- The run's failure-evidence archive also failed: the direct Vitest invocation
-  supplied `.test-results/2026-10-24-v6-schema51-final` before creating that
-  directory. `archiveProductionFixtureFailure` requires a real existing direct
-  `.test-results` child and threw `ENOENT` at its `lstat`; suite teardown then
-  removed the temporary fixture root. The retained
-  `.test-results/2026-10-24-v6-schema51-final/vitest.json` records the terminal
-  probe/source and both errors (SHA-256
-  `a141514fa05f9dc32d6f52362af6feff23470e51331d326f2445eb79ad074310`), but no
-  database/WAL/workspace for this run remains. The unrelated 2026-10-23
-  temporary fixture was not substituted. The Vitest process and matching
-  daemon process tree are terminal; no matching process remains.
+- The first post-review full-file attempt (schema query fixed, archive helper
+  still requiring a pre-existing result directory) ended **2 P9 oracle tests
+  passed, process case failed**. It is retained as intermediate evidence at
+  `.test-results/2026-10-24-v6-schema51-final/vitest.json`; its archive failed
+  with `ENOENT` and its fixture was removed by suite teardown. That archive
+  infrastructure failure is fixed below; this intermediate artifact is not
+  used to diagnose the final P4 result.
+- The final authorized full-file run followed successful root/Web builds and
+  used retry 0 / one worker. It ended **5 passed, 1 failed** (three P9/selector
+  oracles, private-ACL archive regression, schema-51 SQL microtest passed; the
+  process case timed out). Its fixture and DB/WAL were successfully retained at
+  `.test-results/2026-10-24-v6-postdecision-final/sandbox-policy-v6-fresh-work-1696dba1-6c17-471b-be19-bff1886dd634/`.
+  Vitest failed at the 45-second post-P1 waiter with `last=undefined`: the only
+  fresh Execution probe was the pre-P1 `SandboxPolicyRequiredInterruption`,
+  and no exact post-P1 `ExpectedFailure` probe appeared.
+- Read-only comparison of that retained schema-51 DB confirms the fresh P1
+  commit is current, not a stale-payload or digest mismatch. The committed row
+  is policy revision 1 for the exact WorkEpisode binding also stored in
+  `executions` and `agent_execution_state.episode_json`; its public command
+  receipt is `Committed`. The persisted effective summary's recomputed
+  `encodeEffectivePolicySummaryV1` SHA-256 exactly equals `policy_digest`.
+  Its ReadOnly / `windows-restricted-appcontainer-job` / `t3d-v1` / capability
+  revision 4 tuple uses provider-registry revision 2 and digest
+  `26e14c69…`; bundle revision 2 and digest `55e84bca…` match the archived
+  current bundle and high-water file. The fresh payload in the test is built
+  from the public post-restart CandidateRead, whose revision/digest and
+  unchanged-profile constraints were checked before commit.
+- The same DB shows the exact shell invocation remains `NotAdmitted` / `Bound`,
+  with no settlement or observation; its Action is `Pending`, Step is
+  `ActionsInProgress`, and its only ProviderTurn settled before P1. The lease
+  still has its pre-P1 expiry and the Agent state remains `Recovery` / turn 0.
+  Thus the final process case did not observe a P4 re-entry; it did not observe
+  a post-P1 P4 materialization failure either. This is not an `ExpectedFailure`,
+  P9 terminal result, or OS-supported-provider qualification.
+- The test timing mismatch is evidenced by the exact timestamps: the P4 intent
+  was at `17:35:55.017Z`, the initial AgentLoopStep lease ended at
+  `17:35:55.302Z`, and the fresh P1 receipt committed at `17:36:04.642Z`. The
+  restarted daemon was configured with `ARBOR_TICK_INTERVAL_MS=60000`; the
+  production loop sleeps that interval after each scheduler/consumer/recovery
+  cycle. The 45-second P4 waiter therefore expired before the next 60-second
+  poll could reliably dispatch the pending action. The archive's scheduler
+  trace has no persisted command-relative tick cursor, so it cannot establish
+  whether any listed dispatch check followed the P1 receipt; the durable lease
+  row remained at its pre-P1 expired timestamp and was not reacquired. This is
+  a test timing/configuration failure; the retained data does not demonstrate a
+  production materializer defect.
+- The test now changes only the post-drift fresh daemon tick interval to the
+  existing positive-fixture value of 25 ms; its 45-second bound and P9/source
+  assertions remain unchanged. After the public P1 `Committed` receipt it
+  records the scheduler-probe cursor and requires a new exact-Execution
+  `PreDispatchLeaseCheck(dispatchable=true)` before accepting any P4 result.
+  The P4 selector still requires a later exact invocation `ExpectedFailure`;
+  no new process run has been performed after this correction.
 - The archive-hook cause is diagnosed and fixed in test infrastructure:
-  `validateResultDirectory` now creates a missing, lexically validated direct
-  child after validating the real `.test-results` root and immediately applies
-  the P39 private ACL. A test-local regression archives a disposable fixture
-  into a missing destination, verifies the protected directory has only the
-  current SID/SYSTEM/Administrators FullControl ACEs with no inherited or
-  broad principals, and verifies an archive-skipped JSON file inherits that
-  ACL. Non-Windows verification checks 0700 directory and 0600 JSON modes.
-  However, the missing DB means the fresh persisted P1 row,
-  episode binding, effective summary/digest, and current CandidateRead cannot
-  be compared after commit. Therefore why P4 remained parked is **NOT
-  DIAGNOSABLE** from this run. The evidence does not distinguish a failure to
-  rematerialize the committed policy from failure to reschedule the exact
-  pending action; the captured P4 probe may also predate the fresh P1 commit
-  because the test selected the first exact-invocation probe. A subsequent
-  source review confirmed this selector bug: a pre-P1
-  `SandboxPolicyRequiredInterruption` could mask a later post-P1
-  `ExpectedFailure`. The harness now records the executable-probe count before
-  the fresh P1 command and only accepts a later exact execution/invocation
-  `ExpectedFailure`; a pure oracle proves the old probe alone cannot pass.
-  This fixes test-oracle contamination but does not establish why the durable
-  invocation remained pending in the failed run. No production defect is
-  asserted for that P4 gap.
+  `validateResultDirectory` creates a missing, lexically validated direct child
+  after validating the real `.test-results` root and immediately applies the
+  P39 private ACL. A test-local regression verifies only current SID/SYSTEM/
+  Administrators FullControl ACEs on the protected directory and inherited
+  private ACL on archive-skipped JSON; non-Windows verifies 0700/0600 modes.
 - The earlier wrong-column failure and obsolete EAP-oracle failure remain
   separately classified harness/oracle issues, not evidence of a production
   defect. No further process run was performed.
