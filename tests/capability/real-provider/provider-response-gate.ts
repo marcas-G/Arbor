@@ -120,8 +120,7 @@ export const waitForHeldProviderResponse = async (
 export const providerCaptureMatchesSelector = (
   capture: ProviderCapture,
   selector: ProviderResponseGateSelector,
-): boolean =>
-  providerResponseMatchesSelector(capture.request ?? {}, selector);
+): boolean => providerResponseMatchesSelector(capture.request ?? {}, selector);
 
 export type {
   CorrelatedHeldProviderResponseCapture,
