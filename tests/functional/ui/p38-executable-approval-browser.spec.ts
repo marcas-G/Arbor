@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
 import {
@@ -19,6 +19,12 @@ import {
   waitForPublic,
 } from "../support/public-client.js";
 import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
+import {
+  commitTrustedLocalP11Policy,
+  createTrustedLocalP11FixtureEnvironment,
+  grantTrustedLocalP11Permission,
+  initializeTrustedLocalP11Worktree,
+} from "../support/trusted-local-p11-fixture.js";
 
 let fixture: ProductionFixture | undefined;
 let fixtureFailureEvidence: (() => unknown) | undefined;
@@ -115,6 +121,7 @@ interface P38BrowserDiagnosticContext {
   readonly effectLog: string;
   readonly providerRoutes: ReadonlyArray<Readonly<Record<string, unknown>>>;
   readonly daemonStdout: ReadonlyArray<string>;
+  readonly phase?: string;
   readonly approveCommand?: Readonly<Record<string, unknown>>;
 }
 
@@ -319,7 +326,6 @@ const readP38BrowserFailureSnapshot = (
       ? readFileSync(effectPath, "utf8")
       : "";
     const result = {
-      phase: "post-browser-approval-effect-wait",
       publicIdentity: {
         projectId: context.projectId,
         workspaceId: context.workspaceId,
@@ -339,9 +345,18 @@ const readP38BrowserFailureSnapshot = (
       toolResults,
       sandboxProviderUnavailableFacts: unavailableFacts,
       sandboxProviderUnavailableQueue: unavailableQueue,
+      sandboxPolicyDecisions: db
+        .prepare(
+          `SELECT policy_revision, policy_digest, profile_id, provider_id,
+                  episode_binding_json, decision_command_id, expires_at
+             FROM sandbox_policy_decisions WHERE execution_id = ?
+            ORDER BY policy_revision`,
+        )
+        .all(context.executionId),
       inbox,
       providerRoutes: context.providerRoutes,
       providerCallCount: context.providerRoutes.length,
+      phase: context.phase ?? "post-browser-approval-effect-wait",
       daemonStdoutTail: context.daemonStdout.slice(-100),
       effectFiles: {
         effectLogExists: existsSync(effectPath),
@@ -503,7 +518,7 @@ const startQueueApproval = async (marker: string) => {
   return { client, project, target: entry.target, effectLog };
 };
 
-test("P38 executable approval can be resolved from the browser Queue and resumes the same action", async ({
+test("P38 browser approval resumes the same action under explicitly configured TrustedLocal P11 policy", async ({
   page,
 }) => {
   const marker = `P38-BROWSER-${crypto.randomUUID().slice(0, 8)}`;
@@ -512,16 +527,23 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
   const effectLog = `p38-browser-${marker}.log`;
   const command =
     process.platform === "win32"
-      ? `if (Test-Path -LiteralPath 'proof.txt') { Add-Content -LiteralPath '${effectLog}' -Value '${secretCanary}'; mv -LiteralPath 'proof.txt' -Destination '${destination}' }`
-      : `if [ -f proof.txt ]; then printf '%s\\n' '${secretCanary}' >> '${effectLog}' && mv proof.txt '${destination}'; fi`;
+      ? `if (Test-Path -LiteralPath 'proof.txt') { Add-Content -LiteralPath '${effectLog}' -Value '${secretCanary}'; mv -LiteralPath 'proof.txt' -Destination '${destination}'; Write-Output '${marker}' }`
+      : `if [ -f proof.txt ]; then printf '%s\\n' '${secretCanary}' >> '${effectLog}' && mv proof.txt '${destination}' && printf '%s\\n' '${marker}'; fi`;
   const providerRoutes: Array<Readonly<Record<string, unknown>>> = [];
   const daemonStdout: string[] = [];
+  const trustedLocalP11 = createTrustedLocalP11FixtureEnvironment();
+  let diagnosticPhase = "fixture-started";
   let diagnosticContext: P38BrowserDiagnosticContext | undefined;
   let approveCommandEvidence: Readonly<Record<string, unknown>> | undefined;
   fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
     preserveDirectoryOnStop: true,
     onDaemonStdout: (line) => daemonStdout.push(line),
+    daemonEnvironment: trustedLocalP11.daemonEnvironment,
+    setupProbe: trustedLocalP11.setupProbe,
+    firstDaemonEntry: resolve(
+      "tests/functional/support/sandbox-policy-v2-daemon-child.mjs",
+    ),
     reply: (call) => {
       const availableToolNames = call.tools
         .map((tool) => tool.function?.name)
@@ -609,6 +631,12 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
     `P38 browser approval ${marker}`,
     { resourceSelection: "Profile" },
   );
+  await initializeTrustedLocalP11Worktree({
+    databaseFile: fixture.databaseFile,
+    projectId: project.projectId,
+    workspaceId: project.rootWorkspaceId,
+    path: fixture.workspaceDirectory,
+  });
   await client.command(project.projectId, "GrantPermission", {
     permissionGrantId: functionalId("pgr"),
     issuer: "user:local",
@@ -681,6 +709,7 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
     );
   }
   const executableTarget = approvalEntry.target;
+  diagnosticPhase = "executable-approval-visible";
   diagnosticContext = {
     marker,
     secretCanary,
@@ -703,12 +732,52 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
       activeFixture.workspaceDirectory,
       {
         ...context,
+        phase: diagnosticPhase,
         ...(approveCommandEvidence === undefined
           ? {}
           : { approveCommand: approveCommandEvidence }),
       },
     );
   };
+
+  // This journey explicitly tests the P38 browser approval surface under a
+  // configured TrustedLocal P11 policy. It does not qualify an OS sandbox.
+  const trustedLocalPolicyExpiresAt = new Date(
+    Date.now() + 60 * 60_000,
+  ).toISOString();
+  diagnosticPhase = "granting-trusted-local-policy-authority";
+  await grantTrustedLocalP11Permission({
+    client,
+    projectId: project.projectId,
+    executionId: executableTarget.executionId,
+    expiresAt: trustedLocalPolicyExpiresAt,
+  });
+  diagnosticPhase = "committing-trusted-local-p1-policy";
+  await commitTrustedLocalP11Policy({
+    client,
+    baseUrl: fixture.baseUrl,
+    databaseFile: fixture.databaseFile,
+    projectId: project.projectId,
+    workspaceId: project.rootWorkspaceId,
+    executionId: executableTarget.executionId,
+    expiresAt: trustedLocalPolicyExpiresAt,
+  });
+  diagnosticPhase = "trusted-local-p1-policy-committed";
+  const beforeBrowserApproval = readP38BrowserFailureSnapshot(
+    fixture.databaseFile,
+    fixture.workspaceDirectory,
+    { ...diagnosticContext, phase: diagnosticPhase },
+  );
+  expect(beforeBrowserApproval.approval).toMatchObject({
+    approval_id: executableTarget.approvalId,
+    state: "Pending",
+    revision: executableTarget.revision,
+  });
+  expect(beforeBrowserApproval.invocations).toEqual([]);
+  expect(beforeBrowserApproval.sandboxPolicyDecisions).toMatchObject([
+    { profile_id: "FullAccess", provider_id: "TrustedLocal" },
+  ]);
+
   expect(JSON.stringify(executableTarget)).not.toContain(secretCanary);
   expect(executableTarget.validatedArgumentsPreview).not.toContain(
     secretCanary,
@@ -760,6 +829,7 @@ test("P38 executable approval can be resolved from the browser Queue and resumes
     payload: approveRequest.payload,
     receipt: approveReceipt,
   };
+  diagnosticPhase = "browser-approved-exact-eap-receipt";
   expect(approveResponse.status()).toBe(200);
   expect(approveRequest).toMatchObject({
     commandType: "ResolveExecutableApproval",
