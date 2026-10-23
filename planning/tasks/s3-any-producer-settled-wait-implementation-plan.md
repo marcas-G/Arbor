@@ -4,12 +4,12 @@
 authorized.** This file schedules no source changes until both governance gates
 below are satisfied.
 
-**Planning base:** `366b83045aa59338c8c416179c55de66334b9b9e`  
+**Planning base:** `366b83045aa59338c8c416179c55de66334b9b9e`
 **Planning branch/worktree:** `codex/s3-any-producer-impl-plan` at
-`C:\Users\ThinkPad\.codex\worktrees\s3-impl-plan\Arbor`  
-**Fixed package:** `planning/manifests/s3-any-producer-settled-wait-governance-package.manifest.json`  
-**Package SHA-256:** `5b558d26b4140631f5c7a14bb743b1e42a9d8992d50feee1a3d2c3c98353b7c8`  
-**Suggested decision token:** `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`  
+`C:\Users\ThinkPad\.codex\worktrees\s3-impl-plan\Arbor`
+**Fixed package:** `planning/manifests/s3-any-producer-settled-wait-governance-package.manifest.json`
+**Package SHA-256:** `5b558d26b4140631f5c7a14bb743b1e42a9d8992d50feee1a3d2c3c98353b7c8`
+**Suggested decision token:** `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`
 **Review:** p41 record commit `96ba2801dfa7e411d667f83d446b33e4c6b7aaba`,
 Blocking = 0. Review is not acceptance or implementation authorization.
 
