@@ -8,7 +8,10 @@ import {
   type AhProbeHit,
   recordAhProbeLine,
 } from "../support/ah-probe-line.js";
-import { archiveProductionFixtureFailure } from "../support/fixture-failure-evidence.js";
+import {
+  archiveProductionFixtureFailure,
+  writeProductionFixtureArchiveSkipped,
+} from "../support/fixture-failure-evidence.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -197,11 +200,39 @@ afterEach(async ({ task }) => {
     }
     const phase = fixturePhases.get(fixture);
     fixturePhases.delete(fixture);
-    if (failed || stopError !== undefined) {
+    if (!fixture.daemonsExited()) {
       const resultDirectory = process.env.ARBOR_TEST_RESULT_DIRECTORY;
       if (resultDirectory === undefined) {
         throw new Error(
-          `AH7 failure evidence cannot be archived without ARBOR_TEST_RESULT_DIRECTORY; fixture=${fixture.directory}`,
+          `AH7 archive skipped because a daemon may still be active; result directory unavailable; database=${fixture.databaseFile}`,
+          { cause: stopError },
+        );
+      }
+      const skippedPath = writeProductionFixtureArchiveSkipped({
+        fixture,
+        resultDirectory,
+        evidence: {
+          testName: task.name,
+          boundary: phase?.boundary ?? "unknown",
+          phase: phase?.phase ?? "unknown",
+          stopFailed: stopError !== undefined,
+          startupDiagnostics: fixture.startupDiagnostics(),
+          daemonErrors: fixture.daemonErrors,
+        },
+      });
+      process.stdout.write(
+        `[AH7_ARCHIVE_SKIPPED] ${JSON.stringify({ testName: task.name, databaseFile: fixture.databaseFile, skippedPath })}\n`,
+      );
+      if (stopError === undefined) {
+        throw new Error(
+          `AH7 fixture cleanup returned while a daemon may still be active; database=${fixture.databaseFile}`,
+        );
+      }
+    } else if (failed || stopError !== undefined) {
+      const resultDirectory = process.env.ARBOR_TEST_RESULT_DIRECTORY;
+      if (resultDirectory === undefined) {
+        throw new Error(
+          `AH7 failure evidence cannot be archived without ARBOR_TEST_RESULT_DIRECTORY; database=${fixture.databaseFile}`,
           { cause: stopError },
         );
       }
@@ -223,9 +254,9 @@ afterEach(async ({ task }) => {
           phase: phase?.phase ?? "unknown",
           primaryDaemon: fixture.daemonProcessSnapshot(),
           startupDiagnostics: fixture.startupDiagnostics(),
+          daemonErrors: fixture.daemonErrors,
           snapshot,
-          cleanupError:
-            stopError instanceof Error ? stopError.message : undefined,
+          stopFailed: stopError !== undefined,
         },
       });
       process.stdout.write(
