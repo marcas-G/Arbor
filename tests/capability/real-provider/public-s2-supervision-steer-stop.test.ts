@@ -319,6 +319,20 @@ const runJourney = async (input: {
     responseGate: true,
   });
   const { fixture, captureFile } = run;
+  const releasedHeldRequestIds = new Set<string>();
+  const releaseTrackedProviderResponse = (requestId: string): void => {
+    releaseProviderResponse(run, requestId);
+    releasedHeldRequestIds.add(requestId);
+    pendingHeldRequestIds.delete(requestId);
+  };
+  const pendingHeldRequestIds = new Set<string>();
+  const waitForTrackedHeldProviderResponse = async (
+    input: Parameters<typeof waitForHeldProviderResponse>[1],
+  ): Promise<ProviderCapture> => {
+    const capture = await waitForHeldProviderResponse(run, input);
+    pendingHeldRequestIds.add(capture.requestId);
+    return capture;
+  };
   let pass = false;
   let failure: string | undefined;
   const state: Record<string, unknown> = {
@@ -388,7 +402,7 @@ const runJourney = async (input: {
         (capture) => capture.sequence,
       ),
     );
-    const firstHeldResponse = await waitForHeldProviderResponse(run, {
+    const firstHeldResponse = await waitForTrackedHeldProviderResponse({
       afterSequence: rootStarts - 1,
       deadlineAt,
       selector: workGateSelector,
@@ -470,7 +484,7 @@ const runJourney = async (input: {
       state.normalSteerMarker = correctionMarker;
       state.normalSteerReceipt = "Committed";
       let lastSequence = firstHeldResponse.sequence;
-      releaseProviderResponse(run, firstHeldResponse.requestId);
+      releaseTrackedProviderResponse(firstHeldResponse.requestId);
       const correctionRequestSelector = {
         ...workGateSelector,
         requiredMessageText: correctionMarker,
@@ -485,7 +499,7 @@ const runJourney = async (input: {
           deadlineAt,
         });
         try {
-          correctionRequest = await waitForHeldProviderResponse(run, {
+          correctionRequest = await waitForTrackedHeldProviderResponse({
             afterSequence: lastSequence,
             deadlineAt: Math.min(deadlineAt, Date.now() + 1_000),
             selector: correctionRequestSelector,
@@ -503,7 +517,7 @@ const runJourney = async (input: {
       lastSequence = correctionRequest.sequence;
       state.correctionProviderRequestId = correctionRequest.requestId;
       state.correctionInRealProviderRequest = true;
-      releaseProviderResponse(run, correctionRequest.requestId);
+      releaseTrackedProviderResponse(correctionRequest.requestId);
       let correctedContentObserved = false;
       let verification:
         | {
@@ -524,13 +538,13 @@ const runJourney = async (input: {
           deadlineAt,
         });
         try {
-          const held = await waitForHeldProviderResponse(run, {
+          const held = await waitForTrackedHeldProviderResponse({
             afterSequence: lastSequence,
             deadlineAt: Math.min(deadlineAt, Date.now() + 1_000),
             selector: workGateSelector,
           });
           lastSequence = held.sequence;
-          releaseProviderResponse(run, held.requestId);
+          releaseTrackedProviderResponse(held.requestId);
         } catch {
           // Check public lifecycle state between genuine upstream responses.
         }
@@ -624,7 +638,7 @@ const runJourney = async (input: {
       state.globalAfterAcceptance = globalAfterAcceptance;
     } else {
       let lastSequence = firstHeldResponse.sequence;
-      releaseProviderResponse(run, firstHeldResponse.requestId);
+      releaseTrackedProviderResponse(firstHeldResponse.requestId);
       while (
         Date.now() < deadlineAt &&
         !(
@@ -640,13 +654,13 @@ const runJourney = async (input: {
           deadlineAt,
         });
         try {
-          const nextHeld = await waitForHeldProviderResponse(run, {
+          const nextHeld = await waitForTrackedHeldProviderResponse({
             afterSequence: lastSequence,
             deadlineAt: Math.min(deadlineAt, Date.now() + 1_000),
             selector: workGateSelector,
           });
           lastSequence = nextHeld.sequence;
-          releaseProviderResponse(run, nextHeld.requestId);
+          releaseTrackedProviderResponse(nextHeld.requestId);
         } catch {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
@@ -663,7 +677,7 @@ const runJourney = async (input: {
       let heldAfterEffect: ProviderCapture | undefined;
       while (Date.now() < deadlineAt && heldAfterEffect === undefined) {
         try {
-          heldAfterEffect = await waitForHeldProviderResponse(run, {
+          heldAfterEffect = await waitForTrackedHeldProviderResponse({
             afterSequence: lastSequence,
             deadlineAt: Math.min(deadlineAt, Date.now() + 3_000),
             selector: workGateSelector,
@@ -762,7 +776,7 @@ const runJourney = async (input: {
         actualUpstreamBodyCapturedBeforeStop: true,
         responseReleasedAfterStopCommit: true,
       };
-      releaseProviderResponse(run, heldAfterEffect.requestId);
+      releaseTrackedProviderResponse(heldAfterEffect.requestId);
       const quiesced = await waitForPublic(
         async () => {
           const current = await client.view<{
@@ -860,6 +874,28 @@ const runJourney = async (input: {
         ? `${error.name}: ${error.message}`
         : String(error);
   } finally {
+    const capturesAtTeardown = readProviderCaptures(captureFile);
+    const unreleased = new Set(
+      [
+        ...pendingHeldRequestIds,
+        ...capturesAtTeardown
+          .filter((capture) => capture.event === "response-held")
+          .map((capture) => capture.requestId),
+      ].filter((requestId) => !releasedHeldRequestIds.has(requestId)),
+    );
+    if (pass && unreleased.size > 0) {
+      pass = false;
+      failure = `real-provider journey completed with ${unreleased.size} gated responses not explicitly released`;
+    }
+    for (const requestId of unreleased) {
+      try {
+        releaseTrackedProviderResponse(requestId);
+      } catch (error) {
+        pass = false;
+        failure = `${failure ?? ""}\nfailed to release held real response during teardown: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+    state.teardownReleasedHeldResponseCount = unreleased.size;
     const finalized = await finishRealProviderFixture(
       run,
       pass ? "PASS" : "FAIL",
