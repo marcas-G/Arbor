@@ -93,6 +93,25 @@ const completedProviderRequestIds = (
       .map((capture) => capture.requestId),
   );
 
+const systemPromptText = (capture: ProviderCapture): string => {
+  const messages = capture.request?.messages;
+  if (!Array.isArray(messages)) return "";
+  return messages
+    .filter(
+      (message): message is Record<string, unknown> =>
+        typeof message === "object" && message !== null,
+    )
+    .filter(
+      (message) => message.role === "system" || message.role === "developer",
+    )
+    .map((message) =>
+      typeof message.content === "string"
+        ? message.content
+        : JSON.stringify(message.content ?? ""),
+    )
+    .join("\n");
+};
+
 const remainingJourneyTime = (deadlineAt: number): number => {
   const remaining = deadlineAt - Date.now();
   if (remaining <= 0) {
@@ -105,6 +124,14 @@ const remainingJourneyTime = (deadlineAt: number): number => {
 
 interface PublicScenarioState {
   readonly project?: FunctionalProject;
+  readonly rootPromptEvidence?: {
+    readonly providerRequestId: string;
+    readonly promptAssetRef: "prompt:root-conversation:goal-placement:v7";
+    readonly systemPromptSha256: string;
+    readonly routingClauseObserved: true;
+    readonly ordinaryConversationBoundaryObserved: true;
+    readonly noAssumedResourceOrPermissionClauseObserved: true;
+  };
   readonly workId?: string;
   readonly verificationId?: string;
   readonly acceptedWork?: unknown;
@@ -819,6 +846,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
           process.env[CAPTURE_FILE_ENV] = captureFile;
         },
       });
+      activeFixture = fixture;
     } finally {
       if (previousCapturePath === undefined)
         delete process.env[CAPTURE_FILE_ENV];
@@ -844,10 +872,12 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
         failureCleanup:
           "Journey failures after daemon start retain the P39-private fixture directory/database and run-local P39-private capture/evidence directory until human review. Provider capture is written directly to the run-local private directory; fixture startup failures follow bounded helper cleanup and retain the private evidence record.",
         passCleanup:
-          "After pass, afterEach removes the fixture directory/database/capture; the private evidence directory is retained for qualification review.",
+          "After all public assertions and bounded fixture stop pass, the test removes only the fixture directory/database; the run-local P39-private capture/evidence directory is retained for qualification review.",
       },
     };
-    const client = makePublicClient(fixture.baseUrl);
+    const client = makePublicClient(fixture.baseUrl, {
+      deadlineAt: journeyDeadlineAt,
+    });
     const project = await createFunctionalProject(
       client,
       fixture.workspaceDirectory,
@@ -882,6 +912,46 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       marker,
       journeyDeadlineAt,
     );
+    const rootProviderTurnMaybe = await waitForPublic<ProviderCapture | null>(
+      async () =>
+        readProviderCaptures(capturePath).find(
+          (capture) =>
+            capture.event === "response-complete" &&
+            capture.path === "/chat/completions" &&
+            capture.request !== undefined,
+        ) ?? null,
+      (capture) => capture !== null,
+      remainingJourneyTime(journeyDeadlineAt),
+    );
+    if (rootProviderTurnMaybe === null) {
+      throw new Error(
+        "real RootConversation Provider request was not captured",
+      );
+    }
+    const rootProviderTurn = rootProviderTurnMaybe;
+    const rootSystemPrompt = systemPromptText(rootProviderTurn);
+    expect(rootSystemPrompt).toContain(
+      "RootConversation intentionally has no executable Work tools",
+    );
+    expect(rootSystemPrompt).toContain(
+      "do not create Work just because the user asked a question",
+    );
+    expect(rootSystemPrompt).toContain(
+      "do not promise a tool, resource, or permission that canonical profile/context does not expose",
+    );
+    state = {
+      ...state,
+      rootPromptEvidence: {
+        providerRequestId: rootProviderTurn.requestId,
+        promptAssetRef: "prompt:root-conversation:goal-placement:v7",
+        systemPromptSha256: createHash("sha256")
+          .update(rootSystemPrompt)
+          .digest("hex"),
+        routingClauseObserved: true,
+        ordinaryConversationBoundaryObserved: true,
+        noAssumedResourceOrPermissionClauseObserved: true,
+      },
+    };
     await client.command(project.projectId, "ResolveControlApproval", {
       approvalId: approval.approvalId,
       expectedRevision: approval.revision,
@@ -1049,7 +1119,9 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
     await fixture.restart({
       daemonEnvironment: { [CAPTURE_FILE_ENV]: capturePath },
     });
-    const restartedClient = makePublicClient(fixture.baseUrl);
+    const restartedClient = makePublicClient(fixture.baseUrl, {
+      deadlineAt: journeyDeadlineAt,
+    });
     const restarted = await waitForPublic(
       () =>
         currentState(restartedClient, project, currentWork.workId as string),
@@ -1134,8 +1206,28 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       daemon: fixture?.daemonProcessSnapshot() ?? null,
     };
     errorDetail = `${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}\n${JSON.stringify(diagnostics)}`;
-    throw new Error(`REAL public S1 failed: ${redactText(errorDetail)}`);
+    result = "FAIL";
   } finally {
+    let teardownFailure: unknown;
+    if (fixture !== undefined) {
+      activeFixture = undefined;
+      try {
+        await fixture.stop();
+      } catch (error) {
+        teardownFailure = error;
+        result = "FAIL";
+        errorDetail = `${errorDetail === undefined ? "" : `${errorDetail}\n`}fixture stop failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`;
+      }
+      if (result === "PASS" && teardownFailure === undefined) {
+        try {
+          removeFunctionalFixtureDirectory(fixture.directory);
+        } catch (error) {
+          teardownFailure = error;
+          result = "FAIL";
+          errorDetail = `fixture directory cleanup failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`;
+        }
+      }
+    }
     if (privateEvidenceDirectory !== undefined) {
       const captures =
         captureFile === undefined ? [] : readProviderCaptures(captureFile);
@@ -1149,6 +1241,11 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       });
       console.info(`REAL public S1 evidence: ${evidencePath}`);
     }
+  }
+  if (result === "FAIL") {
+    throw new Error(
+      `REAL public S1 failed: ${redactText(errorDetail ?? "qualification failed without diagnostics")}`,
+    );
   }
 });
 
