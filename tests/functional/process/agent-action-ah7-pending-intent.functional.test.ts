@@ -9,6 +9,10 @@ import {
   recordAhProbeLine,
 } from "../support/ah-probe-line.js";
 import {
+  archiveProductionFixtureFailure,
+  writeProductionFixtureArchiveSkipped,
+} from "../support/fixture-failure-evidence.js";
+import {
   type ProductionFixture,
   startProductionFixture,
 } from "../support/production-fixture.js";
@@ -19,8 +23,13 @@ import {
   waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
+import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
 
 const fixtures: ProductionFixture[] = [];
+const fixturePhases = new Map<
+  ProductionFixture,
+  { readonly boundary: Ah7PendingIntentBoundary; phase: string }
+>();
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
 const ah7PendingIntentBoundaries = [
   "AH7AfterActionIntentCommit",
@@ -174,14 +183,90 @@ let activePhase: string | undefined;
 let activeExecutionId: string | undefined;
 let activeDiagnosticTimer: ReturnType<typeof setTimeout> | undefined;
 
-afterEach(async () => {
+afterEach(async ({ task }) => {
   if (activeDiagnosticTimer !== undefined) {
     clearTimeout(activeDiagnosticTimer);
     activeDiagnosticTimer = undefined;
   }
   activePhase = undefined;
   activeExecutionId = undefined;
-  for (const fixture of fixtures.splice(0)) await fixture.stop();
+  const failed = (task.result?.errors?.length ?? 0) > 0;
+  for (const fixture of fixtures.splice(0)) {
+    let stopError: unknown;
+    try {
+      await fixture.stop();
+    } catch (error) {
+      stopError = error;
+    }
+    const phase = fixturePhases.get(fixture);
+    fixturePhases.delete(fixture);
+    if (!fixture.daemonsExited()) {
+      const resultDirectory = process.env.ARBOR_TEST_RESULT_DIRECTORY;
+      if (resultDirectory === undefined) {
+        throw new Error(
+          `AH7 archive skipped because a daemon may still be active; result directory unavailable; database=${fixture.databaseFile}`,
+          { cause: stopError },
+        );
+      }
+      const skippedPath = writeProductionFixtureArchiveSkipped({
+        fixture,
+        resultDirectory,
+        evidence: {
+          testName: task.name,
+          boundary: phase?.boundary ?? "unknown",
+          phase: phase?.phase ?? "unknown",
+          stopFailed: stopError !== undefined,
+          startupDiagnostics: fixture.startupDiagnostics(),
+          daemonErrors: fixture.daemonErrors,
+        },
+      });
+      process.stdout.write(
+        `[AH7_ARCHIVE_SKIPPED] ${JSON.stringify({ testName: task.name, databaseFile: fixture.databaseFile, skippedPath })}\n`,
+      );
+      if (stopError === undefined) {
+        throw new Error(
+          `AH7 fixture cleanup returned while a daemon may still be active; database=${fixture.databaseFile}`,
+        );
+      }
+    } else if (failed || stopError !== undefined) {
+      const resultDirectory = process.env.ARBOR_TEST_RESULT_DIRECTORY;
+      if (resultDirectory === undefined) {
+        throw new Error(
+          `AH7 failure evidence cannot be archived without ARBOR_TEST_RESULT_DIRECTORY; database=${fixture.databaseFile}`,
+          { cause: stopError },
+        );
+      }
+      let snapshot: unknown;
+      try {
+        snapshot = durableSnapshot(fixture.databaseFile);
+      } catch (error) {
+        snapshot = {
+          snapshotError: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const archivedDirectory = archiveProductionFixtureFailure({
+        fixture,
+        resultDirectory,
+        artifactPrefix: "ah7-pending-intent",
+        evidence: {
+          testName: task.name,
+          boundary: phase?.boundary ?? "unknown",
+          phase: phase?.phase ?? "unknown",
+          primaryDaemon: fixture.daemonProcessSnapshot(),
+          startupDiagnostics: fixture.startupDiagnostics(),
+          daemonErrors: fixture.daemonErrors,
+          snapshot,
+          stopFailed: stopError !== undefined,
+        },
+      });
+      process.stdout.write(
+        `[AH7_FAILURE_ARTIFACT] ${JSON.stringify({ testName: task.name, boundary: phase?.boundary ?? "unknown", phase: phase?.phase ?? "unknown", archivedDirectory })}\n`,
+      );
+    } else {
+      removeFunctionalFixtureDirectory(fixture.directory);
+    }
+    if (stopError !== undefined) throw stopError;
+  }
 });
 
 describe("AH7 AgentLoop and P4 tool intent process crash", () => {
@@ -209,6 +294,8 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         let latestToolResult = "<none>";
         const fixture = await startProductionFixture({
           admitWorkspaceDirectory: true,
+          daemonEnvironment: { ARBOR_AH19_STARTUP_TRACE: "1" },
+          preserveDirectoryOnStop: true,
           reply: (call) => {
             const context = JSON.stringify(call.messages);
             const available = new Set(
@@ -308,6 +395,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           },
         });
         fixtures.push(fixture);
+        fixturePhases.set(fixture, { boundary, phase: "fixture-ready" });
         activePhase = "fixture-ready";
         if (boundary === "AH7BeforeToolSettlementCommit") {
           activeDiagnosticTimer = setTimeout(() => {
@@ -405,6 +493,9 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         // redispatch the same Open Work under the selected probe.
         await fixture.crash();
         activePhase = "seed-daemon-exited";
+        const fixturePhase = fixturePhases.get(fixture);
+        if (fixturePhase !== undefined)
+          fixturePhase.phase = "probe-daemon-start";
         probeArmed = true;
         const targetProviderCallStart = fixture.providerCalls.length;
         await fixture.restart({
@@ -412,6 +503,8 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
         });
         activePhase = "probe-daemon-ready";
+        if (fixturePhase !== undefined)
+          fixturePhase.phase = "probe-daemon-ready";
 
         const observed = await waitForPublic(
           async () => ({ hits, targetProviderCalls }),
@@ -603,8 +696,13 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
             "must not be read by replayed invocation",
           );
         }
+        activePhase = "recovery-daemon-start";
+        if (fixturePhase !== undefined)
+          fixturePhase.phase = "recovery-daemon-start";
         await fixture.restart();
         activePhase = "recovery-daemon-ready";
+        if (fixturePhase !== undefined)
+          fixturePhase.phase = "recovery-daemon-ready";
         const recovered = await waitForPublic(
           async () => durableSnapshot(fixture.databaseFile),
           (value) => {

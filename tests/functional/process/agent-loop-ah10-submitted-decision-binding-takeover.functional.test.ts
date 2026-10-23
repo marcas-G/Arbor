@@ -2,6 +2,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  archiveProductionFixtureFailure,
+  writeProductionFixtureArchiveSkipped,
+} from "../support/fixture-failure-evidence.js";
 import { expireExecutionLeaseAfterOwnerExitForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
@@ -16,6 +20,7 @@ import {
   waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
+import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
 
 interface Probe {
   readonly tag: "AH10_PROBE";
@@ -133,11 +138,91 @@ interface BindingFact {
 }
 
 const fixtures: ProductionFixture[] = [];
+const retainedFixtures = new WeakSet<ProductionFixture>();
 const ah10Child = resolve("tests/functional/support/ah10-process-child.mjs");
 
 afterEach(async () => {
-  for (const fixture of fixtures.splice(0)) await fixture.stop();
+  for (const fixture of fixtures.splice(0)) {
+    await fixture.stop();
+    if (!retainedFixtures.has(fixture)) {
+      removeFunctionalFixtureDirectory(fixture.directory);
+    }
+  }
 });
+
+const readProjectFailureSnapshot = (
+  databaseFile: string,
+  projectId: string,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    db.exec("BEGIN");
+    const snapshot = {
+      projectId,
+      executions: db
+        .prepare(
+          `SELECT execution_id, project_id, workspace_id, episode_kind,
+                  episode_ref, settled_at, settlement_kind
+             FROM executions WHERE project_id = ? ORDER BY admitted_at`,
+        )
+        .all(projectId),
+      steps: db
+        .prepare(
+          `SELECT s.execution_id, s.logical_step_no, s.repair_attempt,
+                  s.provider_turn_id, s.manifest_id, s.state, s.revision,
+                  s.next_action_index, s.settlement_json
+             FROM agent_loop_steps s
+             JOIN executions e ON e.execution_id = s.execution_id
+            WHERE e.project_id = ?
+            ORDER BY s.execution_id, s.logical_step_no, s.repair_attempt`,
+        )
+        .all(projectId),
+      actions: db
+        .prepare(
+          `SELECT a.execution_id, s.provider_turn_id, a.logical_step_no,
+                  a.repair_attempt, a.logical_action_id, a.action_index,
+                  a.observation_source_ref, a.call_ref, a.action_kind, a.state
+             FROM agent_loop_step_actions a
+             JOIN agent_loop_steps s
+               ON s.execution_id = a.execution_id
+              AND s.logical_step_no = a.logical_step_no
+              AND s.repair_attempt = a.repair_attempt
+             JOIN executions e ON e.execution_id = a.execution_id
+            WHERE e.project_id = ?
+            ORDER BY a.execution_id, a.logical_step_no, a.repair_attempt,
+                     a.action_index`,
+        )
+        .all(projectId),
+      decisions: db
+        .prepare(
+          `SELECT d.decision_id, d.workspace_id, d.candidate_work_ids_json,
+                  d.state, d.selected_work_id, d.revision
+             FROM work_selection_decision_requests d
+             JOIN workspaces w ON w.workspace_id = d.workspace_id
+            WHERE w.project_id = ? ORDER BY d.created_at`,
+        )
+        .all(projectId),
+      events: db
+        .prepare(
+          `SELECT event_id, project_id, sequence, event_type, aggregate_ref,
+                  payload_json, occurred_at
+             FROM domain_events WHERE project_id = ? ORDER BY sequence`,
+        )
+        .all(projectId),
+    };
+    db.exec("COMMIT");
+    return snapshot;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Preserve the original snapshot failure.
+    }
+    throw error;
+  } finally {
+    db.close();
+  }
+};
 
 const pushProbe = (events: Probe[], line: string) => {
   try {
@@ -407,13 +492,20 @@ describe("AH10 P41 Submitted DecisionEpisode binding process recovery", () => {
       let proposalSent = false;
       let selectionProviderCalls = 0;
       let selectedWorkId: string | undefined;
+      let lastProviderToolNames: string[] = [];
+      let lastProviderCandidateIds: string[] = [];
+      let lastSelectionProviderTools: string[] = [];
+      let lastSelectionCandidateIds: string[] = [];
       const childName = `binding-${marker}`;
       const fixture = await startProductionFixture({
         isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
+        preserveDirectoryOnStop: true,
         reply: (call) => {
           const tools = availableTools(call);
           const messageText = JSON.stringify(call.messages);
+          lastProviderToolNames = [...tools].sort();
+          lastProviderCandidateIds = extractCandidateWorkIds(call.messages);
           if (
             tools.has("propose_workspace") &&
             messageText.includes(`Propose ${childName}`)
@@ -448,6 +540,8 @@ describe("AH10 P41 Submitted DecisionEpisode binding process recovery", () => {
           if (tools.has("select_current_work")) {
             selectionProviderCalls += 1;
             const candidates = extractCandidateWorkIds(call.messages);
+            lastSelectionProviderTools = [...tools].sort();
+            lastSelectionCandidateIds = candidates;
             if (candidates.length < 2) {
               return { _tag: "HttpError", status: 422 };
             }
@@ -586,18 +680,137 @@ describe("AH10 P41 Submitted DecisionEpisode binding process recovery", () => {
         provenance: { source: "HumanInput" },
       });
 
-      const oldAction = await waitForPublic(
-        async () =>
-          events.find(
-            (event) =>
-              event.role === "old" &&
-              event.boundary === "AH7AfterActionIntentCommit" &&
-              event.actionKind === "select_current_work" &&
-              event.actionIndex === 0,
-          ),
-        (event) => event !== undefined,
-        90_000,
-      );
+      let oldAction: Probe | undefined;
+      try {
+        oldAction = await waitForPublic(
+          async () =>
+            events.find(
+              (event) =>
+                event.role === "old" &&
+                event.boundary === "AH7AfterActionIntentCommit" &&
+                event.actionKind === "select_current_work" &&
+                event.actionIndex === 0,
+            ),
+          (event) => event !== undefined,
+          90_000,
+        );
+      } catch (waitError) {
+        let projectSnapshot: ReturnType<
+          typeof readProjectFailureSnapshot
+        > | null = null;
+        let projectSnapshotError: string | undefined;
+        try {
+          projectSnapshot = readProjectFailureSnapshot(
+            fixture.databaseFile,
+            project.projectId,
+          );
+        } catch (error) {
+          projectSnapshotError =
+            error instanceof Error ? error.message : String(error);
+        }
+        let stopError: string | undefined;
+        try {
+          await fixture.crash();
+          await fixture.stop();
+        } catch (error) {
+          stopError = error instanceof Error ? error.message : String(error);
+        }
+        const evidence = {
+          testCase:
+            "AH10 P41 Submitted DecisionEpisode binding process recovery",
+          marker,
+          corruption,
+          factCommitSide,
+          failure:
+            waitError instanceof Error ? waitError.message : String(waitError),
+          failureStage:
+            "waiting for the old select_current_work action-intent probe",
+          provider: {
+            lastToolNames: lastProviderToolNames,
+            lastCandidateIds: lastProviderCandidateIds,
+            lastCandidateCount: lastProviderCandidateIds.length,
+            toolNames: lastSelectionProviderTools,
+            candidateIds: lastSelectionCandidateIds,
+            candidateCount: lastSelectionCandidateIds.length,
+            selectionProviderCalls,
+            assignmentsSent,
+            waitSent,
+            seedWaitSent,
+            selectedWorkId: selectedWorkId ?? null,
+          },
+          oldDaemon: {
+            process: fixture.daemonProcessSnapshot(),
+            stderrTail: fixture.daemonErrors.slice(-24),
+            stopError: stopError ?? null,
+          },
+          probeTail: events.filter((event) => event.role === "old").slice(-40),
+          projectSnapshot,
+          projectSnapshotError: projectSnapshotError ?? null,
+        };
+        retainedFixtures.add(fixture);
+        const resultDirectory = process.env.ARBOR_TEST_RESULT_DIRECTORY;
+        let evidenceArchiveError: string | undefined;
+        if (resultDirectory === undefined || resultDirectory.length === 0) {
+          try {
+            writeFileSync(
+              resolve(fixture.directory, "failure-evidence.json"),
+              `${JSON.stringify(
+                {
+                  ...evidence,
+                  archiveSkipped: true,
+                  reason: "ARBOR_TEST_RESULT_DIRECTORY is unset",
+                  fixtureDirectory: fixture.directory,
+                  databaseFile: fixture.databaseFile,
+                },
+                null,
+                2,
+              )}\n`,
+              { flag: "wx" },
+            );
+          } catch (error) {
+            evidenceArchiveError =
+              error instanceof Error ? error.message : String(error);
+          }
+        } else {
+          try {
+            archiveProductionFixtureFailure({
+              fixture,
+              resultDirectory,
+              artifactPrefix: "p41-manifest-after-commit-old-action-timeout",
+              evidence,
+            });
+          } catch (archiveError) {
+            try {
+              writeProductionFixtureArchiveSkipped({
+                fixture,
+                resultDirectory,
+                evidence: {
+                  ...evidence,
+                  archiveFailure:
+                    archiveError instanceof Error
+                      ? archiveError.message
+                      : String(archiveError),
+                },
+              });
+            } catch (skipError) {
+              evidenceArchiveError = [archiveError, skipError]
+                .map((error) =>
+                  error instanceof Error ? error.message : String(error),
+                )
+                .join("; ");
+            }
+          }
+        }
+        if (evidenceArchiveError !== undefined) {
+          console.error(
+            `[P41 fixture failure evidence archive error] ${evidenceArchiveError}`,
+          );
+          if (waitError instanceof Error) {
+            Object.assign(waitError, { evidenceArchiveError });
+          }
+        }
+        throw waitError;
+      }
       if (oldAction === undefined || selectedWorkId === undefined) {
         throw new Error(
           "Scheduler did not produce the pinned selection action",
