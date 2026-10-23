@@ -61,7 +61,10 @@ import type {
 } from "./authority.js";
 import type { CommandResult } from "./command-result.js";
 import type { SteerWorkPayload } from "./commands/steer-work.js";
-import type { CriticalSteerPreparation } from "./critical-steer.js";
+import type {
+  CriticalSteerActiveMain,
+  CriticalSteerPreparation,
+} from "./critical-steer.js";
 import type { CommandInputIssue } from "./external-command-codec.js";
 import type { CommandRejection } from "./rejection.js";
 
@@ -90,10 +93,8 @@ export interface GatewayEnvelope<C> {
   readonly prepareCriticalSteerStop?: (
     payload: SteerWorkPayload,
     context: CommandSubmissionContext,
-  ) => Effect.Effect<
-    CriticalSteerPreparation,
-    CommandHandlerError | TransactionOperationalFailure
-  >;
+    activeMain?: CriticalSteerActiveMain,
+  ) => Effect.Effect<CriticalSteerPreparation, CommandHandlerError>;
 }
 
 export interface CommandOutcome<R> {
