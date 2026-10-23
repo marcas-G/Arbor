@@ -38,6 +38,8 @@ interface Probe {
   readonly routeKind?: "Control" | "Executable";
   readonly actionIndex?: number;
   readonly callRef?: string;
+  readonly fencingGeneration?: number;
+  readonly pauseRequested?: boolean;
   readonly controlEffectGate?: boolean;
   readonly staleEffectSuppressed?: boolean;
   readonly stage?: string;
@@ -229,7 +231,9 @@ const captureGen1TakeoverWaitFailure = async (input: {
   readonly workspaceId: string;
   readonly workId: string;
   readonly oldIntent: Probe;
-  readonly oldLease: ReturnType<typeof expireLiveOwnerLeaseForStaleProbe>;
+  readonly oldLeaseBeforeExpiry?: ReturnType<
+    typeof expireLiveOwnerLeaseForStaleProbe
+  >;
   readonly targetCalls: number;
   readonly armed: boolean;
   readonly seedWaitIssued: boolean;
@@ -268,7 +272,7 @@ const captureGen1TakeoverWaitFailure = async (input: {
     providerTurnId: input.oldIntent.providerTurnId ?? null,
     callRef: input.oldIntent.callRef ?? null,
     actionIndex: input.oldIntent.actionIndex ?? null,
-    oldLeaseBeforeExpiry: input.oldLease,
+    oldLeaseBeforeExpiry: input.oldLeaseBeforeExpiry ?? null,
     testState: {
       armed: input.armed,
       seedWaitIssued: input.seedWaitIssued,
@@ -489,6 +493,7 @@ const qualifiesLiveStaleGenerationSuppression = (
         ARBOR_AH10_CONTROL_EFFECT_KIND: action,
         ARBOR_AH10_EMIT_STALE_GATE_RELEASE: "1",
         ARBOR_AH10_GATE_ACTION_KIND: action,
+        ARBOR_AH10_DELAY_LEASE_RENEWAL_PAUSE: "1",
       },
     });
     await client.command(project.projectId, "SteerWork", {
@@ -511,12 +516,14 @@ const qualifiesLiveStaleGenerationSuppression = (
       throw new Error("old stale fixture ActionIntent has no LogicalActionId");
     }
     expect(oldIntent).toMatchObject({ routeKind: "Control" });
-    const oldLease = expireLiveOwnerLeaseForStaleProbe(
-      fixture.databaseFile,
-      oldIntent.executionId,
+    writeFileSync(
+      resolve(fixture.directory, "ah10-gates", "old-lease-renewal.pause"),
+      "pause old generation lease renewal until takeover",
     );
-    expect(oldLease.generation).toBe(0);
 
+    let oldLeaseBeforeExpiry:
+      | ReturnType<typeof expireLiveOwnerLeaseForStaleProbe>
+      | undefined;
     const newDaemon = await fixture.startAdditionalDaemon({
       entry: childEntry,
       daemonEnvironment: {
@@ -528,15 +535,38 @@ const qualifiesLiveStaleGenerationSuppression = (
       },
       onStdout: (line) => captureProbe(line, newStartupPhases),
     });
-    await waitForPublic(
-      async () =>
-        events.find(
+    const takeover = await waitForPublic(
+      async () => {
+        const renewalPause = events.find(
           (event) =>
-            event.role === "new" &&
-            event.boundary === "AH10AfterLeaseAcquired" &&
-            event.executionId === oldIntent.executionId,
-        ),
-      (event) => event !== undefined,
+            event.role === "old" &&
+            event.boundary === "AH10BeforeLeaseRenewal" &&
+            event.executionId === oldIntent.executionId &&
+            event.pauseRequested === true,
+        );
+        if (renewalPause !== undefined && oldLeaseBeforeExpiry === undefined) {
+          oldLeaseBeforeExpiry = expireLiveOwnerLeaseForStaleProbe(
+            fixture.databaseFile,
+            oldIntent.executionId,
+          );
+          if (oldLeaseBeforeExpiry.generation !== 0) {
+            throw new Error(
+              "old lease generation changed before test takeover",
+            );
+          }
+        }
+        return {
+          renewalPause,
+          acquired: events.find(
+            (event) =>
+              event.role === "new" &&
+              event.boundary === "AH10AfterLeaseAcquired" &&
+              event.executionId === oldIntent.executionId,
+          ),
+        };
+      },
+      (value) =>
+        value.renewalPause !== undefined && value.acquired !== undefined,
       45_000,
     ).catch((error: unknown) =>
       captureGen1TakeoverWaitFailure({
@@ -549,7 +579,7 @@ const qualifiesLiveStaleGenerationSuppression = (
         workspaceId: project.rootWorkspaceId,
         workId: work.workId,
         oldIntent,
-        oldLease,
+        ...(oldLeaseBeforeExpiry === undefined ? {} : { oldLeaseBeforeExpiry }),
         targetCalls: targetCalls.count,
         armed,
         seedWaitIssued,
@@ -560,6 +590,14 @@ const qualifiesLiveStaleGenerationSuppression = (
         waitError: error,
       }),
     );
+    expect(oldLeaseBeforeExpiry?.generation).toBe(0);
+    expect(takeover.renewalPause).toMatchObject({
+      role: "old",
+      boundary: "AH10BeforeLeaseRenewal",
+      executionId: oldIntent.executionId,
+      fencingGeneration: 0,
+      pauseRequested: true,
+    });
     const newIntent = await releaseActionIntentGate({
       fixture,
       events,
