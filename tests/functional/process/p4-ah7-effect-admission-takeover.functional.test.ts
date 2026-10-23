@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -17,19 +18,37 @@ import {
   waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
+import {
+  commitTrustedLocalP11Policy,
+  createTrustedLocalP11FixtureEnvironment,
+  grantTrustedLocalP11Permission,
+  initializeTrustedLocalP11Worktree,
+} from "../support/trusted-local-p11-fixture.js";
 
 interface Probe {
   readonly tag: "P4_FENCE_PROBE";
   readonly role: "old" | "new";
   readonly boundary: string;
-  readonly executionId: string;
+  readonly executionId?: string;
   readonly invocationId?: string;
   readonly callRef?: string;
   readonly fencingGeneration?: number;
+  readonly outcomeTag?: string;
   readonly definition?: {
     readonly version?: string;
     readonly hash?: string;
     readonly sideEffectSemantics?: string;
+  };
+  readonly registered?: boolean;
+  readonly profile?: {
+    readonly toolName?: string;
+    readonly toolVersion?: string;
+    readonly toolDefinitionHash?: string;
+    readonly profileId?: string;
+    readonly profileVersion?: string;
+    readonly profileHash?: string;
+    readonly profileProtocol?: string;
+    readonly effectKey?: string;
   };
 }
 
@@ -459,6 +478,64 @@ const recordProbe = (events: Probe[], line: string) => {
   }
 };
 
+const shellProfileEnvironment = (
+  semantics: "Reconcilable" | "NonIdempotent",
+): Record<string, string> =>
+  semantics === "Reconcilable"
+    ? { ARBOR_P4_FENCE_RECONCILABLE: "1" }
+    : { ARBOR_P4_FENCE_NON_IDEMPOTENT: "1" };
+
+const assertShellProfileSnapshot = async (
+  events: Probe[],
+  role: "old" | "new",
+  semantics: "Reconcilable" | "NonIdempotent",
+): Promise<void> => {
+  const snapshot = await waitForPublic(
+    async () =>
+      events.find(
+        (event) =>
+          event.role === role && event.boundary === "P4ShellDefinitionSnapshot",
+      ),
+    (event) => event !== undefined,
+    20_000,
+  );
+  expect(snapshot?.definition).toMatchObject({
+    version: "3",
+    hash:
+      semantics === "Reconcilable"
+        ? "shell-v3-p4-fence-test-reconcilable"
+        : "shell-v2-p4-lease-fencing",
+    sideEffectSemantics: semantics,
+  });
+  const registrySnapshot = await waitForPublic(
+    async () =>
+      events.find(
+        (event) =>
+          event.role === role &&
+          event.boundary === "P4TestReconciliationRegistrySnapshot",
+      ),
+    (event) => event !== undefined,
+    20_000,
+  );
+  expect(registrySnapshot?.registered).toBe(semantics === "Reconcilable");
+  if (semantics === "Reconcilable") {
+    expect(registrySnapshot?.profile).toEqual({
+      toolName: "shell",
+      toolVersion: "3",
+      toolDefinitionHash: "shell-v3-p4-fence-test-reconcilable",
+      profileId: "p4-fence-test-reconciliation",
+      profileVersion: "1",
+      profileHash: createHash("sha256")
+        .update("arbor-p4-fence-test-reconciliation-v1")
+        .digest("hex"),
+      profileProtocol: "p4-fence-test-reconciliation-v1",
+      effectKey: "p4-fence-test:tinv_p4_fence_profile_probe",
+    });
+  } else {
+    expect(registrySnapshot?.profile).toBeUndefined();
+  }
+};
+
 describe("P4 AH7 effect-admission generation takeover", () => {
   for (const scenario of [
     {
@@ -489,17 +566,41 @@ describe("P4 AH7 effect-admission generation takeover", () => {
       const events: Probe[] = [];
       let targetProviderCalls = 0;
       let manualWaitCalls = 0;
+      let shellResponseGated = false;
+      let releaseShellResponse!: () => void;
+      let observeShellRequest!: () => void;
+      const shellResponseGate = new Promise<void>((resolveGate) => {
+        releaseShellResponse = resolveGate;
+      });
+      const shellRequestObserved = new Promise<void>((resolveObserved) => {
+        observeShellRequest = resolveObserved;
+      });
+      const p11Fixture = createTrustedLocalP11FixtureEnvironment();
+      const daemonEnvironment = p11Fixture.daemonEnvironment;
+      Object.assign(daemonEnvironment, {
+        ARBOR_P4_FENCE_ROLE: "old",
+        ARBOR_P4_FENCE_ADMISSION_BOUNDARY: scenario.boundary,
+        ...shellProfileEnvironment(scenario.sideEffectSemantics),
+      });
       const fixture = await startProductionFixture({
         admitWorkspaceDirectory: true,
         firstDaemonEntry: fenceChild,
-        daemonEnvironment: {
-          ARBOR_P4_FENCE_ROLE: "old",
-          ARBOR_P4_FENCE_ADMISSION_BOUNDARY: scenario.boundary,
-          ...(scenario.sideEffectSemantics === "NonIdempotent"
-            ? { ARBOR_P4_FENCE_NON_IDEMPOTENT: "1" }
-            : {}),
-        },
+        daemonEnvironment,
+        setupProbe: p11Fixture.setupProbe,
         onDaemonStdout: (line) => recordProbe(events, line),
+        beforeResponse: async (call) => {
+          const context = JSON.stringify(call.messages);
+          if (
+            !shellResponseGated &&
+            call.tools.some((tool) => tool.function?.name === "shell") &&
+            context.includes(steerMarker)
+          ) {
+            shellResponseGated = true;
+            observeShellRequest();
+            await shellResponseGate;
+          }
+          return "respond";
+        },
         reply: (call) => {
           const names = new Set(
             call.tools
@@ -576,6 +677,11 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         },
       });
       fixtures.push(fixture);
+      await assertShellProfileSnapshot(
+        events,
+        "old",
+        scenario.sideEffectSemantics,
+      );
 
       const client = makePublicClient(fixture.baseUrl);
       const project = await createFunctionalProject(
@@ -584,6 +690,12 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         `AH7 effect admission ${marker}`,
         { resourceSelection: "Profile" },
       );
+      await initializeTrustedLocalP11Worktree({
+        databaseFile: fixture.databaseFile,
+        projectId: project.projectId,
+        workspaceId: project.rootWorkspaceId,
+        path: fixture.workspaceDirectory,
+      });
       await client.command(project.projectId, "GrantPermission", {
         permissionGrantId: functionalId("pgr"),
         issuer: "user:local",
@@ -648,6 +760,33 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         steer: { severity: "Normal", guidance: steerMarker },
         provenance: { source: "HumanInput" },
       });
+      await shellRequestObserved;
+      const currentWorkForPolicy = await waitForPublic(
+        () =>
+          client.view<{
+            readonly workId?: string;
+            readonly activeExecution?: { readonly executionId: string };
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (value) =>
+          value !== null &&
+          value.workId === idleWork.workId &&
+          value.activeExecution?.executionId !== undefined,
+      );
+      const policyExecutionId =
+        currentWorkForPolicy?.activeExecution?.executionId;
+      if (policyExecutionId === undefined) {
+        throw new Error("P4 effect-admission Current Work omitted Execution");
+      }
+      const p11ExpiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+      await grantTrustedLocalP11Permission({
+        client,
+        projectId: project.projectId,
+        executionId: policyExecutionId,
+        expiresAt: p11ExpiresAt,
+      });
+      releaseShellResponse();
 
       const approvalInbox = await waitForPublic(
         () =>
@@ -747,6 +886,34 @@ describe("P4 AH7 effect-admission generation takeover", () => {
       );
       expect(approvalResolution).toMatchObject({
         body: { resolution: "Committed" },
+      });
+
+      await waitForPublic(
+        async () =>
+          events.find(
+            (event) =>
+              event.role === "old" &&
+              event.boundary === "P4ExecutableToolRuntimeOutcome" &&
+              event.executionId === policyExecutionId &&
+              event.outcomeTag === "SandboxPolicyRequiredInterruption",
+          ),
+        (event) => event !== undefined,
+        45_000,
+      );
+      const { snapshot: sandboxPolicySnapshot } =
+        await commitTrustedLocalP11Policy({
+          client,
+          baseUrl: fixture.baseUrl,
+          databaseFile: fixture.databaseFile,
+          projectId: project.projectId,
+          workspaceId: project.rootWorkspaceId,
+          executionId: policyExecutionId,
+          expiresAt: p11ExpiresAt,
+        });
+      expect(sandboxPolicySnapshot).toMatchObject({
+        kind: "TrustedLocalUnconfinedV1",
+        executionId: policyExecutionId,
+        profile: "FullAccess",
       });
 
       const oldAdmission = await waitForPublic(
@@ -946,12 +1113,15 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         daemonEnvironment: {
           ARBOR_P4_FENCE_ROLE: "new",
           ARBOR_P4_FENCE_PAUSE_NEW: "1",
-          ...(scenario.sideEffectSemantics === "NonIdempotent"
-            ? { ARBOR_P4_FENCE_NON_IDEMPOTENT: "1" }
-            : {}),
+          ...shellProfileEnvironment(scenario.sideEffectSemantics),
         },
         onStdout: (line) => recordProbe(events, line),
       });
+      await assertShellProfileSnapshot(
+        events,
+        "new",
+        scenario.sideEffectSemantics,
+      );
       const newLease = await waitForPublic(
         async () =>
           events.find(
@@ -1193,6 +1363,42 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         expect(existsSync(join(fixture.workspaceDirectory, effectFile))).toBe(
           false,
         );
+      }
+      const reconciliationAuditPath = join(
+        dirname(fixture.databaseFile),
+        "p4-fence-gates",
+        "reconciliation-port-calls.jsonl",
+      );
+      const reconciliationCalls = existsSync(reconciliationAuditPath)
+        ? readFileSync(reconciliationAuditPath, "utf8")
+            .split(/\r?\n/u)
+            .filter((line) => line.length > 0)
+            .map(
+              (line) =>
+                JSON.parse(line) as {
+                  readonly role: string;
+                  readonly invocationId: string;
+                  readonly attemptNo: number;
+                  readonly result: string;
+                  readonly reasonCode: string;
+                },
+            )
+        : [];
+      if (
+        scenario.sideEffectSemantics === "NonIdempotent" ||
+        scenario.admission === "NotAdmitted"
+      ) {
+        expect(reconciliationCalls).toHaveLength(0);
+      } else {
+        expect(reconciliationCalls).toEqual([
+          {
+            role: "new",
+            invocationId,
+            attemptNo: 0,
+            result: "StillUnknown",
+            reasonCode: "AttemptNotFinal",
+          },
+        ]);
       }
       // NotAdmitted resumes the original Step's persisted ModelOutput and then
       // legitimately asks its distinct successor ProviderTurn to consume the
