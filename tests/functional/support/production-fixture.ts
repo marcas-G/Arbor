@@ -12,6 +12,7 @@ import {
   stopChildBounded as stopChild,
   waitForDaemonListening as waitForNonceBoundPort,
 } from "./daemon-process-lifecycle.js";
+import { safeHandshakeFailure } from "./safe-handshake-failure.js";
 import {
   cloneFunctionalSchema48Database,
   createFunctionalFixtureDirectory,
@@ -134,26 +135,6 @@ const extractSafeTypedError = (
     }
   }
   return result;
-};
-
-const safeHandshakeFailure = (error: unknown): string => {
-  const message = error instanceof Error ? error.message : "";
-  const prefixes = [
-    "functional daemon startup handshake timed out",
-    "functional daemon exited before listening report",
-    "duplicate functional daemon start marker",
-    "invalid functional daemon start identity",
-    "duplicate functional daemon listening marker",
-    "functional daemon listening identity mismatch",
-    "functional daemon bound unexpected port",
-    "functional daemon exited before HTTP readiness",
-    "functional daemon HTTP readiness timed out",
-    "functional daemon startup failed",
-  ];
-  return (
-    prefixes.find((prefix) => message.startsWith(prefix)) ??
-    "functional daemon startup handshake failed"
-  );
 };
 
 const redactDaemonText = (value: string): string =>
