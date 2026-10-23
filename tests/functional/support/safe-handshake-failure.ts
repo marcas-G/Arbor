@@ -13,13 +13,20 @@ const safeHandshakePrefixes = [
 
 const wrongPortHandshake =
   /^functional daemon bound unexpected port: requested=(\d{1,5}) reported=(\d{1,5})(?:; observed=[\s\S]*)?$/u;
+const readinessTimeoutHandshake =
+  /^functional daemon HTTP readiness timed out after (\d{1,10})ms(?:; last=[\s\S]*)?$/u;
 
 const isPortNumber = (value: string): boolean => {
   const port = Number(value);
   return Number.isInteger(port) && port > 0 && port <= 65_535;
 };
 
-/** Retain only the safe numeric port pair from the wrong-port handshake error. */
+const isPositiveSafeInteger = (value: string): boolean => {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0;
+};
+
+/** Retain only safe numeric fields from known handshake failures. */
 export const safeHandshakeFailure = (error: unknown): string => {
   const message = error instanceof Error ? error.message : "";
   const portMismatch = wrongPortHandshake.exec(message);
@@ -30,6 +37,13 @@ export const safeHandshakeFailure = (error: unknown): string => {
     isPortNumber(portMismatch[2])
   ) {
     return `functional daemon bound unexpected port: requested=${portMismatch[1]} reported=${portMismatch[2]}`;
+  }
+  const readinessTimeout = readinessTimeoutHandshake.exec(message);
+  if (
+    readinessTimeout?.[1] !== undefined &&
+    isPositiveSafeInteger(readinessTimeout[1])
+  ) {
+    return `functional daemon HTTP readiness timed out after ${readinessTimeout[1]}ms`;
   }
   return (
     safeHandshakePrefixes.find((prefix) => message.startsWith(prefix)) ??
