@@ -16,6 +16,19 @@ describe("safe daemon handshake diagnostics", () => {
     expect(diagnostic).not.toContain("secret-value");
   });
 
+  it("retains the numeric readiness deadline without the response details", () => {
+    const diagnostic = safeHandshakeFailure(
+      new Error(
+        'functional daemon HTTP readiness timed out after 1500ms; last=HTTP readiness returned 503 with secret="private-value"',
+      ),
+    );
+
+    expect(diagnostic).toBe(
+      "functional daemon HTTP readiness timed out after 1500ms",
+    );
+    expect(diagnostic).not.toContain("private-value");
+  });
+
   it("keeps other handshake failures classified and discards unrecognized detail", () => {
     expect(
       safeHandshakeFailure(
