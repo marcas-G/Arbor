@@ -16,7 +16,6 @@ import {
   finishRealProviderFixture,
   makeDeadlinePublicClient,
   type ProviderCapture,
-  providerCaptureMatchesSelector,
   type RealProviderConfig,
   readProviderCaptures,
   releaseProviderResponse,
@@ -472,8 +471,12 @@ const runJourney = async (input: {
       state.normalSteerReceipt = "Committed";
       let lastSequence = firstHeldResponse.sequence;
       releaseProviderResponse(run, firstHeldResponse.requestId);
-      let correctionRequest: ProviderCapture | null = null;
-      while (Date.now() < deadlineAt && correctionRequest === null) {
+      const correctionRequestSelector = {
+        ...workGateSelector,
+        requiredMessageText: correctionMarker,
+      } as const;
+      let correctionRequest: ProviderCapture | undefined;
+      while (Date.now() < deadlineAt && correctionRequest === undefined) {
         await approveExactPatchIfPending({
           client,
           project,
@@ -481,23 +484,23 @@ const runJourney = async (input: {
           marker: input.marker,
           deadlineAt,
         });
-        correctionRequest =
-          readProviderCaptures(captureFile).find(
-            (capture) =>
-              capture.event === "request-start" &&
-              capture.sequence > lastSequence &&
-              providerCaptureMatchesSelector(capture, workGateSelector) &&
-              JSON.stringify(capture.request?.messages ?? []).includes(
-                correctionMarker,
-              ),
-          ) ?? null;
-        if (correctionRequest === null)
-          await new Promise((resolve) => setTimeout(resolve, 150));
+        try {
+          correctionRequest = await waitForHeldProviderResponse(run, {
+            afterSequence: lastSequence,
+            deadlineAt: Math.min(deadlineAt, Date.now() + 1_000),
+            selector: correctionRequestSelector,
+          });
+        } catch {
+          // Hook attaches request messages to response-held/complete records,
+          // not request-start records. Keep exact-scope approvals progressing
+          // while waiting for the actual corrected Work request to return.
+        }
       }
-      if (correctionRequest === null)
+      if (correctionRequest === undefined)
         throw new Error(
           "REAL NOT QUALIFIED: correction absent from the subsequent real Provider request",
         );
+      lastSequence = correctionRequest.sequence;
       state.correctionProviderRequestId = correctionRequest.requestId;
       state.correctionInRealProviderRequest = true;
       let correctedContentObserved = false;
