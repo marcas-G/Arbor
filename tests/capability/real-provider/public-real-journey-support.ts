@@ -20,6 +20,13 @@ import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
 } from "../../support/p39-windows-deployment-test.js";
+import { readProviderCaptures } from "./provider-response-gate.js";
+
+export {
+  providerCaptureMatchesSelector,
+  readProviderCaptures,
+  waitForHeldProviderResponse,
+} from "./provider-response-gate.js";
 
 export interface RealProviderConfig {
   readonly path: string;
@@ -357,26 +364,6 @@ export const makeDeadlinePublicClient = (
   deadlineAt: number,
 ) => makePublicClient(fixture.baseUrl, { deadlineAt });
 
-export const readProviderCaptures = (
-  captureFile: string,
-): Array<ProviderCapture> => {
-  try {
-    const text = readFileSync(captureFile, "utf8");
-    return text
-      .split(/\r?\n/u)
-      .filter(Boolean)
-      .flatMap((line) => {
-        try {
-          return [JSON.parse(line) as ProviderCapture];
-        } catch {
-          return [];
-        }
-      });
-  } catch {
-    return [];
-  }
-};
-
 export const startedProviderRequests = (
   captures: ReadonlyArray<ProviderCapture>,
 ): ReadonlyArray<ProviderCapture> =>
@@ -415,62 +402,6 @@ export const releaseProviderResponse = (
   createP39PrivateTestFile(
     join(run.responseGateDirectory, `release-${requestId}`),
   );
-};
-
-export const waitForHeldProviderResponse = async (
-  run: StartedRealProviderFixture,
-  input: {
-    readonly afterSequence: number;
-    readonly deadlineAt: number;
-    readonly selector?: ProviderResponseGateSelector;
-  },
-): Promise<ProviderCapture> => {
-  while (Date.now() < input.deadlineAt) {
-    const captures = readProviderCaptures(run.captureFile);
-    const held = captures.find(
-      (capture) =>
-        capture.event === "response-held" &&
-        capture.sequence > input.afterSequence &&
-        (input.selector === undefined ||
-          providerCaptureMatchesSelector(capture, input.selector)) &&
-        captures.some(
-          (completed) =>
-            completed.event === "response-complete" &&
-            completed.requestId === capture.requestId,
-        ),
-    );
-    if (held !== undefined) return held;
-    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
-  }
-  throw new Error(
-    "REAL NOT QUALIFIED: deadline waiting for a genuine held Provider response",
-  );
-};
-
-export const providerCaptureMatchesSelector = (
-  capture: ProviderCapture,
-  selector: ProviderResponseGateSelector,
-): boolean => {
-  const serialized = JSON.stringify(capture.request ?? {});
-  if (
-    selector.requiredMessageText !== undefined &&
-    !serialized.includes(selector.requiredMessageText)
-  ) {
-    return false;
-  }
-  if (selector.requiredAdvertisedToolName !== undefined) {
-    const advertised = capture.request?.tools;
-    const names = Array.isArray(advertised)
-      ? advertised.flatMap((tool) => {
-          if (typeof tool !== "object" || tool === null) return [];
-          const functionName = (tool as { function?: { name?: unknown } })
-            .function?.name;
-          return typeof functionName === "string" ? [functionName] : [];
-        })
-      : [];
-    if (!names.includes(selector.requiredAdvertisedToolName)) return false;
-  }
-  return true;
 };
 
 export const finishRealProviderFixture = async (

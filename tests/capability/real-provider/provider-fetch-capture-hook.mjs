@@ -5,6 +5,13 @@ import { join } from "node:path";
 const captureFile = process.env.ARBOR_PUBLIC_S1_CAPTURE_FILE;
 const endpointValue = process.env.ARBOR_PUBLIC_S1_CAPTURE_ENDPOINT;
 const responseGateDirectory = process.env.ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR;
+const configuredGateTimeoutMs = Number(
+  process.env.ARBOR_PUBLIC_S1_RESPONSE_GATE_TIMEOUT_MS,
+);
+const responseGateTimeoutMs =
+  Number.isFinite(configuredGateTimeoutMs) && configuredGateTimeoutMs > 0
+    ? Math.min(configuredGateTimeoutMs, 5 * 60_000)
+    : 5 * 60_000;
 const originalFetch = globalThis.fetch.bind(globalThis);
 
 const safeValue = (value, key = "") => {
@@ -146,7 +153,7 @@ globalThis.fetch = async (input, init) => {
         responseGateDirectory,
         `release-${base.requestId}`,
       );
-      const gateDeadline = Date.now() + 5 * 60_000;
+      const gateDeadline = Date.now() + responseGateTimeoutMs;
       while (!existsSync(releasePath) && Date.now() < gateDeadline) {
         await new Promise((resolve) => setTimeout(resolve, 25));
       }

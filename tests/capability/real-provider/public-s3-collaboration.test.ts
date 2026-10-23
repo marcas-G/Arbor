@@ -304,6 +304,17 @@ const responseCompletedIds = (captures: ReadonlyArray<ProviderCapture>) =>
       .map((capture) => capture.requestId),
   );
 
+const responseGateIsDrained = (captures: ReadonlyArray<ProviderCapture>) => {
+  const released = new Set(
+    captures
+      .filter((capture) => capture.event === "response-released")
+      .map((capture) => capture.requestId),
+  );
+  return captures
+    .filter((capture) => capture.event === "response-held")
+    .every((capture) => released.has(capture.requestId));
+};
+
 const parentOf = (
   nodes: ReadonlyArray<WorkspaceNode>,
   workspaceId: string,
@@ -882,7 +893,8 @@ it.skipIf(skipReason !== undefined)(
           const starts = startedProviderRequests(records);
           return (
             starts.length > 0 &&
-            starts.every((item) => completed.has(item.requestId))
+            starts.every((item) => completed.has(item.requestId)) &&
+            responseGateIsDrained(records)
           );
         },
         Math.max(1, deadlineAt - Date.now()),
@@ -900,6 +912,7 @@ it.skipIf(skipReason !== undefined)(
       expect(
         captures.some((capture) => capture.event === "response-capture-failed"),
       ).toBe(false);
+      expect(responseGateIsDrained(captures)).toBe(true);
       expect(run.fixture.providerCalls).toHaveLength(0);
       expect(run.fixture.daemonErrors).toEqual([]);
       const capturedCalls = captures.flatMap(capturedToolCalls);
