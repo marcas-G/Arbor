@@ -905,6 +905,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           ),
         ).toHaveLength(committedProbeCount);
         expect(providerCalls).toBe(1);
+        const providerCallsBeforeFreshRoot = providerCalls;
         // Keep the P9 terminal proof intact. Qualify drift through a separate
         // public root Work with its own pre-intent CandidateRead; never mint a
         // second ProviderTurn for this terminal Step.
@@ -937,10 +938,14 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           cwd: freshWorktreePath,
           stdio: "ignore",
         });
-        execFileSync("git", ["commit", "--quiet", "-m", "fresh sandbox fixture"], {
-          cwd: freshWorktreePath,
-          stdio: "ignore",
-        });
+        execFileSync(
+          "git",
+          ["commit", "--quiet", "-m", "fresh sandbox fixture"],
+          {
+            cwd: freshWorktreePath,
+            stdio: "ignore",
+          },
+        );
         await insertProductionPrimaryWorktree({
           databaseFile: fixture.databaseFile,
           projectId: freshProject.projectId,
@@ -1003,7 +1008,8 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
             }),
           (detail) => detail.sandboxPolicyCandidateRead !== undefined,
         );
-        const freshPreDriftRead = freshPreDriftDetail.sandboxPolicyCandidateRead;
+        const freshPreDriftRead =
+          freshPreDriftDetail.sandboxPolicyCandidateRead;
         if (freshPreDriftRead === undefined)
           throw new Error("fresh public CandidateRead was absent before drift");
         const preDriftCandidate = freshPreDriftRead.candidates.find(
@@ -1016,7 +1022,9 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         if (preDriftCandidate?.kind !== "OsEnforced")
           throw new Error("fresh pre-drift Supported candidate was absent");
         expect(preDriftCandidate.providerRegistryRevision).toBe(1);
-        const p1GrantExpiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+        const p1GrantExpiresAt = new Date(
+          Date.now() + 60 * 60_000,
+        ).toISOString();
         await client.command(freshProject.projectId, "GrantPermission", {
           permissionGrantId: functionalId("pgr"),
           issuer: "user:local",
@@ -1142,6 +1150,20 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           preDriftCandidate.capabilityRevision,
         );
 
+        const beforeStaleOwnedSnapshot = p1OwnedDomainSnapshot(
+          fixture.databaseFile,
+          freshExecutionId,
+          freshExecutableApproval.approvalId,
+        );
+        expect(beforeStaleOwnedSnapshot.decisions).toEqual([]);
+        expect(beforeStaleOwnedSnapshot.decisionEvents).toEqual([]);
+        expect(beforeStaleOwnedSnapshot.invocations).toEqual([]);
+        expect(beforeStaleOwnedSnapshot.approval).toMatchObject({
+          state: "Pending",
+          revision: freshExecutableApproval.revision,
+          consumed_by: null,
+          execution_id: freshExecutionId,
+        });
         const staleFreshCommandId = functionalId("cmd");
         const staleFresh = await operatorCommand(
           fixture.baseUrl,
@@ -1156,6 +1178,28 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
             rejection: "StaleSandboxPolicyInputs",
           },
         });
+        const afterStaleOwnedSnapshot = p1OwnedDomainSnapshot(
+          fixture.databaseFile,
+          freshExecutionId,
+          freshExecutableApproval.approvalId,
+        );
+        expect(afterStaleOwnedSnapshot).toEqual(beforeStaleOwnedSnapshot);
+        const freshReadAfterStale =
+          await client.view<WorkspaceDetailForSandbox>("workspace-detail", {
+            workspaceId: freshProject.rootWorkspaceId,
+          });
+        expect(
+          freshReadAfterStale.sandboxPolicyCandidateRead?.commonPreconditions,
+        ).toEqual(refreshedFreshRead.commonPreconditions);
+        expect(
+          freshReadAfterStale.sandboxPolicyCandidateRead?.candidates.find(
+            (candidate) =>
+              candidate.kind === "OsEnforced" &&
+              candidate.providerId === "windows-restricted-appcontainer-job" &&
+              candidate.profile === "ReadOnly" &&
+              candidate.networkMode === "Disabled",
+          ),
+        ).toEqual(refreshedCandidate);
         const untouchedFresh = durableSandboxRead(
           fixture.databaseFile,
           freshExecutionId,
@@ -1187,7 +1231,9 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           "DecideSandboxPolicy",
           freshPayload,
         );
-        expect(acceptedFresh).toMatchObject({ body: { resolution: "Committed" } });
+        expect(acceptedFresh).toMatchObject({
+          body: { resolution: "Committed" },
+        });
         const acceptedFreshState = durableSandboxRead(
           fixture.databaseFile,
           freshExecutionId,
@@ -1221,12 +1267,95 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         const freshDecision = sandboxDecisionDebug(
           fixture.databaseFile,
           freshExecutionId,
+        ) as
+          | {
+              readonly policy_digest?: string;
+              readonly profile_id?: string;
+              readonly provider_id?: string;
+              readonly result_json?: string;
+            }
+          | undefined;
+        if (freshDecision?.result_json === undefined)
+          throw new Error("fresh committed P1 effective summary is absent");
+        const freshDecisionResult = JSON.parse(freshDecision.result_json) as {
+          readonly policyDigest?: string;
+          readonly effectivePolicySnapshot?: Record<string, unknown>;
+        };
+        const effectiveSnapshot = freshDecisionResult.effectivePolicySnapshot;
+        if (effectiveSnapshot === undefined)
+          throw new Error("fresh P1 effective summary payload is missing");
+        expect(freshDecision.policy_digest).toMatch(/^[0-9a-f]{64}$/u);
+        expect(freshDecisionResult.policyDigest).toBe(
+          freshDecision.policy_digest,
         );
+        expect(
+          sha256Hex(
+            encodeEffectivePolicySummaryV1(
+              effectiveSnapshot as unknown as EffectivePolicySummaryV1,
+            ),
+          ),
+        ).toBe(freshDecision.policy_digest);
+        expect(effectiveSnapshot).toMatchObject({
+          kind: "OsEnforced",
+          profile: preDriftCandidate.profile,
+          providerId: preDriftCandidate.providerId,
+          providerVersion: preDriftCandidate.providerVersion,
+          capabilityRevision: preDriftCandidate.capabilityRevision,
+          providerRegistryRevision: refreshedCandidate.providerRegistryRevision,
+          providerRegistryDigest: refreshedCandidate.providerRegistryDigest,
+          sandboxHandleBindingDigest:
+            refreshedCandidate.sandboxHandleBindingDigest,
+          authorityBundleRevision:
+            refreshedFreshRead.commonPreconditions.authorityBundleRevision,
+          authorityBundleDigest:
+            refreshedFreshRead.commonPreconditions.authorityBundleDigest,
+          networkPolicy: {
+            version: 1,
+            mode: "Disabled",
+            destinations: [],
+          },
+        });
         expect(freshDecision).toMatchObject({
           profile_id: preDriftCandidate.profile,
           provider_id: preDriftCandidate.providerId,
         });
-        expect(providerCalls).toBe(providerCallsAtPending + 1);
+        const committedPublicDetail =
+          await client.view<WorkspaceDetailForSandbox>("workspace-detail", {
+            workspaceId: freshProject.rootWorkspaceId,
+          });
+        expect(committedPublicDetail.sandboxPolicy).toMatchObject({
+          kind: "OsEnforced",
+          status: "NeedsDecision",
+          profile: preDriftCandidate.profile,
+          providerId: preDriftCandidate.providerId,
+          providerVersion: preDriftCandidate.providerVersion,
+          networkMode: "Disabled",
+          policyRevision: 1,
+        });
+        const committedCandidateRead =
+          committedPublicDetail.sandboxPolicyCandidateRead;
+        const committedCandidate = committedCandidateRead?.candidates.find(
+          (candidate) =>
+            candidate.kind === "OsEnforced" &&
+            candidate.providerId === "windows-restricted-appcontainer-job" &&
+            candidate.profile === "ReadOnly" &&
+            candidate.networkMode === "Disabled",
+        );
+        expect(committedCandidate).toMatchObject({
+          providerVersion: effectiveSnapshot?.providerVersion,
+          capabilityRevision: effectiveSnapshot?.capabilityRevision,
+          profile: effectiveSnapshot?.profile,
+          networkMode: "Disabled",
+          providerRegistryRevision: effectiveSnapshot?.providerRegistryRevision,
+          providerRegistryDigest: effectiveSnapshot?.providerRegistryDigest,
+          sandboxHandleBindingDigest:
+            effectiveSnapshot?.sandboxHandleBindingDigest,
+        });
+        expect(committedCandidateRead?.commonPreconditions).toMatchObject({
+          authorityBundleRevision: effectiveSnapshot?.authorityBundleRevision,
+          authorityBundleDigest: effectiveSnapshot?.authorityBundleDigest,
+        });
+        expect(providerCalls).toBe(providerCallsBeforeFreshRoot + 1);
         expect(fixture.daemonErrors).toEqual([]);
         return;
       }
