@@ -4,6 +4,7 @@ Date: 2026-10-24
 Status: **SCOPED IMPLEMENTATION PASS; no real-provider/daemon qualification claim**  
 Design Gap candidate: `S2-WDG-01`  
 Implementation commit: `e8c9eb9d2006bed868a0c3d1f42c80dd1410c54b`  
+Cursor-assertion commit: `fb08e8b5658ad6310eb610843bbaa1a988c33ec3`  
 Separate real terminal evidence: [`S2-real-immediate-stop-terminal-self-wait.result.md`](S2-real-immediate-stop-terminal-self-wait.result.md)
 
 ## Frozen-contract basis and disposition
@@ -91,6 +92,12 @@ another revision of the same Work does not count as a foreign independent
 source; and (7) a stale/non-current WorkEpisode self-wait is rejected while a
 subsequent Manual Wait remains available. Existing ClaimCompletion and other
 Wave 2 control-action tests also passed in this file.
+
+The self-wait continuation assertion reads the durable
+`(logical_step_no, repair_attempt, action_index)` cursor tuple and requires the
+later ClaimCompletion action to advance past the rejected Wait. The full target
+file passed 13/13 non-skipped tests before this cursor-only strengthening; the
+strengthened self-wait case then passed 1/1 with the direct cursor assertion.
 
 Generic registry regressions passed **13/13**:
 
