@@ -38,6 +38,82 @@ const parsedRecord = (value: string): Record<string, unknown> | undefined => {
   }
 };
 
+/** The recovery driver may defer its generic manifest hard-fail only when
+ * every ProviderTurn manifest binding is intact and the Step's manifest id is
+ * the sole corrupt field. The caller still needs the exact P41 Submitted
+ * DecisionEpisode classifier before it can use this exception. */
+export const isSoleAgentLoopStepManifestMismatch = (input: {
+  readonly step: AgentLoopStepRecord;
+  readonly executionId: string;
+  readonly sessionId: string;
+  readonly manifest: {
+    readonly manifestId: string;
+    readonly manifestJson: string;
+  } | null;
+  readonly settledManifestId: string | undefined;
+}): boolean => {
+  const { step, manifest } = input;
+  if (
+    manifest === null ||
+    step.providerTurnId.length === 0 ||
+    step.manifestId === undefined ||
+    manifest.manifestId === step.manifestId ||
+    input.settledManifestId !== manifest.manifestId
+  ) {
+    return false;
+  }
+  const parsed = parsedRecord(manifest.manifestJson);
+  return (
+    parsed?.providerTurnId === step.providerTurnId &&
+    parsed.executionId === input.executionId &&
+    parsed.sessionId === input.sessionId &&
+    parsed.logicalStepNo === step.identity.logicalStepNo &&
+    parsed.repairAttempt === step.identity.repairAttempt
+  );
+};
+
+/** Typed driver outcome for the one P41 mismatch that may pass the generic
+ * manifest gate. All other failures stay on the driver's hard-fail path. */
+export const submittedDecisionManifestMismatchOutcome = (input: {
+  readonly decisionEpisode: boolean;
+  readonly failureCode: string | undefined;
+  readonly step: AgentLoopStepRecord;
+  readonly executionId: string;
+  readonly sessionId: string;
+  readonly manifest: {
+    readonly manifestId: string;
+    readonly manifestJson: string;
+  } | null;
+  readonly settledManifestId: string | undefined;
+  readonly logicalActionId: string | undefined;
+}):
+  | {
+      readonly _tag: "SubmittedDecisionBindingMismatch";
+      readonly failureCode: "StepManifestMismatch";
+      readonly logicalStepNo: number;
+      readonly repairAttempt: number;
+      readonly providerTurnId: AgentLoopStepRecord["providerTurnId"];
+      readonly logicalActionId: string;
+    }
+  | undefined => {
+  if (
+    !input.decisionEpisode ||
+    input.failureCode !== "StepManifestMismatch" ||
+    input.logicalActionId === undefined ||
+    !isSoleAgentLoopStepManifestMismatch(input)
+  ) {
+    return undefined;
+  }
+  return {
+    _tag: "SubmittedDecisionBindingMismatch",
+    failureCode: "StepManifestMismatch",
+    logicalStepNo: input.step.identity.logicalStepNo,
+    repairAttempt: input.step.identity.repairAttempt,
+    providerTurnId: input.step.providerTurnId,
+    logicalActionId: input.logicalActionId,
+  };
+};
+
 /** P3 compiler's existing portable request fingerprint codec. */
 export const fnv1aHash = (input: string): string => {
   let value = 0x811c9dc5;
