@@ -51,6 +51,7 @@ const workspaceId = parse(WorkspaceId)(ids.workspace);
 const sessionId = parse(SessionId)(ids.session);
 const executionId = parse(ExecutionId)(ids.execution);
 const workId = parse(WorkId)(ids.work);
+const dependencyId = "dep_018f2b3c-4d5e-7abc-8def-0123456789b2";
 const principal = parse(Principal)("worker:a");
 const actor = parse(Actor)("user:test");
 const context: CommandSubmissionContext = {
@@ -215,10 +216,64 @@ const admitWorkExecution = Effect.gen(function* () {
   ).toBe(true);
 });
 
-const runTurns = (_turns: ReadonlyArray<ReadonlyArray<unknown>>) =>
+const runTurns = (
+  _turns: ReadonlyArray<ReadonlyArray<unknown>>,
+  options: {
+    readonly withDependency?: boolean;
+    readonly advanceWorkRevisionAfterAdmission?: boolean;
+    readonly verificationStates?: ReadonlyArray<"Open" | "Concluded">;
+  } = {},
+) =>
   Effect.gen(function* () {
     yield* seed;
+    const sql = yield* SqlClient;
+    if (options.withDependency === true) {
+      yield* sql.unsafe(
+        "INSERT INTO dependencies (dependency_id, project_id, consumer_work_id, producer_binding, expected_deliverable, revision, state, satisfied_by_deliverable_id, satisfied_at_dependency_revision, created_at, updated_at) VALUES (?,?,?,?,?,0,'Unsatisfied',NULL,NULL,'t','t')",
+        [
+          dependencyId,
+          projectId,
+          workId,
+          JSON.stringify({ _tag: "WorkspaceBound", workspaceId }),
+          JSON.stringify({ kind: "report", requiredArtifactRoles: [] }),
+        ],
+      );
+    }
+    for (const [index, verificationState] of (
+      options.verificationStates ?? []
+    ).entries()) {
+      yield* sql.unsafe(
+        "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, created_at, updated_at, summary_ref, criteria_results, snapshot_status) VALUES (?,?,?,?,?,?,'[]','[]',NULL,NULL,'[]',?, ?,NULL,'t','t',?,NULL,?)",
+        [
+          `ver_018f2b3c-4d5e-7abc-8def-0123456789b${(index + 2).toString(16)}`,
+          projectId,
+          workId,
+          0,
+          workspaceId,
+          JSON.stringify({
+            goal: "wait source fixture",
+            criteria: [
+              {
+                criterionId: "c1",
+                requirement: "the source is exact-bound",
+                required: true,
+              },
+            ],
+            riskRequirements: [],
+          }),
+          verificationState,
+          verificationState === "Concluded" ? "Fail" : null,
+          verificationState === "Concluded" ? "blob:test-summary" : null,
+          verificationState === "Open" ? "Pending" : "UnavailableLegacy",
+        ],
+      );
+    }
     yield* admitWorkExecution;
+    if (options.advanceWorkRevisionAfterAdmission === true) {
+      yield* sql.unsafe("UPDATE works SET revision = 1 WHERE work_id = ?", [
+        workId,
+      ]);
+    }
     const settlement = yield* runExecution(
       executionId,
       {
@@ -226,7 +281,6 @@ const runTurns = (_turns: ReadonlyArray<ReadonlyArray<unknown>>) =>
       },
       principal,
     );
-    const sql = yield* SqlClient;
     const work = yield* sql.unsafe<{ lifecycle: string; revision: number }>(
       "SELECT lifecycle, revision FROM works WHERE work_id = ?",
       [workId],
@@ -274,6 +328,17 @@ const runTurns = (_turns: ReadonlyArray<ReadonlyArray<unknown>>) =>
       work_id: string;
       conditions_json: string;
     }>("SELECT work_id, conditions_json FROM work_waits ORDER BY work_id");
+    const loopActions = yield* sql.unsafe<{
+      action_kind: string;
+      logical_step_no: number;
+      repair_attempt: number;
+      action_index: number;
+      state: string;
+      disposition_json: string | null;
+    }>(
+      "SELECT action_kind, logical_step_no, repair_attempt, action_index, state, disposition_json FROM agent_loop_step_actions WHERE execution_id = ? ORDER BY logical_step_no, repair_attempt, action_index",
+      [executionId],
+    );
     return {
       settlement,
       work,
@@ -284,6 +349,7 @@ const runTurns = (_turns: ReadonlyArray<ReadonlyArray<unknown>>) =>
       workspaces,
       inbox,
       waits,
+      loopActions,
     };
   });
 
@@ -294,6 +360,95 @@ const claimCompletionTurn = [
     toolName: "claim_completion",
     argumentsJson: JSON.stringify({
       claim: "all acceptance criteria delivered and locally verified",
+    }),
+  },
+  { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
+];
+
+const selfVerificationWaitTurn = [
+  {
+    _tag: "ToolCallProposed" as const,
+    callRef: "self-wait",
+    toolName: "wait",
+    argumentsJson: JSON.stringify({
+      reason: "wait for the current Work to be verified",
+      waitSpec: {
+        mode: "Any",
+        conditions: [
+          {
+            _tag: "VerificationChanged",
+            workId,
+            targetWorkRevision: 0,
+          },
+        ],
+      },
+    }),
+  },
+  { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
+];
+
+const oldRevisionSelfVerificationWaitTurn = [
+  {
+    _tag: "ToolCallProposed" as const,
+    callRef: "old-self-wait",
+    toolName: "wait",
+    argumentsJson: JSON.stringify({
+      reason: "wait for the same Work's older verification revision",
+      waitSpec: {
+        mode: "Any",
+        conditions: [
+          {
+            _tag: "VerificationChanged",
+            workId,
+            targetWorkRevision: 1,
+          },
+        ],
+      },
+    }),
+  },
+  { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
+];
+
+const manualWaitTurn = [
+  {
+    _tag: "ToolCallProposed" as const,
+    callRef: "manual-wait",
+    toolName: "wait",
+    argumentsJson: JSON.stringify({
+      reason: "wait for a human input",
+      waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+    }),
+  },
+  { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
+];
+
+const mixedSelfVerificationAndDependencyWaitTurn = [
+  {
+    _tag: "ToolCallProposed" as const,
+    callRef: "mixed-self-wait",
+    toolName: "wait",
+    argumentsJson: JSON.stringify({
+      reason: "wait for either current verification or the existing dependency",
+      waitSpec: {
+        mode: "Any",
+        conditions: [
+          {
+            _tag: "VerificationChanged",
+            workId,
+            targetWorkRevision: 0,
+          },
+          {
+            _tag: "DependencyChanged",
+            dependencyId,
+            observedRevision: 0,
+          },
+          {
+            _tag: "InboxAdvanced",
+            workspaceId,
+            observedSequence: 0,
+          },
+        ],
+      },
     }),
   },
   { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
@@ -848,6 +1003,195 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
       },
     ]);
     expect(result.workspaces).toHaveLength(1);
+  }, 120_000);
+
+  it("rejects a same-Work VerificationChanged self-wait without a verifier source and continues the Work loop", async () => {
+    const { app } = setupApp([selfVerificationWaitTurn, claimCompletionTurn]);
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTurns([selfVerificationWaitTurn, claimCompletionTurn]),
+        app,
+      ),
+    ).finally(cleanupFixture);
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "CompletionClaimed" },
+    });
+    expect(result.work[0]?.lifecycle).toBe("Open");
+    expect(result.loopActions).toHaveLength(2);
+    expect(result.loopActions[0]).toMatchObject({
+      action_kind: "wait",
+      state: "Applied",
+    });
+    expect(result.loopActions[0]?.disposition_json).toContain(
+      "ModelUsable:action/precondition",
+    );
+    expect(result.loopActions[1]).toMatchObject({
+      action_kind: "claim_completion",
+    });
+    const firstCursor = result.loopActions[0];
+    const nextCursor = result.loopActions[1];
+    expect(firstCursor).toBeDefined();
+    expect(nextCursor).toBeDefined();
+    expect(
+      nextCursor !== undefined &&
+        firstCursor !== undefined &&
+        (nextCursor.logical_step_no > firstCursor.logical_step_no ||
+          (nextCursor.logical_step_no === firstCursor.logical_step_no &&
+            (nextCursor.repair_attempt > firstCursor.repair_attempt ||
+              (nextCursor.repair_attempt === firstCursor.repair_attempt &&
+                nextCursor.action_index > firstCursor.action_index)))),
+    ).toBe(true);
+    expect(result.waits).toHaveLength(1);
+    expect(result.waits[0]?.work_id).toBe(workId);
+    expect(JSON.parse(result.waits[0]?.conditions_json ?? "[]")).toEqual([
+      {
+        _tag: "VerificationChanged",
+        workId,
+        targetWorkRevision: 0,
+      },
+    ]);
+  }, 120_000);
+
+  it("preserves independently producible Dependency and Inbox alternatives in a mixed Any Wait", async () => {
+    const { app } = setupApp([mixedSelfVerificationAndDependencyWaitTurn]);
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTurns([mixedSelfVerificationAndDependencyWaitTurn], {
+          withDependency: true,
+        }),
+        app,
+      ),
+    ).finally(cleanupFixture);
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "Yielded" },
+    });
+    expect(result.dependencies).toHaveLength(1);
+    expect(result.waits).toHaveLength(1);
+    expect(JSON.parse(result.waits[0]?.conditions_json ?? "[]")).toEqual([
+      {
+        _tag: "VerificationChanged",
+        workId,
+        targetWorkRevision: 0,
+      },
+      { _tag: "DependencyChanged", dependencyId, observedRevision: 0 },
+      { _tag: "InboxAdvanced", workspaceId, observedSequence: 0 },
+    ]);
+  }, 120_000);
+
+  it("allows a same-Work VerificationChanged wait when the exact Verification is Open", async () => {
+    const { app } = setupApp([selfVerificationWaitTurn]);
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTurns([selfVerificationWaitTurn], { verificationStates: ["Open"] }),
+        app,
+      ),
+    ).finally(cleanupFixture);
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "Yielded" },
+    });
+    expect(result.waits).toHaveLength(1);
+    expect(JSON.parse(result.waits[0]?.conditions_json ?? "[]")).toEqual([
+      {
+        _tag: "VerificationChanged",
+        workId,
+        targetWorkRevision: 0,
+      },
+    ]);
+    expect(result.loopActions[0]?.disposition_json).toContain(
+      "ExecutionSettlement:Completed",
+    );
+  }, 120_000);
+
+  it("prefers an Open Verification over concluded history for the same revision", async () => {
+    const { app } = setupApp([selfVerificationWaitTurn]);
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTurns([selfVerificationWaitTurn], {
+          verificationStates: ["Concluded", "Open"],
+        }),
+        app,
+      ),
+    ).finally(cleanupFixture);
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "Yielded" },
+    });
+    expect(result.waits).toHaveLength(1);
+  }, 120_000);
+
+  it("returns a model-usable result when the exact Work revision's Verification already concluded", async () => {
+    const { app } = setupApp([selfVerificationWaitTurn, claimCompletionTurn]);
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTurns([selfVerificationWaitTurn, claimCompletionTurn], {
+          verificationStates: ["Concluded"],
+        }),
+        app,
+      ),
+    ).finally(cleanupFixture);
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "CompletionClaimed" },
+    });
+    expect(result.loopActions[0]?.disposition_json).toContain(
+      "ModelUsable:action/precondition",
+    );
+  }, 120_000);
+
+  it("does not treat another revision of the same Work as an independent Wait source", async () => {
+    const { app } = setupApp([
+      oldRevisionSelfVerificationWaitTurn,
+      claimCompletionTurn,
+    ]);
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTurns([oldRevisionSelfVerificationWaitTurn, claimCompletionTurn]),
+        app,
+      ),
+    ).finally(cleanupFixture);
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "CompletionClaimed" },
+    });
+    expect(result.loopActions[0]?.disposition_json).toContain(
+      "ModelUsable:action/precondition",
+    );
+  }, 120_000);
+
+  it("rejects a same-Work VerificationChanged wait from a stale non-current WorkEpisode", async () => {
+    const { app } = setupApp([selfVerificationWaitTurn, manualWaitTurn]);
+    const result = await Effect.runPromise(
+      Effect.provide(
+        runTurns([selfVerificationWaitTurn, manualWaitTurn], {
+          advanceWorkRevisionAfterAdmission: true,
+        }),
+        app,
+      ),
+    ).finally(cleanupFixture);
+
+    expect(result.work[0]?.revision).toBe(1);
+    expect(result.settlement).toMatchObject({
+      _tag: "Completed",
+      result: {
+        _tag: "Yielded",
+        waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+      },
+    });
+    expect(result.loopActions[0]?.disposition_json).toContain(
+      "ModelUsable:action/precondition",
+    );
+    expect(JSON.parse(result.waits[0]?.conditions_json ?? "[]")).toEqual([
+      { _tag: "Manual" },
+    ]);
   }, 120_000);
 
   it("MAC-P2 exposes governed ProposeChildWorkspace without creating the child before approval", async () => {
