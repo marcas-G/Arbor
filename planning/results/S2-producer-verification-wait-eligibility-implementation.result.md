@@ -4,7 +4,7 @@ Date: 2026-10-24
 Status: **SCOPED IMPLEMENTATION PASS; no real-provider/daemon qualification claim**  
 Design Gap candidate: `S2-WDG-01`  
 Implementation commit: `e8c9eb9d2006bed868a0c3d1f42c80dd1410c54b`  
-Cursor-assertion commit: `fb08e8b5658ad6310eb610843bbaa1a988c33ec3`  
+Cursor-assertion commit: `fb08e8b5658ad6310eb610843bbaa1a988c33ec3`
 Separate real terminal evidence: [`S2-real-immediate-stop-terminal-self-wait.result.md`](S2-real-immediate-stop-terminal-self-wait.result.md)
 
 ## Frozen-contract basis and disposition
