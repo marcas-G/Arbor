@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +7,10 @@ import {
   hasExpectedF18ProcessCrash,
   unexpectedF18DaemonErrors,
 } from "../support/f18-process-crash-oracle.js";
+import {
+  archiveProductionFixtureFailure,
+  writeProductionFixtureArchiveSkipped,
+} from "../support/fixture-failure-evidence.js";
 import {
   type CapturedProviderCall,
   type ProductionFixture,
@@ -19,9 +23,71 @@ import {
   submitHumanMessage,
   waitForPublic,
 } from "../support/public-client.js";
+import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
 import { makeWorkProvider } from "../support/work-provider.js";
 
+// Bound one complete case, not just fixture setup: three daemon-start paths
+// (initial, injected-crash restart, and recovery; the two recovery daemons run
+// concurrently), every explicit public wait on the ordinary completion path,
+// the frozen 5.5s lease-expiry wait, and 105s for direct commands, SQLite,
+// concurrent source-validation coordination, and cleanup.
+// Each successful daemon start is bounded by a 60s nonce/listen wait plus a
+// 60s HTTP-readiness wait; the injected crash path is conservatively charged
+// the same full bound. The 30s diagnostic lead writes a live checkpoint before
+// Vitest's outer timeout; afterEach then stops and archives the fixture.
+const F18_CASE_BUDGET = {
+  initialDaemonNonceAndReadinessMs: 120_000,
+  crashBoundaryDaemonStartupMs: 120_000,
+  recoveryDaemonsStartupMs: 120_000,
+  governancePublicWaitMs: 30_000,
+  childWorkPublicWaitMs: 45_000,
+  verificationPublicWaitMs: 30_000,
+  parentAcceptancePublicWaitMs: 60_000,
+  workCompletionPublicWaitMs: 30_000,
+  leaseExpiryWaitMs: 5_500,
+  fixtureCommandsCoordinationAndCleanupSlackMs: 105_000,
+} as const;
+
+const F18_CASE_TIMEOUT_MS =
+  F18_CASE_BUDGET.initialDaemonNonceAndReadinessMs +
+  F18_CASE_BUDGET.crashBoundaryDaemonStartupMs +
+  F18_CASE_BUDGET.recoveryDaemonsStartupMs +
+  F18_CASE_BUDGET.governancePublicWaitMs +
+  F18_CASE_BUDGET.childWorkPublicWaitMs +
+  F18_CASE_BUDGET.verificationPublicWaitMs +
+  F18_CASE_BUDGET.parentAcceptancePublicWaitMs +
+  F18_CASE_BUDGET.workCompletionPublicWaitMs +
+  F18_CASE_BUDGET.leaseExpiryWaitMs +
+  F18_CASE_BUDGET.fixtureCommandsCoordinationAndCleanupSlackMs;
+
+interface F18StageRecord {
+  readonly name: string;
+  readonly startedAt: string;
+  readonly startedAtMs: number;
+  endedAt?: string;
+  elapsedMs?: number;
+  outcome: "running" | "passed" | "failed";
+  terminalFact?: unknown;
+}
+
+interface F18CaseDiagnostics {
+  readonly boundary: string;
+  readonly marker: string;
+  readonly startedAt: string;
+  readonly startedAtMs: number;
+  readonly timeoutMs: number;
+  readonly stages: F18StageRecord[];
+  projectId?: string;
+  eventSequence?: number;
+  fixture?: ProductionFixture;
+  terminationCheckpoint?: Record<string, unknown>;
+  complete: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+let activeF18Case: F18CaseDiagnostics | undefined;
 const fixtures: ProductionFixture[] = [];
+const F18_DIAGNOSTIC_LEAD_MS = 30_000;
 const F18_PROCESS_CRASH_CASES: ReadonlyArray<{
   readonly boundary: string;
   readonly expectedLeaseGeneration: 0 | 1;
@@ -118,8 +184,255 @@ const F18_PROCESS_CRASH_CASES: ReadonlyArray<{
   },
 ] as const;
 
-afterEach(async () => {
-  for (const fixture of fixtures.splice(0)) await fixture.stop();
+const readF18ProgressFacts = (
+  fixture: ProductionFixture,
+  projectId: string | undefined,
+  eventSequence: number | undefined,
+): unknown => {
+  if (projectId === undefined) return { projectId: null, state: "not-created" };
+  const database = new DatabaseSync(fixture.databaseFile, { readOnly: true });
+  try {
+    database.exec("BEGIN");
+    const reconciliations = database
+      .prepare(
+        `SELECT event_sequence, event_id, verification_id, phase,
+                lease_generation, failure_code
+           FROM verification_signal_reconciliations
+          WHERE project_id = ?
+          ORDER BY event_sequence DESC LIMIT 3`,
+      )
+      .all(projectId);
+    const offset = database
+      .prepare(
+        `SELECT last_sequence FROM consumer_offsets
+          WHERE consumer_id = 'workflow-signals' AND project_id = ?`,
+      )
+      .get(projectId) as { last_sequence: number } | undefined;
+    const deadLetter =
+      eventSequence === undefined
+        ? undefined
+        : database
+            .prepare(
+              `SELECT reason FROM consumer_dead_letters
+                WHERE consumer_id = 'workflow-signals' AND project_id = ?
+                  AND sequence = ?`,
+            )
+            .get(projectId, eventSequence);
+    const inboxCounts =
+      eventSequence === undefined
+        ? undefined
+        : database
+            .prepare(
+              `SELECT
+                 (SELECT COUNT(*) FROM inbox_entries i
+                   JOIN workspaces w ON w.workspace_id = i.workspace_id
+                  WHERE w.project_id = ? AND i.entry_key LIKE 'child-result:%') AS inbox_rows,
+                 (SELECT COUNT(*) FROM verification_signal_reconciliation_attention_facts
+                  WHERE project_id = ? AND event_sequence = ?) AS attention_facts,
+                 (SELECT COUNT(*) FROM verification_signal_reconciliation_attention_queue
+                  WHERE project_id = ?) AS attention_queue`,
+            )
+            .get(projectId, projectId, eventSequence, projectId);
+    database.exec("COMMIT");
+    return {
+      projectId,
+      eventSequence: eventSequence ?? null,
+      reconciliations,
+      workflowOffset: offset?.last_sequence ?? null,
+      deadLetter: deadLetter ?? null,
+      inboxAndAttention: inboxCounts ?? null,
+    };
+  } catch (error) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      // Preserve the original diagnostic read failure.
+    }
+    return {
+      projectId,
+      eventSequence: eventSequence ?? null,
+      snapshotError: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    database.close();
+  }
+};
+
+const writeF18Progress = (
+  run: F18CaseDiagnostics,
+  event: string,
+  extra: Readonly<Record<string, unknown>> = {},
+) => {
+  const fixture = run.fixture;
+  if (fixture === undefined) return;
+  const now = Date.now();
+  const progress = {
+    schemaVersion: 1,
+    event,
+    boundary: run.boundary,
+    marker: run.marker,
+    startedAt: run.startedAt,
+    elapsedMs: now - run.startedAtMs,
+    timeoutMs: run.timeoutMs,
+    projectId: run.projectId ?? null,
+    eventSequence: run.eventSequence ?? null,
+    activeStage:
+      [...run.stages].reverse().find((stage) => stage.outcome === "running")
+        ?.name ?? null,
+    stages: run.stages.map((stage) => ({
+      ...stage,
+      elapsedMs:
+        stage.elapsedMs ??
+        (stage.outcome === "running" ? now - stage.startedAtMs : undefined),
+    })),
+    facts: readF18ProgressFacts(fixture, run.projectId, run.eventSequence),
+    ...extra,
+  };
+  writeFileSync(
+    join(fixture.directory, "f18-case-progress.json"),
+    `${JSON.stringify(progress, null, 2)}\n`,
+  );
+};
+
+const beginF18Stage = (run: F18CaseDiagnostics, name: string) => {
+  const stage: F18StageRecord = {
+    name,
+    startedAt: new Date().toISOString(),
+    startedAtMs: Date.now(),
+    outcome: "running",
+  };
+  run.stages.push(stage);
+  writeF18Progress(run, "stage-started");
+  return stage;
+};
+
+const finishF18Stage = (
+  run: F18CaseDiagnostics,
+  stage: F18StageRecord,
+  outcome: "passed" | "failed",
+  terminalFact?: unknown,
+) => {
+  stage.outcome = outcome;
+  stage.endedAt = new Date().toISOString();
+  stage.elapsedMs = Date.now() - stage.startedAtMs;
+  if (terminalFact !== undefined) stage.terminalFact = terminalFact;
+  writeF18Progress(run, `stage-${outcome}`);
+};
+
+const runF18Stage = async <T>(
+  run: F18CaseDiagnostics,
+  name: string,
+  action: () => Promise<T>,
+  fact: (value: T) => unknown = (value) => value,
+): Promise<T> => {
+  const stage = beginF18Stage(run, name);
+  try {
+    const value = await action();
+    finishF18Stage(run, stage, "passed", fact(value));
+    return value;
+  } catch (error) {
+    finishF18Stage(run, stage, "failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+};
+
+afterEach(async ({ task }) => {
+  const run = activeF18Case;
+  if (run?.timer !== undefined) clearTimeout(run.timer);
+  const failed = (task.result?.errors?.length ?? 0) > 0;
+  if (run !== undefined) {
+    const unfinished = run.stages.filter(
+      (stage) => stage.outcome === "running",
+    );
+    for (const stage of unfinished) {
+      finishF18Stage(run, stage, failed ? "failed" : "passed", {
+        terminal: failed ? "test-failed-before-stage-return" : "stage-returned",
+        testErrorCount: task.result?.errors?.length ?? 0,
+      });
+    }
+    if (!run.complete && failed) {
+      run.terminationCheckpoint ??= {
+        capturedAt: new Date().toISOString(),
+        elapsedMs: Date.now() - run.startedAtMs,
+        activeStage: null,
+        terminal: "test-failed-or-timed-out-before-explicit-completion",
+      };
+    }
+  }
+  for (const fixture of fixtures.splice(0)) {
+    let stopError: unknown;
+    try {
+      await fixture.stop();
+    } catch (error) {
+      stopError = error;
+    }
+    const currentRun = run;
+    if (!failed && stopError === undefined) {
+      removeFunctionalFixtureDirectory(fixture.directory);
+      continue;
+    }
+    const resultDirectory = process.env.ARBOR_TEST_RESULT_DIRECTORY;
+    const evidence = {
+      testName: task.name,
+      boundary: currentRun?.boundary ?? "unknown",
+      marker: currentRun?.marker ?? null,
+      elapsedMs:
+        currentRun === undefined ? null : Date.now() - currentRun.startedAtMs,
+      timeoutMs: currentRun?.timeoutMs ?? F18_CASE_TIMEOUT_MS,
+      projectId: currentRun?.projectId ?? null,
+      eventSequence: currentRun?.eventSequence ?? null,
+      stages: currentRun?.stages ?? [],
+      currentFacts: readF18ProgressFacts(
+        fixture,
+        currentRun?.projectId,
+        currentRun?.eventSequence,
+      ),
+      terminationCheckpoint: currentRun?.terminationCheckpoint ?? null,
+      primaryDaemon: fixture.daemonProcessSnapshot(),
+      startupDiagnostics: fixture.startupDiagnostics(),
+      daemonErrors: fixture.daemonErrors,
+      cleanupError: stopError instanceof Error ? stopError.message : stopError,
+    };
+    if (resultDirectory === undefined || resultDirectory.length === 0) {
+      process.stderr.write(
+        `[F18_ARCHIVE_SKIPPED] result directory missing; fixture=${fixture.directory}; database=${fixture.databaseFile}\n`,
+      );
+    } else {
+      try {
+        const archivedDirectory = archiveProductionFixtureFailure({
+          fixture,
+          resultDirectory,
+          artifactPrefix: "f18-organization-timeout",
+          evidence,
+        });
+        process.stderr.write(
+          `[F18_FAILURE_ARTIFACT] ${JSON.stringify({ boundary: currentRun?.boundary, archivedDirectory })}\n`,
+        );
+      } catch (archiveError) {
+        try {
+          const skippedPath = writeProductionFixtureArchiveSkipped({
+            fixture,
+            resultDirectory,
+            evidence: {
+              ...evidence,
+              archiveError:
+                archiveError instanceof Error
+                  ? archiveError.message
+                  : String(archiveError),
+            },
+          });
+          process.stderr.write(`[F18_ARCHIVE_SKIPPED] ${skippedPath}\n`);
+        } catch (skipError) {
+          process.stderr.write(
+            `[F18_ARCHIVE_SKIPPED] archive=${archiveError instanceof Error ? archiveError.message : String(archiveError)}; skipRecord=${skipError instanceof Error ? skipError.message : String(skipError)}; fixture=${fixture.directory}; database=${fixture.databaseFile}\n`,
+          );
+        }
+      }
+    }
+  }
+  activeF18Case = undefined;
 });
 
 const serialized = (call: CapturedProviderCall): string =>
@@ -138,8 +451,22 @@ const waitForF18PublicStage = async <T>(
   stage: string,
   run: () => Promise<T>,
 ): Promise<T> => {
+  const diagnostics = activeF18Case;
+  const stageRecord =
+    diagnostics === undefined ? undefined : beginF18Stage(diagnostics, stage);
   try {
-    return await run();
+    const value = await run();
+    if (diagnostics !== undefined && stageRecord !== undefined) {
+      finishF18Stage(diagnostics, stageRecord, "passed", {
+        publicStage: stage,
+        facts: readF18ProgressFacts(
+          fixture,
+          projectId,
+          diagnostics.eventSequence,
+        ),
+      });
+    }
+    return value;
   } catch (error) {
     const database = new DatabaseSync(fixture.databaseFile, { readOnly: true });
     let facts: unknown;
@@ -163,6 +490,13 @@ const waitForF18PublicStage = async <T>(
     } finally {
       database.close();
     }
+    if (diagnostics !== undefined && stageRecord !== undefined) {
+      finishF18Stage(diagnostics, stageRecord, "failed", {
+        publicStage: stage,
+        error: error instanceof Error ? error.message : String(error),
+        facts,
+      });
+    }
     throw new Error(
       `F18 public wait failed at ${stage}; facts=${JSON.stringify(facts)}`,
       { cause: error },
@@ -182,6 +516,39 @@ describe("release-functional long-lived responsibility", () => {
       attention = false,
     }) => {
       const marker = `F18-CHILD-${crypto.randomUUID().slice(0, 8)}`;
+      const run: F18CaseDiagnostics = {
+        boundary,
+        marker,
+        startedAt: new Date().toISOString(),
+        startedAtMs: Date.now(),
+        timeoutMs: F18_CASE_TIMEOUT_MS,
+        stages: [],
+        complete: false,
+      };
+      activeF18Case = run;
+      run.timer = setTimeout(() => {
+        run.terminationCheckpoint = {
+          capturedAt: new Date().toISOString(),
+          elapsedMs: Date.now() - run.startedAtMs,
+          activeStage:
+            [...run.stages]
+              .reverse()
+              .find((stage) => stage.outcome === "running")?.name ?? null,
+          daemon: run.fixture?.daemonProcessSnapshot() ?? null,
+        };
+        try {
+          writeF18Progress(run, "case-timeout-checkpoint", {
+            checkpoint: run.terminationCheckpoint,
+          });
+          process.stderr.write(
+            `[F18_TIMEOUT_CHECKPOINT] ${JSON.stringify(run.terminationCheckpoint)}\n`,
+          );
+        } catch (error) {
+          process.stderr.write(
+            `[F18_TIMEOUT_CHECKPOINT_ERROR] ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        }
+      }, F18_CASE_TIMEOUT_MS - F18_DIAGNOSTIC_LEAD_MS);
       let childDirectory = "";
       let allowParentAcceptance = false;
       const childWorkProvider = makeWorkProvider({ marker, verdict: "Pass" });
@@ -268,29 +635,60 @@ describe("release-functional long-lived responsibility", () => {
         return childWorkProvider(call);
       };
 
-      const fixture = await startProductionFixture({
-        isolatedPortHandshake: true,
-        admitWorkspaceDirectory: true,
-        reply,
-        daemonEnvironment: {
-          NODE_ENV: "test",
-          ARBOR_F18_TEST_LEASE_TTL_MS: "5000",
-        },
-      });
+      const fixture = await runF18Stage(
+        run,
+        "fixture-startup",
+        () =>
+          startProductionFixture({
+            isolatedPortHandshake: true,
+            admitWorkspaceDirectory: true,
+            preserveDirectoryOnStop: true,
+            reply,
+            daemonEnvironment: {
+              NODE_ENV: "test",
+              ARBOR_F18_TEST_LEASE_TTL_MS: "5000",
+            },
+          }),
+        (started) => ({
+          httpPort: started.httpPort,
+          daemon: started.daemonProcessSnapshot(),
+        }),
+      );
+      run.fixture = fixture;
       fixtures.push(fixture);
       childDirectory = fixture.workspaceDirectory;
+      writeF18Progress(run, "fixture-ready");
       const client = makePublicClient(fixture.baseUrl);
-      const project = await createFunctionalProject(
-        client,
-        fixture.workspaceDirectory,
-        "F18 organization",
-        { resourceSelection: "Profile" },
+      const project = await runF18Stage(
+        run,
+        "project-created",
+        () =>
+          createFunctionalProject(
+            client,
+            fixture.workspaceDirectory,
+            "F18 organization",
+            { resourceSelection: "Profile" },
+          ),
+        (created) => ({
+          projectId: created.projectId,
+          rootWorkspaceId: created.rootWorkspaceId,
+        }),
       );
+      run.projectId = project.projectId;
+      writeF18Progress(run, "project-created", {
+        rootWorkspaceId: project.rootWorkspaceId,
+      });
 
-      await submitHumanMessage(
-        client,
-        project,
-        `请为独立长期职责 ${marker} 提议一个子工作区，并附带首个工作。`,
+      await runF18Stage(
+        run,
+        "formation-request-submitted",
+        () =>
+          submitHumanMessage(
+            client,
+            project,
+            `请为独立长期职责 ${marker} 提议一个子工作区，并附带首个工作。`,
+          ),
+        () => ({ acceptedByPublicCommand: true }),
       );
       const governance = await waitForF18PublicStage(
         fixture,
@@ -330,11 +728,17 @@ describe("release-functional long-lived responsibility", () => {
         nodes: Array<{ workspaceId: string; name: string }>;
       }>("responsibility-tree", { projectId: project.projectId });
       expect(before.nodes).toHaveLength(1);
-      await client.command(project.projectId, "RecordDecision", {
-        proposalId: target[1],
-        expectedProposalRevision: Number(target[2]),
-        outcome: { _tag: "Approve" },
-      });
+      await runF18Stage(
+        run,
+        "formation-approved",
+        () =>
+          client.command(project.projectId, "RecordDecision", {
+            proposalId: target[1],
+            expectedProposalRevision: Number(target[2]),
+            outcome: { _tag: "Approve" },
+          }),
+        () => ({ proposalId: target[1], revision: Number(target[2]) }),
+      );
 
       const childWithWork = await waitForF18PublicStage(
         fixture,
@@ -404,10 +808,13 @@ describe("release-functional long-lived responsibility", () => {
       });
       expect(verification.criteriaResults?.[0]?.requirement).toContain(marker);
 
-      await fixture.crash();
+      await runF18Stage(run, "stop-before-reconciliation-fixture", () =>
+        fixture.crash(),
+      );
       const database = new DatabaseSync(fixture.databaseFile);
       let eventSequence = 0;
       let inboxKey = "";
+      const seedStage = beginF18Stage(run, "seed-dead-letter-and-offset");
       try {
         database.exec("BEGIN IMMEDIATE");
         const event = database
@@ -460,6 +867,7 @@ describe("release-functional long-lived responsibility", () => {
           )
           .run(project.rootWorkspaceId, expectedInboxKey);
         database.exec("COMMIT");
+        run.eventSequence = eventSequence;
         const offset = database
           .prepare(
             `SELECT last_sequence FROM consumer_offsets
@@ -469,14 +877,26 @@ describe("release-functional long-lived responsibility", () => {
         expect(Number(offset?.last_sequence ?? 0)).toBeGreaterThanOrEqual(
           eventSequence,
         );
+        finishF18Stage(run, seedStage, "passed", {
+          eventSequence,
+          inboxKey,
+          deadLetterReason: "unsupported eventVersion 2",
+          offset: Number(offset?.last_sequence ?? 0),
+          attentionCorruption: attention,
+        });
       } catch (error) {
         database.exec("ROLLBACK");
+        finishF18Stage(run, seedStage, "failed", {
+          eventSequence,
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
       } finally {
         database.close();
       }
 
       let crashRestartError: unknown;
+      const crashStage = beginF18Stage(run, "restart-to-injected-boundary");
       try {
         await fixture.restart({
           daemonEnvironment: {
@@ -503,6 +923,19 @@ describe("release-functional long-lived responsibility", () => {
           marker: expectedCrashMarker,
         })
       ) {
+        finishF18Stage(run, crashStage, "failed", {
+          expectedCrashMarker,
+          exitCode: crashProcess?.exitCode ?? null,
+          error:
+            crashRestartError instanceof Error
+              ? crashRestartError.message
+              : String(crashRestartError),
+          facts: readF18ProgressFacts(
+            fixture,
+            project.projectId,
+            eventSequence,
+          ),
+        });
         const diagnostic = new DatabaseSync(fixture.databaseFile, {
           readOnly: true,
         });
@@ -524,6 +957,19 @@ describe("release-functional long-lived responsibility", () => {
           { cause: crashRestartError },
         );
       }
+      finishF18Stage(run, crashStage, "passed", {
+        expectedCrashMarker,
+        exitCode: crashProcess?.exitCode ?? null,
+        reconciliationFacts: readF18ProgressFacts(
+          fixture,
+          project.projectId,
+          eventSequence,
+        ),
+      });
+      const postCrashFactsStage = beginF18Stage(
+        run,
+        "post-crash-durable-invariants",
+      );
       const afterInboxCommit = new DatabaseSync(fixture.databaseFile, {
         readOnly: true,
       });
@@ -610,19 +1056,31 @@ describe("release-functional long-lived responsibility", () => {
         expect(attentionQueue).toBe(
           attention && boundary === "AfterAttentionCommit" ? 1 : 0,
         );
+        finishF18Stage(run, postCrashFactsStage, "passed", {
+          phase: phase?.phase ?? null,
+          leaseGeneration: phase?.lease_generation ?? null,
+          inboxRows: restoredInbox === undefined ? 0 : 1,
+          deadLetterReason: deadLetterReason?.reason ?? null,
+          persistedOffset: Number(persistedOffset?.last_sequence ?? 0),
+          conclusionEventCount: concludedEvents,
+          attentionFacts,
+          attentionQueue,
+        });
       } finally {
         afterInboxCommit.close();
       }
 
       if (attention) {
         if (boundary === "BeforeAttentionCommit") {
-          await fixture.restart({
-            daemonEnvironment: {
-              NODE_ENV: "test",
-              ARBOR_F18_TEST_LEASE_TTL_MS: "5000",
-              ARBOR_F18_TEST_CRASH_BOUNDARY: "",
-            },
-          });
+          await runF18Stage(run, "attention-recovery-restart", () =>
+            fixture.restart({
+              daemonEnvironment: {
+                NODE_ENV: "test",
+                ARBOR_F18_TEST_LEASE_TTL_MS: "5000",
+                ARBOR_F18_TEST_CRASH_BOUNDARY: "",
+              },
+            }),
+          );
           await waitForF18PublicStage(
             fixture,
             project.projectId,
@@ -673,10 +1131,28 @@ describe("release-functional long-lived responsibility", () => {
         } finally {
           attentionRecovery.close();
         }
+        const attentionTerminalStage = beginF18Stage(
+          run,
+          "attention-terminal-facts",
+        );
+        finishF18Stage(run, attentionTerminalStage, "passed", {
+          factCount: 1,
+          queueCount: 1,
+        });
+        run.complete = true;
+        writeF18Progress(run, "case-completed", {
+          terminalFact: "Attention fact and durable queue row both present",
+        });
         return;
       }
 
-      await new Promise((resolveWait) => setTimeout(resolveWait, 5_500));
+      await runF18Stage(
+        run,
+        "lease-expiry-wait",
+        () =>
+          new Promise<void>((resolveWait) => setTimeout(resolveWait, 5_500)),
+        () => ({ elapsedMs: F18_CASE_BUDGET.leaseExpiryWaitMs }),
+      );
       allowParentAcceptance = true;
       const barrierDirectory = join(
         fixture.directory,
@@ -692,22 +1168,40 @@ describe("release-functional long-lived responsibility", () => {
       let additionalDaemon:
         | Awaited<ReturnType<typeof fixture.startAdditionalDaemon>>
         | undefined;
-      if (wasCompleted) {
-        await fixture.restart({ daemonEnvironment: competingEnvironment });
-      } else {
-        [additionalDaemon] = await Promise.all([
-          fixture.startAdditionalDaemon({
-            entry: resolve("tests/functional/support/nonce-daemon-child.mjs"),
-            daemonEnvironment: competingEnvironment,
-          }),
-          fixture.restart({ daemonEnvironment: competingEnvironment }),
-        ]);
-        expect(
-          readdirSync(barrierDirectory).filter((name) =>
-            name.startsWith("arrived-"),
-          ),
-        ).toHaveLength(2);
-      }
+      await runF18Stage(
+        run,
+        "recovery-restart-and-source-validation-barrier",
+        async () => {
+          if (wasCompleted) {
+            await fixture.restart({ daemonEnvironment: competingEnvironment });
+          } else {
+            [additionalDaemon] = await Promise.all([
+              fixture.startAdditionalDaemon({
+                entry: resolve(
+                  "tests/functional/support/nonce-daemon-child.mjs",
+                ),
+                daemonEnvironment: competingEnvironment,
+              }),
+              fixture.restart({ daemonEnvironment: competingEnvironment }),
+            ]);
+            expect(
+              readdirSync(barrierDirectory).filter((name) =>
+                name.startsWith("arrived-"),
+              ),
+            ).toHaveLength(2);
+          }
+          return {
+            primaryDaemon: fixture.daemonProcessSnapshot(),
+            barrierArrivals: readdirSync(barrierDirectory).filter((name) =>
+              name.startsWith("arrived-"),
+            ).length,
+          };
+        },
+      );
+      const recoveredFactsStage = beginF18Stage(
+        run,
+        "recovered-durable-invariants",
+      );
       const competed = new DatabaseSync(fixture.databaseFile, {
         readOnly: true,
       });
@@ -764,10 +1258,21 @@ describe("release-functional long-lived responsibility", () => {
         expect(Number(recoveryOffset?.last_sequence ?? 0)).toBe(eventSequence);
         expect(retainedDeadLetter?.reason).toBe("unsupported eventVersion 2");
         expect(recoveredConclusionEvents).toBe(1);
+        finishF18Stage(run, recoveredFactsStage, "passed", {
+          phase: phase?.phase ?? null,
+          leaseGeneration: phase?.lease_generation ?? null,
+          inboxRows: inboxCount,
+          workflowOffset: Number(recoveryOffset?.last_sequence ?? 0),
+          deadLetterReason: retainedDeadLetter?.reason ?? null,
+          conclusionEventCount: recoveredConclusionEvents,
+        });
       } finally {
         competed.close();
       }
-      await additionalDaemon?.crash();
+      await runF18Stage(run, "stop-competing-daemon", async () => {
+        await additionalDaemon?.crash();
+        return { stopped: additionalDaemon !== undefined };
+      });
       const accepted = await waitForF18PublicStage(
         fixture,
         project.projectId,
@@ -822,7 +1327,12 @@ describe("release-functional long-lived responsibility", () => {
       expect(
         unexpectedF18DaemonErrors(fixture.daemonErrors, expectedCrashMarker),
       ).toEqual([]);
+      run.complete = true;
+      writeF18Progress(run, "case-completed", {
+        terminalFact:
+          "public parent Acceptance and child Work completion observed",
+      });
     },
-    90_000,
+    F18_CASE_TIMEOUT_MS,
   );
 });
