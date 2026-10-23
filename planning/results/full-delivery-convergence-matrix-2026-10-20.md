@@ -1,10 +1,71 @@
 # Full delivery convergence matrix
 
-Date: 2026-10-20
+Initial audit date: 2026-10-20
 
 Audited code baseline: `e94a204a7988417eead9bc0fc6a301140d2f7ca9`
 
 Audit scope: read-only review of frozen design, current source/test inventory, and committed qualification records. No tests were run for this audit.
+
+## Current integration snapshot (2026-10-23)
+
+This convergence matrix is the current delivery-status index. The rows below
+under the original module and S1–S4 matrices remain the historical 2026-10-20
+audit of `e94a204a`; this addendum records the later integrated candidate and
+supersedes older statements about its current gates. The v19 provenance ledger
+[`full-delivery-integration-ledger.md`](full-delivery-integration-ledger.md)
+and the 2026-10-12 planning matrix
+[`full-delivery-gap-and-acceptance-matrix.md`](../release/full-delivery-gap-and-acceptance-matrix.md)
+remain supporting history, not a second current index.
+
+Current candidate: `adcb524f0eebb7e4ea40166dc00da8dfd3fc5e4d`.
+The root build and Web build were reported PASS for this candidate. The
+release-manifest runner segment is partial: it selected 23 process files and
+has exact per-file JSON outcomes for 14 files (12 all-pass files, 2 failing
+files), plus one explicit P39 hang-abort artifact; eight selected process
+files were not attempted.
+`segment.json` still marks the segment `ready-to-run`, so these artifacts are
+not a segment-completion record. The segment explicitly deferred the package
+and all six browser files. No full `pnpm check`, complete
+`pnpm test:functional`, UI suite, or `pnpm test:package` PASS is established
+here.
+
+The runner record and raw per-file JSON are external ignored artifacts under
+`C:\Users\ThinkPad\.codex\worktrees\native-sandbox-preintent-integration\Arbor\.test-results\2026-10-23T07-09-08Z-adcb524f-sweep\`.
+The segment metadata is `segment.json`; the two failure artifacts are exactly
+`tests_functional_process_f21-open3-p10-full-rebuild.functional.test.ts.json`
+and `tests_functional_process_organization.functional.test.ts.json`. No
+`*-progress.json` checkpoint was counted as a test result. The preceding
+segment ran against `16a1709b`, and its metadata says results do not carry
+forward to `adcb524f`.
+
+The eight selected process files without a per-file outcome are
+`agent-loop-p9-direct-control-effects.functional.test.ts`,
+`p9-dense-sse-lease-renewal.functional.test.ts`,
+`production-fixture-startup-cleanup.functional.test.ts`,
+`production-fixture-port-handshake.functional.test.ts`,
+`provider-failure-ah4.functional.test.ts`,
+`provider-success-ah1-ah3.functional.test.ts`,
+`rai-readmission-hold.functional.test.ts`, and
+`recovery-verdicts.functional.test.ts`.
+
+| Area | Integrated / isolated status at `adcb524f` | Measured on this candidate | Untested or unresolved | Next acceptance |
+|---|---|---|---|---|
+| Candidate and build boundary | Integrated candidate; root and Web builds reported PASS by the segment runner. | `segment.json` records a clean start at the exact SHA and the two build outcomes. | This is not `pnpm check` or a complete release run. | Finish all manifest process files, then run `pnpm check` on one clean committed candidate. |
+| Agent Loop, checkpoint and provider handoff | Code is integrated; the sweep measured selected crash boundaries only. | AH17 checkpoint 2/2, AH19 Conversation checkpoint owner 2/2, Native owner match 1/1 and mismatch 1/1, P4 tool-settlement fencing 1/1, model-output AH5/AH6 1/1, and command-input validation 3/3. Exact JSONs: `tests_functional_process_ah17-checkpoint-epoch-crash.functional.test.ts.json`, `tests_functional_process_ah19-conversation-checkpoint-owner-crash.functional.test.ts.json`, `tests_functional_process_ah19-conversation-native-owner-match.functional.test.ts.json`, `tests_functional_process_ah19-conversation-native-owner-mismatch.functional.test.ts.json`, `tests_functional_process_p4-ah7-tool-settlement-lease-fencing.functional.test.ts.json`, `tests_functional_process_model-output-ah5-ah6.functional.test.ts.json`, and `tests_functional_process_command-input-validation.functional.test.ts.json`. | AH7/AH10 are not closed by these files. Eight selected process files were not attempted; full recovery and full functional gates remain unmeasured. | Resume the eight remaining process files with no retry, then reconcile remaining AH7/AH10 cells and run the complete functional inventory. |
+| P39 maintenance writer exclusion | Integrated test/helper path; selected case is **HUNG_ABORTED**, not a normal assertion failure. | `p39-writer-exclusion-hang.json` classifies a self-deadlock wait cycle. Authorized operator termination targeted Vitest PID 28580, worker PID 23976, and lock-holder PID 11548; all three exited. The SQLite evidence file was preserved. | No Vitest JSON/pass exists for this case. The deadlock wait ordering remains to be corrected; do not count this as a pass or ordinary red assertion. | Break the wait cycle, then rerun the single P39 writer-exclusion case and capture a complete JSON result. |
+| Project, resource activation and P10 rebuild | Integrated implementation; a current process fixture is red. | F21 Story L full-rebuild JSON has one failed assertion and one pending assertion. The worker exited because its schema-44 database required offline upgrade to schema 51 before reaching the marker. | The failed case does not qualify the full-rebuild path; remaining assertion and broader F21 journey are not accepted from this partial result. | Repair or explicitly disposition the fixture’s 44→51 upgrade path, then obtain a same-file 2/2 process result and browser/resource journey. |
+| Cross-Work delivery and wake | Integrated public-process paths; focused current-candidate cases passed. | `tests_functional_process_cross-work-delivery.functional.test.ts.json` and `tests_functional_process_cross-work-wake.functional.test.ts.json` each report 1/1. | No complete S3 journey, full process run, or UI qualification follows from these focused files. | Run the remaining delivery/dependency process cells and UI acceptance as part of the complete functional inventory. |
+| Receipt, replay and P41 recovery | P41 repair code is integrated. Its four named process boundary cells have **segmented pass evidence**, not a single-file 4/4 result or final suite qualification. | F23 receipt tuple ordering 5/5 in `tests_functional_process_f23-receipt-tuple-ordering.functional.test.ts.json`. [`P41-manifest-recovery-order-fix.result.md`](P41-manifest-recovery-order-fix.result.md) records three of four cells passing in one run and the fourth passing 1/1 in a separate run at source `15a25677757f1b06e309faf165d07a74dc91def7`. | All four cells have pass observations across those two runs; the fourth was not reached in the first file run. No uninterrupted 4/4 file or final release suite qualification is established. | Preserve segmented four-boundary evidence. If single-run qualification is required, run all four cells together with retry 0 on one fixed candidate; complete release gates separately. |
+| Organization and F18 recovery | Integrated code; current process oracle/harness is red. | `tests_functional_process_organization.functional.test.ts.json` records the exact-boundary case failing: the child exited 86 with `F18_TEST_CRASH:AfterSourceValidationBeforeClaim`; the assertion did not accept the observed startup-handshake failure wrapper. Other assertions in this file are pending in the JSON. | This is not evidence of a successful F18 qualification or a proven production recovery defect; the observed boundary and the test oracle need reconciliation. | Reproduce the assertion on a clean candidate, preserve the exact child marker and result JSON, then pass the complete organization file without retry. |
+| Native OS sandbox | T2 provider identities are integrated but remain **Experimental**; production execution is unavailable and no Supported provider is claimed. Windows D2 V3 operator-positive work is isolated in its own branch/result and is not integrated qualification. | No Native provider qualification was selected by this runner segment. Current source reports empty capability tuples and `Unavailable` execution; the unified checkpoint and provider-specific T2/T3 records are supporting scoped evidence only. | Signed production helper launch, Supported capability, filesystem/network/resource enforcement, broker/stop behavior, and cross-process qualification are still open. | Keep production claims disabled until the signed helper and all T3 enforcement and recovery gates are integrated and qualified. |
+| Real-provider S1 and product acceptance | **NOT ACCEPTED.** The historical configured-provider attempt remains partial; current startup activity is not an S1 result. | `isolated-s1-real-provider-partial-20261012.result.md` records a real Work effect but an Unknown Verification / `VerifierOrphan`; it has no Acceptance, Work completion, or restart qualification. The new preparation at `d5f4928d` reports a build PASS and daemon startup in progress only; no completed journey result/artifact is available yet, and this SHA does not qualify `adcb524f`. | No later completed real-provider S1 journey or accepted S1–S4 result is recorded for `adcb524f`. | Finish startup, then record the full Project/resource admission → Work effect → independent PASS → Parent Acceptance → completed detail → hard restart journey on one exact candidate SHA. |
+| Browser UI and package boundary | Integrated Web implementation; release qualification deferred. | None in this runner segment. All six browser files and `tests/functional/package/clean-checkout.functional.test.ts` are listed as deferred by `segment.json`. | No current browser suite, clean checkout/package result, or UI restart acceptance. | Run the six browser files and clean-checkout package test against the same clean release candidate; retain their exact artifacts. |
+| Schema and full release gates | Current schema target is 51; no full release gate is established. | The manifest segment’s root/Web builds passed. The F21 failure above independently demonstrates a current consumer rejecting schema 44 until offline upgrade to 51. `AH10-P10-attention-schema51-fixture-checkpoint-2026-10-23.md` documents scoped 4/4 and 14/14 results at its earlier baseline. | No exact-`adcb524f` cumulative migration qualification, `pnpm check`, complete functional run, or package/UI run is recorded. | Qualify disposable cumulative offline migration to schema 51, then pass `pnpm check`, full `pnpm test:functional` (process + six browser files), and `pnpm test:package` on one clean commit. |
+
+**Release disposition at this snapshot: OPEN / NOT RELEASE QUALIFIED.** Green
+focused JSONs and successful builds do not offset the two current failing file
+reports, the HUNG_ABORTED P39 case, eight unattempted process files, deferred
+UI/package files, or the missing complete release gates.
 
 ## Decision rules
 
