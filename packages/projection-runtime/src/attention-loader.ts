@@ -10,6 +10,7 @@ import type {
   Workspace,
   WorkspaceId,
 } from "@arbor/domain";
+import { decodeExecutionEpisodeBinding } from "@arbor/domain";
 import type {
   AssignWorkBindingAttentionFact,
   AssignWorkBindingAttentionProjectionRow,
@@ -66,10 +67,10 @@ export interface ExecutionSettlementReadFact {
   readonly settlementMalformed?: boolean;
 }
 
-/** Internal canonical source binding used only to decide whether a
- * Work-bound Attention source belongs to the current Work revision. The
- * serialized episode remains opaque here so malformed/unknown versions fail
- * closed in the projection rather than being guessed by an adapter. */
+/** Internal canonical source binding used to determine exact Work-revision
+ * freshness, with the P10 RuntimeSafetyEnvelope workspace-scoped exception
+ * for valid non-Work EGP episodes. The serialized episode remains opaque to
+ * adapters so malformed/unknown versions fail closed in the projection. */
 export interface AttentionSourceExecutionBinding {
   readonly executionId: string;
   readonly projectId: ProjectId;
@@ -304,34 +305,42 @@ const integrityFailure = (input: {
   };
 };
 
-const sameWorkEpisode = (
+const decodeAttentionSourceEpisode = (
   raw: string,
 ):
   | { readonly workId: string; readonly targetWorkRevision: number }
+  | { readonly workspaceScoped: true }
   | { readonly reason: "EpisodeMalformed" | "EpisodeVersionUnsupported" } => {
+  const supportedEpisodeTags = new Set([
+    "WorkEpisode",
+    "ConversationResponseEpisode",
+    "InboxEpisode",
+    "DecisionEpisode",
+  ]);
+  let value: unknown;
   try {
-    const episode: unknown = JSON.parse(raw);
-    if (typeof episode !== "object" || episode === null) {
-      return { reason: "EpisodeMalformed" };
-    }
-    const value = episode as Record<string, unknown>;
-    if (value._tag !== "WorkEpisode") {
-      return { reason: "EpisodeVersionUnsupported" };
-    }
-    if (
-      typeof value.workId !== "string" ||
-      !Number.isSafeInteger(value.targetWorkRevision) ||
-      Number(value.targetWorkRevision) < 0
-    ) {
-      return { reason: "EpisodeMalformed" };
-    }
-    return {
-      workId: value.workId,
-      targetWorkRevision: Number(value.targetWorkRevision),
-    };
+    value = JSON.parse(raw) as unknown;
   } catch {
     return { reason: "EpisodeMalformed" };
   }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { reason: "EpisodeMalformed" };
+  }
+  const tag = (value as { readonly _tag?: unknown })._tag;
+  if (typeof tag !== "string") return { reason: "EpisodeMalformed" };
+  const episode = decodeExecutionEpisodeBinding(value);
+  if (episode === undefined) {
+    return {
+      reason: supportedEpisodeTags.has(tag)
+        ? "EpisodeMalformed"
+        : "EpisodeVersionUnsupported",
+    };
+  }
+  if (episode._tag !== "WorkEpisode") return { workspaceScoped: true };
+  return {
+    workId: episode.workId,
+    targetWorkRevision: episode.targetWorkRevision,
+  };
 };
 
 interface WorkBoundAttentionReference {
@@ -339,6 +348,8 @@ interface WorkBoundAttentionReference {
   readonly workspaceId: WorkspaceId;
   readonly targetWorkspaceId?: WorkspaceId;
   readonly sourceKind: AttentionWorkBoundSourceKind;
+  /** Valid non-Work EGP episodes keep RuntimeSafetyEnvelope workspace scoped. */
+  readonly allowWorkspaceEpisode?: boolean;
 }
 
 const activeWorkBoundExecutions = (
@@ -403,9 +414,24 @@ const activeWorkBoundExecutions = (
       if (binding.episodeJson === null) {
         return yield* Effect.fail(fail("SourceEpisodeStateMissing"));
       }
-      const episode = sameWorkEpisode(binding.episodeJson);
+      const episode = decodeAttentionSourceEpisode(binding.episodeJson);
       if ("reason" in episode) {
         return yield* Effect.fail(fail(episode.reason));
+      }
+      if ("workspaceScoped" in episode) {
+        if (source.allowWorkspaceEpisode !== true) {
+          return yield* Effect.fail(fail("EpisodeVersionUnsupported"));
+        }
+        if (
+          binding.workId !== null ||
+          binding.workProjectId !== null ||
+          binding.workWorkspaceId !== null ||
+          binding.workRevision !== null
+        ) {
+          return yield* Effect.fail(fail("WorkScopeMismatch"));
+        }
+        active.add(source.executionId);
+        continue;
       }
       const workId = episode.workId as WorkId;
       if (binding.workId === null || binding.workRevision === null) {
@@ -1087,6 +1113,7 @@ export const loadAttentionFacts = (
         executionId: fact.executionId,
         workspaceId: fact.workspaceId,
         sourceKind: "RuntimeSafetyEnvelope",
+        allowWorkspaceEpisode: true,
       });
     }
 
