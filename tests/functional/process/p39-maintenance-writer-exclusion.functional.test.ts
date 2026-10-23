@@ -2,7 +2,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect } from "effect";
+import { Duration, Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   acquireP39MaintenanceWriterExclusion,
@@ -32,6 +32,9 @@ const contenderModule = resolve(
 );
 const sameLayerContenderModule = resolve(
   "tests/functional/support/p39-lock-same-layer-contender.mjs",
+);
+const releaseConstructionModule = resolve(
+  "tests/functional/support/p39-release-construction-child.mjs",
 );
 
 const startHolder = async (
@@ -145,6 +148,29 @@ const contenderOutput = new WeakMap<
   ReturnType<typeof startContender>,
   { stdout: string; stderr: string }
 >();
+
+const startReleaseConstructionChild = (lockFilename: string) => {
+  const child = spawn(
+    process.execPath,
+    [releaseConstructionModule, lockFilename],
+    {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+      env: p39WindowsTestEnvironment(),
+    },
+  );
+  const output = { stdout: "", stderr: "" };
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    output.stdout += chunk;
+  });
+  child.stderr.on("data", (chunk: string) => {
+    output.stderr += chunk;
+  });
+  contenderOutput.set(child, output);
+  return child;
+};
 
 const startContender = (
   lockFilename: string,
@@ -428,6 +454,128 @@ describe.skipIf(!p39PathQualificationAvailable)(
         heldMode: "exclusive",
         competingMode: "shared",
       });
+    });
+
+    it("starts the acquire deadline when the Effect runs and can run the same Effect twice", async () => {
+      const directory = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-p39-lock-deferred-acquire-",
+      );
+      const lockFilename = join(directory, "maintenance.sqlite");
+      try {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const client = yield* P39WriterLockClient;
+              const acquire = client.acquire("RuntimeShared");
+              yield* Effect.sleep(Duration.millis(100));
+              const first = yield* acquire;
+              yield* client.release(first);
+              const second = yield* acquire;
+              yield* client.release(second);
+            }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 50))),
+          ),
+        );
+      } finally {
+        removeP39PrivateTestDirectory(directory);
+      }
+    });
+
+    it("tries a free lock once when the configured wait budget is zero", async () => {
+      const directory = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-p39-lock-zero-budget-free-",
+      );
+      const lockFilename = join(directory, "maintenance.sqlite");
+      try {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const client = yield* P39WriterLockClient;
+              const permit = yield* client.acquire("RuntimeShared");
+              yield* client.release(permit);
+            }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 0))),
+          ),
+        );
+      } finally {
+        removeP39PrivateTestDirectory(directory);
+      }
+    });
+
+    it("refuses a contended zero-budget lock without retrying", async () => {
+      const directory = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-p39-lock-zero-budget-busy-",
+      );
+      const lockFilename = join(directory, "maintenance.sqlite");
+      let holder: ChildProcessWithoutNullStreams | undefined;
+      let contender: ReturnType<typeof startContender> | undefined;
+      try {
+        holder = await startHolder(lockFilename, "exclusive");
+        contender = startContender(lockFilename, "shared", 0);
+        await awaitContenderStage(contender, "LAYER_READY", 15_000);
+        contender.stdin.end("acquire\n");
+        const observation = await awaitContender(contender);
+        contender = undefined;
+        expect(observation.result).toMatchObject({
+          _tag: "AcquireFailed",
+          code: "P39_WRITER_LOCK_ACQUIRE_FAILED",
+          timerFired: false,
+        });
+        expect(observation.result.elapsedMs).toBeLessThan(500);
+      } finally {
+        if (contender !== undefined && contender.exitCode === null) {
+          const exited = new Promise<void>((resolveExit) => {
+            contender?.once("exit", () => resolveExit());
+          });
+          contender.kill();
+          await exited;
+        }
+        if (holder !== undefined) await stopHolder(holder);
+        removeP39PrivateTestDirectory(directory);
+      }
+    });
+
+    it("keeps a constructed-but-unrun release tracked for layer shutdown", async () => {
+      const directory = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-p39-release-effect-construction-",
+      );
+      const lockFilename = join(directory, "maintenance.sqlite");
+      let holder: ReturnType<typeof startReleaseConstructionChild> | undefined;
+      let contender: ReturnType<typeof startContender> | undefined;
+      try {
+        holder = startReleaseConstructionChild(lockFilename);
+        await awaitContenderStage(holder, "LAYER_CLOSED", 5_000);
+        contender = startContender(lockFilename, "exclusive", 250);
+        await awaitContenderStage(contender, "LAYER_READY", 15_000);
+        contender.stdin.end("acquire\n");
+        const observation = await awaitContender(contender);
+        contender = undefined;
+        expect(observation.result).toMatchObject({
+          _tag: "Acquired",
+          released: true,
+        });
+        holder.stdin.end("exit\n");
+        await awaitContenderExit(holder);
+        holder = undefined;
+      } finally {
+        if (contender !== undefined && contender.exitCode === null) {
+          const exited = new Promise<void>((resolveExit) => {
+            contender?.once("exit", () => resolveExit());
+          });
+          contender.kill();
+          await exited;
+        }
+        if (holder !== undefined && holder.exitCode === null) {
+          const exited = new Promise<void>((resolveExit) => {
+            holder?.once("exit", () => resolveExit());
+          });
+          holder.kill();
+          await exited;
+        }
+        removeP39PrivateTestDirectory(directory);
+      }
     });
 
     it("retains same-layer shared permits until each matching release", async () => {

@@ -334,7 +334,7 @@ const writerLockSchemaInvalid = (cause?: unknown): P39WriterLockFailure => ({
   ...(cause === undefined ? {} : { cause }),
 });
 
-const isSqliteLockContention = (cause: unknown): boolean =>
+const isSqliteLockContention = (cause: unknown): cause is SqlError =>
   typeof cause === "object" &&
   cause !== null &&
   "_tag" in cause &&
@@ -344,6 +344,20 @@ const isSqliteLockContention = (cause: unknown): boolean =>
   cause.reason !== null &&
   "_tag" in cause.reason &&
   cause.reason._tag === "LockTimeoutError";
+
+const isP39WriterLockFailure = (
+  cause: unknown,
+): cause is P39WriterLockFailure =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "_tag" in cause &&
+  cause._tag === "P39WriterLockFailure";
+
+const isSqliteAdapterError = (cause: unknown): cause is SqliteAdapterError =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "_tag" in cause &&
+  cause._tag === "SqliteAdapterError";
 
 const normalizeForPlatform = (path: string): string => {
   const normalized =
@@ -436,7 +450,11 @@ export const p39WriterLockLayer = (
       const acquireOnce = (
         mode: P39DatabaseWriterPermit["mode"],
         deadline: number,
-      ) =>
+        enforceDeadline: boolean,
+      ): Effect.Effect<
+        P39DatabaseWriterPermit,
+        SqlError | P39WriterLockFailure | SqliteAdapterError
+      > =>
         Effect.acquireUseRelease(
           Scope.make(),
           (scope) =>
@@ -454,7 +472,7 @@ export const p39WriterLockLayer = (
                       ),
                 ),
               );
-              if (performance.now() >= deadline) {
+              if (enforceDeadline && performance.now() >= deadline) {
                 return yield* Effect.fail(writerLockAcquireFailed());
               }
               const sql = Context.get(context, SqlClient);
@@ -463,7 +481,7 @@ export const p39WriterLockLayer = (
               const run = <A>(operation: Effect.Effect<A, SqlError>) =>
                 operation.pipe(
                   Effect.flatMap((value) =>
-                    performance.now() >= deadline
+                    enforceDeadline && performance.now() >= deadline
                       ? Effect.fail(writerLockAcquireFailed())
                       : Effect.succeed(value),
                   ),
@@ -558,7 +576,7 @@ export const p39WriterLockLayer = (
                 yield* sql.unsafe(begin).pipe(
                   Effect.flatMap(() => {
                     transactionOpen = true;
-                    return performance.now() >= deadline
+                    return enforceDeadline && performance.now() >= deadline
                       ? Effect.fail(writerLockAcquireFailed())
                       : Effect.void;
                   }),
@@ -580,16 +598,9 @@ export const p39WriterLockLayer = (
               });
               return yield* acquireInScope.pipe(
                 Effect.mapError((cause) => {
-                  if (
-                    isSqliteLockContention(cause) ||
-                    (typeof cause === "object" &&
-                      cause !== null &&
-                      "_tag" in cause &&
-                      (cause._tag === "P39WriterLockFailure" ||
-                        cause._tag === "SqliteAdapterError"))
-                  ) {
-                    return cause as P39WriterLockFailure | SqliteAdapterError;
-                  }
+                  if (isSqliteLockContention(cause)) return cause;
+                  if (isP39WriterLockFailure(cause)) return cause;
+                  if (isSqliteAdapterError(cause)) return cause;
                   return initializationComplete
                     ? writerLockAcquireFailed(cause)
                     : sqliteAdapterError(
@@ -615,66 +626,74 @@ export const p39WriterLockLayer = (
           },
         );
       const acquire = (mode: P39DatabaseWriterPermit["mode"]) => {
-        const timeout = Number.isFinite(busyTimeoutMs)
-          ? Math.max(0, Math.floor(busyTimeoutMs))
-          : 0;
-        const deadline = performance.now() + timeout;
-        const loop = (): Effect.Effect<
-          P39DatabaseWriterPermit,
-          P39WriterLockFailure | SqliteAdapterError
-        > =>
-          Effect.suspend(() => {
-            if (performance.now() >= deadline) {
-              return Effect.fail(writerLockAcquireFailed());
-            }
-            return Effect.result(acquireOnce(mode, deadline)).pipe(
-              Effect.flatMap((result) => {
-                if (result._tag === "Success") {
-                  return Effect.succeed(result.success);
-                }
-                if (isSqliteLockContention(result.failure)) {
-                  const remainingMs = deadline - performance.now();
-                  if (remainingMs <= 0) {
-                    return Effect.fail(writerLockAcquireFailed(result.failure));
+        return Effect.suspend(() => {
+          const timeout = Number.isFinite(busyTimeoutMs)
+            ? Math.max(0, Math.floor(busyTimeoutMs))
+            : 0;
+          const deadline = performance.now() + timeout;
+          const loop = (
+            firstAttempt: boolean,
+          ): Effect.Effect<
+            P39DatabaseWriterPermit,
+            P39WriterLockFailure | SqliteAdapterError
+          > =>
+            Effect.suspend(() => {
+              if (!firstAttempt && performance.now() >= deadline) {
+                return Effect.fail(writerLockAcquireFailed());
+              }
+              return Effect.result(
+                acquireOnce(mode, deadline, timeout > 0),
+              ).pipe(
+                Effect.flatMap((result) => {
+                  if (result._tag === "Success") {
+                    return Effect.succeed(result.success);
                   }
-                  return Effect.sleep(
-                    Duration.millis(Math.min(10, remainingMs)),
-                  ).pipe(Effect.flatMap(loop));
-                }
-                return Effect.fail(
-                  typeof result.failure === "object" &&
-                    result.failure !== null &&
-                    "_tag" in result.failure &&
-                    result.failure._tag === "P39WriterLockFailure"
-                    ? (result.failure as P39WriterLockFailure)
-                    : typeof result.failure === "object" &&
-                        result.failure !== null &&
-                        "_tag" in result.failure &&
-                        result.failure._tag === "SqliteAdapterError"
-                      ? (result.failure as SqliteAdapterError)
-                      : writerLockAcquireFailed(result.failure),
-                );
-              }),
-            );
-          });
-        return loop();
+                  if (isSqliteLockContention(result.failure)) {
+                    const remainingMs = deadline - performance.now();
+                    if (remainingMs <= 0) {
+                      return Effect.fail(
+                        writerLockAcquireFailed(result.failure),
+                      );
+                    }
+                    return Effect.sleep(
+                      Duration.millis(Math.min(10, remainingMs)),
+                    ).pipe(Effect.flatMap(() => loop(false)));
+                  }
+                  if (isP39WriterLockFailure(result.failure)) {
+                    return Effect.fail(result.failure);
+                  }
+                  if (isSqliteAdapterError(result.failure)) {
+                    return Effect.fail(result.failure);
+                  }
+                  return Effect.fail(writerLockAcquireFailed(result.failure));
+                }),
+              );
+            });
+          return loop(true);
+        });
       };
       const release = (permit: P39DatabaseWriterPermit) => {
-        const active = activePermits.get(permit.token);
-        if (active === undefined) {
-          return Effect.fail({
-            _tag: "P39WriterLockFailure" as const,
-            code: "P39_WRITER_LOCK_RELEASE_FAILED" as const,
-          });
-        }
-        activePermits.delete(permit.token);
-        return active.rollback.pipe(
-          Effect.onExit(() => Scope.close(active.scope, Exit.void)),
-          Effect.mapError((cause) => ({
-            _tag: "P39WriterLockFailure" as const,
-            code: "P39_WRITER_LOCK_RELEASE_FAILED" as const,
-            cause,
-          })),
+        return Effect.uninterruptible(
+          Effect.suspend(() => {
+            const active = activePermits.get(permit.token);
+            if (active === undefined) {
+              return Effect.fail({
+                _tag: "P39WriterLockFailure" as const,
+                code: "P39_WRITER_LOCK_RELEASE_FAILED" as const,
+              });
+            }
+            return active.rollback.pipe(
+              Effect.onExit(() => {
+                activePermits.delete(permit.token);
+                return Scope.close(active.scope, Exit.void);
+              }),
+              Effect.mapError((cause) => ({
+                _tag: "P39WriterLockFailure" as const,
+                code: "P39_WRITER_LOCK_RELEASE_FAILED" as const,
+                cause,
+              })),
+            );
+          }),
         );
       };
       const layerScope = yield* Effect.scope;
