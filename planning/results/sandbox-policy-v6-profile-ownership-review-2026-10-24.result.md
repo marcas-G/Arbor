@@ -81,9 +81,12 @@ outside this review.
 - A prepare-once audit against the retained schema-version-51 database covered
   all 30 static SQL statements in this V6 process test and all 13 in its
   `ah-durable-snapshot.ts` helper: **43/43 prepared, 0 invalid columns or
-  aliases** after the fix. The test now includes a test-local schema microtest
-  that prepares this same source-listed query set against a newly cloned current
-  functional schema, without starting the daemon.
+  aliases** after the fix. The test includes a test-local schema microtest that
+  uses `createCurrentSchemaTestDatabase`, asserts `PRAGMA user_version` equals
+  `CURRENT_SCHEMA_VERSION` (51), then prepares this source-listed query set.
+  This uses the production migration chain and does not start a daemon.
+  Independent review caught that the first microtest draft used a historical
+  schema-50 clone; that draft was replaced before any process rerun.
 - The accepted fresh-decision assertions also compare the persisted effective
   summary tuple and policy digest against the refreshed public CandidateRead,
   including bundle revision/digest, provider registry revision/digest,
@@ -94,8 +97,9 @@ outside this review.
   both harness/test-oracle failures, not evidence of a production defect.
 - Post-fix lightweight verification: the V6 P9 exact-Step oracles and the new
   current-schema SQL microtest pass together (**3 passed, 1 process case
-  skipped**); the microtest clones the current schema, prepares all 43 static
-  queries, and does not start a daemon. Targeted Biome and `git diff --check`
+  skipped**); the microtest creates schema 51 through the current-schema test
+  helper, prepares all 43 static queries, and does not start a daemon. Targeted
+  Biome and `git diff --check`
   pass. `pnpm exec tsc -p tsconfig.test.json --noEmit` reports only the
   pre-existing unrelated `organization.functional.test.ts:740` missing
   `ProductionFixture.httpPort` member; no V6 or helper errors are reported.
