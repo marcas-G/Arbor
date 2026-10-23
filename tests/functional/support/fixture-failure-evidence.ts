@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { setP39PrivateWindowsAcl } from "../../support/p39-windows-deployment-test.js";
 import type { ProductionFixture } from "./production-fixture.js";
 
 const normalizedPath = (path: string): string =>
@@ -42,7 +43,24 @@ const validateResultDirectory = (resultDirectory: string) => {
   }
   if (!existsSync(resolvedResultDirectory)) {
     mkdirSync(resolvedResultDirectory);
+  } else {
+    const existingStat = lstatSync(resolvedResultDirectory);
+    if (!existingStat.isDirectory() || existingStat.isSymbolicLink()) {
+      throw new Error(
+        `Fixture failure evidence destination is not a real directory: ${resolvedResultDirectory}`,
+      );
+    }
+    const existingRealPath = realpathSync.native(resolvedResultDirectory);
+    if (
+      normalizedPath(existingRealPath) !==
+      normalizedPath(resolvedResultDirectory)
+    ) {
+      throw new Error(
+        `Fixture failure evidence destination traverses a reparse path: ${resolvedResultDirectory}`,
+      );
+    }
   }
+  setP39PrivateWindowsAcl(resolvedResultDirectory, "directory");
   const resultStat = lstatSync(resolvedResultDirectory);
   if (!resultStat.isDirectory() || resultStat.isSymbolicLink()) {
     throw new Error(
@@ -83,7 +101,7 @@ export const writeProductionFixtureArchiveSkipped = (input: {
       null,
       2,
     )}\n`,
-    { flag: "wx" },
+    { flag: "wx", mode: 0o600 },
   );
   return filename;
 };
@@ -170,7 +188,7 @@ export const archiveProductionFixtureFailure = (input: {
       null,
       2,
     )}\n`,
-    { flag: "wx" },
+    { flag: "wx", mode: 0o600 },
   );
   return archivedDirectory;
 };
