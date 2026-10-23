@@ -1,6 +1,6 @@
 # V6 Fresh Profile Ownership Review — 2026-10-24
 
-Status: **E50 PROFILE FIX REVIEWED; PRE-INTENT V6 PROCESS REACHED CANONICAL P9 NO-EFFECT TERMINAL; LAST FULLFILE WAS A TEST-ORACLE FALSE RED; ORACLE FIXED, NO RERUN YET**
+Status: **E50 PROFILE FIX REVIEWED; PRE-INTENT SYNTHETIC V6 REGISTRY-DRIFT/RESTART PROCESS QUALIFICATION PASS; NO OS-SUPPORTED-PROVIDER CLAIM**
 
 ## E50 fixture review
 
@@ -231,4 +231,30 @@ outside this review.
   only the pre-existing unrelated
   `tests/functional/process/organization.functional.test.ts:740`
   `ProductionFixture.httpPort` error. No daemon was started by the filtered
-  run; the process case remains NOT rerun pending independent review.
+  run; at that checkpoint the process case remained NOT rerun pending
+  independent review (the subsequent authorized run is recorded below).
+- After independent review found no semantic blocker, the one authorized
+  fullfile rerun was performed at HEAD `525815fe` plus this result-only count
+  correction. `pnpm build` and `pnpm --filter @arbor/web build` passed first.
+  The exact command used retry 0 / one worker:
+  `pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/sandbox-policy-v6-registry-drift-restart.functional.test.ts --retry=0 --maxWorkers=1 --reporter=json --outputFile=.test-results/2026-10-24-v6-canonical-noeffect-rerun-525815fe/vitest.json`.
+  Terminal Vitest result: **11 passed, 0 failed, 0 pending** (10 light cases
+  plus the single process case); all five reported suites passed. JSON SHA-256:
+  `E15EEABACAC2F74077AFF219484246941D9B28D3B7E38FDB0DABE34F98DFA29D`.
+  The report directory was verified P39-private (protected DACL; only current
+  user, SYSTEM, and Administrators), and the JSON file inherits that ACL.
+  The successful fixture cleanup left only `vitest.json` in the report
+  directory; a process check found no active command line referencing this
+  worktree.
+- The fullfile's fresh Work followed the accepted pre-intent path: exact EAP
+  and public CandidateRead with no invocation/binding, exact Decide grant,
+  source drift/restart, stale old P1 rejection without owned mutation, fresh
+  P1 commit against refreshed tuple/digest, then resolution of the same EAP.
+  The resumed exact P4 invocation settled ExpectedFailure with
+  `MayHaveStarted/P39Admission`, typed
+  `ProviderVersionMismatch + NoEffect + execution did not start`, matching
+  immutable P9 fact/attempt/binding, TerminalRejected Action and no artifact
+  output. The earlier independent terminal/persistence assertions also
+  passed. This establishes only the synthetic V6 CandidateRead/P1/P4/P9
+  registry-drift/restart journey; it is not an `OSSupported` provider or real
+  OS sandbox qualification, and it does not close P39 canonical-digest scope.
