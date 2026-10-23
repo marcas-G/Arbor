@@ -163,7 +163,8 @@ const readP38BrowserFailureSnapshot = (
                 project_id, workspace_id, state, revision, consumed_at,
                 consumed_by, logical_step_no, repair_attempt, action_index,
                 logical_action_id, call_ref, tool_invocation_id,
-                tool_name, tool_version, action_digest, expires_at
+                stable_action_id AS tool_name,
+                action_version AS tool_version, action_digest, expires_at
            FROM action_approvals
           WHERE approval_id = ? AND route_kind = 'Executable'`,
       )
