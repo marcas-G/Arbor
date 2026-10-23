@@ -503,6 +503,7 @@ const runJourney = async (input: {
       lastSequence = correctionRequest.sequence;
       state.correctionProviderRequestId = correctionRequest.requestId;
       state.correctionInRealProviderRequest = true;
+      releaseProviderResponse(run, correctionRequest.requestId);
       let correctedContentObserved = false;
       let verification:
         | {
