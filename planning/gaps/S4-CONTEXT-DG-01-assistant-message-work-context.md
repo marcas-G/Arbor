@@ -3,6 +3,7 @@
 Status: **OPEN — manual owner clarification required**
 Discovered against candidate: `4de305bb6e81f98688f40d98e817d5b4d7da19b4`
 Evidence: [S4 Work AssistantMessage context diagnostic](../results/s4-work-assistant-message-context-diagnostic.result.md)
+Governance draft: [Option A proposal](../proposals/S4-CONTEXT-DG-01-assistant-message-projection-governance-draft.md) (unaccepted)
 
 ## Question
 
