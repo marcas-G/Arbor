@@ -330,10 +330,13 @@ const runTurns = (
     }>("SELECT work_id, conditions_json FROM work_waits ORDER BY work_id");
     const loopActions = yield* sql.unsafe<{
       action_kind: string;
+      logical_step_no: number;
+      repair_attempt: number;
+      action_index: number;
       state: string;
       disposition_json: string | null;
     }>(
-      "SELECT action_kind, state, disposition_json FROM agent_loop_step_actions WHERE execution_id = ? ORDER BY logical_step_no, repair_attempt, action_index",
+      "SELECT action_kind, logical_step_no, repair_attempt, action_index, state, disposition_json FROM agent_loop_step_actions WHERE execution_id = ? ORDER BY logical_step_no, repair_attempt, action_index",
       [executionId],
     );
     return {
@@ -1027,6 +1030,19 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     expect(result.loopActions[1]).toMatchObject({
       action_kind: "claim_completion",
     });
+    const firstCursor = result.loopActions[0];
+    const nextCursor = result.loopActions[1];
+    expect(firstCursor).toBeDefined();
+    expect(nextCursor).toBeDefined();
+    expect(
+      nextCursor !== undefined &&
+        firstCursor !== undefined &&
+        (nextCursor.logical_step_no > firstCursor.logical_step_no ||
+          (nextCursor.logical_step_no === firstCursor.logical_step_no &&
+            (nextCursor.repair_attempt > firstCursor.repair_attempt ||
+              (nextCursor.repair_attempt === firstCursor.repair_attempt &&
+                nextCursor.action_index > firstCursor.action_index)))),
+    ).toBe(true);
     expect(result.waits).toHaveLength(1);
     expect(result.waits[0]?.work_id).toBe(workId);
     expect(JSON.parse(result.waits[0]?.conditions_json ?? "[]")).toEqual([
