@@ -37,6 +37,8 @@ const makeRun = (): StartedRealProviderFixture => {
     captureFile,
     evidenceDirectory: privateDirectory,
     privateRunDirectory: privateDirectory,
+    archiveResultDirectory: privateDirectory,
+    ownsArchiveResultDirectory: false,
     responseGateDirectory: privateDirectory,
     fixture: {} as StartedRealProviderFixture["fixture"],
   };

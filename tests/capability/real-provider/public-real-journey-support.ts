@@ -22,6 +22,7 @@ import { removeFunctionalFixtureDirectory } from "../../functional/support/schem
 import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
+  removeP39PrivateTestDirectory,
 } from "../../support/p39-windows-deployment-test.js";
 import { readProviderCaptures } from "./provider-response-gate.js";
 
@@ -78,6 +79,8 @@ export interface StartedRealProviderFixture {
   readonly captureFile: string;
   readonly evidenceDirectory: string;
   readonly privateRunDirectory: string;
+  readonly archiveResultDirectory: string;
+  readonly ownsArchiveResultDirectory: boolean;
   readonly responseGateDirectory?: string;
   fixtureArchiveDirectory?: string;
 }
@@ -305,6 +308,18 @@ export const startRealProviderFixture = async (input: {
     evidenceRoot.path,
     `real-public-${safeJourneyId}-`,
   );
+  const resultsRoot = realpathSync.native(
+    resolve(repositoryRoot, ".test-results"),
+  );
+  const runPathFromResults = relative(resultsRoot, privateRunDirectory);
+  const ownsArchiveResultDirectory =
+    runPathFromResults === "" ||
+    runPathFromResults === ".." ||
+    runPathFromResults.startsWith(`..${sep}`) ||
+    runPathFromResults.includes(sep);
+  const archiveResultDirectory = ownsArchiveResultDirectory
+    ? makeP39PrivateTestDirectory(resultsRoot, "real-public-fixture-archive-")
+    : privateRunDirectory;
   const evidenceDirectory = makeP39PrivateTestDirectory(
     privateRunDirectory,
     "evidence-",
@@ -370,6 +385,8 @@ export const startRealProviderFixture = async (input: {
     captureFile,
     evidenceDirectory,
     privateRunDirectory,
+    archiveResultDirectory,
+    ownsArchiveResultDirectory,
     ...(responseGateDirectory === undefined ? {} : { responseGateDirectory }),
   };
 };
@@ -466,11 +483,18 @@ export const finishRealProviderFixture = async (
       failure instanceof Error ? failure.message : String(failure),
     );
   }
+  if (
+    status === "PASS" &&
+    run.ownsArchiveResultDirectory &&
+    readdirSync(run.archiveResultDirectory).length === 0
+  ) {
+    removeP39PrivateTestDirectory(run.archiveResultDirectory);
+  }
   if (status === "FAIL" && run.fixture.daemonsExited()) {
     try {
       run.fixtureArchiveDirectory = archiveProductionFixtureFailure({
         fixture: run.fixture,
-        resultDirectory: run.privateRunDirectory,
+        resultDirectory: run.archiveResultDirectory,
         artifactPrefix: "retained-fixture",
         evidence: {
           schemaVersion: "arbor-real-public-fixture-failure-v1",
