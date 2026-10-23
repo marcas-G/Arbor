@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join, resolve } from "node:path";
 import { p39WindowsTestEnvironment } from "../../support/p39-windows-deployment-test.js";
@@ -24,10 +24,142 @@ const NONCE_DAEMON_ENTRY = resolve(
 );
 const WEB_DIST = resolve("apps/web/dist");
 const MAX_DAEMON_ERROR_CHARS = 12_000;
+const MAX_DAEMON_ERROR_ENTRIES = 24;
+const SAFE_TYPED_ERROR_FIELDS = [
+  "tag",
+  "stage",
+  "reason",
+  "name",
+  "code",
+] as const;
+
+const SAFE_STARTUP_PHASES = new Set([
+  "layer.construction.before",
+  "layer.construction.after",
+  "p39.layer-path-validation.before",
+  "p39.layer-path-validation.after",
+  "p39.schema-validation.before",
+  "p39.schema-validation.after",
+  "p39.runtime-path-validation.before",
+  "p39.runtime-path-validation.after",
+  "p39.writer-permit-acquire.before",
+  "p39.writer-permit-acquire.after",
+  "production-daemon-service.acquired",
+  "daemon.start.before",
+  "daemon.start.after",
+  "daemon.migrate.before",
+  "daemon.migrate.after",
+  "daemon.startup-recovery.before",
+  "daemon.startup-recovery.after",
+  "web-transport.bind.before",
+  "web-transport.bind.after",
+  "daemon.process.exit",
+]);
+
+const safeStartupPhaseEvent = (
+  line: string,
+): Readonly<Record<string, string | number>> | undefined => {
+  try {
+    const value = JSON.parse(line) as Record<string, unknown>;
+    if (
+      value.tag !== "AH19_STARTUP_PHASE" ||
+      typeof value.phase !== "string" ||
+      !SAFE_STARTUP_PHASES.has(value.phase)
+    ) {
+      return undefined;
+    }
+    return {
+      phase: value.phase,
+      ...(typeof value.elapsedMs === "number" &&
+      Number.isFinite(value.elapsedMs)
+        ? { elapsedMs: value.elapsedMs }
+        : {}),
+      ...(typeof value.pid === "number" && Number.isSafeInteger(value.pid)
+        ? { pid: value.pid }
+        : {}),
+      ...(typeof value.exitCode === "number" &&
+      Number.isSafeInteger(value.exitCode)
+        ? { exitCode: value.exitCode }
+        : {}),
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const extractP39ReasonCode = (text: string): string => {
+  const match =
+    /\b["']?reasonCode["']?\s*[:=]\s*["']?(P39_[A-Z0-9_]{1,80})["']?/u.exec(
+      text,
+    );
+  return match?.[1] ?? "unknown";
+};
+
+const extractP39FailureCode = (text: string): string => {
+  const match =
+    /\b["']?code["']?\s*[:=]\s*["']?(P39_[A-Z0-9_]{1,80})["']?/u.exec(text);
+  return match?.[1] ?? "unknown";
+};
+
+const sanitizeDiagnosticValue = (value: string): string =>
+  redactDaemonText(value)
+    .replace(/(?:[a-z]:\\|\\\\)[^\s,;)}\]]+/giu, "[PATH]")
+    .replace(/https?:\/\/[^\s"'<>]+/giu, "[URL]")
+    .replace(/[\r\n\t]+/gu, " ")
+    .replace(/[^\p{L}\p{N}_.:/ -]/gu, "?")
+    .trim()
+    .slice(0, 160);
+
+const extractSafeTypedError = (
+  text: string,
+): Readonly<
+  Partial<Record<(typeof SAFE_TYPED_ERROR_FIELDS)[number], string>>
+> => {
+  const result: Partial<
+    Record<(typeof SAFE_TYPED_ERROR_FIELDS)[number], string>
+  > = {};
+  for (const field of SAFE_TYPED_ERROR_FIELDS) {
+    const labels = field === "tag" ? ["_tag", "tag"] : [field];
+    for (const label of labels) {
+      const matcher = new RegExp(
+        `\\b["']?${label}["']?\\s*[:=]\\s*(?:["']([^"']{1,512})["']|([A-Za-z0-9_.:/-]{1,160}))`,
+        "gu",
+      );
+      const match = matcher.exec(text);
+      const candidate = match?.[1] ?? match?.[2];
+      if (candidate !== undefined) {
+        result[field] = sanitizeDiagnosticValue(candidate);
+        break;
+      }
+    }
+  }
+  return result;
+};
+
+const safeHandshakeFailure = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : "";
+  const prefixes = [
+    "functional daemon startup handshake timed out",
+    "functional daemon exited before listening report",
+    "duplicate functional daemon start marker",
+    "invalid functional daemon start identity",
+    "duplicate functional daemon listening marker",
+    "functional daemon listening identity mismatch",
+    "functional daemon bound unexpected port",
+    "functional daemon exited before HTTP readiness",
+    "functional daemon HTTP readiness timed out",
+    "functional daemon startup failed",
+  ];
+  return (
+    prefixes.find((prefix) => message.startsWith(prefix)) ??
+    "functional daemon startup handshake failed"
+  );
+};
 
 const redactDaemonText = (value: string): string =>
   value
     .replaceAll("test-only", "[REDACTED]")
+    .replace(/https?:\/\/[^\s"'<>]+/giu, "[URL]")
     .replace(
       /(authorization["']?\s*[:=]\s*["']?bearer\s+)["']?[^"'\s,;]+/giu,
       "$1[REDACTED]",
@@ -35,6 +167,11 @@ const redactDaemonText = (value: string): string =>
     .replace(
       /((?:api[_-]?key|token|secret)["']?\s*[:=]\s*["']?)[^"'\s,;]+/giu,
       "$1[REDACTED]",
+    )
+    .replace(/(?:[a-z]:[\\/]|\\\\)[^\s"'<>),;}\]]+/giu, "[PATH]")
+    .replace(
+      /(?<![\w:])\/(?:[^/\s"'<>),;}\]]+\/)*[^/\s"'<>),;}\]]+/gu,
+      "[PATH]",
     )
     .slice(-MAX_DAEMON_ERROR_CHARS);
 
@@ -79,6 +216,20 @@ export interface ProductionFixture {
   readonly workspaceDirectory: string;
   readonly providerCalls: ReadonlyArray<CapturedProviderCall>;
   readonly daemonErrors: ReadonlyArray<string>;
+  /** Safe allowlisted startup phases and the last structured P39 reason code. */
+  readonly startupDiagnostics: () => {
+    readonly p39FailureCode: string;
+    readonly p39ReasonCode: string;
+    readonly typedError: Readonly<
+      Partial<Record<(typeof SAFE_TYPED_ERROR_FIELDS)[number], string>>
+    >;
+    readonly webStaticIndex: "present" | "missing";
+    readonly startupPhases: ReadonlyArray<
+      Readonly<Record<string, string | number>>
+    >;
+  };
+  /** True only when every primary and additional daemon child has exited. */
+  readonly daemonsExited: () => boolean;
   /** Sanitized state of the last primary daemon launcher (never env values). */
   readonly daemonProcessSnapshot: () => {
     readonly pid: number | undefined;
@@ -507,10 +658,18 @@ export const startProductionFixture = async (input: {
   let httpPort = 0;
   let baseUrl = `http://127.0.0.1:${httpPort}`;
   const daemonErrors: string[] = [];
+  const startupPhaseEvents: Array<Readonly<Record<string, string | number>>> =
+    [];
+  let lastP39ReasonCode = "unknown";
+  let lastP39FailureCode = "unknown";
+  let lastWebStaticIndex: "present" | "missing" = "missing";
+  let lastTypedError: Readonly<
+    Partial<Record<(typeof SAFE_TYPED_ERROR_FIELDS)[number], string>>
+  > = {};
   const recordDaemonError = (message: string) => {
     daemonErrors.push(redactDaemonText(message));
-    if (daemonErrors.length > 24)
-      daemonErrors.splice(0, daemonErrors.length - 24);
+    if (daemonErrors.length > MAX_DAEMON_ERROR_ENTRIES)
+      daemonErrors.splice(0, daemonErrors.length - MAX_DAEMON_ERROR_ENTRIES);
   };
   const daemonErrorSummary = () =>
     redactDaemonText(
@@ -566,6 +725,14 @@ export const startProductionFixture = async (input: {
       ...input.daemonEnvironment,
       ...override?.daemonEnvironment,
     };
+    lastWebStaticIndex = existsSync(
+      join(
+        resolve(directory, daemonEnv.ARBOR_WEB_DIST ?? WEB_DIST),
+        "index.html",
+      ),
+    )
+      ? "present"
+      : "missing";
     if (input.admitWorkspaceDirectory === true) {
       daemonEnv.ARBOR_PROJECT_ROOT = workspaceDirectory;
     } else {
@@ -583,30 +750,11 @@ export const startProductionFixture = async (input: {
         ? NONCE_DAEMON_ENTRY
         : requestedEntry;
     daemonStarts += 1;
-    const startupStdout: string[] = [];
-    const startupEnvironmentDiagnostic =
-      process.platform === "win32"
-        ? `PSModulePath=${JSON.stringify(daemonEnv.PSModulePath ?? null)}; PowerShellModulesPathPresent=${(daemonEnv.PSModulePath ?? "").split(";").some((path) => path.toLowerCase().includes("\\windowspowershell\\v1.0\\modules"))}; ChildEnvironmentHasPSModulePath=${Object.hasOwn(daemonEnv, "PSModulePath")}`
-        : "";
     daemon = spawn(process.execPath, [entry], {
       cwd: directory,
       env: daemonEnv,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
-    });
-    let startupStdoutBuffer = "";
-    daemon.stdout?.on("data", (chunk: Buffer) => {
-      startupStdoutBuffer += chunk.toString("utf8");
-      let newline = startupStdoutBuffer.indexOf("\n");
-      while (newline >= 0) {
-        const line = startupStdoutBuffer.slice(0, newline).trim();
-        startupStdoutBuffer = startupStdoutBuffer.slice(newline + 1);
-        if (line.length > 0) {
-          startupStdout.push(redactDaemonText(line));
-          if (startupStdout.length > 16) startupStdout.shift();
-        }
-        newline = startupStdoutBuffer.indexOf("\n");
-      }
     });
     lastDaemonLaunch = {
       child: daemon,
@@ -625,6 +773,11 @@ export const startProductionFixture = async (input: {
     try {
       httpPort = await waitForNonceBoundPort(daemon, requestedPort, {
         onStdoutLine: (line) => {
+          const safePhase = safeStartupPhaseEvent(line);
+          if (safePhase !== undefined) {
+            startupPhaseEvents.push({ ...safePhase, launch: daemonStarts });
+            if (startupPhaseEvents.length > 32) startupPhaseEvents.shift();
+          }
           input.onDaemonStdout?.(line);
         },
       });
@@ -633,8 +786,12 @@ export const startProductionFixture = async (input: {
         error,
         "functional daemon startup handshake",
       );
+      const diagnosticText = daemonErrorSummary();
+      lastP39ReasonCode = extractP39ReasonCode(diagnosticText);
+      lastP39FailureCode = extractP39FailureCode(diagnosticText);
+      lastTypedError = extractSafeTypedError(diagnosticText);
       throw new Error(
-        `functional daemon startup handshake failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon.exitCode)}; signal=${String(daemon.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}`,
+        `functional daemon startup handshake failed: ${safeHandshakeFailure(error)}; exitCode=${String(daemon.exitCode)}; signal=${String(daemon.signalCode)}; typedError=${JSON.stringify(lastTypedError)}; p39FailureCode=${lastP39FailureCode}; p39ReasonCode=${lastP39ReasonCode}; startupPhases=${JSON.stringify(startupPhaseEvents)}`,
         { cause: error },
       );
     }
@@ -652,8 +809,12 @@ export const startProductionFixture = async (input: {
       );
     } catch (error) {
       await stopDaemonAfterStartupFailure(error, "functional daemon readiness");
+      const diagnosticText = daemonErrorSummary();
+      lastP39ReasonCode = extractP39ReasonCode(diagnosticText);
+      lastP39FailureCode = extractP39FailureCode(diagnosticText);
+      lastTypedError = extractSafeTypedError(diagnosticText);
       throw new Error(
-        `functional daemon startup failed: ${error instanceof Error ? error.message : String(error)}; exitCode=${String(daemon?.exitCode)}; signal=${String(daemon?.signalCode)}; stderr=${daemonErrorSummary() || "<empty>"}; ${startupEnvironmentDiagnostic}; stdout=${startupStdout.join(" | ") || "<empty>"}`,
+        `functional daemon startup failed: ${safeHandshakeFailure(error)}; exitCode=${String(daemon?.exitCode)}; signal=${String(daemon?.signalCode)}; webStaticIndex=${lastWebStaticIndex}; startupHint=${lastWebStaticIndex === "missing" ? "web dist not built" : "none"}; typedError=${JSON.stringify(lastTypedError)}; p39FailureCode=${lastP39FailureCode}; p39ReasonCode=${lastP39ReasonCode}; startupPhases=${JSON.stringify(startupPhaseEvents)}`,
         { cause: error },
       );
     }
@@ -679,10 +840,54 @@ export const startProductionFixture = async (input: {
       );
       cleanupFailures.push(cleanupError);
     }
-    try {
-      removeFunctionalFixtureDirectory(directory);
-    } catch (cleanupError) {
-      cleanupFailures.push(cleanupError);
+    const startupChildExited = daemon === undefined || childHasExited(daemon);
+    if (input.preserveDirectoryOnStop === true || !startupChildExited) {
+      try {
+        const filename = join(directory, "startup-failure-evidence.json");
+        writeFileSync(
+          filename,
+          `${JSON.stringify(
+            {
+              startupFailure: true,
+              phase: "initial-daemon-startup",
+              handshakeFailure: safeHandshakeFailure(error),
+              errorName:
+                error instanceof Error
+                  ? sanitizeDiagnosticValue(error.name)
+                  : "unknown",
+              databaseFile,
+              workspaceDirectory,
+              primaryDaemon: {
+                pid: daemon?.pid,
+                exitCode: daemon?.exitCode,
+                signalCode: daemon?.signalCode,
+                alive: daemon !== undefined && !childHasExited(daemon),
+              },
+              p39FailureCode: lastP39FailureCode,
+              p39ReasonCode: lastP39ReasonCode,
+              webStaticIndex: lastWebStaticIndex,
+              typedError: lastTypedError,
+              startupPhases: [...startupPhaseEvents],
+              daemonErrors: [...daemonErrors],
+              cleanupFailureCount: cleanupFailures.length,
+            },
+            null,
+            2,
+          )}\n`,
+          { flag: "wx" },
+        );
+        process.stdout.write(
+          `[FUNCTIONAL_FIXTURE_PRESERVED] ${JSON.stringify({ directory, databaseFile, evidenceFile: filename, daemonExited: startupChildExited })}\n`,
+        );
+      } catch (evidenceError) {
+        cleanupFailures.push(evidenceError);
+      }
+    } else {
+      try {
+        removeFunctionalFixtureDirectory(directory);
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError);
+      }
     }
     if (cleanupFailures.length > 0) {
       throw new AggregateError(
@@ -701,6 +906,17 @@ export const startProductionFixture = async (input: {
     workspaceDirectory,
     providerCalls: activeProvider.calls,
     daemonErrors,
+    startupDiagnostics: () => ({
+      p39FailureCode: lastP39FailureCode,
+      p39ReasonCode: lastP39ReasonCode,
+      typedError: { ...lastTypedError },
+      webStaticIndex: lastWebStaticIndex,
+      startupPhases: [...startupPhaseEvents],
+    }),
+    daemonsExited: () =>
+      [daemon, ...additionalDaemons].every(
+        (child) => child === undefined || childHasExited(child),
+      ),
     daemonProcessSnapshot: () => {
       const launch = lastDaemonLaunch;
       if (launch === undefined) return null;
@@ -854,8 +1070,15 @@ export const startProductionFixture = async (input: {
         failures.push(new Error(diagnostic, { cause: error }));
       }
       try {
-        if (input.preserveDirectoryOnStop !== true) {
+        const allDaemonsExited = [daemon, ...additionalDaemons].every(
+          (child) => child === undefined || childHasExited(child),
+        );
+        if (input.preserveDirectoryOnStop !== true && allDaemonsExited) {
           removeFunctionalFixtureDirectory(directory);
+        } else if (!allDaemonsExited) {
+          recordDaemonError(
+            `fixture directory retained because daemon exit was not confirmed; database=${databaseFile}`,
+          );
         }
       } catch (error) {
         failures.push(error);
