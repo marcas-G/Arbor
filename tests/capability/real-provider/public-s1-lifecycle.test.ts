@@ -31,6 +31,10 @@ import {
   makeP39PrivateTestDirectory,
 } from "../../support/p39-windows-deployment-test.js";
 import { isChatCompletionsPath } from "./provider-capture-path.js";
+import {
+  type CapturedWaitArguments,
+  isPrematureCurrentWorkVerificationWait,
+} from "./public-s1-wait-diagnostics.js";
 
 const OPT_IN_ENV = "ARBOR_RUN_REAL_PUBLIC_S1";
 const CONFIG_PATH_ENV = "ARBOR_PUBLIC_S1_CONFIG";
@@ -113,6 +117,97 @@ const systemPromptText = (capture: ProviderCapture): string => {
     .join("\n");
 };
 
+interface CapturedToolCall {
+  readonly name: string;
+  readonly arguments?: unknown;
+}
+
+const advertisedToolNames = (
+  capture: ProviderCapture,
+): ReadonlyArray<string> => {
+  const tools = capture.request?.tools;
+  if (!Array.isArray(tools)) return [];
+  return tools.flatMap((tool) => {
+    if (typeof tool !== "object" || tool === null) return [];
+    const functionDefinition = (tool as { function?: { name?: unknown } })
+      .function;
+    return typeof functionDefinition?.name === "string"
+      ? [functionDefinition.name]
+      : [];
+  });
+};
+
+const capturedToolCalls = (
+  capture: ProviderCapture,
+): ReadonlyArray<CapturedToolCall> => {
+  if (capture.responseBodyBase64 === undefined) return [];
+  const responseText = Buffer.from(
+    capture.responseBodyBase64,
+    "base64",
+  ).toString("utf8");
+  const fragments = new Map<number, { name: string; argumentsText: string }>();
+  const absorb = (value: unknown): void => {
+    if (typeof value !== "object" || value === null) return;
+    const calls = (
+      value as {
+        choices?: Array<{
+          delta?: { tool_calls?: unknown[] };
+          message?: { tool_calls?: unknown[] };
+        }>;
+      }
+    ).choices?.[0];
+    const streamed =
+      calls?.delta?.tool_calls ?? calls?.message?.tool_calls ?? [];
+    for (const rawCall of streamed) {
+      if (typeof rawCall !== "object" || rawCall === null) continue;
+      const call = rawCall as {
+        index?: number;
+        function?: { name?: unknown; arguments?: unknown };
+      };
+      const index = call.index ?? fragments.size;
+      const fragment = fragments.get(index) ?? { name: "", argumentsText: "" };
+      if (typeof call.function?.name === "string") {
+        fragment.name += call.function.name;
+      }
+      if (typeof call.function?.arguments === "string") {
+        fragment.argumentsText += call.function.arguments;
+      } else if (call.function?.arguments !== undefined) {
+        fragment.argumentsText += JSON.stringify(call.function.arguments);
+      }
+      fragments.set(index, fragment);
+    }
+  };
+  for (const line of responseText.split(/\r?\n/u)) {
+    if (!line.startsWith("data: ") || line.slice(6) === "[DONE]") continue;
+    try {
+      absorb(JSON.parse(line.slice(6)) as unknown);
+    } catch {
+      // Ignore non-JSON stream metadata; provider content is diagnostic only.
+    }
+  }
+  if (fragments.size === 0 && responseText.trimStart().startsWith("{")) {
+    try {
+      absorb(JSON.parse(responseText) as unknown);
+    } catch {
+      return [];
+    }
+  }
+  return [...fragments.values()].map((fragment) => {
+    let parsedArguments: unknown;
+    try {
+      parsedArguments = JSON.parse(fragment.argumentsText) as unknown;
+    } catch {
+      parsedArguments = fragment.argumentsText;
+    }
+    return {
+      name: fragment.name,
+      ...(fragment.argumentsText.length > 0
+        ? { arguments: parsedArguments }
+        : {}),
+    };
+  });
+};
+
 const remainingJourneyTime = (deadlineAt: number): number => {
   const remaining = deadlineAt - Date.now();
   if (remaining <= 0) {
@@ -133,6 +228,14 @@ interface PublicScenarioState {
     readonly ordinaryConversationBoundaryObserved: true;
     readonly noAssumedResourceOrPermissionClauseObserved: true;
   };
+  readonly workPromptEvidence?: {
+    readonly providerRequestId: string;
+    readonly promptAssetRef: "prompt:base-agent-protocol:base-loop:v2";
+    readonly systemPromptSha256: string;
+    readonly activeWorkExecutionRoleObserved: true;
+    readonly rootConversationActionNotLeaked: true;
+  };
+  readonly prematureWorkWait?: PrematureWorkWaitEvidence;
   readonly workId?: string;
   readonly verificationId?: string;
   readonly acceptedWork?: unknown;
@@ -150,6 +253,29 @@ interface PublicScenarioState {
     readonly failureCleanup: string;
     readonly passCleanup: string;
   };
+}
+
+interface PrematureWorkWaitEvidence {
+  readonly primaryJourneyOracle: "PublicCommandsAndViews";
+  readonly selfWaitDiagnosticOracle: "ProviderCaptureAndReadOnlySQLiteAuxiliary";
+  readonly workId: string;
+  readonly workRevision: number;
+  readonly publicCurrentWork: {
+    readonly workId: string;
+    readonly revision: number;
+    readonly status: string;
+  };
+  readonly waitArguments: CapturedWaitArguments;
+  readonly durableWait: {
+    readonly workId: string;
+    readonly waitMode: string;
+    readonly conditions: ReadonlyArray<unknown>;
+  };
+  readonly completionClaimRequested: false;
+  readonly proofExists: false;
+  readonly verificationExists: false;
+  readonly publicVerification: unknown;
+  readonly publicInboxUnconsumed: ReadonlyArray<unknown>;
 }
 
 interface WorkspaceFileSnapshot {
@@ -569,6 +695,159 @@ const currentState = async (
   return { verification, work };
 };
 
+const readDurableWorkWait = (input: {
+  readonly databaseFile: string;
+  readonly workId: string;
+}): PrematureWorkWaitEvidence["durableWait"] | undefined => {
+  const database = new DatabaseSync(input.databaseFile, { readOnly: true });
+  try {
+    const row = database
+      .prepare(
+        "SELECT work_id, wait_mode, conditions_json FROM work_waits WHERE work_id = ?",
+      )
+      .get(input.workId) as
+      | {
+          work_id: string;
+          wait_mode: string;
+          conditions_json: string;
+        }
+      | undefined;
+    if (row === undefined) return undefined;
+    return {
+      workId: row.work_id,
+      waitMode: row.wait_mode,
+      conditions: JSON.parse(row.conditions_json) as ReadonlyArray<unknown>,
+    };
+  } finally {
+    database.close();
+  }
+};
+
+const findPrematureCurrentWorkVerificationWait = async (input: {
+  readonly client: PublicClient;
+  readonly project: FunctionalProject;
+  readonly databaseFile: string;
+  readonly captureFile: string;
+  readonly workId: string;
+  readonly currentWork: {
+    readonly workId?: string;
+    readonly revision?: number;
+    readonly status?: string;
+  } | null;
+  readonly proofPath: string;
+  readonly publicInboxUnconsumed: ReadonlyArray<unknown>;
+}): Promise<PrematureWorkWaitEvidence | undefined> => {
+  const workCaptures = readProviderCaptures(input.captureFile).filter(
+    (capture) =>
+      capture.event === "response-complete" &&
+      advertisedToolNames(capture).includes("patch") &&
+      advertisedToolNames(capture).includes("claim_completion"),
+  );
+  const latest = workCaptures.at(-1);
+  if (latest === undefined) return undefined;
+  if (
+    input.currentWork?.workId !== input.workId ||
+    input.currentWork.status !== "Open" ||
+    input.currentWork.revision === undefined
+  ) {
+    return undefined;
+  }
+  const calls = capturedToolCalls(latest);
+  const waitCalls = calls.flatMap((call, index) =>
+    call.name === "wait" &&
+    typeof call.arguments === "object" &&
+    call.arguments !== null
+      ? [{ index, arguments: call.arguments as CapturedWaitArguments }]
+      : [],
+  );
+  if (waitCalls.length === 0) return undefined;
+  const durableWait = readDurableWorkWait({
+    databaseFile: input.databaseFile,
+    workId: input.workId,
+  });
+  if (durableWait === undefined) return undefined;
+  const conditionsMatch = (waitArguments: CapturedWaitArguments): boolean => {
+    const requestedConditions = waitArguments.waitSpec?.conditions;
+    const durableConditions = durableWait.conditions;
+    return (
+      durableWait.waitMode === waitArguments.waitSpec?.mode &&
+      requestedConditions !== undefined &&
+      requestedConditions.length === durableConditions.length &&
+      requestedConditions.every((requested, index) => {
+        const durable = durableConditions[index];
+        if (typeof durable !== "object" || durable === null) return false;
+        const requestedRecord = requested as unknown as Record<string, unknown>;
+        const durableRecord = durable as Record<string, unknown>;
+        const keys = new Set([
+          ...Object.keys(requestedRecord),
+          ...Object.keys(durableRecord),
+        ]);
+        return [...keys].every(
+          (key) =>
+            JSON.stringify(requestedRecord[key]) ===
+            JSON.stringify(durableRecord[key]),
+        );
+      })
+    );
+  };
+  const registeredWaitCall = waitCalls.find((call) =>
+    conditionsMatch(call.arguments),
+  );
+  if (registeredWaitCall === undefined) return undefined;
+  const waitArguments = registeredWaitCall.arguments;
+  const priorProviderClaims = workCaptures
+    .slice(0, -1)
+    .some((capture) =>
+      capturedToolCalls(capture).some(
+        (call) => call.name === "claim_completion",
+      ),
+    );
+  const sameTurnPriorClaim = calls
+    .slice(0, registeredWaitCall.index)
+    .some((call) => call.name === "claim_completion");
+  const completionClaimRequested = priorProviderClaims || sameTurnPriorClaim;
+  const proofExists = existsSync(input.proofPath);
+  const verification = await input.client.view<{
+    verificationId?: string;
+    evidenceRefs: ReadonlyArray<string>;
+    criteriaResults: ReadonlyArray<unknown>;
+  }>("verification", { workId: input.workId });
+  const verificationExists =
+    verification.verificationId !== undefined ||
+    verification.evidenceRefs.length > 0 ||
+    verification.criteriaResults.length > 0;
+  if (
+    !isPrematureCurrentWorkVerificationWait({
+      wait: waitArguments,
+      workId: input.workId,
+      workRevision: input.currentWork.revision,
+      completionClaimRequested,
+      proofExists,
+      verificationExists,
+    })
+  ) {
+    return undefined;
+  }
+  return {
+    primaryJourneyOracle: "PublicCommandsAndViews",
+    selfWaitDiagnosticOracle: "ProviderCaptureAndReadOnlySQLiteAuxiliary",
+    workId: input.workId,
+    workRevision: input.currentWork.revision,
+    publicCurrentWork: {
+      workId: input.workId,
+      revision: input.currentWork.revision,
+      status: input.currentWork.status,
+    },
+    waitArguments,
+    durableWait,
+    completionClaimRequested: false,
+    proofExists: false,
+    verificationExists: false,
+    publicVerification: verification,
+    publicInboxUnconsumed: input.publicInboxUnconsumed,
+  };
+};
+
 const waitForExactWorkApproval = async (
   client: PublicClient,
   project: FunctionalProject,
@@ -686,7 +965,12 @@ const approveExactPatchIfRequired = async (input: {
   readonly marker: string;
   readonly proofPath: string;
   readonly proofContent: string;
+  readonly databaseFile: string;
+  readonly captureFile: string;
   readonly deadlineAt: number;
+  readonly recordPrematureWorkWait: (
+    evidence: PrematureWorkWaitEvidence,
+  ) => void;
 }) => {
   const deadline = Math.min(input.deadlineAt, Date.now() + JOURNEY_TIMEOUT_MS);
   while (Date.now() < deadline) {
@@ -708,6 +992,8 @@ const approveExactPatchIfRequired = async (input: {
       }>("inbox-view", { workspaceId: input.project.rootWorkspaceId }),
       input.client.view<{
         workId?: string;
+        revision?: number;
+        status?: string;
         activeExecution?: { executionId: string };
       } | null>("current-work", { workspaceId: input.project.rootWorkspaceId }),
     ]);
@@ -750,7 +1036,23 @@ const approveExactPatchIfRequired = async (input: {
           reason: `approve the exact fs:write patch for ${input.marker}`,
         },
       );
-      return;
+      continue;
+    }
+    const selfWait = await findPrematureCurrentWorkVerificationWait({
+      client: input.client,
+      project: input.project,
+      databaseFile: input.databaseFile,
+      captureFile: input.captureFile,
+      workId: input.workId,
+      currentWork: current,
+      proofPath: input.proofPath,
+      publicInboxUnconsumed: inbox.unconsumed,
+    });
+    if (selfWait !== undefined) {
+      input.recordPrematureWorkWait(selfWait);
+      throw new Error(
+        `REAL public S1 WorkEpisode self-wait: the same Work durably yielded on its own VerificationChanged condition before a CompletionClaim, target-file effect, or Verification; evidence=${JSON.stringify(selfWait)}`,
+      );
     }
     try {
       if (readFileSync(input.proofPath, "utf8") === input.proofContent) return;
@@ -934,6 +1236,9 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
     expect(rootSystemPrompt).toContain(
       "RootConversation intentionally has no executable Work tools",
     );
+    expect(rootSystemPrompt).not.toContain(
+      "In a WorkspaceWork turn bound to a current Work",
+    );
     expect(rootSystemPrompt).toContain(
       "do not create Work just because the user asked a question",
     );
@@ -976,17 +1281,58 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       throw new Error(`public current-work did not expose Work ${marker}`);
     }
     state = { ...state, workId: currentWork.workId };
+    const proofPath = join(fixture.workspaceDirectory, proofName);
+    const workProviderTurnMaybe = await waitForPublic<ProviderCapture | null>(
+      async () =>
+        readProviderCaptures(capturePath).find((capture) => {
+          const names = advertisedToolNames(capture);
+          return (
+            capture.event === "response-complete" &&
+            names.includes("patch") &&
+            names.includes("claim_completion")
+          );
+        }) ?? null,
+      (capture) => capture !== null,
+      remainingJourneyTime(journeyDeadlineAt),
+    );
+    if (workProviderTurnMaybe === null) {
+      throw new Error("real WorkspaceWork Provider request was not captured");
+    }
+    const workProviderTurn = workProviderTurnMaybe;
+    const workSystemPrompt = systemPromptText(workProviderTurn);
+    expect(workSystemPrompt).toContain(
+      "In a WorkspaceWork turn bound to a current Work, you are the executing agent responsible for advancing that Work",
+    );
+    expect(workSystemPrompt).not.toContain(
+      "RootConversation intentionally has no executable Work tools",
+    );
+    state = {
+      ...state,
+      workPromptEvidence: {
+        providerRequestId: workProviderTurn.requestId,
+        promptAssetRef: "prompt:base-agent-protocol:base-loop:v2",
+        systemPromptSha256: createHash("sha256")
+          .update(workSystemPrompt)
+          .digest("hex"),
+        activeWorkExecutionRoleObserved: true,
+        rootConversationActionNotLeaked: true,
+      },
+    };
     await approveExactPatchIfRequired({
       client,
       project,
       workId: currentWork.workId,
       marker,
-      proofPath: join(fixture.workspaceDirectory, proofName),
+      proofPath,
       proofContent,
+      databaseFile: fixture.databaseFile,
+      captureFile,
       deadlineAt: journeyDeadlineAt,
+      recordPrematureWorkWait: (evidence) => {
+        state = { ...state, prematureWorkWait: evidence };
+      },
     });
 
-    const proofPath = join(fixture.workspaceDirectory, proofName);
     await waitForPublic(
       async () => readFileSync(proofPath, "utf8"),
       (content) => content === proofContent,

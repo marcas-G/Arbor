@@ -110,6 +110,7 @@ import {
 import {
   GENERIC_INSTRUCTION_ASSETS,
   instructionAssetFragment,
+  workExecutionLoopFragmentsFor,
 } from "./prompt-assets.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { decideRepair } from "./repair.js";
@@ -5201,6 +5202,7 @@ export const runModelDecision = (
             ),
           ]
         : [];
+      const workExecutionLoopAsset = GENERIC_INSTRUCTION_ASSETS.baseLoop;
       const instructionContents = new Map(workContext.contents);
       if (conversationExecution) {
         instructionContents.set(
@@ -5520,6 +5522,15 @@ export const runModelDecision = (
             conversationExecution && conversationMessages.length > 0,
         })
         .pipe(Effect.mapError(failure));
+      const workExecutionLoopFragments = workExecutionLoopFragmentsFor(
+        turnProfile.purpose,
+      );
+      if (workExecutionLoopFragments.length > 0) {
+        instructionContents.set(
+          workExecutionLoopAsset.contentRef,
+          workExecutionLoopAsset.text,
+        );
+      }
       const prepared = yield* Effect.match(
         modelContext.prepareTurn({
           executionId: input.execution.executionId,
@@ -5533,6 +5544,7 @@ export const runModelDecision = (
           fragments: [
             runtimeSafetyFragment,
             ...workContext.fragments,
+            ...workExecutionLoopFragments,
             ...conversationActionFragments,
             ...repairFragments,
           ],
