@@ -40,12 +40,20 @@ Web 产物缺失曾导致第一次运行在 daemon readiness（HTTP 503）失败
 bail 1 重跑原文件。完整 Vitest JSON、verbose 日志、进度文件与命令元数据位于
 `.test-results/2026-10-23T14-44-03-p41-manifest-recovery-order-webdist/`。
 
-结果 **3/4 PASS、1 FAIL；P41 仍 PARTIAL / NOT FULL PROCESS QUALIFIED**：
-workspace/manifest before-commit 两案通过，workspace after-commit 通过；manifest
-after-commit 在 90 秒内未观察到旧 daemon 的
-`AH7AfterActionIntentCommit(select_current_work, actionIndex=0)` probe，超时发生在
-测试注入坏 Manifest 之前。该失败不证明 P41 修复失败，也不能补足该 case 的资格。
-独立复核确认超时边界在坏 Step Manifest 注入前。失败测试期望未修改。
+首次完整文件尝试结果 **3/4 PASS、1 FAIL**：workspace/manifest before-commit 两案
+通过，workspace after-commit 通过；manifest after-commit 在 90 秒内未观察到旧
+daemon 的 `AH7AfterActionIntentCommit(select_current_work, actionIndex=0)` probe，
+超时发生在测试注入坏 Manifest 之前。该失败不证明 P41 修复失败，也不能补足该
+case 的资格。独立复核确认超时边界在坏 Step Manifest 注入前。失败测试期待未修改。
+
+之后在同一 production source commit `15a25677757f1b06e309faf165d07a74dc91def7`
+上，对唯一 manifest-after-commit case 单独运行，**1/1 PASS**；其余三案按
+`testNamePattern` 明确 skipped。JSON、verbose、progress 与命令元数据位于
+`.test-results/2026-10-23T15-05-37-p41-manifest-after-isolated/`。
+
+现有证据因此是**分段 process 覆盖**：首次完整文件运行通过三案，随后独立运行通过
+先前未达到坏 Manifest 注入点的第四案。未在同一个无中断完整文件运行中获得 4/4，
+故 P41 仍 **PARTIAL / NOT FULL PROCESS QUALIFIED**；这也不是完整 release 资格。
 
 为下一次 case-4 重测补入失败诊断：仅包裹旧 `select_current_work` action-intent
 probe 等待；失败时保留 provider 工具/候选、P9 probe 尾部、旧 daemon PID/退出/错误，
