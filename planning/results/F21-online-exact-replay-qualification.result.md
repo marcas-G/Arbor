@@ -1,6 +1,6 @@
 # F21 在线 exact replay 恢复资格
 
-状态：实现已补，资格测试 **NOT RUN**。
+状态：实现已补；首轮资格尝试命中 receipt-envelope 断言错误，修复后资格重跑 **NOT RUN**。
 
 基线：`16a1709b0c8d8bcede721dcba4b703a8d31321ac`。
 
@@ -14,4 +14,8 @@ P12 `10-transport-shells.md` 第 352–355 行规定：canonical path 在 daemon
 pnpm vitest run tests/functional/process/f21-open3-activation-recovery.functional.test.ts -t "P12 exact replay activates restored path online in the same daemon"
 ```
 
-执行结果：**NOT RUN**（按调度要求等待 root 安排串行资格）。
+2026-10-23 候选 `46d811b7` 首次定向运行记录于主树 `.test-results/2026-10-23T09-40-36Z-46d811b7-f21-v6/f21-p12-online-replay-exact.json`。唯一失败发生在在线 replay 的 receipt 断言（约 11.3s）：HTTP 返回 200，测试把持久化 `result_json`（仅 result）误当成完整 receipt，并再与 HTTP success envelope 比较。`PublicClient.rawCommand` 返回 `{ status, payload }`；其 `command` 读取 `payload.body.resolution` 并返回 payload。直连 `/commands` 同样有 HTTP envelope，canonical receipt 位于 `body`，形状为 `{ commandId, resolution, result }`。因此这次失败不是资源恢复失败证据，亦未越过该断言证明后续 Active/ownership/Attention/event oracle。
+
+随后测试改为从持久化 `command_id`、`resolution`、`result_json` 重建原 canonical receipt，只比较 replay envelope 的 `body` 与该 receipt，并保留 `HTTP 200`、exact commandId、持久 result_json 不变、单 command、same daemon PID、activation events `[Pending, Active]`、唯一 ownership、Attention 清除等所有断言。其他 F21 replay assertions 已静态检视，restart case 本来就从 HTTP envelope 提取 `body` 并对 canonical receipt exact 比较。本修复未改生产返回/production code，也未放宽 oracle。
+
+修复后资格测试：**NOT RUN**（等待 root 安排串行 daemon slot）。
