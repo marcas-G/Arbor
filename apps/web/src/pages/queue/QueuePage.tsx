@@ -80,6 +80,13 @@ type QueueItem =
   | ControlApprovalItem
   | ExecutableApprovalItem;
 
+type ApprovedExecutableApprovalReceipt = {
+  readonly approvalId: string;
+  readonly executionId: string;
+  readonly workspaceId: string;
+  readonly commandId: string;
+};
+
 const asProblem = (error: unknown): Problem => error as Problem;
 
 const fetchInbox = async (
@@ -295,6 +302,8 @@ export function QueuePage({
   const [lastReceipt, setLastReceipt] = useState<CommandReceiptView | null>(
     null,
   );
+  const [lastApprovedExecutableApproval, setLastApprovedExecutableApproval] =
+    useState<ApprovedExecutableApprovalReceipt | null>(null);
   const selectedItem =
     items.find((item) => item.id === selectedId) ?? items[0] ?? null;
   const mobileSheetOpen =
@@ -307,6 +316,27 @@ export function QueuePage({
 
   const onSubmitted = (receipt: CommandReceiptView): void => {
     setLastReceipt(receipt);
+    const receiptResult =
+      typeof receipt.result === "object" && receipt.result !== null
+        ? (receipt.result as Record<string, unknown>)
+        : undefined;
+    if (
+      selectedItem?.type === "executable-approval" &&
+      receipt.resolution === "Committed" &&
+      receiptResult?.approvalId === selectedItem.target.approvalId &&
+      receiptResult.executionId === selectedItem.target.executionId &&
+      receiptResult.state === "Approved" &&
+      receiptResult.revision === selectedItem.target.revision + 1
+    ) {
+      setLastApprovedExecutableApproval({
+        approvalId: selectedItem.target.approvalId,
+        executionId: selectedItem.target.executionId,
+        workspaceId: selectedItem.workspaceId,
+        commandId: receipt.commandId,
+      });
+    } else {
+      setLastApprovedExecutableApproval(null);
+    }
     setAcceptanceOpenFor(null);
     void queryClient.invalidateQueries({ queryKey: ["view"] });
   };
@@ -346,6 +376,31 @@ export function QueuePage({
   return (
     <div className={styles.page}>
       <QueueHeader />
+      {lastApprovedExecutableApproval === null ? null : (
+        <Card title="工具动作审批已通过">
+          <div className="arbor-view-stack">
+            <p role="status">
+              审批回执仅表示这个精确工具动作获准继续；它不证明动作已执行、产生效果或工作已完成。
+            </p>
+            <span>
+              <MonoText>{lastApprovedExecutableApproval.executionId}</MonoText>
+            </span>
+            <Button
+              variant="quiet"
+              onClick={() =>
+                navigate({
+                  name: "workspace",
+                  projectId,
+                  workspaceId: lastApprovedExecutableApproval.workspaceId,
+                  tab: "overview",
+                })
+              }
+            >
+              查看对应工作区详情
+            </Button>
+          </div>
+        </Card>
+      )}
       {tree.isRefetching ? (
         <p className={styles.refreshing} role="status">
           正在刷新待处理事项
@@ -535,7 +590,14 @@ function QueueDetail({
     return <Empty>选择一条待处理事项查看精确目标与可用动作。</Empty>;
   }
   const openTarget = (): void => {
-    if (item.type !== "acceptance") {
+    if (item.type === "executable-approval") {
+      navigate({
+        name: "workspace",
+        projectId,
+        workspaceId: item.workspaceId,
+        tab: "overview",
+      });
+    } else if (item.type !== "acceptance") {
       navigate({
         name: "workspace",
         projectId,
@@ -720,7 +782,11 @@ function QueueDetail({
         </>
       )}
       <Button variant="quiet" onClick={openTarget}>
-        {item.type === "acceptance" ? "查看工作与验证" : "打开工作区收件箱"}
+        {item.type === "acceptance"
+          ? "查看工作与验证"
+          : item.type === "executable-approval"
+            ? "查看工作区策略与当前工作"
+            : "打开工作区收件箱"}
       </Button>
       {lastReceipt === null ? null : (
         <p
