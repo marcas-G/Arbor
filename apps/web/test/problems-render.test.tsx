@@ -164,6 +164,27 @@ describe("ProblemCard treatments", () => {
     expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
   });
 
+  it("explains unavailable sandbox policy authority without choosing a fallback", () => {
+    render(
+      <ProblemCard
+        problem={problem({
+          code: "projection/unavailable",
+          category: "unavailable",
+          retryDisposition: "retryable",
+          safeDetails: {
+            sourceTag: "SandboxPolicyCandidateAuthorityUnavailable",
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText("沙箱策略权威来源不可用")).toBeTruthy();
+    expect(screen.getByText(/请先配置或恢复可信策略来源后重试/u)).toBeTruthy();
+    expect(
+      screen.getByText(/不会自动选择 TrustedLocal 或绕过权限/u),
+    ).toBeTruthy();
+    expect(screen.getByText("code projection/unavailable")).toBeTruthy();
+  });
+
   it("unavailable non-retryable shows no retry button even with onRetry", () => {
     const onRetry = vi.fn();
     render(

@@ -378,6 +378,79 @@ describe("W-08 Governance Queue（待处理）", () => {
     });
   });
 
+  it("keeps approval separate from fulfillment and links to the exact workspace", async () => {
+    const approvalId =
+      "eap:prj_1:exe_approved:0:0:0:la_approved:call_approved:tinv_approved";
+    const executionId = "exe_approved";
+    const executableEntry = {
+      entryKey: `eap:${approvalId}:0`,
+      kind: "Governance",
+      summary: "shell action awaits human approval",
+      watermark: 11,
+      target: {
+        kind: "ExecutableApproval",
+        approvalId,
+        revision: 0,
+        executionId,
+        toolName: "shell",
+        toolVersion: "1.0.0",
+        validatedArgumentsPreview: '{"command":"move proof.txt"}',
+        targetResourceSpaceIds: ["filesystem"],
+        capabilities: ["shell:exec"],
+        sideEffectSemantics: "NonIdempotent",
+        expiresAt: "2099-01-02T03:04:05.000Z",
+        actionDigest: "sha256:approved-action",
+      },
+    };
+    let approved = false;
+    const recorded = installProjectQueue(
+      [treeDto.nodes[0] as Record<string, unknown>],
+      () => (approved ? [] : [executableEntry]),
+      () => ({}),
+      (body) => {
+        expect(body.commandType).toBe("ResolveExecutableApproval");
+        approved = true;
+        return {
+          commandId: "cmd_executable_approval",
+          resolution: "Committed",
+          result: {
+            approvalId,
+            executionId,
+            state: "Approved",
+            revision: 1,
+          },
+        };
+      },
+    );
+    renderQueue();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /shell · revision 0/ }),
+    );
+    expect(
+      screen.getByRole("button", { name: "查看工作区策略与当前工作" }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "批准并继续" }));
+    await waitFor(() =>
+      expect(
+        screen.getByText(/审批回执仅表示这个精确工具动作获准继续/u),
+      ).toBeTruthy(),
+    );
+    expect(
+      screen.getByText(/不证明动作已执行、产生效果或工作已完成/u),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "查看对应工作区详情" }),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(recorded.urls.some((url) => url === "/commands")).toBe(true),
+    );
+    expect(screen.getByText("没有等你处理的事项")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "查看对应工作区详情" }));
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/p/prj_1/workspace/ws_root"),
+    );
+  });
+
   it("shows an expired Executable approval without decision controls", async () => {
     const approvalId = "eap:prj_1:exe_expired:1:0:0:la_2:call_2:tinv_2";
     installProjectQueue(
