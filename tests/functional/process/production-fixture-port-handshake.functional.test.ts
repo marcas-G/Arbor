@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -15,6 +15,7 @@ import {
   type ProductionFixture,
   startProductionFixture,
 } from "../support/production-fixture.js";
+import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
 
 const invalidChild = resolve(
   "tests/functional/support/invalid-handshake-child.mjs",
@@ -320,16 +321,19 @@ describe("production fixture port-zero startup handshake", () => {
     let fixtureDirectory: string | undefined;
     let providerPort: number | undefined;
     let childPid: number | undefined;
+    let unexpectedFixture: ProductionFixture | undefined;
+    let startupError: unknown;
     const lines: string[] = [];
     const startedAt = Date.now();
 
-    await expect(
-      startProductionFixture({
+    try {
+      unexpectedFixture = await startProductionFixture({
         reply: () => "unused",
         firstDaemonEntry: invalidChild,
         daemonEnvironment: {
           ARBOR_TEST_HANDSHAKE_MODE: "exit-after-listening",
         },
+        preserveDirectoryOnStop: true,
         onDaemonStdout: (line) => {
           lines.push(line);
           try {
@@ -345,26 +349,63 @@ describe("production fixture port-zero startup handshake", () => {
           fixtureDirectory = event.directory;
           providerPort = event.providerPort;
         },
-      }),
-    ).rejects.toThrow(
-      /exited before HTTP readiness.*exitCode=23.*readiness-exit-sentinel/su,
-    );
-
-    expect(Date.now() - startedAt).toBeLessThan(5_000);
-    expect(fixtureDirectory).toBeDefined();
-    expect(existsSync(fixtureDirectory ?? "")).toBe(false);
-    expect(providerPort).toBeDefined();
-    await expect(
-      fetch(`http://127.0.0.1:${providerPort}/models`),
-    ).rejects.toThrow();
-    expect(childPid).toBeDefined();
-    if (childPid !== undefined) {
-      expect(() => process.kill(childPid as number, 0)).toThrow();
+      });
+    } catch (error) {
+      startupError = error;
     }
-    expect(lifecycleReports(lines).map((report) => report.tag)).toEqual([
-      "FUNCTIONAL_DAEMON_STARTED",
-      "FUNCTIONAL_DAEMON_LISTENING",
-    ]);
+
+    try {
+      if (unexpectedFixture !== undefined) await unexpectedFixture.stop();
+      expect(startupError).toBeInstanceOf(Error);
+      const startupMessage =
+        startupError instanceof Error
+          ? startupError.message
+          : String(startupError);
+      expect(startupMessage).toMatch(
+        /exited before HTTP readiness.*exitCode=23/u,
+      );
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+      expect(fixtureDirectory).toBeDefined();
+      const startupEvidencePath = resolve(
+        fixtureDirectory ?? "",
+        "startup-failure-evidence.json",
+      );
+      const startupEvidence = JSON.parse(
+        readFileSync(startupEvidencePath, "utf8"),
+      ) as {
+        readonly phase?: string;
+        readonly handshakeFailure?: string;
+        readonly primaryDaemon?: { readonly exitCode?: number | null };
+        readonly daemonErrors?: ReadonlyArray<string>;
+      };
+      expect(startupEvidence).toMatchObject({
+        phase: "initial-daemon-startup",
+        handshakeFailure: "functional daemon exited before HTTP readiness",
+        primaryDaemon: { exitCode: 23 },
+      });
+      expect(
+        startupEvidence.daemonErrors?.some((line) =>
+          line.includes("readiness-exit-sentinel"),
+        ),
+      ).toBe(true);
+      expect(providerPort).toBeDefined();
+      await expect(
+        fetch(`http://127.0.0.1:${providerPort}/models`),
+      ).rejects.toThrow();
+      expect(childPid).toBeDefined();
+      if (childPid !== undefined) {
+        expect(() => process.kill(childPid as number, 0)).toThrow();
+      }
+      expect(lifecycleReports(lines).map((report) => report.tag)).toEqual([
+        "FUNCTIONAL_DAEMON_STARTED",
+        "FUNCTIONAL_DAEMON_LISTENING",
+      ]);
+    } finally {
+      if (fixtureDirectory !== undefined && existsSync(fixtureDirectory)) {
+        removeFunctionalFixtureDirectory(fixtureDirectory);
+      }
+    }
+    expect(existsSync(fixtureDirectory ?? "")).toBe(false);
   }, 120_000);
 
   it("aborts hung readiness requests within the overall deadline and cleans up", async () => {
