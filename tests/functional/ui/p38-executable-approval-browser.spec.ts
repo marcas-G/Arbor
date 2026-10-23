@@ -532,6 +532,7 @@ test("P38 browser approval resumes the same action under explicitly configured T
   const providerRoutes: Array<Readonly<Record<string, unknown>>> = [];
   const daemonStdout: string[] = [];
   const trustedLocalP11 = createTrustedLocalP11FixtureEnvironment();
+  trustedLocalP11.daemonEnvironment.ARBOR_TICK_INTERVAL_MS = "25";
   let diagnosticPhase = "fixture-started";
   let diagnosticContext: P38BrowserDiagnosticContext | undefined;
   let approveCommandEvidence: Readonly<Record<string, unknown>> | undefined;
