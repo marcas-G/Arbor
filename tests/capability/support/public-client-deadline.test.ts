@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { makePublicClient } from "../functional/support/public-client.js";
+import { makePublicClient } from "../../functional/support/public-client.js";
 
 describe("PublicClient absolute request deadline", () => {
   it("aborts a public view request when the deadline expires without a response", async () => {
