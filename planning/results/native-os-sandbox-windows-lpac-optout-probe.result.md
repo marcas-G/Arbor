@@ -39,9 +39,21 @@ TEMP directory, which is removed by `afterAll`.
 
 Run: direct Node/Vitest invocation of only
 `adapters/sandbox-windows/test/windows-native-lpac-optout-probe.test.ts`, one
-worker, retry zero, with a 15-second `spawnSync` deadline. The raw JSON report
-is retained at
-`.test-results/windows-private-env-exploratory-7aa5bc73/lpac-optout-probe-profile-inline-details-f4086b03.json`.
+worker, retry zero, with a 15-second `spawnSync` deadline. The first run's
+retained JSON was only the Vitest process summary at
+`.test-results/windows-private-env-exploratory-7aa5bc73/lpac-optout-probe-profile-inline-details-f4086b03.json`;
+it did not preserve the driver's structured child fields. After review found
+that evidence gap, a test-only change added a separate P39-private artifact
+written before assertions. The single rerun's raw structured artifact is
+`.test-results/lpac-p39-raw-sSvh58/probe-result.json` (artifact ID
+`47b974f9-430c-4f7a-85c9-07fe27b358f3`, SHA-256
+`F49E064DD83BEFE596EE23B72A0C94BD97E36A8CC97FDC71425E5FDEE6C47E1A`). Its
+schema is `Arbor.WindowsLpacOptOutProbeRawV1`; it records the test source hash,
+host/limits, native process status and an allowlisted set of scalar probe and
+cleanup fields. It intentionally excludes stdout/stderr, paths, environment
+values, secrets and driver error payloads. The file ACL was verified to grant
+FullControl only to the current user, SYSTEM and Administrators. The test
+assertions remain unchanged and still fail on this result.
 The test is now opt-in for future runs via the test-only environment variable
 `ARBOR_RUN_WINDOWS_LPAC_PROBE=1`; it is not a production flag. Replay with:
 
@@ -93,5 +105,18 @@ then shell-fixture access failures) have separate preserved JSON reports in the
 same ignored `.test-results/windows-private-env-exploratory-7aa5bc73/` folder;
 they were not substituted for the final native-command result.
 
-Static verification: C# driver compiled with warnings as errors; Biome and
-`git diff --check` passed. No full native suite or daemon suite was run.
+The structured fields in the P39 artifact confirm both children were created,
+assigned to Jobs, resumed and exited successfully; both profile deletion and
+ACL restoration reported success, and `CLEANUP_FAILURES=0`. The artifact also
+shows the actual access results: regular `OUTSIDE_READ=ALLOWED`, LPAC
+`OUTSIDE_READ=DENIED`; regular workspace content matched, while LPAC workspace
+operations failed. Both Temp oracles failed. `OUTSIDE_CONTENT_MATCH` is known
+faulty secondary telemetry because the driver trims fixture text before
+comparing against a newline-terminated expected string; it is retained but not
+used as evidence. The outside-read command exit status is the relevant oracle.
+
+Static verification after adding the artifact writer: TypeScript typecheck,
+Biome, and `git diff --check` passed; the C# driver compiled with warnings as
+errors. Post-run checks found zero recent `arbor-lpac-probe-*` TEMP fixtures and
+no matching probe/cmd child processes. No full native suite or daemon suite
+was run.
