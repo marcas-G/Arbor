@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 
 const captureFile = process.env.ARBOR_PUBLIC_S1_CAPTURE_FILE;
@@ -63,6 +64,16 @@ globalThis.fetch = async (input, init) => {
   const sequence =
     Number(process.env.ARBOR_PUBLIC_S1_CAPTURE_SEQUENCE ?? "0") + 1;
   process.env.ARBOR_PUBLIC_S1_CAPTURE_SEQUENCE = String(sequence);
+  const pathname = new URL(url).pathname;
+  const base = {
+    processId: process.pid,
+    requestId: randomUUID(),
+    sequence,
+    method: init?.method ?? (input instanceof Request ? input.method : "GET"),
+    path: pathname,
+  };
+  append({ ...base, event: "request-start" });
+
   const body = typeof init?.body === "string" ? init.body : undefined;
   let request;
   if (body !== undefined) {
@@ -72,14 +83,7 @@ globalThis.fetch = async (input, init) => {
       request = { unparsedBody: body };
     }
   }
-  const pathname = new URL(url).pathname;
-  const base = {
-    sequence,
-    processId: process.pid,
-    method: init?.method ?? (input instanceof Request ? input.method : "GET"),
-    path: pathname,
-    ...(request === undefined ? {} : { request }),
-  };
+  const requestEvidence = request === undefined ? base : { ...base, request };
 
   try {
     const response = await originalFetch(input, init);
@@ -94,7 +98,8 @@ globalThis.fetch = async (input, init) => {
       .then((bytes) => {
         const bodyText = safeValue(new TextDecoder().decode(bytes));
         append({
-          ...base,
+          ...requestEvidence,
+          event: "response-complete",
           status: response.status,
           responseHeaders: headers,
           responseBodyBase64: Buffer.from(bodyText).toString("base64"),
@@ -102,7 +107,8 @@ globalThis.fetch = async (input, init) => {
       })
       .catch((error) =>
         append({
-          ...base,
+          ...requestEvidence,
+          event: "response-capture-failed",
           status: response.status,
           responseHeaders: headers,
           captureError: error instanceof Error ? error.name : "CaptureError",
@@ -111,7 +117,8 @@ globalThis.fetch = async (input, init) => {
     return response;
   } catch (error) {
     append({
-      ...base,
+      ...requestEvidence,
+      event: "request-failed",
       error: error instanceof Error ? error.name : "FetchError",
     });
     throw error;
