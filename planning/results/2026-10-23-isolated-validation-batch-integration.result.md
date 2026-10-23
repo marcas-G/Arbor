@@ -20,6 +20,7 @@
 | `a8aaf6d3c9a5445c48968a6e952c45a26f2cc547` | safe readiness-failure evidence completion | merge `ddacaab7` |
 | `9b19b224d444dc2bee0b6adae9a363715d91e9a8` | P9 delayed old-generation lease renewal test fixture | merge `8129e483` |
 | `55a7b89bf6996ad4479e1e7f5b864bd350b7a5f0` | 脱敏 real-public-S1 qualification record | merge `7643956e` |
+| `0721d984ee48094cc272a2a84e41702e8c2ef77e` + `b03ba50795c70b2b07a09bcbe64843f5885a1bde` | F18 per-case budget/deadline and late-write containment | merge `303820b4` |
 
 整合前逐项核对来源 commit 的父提交、文件路径和实际 diff。最初只 cherry-pick `adcb524f` 得到 `398efe4c`，它只包含 tip 的 P41 结果记录，不包含其祖先中的生产修复、诊断证据及 fixture 测试修正；该 tip-only 挑入不足以代表主线整合。随后按主线拓扑在 `7581d46d` 上执行 `git merge --no-edit adcb524f`，得到 merge commit `2f0779a7085b964f9b95f6304b16a378e469cc15`，父提交为 `7581d46d` 与 `adcb524f`。没有 merge conflict。完整可达的 P41 链为 `15a25677`、`6416295e`、`779ec803`、`15bbdb99`、`adcb524f`；`git merge-base --is-ancestor adcb524f HEAD` 返回 exit 0。最初的 tip-only commit 保留在历史以供审计，不再作为完整整合凭据。其余来源提交按上表各挑入一次，无重复改动。
 
@@ -36,6 +37,8 @@ real-public-S1 按完整 source branch merge：相对隔离候选 `ae2630ea` 的
 P9 direct-control diagnostics `e70c423a` 的父提交为 `ae2630ea`；普通 merge `3d2341ed` 仅引入 process test、AH10 child test-support probe 与诊断结果记录，没有 production runtime 改动。原 gen1 45 秒等待和成功/拒绝语义断言保留，诊断增加失败快照；相应 P9 process case **NOT RUN**。
 
 Port-handshake diagnostics `bd7cd924` 的父提交为 `ae2630ea`；普通 merge `d2902411` 仅改 process test-support classifier/helper 并新增三条小单测，无 production runtime 改动。所有 `safeHandshakeFailure` 路径复用严格前缀分类；wrong-port 只保留 validated numeric ports，不序列化 error cause。拒绝/停止断言保持。独立 review **PASS，无阻断**；新增小单测尚未运行。
+
+F18 per-case budget/deadline 以完整 range 整合：`0721d984` 和 `b03ba507`，普通 merge `303820b4`，仅修改 `tests/functional/process/organization.functional.test.ts`。独立 review 确认 665.5s 外层耗时可由现有 setup/wait budget 解释，不是冻结业务 SLO；b03 将 PublicClient 和轮询绑定同一 case deadline，并将 `afterEach` 置为 closed 以阻止 late write，不改 lease、内层等待或业务断言。定向 Biome 与 diff PASS；F18 crash-oracle + public-client deadline unit 共 3/3 PASS。F18 第二 process case 保留给 `remaining_functional_sweep`。
 
 没有合入 nativehelper 分支；其安全红测仍待处理。S1 变更了 production prompt/control catalog assets，因此等待所有源码批次整合后才执行 build；native 实验已结束，build 结果见下节。
 
