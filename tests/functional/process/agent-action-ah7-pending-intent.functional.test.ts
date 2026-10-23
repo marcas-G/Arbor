@@ -61,6 +61,42 @@ const readFailureProjectSnapshot = (input: {
   try {
     db.exec("BEGIN");
     const executionFilter = input.executionId ?? null;
+    const sessionEntries = db
+      .prepare(
+        `SELECT DISTINCT se.sequence, se.session_id, se.payload_json,
+                se.source_kind, se.source_ref
+           FROM session_entries se JOIN executions e
+             ON e.session_id = se.session_id
+          WHERE e.project_id = ?
+            AND (? IS NULL OR e.execution_id = ?)
+            AND se.item_type = 'ToolResult'
+          ORDER BY se.session_id, se.sequence`,
+      )
+      .all(input.projectId, executionFilter, executionFilter) as Array<{
+      readonly sequence: number;
+      readonly session_id: string;
+      readonly payload_json: string;
+      readonly source_kind: string | null;
+      readonly source_ref: string | null;
+    }>;
+    const toolResults =
+      input.callRef === undefined
+        ? sessionEntries
+        : sessionEntries.filter((entry) => {
+            try {
+              const payload: unknown = JSON.parse(entry.payload_json);
+              return (
+                typeof payload === "object" &&
+                payload !== null &&
+                "_tag" in payload &&
+                payload._tag === "ToolResult" &&
+                "callRef" in payload &&
+                payload.callRef === input.callRef
+              );
+            } catch {
+              return false;
+            }
+          });
     const snapshot = {
       projectId: input.projectId,
       executionId: input.executionId ?? null,
@@ -172,25 +208,7 @@ const readFailureProjectSnapshot = (input: {
             ORDER BY a.artifact_id`,
         )
         .all(input.projectId, executionFilter, executionFilter),
-      toolResults: db
-        .prepare(
-          `SELECT se.sequence, se.session_id, se.payload_json, se.source_kind,
-                  se.source_ref
-             FROM session_entries se JOIN executions e
-               ON e.session_id = se.session_id
-            WHERE e.project_id = ?
-              AND (? IS NULL OR e.execution_id = ?)
-              AND se.item_type = 'ToolResult'
-              AND (? IS NULL OR se.payload_json LIKE '%' || ? || '%')
-            ORDER BY se.session_id, se.sequence`,
-        )
-        .all(
-          input.projectId,
-          executionFilter,
-          executionFilter,
-          input.callRef ?? null,
-          input.callRef ?? null,
-        ),
+      toolResults,
       events: db
         .prepare(
           `SELECT event_id, project_id, sequence, event_type, aggregate_ref,
