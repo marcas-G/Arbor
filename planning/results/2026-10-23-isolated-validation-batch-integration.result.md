@@ -23,11 +23,11 @@ V6、F21 补测提交只改 process tests/support 与 `planning/results/**` 记�
 
 F18 exact crash-oracle commit 的父提交为完整主线 `adcb524f`，已在主线 merge 后单独挑入。独立 `recent_test_oracle_audit` review **PASS，无 P1/P2**：12 个 boundary 的 lease generation 与 production probe 对应，原业务断言保留，marker 过滤不会吞掉相邻错误。该 review 不等于真实 process qualification。
 
-主索引更新 `5438ef8c` 原样从 `adcb524f` 挑入，只改变 `full-delivery-convergence-matrix-2026-10-20.md`。其中 real S1 记录为在 `d5f4928d` 实际启动但尚无终态结果；既有“启动中”状态仍成立。索引的 current candidate 仍明确为 `adcb524f`。候选 `a33040e9`、`ae2630ea` 及当前整合线均没有继承 adcb 的 build、功能或 release qualification；不能从索引中的 adcb 证据推导候选通过。
+主索引更新 `5438ef8c` 原样从 `adcb524f` 挑入，只改变 `full-delivery-convergence-matrix-2026-10-20.md`。索引最初记录的 `d5f4928d` build PASS / daemon startup in progress 是当时的中间观测，不作为终态证据覆盖；后续终态已同步进当前索引：Vitest **1 failed / 499.8s**，公开交互到 `Answered` 但没有 Work approval。旧 prompt 包含 `claim_completion`，Root 将缺文件工具误判为 no executor。早期 `early-aborted` 分类已更正。原 fixture/capture 后续缺失，仅私人 `real-s1-failure-evidence.json` 留有公开问答和 2 个 HTTP 200 观测，不能声称完整留证。索引的 current candidate 仍明确为 `adcb524f`。候选 `a33040e9`、`ae2630ea` 及当前整合线均没有继承 adcb 的 build、功能或 release qualification；不能从索引中的 adcb 证据推导候选通过。
 
 AH7 pending-intent diagnostics 以完整 range 整合：`git log adcb524f..09f644a8 --oneline` 给出 `16785463` 和 `09f644a8` 两笔；在候选上普通 merge 得到 `c9862404`，父提交为 `41218ea3` 与 `09f644a8`。来源 range 的 diff 仅涉及 `tests/functional/process/agent-action-ah7-pending-intent.functional.test.ts`。首笔补充按项目/Execution/callRef 限定的一致快照与启动失败归档上下文；次笔移除 SQL `LIKE` 子串匹配，改为解析 `ToolResult` JSON 并 exact 比较 `callRef`。生产和设计文件未改，AH7 原资格断言未改；该 change set review 无 B1。AH7 重型 process qualification 仍 **NOT RUN**。
 
-real-public-S1 按完整 source branch merge：相对隔离候选 `ae2630ea` 的提交链为 `4ebd8804`、`79cfcbed`、`f0d06bc2`、`166c2341`、`de8d44c5`，中间保留其 `adcb524f` merge。普通 merge 为 `2fdad3de`，无冲突。改动包含 opt-in public real-provider S1 lifecycle、Root Work routing/prompt 与 control-catalog 文案、versioned provider completion matcher、journey deadline、capture hook 和支持测试。Root v7 `assign_work` 说明已有独立 review；该 review/代码整合不构成真实 S1 journey 结果。既有 `d5f4928d` 只证明启动在进行，没有终态、Verification、Acceptance 或 restart 资格。S1 process **NOT RUN** 于当前候选。
+real-public-S1 按完整 source branch merge：相对隔离候选 `ae2630ea` 的提交链为 `4ebd8804`、`79cfcbed`、`f0d06bc2`、`166c2341`、`de8d44c5`，中间保留其 `adcb524f` merge。普通 merge 为 `2fdad3de`，无冲突。改动包含 opt-in public real-provider S1 lifecycle、Root Work routing/prompt 与 control-catalog 文案、versioned provider completion matcher、journey deadline、capture hook 和支持测试。Root v7 `assign_work` 说明已有独立 review。d5 尝试的终态是上文记录的 1 failed / 499.8s，不构成 S1 qualification；完整 fixture/capture 未留存。`de8d44c5` 新 Root v7/assign_work 路径及当前整合候选尚未真实重测，不能沿用 d5 的进度或结果。
 
 P9 direct-control diagnostics `e70c423a` 的父提交为 `ae2630ea`；普通 merge `3d2341ed` 仅引入 process test、AH10 child test-support probe 与诊断结果记录，没有 production runtime 改动。原 gen1 45 秒等待和成功/拒绝语义断言保留，诊断增加失败快照；相应 P9 process case **NOT RUN**。
 
@@ -44,4 +44,4 @@ Port-handshake diagnostics `bd7cd924` 的父提交为 `ae2630ea`；普通 merge 
 - F18 crash-oracle lightweight unit file：**2/2 PASS**（`pnpm exec vitest run tests/f18-process-crash-oracle.test.ts`）。F18 organization process cases 仍 **NOT RUN**。
 - `5438ef8c` 主索引文档 cherry-pick：仅该 Markdown 文件，diff check 后整合；候选 qualification 仍按精确 SHA 隔离。
 - AH7 pending-intent 文件来源 typecheck/Biome 据提交方报告 PASS；本次定向 Biome 1 file **PASS**、`git diff adcb524f HEAD --check` / 工作树 diff check **PASS**。F18 crash-oracle lightweight unit file 在当前候选重跑 **2/2 PASS**。AH7 process qualification **NOT RUN**。
-- 不运行全量 typecheck/build、daemon 重型测试或全量扫描；V6/F21/F18/AH7/P9/real-S1/port-handshake process qualifications 仍 **NOT RUN**，待 root 统一串行安排。
+- 不运行全量 typecheck/build、daemon 重型测试或全量扫描；V6/F21/F18/AH7/P9/当前 de8 real-S1/port-handshake process qualifications 仍 **NOT RUN**，待 root 统一串行安排。较早 d5 S1 已 terminal-fail，不能算 qualification。
