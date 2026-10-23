@@ -24,6 +24,9 @@
 | `2b04cb75286eed7de717a9b310e7e557a84c1739` | F21 online replay canonical receipt assertion repair | `2b04cb75` |
 | `bf86b8848d87e6157fbe8fee8f289012ef466709` | safe handshake error cause normalization | merge `7ac920c2` |
 | `68fab54cabefd5b583d2cad1e80e64e0563ced76` | isolated functional qualification sweep record | fast-forward |
+| `dfa8139e` + `8c67f364` + `27cf6d5b66010d6957ee6c942071bb8d3b078353` | S2 shared public real-journey harness and evidence-root readiness | merge `1de70e89` |
+| `e33a7f25fb98a746b238b4f35758488d9d253caa` | S4 public recovery journeys based on current shared helper | merge `1922a401` |
+| `3e43fb4086c64e1e7d393d8f90a3834d6fdc7993` | S3 permission recovery journey against current shared helper | cherry-pick `44bc1522` |
 
 整合前逐项核对来源 commit 的父提交、文件路径和实际 diff。最初只 cherry-pick `adcb524f` 得到 `398efe4c`，它只包含 tip 的 P41 结果记录，不包含其祖先中的生产修复、诊断证据及 fixture 测试修正；该 tip-only 挑入不足以代表主线整合。随后按主线拓扑在 `7581d46d` 上执行 `git merge --no-edit adcb524f`，得到 merge commit `2f0779a7085b964f9b95f6304b16a378e469cc15`，父提交为 `7581d46d` 与 `adcb524f`。没有 merge conflict。完整可达的 P41 链为 `15a25677`、`6416295e`、`779ec803`、`15bbdb99`、`adcb524f`；`git merge-base --is-ancestor adcb524f HEAD` 返回 exit 0。最初的 tip-only commit 保留在历史以供审计，不再作为完整整合凭据。其余来源提交按上表各挑入一次，无重复改动。
 
@@ -43,13 +46,17 @@ Port-handshake diagnostics `bd7cd924` 的父提交为 `ae2630ea`；普通 merge 
 
 F18 per-case budget/deadline 以完整 range 整合：`0721d984` 和 `b03ba507`，普通 merge `303820b4`，仅修改 `tests/functional/process/organization.functional.test.ts`。独立 review 确认 665.5s 外层耗时可由现有 setup/wait budget 解释，不是冻结业务 SLO；b03 将 PublicClient 和轮询绑定同一 case deadline，并将 `afterEach` 置为 closed 以阻止 late write，不改 lease、内层等待或业务断言。定向 Biome 与 diff PASS；F18 crash-oracle + public-client deadline unit 共 3/3 PASS。F18 第二 process case 保留给 `remaining_functional_sweep`。
 
+S2/S3/S4 source integration 全部建立在 shared real-journey helper `27cf6d5b` 上：S2 range `dfa8139e` / `8c67f364` / `27cf6d5b` 包含 test-only capture gate、deadline 与 evidence-root helper 和 S2 test；recent oracle audit 已确认 gate 默认透明、未 arm 时不延迟响应，canonical evidence-root same-path修复已在27cf。S4 `e33a7f25` 的 parent 正是27cf，新增 S4 test file only。S3 owner 的来源树将 8c67/27cf 重放为等价 commits；其 final `3e43fb40` 只改 S3 test file。候选 helper blob 与27cf精确相同（`02e29505d6d919ec32c7f82e78f40c4bda57e9778`）；为避免导入重复/旧 helper history，最终 S3 test commit作为单文件变更cherry-pick到共同helper候选，缺失路径冲突时保留了与来源commit blob完全相同的最终测试文件。S3/S4均不改生产Role/API。
+
+S3/S4 owners 的来源类型检查均报告 PASS；candidate 在最终整合后也完整运行 `pnpm build` 与 `pnpm exec tsc -p tsconfig.test.json --noEmit --pretty false`，两者 exit 0。候选相对 `44f3cc39` 的9个改动 TypeScript/MJS 文件 Biome PASS、diff check PASS；6项轻量测试实际执行为5 files/18 tests PASS（默认 Vitest 配置忽略 public-real opt-in目录），CRAC architecture 4/4 PASS。Readiness owner另报告 evidence-root 4个path cases PASS。没有设置 real-provider opt-in、发送请求或运行 S2/S3/S4 daemon journey；这些仅为实现与类型/静态核对，不是场景资格。
+
 F21 在线 replay 的 `46d811b7` 首轮失败与修复已在候选整合。唯一失败是 raw JSON 命令成功后，对 canonical receipt 与 HTTP envelope 形状断言错配；命令仍 HTTP 200，持久结果 `result_json` 仅为 result。修复 `2b04cb75` 使用持久 `command_id`/resolution/result 构造 canonical receipt，只精确比较响应 `body`，并保留 same-command、receipt stability、同 PID、`[Pending, Active]` event、单 ownership、Attention 清除和 Provider 计数断言。result record 将首轮列为 oracle mismatch failed，修复后 online daemon case **NOT RUN**，留给 sweep；这不是资源恢复问题的失败证据。此改动仅 test 与 result record。
 
 Safe handshake error normalization `bf86b884` 以完整单提交范围整合（source base `46d811b7`），merge 为 `7ac920c2`，只改 functional test-support 与 handshake unit file。它沿 cause chain 限深查找最具体已知分类，仅保留经过校验的 port/readiness numeric 字段；不序列化 Error cause，不改变 lifecycle rejection/stop 逻辑。独立 review PASS 无阻断；`handshake-diagnostic.test.ts` 8/8 PASS。候选相对 `46d811b7` 无 production/runtime 路径改动。
 
 `68fab54c` sweep 记录以 fast-forward 整合（只新增 sweep 文档）。候选完整 `tsconfig.test.json` typecheck 首轮只报一项：`organization.functional.test.ts:740` 读取不存在的 `ProductionFixture.httpPort`。修复从既有 `started.baseUrl` 提取实际监听端口 `Number(new URL(started.baseUrl).port)`；不扩展 fixture/runtime API、不用 `as any` 或过滤错误。完整重跑 `pnpm exec tsc -p tsconfig.test.json --noEmit` exit 0，未报 V6 diagnostic 类型错误。相关 organization 测试 Biome PASS，diff check PASS。root `pnpm build` exit 0；dist 存在且相对 46 的 production source 没有差异。F21 online daemon case 尚未重跑，保持待 `remaining_functional_sweep`。
 
-没有合入 nativehelper 分支；其安全红测仍待处理。S1 变更了 production prompt/control catalog assets，因此等待所有源码批次整合后才执行 build；native 实验已结束，build 结果见下节。
+没有合入 nativehelper 分支；其安全红测仍待处理。S1 变更了 production prompt/control catalog assets；当前候选含此前已验证的 BaseLoop v2 源码，后续 S2/S3/S4 变更仅在 test/support/config，未改生产Role。
 
 第三批源码完整合并后的 build 与定向验证已在候选 `8129e483` 执行：root `pnpm build` exit 0；Web `pnpm --filter @arbor/web build` exit 0，存在 >500 kB chunk 提示。root `main.js` 与 Web `index.html` dist 均存在，但产物存在不等于资格。六个轻量单测文件 16/16 PASS（handshake、安全 F18 marker、Root Work routing、provider capture path、public-client deadline、S1 wait diagnosis）；定向 CRAC architecture 4/4 PASS；相对 `d89103d` 的 10 个 TS/MJS 文件 Biome PASS、diff check PASS。之后 `55a7b89b` / `7643956e` 只增加/合并资格结果记录和状态矩阵文档，未改源码。完整 typecheck、`pnpm check`、functional/daemon suite 均未运行。
 
