@@ -1,10 +1,12 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   lstatSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -378,15 +380,39 @@ export const armProviderResponseGate = (
       "response gate was not enabled for this real-provider fixture",
     );
   }
-  if (selector !== undefined) {
-    const selectorPath = join(run.responseGateDirectory, "selector.json");
-    createP39PrivateTestFile(selectorPath);
-    writeFileSync(selectorPath, `${JSON.stringify(selector)}\n`, {
+  if (selector !== undefined) updateProviderResponseGateSelector(run, selector);
+  createP39PrivateTestFile(join(run.responseGateDirectory, "armed"));
+};
+
+export const updateProviderResponseGateSelector = (
+  run: StartedRealProviderFixture,
+  selector: ProviderResponseGateSelector,
+): void => {
+  if (run.responseGateDirectory === undefined) {
+    throw new Error(
+      "response gate was not enabled for this real-provider fixture",
+    );
+  }
+  const selectorPath = join(run.responseGateDirectory, "selector.json");
+  const temporarySelectorPath = join(
+    run.responseGateDirectory,
+    `selector-${randomUUID()}.tmp`,
+  );
+  createP39PrivateTestFile(temporarySelectorPath);
+  try {
+    writeFileSync(temporarySelectorPath, `${JSON.stringify(selector)}\n`, {
       encoding: "utf8",
       mode: 0o600,
     });
+    renameSync(temporarySelectorPath, selectorPath);
+  } catch (error) {
+    try {
+      rmSync(temporarySelectorPath, { force: true });
+    } catch {
+      // Preserve the selector update failure; this is a disposable private gate path.
+    }
+    throw error;
   }
-  createP39PrivateTestFile(join(run.responseGateDirectory, "armed"));
 };
 
 export const releaseProviderResponse = (

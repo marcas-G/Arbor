@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { providerResponseMatchesSelector } from "./provider-response-gate.mjs";
 
 const captureFile = process.env.ARBOR_PUBLIC_S1_CAPTURE_FILE;
 const endpointValue = process.env.ARBOR_PUBLIC_S1_CAPTURE_ENDPOINT;
@@ -71,24 +72,7 @@ const responseGateMatches = (request) => {
   if (!existsSync(selectorPath)) return true;
   try {
     const selector = JSON.parse(readFileSync(selectorPath, "utf8"));
-    const serialized = JSON.stringify(request ?? {});
-    if (
-      typeof selector.requiredMessageText === "string" &&
-      !serialized.includes(selector.requiredMessageText)
-    )
-      return false;
-    if (typeof selector.requiredAdvertisedToolName === "string") {
-      const tools = request?.tools;
-      const names = Array.isArray(tools)
-        ? tools.flatMap((tool) =>
-            typeof tool?.function?.name === "string"
-              ? [tool.function.name]
-              : [],
-          )
-        : [];
-      if (!names.includes(selector.requiredAdvertisedToolName)) return false;
-    }
-    return true;
+    return providerResponseMatchesSelector(request, selector);
   } catch {
     return false;
   }

@@ -22,6 +22,7 @@ import {
   repositoryBuildAssets,
   startedProviderRequests,
   startRealProviderFixture,
+  updateProviderResponseGateSelector,
   validateRealJourneyEvidenceRoot,
   waitForHeldProviderResponse,
   writeRealProviderEvidence,
@@ -483,12 +484,13 @@ const runJourney = async (input: {
       expect(steeredCurrentWork?.revision).toBe(work.revision + 1);
       state.normalSteerMarker = correctionMarker;
       state.normalSteerReceipt = "Committed";
-      let lastSequence = firstHeldResponse.sequence;
-      releaseTrackedProviderResponse(firstHeldResponse.requestId);
       const correctionRequestSelector = {
         ...workGateSelector,
         requiredMessageText: correctionMarker,
       } as const;
+      updateProviderResponseGateSelector(run, correctionRequestSelector);
+      let lastSequence = firstHeldResponse.sequence;
+      releaseTrackedProviderResponse(firstHeldResponse.requestId);
       let correctionRequest: ProviderCapture | undefined;
       while (Date.now() < deadlineAt && correctionRequest === undefined) {
         await approveExactPatchIfPending({
