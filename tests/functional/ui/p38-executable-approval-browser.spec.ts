@@ -886,6 +886,16 @@ test("P38 browser approval resumes the same action under explicitly configured T
       },
     },
   });
+  await expect(
+    page.getByText(/不证明动作已执行、产生效果或工作已完成/u),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "查看对应工作区详情" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "查看对应工作区详情" }).click();
+  await expect(page).toHaveURL(
+    `${fixture.baseUrl}/p/${project.projectId}/workspace/${project.rootWorkspaceId}`,
+  );
 
   await expect
     .poll(
