@@ -1,6 +1,6 @@
 # Sandbox Policy V6 Fresh Work Diagnostic — 2026-10-23
 
-Status: **DIAGNOSTIC RUN FAILED BEFORE THE FRESH WORK BRANCH; P9 TEST RACE IDENTIFIED; FRESH EAP TIMEOUT ROOT CAUSE STILL OPEN**
+Status: **DIAGNOSTIC RUN REACHED FRESH WORK; EAP TIMEOUT ROOT CAUSE IDENTIFIED AS FIXTURE PROFILE/OWNERSHIP MISMATCH; POST-FIX FULL RUN NOT RUN**
 
 ## Run and retained evidence
 
@@ -44,19 +44,38 @@ failure fixture and SQLite database were archived through the existing helper:
   whose same source Step is in a legal post-action state is classified as the
   P9 unavailable terminal. A generic `ExpectedFailure` with an Applied Action
   remains nonterminal.
-- This run did not reach the new fresh-project/EAP section, so it does not
-  explain the earlier fresh `waitForExecutableApproval` timeout. That earlier
-  run retained no provider request capture or runtime database. The new
-  instrumentation is set to preserve those facts if a scheduled run reaches
-  that section.
+- A later single full-file run reached the fresh EAP wait and retained the
+  public views, exact Execution/Step/Action/approval/invocation snapshot, and
+  provider route trace. The fresh Workspace had no active `resource_ownership`
+  claim; the only active filesystem claim belonged to the original Workspace
+  at the base Profile root. The test had selected that same host Profile for a
+  second project but manually inserted a nested `GitWorktree` path. P4 resolved
+  the shell region to that nested path and correctly returned
+  `ResourceAdmissionDenied` before creating an Executable approval. The
+  public Inbox therefore contained only the still-unconsumed HumanConversation
+  and no `eap:` entry. The earlier fresh `waitForExecutableApproval` timeout
+  had the same lack of retained DB/request evidence, but this later run now
+  provides the matching concrete failure mode.
+- The scripted provider then returned `shell` again on every WorkspaceWork
+  request despite the preceding exact `[Denied] tool denied:` result. That
+  produced 22 repeated no-effect denial Actions/Steps and ended in
+  `SessionContextBlocked:ContradictoryTimeline`. The test now stops selecting
+  another shell action after a prior exact tool denial, so a future diagnostic
+  failure remains bounded and attributable to the first denied action.
+- The fixture now creates a distinct fresh Project root, restarts the daemon
+  with that path as the host Profile root before public CreateProject, and
+  gives the Project its primary GitWorktree at the same path. The later
+  registry-drift restart keeps that Profile root. The failure snapshot's
+  transcript request omitted required `limit` and returned 400; it now sends
+  `limit: 40` so `responseStatus` can be captured on a future EAP failure.
 
 The run and synthetic D2 source do not qualify any real or `OSSupported`
 provider. No production or design file changed.
 
 ## Verification
 
-- Diagnostic full-file run: **FAIL** at the P9 state/probe race above; it is
-  not a fresh-work drift qualification.
+- Initial diagnostic full-file run: **FAIL** at the P9 state/probe race above;
+  it did not reach the fresh Work branch.
 - `pnpm build` and `pnpm --filter @arbor/web build`: PASS at merged `46d811b7`
   before the test-only diagnostic patch; these built dist files were used by
   the diagnostic run.
@@ -65,5 +84,9 @@ provider. No production or design file changed.
   simulates the source Step already at `NextStepReady` with a newer `Prepared`
   successor; the other ensures a generic ExpectedFailure is not classified as
   the P9 unavailable terminal.
-- The functional process file was not rerun after these corrections.
+- Fresh-work full-file run: **2 oracle tests passed, process case failed** at
+  `waitForExecutableApproval` after P4 `ResourceAdmissionDenied`; it is not a
+  V6-E drift/reapproval qualification.
+- After correcting the fixture Profile root, the full functional file was not
+  rerun under the one-run limit.
 

@@ -926,13 +926,23 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
             available.has("assign_work") &&
             !targetWorkTurn &&
             !context.includes("WorkAssigned(");
+          const priorToolDenial = call.messages.some(
+            (message) =>
+              message.role === "tool" &&
+              typeof message.content === "string" &&
+              message.content.startsWith("[Denied] tool denied:"),
+          );
           const shellPredicate =
-            context.includes(marker) && available.has("shell");
+            context.includes(marker) &&
+            available.has("shell") &&
+            !priorToolDenial;
           const selectedBranch = rootAssignmentPredicate
             ? "root-assign-work"
             : shellPredicate
               ? "workspace-shell"
-              : "fallback-text";
+              : priorToolDenial
+                ? "stop-after-exact-tool-denial"
+                : "fallback-text";
           scriptedProviderTrace.push({
             requestNo: scriptedProviderTrace.length + 1,
             inferredProfileFromTools: targetWorkTurn
@@ -943,6 +953,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
             availableToolNames: availableNames,
             markerPresent: context.includes(marker),
             workAssignedLiteralPresent: context.includes("WorkAssigned("),
+            priorToolDenial,
             rootAssignmentPredicate,
             shellPredicate,
             selectedBranch,
@@ -984,7 +995,12 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
               },
             };
           }
-          return { _tag: "Text", text: `Waiting for ${marker}` };
+          return {
+            _tag: "Text",
+            text: priorToolDenial
+              ? `The exact P4 tool action was denied; stop this attempt for ${marker}.`
+              : `Waiting for ${marker}`,
+          };
         },
         onDaemonStdout: (line) => {
           stdoutLines.push(line);
@@ -1432,51 +1448,61 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         // Keep the P9 terminal proof intact. Qualify drift through a separate
         // public root Work with its own pre-intent CandidateRead; never mint a
         // second ProviderTurn for this terminal Step.
-        const freshProject = await createFunctionalProject(
-          client,
-          fixture.workspaceDirectory,
-          "V6 E fresh candidate after registry drift",
-          { resourceSelection: "Profile" },
+        const freshProjectRootDirectory = resolve(
+          fixture.directory,
+          "fresh-project-root",
         );
-        diagnosticState.phase = "fresh-project-created";
-        diagnosticState.freshProjectId = freshProject.projectId;
-        diagnosticState.freshWorkspaceId = freshProject.rootWorkspaceId;
-        const freshWorktreePath = resolve(
-          fixture.workspaceDirectory,
-          `fresh-${crypto.randomUUID()}`,
-        );
-        mkdirSync(freshWorktreePath, { recursive: true });
-        writeFileSync(resolve(freshWorktreePath, "proof.txt"), marker);
+        mkdirSync(freshProjectRootDirectory, { recursive: true });
+        writeFileSync(resolve(freshProjectRootDirectory, "proof.txt"), marker);
         execFileSync("git", ["init", "--quiet"], {
-          cwd: freshWorktreePath,
+          cwd: freshProjectRootDirectory,
           stdio: "ignore",
         });
         execFileSync("git", ["config", "user.name", "Arbor Test"], {
-          cwd: freshWorktreePath,
+          cwd: freshProjectRootDirectory,
           stdio: "ignore",
         });
         execFileSync(
           "git",
           ["config", "user.email", "arbor-test@example.invalid"],
-          { cwd: freshWorktreePath, stdio: "ignore" },
+          { cwd: freshProjectRootDirectory, stdio: "ignore" },
         );
         execFileSync("git", ["add", "proof.txt"], {
-          cwd: freshWorktreePath,
+          cwd: freshProjectRootDirectory,
           stdio: "ignore",
         });
         execFileSync(
           "git",
           ["commit", "--quiet", "-m", "fresh sandbox fixture"],
           {
-            cwd: freshWorktreePath,
+            cwd: freshProjectRootDirectory,
             stdio: "ignore",
           },
         );
+        await fixture.restart({
+          entry: child,
+          projectRootDirectory: freshProjectRootDirectory,
+          daemonEnvironment: {
+            ARBOR_AH_BOUNDARY: "disabled",
+            ARBOR_TICK_INTERVAL_MS: "25",
+            ARBOR_SCHEDULER_PROBE: "1",
+          },
+        });
+        const freshProject = await createFunctionalProject(
+          client,
+          freshProjectRootDirectory,
+          "V6 E fresh candidate after registry drift",
+          { resourceSelection: "Profile" },
+        );
+        diagnosticState.phase = "fresh-project-created";
+        diagnosticState.freshProjectId = freshProject.projectId;
+        diagnosticState.freshWorkspaceId = freshProject.rootWorkspaceId;
+        diagnosticState.freshProjectRootDirectory = freshProjectRootDirectory;
         await insertProductionPrimaryWorktree({
           databaseFile: fixture.databaseFile,
           projectId: freshProject.projectId,
           workspaceId: freshProject.rootWorkspaceId,
-          path: freshWorktreePath,
+          path: freshProjectRootDirectory,
         });
         await client.command(freshProject.projectId, "GrantPermission", {
           permissionGrantId: functionalId("pgr"),
@@ -1556,6 +1582,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
               client
                 .view("transcript", {
                   workspaceId: freshProject.rootWorkspaceId,
+                  limit: 40,
                 })
                 .then((value) => ({ value }))
                 .catch((readError: unknown) => ({ error: String(readError) })),
@@ -1732,6 +1759,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         commitSandboxPolicyV3HighWater(sourceFilename, driftedPair);
         await fixture.restart({
           entry: child,
+          projectRootDirectory: freshProjectRootDirectory,
           daemonEnvironment: {
             ARBOR_AH_BOUNDARY: "disabled",
             ARBOR_TICK_INTERVAL_MS: "60000",

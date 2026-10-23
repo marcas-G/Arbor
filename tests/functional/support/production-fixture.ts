@@ -227,6 +227,8 @@ export interface ProductionFixture {
   readonly restart: (options?: {
     /** Custom entries must emit the PID/nonce/listening handshake. */
     readonly entry?: string;
+    /** Test-only replacement for the single admitted host Profile root. */
+    readonly projectRootDirectory?: string;
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
     /** Test-only quiescent seam between stopping and starting the daemon. */
     readonly beforeStart?: () => void | Promise<void>;
@@ -687,6 +689,7 @@ export const startProductionFixture = async (input: {
 
   const startDaemon = async (override?: {
     readonly entry?: string;
+    readonly projectRootDirectory?: string;
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
   }) => {
     lastSafeHandshakeFailure = undefined;
@@ -717,7 +720,8 @@ export const startProductionFixture = async (input: {
       ? "present"
       : "missing";
     if (input.admitWorkspaceDirectory === true) {
-      daemonEnv.ARBOR_PROJECT_ROOT = workspaceDirectory;
+      daemonEnv.ARBOR_PROJECT_ROOT =
+        override?.projectRootDirectory ?? workspaceDirectory;
     } else {
       delete daemonEnv.ARBOR_PROJECT_ROOT;
     }
