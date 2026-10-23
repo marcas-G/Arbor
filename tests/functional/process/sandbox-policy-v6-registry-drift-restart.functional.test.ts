@@ -6,6 +6,7 @@ import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ClockLive,
+  CURRENT_SCHEMA_VERSION,
   layer as sqliteLayer,
   TransactionPortLive,
   WorkspaceRepositoryLive,
@@ -28,6 +29,7 @@ import {
   WorkspaceRepository,
   WorktreeStore,
 } from "../../../packages/ports/src/index.js";
+import { createCurrentSchemaTestDatabase } from "../../support/schema44-database.js";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
 import { archiveProductionFixtureFailure } from "../support/fixture-failure-evidence.js";
 import {
@@ -49,11 +51,7 @@ import {
   writeSandboxPolicyV3SourceFirst,
   writeSandboxPolicyV3TestPair,
 } from "../support/sandbox-policy-v3-source.js";
-import {
-  cloneFunctionalSchema50Database,
-  createFunctionalFixtureDirectory,
-  removeFunctionalFixtureDirectory,
-} from "../support/schema44-bootstrap.js";
+import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
 
 interface SandboxCandidate {
   readonly kind: string;
@@ -628,11 +626,20 @@ describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
 
 describe("V6 diagnostic SQL follows current persistence schema", () => {
   it("prepares every static test/support query against the current schema", async () => {
-    const directory = createFunctionalFixtureDirectory();
+    const fixture = await createCurrentSchemaTestDatabase({
+      prefix: "v6-diagnostic-schema-",
+    });
     try {
-      const fixture = await cloneFunctionalSchema50Database(directory);
-      const db = new DatabaseSync(fixture.databaseFile, { readOnly: true });
+      const db = new DatabaseSync(fixture.databaseFilename, { readOnly: true });
       try {
+        const schemaVersion = Number(
+          (
+            db.prepare("PRAGMA user_version").get() as {
+              user_version: number;
+            }
+          ).user_version,
+        );
+        expect(schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         const diagnosticSql = [
           ...staticPreparedSqlFrom(import.meta.filename),
           ...staticPreparedSqlFrom(
@@ -645,7 +652,7 @@ describe("V6 diagnostic SQL follows current persistence schema", () => {
         db.close();
       }
     } finally {
-      removeFunctionalFixtureDirectory(directory);
+      fixture.cleanup();
     }
   });
 });
