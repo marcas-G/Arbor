@@ -60,6 +60,8 @@ import type {
   StopAdmission,
 } from "./authority.js";
 import type { CommandResult } from "./command-result.js";
+import type { SteerWorkPayload } from "./commands/steer-work.js";
+import type { CriticalSteerPreparation } from "./critical-steer.js";
 import type { CommandInputIssue } from "./external-command-codec.js";
 import type { CommandRejection } from "./rejection.js";
 
@@ -81,6 +83,17 @@ export interface GatewayEnvelope<C> {
   /** Exact ActionApproval evidence for current-Workspace AssignWork; consumed
    * by the AssignWork handler in this command transaction. */
   readonly assignWorkApprovalEvidence?: AssignWorkApprovalCommandEvidence;
+  /** Process-local P12 preparation hook for the exact StopExecution leg of a
+   * Critical Steer. External decoding never accepts this field, it is omitted
+   * from semantic fingerprints, and CommandGateway invokes it only after its
+   * advisory receipt miss. */
+  readonly prepareCriticalSteerStop?: (
+    payload: SteerWorkPayload,
+    context: CommandSubmissionContext,
+  ) => Effect.Effect<
+    CriticalSteerPreparation,
+    CommandHandlerError | TransactionOperationalFailure
+  >;
 }
 
 export interface CommandOutcome<R> {

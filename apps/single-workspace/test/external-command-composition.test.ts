@@ -299,6 +299,137 @@ describe("external command composition boundary", () => {
     expect(calls).toEqual(["load-inputs", "resolver", "gateway"]);
   });
 
+  it("prepares Critical Steer Stop authority only after the outer resolver and binds it to the selected active main", async () => {
+    const projectId = "prj_018ee90a-5b83-7def-8c2d-7ef1a3c5a121";
+    const workspaceId = "ws_018ee90a-5b83-7def-8c2d-7ef1a3c5a122";
+    const workId = "wrk_018ee90a-5b83-7def-8c2d-7ef1a3c5a123";
+    const executionId = "exe_018ee90a-5b83-7def-8c2d-7ef1a3c5a124";
+    const commandId = "cmd_018ee90a-5b83-7def-8c2d-7ef1a3c5a125";
+    const actor = "user:local";
+    const calls: string[] = [];
+    let prepared: unknown;
+    const resolver = {
+      resolve: (input: AuthorityDecisionInput) => {
+        calls.push(`resolver:${input.envelope.commandType}`);
+        if (input.envelope.commandType === "StopExecution") {
+          expect(input.envelope.commandId).toBe(commandId);
+          expect(input.envelope.payload).toEqual({ executionId });
+          return Effect.succeed({
+            _tag: "StopExecutionAuthority",
+            submissionOrigin: "External",
+            principal: actor,
+            commandId,
+            semanticRequestFingerprint: input.semanticRequestFingerprint,
+            projectId,
+            commandKind: "StopExecution",
+            executionId,
+          } as never);
+        }
+        return Effect.succeed({
+          _tag: "SteerWorkAuthority",
+          principal: actor,
+          commandId,
+          semanticRequestFingerprint: input.semanticRequestFingerprint,
+          projectId,
+          targetWorkspaceId: workspaceId,
+          workId,
+        } as never);
+      },
+    };
+    const submission = makeExternalSubmission({
+      resolver: resolver as never,
+      gateway: {
+        execute: (
+          envelope: Parameters<CommandGatewayService["execute"]>[0],
+          context: Parameters<CommandGatewayService["execute"]>[1],
+        ) => {
+          calls.push("gateway");
+          const prepare = (
+            envelope as typeof envelope & {
+              prepareCriticalSteerStop?: (
+                payload: never,
+                context: Parameters<CommandGatewayService["execute"]>[1],
+              ) => Effect.Effect<unknown>;
+            }
+          ).prepareCriticalSteerStop;
+          expect(prepare).toBeTypeOf("function");
+          return Effect.gen(function* () {
+            if (prepare === undefined) {
+              return yield* Effect.die(
+                new Error("Critical Steer prep missing"),
+              );
+            }
+            prepared = yield* prepare(envelope.payload as never, context);
+            return {
+              commandId,
+              resolution: {
+                _tag: "Committed",
+                result: { severity: "Critical" },
+              },
+            } as never;
+          });
+        },
+      } as never,
+      registry: {
+        lookup: (commandType: string) =>
+          Option.some({ schemaVersion: "1", commandType }),
+      } as never,
+      loadInputs: (input) => {
+        calls.push(`load-inputs:${input.commandType}`);
+        return Effect.succeed({
+          canonicalFacts: { projectId },
+          grants: [],
+          governance: { authenticatedHumans: [actor], directParentOf: [] },
+          policy: makeProjectPolicy(),
+        } as unknown as AuthorityInputs);
+      },
+      findActiveMainByWorkspace: (targetWorkspaceId) => {
+        calls.push(`active:${targetWorkspaceId}`);
+        return Effect.succeed(executionId as never);
+      },
+    });
+    const response = await Effect.runPromise(
+      submission.submit(actor as never, externalContext(actor as never), {
+        commandType: "SteerWork",
+        commandId,
+        projectId,
+        actor,
+        issuedAt: "2026-10-16T00:00:00.000Z",
+        payload: {
+          workId,
+          workspaceId,
+          steer: {
+            severity: "Critical",
+            guidance: "correct the current direction",
+          },
+          expectedWorkRevision: 0,
+          provenance: { source: "HumanInput" },
+        },
+      }),
+    );
+    expect(response).toMatchObject({ ok: true, status: 200 });
+    expect(calls).toEqual([
+      "load-inputs:SteerWork",
+      "resolver:SteerWork",
+      "gateway",
+      `active:${workspaceId}`,
+      "load-inputs:StopExecution",
+      "resolver:StopExecution",
+    ]);
+    expect(prepared).toMatchObject({
+      _tag: "Ready",
+      executionId,
+      authority: {
+        _tag: "StopExecutionAuthority",
+        submissionOrigin: "External",
+        principal: actor,
+        commandId,
+        projectId,
+        executionId,
+      },
+    });
+  });
+
   it("routes exact authenticated-human RenameProject and CloseProject through resolver then Gateway", async () => {
     const calls: string[] = [];
     const submission = makeExternalSubmission({
