@@ -21,7 +21,6 @@ import {
   createFunctionalProject,
   makePublicClient,
   submitHumanMessage,
-  waitForPublic,
 } from "../support/public-client.js";
 import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
 import { makeWorkProvider } from "../support/work-provider.js";
@@ -76,12 +75,15 @@ interface F18CaseDiagnostics {
   readonly startedAt: string;
   readonly startedAtMs: number;
   readonly timeoutMs: number;
+  readonly requestDeadlineAt: number;
+  readonly deadlineController: AbortController;
   readonly stages: F18StageRecord[];
   projectId?: string;
   eventSequence?: number;
   fixture?: ProductionFixture;
   terminationCheckpoint?: Record<string, unknown>;
   complete: boolean;
+  closed: boolean;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -263,6 +265,7 @@ const writeF18Progress = (
   event: string,
   extra: Readonly<Record<string, unknown>> = {},
 ) => {
+  if (run.closed) return;
   const fixture = run.fixture;
   if (fixture === undefined) return;
   const now = Date.now();
@@ -295,6 +298,7 @@ const writeF18Progress = (
 };
 
 const beginF18Stage = (run: F18CaseDiagnostics, name: string) => {
+  if (run.closed) throw new Error("F18 case is already closed");
   const stage: F18StageRecord = {
     name,
     startedAt: new Date().toISOString(),
@@ -312,6 +316,7 @@ const finishF18Stage = (
   outcome: "passed" | "failed",
   terminalFact?: unknown,
 ) => {
+  if (run.closed) return;
   stage.outcome = outcome;
   stage.endedAt = new Date().toISOString();
   stage.elapsedMs = Date.now() - stage.startedAtMs;
@@ -325,17 +330,82 @@ const runF18Stage = async <T>(
   action: () => Promise<T>,
   fact: (value: T) => unknown = (value) => value,
 ): Promise<T> => {
+  if (run.closed) throw new Error("F18 case is already closed");
   const stage = beginF18Stage(run, name);
   try {
-    const value = await action();
+    const value = await awaitBeforeF18Deadline(run, action);
+    if (run.closed) throw new Error("F18 case closed before stage completion");
     finishF18Stage(run, stage, "passed", fact(value));
     return value;
   } catch (error) {
-    finishF18Stage(run, stage, "failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (!run.closed) {
+      finishF18Stage(run, stage, "failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     throw error;
   }
+};
+
+const awaitBeforeF18Deadline = async <T>(
+  run: F18CaseDiagnostics,
+  action: () => Promise<T>,
+): Promise<T> => {
+  if (run.closed) throw new Error("F18 case is already closed");
+  if (Date.now() >= run.requestDeadlineAt) {
+    run.deadlineController.abort(
+      new Error("F18 case absolute deadline exceeded"),
+    );
+  }
+  const signal = run.deadlineController.signal;
+  if (signal.aborted) {
+    throw signal.reason ?? new Error("F18 case absolute deadline exceeded");
+  }
+  let onAbort: (() => void) | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    onAbort = () =>
+      reject(signal.reason ?? new Error("F18 case absolute deadline exceeded"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    const pending = action();
+    return await Promise.race([pending, deadline]);
+  } finally {
+    if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+  }
+};
+
+const waitForF18Public = async <A>(
+  run: F18CaseDiagnostics,
+  read: () => Promise<A>,
+  predicate: (value: A) => boolean,
+  timeoutMs = 30_000,
+): Promise<A> => {
+  const stageDeadline = Date.now() + timeoutMs;
+  const deadline = Math.min(stageDeadline, run.requestDeadlineAt);
+  let last: A | undefined;
+  while (Date.now() < deadline && !run.closed) {
+    try {
+      last = await read();
+      if (run.closed || Date.now() >= deadline) break;
+      if (predicate(last)) return last;
+    } catch {
+      // Preserve the existing public wait's retry-on-process-race behavior.
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs > 0) {
+      await new Promise((resolveWait) =>
+        setTimeout(resolveWait, Math.min(100, remainingMs)),
+      );
+    }
+  }
+  if (run.closed) throw new Error("F18 case closed during public wait");
+  if (run.requestDeadlineAt <= stageDeadline) {
+    throw new Error(
+      `F18 case public request deadline exceeded; last=${JSON.stringify(last)}`,
+    );
+  }
+  throw new Error(`public functional timeout; last=${JSON.stringify(last)}`);
 };
 
 afterEach(async ({ task }) => {
@@ -360,6 +430,10 @@ afterEach(async ({ task }) => {
         terminal: "test-failed-or-timed-out-before-explicit-completion",
       };
     }
+  }
+  if (run !== undefined) {
+    run.closed = true;
+    run.deadlineController.abort(new Error("F18 case closed during cleanup"));
   }
   for (const fixture of fixtures.splice(0)) {
     let stopError: unknown;
@@ -456,6 +530,9 @@ const waitForF18PublicStage = async <T>(
     diagnostics === undefined ? undefined : beginF18Stage(diagnostics, stage);
   try {
     const value = await run();
+    if (diagnostics?.closed === true) {
+      throw new Error("F18 case closed before public stage completion");
+    }
     if (diagnostics !== undefined && stageRecord !== undefined) {
       finishF18Stage(diagnostics, stageRecord, "passed", {
         publicStage: stage,
@@ -468,6 +545,7 @@ const waitForF18PublicStage = async <T>(
     }
     return value;
   } catch (error) {
+    if (diagnostics?.closed === true) throw error;
     const database = new DatabaseSync(fixture.databaseFile, { readOnly: true });
     let facts: unknown;
     try {
@@ -516,14 +594,19 @@ describe("release-functional long-lived responsibility", () => {
       attention = false,
     }) => {
       const marker = `F18-CHILD-${crypto.randomUUID().slice(0, 8)}`;
+      const startedAtMs = Date.now();
       const run: F18CaseDiagnostics = {
         boundary,
         marker,
-        startedAt: new Date().toISOString(),
-        startedAtMs: Date.now(),
+        startedAt: new Date(startedAtMs).toISOString(),
+        startedAtMs,
         timeoutMs: F18_CASE_TIMEOUT_MS,
+        requestDeadlineAt:
+          startedAtMs + F18_CASE_TIMEOUT_MS - F18_DIAGNOSTIC_LEAD_MS,
+        deadlineController: new AbortController(),
         stages: [],
         complete: false,
+        closed: false,
       };
       activeF18Case = run;
       run.timer = setTimeout(() => {
@@ -547,8 +630,12 @@ describe("release-functional long-lived responsibility", () => {
           process.stderr.write(
             `[F18_TIMEOUT_CHECKPOINT_ERROR] ${error instanceof Error ? error.message : String(error)}\n`,
           );
+        } finally {
+          run.deadlineController.abort(
+            new Error("F18 case absolute request deadline reached"),
+          );
         }
-      }, F18_CASE_TIMEOUT_MS - F18_DIAGNOSTIC_LEAD_MS);
+      }, run.requestDeadlineAt - Date.now());
       let childDirectory = "";
       let allowParentAcceptance = false;
       const childWorkProvider = makeWorkProvider({ marker, verdict: "Pass" });
@@ -658,7 +745,9 @@ describe("release-functional long-lived responsibility", () => {
       fixtures.push(fixture);
       childDirectory = fixture.workspaceDirectory;
       writeF18Progress(run, "fixture-ready");
-      const client = makePublicClient(fixture.baseUrl);
+      const client = makePublicClient(fixture.baseUrl, {
+        deadlineAt: run.requestDeadlineAt,
+      });
       const project = await runF18Stage(
         run,
         "project-created",
@@ -695,7 +784,8 @@ describe("release-functional long-lived responsibility", () => {
         project.projectId,
         "governance-entry",
         () =>
-          waitForPublic(
+          waitForF18Public(
+            run,
             () =>
               client.view<{
                 unconsumed: Array<{
@@ -745,7 +835,8 @@ describe("release-functional long-lived responsibility", () => {
         project.projectId,
         "child-work-created",
         () =>
-          waitForPublic(
+          waitForF18Public(
+            run,
             () =>
               client.view<{
                 nodes: Array<{
@@ -778,7 +869,8 @@ describe("release-functional long-lived responsibility", () => {
         project.projectId,
         "initial-verification-snapshot",
         () =>
-          waitForPublic(
+          waitForF18Public(
+            run,
             () =>
               client.view<{
                 verdict?: string;
@@ -898,13 +990,15 @@ describe("release-functional long-lived responsibility", () => {
       let crashRestartError: unknown;
       const crashStage = beginF18Stage(run, "restart-to-injected-boundary");
       try {
-        await fixture.restart({
-          daemonEnvironment: {
-            NODE_ENV: "test",
-            ARBOR_F18_TEST_LEASE_TTL_MS: "5000",
-            ARBOR_F18_TEST_CRASH_BOUNDARY: boundary,
-          },
-        });
+        await awaitBeforeF18Deadline(run, () =>
+          fixture.restart({
+            daemonEnvironment: {
+              NODE_ENV: "test",
+              ARBOR_F18_TEST_LEASE_TTL_MS: "5000",
+              ARBOR_F18_TEST_CRASH_BOUNDARY: boundary,
+            },
+          }),
+        );
       } catch (error) {
         crashRestartError = error;
       }
@@ -1086,7 +1180,8 @@ describe("release-functional long-lived responsibility", () => {
             project.projectId,
             "attention-recovery-after-rollback",
             async () =>
-              waitForPublic(
+              waitForF18Public(
+                run,
                 async () => {
                   const database = new DatabaseSync(fixture.databaseFile, {
                     readOnly: true,
@@ -1278,7 +1373,8 @@ describe("release-functional long-lived responsibility", () => {
         project.projectId,
         "parent-acceptance",
         () =>
-          waitForPublic(
+          waitForF18Public(
+            run,
             () =>
               client.view<{
                 verdict?: string;
@@ -1307,7 +1403,8 @@ describe("release-functional long-lived responsibility", () => {
         project.projectId,
         "child-work-completion",
         () =>
-          waitForPublic(
+          waitForF18Public(
+            run,
             () =>
               client.view<{
                 nodes: Array<{
