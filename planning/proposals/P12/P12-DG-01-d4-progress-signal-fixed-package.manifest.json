@@ -1,13 +1,14 @@
 {
-  "package": "P12-DG-01 durable-progress signal fixed package",
+  "package": "P12-DG-01 D2/D4 progress-signal convergence fixed package, revision 2",
   "status": "PROPOSED_NOT_ACCEPTED",
-  "decisionToken": "ACCEPT_P12_DG_01_AGENT_ACTION_TERMINAL_D4_PROGRESS",
+  "retirement": "This revision supersedes and retires the previous draft and its decision token; use only this manifest/package identity.",
+  "decisionToken": "ACCEPT_P12_DG_01_D2_D4_PROGRESS_CONVERGENCE",
   "baseCommit": "852ed5728faae3fb365a828804b85bc7940cf72a",
   "preparedDate": "2026-10-24",
   "files": [
     {
       "path": "planning/proposals/P12/P12-DG-01-d4-progress-signal-fixed-package.md",
-      "sha256": "B0B22BF4850E85785FDA718461A8582491BDDEF206209A7B848B4D6510C1BD51"
+      "sha256": "8E737E2F0E4C423D7A4AAD05B3F44CAA3E9C618DA1E451F3AB7F5C8F60AA5E71"
     }
   ],
   "scope": "Governance proposal only. No docs/design or production changes, no migration, no real Provider/daemon execution."
