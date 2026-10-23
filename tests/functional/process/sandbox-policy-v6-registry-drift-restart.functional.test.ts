@@ -49,7 +49,11 @@ import {
   writeSandboxPolicyV3SourceFirst,
   writeSandboxPolicyV3TestPair,
 } from "../support/sandbox-policy-v3-source.js";
-import { removeFunctionalFixtureDirectory } from "../support/schema44-bootstrap.js";
+import {
+  cloneFunctionalSchema50Database,
+  createFunctionalFixtureDirectory,
+  removeFunctionalFixtureDirectory,
+} from "../support/schema44-bootstrap.js";
 
 interface SandboxCandidate {
   readonly kind: string;
@@ -98,6 +102,31 @@ const child = resolve(
 const fixtures: ProductionFixture[] = [];
 const artifactFixtureCleanups: Array<() => void> = [];
 const fixtureDiagnostics = new Map<ProductionFixture, () => unknown>();
+
+const staticPreparedSqlFrom = (filename: string): ReadonlyArray<string> => {
+  const source = readFileSync(filename, "utf8");
+  const preparedCalls = source.match(/\.prepare\(/gu) ?? [];
+  const schemaLoopCalls = source.match(/\.prepare\(\s*statement\s*\)/gu) ?? [];
+  const sql: string[] = [];
+  const matcher = /\.prepare\(\s*(?:`([\s\S]*?)`|"([^"]*)")/gu;
+  for (const match of source.matchAll(matcher)) {
+    const statement = match[1] ?? match[2];
+    if (statement === undefined || statement.includes("${")) {
+      throw new Error(`non-static diagnostic SQL in ${filename}`);
+    }
+    sql.push(statement);
+  }
+  const expectedSchemaLoopCalls = source.includes("const staticPreparedSqlFrom")
+    ? 1
+    : 0;
+  if (
+    schemaLoopCalls.length !== expectedSchemaLoopCalls ||
+    sql.length + schemaLoopCalls.length !== preparedCalls.length
+  ) {
+    throw new Error(`uncollected diagnostic SQL in ${filename}`);
+  }
+  return sql;
+};
 
 const decodeToolObservation = (value: unknown): Record<string, unknown> => {
   if (typeof value === "string")
@@ -258,10 +287,16 @@ const freshExecutionDiagnosticSnapshot = (
     const snapshot = {
       execution: db
         .prepare(
-          `SELECT execution_id, project_id, workspace_id, episode_binding_json,
+          `SELECT execution_id, project_id, workspace_id,
                   episode_kind, episode_ref, episode_revision, settled_at,
                   settlement_kind, settlement_json
              FROM executions WHERE execution_id = ?`,
+        )
+        .get(executionId),
+      agentExecutionState: db
+        .prepare(
+          `SELECT episode_json FROM agent_execution_state
+            WHERE execution_id = ?`,
         )
         .get(executionId),
       steps: db
@@ -588,6 +623,30 @@ describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
         step: exact?.step,
       }),
     ).toBe(false);
+  });
+});
+
+describe("V6 diagnostic SQL follows current persistence schema", () => {
+  it("prepares every static test/support query against the current schema", async () => {
+    const directory = createFunctionalFixtureDirectory();
+    try {
+      const fixture = await cloneFunctionalSchema50Database(directory);
+      const db = new DatabaseSync(fixture.databaseFile, { readOnly: true });
+      try {
+        const diagnosticSql = [
+          ...staticPreparedSqlFrom(import.meta.filename),
+          ...staticPreparedSqlFrom(
+            resolve("tests/functional/support/ah-durable-snapshot.ts"),
+          ),
+        ];
+        expect(diagnosticSql.length).toBeGreaterThan(40);
+        for (const statement of diagnosticSql) db.prepare(statement);
+      } finally {
+        db.close();
+      }
+    } finally {
+      removeFunctionalFixtureDirectory(directory);
+    }
   });
 });
 
@@ -1778,9 +1837,17 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         ).toBe(0);
         expect(
           JSON.parse(
-            String(freshPostIntentState.execution?.episode_binding_json),
+            String(freshPostIntentState.agentExecutionState?.episode_json),
           ),
         ).toEqual(freshPreDriftRead.commonPreconditions.episodeBinding);
+        expect(freshPostIntentState.execution).toMatchObject({
+          episode_kind: "WorkEpisode",
+          episode_ref:
+            freshPreDriftRead.commonPreconditions.episodeBinding.workId,
+          episode_revision:
+            freshPreDriftRead.commonPreconditions.episodeBinding
+              .targetWorkRevision,
+        });
         const p1GrantExpiresAt = new Date(
           Date.now() + 60 * 60_000,
         ).toISOString();

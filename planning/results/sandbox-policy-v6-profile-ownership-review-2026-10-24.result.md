@@ -1,6 +1,6 @@
 # V6 Fresh Profile Ownership Review — 2026-10-24
 
-Status: **E50 PROFILE FIX REVIEWED; FRESH POST-INTENT CANDIDATEREAD PATH CORRECTED; FULL PROCESS REQUALIFICATION NOT RUN**
+Status: **E50 PROFILE FIX REVIEWED; FRESH POST-INTENT CANDIDATEREAD PATH CORRECTED; FULL PROCESS REQUALIFICATION BLOCKED BY TEST-LOCAL SCHEMA QUERY, FIXED; PROCESS RETEST NOT RUN**
 
 ## E50 fixture review
 
@@ -65,7 +65,40 @@ outside this review.
   Workspace had an active ownership claim at its exact new Profile root; P4
   created the NotAdmitted/Bound post-intent source and no EAP by design.
 - After changing the process case to use public post-intent CandidateRead, the
-  full file was not rerun under the one-run limit.
+  authorized full-file attempt ran once with retry 0 / one worker. It ended
+  with Vitest terminal status **1 failed process case, 2 passed P9 oracle
+  cases** (3 total). The process advanced through restart, stale P1 rejection,
+  and reached the fresh CandidateRead diagnostic snapshot, where the test
+  queried nonexistent `executions.episode_binding_json`. This is a test-local
+  schema mismatch, not a production runtime failure. Evidence is retained at
+  `.test-results/2026-10-24T01-10-v6-fresh-postintent-final/`, including the
+  archived fixture database; the failed fixture itself remains available.
+- Current schema inspection confirmed P25 `executions` stores
+  `episode_kind`/`episode_ref`/`episode_revision`; P26 stores the serialized
+  exact episode identity in `agent_execution_state.episode_json`. The query
+  now reads those actual columns and checks both serialized and decomposed
+  WorkEpisode identity against the public CandidateRead binding.
+- A prepare-once audit against the retained schema-version-51 database covered
+  all 30 static SQL statements in this V6 process test and all 13 in its
+  `ah-durable-snapshot.ts` helper: **43/43 prepared, 0 invalid columns or
+  aliases** after the fix. The test now includes a test-local schema microtest
+  that prepares this same source-listed query set against a newly cloned current
+  functional schema, without starting the daemon.
+- The accepted fresh-decision assertions also compare the persisted effective
+  summary tuple and policy digest against the refreshed public CandidateRead,
+  including bundle revision/digest, provider registry revision/digest,
+  provider version, capability revision, handle binding, profile and network
+  policy. The canonical P39 digest qualification remains out of scope.
+- No process rerun has been performed after the schema-query correction. The
+  earlier wrong-column failure and the prior obsolete EAP-oracle failure are
+  both harness/test-oracle failures, not evidence of a production defect.
+- Post-fix lightweight verification: the V6 P9 exact-Step oracles and the new
+  current-schema SQL microtest pass together (**3 passed, 1 process case
+  skipped**); the microtest clones the current schema, prepares all 43 static
+  queries, and does not start a daemon. Targeted Biome and `git diff --check`
+  pass. `pnpm exec tsc -p tsconfig.test.json --noEmit` reports only the
+  pre-existing unrelated `organization.functional.test.ts:740` missing
+  `ProductionFixture.httpPort` member; no V6 or helper errors are reported.
 - Focused typecheck after this correction reports only the unrelated
   `organization.functional.test.ts:740` missing `ProductionFixture.httpPort`
   member; no V6 or fixture-support type errors remain. Targeted Biome passes,
