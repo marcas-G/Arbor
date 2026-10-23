@@ -179,6 +179,14 @@ export interface ClaimCompletionDependencies {
   readonly clock: ClockService;
 }
 
+interface VerificationWaitEligibilityDependencies {
+  readonly works: Pick<WorkRepositoryService, "findById">;
+  readonly workspaces: Pick<WorkspaceRepositoryService, "findById">;
+  readonly verifications: Pick<VerificationRepositoryService, "listByWork">;
+  readonly tx: TransactionPortService;
+  readonly blockedWaitEnabled: boolean;
+}
+
 export interface AssignWorkDependencies {
   readonly gateway: CommandGatewayService;
   readonly commandHandlerRegistry?: CommandHandlerRegistryService;
@@ -2607,6 +2615,163 @@ const claimCompletionHandler = (
     }).pipe(Effect.mapError(actionOperationalFailure("ClaimCompletion"))),
 });
 
+/** P8 owns the source that can make a Work's VerificationChanged condition
+ * true. A Work-bound Wait on one or more VerificationChanged conditions for
+ * that same Work must have an exact Open Verification unless its Any set also
+ * contains another independently producible condition. ClaimCompletion has
+ * its own producer path: it atomically persists the exact VerificationChanged
+ * Wait with CompletionClaimed and is not routed through this model-facing
+ * Wait action. */
+const verificationWaitEligibilityHandler = (
+  dependencies: VerificationWaitEligibilityDependencies,
+): AgentActionHandler => ({
+  action: "Wait",
+  handle: (input) =>
+    Effect.gen(function* () {
+      const { action, execution } = input;
+      if (action._tag !== "Wait") {
+        return yield* Effect.fail(
+          actionOperationalFailure("Wait.dispatch")(
+            "Wait handler received a different AgentAction",
+          ),
+        );
+      }
+      const episode = workEpisode(execution);
+      if (episode === null) {
+        return yield* Effect.fail(
+          actionError(
+            "Wait requires an active Work binding for durable WorkWait registration",
+            "action/not-applicable",
+          ),
+        );
+      }
+      if (action.disposition === "Blocked") {
+        if (!dependencies.blockedWaitEnabled) {
+          return yield* Effect.fail(
+            actionError(
+              "Blocked recovery is unavailable on this runtime because the durable WorkBlocker ledger is not active",
+              "action/not-applicable",
+            ),
+          );
+        }
+        return {
+          _tag: "BlockedWorkEpisodeRequest" as const,
+          request: action.request,
+        };
+      }
+
+      const sameWorkVerificationConditions = action.waitSpec.conditions.flatMap(
+        (condition) =>
+          condition._tag === "VerificationChanged" &&
+          condition.workId === episode.workId
+            ? [condition]
+            : [],
+      );
+      const hasIndependentAlternative = action.waitSpec.conditions.some(
+        (condition) =>
+          condition._tag !== "VerificationChanged" ||
+          condition.workId !== episode.workId,
+      );
+
+      if (sameWorkVerificationConditions.length > 0) {
+        const eligibility = yield* dependencies.tx
+          .transact(
+            Effect.gen(function* () {
+              const [storedWork, storedWorkspace] = yield* Effect.all([
+                dependencies.works.findById(episode.workId),
+                dependencies.workspaces.findById(execution.workspaceId),
+              ]);
+              if (
+                Option.isNone(storedWork) ||
+                Option.isNone(storedWorkspace) ||
+                storedWork.value.workspaceId !== execution.workspaceId ||
+                storedWorkspace.value.currentWorkId !== episode.workId ||
+                storedWork.value.lifecycle !== "Open" ||
+                Number(storedWork.value.revision) !==
+                  Number(episode.targetWorkRevision)
+              ) {
+                return "not-current" as const;
+              }
+
+              const history = yield* dependencies.verifications.listByWork(
+                episode.workId,
+              );
+              const targetRevisions = new Set(
+                sameWorkVerificationConditions.map((condition) =>
+                  Number(condition.targetWorkRevision),
+                ),
+              );
+              const openRevisions = new Set(
+                history
+                  .filter((verification) =>
+                    targetRevisions.has(
+                      Number(verification.targetWorkRevision),
+                    ),
+                  )
+                  .filter(
+                    (verification) => verification.state.status === "Open",
+                  )
+                  .map((verification) =>
+                    Number(verification.targetWorkRevision),
+                  ),
+              );
+              if (openRevisions.size > 0) return "open-verification" as const;
+              const hasConcludedSource = history.some(
+                (verification) =>
+                  targetRevisions.has(
+                    Number(verification.targetWorkRevision),
+                  ) && verification.state.status === "Concluded",
+              );
+              return hasConcludedSource
+                ? ("verification-concluded" as const)
+                : ("missing-source" as const);
+            }),
+          )
+          .pipe(Effect.mapError(actionOperationalFailure("WaitEligibility")));
+
+        if (eligibility === "not-current") {
+          return yield* Effect.fail(
+            actionError(
+              "This Work execution is no longer bound to the current open Work revision. Refresh the Work context before waiting.",
+              "action/precondition",
+              "ChooseAlternative",
+            ),
+          );
+        }
+        if (eligibility === "verification-concluded") {
+          return yield* Effect.fail(
+            actionError(
+              "Verification for this Work revision already has a conclusion. Read that result and continue instead of waiting again.",
+              "action/precondition",
+              "ChooseAlternative",
+            ),
+          );
+        }
+        if (eligibility === "missing-source" && !hasIndependentAlternative) {
+          return yield* Effect.fail(
+            actionError(
+              "This Work has no pending independent verification for its current revision. Continue advancing the Work or wait on a real external condition.",
+              "action/precondition",
+              "ChooseAlternative",
+            ),
+          );
+        }
+      }
+
+      return {
+        _tag: "Settle" as const,
+        settlement: {
+          _tag: "Completed" as const,
+          result: {
+            _tag: "Yielded" as const,
+            reason: action.reason,
+            waitSpec: action.waitSpec,
+          },
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("Wait"))),
+});
+
 /** ACR-8 (DID v1.19): P6 formation semantics are closed. The handler
  * persists a Pending proposal only — the human RecordDecision gate (and the
  * formation consumer that creates the child on Approve) stays untouched.
@@ -4257,6 +4422,9 @@ export const makeSingleWorkspaceControlActionHandlers = (
         "verifications" | "sessions" | "toolInvocations"
       >
     > &
+    Partial<{
+      waitVerifications: VerificationWaitEligibilityDependencies["verifications"];
+    }> &
     Partial<
       Pick<
         ResolveWorkBlockerActionDependencies,
@@ -4292,6 +4460,19 @@ export const makeSingleWorkspaceControlActionHandlers = (
         journal: dependencies.journal,
         clock: dependencies.clock,
         ids: dependencies.ids,
+      }),
+    );
+  }
+  if (dependencies.waitVerifications !== undefined) {
+    handlers.push(
+      verificationWaitEligibilityHandler({
+        works: dependencies.works,
+        workspaces: dependencies.workspaces,
+        verifications: dependencies.waitVerifications,
+        tx: dependencies.tx,
+        blockedWaitEnabled: handlers.some(
+          (handler) => handler.action === "ResolveWorkBlocker",
+        ),
       }),
     );
   }
@@ -4499,6 +4680,7 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
           ...(Option.isSome(placement) ? { placement: placement.value } : {}),
           inbox,
           verifications,
+          waitVerifications: verifications,
           sessions: yield* SessionRepository,
           toolInvocations,
           loopSteps,
