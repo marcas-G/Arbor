@@ -4,6 +4,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -832,6 +833,194 @@ test("P12 keeps a missing persisted path Pending across two real restarts, then 
         targetWorkspaceId: workspaceId,
       }),
     );
+  } finally {
+    if (workspaceMoved && existsSync(movedWorkspaceDirectory)) {
+      renameSync(movedWorkspaceDirectory, fixture.workspaceDirectory);
+    }
+    db.close();
+    await fixture.stop();
+    rmSync(markerDirectory, { recursive: true, force: true });
+  }
+});
+
+test("P12 exact replay activates restored path online in the same daemon", async () => {
+  const markerDirectory = mkdtempSync(
+    join(tmpdir(), "arbor-f21-online-replay-"),
+  );
+  const markerFile = join(markerDirectory, "activation.marker");
+  const releaseFile = join(markerDirectory, "activation.release");
+  const movedWorkspaceDirectory = join(markerDirectory, "workspace-offline");
+  const fixture = await startProductionFixture({
+    admitWorkspaceDirectory: true,
+    firstDaemonEntry: activationDaemonChild,
+    daemonEnvironment: {
+      F21_ACTIVATION_PROBE_BOUNDARY:
+        "GatewayCommittedBeforeP11ActivationReleasable",
+      F21_ACTIVATION_MARKER: markerFile,
+      F21_ACTIVATION_RELEASE: releaseFile,
+    },
+    reply: () => ({ _tag: "Text", text: "No model call expected" }),
+  });
+  const db = new DatabaseSync(fixture.databaseFile);
+  let workspaceMoved = false;
+  try {
+    const { client, projectId, workspaceId, commandId, envelope } =
+      await makeEnvelope(fixture);
+    const initialProcess = fixture.daemonProcessSnapshot();
+    expect(initialProcess?.pid).toBeDefined();
+    expect(initialProcess?.alive).toBe(true);
+
+    const request = fetch(`${fixture.baseUrl}/commands`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer local",
+      },
+      body: JSON.stringify(envelope),
+    });
+    await waitForMarker(markerFile);
+    const marker = JSON.parse(readFileSync(markerFile, "utf8")) as {
+      boundary: string;
+      commandId: string;
+      projectId: string;
+      workspaceId: string;
+    };
+    expect(marker).toEqual({
+      boundary: "GatewayCommittedBeforeP11ActivationReleasable",
+      commandId,
+      projectId,
+      workspaceId,
+    });
+
+    // The post-commit test gate keeps this daemon alive before P11 activation.
+    // Make the persisted path unavailable only for the first activation attempt.
+    renameSync(fixture.workspaceDirectory, movedWorkspaceDirectory);
+    workspaceMoved = true;
+    writeFileSync(releaseFile, "continue", "utf8");
+    const failedResponse = await request;
+    expect(failedResponse.status).not.toBe(200);
+    const pidAfterFailedActivation = fixture.daemonProcessSnapshot();
+    expect(pidAfterFailedActivation?.pid).toBe(initialProcess?.pid);
+    expect(pidAfterFailedActivation?.alive).toBe(true);
+
+    const pending = db
+      .prepare(
+        `SELECT c.resolution, c.result_json, i.status AS intent_status,
+                (SELECT COUNT(*) FROM resource_ownership
+                 WHERE workspace_id = ? AND released_at IS NULL) AS claim_count,
+                (SELECT COUNT(*) FROM workspace_resource_activation_attention_rows
+                 WHERE project_id = ? AND workspace_id = ?) AS attention_count
+         FROM commands c
+         JOIN workspace_resource_activation_intents i
+           ON i.project_id = ? AND i.workspace_id = ?
+         WHERE c.command_id = ?`,
+      )
+      .get(
+        workspaceId,
+        projectId,
+        workspaceId,
+        projectId,
+        workspaceId,
+        commandId,
+      ) as
+      | {
+          resolution: string;
+          result_json: string;
+          intent_status: string;
+          claim_count: number;
+          attention_count: number;
+        }
+      | undefined;
+    expect(pending).toMatchObject({
+      resolution: "Committed",
+      intent_status: "Pending",
+      claim_count: 0,
+      attention_count: 1,
+    });
+    expect(pending).toBeDefined();
+    if (pending === undefined) throw new Error("committed receipt missing");
+    const originalReceipt = JSON.parse(pending.result_json);
+    const pendingAttention = await client.view<{
+      rows: ReadonlyArray<Record<string, unknown>>;
+    }>("attention", { projectId });
+    expect(pendingAttention.rows).toContainEqual(
+      expect.objectContaining({
+        source: "WorkspaceResourceActivationPending",
+        targetWorkspaceId: workspaceId,
+        dedupKey: `resource-activation:${projectId}:${workspaceId}:0`,
+      }),
+    );
+
+    renameSync(movedWorkspaceDirectory, fixture.workspaceDirectory);
+    workspaceMoved = false;
+    const replay = await fetch(`${fixture.baseUrl}/commands`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer local",
+      },
+      body: JSON.stringify(envelope),
+    });
+    const replayBody = (await replay.json()) as Record<string, unknown>;
+    expect(replay.status).toBe(200);
+    expect(replayBody).toMatchObject({ ok: true, body: originalReceipt });
+
+    const completed = db
+      .prepare(
+        `SELECT c.resolution, c.result_json, i.status AS intent_status,
+                (SELECT COUNT(*) FROM resource_ownership
+                 WHERE workspace_id = ? AND released_at IS NULL) AS claim_count,
+                (SELECT COUNT(*) FROM workspace_resource_activation_attention_rows
+                 WHERE project_id = ? AND workspace_id = ?) AS attention_count,
+                (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS command_count,
+                (SELECT COUNT(*) FROM domain_events
+                 WHERE project_id = ? AND event_type = 'WorkspaceResourceActivationChanged') AS activation_event_count
+         FROM commands c
+         JOIN workspace_resource_activation_intents i
+           ON i.project_id = ? AND i.workspace_id = ?
+         WHERE c.command_id = ?`,
+      )
+      .get(
+        workspaceId,
+        projectId,
+        workspaceId,
+        commandId,
+        projectId,
+        projectId,
+        workspaceId,
+        commandId,
+      ) as {
+      resolution: string;
+      result_json: string;
+      intent_status: string;
+      claim_count: number;
+      attention_count: number;
+      command_count: number;
+      activation_event_count: number;
+    };
+    expect(completed).toMatchObject({
+      resolution: "Committed",
+      intent_status: "Active",
+      claim_count: 1,
+      attention_count: 0,
+      command_count: 1,
+      activation_event_count: 2,
+      result_json: pending.result_json,
+    });
+    expect(JSON.parse(completed.result_json)).toEqual(originalReceipt);
+    const finalProcess = fixture.daemonProcessSnapshot();
+    expect(finalProcess?.pid).toBe(initialProcess?.pid);
+    expect(finalProcess?.alive).toBe(true);
+    const clearedAttention = await client.view<{
+      rows: ReadonlyArray<Record<string, unknown>>;
+    }>("attention", { projectId });
+    expect(clearedAttention.rows).not.toContainEqual(
+      expect.objectContaining({
+        source: "WorkspaceResourceActivationPending",
+        targetWorkspaceId: workspaceId,
+      }),
+    );
+    expect(fixture.providerCalls).toHaveLength(0);
   } finally {
     if (workspaceMoved && existsSync(movedWorkspaceDirectory)) {
       renameSync(movedWorkspaceDirectory, fixture.workspaceDirectory);
