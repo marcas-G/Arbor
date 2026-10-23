@@ -1,6 +1,6 @@
 # V6 Fresh Profile Ownership Review — 2026-10-24
 
-Status: **E50 PROFILE FIX REVIEWED; P1 CURRENT DECISION DURABLE; FINAL PROCESS WAITER EXPIRED BEFORE NEXT 60S SCHEDULER TICK; TEST TIMING FIXED, NOT FULL-RERUN**
+Status: **E50 PROFILE FIX REVIEWED; P1 CURRENT DECISION DURABLE; FINAL P4 REPLAY FAILED CLOSED ON RECOVERY-BINDING MISMATCH AFTER EXACT P1 GRANT; DESIGN/IMPLEMENTATION DISPOSITION REQUIRED**
 
 ## E50 fixture review
 
@@ -102,51 +102,57 @@ outside this review.
   infrastructure failure is fixed below; this intermediate artifact is not
   used to diagnose the final P4 result.
 - The final authorized full-file run followed successful root/Web builds and
-  used retry 0 / one worker. It ended **5 passed, 1 failed** (three P9/selector
-  oracles, private-ACL archive regression, schema-51 SQL microtest passed; the
-  process case timed out). Its fixture and DB/WAL were successfully retained at
-  `.test-results/2026-10-24-v6-postdecision-final/sandbox-policy-v6-fresh-work-1696dba1-6c17-471b-be19-bff1886dd634/`.
-  Vitest failed at the 45-second post-P1 waiter with `last=undefined`: the only
-  fresh Execution probe was the pre-P1 `SandboxPolicyRequiredInterruption`,
-  and no exact post-P1 `ExpectedFailure` probe appeared.
-- Read-only comparison of that retained schema-51 DB confirms the fresh P1
-  commit is current, not a stale-payload or digest mismatch. The committed row
-  is policy revision 1 for the exact WorkEpisode binding also stored in
-  `executions` and `agent_execution_state.episode_json`; its public command
-  receipt is `Committed`. The persisted effective summary's recomputed
-  `encodeEffectivePolicySummaryV1` SHA-256 exactly equals `policy_digest`.
-  Its ReadOnly / `windows-restricted-appcontainer-job` / `t3d-v1` / capability
-  revision 4 tuple uses provider-registry revision 2 and digest
-  `26e14c69…`; bundle revision 2 and digest `55e84bca…` match the archived
-  current bundle and high-water file. The fresh payload in the test is built
-  from the public post-restart CandidateRead, whose revision/digest and
-  unchanged-profile constraints were checked before commit.
-- The same DB shows the exact shell invocation remains `NotAdmitted` / `Bound`,
-  with no settlement or observation; its Action is `Pending`, Step is
-  `ActionsInProgress`, and its only ProviderTurn settled before P1. The lease
-  still has its pre-P1 expiry and the Agent state remains `Recovery` / turn 0.
-  Thus the final process case did not observe a P4 re-entry; it did not observe
-  a post-P1 P4 materialization failure either. This is not an `ExpectedFailure`,
-  P9 terminal result, or OS-supported-provider qualification.
-- The test timing mismatch is evidenced by the exact timestamps: the P4 intent
-  was at `17:35:55.017Z`, the initial AgentLoopStep lease ended at
-  `17:35:55.302Z`, and the fresh P1 receipt committed at `17:36:04.642Z`. The
-  restarted daemon was configured with `ARBOR_TICK_INTERVAL_MS=60000`; the
-  production loop sleeps that interval after each scheduler/consumer/recovery
-  cycle. The 45-second P4 waiter therefore expired before the next 60-second
-  poll could reliably dispatch the pending action. The archive's scheduler
-  trace has no persisted command-relative tick cursor, so it cannot establish
-  whether any listed dispatch check followed the P1 receipt; the durable lease
-  row remained at its pre-P1 expired timestamp and was not reacquired. This is
-  a test timing/configuration failure; the retained data does not demonstrate a
-  production materializer defect.
-- The test now changes only the post-drift fresh daemon tick interval to the
-  existing positive-fixture value of 25 ms; its 45-second bound and P9/source
-  assertions remain unchanged. After the public P1 `Committed` receipt it
-  records the scheduler-probe cursor and requires a new exact-Execution
-  `PreDispatchLeaseCheck(dispatchable=true)` before accepting any P4 result.
-  The P4 selector still requires a later exact invocation `ExpectedFailure`;
-  no new process run has been performed after this correction.
+  used retry 0 / one worker. The fresh-phase tick was set to 25 ms; the
+  post-P1 waiter required a newly observed exact-Execution predispatch, and its
+  original 45-second bound was unchanged. The run ended **5 passed, 1 failed**
+  (three P9/selector oracles, private-ACL archive regression, and schema-51 SQL
+  microtest passed). The process case observed a post-P1 scheduler dispatch,
+  then failed closed at the exact P4 recovery-binding replay with
+  `ToolRuntimeOperationalFailure` / `RecoveryBindingReplayMismatch`.
+  Fixture/DB/WAL are retained at
+  `.test-results/2026-10-24-v6-postdecision-tick25-final/sandbox-policy-v6-fresh-work-ed139e45-b9c1-41c5-a31c-73cf4ab70b06/`;
+  Vitest JSON SHA-256 is
+  `2e2217b7ada415f3b3261522991d944cd4c254c48890621dda4d91fe0b7210a2` and DB
+  SHA-256 is `d3b3558b0c720a49d2bac916a3cc535a0afe4ac91350b9445a243339bb207e16`.
+- Read-only comparison confirms fresh P1 is current, not a stale CandidateRead
+  payload or policy-digest mismatch. The committed P1 row is policy revision 1
+  for the exact WorkEpisode binding stored in `executions` and
+  `agent_execution_state.episode_json`; the command receipt is `Committed`.
+  Recomputing `encodeEffectivePolicySummaryV1` yields the exact persisted
+  `policy_digest`. The effective tuple is ReadOnly /
+  `windows-restricted-appcontainer-job` / `t3d-v1` / capability revision 4;
+  provider-registry revision 2 / digest `26e14c69…` and bundle revision 2 /
+  digest `55e84bca…` match the archived current source and high-water. The test
+  built the P1 payload from the public post-restart CandidateRead and checked
+  its updated revisions/digests and unchanged profile before commit.
+- The retained DB shows the NotAdmitted shell invocation remained Bound to the
+  same invocation, ProviderTurn, Action and callRef. Its original immutable
+  `authoritySourceRevision` and `permissionGrantRevisions` contain only the
+  shell `shell:exec` grant. The fresh P1 command added a separate exact-target
+  `DecideSandboxPolicy` grant; the current project's active grant set now
+  contains both. On post-P1 replay, P4 emits the same exact action but
+  `makeRecoveryBindingV1` recomputes `authoritySourceRevision` from the expanded
+  active-grant set, so the new canonical binding no longer equals the
+  immutable P3 RecoveryBinding and P4 reports `RecoveryBindingReplayMismatch`.
+  Concretely, the bound source lists shell grant
+  `pgr_99edf2a9-001a-735b-809a-b30bb0317a05`; the later P1 grant is
+  `pgr_98c787ee-310c-77d5-8ef8-100bb45f23c5`, capability `DecideSandboxPolicy`,
+  targeted to the exact fresh Execution. Its inclusion in the current active
+  grant snapshot changes the binding even though the shell grant's revision
+  remains unchanged.
+  The invocation remains NotAdmitted/Bound and unsettled, with no observation;
+  the Action is `TerminalRejected` and Step `SettlementProposed`. No sandbox
+  effect or P9 provider-unavailable fact was produced.
+- This is not the earlier 60-second scheduler timing issue: the 25-ms run
+  proves a post-P1 predispatch and exact P4 replay. The remaining conflict is
+  whether RecoveryBinding should treat a newly committed, non-shell
+  `DecideSandboxPolicy` grant as changing the shell invocation's authority
+  source. The current evidence localizes the failure to that immutable-source
+  comparison; it does not establish whether the intended resolution is an
+  implementation correction or a manually governed contract clarification.
+  No production or design changes were made. The original independent P9
+  terminal proof remains intact; this fresh invocation did not reach a P9
+  terminal result. No OS-supported-provider qualification is claimed.
 - The archive-hook cause is diagnosed and fixed in test infrastructure:
   `validateResultDirectory` creates a missing, lexically validated direct child
   after validating the real `.test-results` root and immediately applies the
