@@ -1,11 +1,13 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   acquireP39MaintenanceWriterExclusion,
   acquireP39RuntimeWriterPermit,
+  P39WriterLockClient,
   p39WriterLockLayer,
   releaseP39WriterPermit,
 } from "../../../adapters/persistence-sqlite/src/index.js";
@@ -24,6 +26,12 @@ const p39PathQualificationAvailable = isP39PathQualificationEnabled(
 
 const childModule = resolve(
   "tests/functional/support/p39-writer-lock-child.mjs",
+);
+const contenderModule = resolve(
+  "tests/functional/support/p39-writer-lock-contender.mjs",
+);
+const sameLayerContenderModule = resolve(
+  "tests/functional/support/p39-lock-same-layer-contender.mjs",
 );
 
 const startHolder = async (
@@ -133,6 +141,224 @@ const killHolder = async (
   await exited;
 };
 
+const contenderOutput = new WeakMap<
+  ReturnType<typeof startContender>,
+  { stdout: string; stderr: string }
+>();
+
+const startContender = (
+  lockFilename: string,
+  mode: "shared" | "exclusive",
+  timeoutMs: number,
+  cancelAfterMs?: number,
+  module = contenderModule,
+) => {
+  const child = spawn(
+    process.execPath,
+    module === sameLayerContenderModule
+      ? [module, lockFilename, mode]
+      : [
+          module,
+          lockFilename,
+          mode,
+          String(timeoutMs),
+          ...(cancelAfterMs === undefined ? [] : [String(cancelAfterMs)]),
+        ],
+    {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+      env: p39WindowsTestEnvironment(),
+    },
+  );
+  const output = { stdout: "", stderr: "" };
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    output.stdout += chunk;
+  });
+  child.stderr.on("data", (chunk: string) => {
+    output.stderr += chunk;
+  });
+  contenderOutput.set(child, output);
+  return child;
+};
+
+const awaitContenderStage = async (
+  child: ReturnType<typeof startContender>,
+  stage: string,
+  deadlineMs: number,
+) => {
+  const output = contenderOutput.get(child);
+  if (output === undefined) throw new Error("P39 contender output missing");
+  if (output.stdout.includes(`${stage}\n`)) return;
+  await new Promise<void>((resolveReady, rejectReady) => {
+    const onData = () => {
+      if (output.stdout.includes(`${stage}\n`)) {
+        clearTimeout(timer);
+        child.stdout.off("data", onData);
+        resolveReady();
+      }
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      rejectReady(
+        new Error(
+          `P39 contender did not reach ${stage} within ${deadlineMs}ms; progress=${output.stdout}; stderr=${output.stderr}`,
+        ),
+      );
+    }, deadlineMs);
+    child.stdout.on("data", onData);
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      child.stdout.off("data", onData);
+      rejectReady(
+        new Error(
+          `P39 contender exited before ${stage}: code=${String(code)} signal=${String(signal)}; progress=${output.stdout}; stderr=${output.stderr}`,
+        ),
+      );
+    });
+  });
+};
+
+const awaitContenderPhase = async (
+  child: ReturnType<typeof startContender>,
+  phase: string,
+  deadlineMs = 5_000,
+) => {
+  const output = contenderOutput.get(child);
+  if (output === undefined) throw new Error("P39 contender output missing");
+  const readResult = () => {
+    for (const line of output.stdout.split(/\r?\n/u)) {
+      if (!line.startsWith("{")) continue;
+      try {
+        const result = JSON.parse(line) as {
+          phase?: string;
+          _tag: string;
+          code?: string;
+          elapsedMs?: number;
+          timerFired?: boolean;
+        };
+        if (result.phase === phase) return result;
+      } catch {
+        // Ignore non-JSON diagnostic fragments.
+      }
+    }
+    return undefined;
+  };
+  const existing = readResult();
+  if (existing !== undefined) return existing;
+  return new Promise<NonNullable<ReturnType<typeof readResult>>>(
+    (resolvePhase, rejectPhase) => {
+      const onData = () => {
+        const result = readResult();
+        if (result === undefined) return;
+        clearTimeout(timer);
+        child.stdout.off("data", onData);
+        resolvePhase(result);
+      };
+      const timer = setTimeout(() => {
+        child.kill();
+        rejectPhase(
+          new Error(
+            `P39 contender phase ${phase} exceeded ${deadlineMs}ms; progress=${output.stdout}; stderr=${output.stderr}`,
+          ),
+        );
+      }, deadlineMs);
+      child.stdout.on("data", onData);
+      child.once("exit", (code, signal) => {
+        clearTimeout(timer);
+        child.stdout.off("data", onData);
+        const result = readResult();
+        if (result !== undefined) resolvePhase(result);
+        else {
+          rejectPhase(
+            new Error(
+              `P39 contender exited before phase ${phase}: code=${String(code)} signal=${String(signal)}; progress=${output.stdout}`,
+            ),
+          );
+        }
+      });
+    },
+  );
+};
+
+const awaitContenderExit = async (
+  child: ReturnType<typeof startContender>,
+  deadlineMs = 2_000,
+) => {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((resolveExit) => {
+    child.once("close", () => resolveExit());
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    exited,
+    new Promise<void>((resolveExit) => {
+      timer = setTimeout(() => {
+        child.kill();
+        resolveExit();
+      }, deadlineMs);
+    }),
+  ]);
+  if (timer !== undefined) clearTimeout(timer);
+};
+
+const awaitContender = async (
+  child: ReturnType<typeof startContender>,
+  deadlineMs = 5_000,
+) => {
+  const output = contenderOutput.get(child);
+  if (output === undefined) throw new Error("P39 contender output missing");
+  const closed = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }>((resolveExit, rejectExit) => {
+    child.once("error", rejectExit);
+    child.once("close", (code, signal) => resolveExit({ code, signal }));
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      child.kill();
+      reject(
+        new Error(
+          `P39 contender exceeded ${deadlineMs}ms external deadline; progress=${output.stdout}; stderr=${output.stderr}`,
+        ),
+      );
+    }, deadlineMs);
+  });
+  try {
+    const exit = await Promise.race([closed, timedOut]);
+    if (exit.code !== 0) {
+      throw new Error(
+        `P39 contender exited ${String(exit.code)} signal=${String(exit.signal)}; progress=${output.stdout}; stderr=${output.stderr}`,
+      );
+    }
+    const resultLine = output.stdout
+      .split(/\r?\n/u)
+      .find((line) => line.startsWith("{"));
+    if (resultLine === undefined) {
+      throw new Error(
+        `P39 contender emitted no result; progress=${output.stdout}`,
+      );
+    }
+    return {
+      output: output.stdout,
+      result: JSON.parse(resultLine) as {
+        _tag: string;
+        code?: string;
+        errorTag?: string;
+        errorMessage?: string;
+        elapsedMs?: number;
+        released?: boolean;
+        timerFired?: boolean;
+      },
+    };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
 const competeAcrossProcess = async (input: {
   readonly heldMode: "shared" | "exclusive";
   readonly competingMode: "shared" | "exclusive";
@@ -143,36 +369,45 @@ const competeAcrossProcess = async (input: {
   );
   const lockFilename = join(directory, "maintenance.sqlite");
   let child: ChildProcessWithoutNullStreams | undefined;
+  let contender: ReturnType<typeof startContender> | undefined;
   try {
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.provide(
-          Effect.gen(function* () {
-            child = yield* Effect.promise(() =>
-              startHolder(lockFilename, input.heldMode),
-            );
-            const holder = child;
-            if (holder === undefined) {
-              return yield* Effect.fail(
-                new Error("lock holder was not started"),
-              );
-            }
-            const acquire =
-              input.competingMode === "exclusive"
-                ? acquireP39MaintenanceWriterExclusion()
-                : acquireP39RuntimeWriterPermit();
-            const blocked = yield* Effect.flip(acquire);
-            expect(blocked.code).toBe("P39_WRITER_LOCK_ACQUIRE_FAILED");
-
-            yield* Effect.promise(() => stopHolder(holder));
-            const permit = yield* acquire;
-            yield* releaseP39WriterPermit(permit);
-          }),
-          p39WriterLockLayer(lockFilename, 250),
-        ),
-      ),
+    contender = startContender(
+      lockFilename,
+      input.competingMode,
+      250,
+      undefined,
+      sameLayerContenderModule,
     );
+    await awaitContenderStage(contender, "LAYER_READY", 15_000);
+    child = await startHolder(lockFilename, input.heldMode);
+    contender.stdin.write("acquire\n");
+    const firstAttempt = await awaitContenderPhase(contender, "first");
+    expect(firstAttempt).toMatchObject({
+      _tag: "AcquireFailed",
+      code: "P39_WRITER_LOCK_ACQUIRE_FAILED",
+      timerFired: true,
+    });
+
+    const holder = child;
+    await stopHolder(holder);
+    child = undefined;
+    contender.stdin.write("retry\n");
+    const secondAttempt = await awaitContenderPhase(contender, "second");
+    expect(secondAttempt).toMatchObject({
+      _tag: "Acquired",
+      timerFired: false,
+    });
+    contender.stdin.end();
+    await awaitContenderExit(contender);
+    contender = undefined;
   } finally {
+    if (contender !== undefined && contender.exitCode === null) {
+      const exited = new Promise<void>((resolveExit) => {
+        contender?.once("exit", () => resolveExit());
+      });
+      contender.kill();
+      await exited;
+    }
     if (child !== undefined) await stopHolder(child);
     removeP39PrivateTestDirectory(directory);
   }
@@ -193,6 +428,185 @@ describe.skipIf(!p39PathQualificationAvailable)(
         heldMode: "exclusive",
         competingMode: "shared",
       });
+    });
+
+    it("retains same-layer shared permits until each matching release", async () => {
+      const directory = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-p39-same-layer-permits-",
+      );
+      const lockFilename = join(directory, "maintenance.sqlite");
+      try {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const client = yield* P39WriterLockClient;
+              const first = yield* client.acquire("RuntimeShared");
+              const second = yield* client.acquire("RuntimeShared");
+
+              let timerFired = false;
+              const timer = setTimeout(() => {
+                timerFired = true;
+              }, 25);
+              const blockedByBoth = yield* Effect.result(
+                client.acquire("MaintenanceExclusive"),
+              );
+              clearTimeout(timer);
+              expect(blockedByBoth._tag).toBe("Failure");
+              if (blockedByBoth._tag === "Failure") {
+                expect(blockedByBoth.failure._tag).toBe("P39WriterLockFailure");
+                if (blockedByBoth.failure._tag === "P39WriterLockFailure") {
+                  expect(blockedByBoth.failure.code).toBe(
+                    "P39_WRITER_LOCK_ACQUIRE_FAILED",
+                  );
+                }
+              }
+              expect(timerFired).toBe(true);
+
+              yield* client.release(first);
+              const blockedBySecond = yield* Effect.result(
+                client.acquire("MaintenanceExclusive"),
+              );
+              expect(blockedBySecond._tag).toBe("Failure");
+              yield* client.release(second);
+
+              const exclusive = yield* client.acquire("MaintenanceExclusive");
+              yield* client.release(exclusive);
+            }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 150))),
+          ),
+        );
+      } finally {
+        removeP39PrivateTestDirectory(directory);
+      }
+    });
+
+    it("keeps the event loop responsive and acquires when maintenance releases before the deadline", async () => {
+      const directory = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-p39-lock-early-release-",
+      );
+      const lockFilename = join(directory, "maintenance.sqlite");
+      let holder: ChildProcessWithoutNullStreams | undefined;
+      let contender: ReturnType<typeof startContender> | undefined;
+      let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        contender = startContender(lockFilename, "shared", 5_000);
+        await awaitContenderStage(contender, "LAYER_READY", 15_000);
+        holder = await startHolder(lockFilename, "exclusive");
+        const heldProcess = holder;
+        const releaseHolder = new Promise<void>(
+          (resolveRelease, rejectRelease) => {
+            releaseTimer = setTimeout(() => {
+              void stopHolder(heldProcess).then(() => {
+                holder = undefined;
+                resolveRelease();
+              }, rejectRelease);
+            }, 125);
+          },
+        );
+        contender.stdin.end("acquire\n");
+        const observation = await awaitContender(contender);
+        contender = undefined;
+        await releaseHolder;
+        expect(observation.result).toMatchObject({
+          _tag: "Acquired",
+          released: true,
+          timerFired: true,
+        });
+        expect(observation.result.elapsedMs).toBeLessThan(5_000);
+      } finally {
+        if (releaseTimer !== undefined) clearTimeout(releaseTimer);
+        if (contender !== undefined && contender.exitCode === null) {
+          const exited = new Promise<void>((resolveExit) => {
+            contender?.once("exit", () => resolveExit());
+          });
+          contender.kill();
+          await exited;
+        }
+        if (holder !== undefined) await stopHolder(holder);
+        removeP39PrivateTestDirectory(directory);
+      }
+    });
+
+    it("cancels a pending retry, closes its connection, then permits a fresh acquisition", async () => {
+      const directory = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-p39-lock-cancel-",
+      );
+      const lockFilename = join(directory, "maintenance.sqlite");
+      let holder: ChildProcessWithoutNullStreams | undefined;
+      let contender: ReturnType<typeof startContender> | undefined;
+      try {
+        contender = startContender(lockFilename, "shared", 10_000, 125);
+        await awaitContenderStage(contender, "LAYER_READY", 15_000);
+        holder = await startHolder(lockFilename, "exclusive");
+        contender.stdin.end("acquire\n");
+        const observation = await awaitContender(contender);
+        contender = undefined;
+        expect(observation.result).toMatchObject({
+          _tag: "Cancelled",
+          timerFired: true,
+        });
+
+        await stopHolder(holder);
+        holder = undefined;
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const permit = yield* acquireP39RuntimeWriterPermit();
+              yield* releaseP39WriterPermit(permit);
+            }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 1_000))),
+          ),
+        );
+      } finally {
+        if (contender !== undefined && contender.exitCode === null) {
+          const exited = new Promise<void>((resolveExit) => {
+            contender?.once("exit", () => resolveExit());
+          });
+          contender.kill();
+          await exited;
+        }
+        if (holder !== undefined) await stopHolder(holder);
+        removeP39PrivateTestDirectory(directory);
+      }
+    });
+
+    it("does not retry a non-busy invalid lock database", async () => {
+      const directory = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-p39-lock-invalid-schema-",
+      );
+      const lockFilename = join(directory, "maintenance.sqlite");
+      let contender: ReturnType<typeof startContender> | undefined;
+      const invalid = new DatabaseSync(lockFilename);
+      try {
+        invalid.exec("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)");
+      } finally {
+        invalid.close();
+      }
+      try {
+        contender = startContender(lockFilename, "shared", 1_000);
+        await awaitContenderStage(contender, "LAYER_READY", 15_000);
+        contender.stdin.end("acquire\n");
+        const observation = await awaitContender(contender);
+        contender = undefined;
+        expect(observation.result).toMatchObject({
+          _tag: "AcquireFailed",
+          errorTag: "SqliteAdapterError",
+          timerFired: false,
+        });
+        expect(observation.result.errorMessage).toContain("unsupported schema");
+        expect(observation.result.elapsedMs).toBeLessThan(500);
+      } finally {
+        if (contender !== undefined && contender.exitCode === null) {
+          const exited = new Promise<void>((resolveExit) => {
+            contender?.once("exit", () => resolveExit());
+          });
+          contender.kill();
+          await exited;
+        }
+        removeP39PrivateTestDirectory(directory);
+      }
     });
 
     it("releases a crashed daemon's shared permit through the SQLite VFS handle", async () => {
