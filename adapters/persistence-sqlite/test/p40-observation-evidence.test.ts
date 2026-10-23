@@ -1,5 +1,6 @@
 import {
   Actor,
+  CommandId,
   type DomainEvent,
   EventId,
   EventSequence,
@@ -10,10 +11,11 @@ import {
   WorkspaceId,
 } from "@arbor/domain";
 import {
+  type AssignWorkBindingAttentionFact,
   type ToolObservationReplayAttentionFact,
   TransactionScope,
 } from "@arbor/ports";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { makeProjectAttentionProjectionStore } from "../src/attention-projection.js";
 import * as persistenceExports from "../src/index.js";
@@ -49,7 +51,19 @@ const providerTurnId = "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const callRef = "call-p40-1";
 const attentionFactId = `att_${"1".repeat(64)}`;
 const eventId = parse(EventId)("evt_018f2b3c-4d5e-7abc-8def-0123456789a1");
+const commandId = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const detectedAt = "2026-10-11T00:00:01.000Z";
+const assignWorkFact: AssignWorkBindingAttentionFact = {
+  attentionFactId: "assign-work-attention-fact",
+  projectId,
+  executionId,
+  targetWorkspaceId: workspaceId,
+  logicalActionId,
+  committedCommandId: commandId,
+  failureCode: "MissingBinding",
+  firstDetectedAt: detectedAt,
+  eventId,
+};
 
 const replayFact: ToolObservationReplayAttentionFact = {
   attentionFactId,
@@ -97,6 +111,71 @@ const baseAttentionFacts = () => ({
 });
 
 describe("P40 tool observation evidence module", () => {
+  it("rejects a directly applied v2 AssignWork event at the P10 store boundary", async () => {
+    let writes = 0;
+    const noOp = Effect.succeed(undefined);
+    const projection = makeProjectAttentionProjectionStore(
+      projectId,
+      {
+        ...baseAttentionFacts(),
+        findAssignWorkBindingFailure: () =>
+          Effect.succeed(Option.some(assignWorkFact)),
+      },
+      {
+        putAssignWorkBindingFailure: () => {
+          writes += 1;
+          return noOp;
+        },
+        putDeliverReplayFailure: () => noOp,
+        putToolObservationReplayFailure: () => noOp,
+        resetProject: () => noOp,
+        reconcileWorkspaceResourceActivation: () => noOp,
+        reconcileStaleWorkRevisionRows: () => noOp,
+      },
+    );
+    const unsupported: DomainEvent<unknown> = {
+      eventId,
+      projectId,
+      sequence: parse(EventSequence)(1),
+      eventType: "AssignWorkTargetBindingEscalated",
+      eventVersion: 2,
+      occurredAt: detectedAt,
+      aggregateRef: workspaceId,
+      actor: parse(Actor)("system:recovery"),
+      causedByCommandId: commandId,
+      correlationRef: logicalActionId,
+      payload: {
+        _tag: "AssignWorkTargetBindingEscalated",
+        attentionFactId: assignWorkFact.attentionFactId,
+        executionId,
+        targetWorkspaceId: workspaceId,
+        logicalActionId,
+        committedCommandId: commandId,
+        failureCode: "MissingBinding",
+      },
+    };
+    const exit = await Effect.runPromise(
+      Effect.exit(
+        projection.apply([unsupported]).pipe(
+          Effect.provideService(TransactionScope, {
+            session: { id: "p10-direct-v2-test" },
+          }),
+        ),
+      ),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.squash(exit.cause)).toMatchObject({
+        _tag: "PersistenceCorruption",
+        repository: "ConsumerOffsetStore",
+        operation: "p10-attention-apply",
+        reason:
+          "AssignWork binding event does not exactly match its immutable P9 fact",
+      });
+    }
+    expect(writes).toBe(0);
+  });
+
   it("allows the pre-P40 P10 projection to run without the P40-only replay-fact source", async () => {
     const noOp = Effect.succeed(undefined);
     const projection = makeProjectAttentionProjectionStore(
