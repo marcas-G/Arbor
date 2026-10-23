@@ -12,6 +12,7 @@
 | `cbf2342bdc5614977cce89061bee344a38174374` | F21 P10 历史 rebuild fixture 升至 schema 51 | `d789772c` |
 | `f6eabd55ee84b4059bf72cf4bcf767741b0f8c19` | F18 exact process crash marker oracle | `7a362eb9` |
 | `5438ef8c2a79a44405c7bb6858e5f26b7f96f592` | 唯一主索引更新（delivery convergence matrix） | `9e594220` |
+| `16785463186e71845a4dbddd0d16f9b32b69d2d7` + `09f644a85f7567618178616116b2003af078a347` | AH7 pending-intent failure diagnostics；ToolResult `callRef` JSON exact match | merge `c9862404` |
 
 整合前逐项核对来源 commit 的父提交、文件路径和实际 diff。最初只 cherry-pick `adcb524f` 得到 `398efe4c`，它只包含 tip 的 P41 结果记录，不包含其祖先中的生产修复、诊断证据及 fixture 测试修正；该 tip-only 挑入不足以代表主线整合。随后按主线拓扑在 `7581d46d` 上执行 `git merge --no-edit adcb524f`，得到 merge commit `2f0779a7085b964f9b95f6304b16a378e469cc15`，父提交为 `7581d46d` 与 `adcb524f`。没有 merge conflict。完整可达的 P41 链为 `15a25677`、`6416295e`、`779ec803`、`15bbdb99`、`adcb524f`；`git merge-base --is-ancestor adcb524f HEAD` 返回 exit 0。最初的 tip-only commit 保留在历史以供审计，不再作为完整整合凭据。其余来源提交按上表各挑入一次，无重复改动。
 
@@ -21,6 +22,8 @@ F18 exact crash-oracle commit 的父提交为完整主线 `adcb524f`，已在主
 
 主索引更新 `5438ef8c` 原样从 `adcb524f` 挑入，只改变 `full-delivery-convergence-matrix-2026-10-20.md`。其中 real S1 记录为在 `d5f4928d` 实际启动但尚无终态结果；既有“启动中”状态仍成立。索引的 current candidate 仍明确为 `adcb524f`。本整合候选 `a33040e9` 及其后续提交没有继承 adcb 的 build、功能或 release qualification；不能从索引中的 adcb 证据推导候选通过。
 
+AH7 pending-intent diagnostics 以完整 range 整合：`git log adcb524f..09f644a8 --oneline` 给出 `16785463` 和 `09f644a8` 两笔；在候选上普通 merge 得到 `c9862404`，父提交为 `41218ea3` 与 `09f644a8`。来源 range 的 diff 仅涉及 `tests/functional/process/agent-action-ah7-pending-intent.functional.test.ts`。首笔补充按项目/Execution/callRef 限定的一致快照与启动失败归档上下文；次笔移除 SQL `LIKE` 子串匹配，改为解析 `ToolResult` JSON 并 exact 比较 `callRef`。生产和设计文件未改，AH7 原资格断言未改；该 change set review 无 B1。AH7 重型 process qualification 仍 **NOT RUN**。
+
 ## 检查状态
 
 - `AGENTS.md` 与 `docs/design/00-problem-goals.md` 已阅读；owner semantics 未改。
@@ -29,4 +32,5 @@ F18 exact crash-oracle commit 的父提交为完整主线 `adcb524f`，已在主
 - `git diff 16a1709b HEAD --check`、`git diff HEAD^1 HEAD --check` 与工作区 `git diff --check`：**PASS**。
 - F18 crash-oracle lightweight unit file：**2/2 PASS**（`pnpm exec vitest run tests/f18-process-crash-oracle.test.ts`）。F18 organization process cases 仍 **NOT RUN**。
 - `5438ef8c` 主索引文档 cherry-pick：仅该 Markdown 文件，diff check 后整合；候选 qualification 仍按精确 SHA 隔离。
+- AH7 pending-intent 文件来源 typecheck/Biome 据提交方报告 PASS；本次定向 Biome 1 file **PASS**、`git diff adcb524f HEAD --check` / 工作树 diff check **PASS**。F18 crash-oracle lightweight unit file 在当前候选重跑 **2/2 PASS**。AH7 process qualification **NOT RUN**。
 - 不运行全量 typecheck/build、daemon 重型测试或全量扫描；V6/F21/F18 process qualification 仍 **NOT RUN**，待 root 统一串行安排。
