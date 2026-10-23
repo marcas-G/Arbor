@@ -16,6 +16,9 @@
 | `4ebd8804` + `79cfcbed` + `f0d06bc2` + `166c2341` + `de8d44c5944c904e49d20844fe9b97bdb5d10951` | real-public-S1 full process harness range | merge `2fdad3de` |
 | `e70c423a0b03e703f599fc261dde6dde9093df68` | P9 direct-control gen1 lease-timeout diagnostics | merge `3d2341ed` |
 | `bd7cd924b10fbb0ab96e7e845f136de15841ce75` | safe port-handshake diagnostic helper and unit tests | merge `d2902411` |
+| `53c36a77a2e1c07ba72989e18b01c90003f49f67` + `c69e87c79ff1c8f80672cec49b4776aa7e0e1ef4` | real-public-S1 WorkEpisode role guidance and durable self-wait diagnosis | merge `d4640d36` |
+| `a8aaf6d3c9a5445c48968a6e952c45a26f2cc547` | safe readiness-failure evidence completion | merge `ddacaab7` |
+| `9b19b224d444dc2bee0b6adae9a363715d91e9a8` | P9 delayed old-generation lease renewal test fixture | merge `8129e483` |
 
 整合前逐项核对来源 commit 的父提交、文件路径和实际 diff。最初只 cherry-pick `adcb524f` 得到 `398efe4c`，它只包含 tip 的 P41 结果记录，不包含其祖先中的生产修复、诊断证据及 fixture 测试修正；该 tip-only 挑入不足以代表主线整合。随后按主线拓扑在 `7581d46d` 上执行 `git merge --no-edit adcb524f`，得到 merge commit `2f0779a7085b964f9b95f6304b16a378e469cc15`，父提交为 `7581d46d` 与 `adcb524f`。没有 merge conflict。完整可达的 P41 链为 `15a25677`、`6416295e`、`779ec803`、`15bbdb99`、`adcb524f`；`git merge-base --is-ancestor adcb524f HEAD` 返回 exit 0。最初的 tip-only commit 保留在历史以供审计，不再作为完整整合凭据。其余来源提交按上表各挑入一次，无重复改动。
 
@@ -33,7 +36,13 @@ P9 direct-control diagnostics `e70c423a` 的父提交为 `ae2630ea`；普通 mer
 
 Port-handshake diagnostics `bd7cd924` 的父提交为 `ae2630ea`；普通 merge `d2902411` 仅改 process test-support classifier/helper 并新增三条小单测，无 production runtime 改动。所有 `safeHandshakeFailure` 路径复用严格前缀分类；wrong-port 只保留 validated numeric ports，不序列化 error cause。拒绝/停止断言保持。独立 review **PASS，无阻断**；新增小单测尚未运行。
 
-没有合入 nativehelper 分支；其安全红测仍待处理。S1 变更了 production prompt/control catalog assets，候选需在所有批次整合完毕后再 build；当前因 native 实验仍在运行，build **NOT RUN**。
+没有合入 nativehelper 分支；其安全红测仍待处理。S1 变更了 production prompt/control catalog assets，因此等待所有源码批次整合后才执行 build；native 实验已结束，build 结果见下节。
+
+第三批完整合并后的 build 与定向验证已在候选 `8129e483` 执行：root `pnpm build` exit 0；Web `pnpm --filter @arbor/web build` exit 0，存在 >500 kB chunk 提示。root `main.js` 与 Web `index.html` dist 均存在，但产物存在不等于资格。六个轻量单测文件 16/16 PASS（handshake、安全 F18 marker、Root Work routing、provider capture path、public-client deadline、S1 wait diagnosis）；定向 CRAC architecture 4/4 PASS；相对 `d89103d` 的 10 个 TS/MJS 文件 Biome PASS、diff check PASS。完整 typecheck、`pnpm check`、functional/daemon suite 均未运行。
+
+独立来源报告称第三次真实 S1 在测试提交 `c69e87c7` / production `53c36a77` 上 1/1 PASS，重启后新增 Provider 调用为 0；脱敏结果记录仍待 real-provider agent 提交最终 SHA。当前候选的 `model-decision.ts` / `prompt-assets.ts` 与 `53c36a77` blob 完全相同，`control-catalog.ts` 与 `de8d44c5` blob 完全相同；这支持生产源码关联，但不是同 SHA 的完整 gate，也不是当前主线 `d89103d` 的实测。脱敏结果记录到达前，主索引保留 d5 的 1 failed 终态和未重测说明，不升级为资格通过。
+
+Readiness evidence `a8aaf6d3` 只扩展 test-only safe handshake classifier 与失败归档测试，原拒绝/停止语义断言保持；相关轻量单测包含在上述 16/16 中。P9 renewal-pause fixture `9b19b224` 只改测试/诊断结果记录并设置旧 gen0 lease renewal pause gate，未改生产代码；来源独立 review PASS，process case 尚未运行。候选没有合入 P39 lock-scope 或 nativehelper 专项分支。
 
 ## 检查状态
 
@@ -44,4 +53,4 @@ Port-handshake diagnostics `bd7cd924` 的父提交为 `ae2630ea`；普通 merge 
 - F18 crash-oracle lightweight unit file：**2/2 PASS**（`pnpm exec vitest run tests/f18-process-crash-oracle.test.ts`）。F18 organization process cases 仍 **NOT RUN**。
 - `5438ef8c` 主索引文档 cherry-pick：仅该 Markdown 文件，diff check 后整合；候选 qualification 仍按精确 SHA 隔离。
 - AH7 pending-intent 文件来源 typecheck/Biome 据提交方报告 PASS；本次定向 Biome 1 file **PASS**、`git diff adcb524f HEAD --check` / 工作树 diff check **PASS**。F18 crash-oracle lightweight unit file 在当前候选重跑 **2/2 PASS**。AH7 process qualification **NOT RUN**。
-- 不运行全量 typecheck/build、daemon 重型测试或全量扫描；V6/F21/F18/AH7/P9/当前 de8 real-S1/port-handshake process qualifications 仍 **NOT RUN**，待 root 统一串行安排。较早 d5 S1 已 terminal-fail，不能算 qualification。
+- 当前候选未运行全量 `pnpm check`、functional/daemon suite 或全量扫描。V6/F21/F18/AH7/P9/real-S1/port-handshake process qualifications 仍需按精确候选与结果记录核对；较早 d5 S1 的 terminal-fail 不是通过资格。c69/53c 的第三次 real S1 仅为来源报告的独立 1/1 PASS，脱敏记录 SHA 待补，不能扩展成当前候选同 SHA 的 full gate。
