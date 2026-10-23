@@ -11,8 +11,9 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { sha256Hex } from "@arbor/ports";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
-import { Context, Duration, Effect, Layer } from "effect";
+import { Context, Duration, Effect, Exit, Layer, Scope } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 import type { SqliteAdapterError } from "./errors.js";
 import { sqliteAdapterError } from "./errors.js";
 import {
@@ -51,7 +52,10 @@ export interface P39WriterLockFailure {
 export interface P39WriterLockClientService {
   readonly acquire: (
     mode: P39DatabaseWriterPermit["mode"],
-  ) => Effect.Effect<P39DatabaseWriterPermit, P39WriterLockFailure>;
+  ) => Effect.Effect<
+    P39DatabaseWriterPermit,
+    P39WriterLockFailure | SqliteAdapterError
+  >;
   readonly release: (
     permit: P39DatabaseWriterPermit,
   ) => Effect.Effect<void, P39WriterLockFailure>;
@@ -318,6 +322,29 @@ const unsupportedWriterDeployment = (): P39WriterLockFailure => ({
   code: "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT",
 });
 
+const writerLockAcquireFailed = (cause?: unknown): P39WriterLockFailure => ({
+  _tag: "P39WriterLockFailure",
+  code: "P39_WRITER_LOCK_ACQUIRE_FAILED",
+  ...(cause === undefined ? {} : { cause }),
+});
+
+const writerLockSchemaInvalid = (cause?: unknown): P39WriterLockFailure => ({
+  _tag: "P39WriterLockFailure",
+  code: "P39_WRITER_LOCK_SCHEMA_INVALID",
+  ...(cause === undefined ? {} : { cause }),
+});
+
+const isSqliteLockContention = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "_tag" in cause &&
+  cause._tag === "SqlError" &&
+  "reason" in cause &&
+  typeof cause.reason === "object" &&
+  cause.reason !== null &&
+  "_tag" in cause.reason &&
+  cause.reason._tag === "LockTimeoutError";
+
 const normalizeForPlatform = (path: string): string => {
   const normalized =
     process.platform === "win32" ? path.replace(/^\\\\\?\\/u, "") : path;
@@ -355,124 +382,294 @@ export const p39WriterLockLayer = (
   const lockClient = Layer.effect(
     P39WriterLockClient,
     Effect.gen(function* () {
-      const sql = yield* SqlClient;
+      const parent = dirname(filename);
+      if (!validateP39ProtectedPaths([{ path: parent, kind: "directory" }])) {
+        return yield* Effect.fail(unsupportedWriterDeployment());
+      }
+      if (!existsSync(filename)) {
+        const parentStat = statSync(parent, { bigint: true });
+        const sharedGroupDirectory =
+          process.platform !== "win32" &&
+          (Number(parentStat.mode & 0o7777n) & 0o020) !== 0;
+        try {
+          const descriptor = openSync(
+            filename,
+            "wx",
+            sharedGroupDirectory ? 0o660 : 0o600,
+          );
+          closeSync(descriptor);
+          if (process.platform !== "win32") {
+            chmodSync(filename, sharedGroupDirectory ? 0o660 : 0o600);
+          }
+        } catch (cause) {
+          if (
+            typeof cause !== "object" ||
+            cause === null ||
+            !("code" in cause) ||
+            cause.code !== "EEXIST"
+          ) {
+            return yield* Effect.fail(invalidLockPath());
+          }
+        }
+      }
       if (
         !validateP39ProtectedPaths([
-          { path: dirname(filename), kind: "directory" },
+          { path: parent, kind: "directory" },
           { path: filename, kind: "file" },
         ])
       ) {
         return yield* Effect.fail(unsupportedWriterDeployment());
       }
-      const currentMode = yield* sql.unsafe<{ journal_mode: string }>(
-        "PRAGMA journal_mode",
-      );
-      if (currentMode[0]?.journal_mode?.toLowerCase() !== "delete") {
-        const tables = yield* sql.unsafe<{ name: string }>(
-          "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-        );
-        if (tables.length > 0) {
-          return yield* Effect.fail(
-            sqliteAdapterError(
-              "P39 writer lock database must use DELETE journal mode",
-            ),
-          );
+      const activePermits = new Map<
+        string,
+        {
+          readonly scope: Scope.Scope;
+          readonly rollback: Effect.Effect<void, SqlError>;
         }
-        const mode = yield* sql.unsafe<{ journal_mode: string }>(
-          "PRAGMA journal_mode = DELETE",
-        );
-        if (mode[0]?.journal_mode?.toLowerCase() !== "delete") {
-          return yield* Effect.fail(
-            sqliteAdapterError(
-              "P39 writer lock database requires DELETE journal mode",
-            ),
-          );
-        }
-      }
-      if (currentMode.length === 0) {
-        return yield* Effect.fail(
-          sqliteAdapterError(
-            "P39 writer lock database journal mode could not be read",
-          ),
-        );
-      }
-      yield* sql.unsafe("PRAGMA synchronous = FULL");
-      yield* sql.unsafe("PRAGMA foreign_keys = ON");
-      const existing = yield* sql.unsafe<{ name: string }>(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'p39_writer_lock'",
-      );
-      if (existing.length === 0) {
-        const userObjects = yield* sql.unsafe<{ name: string }>(
-          "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'",
-        );
-        if (userObjects.length > 0) {
-          return yield* Effect.fail(
-            sqliteAdapterError(
-              "P39 writer lock database contains an unsupported schema",
-            ),
-          );
-        }
-        yield* sql.withTransaction(
-          Effect.gen(function* () {
-            for (const statement of P39_WRITER_LOCK_DDL.split(";")
-              .map((part) => part.trim())
-              .filter(Boolean)) {
-              yield* sql.unsafe(statement);
+      >();
+      const makeConnectionLayer = () =>
+        SqliteClient.layer({
+          filename,
+          disableWAL: true,
+          busyTimeout: Duration.zero,
+        });
+      const acquireOnce = (
+        mode: P39DatabaseWriterPermit["mode"],
+        deadline: number,
+      ) =>
+        Effect.acquireUseRelease(
+          Scope.make(),
+          (scope) =>
+            Effect.gen(function* () {
+              const context = yield* Layer.buildWithScope(
+                makeConnectionLayer(),
+                scope,
+              ).pipe(
+                Effect.mapError((cause) =>
+                  isSqliteLockContention(cause)
+                    ? cause
+                    : sqliteAdapterError(
+                        "failed to initialize P39 writer lock database",
+                        cause,
+                      ),
+                ),
+              );
+              if (performance.now() >= deadline) {
+                return yield* Effect.fail(writerLockAcquireFailed());
+              }
+              const sql = Context.get(context, SqlClient);
+              let transactionOpen = false;
+              let initializationComplete = false;
+              const run = <A>(operation: Effect.Effect<A, SqlError>) =>
+                operation.pipe(
+                  Effect.flatMap((value) =>
+                    performance.now() >= deadline
+                      ? Effect.fail(writerLockAcquireFailed())
+                      : Effect.succeed(value),
+                  ),
+                );
+              const acquireInScope = Effect.gen(function* () {
+                const currentMode = yield* run(
+                  sql.unsafe<{ journal_mode: string }>("PRAGMA journal_mode"),
+                );
+                if (currentMode[0]?.journal_mode?.toLowerCase() !== "delete") {
+                  const tables = yield* run(
+                    sql.unsafe<{ name: string }>(
+                      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+                    ),
+                  );
+                  if (tables.length > 0) {
+                    return yield* Effect.fail(
+                      sqliteAdapterError(
+                        "P39 writer lock database must use DELETE journal mode",
+                      ),
+                    );
+                  }
+                  const mode = yield* run(
+                    sql.unsafe<{ journal_mode: string }>(
+                      "PRAGMA journal_mode = DELETE",
+                    ),
+                  );
+                  if (mode[0]?.journal_mode?.toLowerCase() !== "delete") {
+                    return yield* Effect.fail(
+                      sqliteAdapterError(
+                        "P39 writer lock database requires DELETE journal mode",
+                      ),
+                    );
+                  }
+                }
+                if (currentMode.length === 0) {
+                  return yield* Effect.fail(
+                    sqliteAdapterError(
+                      "P39 writer lock database journal mode could not be read",
+                    ),
+                  );
+                }
+                yield* run(sql.unsafe("PRAGMA synchronous = FULL"));
+                yield* run(sql.unsafe("PRAGMA foreign_keys = ON"));
+                const existing = yield* run(
+                  sql.unsafe<{ name: string }>(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'p39_writer_lock'",
+                  ),
+                );
+                if (existing.length === 0) {
+                  const userObjects = yield* run(
+                    sql.unsafe<{ name: string }>(
+                      "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'",
+                    ),
+                  );
+                  if (userObjects.length > 0) {
+                    return yield* Effect.fail(
+                      sqliteAdapterError(
+                        "P39 writer lock database contains an unsupported schema",
+                      ),
+                    );
+                  }
+                  yield* run(
+                    sql.withTransaction(
+                      Effect.gen(function* () {
+                        for (const statement of P39_WRITER_LOCK_DDL.split(";")
+                          .map((part) => part.trim())
+                          .filter(Boolean)) {
+                          yield* sql.unsafe(statement);
+                        }
+                      }),
+                    ),
+                  );
+                }
+                const identity = yield* run(
+                  sql.unsafe<{ lock_id: number }>(
+                    "SELECT lock_id FROM p39_writer_lock",
+                  ),
+                );
+                if (
+                  identity.length !== 1 ||
+                  Number(identity[0]?.lock_id) !== 1
+                ) {
+                  return yield* Effect.fail(
+                    sqliteAdapterError(
+                      "P39 writer lock database has an invalid identity row",
+                    ),
+                  );
+                }
+                initializationComplete = true;
+                const begin =
+                  mode === "RuntimeShared" ? "BEGIN" : "BEGIN EXCLUSIVE";
+                yield* sql.unsafe(begin).pipe(
+                  Effect.flatMap(() => {
+                    transactionOpen = true;
+                    return performance.now() >= deadline
+                      ? Effect.fail(writerLockAcquireFailed())
+                      : Effect.void;
+                  }),
+                );
+                const rows = yield* run(
+                  sql.unsafe<{ lock_id: number }>(
+                    "SELECT lock_id FROM p39_writer_lock WHERE lock_id = 1",
+                  ),
+                );
+                if (rows.length !== 1) {
+                  return yield* Effect.fail(writerLockSchemaInvalid());
+                }
+                const permit = { token: randomUUID(), mode };
+                activePermits.set(permit.token, {
+                  scope,
+                  rollback: sql.unsafe("ROLLBACK").pipe(Effect.asVoid),
+                });
+                return permit;
+              });
+              return yield* acquireInScope.pipe(
+                Effect.mapError((cause) => {
+                  if (
+                    isSqliteLockContention(cause) ||
+                    (typeof cause === "object" &&
+                      cause !== null &&
+                      "_tag" in cause &&
+                      (cause._tag === "P39WriterLockFailure" ||
+                        cause._tag === "SqliteAdapterError"))
+                  ) {
+                    return cause as P39WriterLockFailure | SqliteAdapterError;
+                  }
+                  return initializationComplete
+                    ? writerLockAcquireFailed(cause)
+                    : sqliteAdapterError(
+                        "failed to initialize P39 writer lock database",
+                        cause,
+                      );
+                }),
+                Effect.onExit((exit) =>
+                  Exit.isFailure(exit) && transactionOpen
+                    ? sql.unsafe("ROLLBACK").pipe(Effect.ignore)
+                    : Effect.void,
+                ),
+              );
+            }),
+          (scope, exit) => {
+            if (Exit.isSuccess(exit) && activePermits.has(exit.value.token)) {
+              return Effect.void;
             }
-          }),
+            for (const [token, active] of activePermits) {
+              if (active.scope === scope) activePermits.delete(token);
+            }
+            return Scope.close(scope, exit);
+          },
         );
-      }
-      const identity = yield* sql.unsafe<{ lock_id: number }>(
-        "SELECT lock_id FROM p39_writer_lock",
-      );
-      if (identity.length !== 1 || Number(identity[0]?.lock_id) !== 1) {
-        return yield* Effect.fail(
-          sqliteAdapterError(
-            "P39 writer lock database has an invalid identity row",
-          ),
-        );
-      }
-      const activePermitTokens = new Set<string>();
-      const acquire = (mode: P39DatabaseWriterPermit["mode"]) =>
-        Effect.gen(function* () {
-          const begin = mode === "RuntimeShared" ? "BEGIN" : "BEGIN EXCLUSIVE";
-          yield* sql.unsafe(begin);
-          const identity = yield* Effect.exit(
-            sql.unsafe<{ lock_id: number }>(
-              "SELECT lock_id FROM p39_writer_lock WHERE lock_id = 1",
-            ),
-          );
-          if (identity._tag === "Failure") {
-            yield* sql.unsafe("ROLLBACK").pipe(Effect.ignore);
-            return yield* Effect.failCause(identity.cause);
-          }
-          const row = identity.value;
-          if (row.length !== 1) {
-            yield* sql.unsafe("ROLLBACK").pipe(Effect.ignore);
-            return yield* Effect.fail({
-              _tag: "P39WriterLockFailure" as const,
-              code: "P39_WRITER_LOCK_SCHEMA_INVALID" as const,
-            });
-          }
-          const permit = { token: randomUUID(), mode };
-          activePermitTokens.add(permit.token);
-          return permit;
-        }).pipe(
-          Effect.mapError((cause) => ({
-            _tag: "P39WriterLockFailure" as const,
-            code: "P39_WRITER_LOCK_ACQUIRE_FAILED" as const,
-            cause,
-          })),
-        );
+      const acquire = (mode: P39DatabaseWriterPermit["mode"]) => {
+        const timeout = Number.isFinite(busyTimeoutMs)
+          ? Math.max(0, Math.floor(busyTimeoutMs))
+          : 0;
+        const deadline = performance.now() + timeout;
+        const loop = (): Effect.Effect<
+          P39DatabaseWriterPermit,
+          P39WriterLockFailure | SqliteAdapterError
+        > =>
+          Effect.suspend(() => {
+            if (performance.now() >= deadline) {
+              return Effect.fail(writerLockAcquireFailed());
+            }
+            return Effect.result(acquireOnce(mode, deadline)).pipe(
+              Effect.flatMap((result) => {
+                if (result._tag === "Success") {
+                  return Effect.succeed(result.success);
+                }
+                if (isSqliteLockContention(result.failure)) {
+                  const remainingMs = deadline - performance.now();
+                  if (remainingMs <= 0) {
+                    return Effect.fail(writerLockAcquireFailed(result.failure));
+                  }
+                  return Effect.sleep(
+                    Duration.millis(Math.min(10, remainingMs)),
+                  ).pipe(Effect.flatMap(loop));
+                }
+                return Effect.fail(
+                  typeof result.failure === "object" &&
+                    result.failure !== null &&
+                    "_tag" in result.failure &&
+                    result.failure._tag === "P39WriterLockFailure"
+                    ? (result.failure as P39WriterLockFailure)
+                    : typeof result.failure === "object" &&
+                        result.failure !== null &&
+                        "_tag" in result.failure &&
+                        result.failure._tag === "SqliteAdapterError"
+                      ? (result.failure as SqliteAdapterError)
+                      : writerLockAcquireFailed(result.failure),
+                );
+              }),
+            );
+          });
+        return loop();
+      };
       const release = (permit: P39DatabaseWriterPermit) => {
-        if (!activePermitTokens.delete(permit.token)) {
+        const active = activePermits.get(permit.token);
+        if (active === undefined) {
           return Effect.fail({
             _tag: "P39WriterLockFailure" as const,
             code: "P39_WRITER_LOCK_RELEASE_FAILED" as const,
           });
         }
-        return sql.unsafe("ROLLBACK").pipe(
-          Effect.asVoid,
+        activePermits.delete(permit.token);
+        return active.rollback.pipe(
+          Effect.onExit(() => Scope.close(active.scope, Exit.void)),
           Effect.mapError((cause) => ({
             _tag: "P39WriterLockFailure" as const,
             code: "P39_WRITER_LOCK_RELEASE_FAILED" as const,
@@ -480,47 +677,29 @@ export const p39WriterLockLayer = (
           })),
         );
       };
+      const layerScope = yield* Effect.scope;
+      yield* Scope.addFinalizer(
+        layerScope,
+        Effect.gen(function* () {
+          for (const [token, active] of activePermits) {
+            activePermits.delete(token);
+            yield* active.rollback.pipe(Effect.ignore);
+            yield* Scope.close(active.scope, Exit.void);
+          }
+        }),
+      );
       return P39WriterLockClient.of({
         acquire: (mode) => acquire(mode),
         release,
       });
-    }).pipe(
-      Effect.mapError((cause) => {
-        if (
-          typeof cause === "object" &&
-          cause !== null &&
-          "_tag" in cause &&
-          cause._tag === "P39WriterLockFailure"
-        ) {
-          return cause as P39WriterLockFailure;
-        }
-        return typeof cause === "object" &&
-          cause !== null &&
-          "_tag" in cause &&
-          cause._tag === "SqliteAdapterError"
-          ? (cause as SqliteAdapterError)
-          : sqliteAdapterError(
-              "failed to initialize P39 writer lock database",
-              cause,
-            );
-      }),
-    ),
-  );
-  return Layer.provide(
-    lockClient,
-    SqliteClient.layer({
-      filename,
-      disableWAL: true,
-      // SqliteClient applies this immediately after opening DatabaseSync,
-      // before journal/schema probes can encounter a competing exclusive lock.
-      busyTimeout: Duration.millis(Math.max(0, Math.floor(busyTimeoutMs))),
     }),
   );
+  return lockClient;
 };
 
 export const acquireP39RuntimeWriterPermit = (): Effect.Effect<
   P39DatabaseWriterPermit,
-  P39WriterLockFailure,
+  P39WriterLockFailure | SqliteAdapterError,
   P39WriterLockClient
 > =>
   Effect.flatMap(P39WriterLockClient, (client) =>
@@ -529,7 +708,7 @@ export const acquireP39RuntimeWriterPermit = (): Effect.Effect<
 
 export const acquireP39MaintenanceWriterExclusion = (): Effect.Effect<
   P39DatabaseWriterPermit,
-  P39WriterLockFailure,
+  P39WriterLockFailure | SqliteAdapterError,
   P39WriterLockClient
 > =>
   Effect.flatMap(P39WriterLockClient, (client) =>
