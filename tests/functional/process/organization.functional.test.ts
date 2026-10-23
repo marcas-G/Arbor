@@ -737,7 +737,7 @@ describe("release-functional long-lived responsibility", () => {
             },
           }),
         (started) => ({
-          httpPort: started.httpPort,
+          httpPort: Number(new URL(started.baseUrl).port),
           daemon: started.daemonProcessSnapshot(),
         }),
       );
