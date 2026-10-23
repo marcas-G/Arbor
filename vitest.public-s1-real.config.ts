@@ -11,7 +11,9 @@ export default defineConfig({
     exclude: ["**/node_modules/**"],
     testTimeout: 0,
     hookTimeout: 120_000,
+    maxWorkers: 1,
     fileParallelism: false,
+    retry: 0,
     reporters: ["verbose"],
   },
 });
