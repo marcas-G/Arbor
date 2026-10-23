@@ -1,6 +1,6 @@
 # V6 Fresh Profile Ownership Review — 2026-10-24
 
-Status: **E50 PROFILE FIX REVIEWED; FULL PROCESS REQUALIFICATION NOT RUN**
+Status: **E50 PROFILE FIX REVIEWED; FRESH POST-INTENT CANDIDATEREAD PATH CORRECTED; FULL PROCESS REQUALIFICATION NOT RUN**
 
 ## E50 fixture review
 
@@ -26,6 +26,24 @@ The fake provider now stops repeating shell after a prior exact
 produce an EAP or pass the test. The transcript diagnostic includes its
 required positive `limit` so `responseStatus` is captured when available.
 
+The one full-file run after the Profile-root change reached the fresh Work but
+still timed out waiting for an Executable approval. Its archived database
+showed a Pending shell Action and one exact `NotAdmitted` ToolInvocation with
+`RecoveryBinding=Bound`, but no executable-approval row. This is the accepted
+post-intent P10/P1 source: `GrantPermission(shell:exec)` authorized the tool,
+so the P4 handoff persisted its NotAdmitted intent without creating an EAP.
+The accepted contract explicitly exposes CandidateRead from either that
+post-intent source or the pre-intent Pending Action plus EAP source. The test
+now waits on public Workspace Detail CandidateRead and uses SQL only to
+cross-check the exact NotAdmitted/Bound invocation and its current Action/Step
+source. An empty EAP table is expected and does not skip P1; the separate exact
+`DecideSandboxPolicy` permission and fresh P1 decision remain required. After
+that commit the same P4 invocation is expected to resume and return the
+synthetic provider's no-effect `ProviderVersionMismatch`; this makes no real
+OS provider claim. The public CandidateRead, its exact tuple and common
+preconditions remain the submitted authority; SQL does not construct or
+replace the candidate DTO.
+
 No production/design contract changed. This is fixture setup and diagnostic
 logic only. The earlier run's synthetic D2 evidence remains no claim about a
 real or `OSSupported` provider. P39 canonical digest qualification remains
@@ -41,6 +59,14 @@ outside this review.
   `tests/functional/process/organization.functional.test.ts:740` error remains
   (`ProductionFixture.httpPort` is absent). No type errors were reported in
   the V6 test or the changed fixture support.
-- Full V6 process test after the Profile-root correction: **NOT RUN** (the
-  single full-file run allocated for this review was already consumed by the
-  preceding diagnostic run).
+- Full-file run after the Profile-root change: **2 oracle tests passed; process
+  case failed at the obsolete `waitForExecutableApproval` expectation**. The
+  archived evidence supersedes the earlier nested-root diagnosis: the fresh
+  Workspace had an active ownership claim at its exact new Profile root; P4
+  created the NotAdmitted/Bound post-intent source and no EAP by design.
+- After changing the process case to use public post-intent CandidateRead, the
+  full file was not rerun under the one-run limit.
+- Focused typecheck after this correction reports only the unrelated
+  `organization.functional.test.ts:740` missing `ProductionFixture.httpPort`
+  member; no V6 or fixture-support type errors remain. Targeted Biome passes,
+  and the two oracle unit cases pass (2/2; process case filtered).

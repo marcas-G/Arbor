@@ -40,7 +40,6 @@ import {
   makePublicClient,
   submitHumanMessage,
   waitForApproval,
-  waitForExecutableApproval,
   waitForPublic,
 } from "../support/public-client.js";
 import {
@@ -173,11 +172,7 @@ const durableSandboxRead = (
   }
 };
 
-const p1OwnedDomainSnapshot = (
-  databaseFile: string,
-  executionId: string,
-  executableApprovalId: string,
-) => {
+const p1OwnedDomainSnapshot = (databaseFile: string, executionId: string) => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
     db.exec("BEGIN");
@@ -214,14 +209,15 @@ const p1OwnedDomainSnapshot = (
             ORDER BY invocation_id`,
         )
         .all(executionId),
-      approval: db
+      executableApprovals: db
         .prepare(
           `SELECT approval_id, route_kind, execution_id, state, revision,
                   consumed_by
              FROM action_approvals
-            WHERE approval_id = ? AND route_kind = 'Executable'`,
+            WHERE execution_id = ? AND route_kind = 'Executable'
+            ORDER BY approval_id`,
         )
-        .get(executableApprovalId),
+        .all(executionId),
       actions: db
         .prepare(
           `SELECT logical_step_no, repair_attempt, action_index,
@@ -262,9 +258,9 @@ const freshExecutionDiagnosticSnapshot = (
     const snapshot = {
       execution: db
         .prepare(
-          `SELECT execution_id, project_id, workspace_id, episode_kind,
-                  episode_ref, episode_revision, settled_at, settlement_kind,
-                  settlement_json
+          `SELECT execution_id, project_id, workspace_id, episode_binding_json,
+                  episode_kind, episode_ref, episode_revision, settled_at,
+                  settlement_kind, settlement_json
              FROM executions WHERE execution_id = ?`,
         )
         .get(executionId),
@@ -388,6 +384,9 @@ interface P9InvocationRow {
   readonly invocation_id: string;
   readonly settled_at: string | null;
   readonly settlement_kind: string | null;
+  readonly effect_admission_state?: string;
+  readonly recovery_binding_state?: string;
+  readonly recovery_binding_sha256?: string | null;
   readonly observation_json: unknown;
 }
 
@@ -601,8 +600,9 @@ const readP9OutcomeSourceForProbe = (
     db.exec("BEGIN");
     const invocation = db
       .prepare(
-        `SELECT execution_id, invocation_id, settled_at, settlement_kind,
-                observation_json
+        `SELECT execution_id, invocation_id, effect_admission_state,
+                recovery_binding_state, recovery_binding_sha256, settled_at,
+                settlement_kind, observation_json
            FROM tool_invocations
           WHERE execution_id = ? AND invocation_id = ?`,
       )
@@ -1593,40 +1593,51 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         diagnosticState.phase = "fresh-current-work-active";
         diagnosticState.freshWorkId = freshWork.workId;
         diagnosticState.freshExecutionId = freshExecutionId;
-        let freshExecutableApproval: Awaited<
-          ReturnType<typeof waitForExecutableApproval>
-        >;
+        let freshPreDriftDetail: WorkspaceDetailForSandbox;
         try {
-          diagnosticState.phase = "waiting-for-fresh-executable-approval";
-          freshExecutableApproval = await waitForExecutableApproval(
-            client,
-            freshProject.rootWorkspaceId,
-            `${marker} fresh Work`,
+          diagnosticState.phase =
+            "waiting-for-fresh-post-intent-candidate-read";
+          freshPreDriftDetail = await waitForPublic(
+            () =>
+              client.view<WorkspaceDetailForSandbox>("workspace-detail", {
+                workspaceId: freshProject.rootWorkspaceId,
+              }),
+            (detail) => detail.sandboxPolicyCandidateRead !== undefined,
           );
-          diagnosticState.phase = "fresh-executable-approval-observed";
+          diagnosticState.phase = "fresh-post-intent-candidate-read-observed";
         } catch (error) {
-          const [inboxResult, currentWorkResult, transcriptResult] =
-            await Promise.all([
-              client
-                .view("inbox-view", {
-                  workspaceId: freshProject.rootWorkspaceId,
-                })
-                .then((value) => ({ value }))
-                .catch((readError: unknown) => ({ error: String(readError) })),
-              client
-                .view("current-work", {
-                  workspaceId: freshProject.rootWorkspaceId,
-                })
-                .then((value) => ({ value }))
-                .catch((readError: unknown) => ({ error: String(readError) })),
-              client
-                .view("transcript", {
-                  workspaceId: freshProject.rootWorkspaceId,
-                  limit: 40,
-                })
-                .then((value) => ({ value }))
-                .catch((readError: unknown) => ({ error: String(readError) })),
-            ]);
+          const [
+            inboxResult,
+            currentWorkResult,
+            transcriptResult,
+            candidateDetailResult,
+          ] = await Promise.all([
+            client
+              .view("inbox-view", {
+                workspaceId: freshProject.rootWorkspaceId,
+              })
+              .then((value) => ({ value }))
+              .catch((readError: unknown) => ({ error: String(readError) })),
+            client
+              .view("current-work", {
+                workspaceId: freshProject.rootWorkspaceId,
+              })
+              .then((value) => ({ value }))
+              .catch((readError: unknown) => ({ error: String(readError) })),
+            client
+              .view("transcript", {
+                workspaceId: freshProject.rootWorkspaceId,
+                limit: 40,
+              })
+              .then((value) => ({ value }))
+              .catch((readError: unknown) => ({ error: String(readError) })),
+            client
+              .view("workspace-detail", {
+                workspaceId: freshProject.rootWorkspaceId,
+              })
+              .then((value) => ({ value }))
+              .catch((readError: unknown) => ({ error: String(readError) })),
+          ]);
           const transcriptEntries =
             "value" in transcriptResult &&
             typeof transcriptResult.value === "object" &&
@@ -1664,6 +1675,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
             inbox: inboxResult,
             currentWork: currentWorkResult,
             transcript: transcriptResult,
+            workspaceDetail: candidateDetailResult,
             matchingHumanTurn: matchingHumanTurn ?? null,
             responseStatus: matchingHumanTurn?.responseStatus ?? null,
           };
@@ -1689,23 +1701,16 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
             }),
           );
           diagnosticState.failureCapture = {
-            point: "waitForExecutableApproval",
+            point: "fresh post-intent workspace-detail CandidateRead",
             publicFailureSnapshot,
             storeSnapshot,
             providerRequestToolProfiles,
           };
           throw new Error(
-            `fresh executable approval timeout; public=${JSON.stringify(publicFailureSnapshot)}; store=${JSON.stringify(storeSnapshot)}; providerRoutes=${JSON.stringify(providerRequestToolProfiles)}; providerCallCount=${fixture.providerCalls.length}; daemonErrors=${fixture.daemonErrors.join(" | ")}`,
+            `fresh post-intent CandidateRead timeout; public=${JSON.stringify(publicFailureSnapshot)}; store=${JSON.stringify(storeSnapshot)}; providerRoutes=${JSON.stringify(providerRequestToolProfiles)}; providerCallCount=${fixture.providerCalls.length}; daemonErrors=${fixture.daemonErrors.join(" | ")}`,
             { cause: error },
           );
         }
-        const freshPreDriftDetail = await waitForPublic(
-          () =>
-            client.view<WorkspaceDetailForSandbox>("workspace-detail", {
-              workspaceId: freshProject.rootWorkspaceId,
-            }),
-          (detail) => detail.sandboxPolicyCandidateRead !== undefined,
-        );
         const freshPreDriftRead =
           freshPreDriftDetail.sandboxPolicyCandidateRead;
         if (freshPreDriftRead === undefined)
@@ -1720,6 +1725,62 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         if (preDriftCandidate?.kind !== "OsEnforced")
           throw new Error("fresh pre-drift Supported candidate was absent");
         expect(preDriftCandidate.providerRegistryRevision).toBe(1);
+        const freshPostIntentState = freshExecutionDiagnosticSnapshot(
+          fixture.databaseFile,
+          freshExecutionId,
+        );
+        expect(freshPostIntentState.execution).toMatchObject({
+          execution_id: freshExecutionId,
+          episode_kind: "WorkEpisode",
+          episode_ref: freshWork.workId,
+          episode_revision:
+            freshPreDriftRead.commonPreconditions.expectedEpisodeRevision,
+          settled_at: null,
+          settlement_kind: null,
+        });
+        expect(freshPostIntentState.invocations).toHaveLength(1);
+        expect(freshPostIntentState.invocations[0]).toMatchObject({
+          tool_name: "shell",
+          effect_admission_state: "NotAdmitted",
+          recovery_binding_state: "Bound",
+          settled_at: null,
+          settlement_kind: null,
+        });
+        expect(
+          freshPostIntentState.invocations[0]?.recovery_binding_sha256,
+        ).toMatch(/^[0-9a-f]{64}$/u);
+        expect(freshPostIntentState.actions).toHaveLength(1);
+        expect(freshPostIntentState.actions[0]).toMatchObject({
+          route_kind: "Executable",
+          action_kind: "shell",
+          state: "Pending",
+          action_index: 0,
+        });
+        const freshSourceAction = freshPostIntentState.actions[0] as {
+          readonly logical_step_no: number;
+          readonly repair_attempt: number;
+          readonly action_index: number;
+        };
+        expect(
+          freshPostIntentState.steps.find(
+            (step) =>
+              step.logical_step_no === freshSourceAction.logical_step_no &&
+              step.repair_attempt === freshSourceAction.repair_attempt,
+          ),
+        ).toMatchObject({
+          state: "ActionsInProgress",
+          next_action_index: freshSourceAction.action_index,
+        });
+        expect(freshPostIntentState.executableApprovals).toEqual([]);
+        expect(freshPostIntentState.sandboxDecisions).toEqual([]);
+        expect(
+          freshPreDriftRead.commonPreconditions.latestCommittedPolicyRevision,
+        ).toBe(0);
+        expect(
+          JSON.parse(
+            String(freshPostIntentState.execution?.episode_binding_json),
+          ),
+        ).toEqual(freshPreDriftRead.commonPreconditions.episodeBinding);
         const p1GrantExpiresAt = new Date(
           Date.now() + 60 * 60_000,
         ).toISOString();
@@ -1741,27 +1802,6 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           executionId: freshExecutionId,
           expiresAt: p1GrantExpiresAt,
         });
-        const freshApprovalStore = new DatabaseSync(fixture.databaseFile, {
-          readOnly: true,
-        });
-        try {
-          const approvalBeforeDrift = freshApprovalStore
-            .prepare(
-              `SELECT state, revision, consumed_by, execution_id
-                 FROM action_approvals
-                WHERE approval_id = ? AND route_kind = 'Executable'`,
-            )
-            .get(freshExecutableApproval.approvalId);
-          expect(approvalBeforeDrift).toMatchObject({
-            state: "Pending",
-            revision: freshExecutableApproval.revision,
-            consumed_by: null,
-            execution_id: freshExecutionId,
-          });
-        } finally {
-          freshApprovalStore.close();
-        }
-
         const driftPid = fixture.daemonProcessSnapshot()?.pid;
         await fixture.crash();
         if (sourceFilename === undefined)
@@ -1852,17 +1892,44 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         const beforeStaleOwnedSnapshot = p1OwnedDomainSnapshot(
           fixture.databaseFile,
           freshExecutionId,
-          freshExecutableApproval.approvalId,
         );
         expect(beforeStaleOwnedSnapshot.decisions).toEqual([]);
         expect(beforeStaleOwnedSnapshot.decisionEvents).toEqual([]);
-        expect(beforeStaleOwnedSnapshot.invocations).toEqual([]);
-        expect(beforeStaleOwnedSnapshot.approval).toMatchObject({
-          state: "Pending",
-          revision: freshExecutableApproval.revision,
-          consumed_by: null,
-          execution_id: freshExecutionId,
+        expect(beforeStaleOwnedSnapshot.invocations).toHaveLength(1);
+        expect(beforeStaleOwnedSnapshot.invocations[0]).toMatchObject({
+          invocation_id: freshPostIntentState.invocations[0]?.invocation_id,
+          effect_admission_state: "NotAdmitted",
+          recovery_binding_state: "Bound",
+          settled_at: null,
+          settlement_kind: null,
         });
+        expect(beforeStaleOwnedSnapshot.actions).toEqual(
+          freshPostIntentState.actions.map((action) => ({
+            logical_step_no: action.logical_step_no,
+            repair_attempt: action.repair_attempt,
+            action_index: action.action_index,
+            logical_action_id: action.logical_action_id,
+            call_ref: action.call_ref,
+            state: action.state,
+            result_ref: action.result_ref,
+            settlement_ref: action.settlement_ref,
+            disposition_json: action.disposition_json,
+            observation_source_ref: action.observation_source_ref,
+            revision: action.revision,
+          })),
+        );
+        expect(beforeStaleOwnedSnapshot.steps).toEqual(
+          freshPostIntentState.steps.map((step) => ({
+            logical_step_no: step.logical_step_no,
+            repair_attempt: step.repair_attempt,
+            provider_turn_id: step.provider_turn_id,
+            state: step.state,
+            revision: step.revision,
+            next_action_index: step.next_action_index,
+            settlement_json: step.settlement_json,
+          })),
+        );
+        expect(beforeStaleOwnedSnapshot.executableApprovals).toEqual([]);
         const staleFreshCommandId = functionalId("cmd");
         const staleFresh = await operatorCommand(
           fixture.baseUrl,
@@ -1880,7 +1947,6 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         const afterStaleOwnedSnapshot = p1OwnedDomainSnapshot(
           fixture.databaseFile,
           freshExecutionId,
-          freshExecutableApproval.approvalId,
         );
         expect(afterStaleOwnedSnapshot).toEqual(beforeStaleOwnedSnapshot);
         const freshReadAfterStale =
@@ -1910,7 +1976,14 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           state: "Pending",
           action_index: 0,
         });
-        expect(untouchedFresh.invocation).toBeUndefined();
+        expect(untouchedFresh.invocation).toMatchObject({
+          invocation_id: freshPostIntentState.invocations[0]?.invocation_id,
+          effect_admission_state: "NotAdmitted",
+          recovery_binding_state: "Bound",
+          settled_at: null,
+          settlement_kind: null,
+          observation_json: null,
+        });
 
         const freshPayload = policyPayload({
           read: refreshedFreshRead,
@@ -1933,36 +2006,77 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         expect(acceptedFresh).toMatchObject({
           body: { resolution: "Committed" },
         });
-        const acceptedFreshState = durableSandboxRead(
+        const freshInvocationId = String(
+          freshPostIntentState.invocations[0]?.invocation_id ?? "",
+        );
+        expect(freshInvocationId).toMatch(/^tin_/u);
+        const acceptedFreshP4Outcome = await waitForPublic(
+          async () => {
+            const probeRecord = executableProbeLines.find(
+              (event) =>
+                event.boundary === "P4ExecutableToolRuntimeOutcome" &&
+                event.executionId === freshExecutionId &&
+                event.invocationId === freshInvocationId,
+            );
+            if (probeRecord === undefined) return undefined;
+            const probe = probeRecord as unknown as P4OutcomeProbe;
+            return {
+              probe,
+              source: readP9OutcomeSourceForProbe(fixture.databaseFile, probe),
+            };
+          },
+          (value) =>
+            value !== undefined &&
+            value.source.invocation?.settled_at !== null &&
+            value.source.invocation?.settlement_kind === "ExpectedFailure" &&
+            value.source.invocation.effect_admission_state === "NotAdmitted" &&
+            value.source.invocation.recovery_binding_state === "Bound" &&
+            value.source.action?.state === "TerminalRejected" &&
+            [
+              "StepEffectsCommitted",
+              "NextStepReady",
+              "SettlementProposed",
+            ].includes(value.source.step?.state ?? "") &&
+            isP9SandboxUnavailableTerminal({
+              probe: value.probe,
+              invocation: value.source.invocation,
+              action: value.source.action,
+              step: value.source.step,
+            }),
+          45_000,
+        );
+        if (acceptedFreshP4Outcome === undefined)
+          throw new Error("fresh P4 no-effect settlement was absent");
+        expect(acceptedFreshP4Outcome.probe).toMatchObject({
+          outcomeTag: "ExpectedFailure",
+          invocationId: freshInvocationId,
+          executionId: freshExecutionId,
+        });
+        expect(acceptedFreshP4Outcome.source.invocation).toMatchObject({
+          effect_admission_state: "NotAdmitted",
+          recovery_binding_state: "Bound",
+          settlement_kind: "ExpectedFailure",
+        });
+        expect(acceptedFreshP4Outcome.source.action).toMatchObject({
+          state: "TerminalRejected",
+          action_index: acceptedFreshP4Outcome.probe.actionIndex,
+          logical_action_id: acceptedFreshP4Outcome.probe.logicalActionId,
+          call_ref: acceptedFreshP4Outcome.probe.callRef,
+        });
+        const postDecisionP9Evidence = freshExecutionDiagnosticSnapshot(
           fixture.databaseFile,
           freshExecutionId,
         );
-        expect(acceptedFreshState.decisions).toEqual({ count: 1 });
-        expect(acceptedFreshState.decisionEvents).toEqual({ count: 1 });
-        expect(acceptedFreshState.actions).toEqual(untouchedFresh.actions);
-        expect(acceptedFreshState.invocation).toBeUndefined();
-        const approvalAfterFreshDecision = new DatabaseSync(
-          fixture.databaseFile,
-          { readOnly: true },
-        );
-        try {
-          expect(
-            approvalAfterFreshDecision
-              .prepare(
-                `SELECT state, revision, consumed_by, execution_id
-                   FROM action_approvals
-                  WHERE approval_id = ? AND route_kind = 'Executable'`,
-              )
-              .get(freshExecutableApproval.approvalId),
-          ).toMatchObject({
-            state: "Pending",
-            revision: freshExecutableApproval.revision,
-            consumed_by: null,
-            execution_id: freshExecutionId,
-          });
-        } finally {
-          approvalAfterFreshDecision.close();
-        }
+        expect(postDecisionP9Evidence.providerUnavailableFacts).toHaveLength(1);
+        expect(
+          postDecisionP9Evidence.providerUnavailableFacts[0],
+        ).toMatchObject({
+          policy_revision: 1,
+          profile_id: preDriftCandidate.profile,
+          provider_id: preDriftCandidate.providerId,
+          provider_version: preDriftCandidate.providerVersion,
+          failure_code: "ProviderVersionMismatch",
+        });
         const freshDecision = sandboxDecisionDebug(
           fixture.databaseFile,
           freshExecutionId,
@@ -2018,41 +2132,19 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           profile_id: preDriftCandidate.profile,
           provider_id: preDriftCandidate.providerId,
         });
-        const committedPublicDetail =
-          await client.view<WorkspaceDetailForSandbox>("workspace-detail", {
-            workspaceId: freshProject.rootWorkspaceId,
-          });
-        expect(committedPublicDetail.sandboxPolicy).toMatchObject({
-          kind: "OsEnforced",
-          status: "NeedsDecision",
-          profile: preDriftCandidate.profile,
-          providerId: preDriftCandidate.providerId,
-          providerVersion: preDriftCandidate.providerVersion,
+        expect(refreshedCandidate).toMatchObject({
+          providerVersion: effectiveSnapshot.providerVersion,
+          capabilityRevision: effectiveSnapshot.capabilityRevision,
+          profile: effectiveSnapshot.profile,
           networkMode: "Disabled",
-          policyRevision: 1,
-        });
-        const committedCandidateRead =
-          committedPublicDetail.sandboxPolicyCandidateRead;
-        const committedCandidate = committedCandidateRead?.candidates.find(
-          (candidate) =>
-            candidate.kind === "OsEnforced" &&
-            candidate.providerId === "windows-restricted-appcontainer-job" &&
-            candidate.profile === "ReadOnly" &&
-            candidate.networkMode === "Disabled",
-        );
-        expect(committedCandidate).toMatchObject({
-          providerVersion: effectiveSnapshot?.providerVersion,
-          capabilityRevision: effectiveSnapshot?.capabilityRevision,
-          profile: effectiveSnapshot?.profile,
-          networkMode: "Disabled",
-          providerRegistryRevision: effectiveSnapshot?.providerRegistryRevision,
-          providerRegistryDigest: effectiveSnapshot?.providerRegistryDigest,
+          providerRegistryRevision: effectiveSnapshot.providerRegistryRevision,
+          providerRegistryDigest: effectiveSnapshot.providerRegistryDigest,
           sandboxHandleBindingDigest:
-            effectiveSnapshot?.sandboxHandleBindingDigest,
+            effectiveSnapshot.sandboxHandleBindingDigest,
         });
-        expect(committedCandidateRead?.commonPreconditions).toMatchObject({
-          authorityBundleRevision: effectiveSnapshot?.authorityBundleRevision,
-          authorityBundleDigest: effectiveSnapshot?.authorityBundleDigest,
+        expect(refreshedFreshRead.commonPreconditions).toMatchObject({
+          authorityBundleRevision: effectiveSnapshot.authorityBundleRevision,
+          authorityBundleDigest: effectiveSnapshot.authorityBundleDigest,
         });
         expect(providerCalls).toBe(providerCallsBeforeFreshRoot + 1);
         expect(fixture.daemonErrors).toEqual([]);
