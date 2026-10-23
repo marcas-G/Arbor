@@ -114,3 +114,25 @@ follow-up, `pnpm typecheck` and the adapter package build pass; the broader P39
 focused cases were not rerun in this follow-up. Zero budget means one
 non-waiting SQLite attempt, not a hard zero-millisecond wall-clock bound;
 one-time setup and event-loop scheduling can still consume time.
+
+## Integrated-candidate focused qualification (2026-10-24)
+
+The final two candidate commits were integrated as source `cd1a2845` and the
+SQLite adapter package was rebuilt before qualification. The complete focused
+file
+`tests/functional/process/p39-maintenance-writer-exclusion.functional.test.ts`
+then passed 11/11 with retry 0 and one worker in 97.50 seconds. It covered both
+cross-process shared/exclusive directions, deferred and repeated Effects,
+zero-budget free and contended acquisition, constructed-but-unrun release,
+same-layer permit ownership, event-loop responsiveness, cancellation cleanup,
+invalid schema, and crashed holder recovery.
+
+A pre-build run of four lifecycle cases had one child timeout with no output;
+after rebuilding the adapter package, the exact case passed in 4.709 seconds
+inside the full 11/11 run. This is recorded as stale-dist test setup evidence,
+not a production regression or retry of the qualified run.
+
+The integrated result still does not identify or reproduce the historical
+931106 ms sweep hang. It qualifies the bounded writer-lock module on the
+current candidate; it does not close the historical common-cause audit or the
+full functional release gate.
