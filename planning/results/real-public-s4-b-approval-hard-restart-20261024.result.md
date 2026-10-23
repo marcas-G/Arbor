@@ -64,33 +64,80 @@ RootConversation action, and EAP is emitted only after a Work Agent proposes
 an action whose exact P4/P1 authority requires approval. Direct SQLite
 insertion would invalidate the public-process oracle. Therefore a future S4-B
 must retain the real public Root admission and qualify a genuinely approval-
-required action before restart. A bounded candidate plan is:
+required action before restart. The bounded plan below is implemented in test
+source but not qualified by a real S4-B run:
 
-1. First use a fake/provider-light harness to validate the gate and P1/EAP
-   routing without daemon or real Provider. Reuse/extract the existing P38 /
-   TrustedLocal P11 fixture helper instead of copying its large setup.
-2. Keep the response gate transparent. Ask the real Work Agent to call only
-   `shell` with `Get-Date` (no external effect), with the selected P1 policy
-   path explicitly requiring approval. Arm the selector for that exact
-   WorkspaceWork shell tool call. Once its authentic upstream response is
-   held before SDK/runtime delivery, read the exact active Execution, prepare
-   the isolated TrustedLocal P11 worktree/authority, grant
-   `DecideSandboxPolicy` to that exact Execution, and commit the corresponding
-   P1 TrustedLocal policy through the existing fixture route. Releasing the
-   captured response should then produce a public pending EAP bound to that
-   Work/Execution and shell invocation. A missing or different call must fail
-   closed before restart; the gate must not synthesize a Provider answer.
-3. Assert the exact pending EAP and absent unexpected file state, hard-restart
-   the same fixture DB, then reassert identical Work/Execution/EAP/tool
-   invocation binding and no effect during a short idle interval. Resolve via
-   the public approval command. Require that same invocation to settle Success
-   and produce exactly one ToolObservation, with no unexpected workspace file
-   mutation and the Work still publicly inspectable.
+1. The pure response-gate harness validates setupProbe/daemon-environment
+   wiring and strict streamed-tool-call decoding. A separate targeted AH7/P38
+   functional case validates the existing TrustedLocal P11/EAP fixture route
+   with a scripted local Provider. S4 reuses `trusted-local-p11-fixture.ts`;
+   it does not copy the long P38 setup.
+2. Keep the response gate transparent. The real Work Agent must call only
+   `shell` with `Get-Date` (no external effect), whose shell policy is
+   `RequireApproval`. Setup selects `project-root`, initializes the isolated
+   TrustedLocal P11 worktree/authority, captures the workspace baseline, and
+   grants `shell:exec` before the Work. The selector holds only that exact
+   WorkspaceWork shell response. While the authentic response is held before
+   SDK/runtime delivery, read the exact active Execution and grant
+   `DecideSandboxPolicy` to it. Release that unchanged response, require one
+   shell/Get-Date call and a public pending EAP bound to the same
+   Work/Execution/ToolInvocation, with no ToolInvocation or workspace effect
+   yet. Commit P1 TrustedLocal policy while EAP remains Pending; P1 supplies
+   process context and is not the EAP source.
+3. Hard-restart the same fixture DB. Reassert identical
+   Work/Execution/EAP/ToolInvocation binding, pending/no-invocation state, the
+   committed P1 snapshot, and no effect during a short idle interval. Resolve
+   via the public approval command. Require that same invocation to settle
+   Success and produce exactly one canonical observation and one ToolResult,
+   with no unexpected workspace file mutation and the Work still publicly
+   inspectable.
 4. Review the helper extraction and light routing evidence independently;
    only then request authorization for at most one real S4-B run. A real Root
    and Work model still select the tool, so this remains a fail-closed
    qualification, not a claim that public setup can eliminate Provider
    variability.
+
+## Provider-light implementation status (not real qualification)
+
+The test-only source wires setupProbe and mutable required daemon environment
+through `startRealProviderFixture`; the same base environment is reused by
+`ProductionFixture.restart`, including the post-clone private P11 authority
+source. The required-environment allowlist is limited to the exact local test
+`ARBOR_AUTH_TOKENS` pair and fixture-private
+`ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE`; the source path must be absolute and
+remain inside the disposable fixture. Other DB/HTTP/project/config/model/
+provider/capture/gate/hook keys fail closed. S4-B's restart override explicitly
+disables the old response gate.
+
+S4-B now requires the exact captured shell `Get-Date` call, exact public
+Executable Approval/action binding, P1 commit while EAP is Pending, same
+Work/Execution/EAP after restart, no newly issued WorkspaceWork Provider
+request or invocation during a 1.5-second idle window, and the same invocation
+settling Success. A read-only execution-wide SQL snapshot requires exactly one
+ToolInvocation, one consumed EAP, one canonical `_tag: Success` bounded
+observation, one matching ToolResult, and no extra Pending EAP/tool action. It
+also requires an unchanged workspace snapshot and a publicly inspectable
+Work. These counts apply only to this S4-B Execution, not system-wide
+exactly-once behavior. P1 `TrustedLocalUnconfinedV1` is fixture-only context
+and does **not** qualify an OS-enforced sandbox.
+
+Source-only/provider-light validation:
+
+```text
+pnpm exec tsc -p tsconfig.test.json --noEmit                         PASS
+pnpm exec biome check <three S4/support test files>                 PASS
+pnpm exec vitest run --config vitest.public-real.config.ts tests/capability/real-provider/public-s0-response-gate.test.ts tests/capability/real-provider/public-s4-recovery.test.ts --testNamePattern 'response gate capture contract|S4-B gate requires' --maxWorkers=1 --retry=0 --no-file-parallelism
+  10 passed, 2 REAL S4 cases skipped
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts --testNamePattern 'resumes a NotAdmitted shell intent from its persisted ProviderTurn' --maxWorkers=1 --retry=0 --no-file-parallelism
+  1 passed, 24 skipped (isolated functional daemon + scripted local Provider)
+git diff --check                                                 PASS
+```
+
+The AH7/P38 functional run is reuse evidence using its local scripted
+Provider, not real-model or S4-B qualification. The failed real S4-B attempt
+itself changed no product source or design; follow-up changes are limited to
+the real-provider test/support files and this result record. The S4-A result
+remains separate; this record makes no S4-B recovery claim.
 
 Until a run reaches that exact pending EAP and survives restart, do not claim
 S4-B.
