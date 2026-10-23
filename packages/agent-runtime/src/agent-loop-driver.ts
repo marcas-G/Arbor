@@ -63,6 +63,7 @@ import {
   p20OverflowReplacementManifestBindingFailures,
   resolveP20OverflowReplacementChain,
   retryDispositionMatchesSuccessor,
+  submittedDecisionManifestMismatchOutcome,
 } from "./agent-loop-step-recovery.js";
 import {
   type ControlToolRegistryService,
@@ -72,7 +73,10 @@ import {
 import type { ControlActionAuthorizerService } from "./control-authorization.js";
 import { makeControlBasisResolver } from "./control-basis-resolver.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
-import { runModelDecision } from "./model-decision.js";
+import {
+  classifySubmittedDecisionBindingFailure,
+  runModelDecision,
+} from "./model-decision.js";
 import { recordAcceptedModelOutput } from "./model-output-journal.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
@@ -735,6 +739,70 @@ export const AgentLoopDriverLive = (
                       providerTurnId: String(current.providerTurnId),
                     }) ?? Promise.resolve(),
                 );
+              }
+              let submittedDecisionBindingMismatch:
+                | ReturnType<typeof submittedDecisionManifestMismatchOutcome>
+                | undefined;
+              const episode = executionEpisode(input.execution);
+              if (
+                !manifestBound &&
+                episode?._tag === "DecisionEpisode" &&
+                Option.isSome(decisionRequestsOption)
+              ) {
+                const [request, actions, settledResult] = yield* Effect.all(
+                  [
+                    tx.transact(
+                      decisionRequestsOption.value.findById(episode.decisionId),
+                    ),
+                    tx.transact(loopSteps.listActions(current.identity)),
+                    tx.transact(
+                      providerTurns.findSettledResult(current.providerTurnId),
+                    ),
+                  ],
+                  { concurrency: 1 },
+                ).pipe(Effect.mapError(failure));
+                const pendingAction = actions.find(
+                  (action) =>
+                    action.actionIndex === current.nextActionIndex &&
+                    action.routeKind === "Control" &&
+                    action.actionKind === "select_current_work" &&
+                    action.state === "Pending",
+                );
+                if (
+                  Option.isSome(request) &&
+                  settledResult?._tag === "SettledSuccess"
+                ) {
+                  const failureCode = classifySubmittedDecisionBindingFailure({
+                    executionWorkspaceId: String(input.execution.workspaceId),
+                    episode,
+                    request: request.value,
+                    workspace: undefined,
+                    step: current,
+                    pendingAction,
+                    providerTurnId: String(current.providerTurnId),
+                    providerResult: {
+                      _tag: "SettledSuccess",
+                      manifestId: String(settledResult.manifestId),
+                    },
+                  });
+                  submittedDecisionBindingMismatch =
+                    submittedDecisionManifestMismatchOutcome({
+                      decisionEpisode: true,
+                      failureCode,
+                      step: current,
+                      executionId: String(input.execution.executionId),
+                      sessionId: String(input.execution.sessionId),
+                      manifest: priorManifest,
+                      settledManifestId: String(settledResult.manifestId),
+                      logicalActionId: pendingAction?.logicalActionId,
+                    });
+                }
+              }
+              if (submittedDecisionBindingMismatch !== undefined) {
+                // Return the typed outcome directly to ExecutionRuntime's
+                // existing P9 fact transaction before context, Provider, or
+                // action replay can observe the corrupted Step manifest.
+                return submittedDecisionBindingMismatch;
               }
               if (
                 !isPreparedStepAwaitingInitialManifest(
