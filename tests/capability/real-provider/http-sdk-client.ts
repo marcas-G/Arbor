@@ -11,7 +11,6 @@ export interface HttpProviderCallEvidence {
   readonly endpoint: string;
   readonly request: Record<string, unknown>;
   responseStatus?: number;
-  responseHeaders?: Record<string, string>;
   responseBodyBase64?: string;
   error?: string;
 }
@@ -78,13 +77,6 @@ const captureFetch =
         signal: init.signal as AbortSignal,
       });
       capture.responseStatus = response.status;
-      capture.responseHeaders = Object.fromEntries(
-        [...response.headers.entries()].filter(([name]) =>
-          ["content-type", "x-request-id", "server"].includes(
-            name.toLowerCase(),
-          ),
-        ),
-      );
       if (!response.ok || response.body === null) {
         const body = response.body === null ? "" : await response.text();
         capture.responseBodyBase64 = Buffer.from(body).toString("base64");

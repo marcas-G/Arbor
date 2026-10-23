@@ -31,6 +31,7 @@ import {
   makeP39PrivateTestDirectory,
 } from "../../support/p39-windows-deployment-test.js";
 import { isChatCompletionsPath } from "./provider-capture-path.js";
+import { validateRealJourneyEvidenceRoot } from "./public-real-journey-support.js";
 import {
   type CapturedWaitArguments,
   isPrematureCurrentWorkVerificationWait,
@@ -38,7 +39,7 @@ import {
 
 const OPT_IN_ENV = "ARBOR_RUN_REAL_PUBLIC_S1";
 const CONFIG_PATH_ENV = "ARBOR_PUBLIC_S1_CONFIG";
-const EVIDENCE_ROOT_ENV = "ARBOR_PUBLIC_S1_EVIDENCE_ROOT";
+const EVIDENCE_ROOT_ENV = "ARBOR_PUBLIC_REAL_EVIDENCE_ROOT";
 const CAPTURE_FILE_ENV = "ARBOR_PUBLIC_S1_CAPTURE_FILE";
 const CAPTURE_ENDPOINT_ENV = "ARBOR_PUBLIC_S1_CAPTURE_ENDPOINT";
 const JOURNEY_TIMEOUT_MS = 8 * 60_000;
@@ -73,7 +74,6 @@ interface ProviderCapture {
   readonly path: string;
   readonly request?: Record<string, unknown>;
   readonly status?: number;
-  readonly responseHeaders?: Readonly<Record<string, string>>;
   readonly responseBodyBase64?: string;
   readonly captureError?: string;
   readonly error?: string;
@@ -600,14 +600,16 @@ const missingBuildAssets = (): ReadonlyArray<string> =>
     .filter(([, path]) => !existsSync(path as string))
     .map(([label]) => label as string);
 const buildAssetsMissingAtLoad = missingBuildAssets();
+const evidenceRootReadiness = validateRealJourneyEvidenceRoot(
+  process.env[EVIDENCE_ROOT_ENV],
+);
 const skipReason =
   process.env[OPT_IN_ENV] !== "1"
     ? `set ${OPT_IN_ENV}=1 to explicitly opt in`
     : readinessAtLoad.ready
-      ? process.env[EVIDENCE_ROOT_ENV] === undefined ||
-        !existsSync(process.env[EVIDENCE_ROOT_ENV])
-        ? `set ${EVIDENCE_ROOT_ENV} to an existing private .test-results run directory`
-        : undefined
+      ? evidenceRootReadiness.ready
+        ? undefined
+        : evidenceRootReadiness.reason
       : readinessAtLoad.reason;
 
 const writeEvidence = (input: {
@@ -639,13 +641,6 @@ const writeEvidence = (input: {
           wireModelName: input.config.wireModelName,
           secretStoreKind: input.config.secretKind,
           credentialsRecorded: false,
-          serverHeaders: [
-            ...new Set(
-              input.captures
-                .map((capture) => capture.responseHeaders?.server)
-                .filter((server): server is string => server !== undefined),
-            ),
-          ],
         },
         requestsAndResponses: input.captures,
         publicScenario: input.publicScenario,
@@ -1107,12 +1102,10 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
   let result: "PASS" | "FAIL" = "FAIL";
   let errorDetail: string | undefined;
   try {
-    const evidenceRoot = process.env[EVIDENCE_ROOT_ENV];
-    if (evidenceRoot === undefined || !existsSync(evidenceRoot)) {
-      throw new Error(
-        `REAL NOT QUALIFIED: ${EVIDENCE_ROOT_ENV} must name the existing private run directory`,
-      );
+    if (!evidenceRootReadiness.ready) {
+      throw new Error(`REAL NOT QUALIFIED: ${evidenceRootReadiness.reason}`);
     }
+    const evidenceRoot = evidenceRootReadiness.path;
     privateEvidenceDirectory = makeP39PrivateTestDirectory(
       evidenceRoot,
       "evidence-",
