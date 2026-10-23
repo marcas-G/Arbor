@@ -616,7 +616,7 @@ const readP9OutcomeSourceForProbe = (
            FROM agent_loop_step_actions WHERE execution_id = ?
           ORDER BY logical_step_no, repair_attempt, action_index`,
       )
-      .all(probe.executionId) as ReadonlyArray<P9ActionRow>;
+      .all(probe.executionId) as unknown as ReadonlyArray<P9ActionRow>;
     const steps = db
       .prepare(
         `SELECT execution_id, logical_step_no, repair_attempt,
@@ -624,7 +624,7 @@ const readP9OutcomeSourceForProbe = (
            FROM agent_loop_steps WHERE execution_id = ?
           ORDER BY logical_step_no, repair_attempt`,
       )
-      .all(probe.executionId) as ReadonlyArray<P9StepRow>;
+      .all(probe.executionId) as unknown as ReadonlyArray<P9StepRow>;
     const exact = p9ActionStepForProbe({ probe, invocation, actions, steps });
     db.exec("COMMIT");
     return {
@@ -1345,6 +1345,8 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
           { cause: error },
         );
       });
+      if (firstSettled === undefined)
+        throw new Error("P4 ExpectedFailure source snapshot was unavailable");
       const firstInvocationState = firstSettled.source.invocation;
       const firstActionState = firstSettled.source.action;
       const firstStepState = firstSettled.source.step;
@@ -1498,6 +1500,44 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
         diagnosticState.freshProjectId = freshProject.projectId;
         diagnosticState.freshWorkspaceId = freshProject.rootWorkspaceId;
         diagnosticState.freshProjectRootDirectory = freshProjectRootDirectory;
+        const freshProfileOwnershipStore = new DatabaseSync(
+          fixture.databaseFile,
+          { readOnly: true },
+        );
+        try {
+          const claims = freshProfileOwnershipStore
+            .prepare(
+              `SELECT resource_space_id, canonical_region,
+                      source_address_snapshot, resource_boundary_revision
+                 FROM resource_ownership
+                WHERE workspace_id = ? AND released_at IS NULL`,
+            )
+            .all(freshProject.rootWorkspaceId) as unknown as ReadonlyArray<{
+            readonly resource_space_id: string;
+            readonly canonical_region: string;
+            readonly source_address_snapshot: string;
+            readonly resource_boundary_revision: number;
+          }>;
+          expect(claims).toHaveLength(1);
+          expect(claims[0]?.resource_space_id).toBe("filesystem");
+          expect(
+            JSON.parse(claims[0]?.source_address_snapshot ?? "null"),
+          ).toEqual({
+            _tag: "FileTree",
+            path: freshProjectRootDirectory,
+          });
+          expect(
+            JSON.parse(claims[0]?.canonical_region ?? "null"),
+          ).toMatchObject({
+            resourceSpaceId: "filesystem",
+            normalizedRegion: {
+              kind: "FileTree",
+              path: freshProjectRootDirectory,
+            },
+          });
+        } finally {
+          freshProfileOwnershipStore.close();
+        }
         await insertProductionPrimaryWorktree({
           databaseFile: fixture.databaseFile,
           projectId: freshProject.projectId,
@@ -1627,34 +1667,35 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
             matchingHumanTurn: matchingHumanTurn ?? null,
             responseStatus: matchingHumanTurn?.responseStatus ?? null,
           };
+          const providerRequestToolProfiles = scriptedProviderTrace.map(
+            ({
+              requestNo,
+              inferredProfileFromTools,
+              availableToolNames,
+              markerPresent,
+              workAssignedLiteralPresent,
+              rootAssignmentPredicate,
+              shellPredicate,
+              selectedBranch,
+            }) => ({
+              requestNo,
+              inferredProfileFromTools,
+              availableToolNames,
+              markerPresent,
+              workAssignedLiteralPresent,
+              rootAssignmentPredicate,
+              shellPredicate,
+              selectedBranch,
+            }),
+          );
           diagnosticState.failureCapture = {
             point: "waitForExecutableApproval",
             publicFailureSnapshot,
             storeSnapshot,
-            providerRequestToolProfiles: scriptedProviderTrace.map(
-              ({
-                requestNo,
-                inferredProfileFromTools,
-                availableToolNames,
-                markerPresent,
-                workAssignedLiteralPresent,
-                rootAssignmentPredicate,
-                shellPredicate,
-                selectedBranch,
-              }) => ({
-                requestNo,
-                inferredProfileFromTools,
-                availableToolNames,
-                markerPresent,
-                workAssignedLiteralPresent,
-                rootAssignmentPredicate,
-                shellPredicate,
-                selectedBranch,
-              }),
-            ),
+            providerRequestToolProfiles,
           };
           throw new Error(
-            `fresh executable approval timeout; public=${JSON.stringify(publicFailureSnapshot)}; store=${JSON.stringify(storeSnapshot)}; providerRoutes=${JSON.stringify(diagnosticState.failureCapture.providerRequestToolProfiles)}; providerCallCount=${fixture.providerCalls.length}; daemonErrors=${fixture.daemonErrors.join(" | ")}`,
+            `fresh executable approval timeout; public=${JSON.stringify(publicFailureSnapshot)}; store=${JSON.stringify(storeSnapshot)}; providerRoutes=${JSON.stringify(providerRequestToolProfiles)}; providerCallCount=${fixture.providerCalls.length}; daemonErrors=${fixture.daemonErrors.join(" | ")}`,
             { cause: error },
           );
         }
