@@ -104,6 +104,7 @@ export type EvidenceRootReadiness =
 
 export const validateRealJourneyEvidenceRoot = (
   configuredPath = process.env[EVIDENCE_ROOT_ENV],
+  worktreeRoot = repositoryRoot,
 ): EvidenceRootReadiness => {
   if (configuredPath === undefined || configuredPath.trim().length === 0) {
     return {
@@ -112,8 +113,9 @@ export const validateRealJourneyEvidenceRoot = (
     };
   }
   try {
-    const resultsRoot = resolve(repositoryRoot, ".test-results");
-    const requested = resolve(repositoryRoot, configuredPath);
+    const canonicalWorktree = resolve(worktreeRoot);
+    const resultsRoot = resolve(canonicalWorktree, ".test-results");
+    const requested = resolve(canonicalWorktree, configuredPath);
     if (
       (requested !== resultsRoot &&
         !isWithinDirectory(resultsRoot, requested)) ||
@@ -128,8 +130,8 @@ export const validateRealJourneyEvidenceRoot = (
     if (!lstatSync(requested).isDirectory()) {
       return { ready: false, reason: "evidence root must be a directory" };
     }
-    const relativeRoot = relative(repositoryRoot, requested);
-    let cursor = repositoryRoot;
+    const relativeRoot = relative(canonicalWorktree, requested);
+    let cursor = canonicalWorktree;
     for (const segment of relativeRoot.split(sep)) {
       cursor = join(cursor, segment);
       if (lstatSync(cursor).isSymbolicLink()) {
@@ -141,7 +143,10 @@ export const validateRealJourneyEvidenceRoot = (
     }
     const canonicalResultsRoot = realpathSync(resultsRoot);
     const canonicalRequested = realpathSync(requested);
-    if (!isWithinDirectory(canonicalResultsRoot, canonicalRequested)) {
+    if (
+      canonicalRequested !== canonicalResultsRoot &&
+      !isWithinDirectory(canonicalResultsRoot, canonicalRequested)
+    ) {
       return {
         ready: false,
         reason: "evidence root resolves outside this worktree's .test-results",
