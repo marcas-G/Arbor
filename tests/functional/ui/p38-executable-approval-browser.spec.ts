@@ -25,7 +25,7 @@ let fixtureFailureEvidence: (() => unknown) | undefined;
 let preserveFixtureForFailure = false;
 const EXECUTABLE_APPROVAL_ENTRY_KEY = /^eap:.+:\d+$/u;
 
-test.afterEach(async (_fixtures, testInfo) => {
+test.afterEach(async ({ page: _page }, testInfo) => {
   const currentFixture = fixture;
   const captureFailureEvidence = fixtureFailureEvidence;
   const preserveForFailure = preserveFixtureForFailure;
