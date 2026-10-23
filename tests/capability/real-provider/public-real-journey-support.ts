@@ -63,6 +63,15 @@ export interface ProviderCapture {
   readonly error?: string;
 }
 
+/** A response-gated upstream reply, joined by exact request identity with its
+ * `response-complete` capture. The event remains `response-held`; the complete
+ * response fields are copied only after the pair has been consistency-checked. */
+export interface CorrelatedHeldProviderResponseCapture extends ProviderCapture {
+  readonly event: "response-held";
+  readonly status: number;
+  readonly responseBodyBase64: string;
+}
+
 export interface StartedRealProviderFixture {
   readonly fixture: ProductionFixture;
   readonly captureFile: string;
