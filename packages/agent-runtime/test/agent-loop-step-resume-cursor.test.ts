@@ -13,6 +13,11 @@ import {
   isPreparedStepAwaitingInitialManifest,
   selectInitialAgentLoopStepCursor,
 } from "../src/agent-loop-driver.js";
+import {
+  isSoleAgentLoopStepManifestMismatch,
+  submittedDecisionManifestMismatchOutcome,
+} from "../src/agent-loop-step-recovery.js";
+import { classifySubmittedDecisionBindingFailure } from "../src/model-decision.js";
 
 const executionId = parse(ExecutionId)(
   "exe_00000000-0000-7000-8000-000000000001",
@@ -297,6 +302,134 @@ describe("P9 AgentLoopStep resume cursor", () => {
       isAgentLoopStepManifestBound(prepared, executionId, sessionId, {
         ...manifest,
         manifestId: "manifest_other",
+      }),
+    ).toBe(false);
+  });
+
+  it("recognizes only a Step manifest id mismatch with the ProviderTurn source intact", () => {
+    const sessionId = parse(SessionId)(
+      "ses_00000000-0000-7000-8000-000000000001",
+    );
+    const current = step(0, 0, {
+      state: "ActionsInProgress",
+      manifestId: "manifest_corrupt_step",
+    });
+    const manifestValue = {
+      providerTurnId: current.providerTurnId,
+      executionId,
+      sessionId,
+      logicalStepNo: 0,
+      repairAttempt: 0,
+    };
+    const manifest = {
+      manifestId: "manifest_provider_turn",
+      manifestJson: JSON.stringify(manifestValue),
+    };
+    const input = {
+      step: current,
+      executionId,
+      sessionId,
+      manifest,
+      settledManifestId: manifest.manifestId,
+    };
+    expect(isSoleAgentLoopStepManifestMismatch(input)).toBe(true);
+    const pendingAction = {
+      actionIndex: 0,
+      routeKind: "Control" as const,
+      actionKind: "select_current_work",
+      state: "Pending" as const,
+    };
+    const failureCode = classifySubmittedDecisionBindingFailure({
+      executionWorkspaceId: "ws_owner",
+      episode: { decisionId: "dec_exact", requestRevision: 0 },
+      request: {
+        workspaceId: "ws_owner",
+        candidateWorkIds: ["wrk_selected"],
+        workspaceRevision: 4,
+        revision: 1,
+        state: { _tag: "Submitted" as const, selectedWorkId: "wrk_selected" },
+      },
+      workspace: undefined,
+      step: current,
+      pendingAction,
+      providerTurnId: current.providerTurnId,
+      providerResult: {
+        _tag: "SettledSuccess" as const,
+        manifestId: manifest.manifestId,
+      },
+    });
+    expect(
+      submittedDecisionManifestMismatchOutcome({
+        decisionEpisode: true,
+        failureCode,
+        ...input,
+        logicalActionId: "lac_selection",
+      }),
+    ).toEqual({
+      _tag: "SubmittedDecisionBindingMismatch",
+      failureCode: "StepManifestMismatch",
+      logicalStepNo: 0,
+      repairAttempt: 0,
+      providerTurnId: current.providerTurnId,
+      logicalActionId: "lac_selection",
+    });
+    expect(
+      submittedDecisionManifestMismatchOutcome({
+        decisionEpisode: false,
+        failureCode,
+        ...input,
+        logicalActionId: "lac_selection",
+      }),
+    ).toBeUndefined();
+    expect(
+      classifySubmittedDecisionBindingFailure({
+        executionWorkspaceId: "ws_owner",
+        episode: { decisionId: "dec_exact", requestRevision: 0 },
+        request: {
+          workspaceId: "ws_owner",
+          candidateWorkIds: ["wrk_selected"],
+          workspaceRevision: 4,
+          revision: 1,
+          state: { _tag: "Pending" as const },
+        },
+        workspace: undefined,
+        step: current,
+        pendingAction: { ...pendingAction, actionIndex: 1 },
+        providerTurnId: current.providerTurnId,
+        providerResult: {
+          _tag: "SettledSuccess" as const,
+          manifestId: manifest.manifestId,
+        },
+      }),
+    ).toBeUndefined();
+    for (const field of [
+      "providerTurnId",
+      "executionId",
+      "sessionId",
+    ] as const) {
+      expect(
+        isSoleAgentLoopStepManifestMismatch({
+          ...input,
+          manifest: {
+            ...manifest,
+            manifestJson: JSON.stringify({
+              ...manifestValue,
+              [field]: "foreign-binding",
+            }),
+          },
+        }),
+      ).toBe(false);
+    }
+    expect(
+      isSoleAgentLoopStepManifestMismatch({
+        ...input,
+        settledManifestId: "another-manifest",
+      }),
+    ).toBe(false);
+    expect(
+      isSoleAgentLoopStepManifestMismatch({
+        ...input,
+        step: { ...current, providerTurnId: "" as never },
       }),
     ).toBe(false);
   });
