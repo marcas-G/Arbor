@@ -2,6 +2,12 @@
 
 **Status:** DRAFT — not accepted; no production implementation authorized.
 
+**Suggested decision token:** `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`
+
+If accepted, this package authorizes only the owning-document design landing.
+Implementation requires a separate explicit authorization and implementation
+evidence package.
+
 **Evidence:** Real public S3 rerun result
 `planning/results/real-public-s3-collaboration-rerun-20261024.result.md`;
 isolated RED `tests/functional/pending/s3-any-producer-settled-wait-attention.pending.test.ts`.
@@ -197,3 +203,8 @@ without schema changes. A fixed RED/acceptance matrix must cover:
 
 Until manual acceptance, this remains a design proposal and the RED remains
 intentionally failing/excluded from normal test suites.
+
+Acceptance of this exact draft and its package manifest grants authority only
+to land the approved P7/P10 contract changes in their owning design documents;
+it does not authorize source implementation, production behavior changes,
+migrations, or a real-provider qualification run.
