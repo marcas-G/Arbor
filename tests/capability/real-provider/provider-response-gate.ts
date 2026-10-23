@@ -37,14 +37,30 @@ export const waitForHeldProviderResponse = async (
 ): Promise<CorrelatedHeldProviderResponseCapture> => {
   while (Date.now() < input.deadlineAt) {
     const captures = readProviderCaptures(run.captureFile);
-    const held = captures.find(
+    const candidateHeld = captures.find(
       (capture) =>
         capture.event === "response-held" &&
         capture.sequence > input.afterSequence &&
         (input.selector === undefined ||
           providerCaptureMatchesSelector(capture, input.selector)),
     );
-    if (held !== undefined) {
+    if (candidateHeld !== undefined) {
+      const matchingHeld = captures.filter(
+        (capture) =>
+          capture.event === "response-held" &&
+          capture.requestId === candidateHeld.requestId,
+      );
+      if (matchingHeld.length !== 1) {
+        throw new Error(
+          "REAL NOT QUALIFIED: held Provider response has duplicate held captures",
+        );
+      }
+      const held = matchingHeld[0];
+      if (held === undefined) {
+        throw new Error(
+          "REAL NOT QUALIFIED: selected held Provider response disappeared",
+        );
+      }
       const completed = captures.filter(
         (capture) =>
           capture.event === "response-complete" &&
