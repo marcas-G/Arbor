@@ -1,6 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
@@ -625,6 +633,45 @@ describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
 });
 
 describe("V6 diagnostic SQL follows current persistence schema", () => {
+  it("creates a missing safe result directory before archiving a fixture", () => {
+    const schemaRoot = mkdtempSync(
+      resolve(`.arbor-functional-schema44-v6-archive-${randomUUID()}-`),
+    );
+    const fixtureDirectory = join(schemaRoot, `fixture-${randomUUID()}`);
+    const resultDirectory = resolve(
+      ".test-results",
+      `v6-archive-helper-${randomUUID()}`,
+    );
+    mkdirSync(fixtureDirectory);
+    const databaseFile = join(fixtureDirectory, "arbor-functional.db");
+    writeFileSync(databaseFile, "fixture archive regression");
+    const fixture = {
+      directory: fixtureDirectory,
+      databaseFile,
+      daemonsExited: () => true,
+    } as unknown as ProductionFixture;
+    try {
+      expect(existsSync(resultDirectory)).toBe(false);
+      const archivedDirectory = archiveProductionFixtureFailure({
+        fixture,
+        resultDirectory,
+        artifactPrefix: "v6-archive-helper",
+        evidence: { testName: "missing-result-directory" },
+      });
+      expect(existsSync(resultDirectory)).toBe(true);
+      expect(existsSync(join(archivedDirectory, "failure-evidence.json"))).toBe(
+        true,
+      );
+      expect(existsSync(join(archivedDirectory, "arbor-functional.db"))).toBe(
+        true,
+      );
+    } finally {
+      rmSync(schemaRoot, { recursive: true, force: true });
+      if (existsSync(resultDirectory))
+        rmSync(resultDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("prepares every static test/support query against the current schema", async () => {
     const fixture = await createCurrentSchemaTestDatabase({
       prefix: "v6-diagnostic-schema-",
