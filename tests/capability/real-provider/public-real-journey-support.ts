@@ -26,12 +26,18 @@ import {
   removeP39PrivateTestDirectory,
 } from "../../support/p39-windows-deployment-test.js";
 import { readProviderCaptures } from "./provider-response-gate.js";
+import type {
+  CapturedProviderToolCall,
+  ProviderResponseGateSelector,
+} from "./provider-response-gate.mjs";
+import { decodeProviderToolCalls } from "./provider-response-gate.mjs";
 
 export {
   providerCaptureMatchesSelector,
   readProviderCaptures,
   waitForHeldProviderResponse,
 } from "./provider-response-gate.js";
+export type { CapturedProviderToolCall, ProviderResponseGateSelector };
 
 export interface RealProviderConfig {
   readonly path: string;
@@ -86,11 +92,6 @@ export interface StartedRealProviderFixture {
   fixtureArchiveDirectory?: string;
 }
 
-export interface ProviderResponseGateSelector {
-  readonly requiredAdvertisedToolName?: string;
-  readonly requiredMessageText?: string;
-}
-
 export interface WorkspaceFileSnapshot {
   readonly entries: Readonly<
     Record<
@@ -103,11 +104,6 @@ export interface WorkspaceFileSnapshot {
       }
     >
   >;
-}
-
-export interface CapturedProviderToolCall {
-  readonly name: string;
-  readonly arguments: Readonly<Record<string, unknown>>;
 }
 
 export const createRealProviderFixtureDaemonSetup = (input: {
@@ -181,100 +177,9 @@ export const createRealProviderFixtureDaemonSetup = (input: {
   };
 };
 
-/** Decode only complete provider-captured SSE tool calls. The response gate
- * returns a real upstream body; this parser neither creates nor modifies it. */
-export const decodeCapturedProviderToolCalls = (
-  responseBodyBase64: string,
-): ReadonlyArray<CapturedProviderToolCall> => {
-  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(responseBodyBase64)) {
-    throw new Error("captured Provider response is not valid base64");
-  }
-  const responseText = Buffer.from(responseBodyBase64, "base64").toString(
-    "utf8",
-  );
-  const fragments = new Map<string, { name: string; argumentsText: string }>();
-  const absorb = (value: unknown) => {
-    if (typeof value !== "object" || value === null) return;
-    const choices = (value as { choices?: unknown }).choices;
-    if (!Array.isArray(choices)) return;
-    for (const [choiceOffset, rawChoice] of choices.entries()) {
-      if (typeof rawChoice !== "object" || rawChoice === null) continue;
-      const choice = rawChoice as {
-        index?: unknown;
-        delta?: { tool_calls?: unknown };
-        message?: { tool_calls?: unknown };
-      };
-      const choiceIndex =
-        typeof choice.index === "number" && Number.isInteger(choice.index)
-          ? choice.index
-          : choiceOffset;
-      const calls = choice.delta?.tool_calls ?? choice.message?.tool_calls;
-      if (!Array.isArray(calls)) continue;
-      for (const [callOffset, rawCall] of calls.entries()) {
-        if (typeof rawCall !== "object" || rawCall === null) continue;
-        const call = rawCall as {
-          index?: unknown;
-          function?: { name?: unknown; arguments?: unknown };
-        };
-        const callIndex =
-          typeof call.index === "number" && Number.isInteger(call.index)
-            ? call.index
-            : callOffset;
-        const key = `${choiceIndex}:${callIndex}`;
-        const fragment = fragments.get(key) ?? {
-          name: "",
-          argumentsText: "",
-        };
-        if (typeof call.function?.name === "string") {
-          fragment.name += call.function.name;
-        }
-        if (typeof call.function?.arguments === "string") {
-          fragment.argumentsText += call.function.arguments;
-        } else if (call.function?.arguments !== undefined) {
-          fragment.argumentsText += JSON.stringify(call.function.arguments);
-        }
-        fragments.set(key, fragment);
-      }
-    }
-  };
-
-  for (const line of responseText.split(/\r?\n/u)) {
-    if (!line.startsWith("data: ")) continue;
-    const data = line.slice(6);
-    if (data === "[DONE]") continue;
-    try {
-      absorb(JSON.parse(data) as unknown);
-    } catch {
-      throw new Error("captured Provider SSE contains invalid JSON data");
-    }
-  }
-  return [...fragments.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([, fragment]) => {
-      if (fragment.name.length === 0 || fragment.argumentsText.length === 0) {
-        throw new Error("captured Provider tool call is incomplete");
-      }
-      let parsedArguments: unknown;
-      try {
-        parsedArguments = JSON.parse(fragment.argumentsText) as unknown;
-      } catch {
-        throw new Error("captured Provider tool-call arguments are invalid");
-      }
-      if (
-        typeof parsedArguments !== "object" ||
-        parsedArguments === null ||
-        Array.isArray(parsedArguments)
-      ) {
-        throw new Error(
-          "captured Provider tool-call arguments are not an object",
-        );
-      }
-      return {
-        name: fragment.name,
-        arguments: parsedArguments as Readonly<Record<string, unknown>>,
-      };
-    });
-};
+/** Uses the exact MJS decoder that the Provider fetch hook uses to select a
+ * held response, so test assertions and production-hook decisions agree. */
+export const decodeCapturedProviderToolCalls = decodeProviderToolCalls;
 
 const CONFIG_PATH_ENV = "ARBOR_PUBLIC_S1_CONFIG";
 const CAPTURE_FILE_ENV = "ARBOR_PUBLIC_S1_CAPTURE_FILE";

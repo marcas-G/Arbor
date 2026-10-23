@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { providerResponseMatchesSelector } from "./provider-response-gate.mjs";
+import {
+  providerRequestMatchesSelector,
+  providerResponseMatchesSelector,
+} from "./provider-response-gate.mjs";
 
 const captureFile = process.env.ARBOR_PUBLIC_S1_CAPTURE_FILE;
 const endpointValue = process.env.ARBOR_PUBLIC_S1_CAPTURE_ENDPOINT;
@@ -62,19 +65,21 @@ const append = (record) => {
   });
 };
 
-const responseGateMatches = (request) => {
+const responseGateSelectorForRequest = (request) => {
   if (
     !responseGateDirectory ||
     !existsSync(join(responseGateDirectory, "armed"))
   )
-    return false;
+    return undefined;
   const selectorPath = join(responseGateDirectory, "selector.json");
-  if (!existsSync(selectorPath)) return true;
+  if (!existsSync(selectorPath)) return {};
   try {
     const selector = JSON.parse(readFileSync(selectorPath, "utf8"));
-    return providerResponseMatchesSelector(request, selector);
+    return providerRequestMatchesSelector(request, selector)
+      ? selector
+      : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 };
 
@@ -115,19 +120,31 @@ globalThis.fetch = async (input, init) => {
     }
   }
   const requestEvidence = request === undefined ? base : { ...base, request };
+  const candidateResponseGateSelector = responseGateSelectorForRequest(request);
 
   try {
     const response = await originalFetch(input, init);
     const clone = response.clone();
-    if (responseGateMatches(request)) {
+    if (candidateResponseGateSelector !== undefined) {
       const bytes = await clone.arrayBuffer();
+      const rawBodyBase64 = Buffer.from(bytes).toString("base64");
       const bodyText = safeValue(new TextDecoder().decode(bytes));
+      const safeBodyBase64 = Buffer.from(bodyText).toString("base64");
       append({
         ...requestEvidence,
         event: "response-complete",
         status: response.status,
-        responseBodyBase64: Buffer.from(bodyText).toString("base64"),
+        responseBodyBase64: safeBodyBase64,
       });
+      if (
+        !providerResponseMatchesSelector(
+          request,
+          candidateResponseGateSelector,
+          rawBodyBase64,
+        )
+      ) {
+        return response;
+      }
       append({
         ...requestEvidence,
         event: "response-held",

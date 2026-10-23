@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 import {
+  decodeCapturedProviderToolCalls,
   type ProviderCapture,
   providerCaptureMatchesSelector,
   providerRequestEvidence,
@@ -62,6 +63,25 @@ const waitForCapture = async (
   throw new Error("stubbed Provider capture did not reach the expected event");
 };
 
+const makeGateRun = (): StartedRealProviderFixture => {
+  const privateDirectory = join(
+    tmpdir(),
+    `arbor-provider-response-selector-${randomUUID()}`,
+  );
+  mkdirSync(privateDirectory, { recursive: true });
+  const captureFile = join(privateDirectory, "captures.jsonl");
+  writeFileSync(captureFile, "", { encoding: "utf8", mode: 0o600 });
+  return {
+    captureFile,
+    evidenceDirectory: privateDirectory,
+    privateRunDirectory: privateDirectory,
+    archiveResultDirectory: privateDirectory,
+    ownsArchiveResultDirectory: false,
+    responseGateDirectory: privateDirectory,
+    fixture: {} as StartedRealProviderFixture["fixture"],
+  };
+};
+
 const waitForExit = (child: ChildProcess, timeoutMs: number) => {
   if (child.exitCode !== null || child.signalCode !== null) {
     return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
@@ -87,20 +107,30 @@ const spawnStubFetch = (input: {
   readonly captureFile: string;
   readonly responseGateDirectory: string;
   readonly marker: string;
+  readonly advertisedToolName?: string;
+  readonly responseBodies?: ReadonlyArray<string>;
+  readonly observedBodiesFile?: string;
 }) => {
   const source = `
-    globalThis.fetch = async () => new Response("stubbed-upstream-response", { status: 200 });
+    import { writeFileSync } from "node:fs";
+    const responseBodies = ${JSON.stringify(input.responseBodies ?? ["stubbed-upstream-response"])};
+    let responseIndex = 0;
+    const observedBodies = [];
+    globalThis.fetch = async () => new Response(responseBodies[responseIndex++] ?? "missing-stubbed-response", { status: 200 });
     await import(${JSON.stringify(input.hookUrl)});
-    const request = new Request(${JSON.stringify(`${input.endpoint}/chat/completions`)}, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: ${JSON.stringify(input.marker)} }],
-        tools: [{ function: { name: "assign_work" } }]
-      })
-    });
-    const response = await globalThis.fetch(request);
-    await response.text();
+    for (let index = 0; index < responseBodies.length; index += 1) {
+      const request = new Request(${JSON.stringify(`${input.endpoint}/chat/completions`)}, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: ${JSON.stringify(input.marker)} }],
+          tools: [{ function: { name: ${JSON.stringify(input.advertisedToolName ?? "assign_work")} } }]
+        })
+      });
+      const response = await globalThis.fetch(request);
+      observedBodies.push(await response.text());
+    }
+    ${input.observedBodiesFile === undefined ? "" : `writeFileSync(${JSON.stringify(input.observedBodiesFile)}, JSON.stringify(observedBodies));`}
   `;
   return spawn(process.execPath, ["--input-type=module", "-e", source], {
     cwd: process.cwd(),
@@ -332,5 +362,168 @@ it("captures the request body on response-held, matches that event, and releases
       }
     }
     rmSync(directory, { recursive: true, force: true });
+  }
+}, 10_000);
+
+it("passes nonmatching authentic responses through and holds only the exact fragmented shell tool call", async () => {
+  const run = makeGateRun();
+  const observedBodiesFile = join(
+    run.privateRunDirectory,
+    "observed-bodies.json",
+  );
+  const marker = `S4B-GATE-${randomUUID()}`;
+  const endpoint = "http://fake-provider.invalid/v1";
+  const selector = {
+    requiredAdvertisedToolName: "shell",
+    requiredMessageText: marker,
+    requiredResponseToolCall: {
+      name: "shell",
+      requiredArguments: {
+        command: "Get-Date",
+        cwd: { mount: "workspace", path: "." },
+      },
+      allowedAdditionalArguments: ["timeoutMs"],
+      numericArgumentMaximums: { timeoutMs: 5_000 },
+    },
+  } as const;
+  writeFileSync(
+    join(run.responseGateDirectory as string, "selector.json"),
+    JSON.stringify(selector),
+    { encoding: "utf8", mode: 0o600 },
+  );
+  writeFileSync(join(run.responseGateDirectory as string, "armed"), "", {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+
+  const textResponse =
+    'data: {"choices":[{"index":0,"delta":{"content":"planning"}}]}\n' +
+    "data: [DONE]\n";
+  const shellResponse =
+    `data: ${JSON.stringify({
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  name: "sh",
+                  arguments: '{"command":"Get-',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    })}\n` +
+    `data: ${JSON.stringify({
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  name: "ell",
+                  arguments:
+                    'Date","cwd":{"mount":"workspace","path":"."},"timeoutMs":5000}',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    })}\n` +
+    "data: [DONE]\n";
+  const child = spawnStubFetch({
+    endpoint,
+    hookUrl: pathToFileURL(resolve(hookPath)).href,
+    captureFile: run.captureFile,
+    responseGateDirectory: run.responseGateDirectory as string,
+    marker,
+    advertisedToolName: "shell",
+    responseBodies: [textResponse, shellResponse],
+    observedBodiesFile,
+  });
+  const stderr: Array<string> = [];
+  child.stderr?.on("data", (chunk: Buffer) =>
+    stderr.push(chunk.toString("utf8")),
+  );
+  const exited = waitForExit(child, 5_000);
+
+  try {
+    const firstComplete = await waitForCapture(
+      run.captureFile,
+      (capture) =>
+        capture.event === "response-complete" && capture.sequence === 1,
+      Date.now() + 3_000,
+    );
+    const capturesAfterFirst = readCaptureLines(run.captureFile);
+    expect(
+      capturesAfterFirst.some(
+        (capture) =>
+          capture.event === "response-held" &&
+          capture.requestId === firstComplete.requestId,
+      ),
+    ).toBe(false);
+    expect(
+      providerCaptureMatchesSelector(
+        firstComplete,
+        selector,
+        capturesAfterFirst,
+      ),
+    ).toBe(false);
+
+    const held = await waitForHeldLine(run.captureFile, Date.now() + 3_000);
+    expect(held.sequence).toBe(2);
+    const captures = readCaptureLines(run.captureFile);
+    const secondComplete = captures.find(
+      (capture) =>
+        capture.event === "response-complete" &&
+        capture.requestId === held.requestId,
+    );
+    expect(secondComplete?.responseBodyBase64).toBe(
+      Buffer.from(shellResponse).toString("base64"),
+    );
+    expect(providerCaptureMatchesSelector(held, selector, captures)).toBe(true);
+    const heldResponse = await waitForHeldProviderResponse(run, {
+      afterSequence: 1,
+      deadlineAt: Date.now() + 1_000,
+      selector,
+    });
+    expect(heldResponse.requestId).toBe(held.requestId);
+    expect(
+      decodeCapturedProviderToolCalls(heldResponse.responseBodyBase64),
+    ).toEqual([
+      {
+        name: "shell",
+        arguments: {
+          command: "Get-Date",
+          cwd: { mount: "workspace", path: "." },
+          timeoutMs: 5_000,
+        },
+      },
+    ]);
+
+    writeFileSync(
+      join(run.responseGateDirectory as string, `release-${held.requestId}`),
+      "",
+      { encoding: "utf8", mode: 0o600 },
+    );
+    expect(await exited).toEqual({ code: 0, signal: null });
+    expect(JSON.parse(readFileSync(observedBodiesFile, "utf8"))).toEqual([
+      textResponse,
+      shellResponse,
+    ]);
+    expect(stderr.join("")).toBe("");
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await waitForExit(child, 1_000).catch(() => undefined);
+    }
+    rmSync(run.privateRunDirectory, { recursive: true, force: true });
   }
 }, 10_000);
