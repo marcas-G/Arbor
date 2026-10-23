@@ -260,6 +260,11 @@ interface PrematureWorkWaitEvidence {
   readonly selfWaitDiagnosticOracle: "ProviderCaptureAndReadOnlySQLiteAuxiliary";
   readonly workId: string;
   readonly workRevision: number;
+  readonly publicCurrentWork: {
+    readonly workId: string;
+    readonly revision: number;
+    readonly status: string;
+  };
   readonly waitArguments: CapturedWaitArguments;
   readonly durableWait: {
     readonly workId: string;
@@ -724,7 +729,11 @@ const findPrematureCurrentWorkVerificationWait = async (input: {
   readonly databaseFile: string;
   readonly captureFile: string;
   readonly workId: string;
-  readonly workRevision: number;
+  readonly currentWork: {
+    readonly workId?: string;
+    readonly revision?: number;
+    readonly status?: string;
+  } | null;
   readonly proofPath: string;
   readonly publicInboxUnconsumed: ReadonlyArray<unknown>;
 }): Promise<PrematureWorkWaitEvidence | undefined> => {
@@ -736,6 +745,13 @@ const findPrematureCurrentWorkVerificationWait = async (input: {
   );
   const latest = workCaptures.at(-1);
   if (latest === undefined) return undefined;
+  if (
+    input.currentWork?.workId !== input.workId ||
+    input.currentWork.status !== "Open" ||
+    input.currentWork.revision === undefined
+  ) {
+    return undefined;
+  }
   const calls = capturedToolCalls(latest);
   const waitCalls = calls.flatMap((call, index) =>
     call.name === "wait" &&
@@ -804,7 +820,7 @@ const findPrematureCurrentWorkVerificationWait = async (input: {
     !isPrematureCurrentWorkVerificationWait({
       wait: waitArguments,
       workId: input.workId,
-      workRevision: input.workRevision,
+      workRevision: input.currentWork.revision,
       completionClaimRequested,
       proofExists,
       verificationExists,
@@ -816,7 +832,12 @@ const findPrematureCurrentWorkVerificationWait = async (input: {
     primaryJourneyOracle: "PublicCommandsAndViews",
     selfWaitDiagnosticOracle: "ProviderCaptureAndReadOnlySQLiteAuxiliary",
     workId: input.workId,
-    workRevision: input.workRevision,
+    workRevision: input.currentWork.revision,
+    publicCurrentWork: {
+      workId: input.workId,
+      revision: input.currentWork.revision,
+      status: input.currentWork.status,
+    },
     waitArguments,
     durableWait,
     completionClaimRequested: false,
@@ -941,7 +962,6 @@ const approveExactPatchIfRequired = async (input: {
   readonly client: PublicClient;
   readonly project: FunctionalProject;
   readonly workId: string;
-  readonly workRevision: number;
   readonly marker: string;
   readonly proofPath: string;
   readonly proofContent: string;
@@ -972,6 +992,8 @@ const approveExactPatchIfRequired = async (input: {
       }>("inbox-view", { workspaceId: input.project.rootWorkspaceId }),
       input.client.view<{
         workId?: string;
+        revision?: number;
+        status?: string;
         activeExecution?: { executionId: string };
       } | null>("current-work", { workspaceId: input.project.rootWorkspaceId }),
     ]);
@@ -1022,7 +1044,7 @@ const approveExactPatchIfRequired = async (input: {
       databaseFile: input.databaseFile,
       captureFile: input.captureFile,
       workId: input.workId,
-      workRevision: input.workRevision,
+      currentWork: current,
       proofPath: input.proofPath,
       publicInboxUnconsumed: inbox.unconsumed,
     });
@@ -1300,7 +1322,6 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       client,
       project,
       workId: currentWork.workId,
-      workRevision: currentWork.revision,
       marker,
       proofPath,
       proofContent,
