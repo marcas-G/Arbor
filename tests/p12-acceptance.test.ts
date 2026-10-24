@@ -43,6 +43,7 @@ import {
   SessionRepositoryLive,
   TransactionPortLive,
   VerificationRepositoryLive,
+  WorkContractRevisionRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
@@ -242,6 +243,7 @@ import {
   TransactionPort,
   TransactionScope,
   type VerificationRepository,
+  type WorkContractRevisionRepository,
   type WorkRepository,
   WorkspaceRepository,
   type WorkWaitStore,
@@ -656,7 +658,17 @@ const secretWorkPayload = (): AssignWorkPayload => ({
   why: "P12-013",
   constraints: [],
   completionExpectation: "done",
-  verificationMission: { goal: "g", criteria: [], riskRequirements: [] },
+  verificationMission: {
+    goal: "g",
+    criteria: [
+      {
+        criterionId: "runtime-safety-proof",
+        requirement: "the runtime safety result is observable",
+        required: true,
+      },
+    ],
+    riskRequirements: [],
+  },
   provenance: { predecessorWorkId: null, reason: "initial" },
   revision: parse(WorkRevision)(0),
 });
@@ -1914,10 +1926,10 @@ describe("p12-acceptance story 9 — §8.16A six dimensions", () => {
             workspaceId: safetyWorkspaceId,
             episodeJson: JSON.stringify({
               _tag: "WorkEpisode",
-              workId: "work-runtime-safety",
+              workId: safetyWorkId,
               targetWorkRevision: 0,
             }),
-            workId: "work-runtime-safety",
+            workId: safetyWorkId,
             workProjectId: targetProjectId,
             workWorkspaceId: safetyWorkspaceId,
             workRevision: 0,
@@ -2159,6 +2171,7 @@ type TransportDbServices =
   | WorkspaceRepository
   | ExecutionRepository
   | WorkRepository
+  | WorkContractRevisionRepository
   | MessageStore
   | PermissionGrantRepository
   | CommandStore
@@ -2184,6 +2197,7 @@ const transportApp = (
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(WorkContractRevisionRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
