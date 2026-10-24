@@ -641,6 +641,21 @@ describe("AH10 P41 Submitted DecisionEpisode binding process recovery", () => {
         { resourceSelection: "Profile" },
       );
       const currentWorkId = await submitSchedulerWork(client, project, marker);
+      await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (work) =>
+          seedWaitSent &&
+          work?.workId === currentWorkId &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+      );
       let foreignWorkspaceId: string | undefined;
       if (corruption === "workspace") {
         const foreignWorkspace = await proposeAndApproveChildWithoutWork(
