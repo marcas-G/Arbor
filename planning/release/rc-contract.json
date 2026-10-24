@@ -68,19 +68,19 @@
       "owner": "Recovery / Verification",
       "status": "OPEN",
       "evidenceClass": ["process", "deterministic"],
-      "exactSha": "772ba5d713032fbccd7623264f5b664bee22f4a9",
-      "evidence": ["planning/results/current-recovery-closure-audit-772ba5d7.result.md", "tests/functional/pending/ah10-verification-recorded-at-fingerprint.functional.test.ts", "tests/functional/pending/p8-conclusion-criteria-snapshot.functional.test.ts", "tests/functional/pending/f23-retry-verification-permanent-replay.functional.test.ts", "tests/functional/pending/f23-exact-tuple-receipt-integrity.functional.test.ts"],
-      "closureCondition": "四案由有权测试选择审计晋升到默认 release manifest，并在最终候选 SHA 上无 retry 全部通过；完整覆盖报告列出四案。"
+      "exactSha": null,
+      "evidence": ["planning/testing/manifest.json", "tests/functional/process/ah10-verification-recorded-at-fingerprint.functional.test.ts", "tests/functional/process/p8-conclusion-criteria-snapshot.functional.test.ts", "tests/functional/process/f23-retry-verification-permanent-replay.functional.test.ts", "tests/functional/process/f23-exact-tuple-receipt-integrity.functional.test.ts"],
+      "closureCondition": "四案已在 96df63929c4250efa06ceafaf3b95b0bcf563b16 晋升到默认 release manifest；仍须在最终候选 SHA 上无 retry 全部通过，并由完整覆盖报告列出四案。晋升提交不等于资格运行。"
     },
     {
       "id": "p6-public-read",
       "name": "F23 UnboundLegacy 的 P6 公共读取资格",
       "owner": "P6 / Web",
-      "status": "OPEN",
-      "evidenceClass": ["process", "browser"],
-      "exactSha": null,
-      "evidence": ["planning/results/current-recovery-closure-audit-772ba5d7.result.md", "planning/results/F23-P6-operator-unbound-legacy-public-read.result.md"],
-      "closureCondition": "通过正式 public read route 证明目标用户能看到有界 disposition；operator-only offline rebuild 不计作公共读取证据。"
+      "status": "PASS",
+      "evidenceClass": ["process"],
+      "exactSha": "f5df474a49760898dae001daf49cb652ef39811a",
+      "evidence": ["planning/results/F23-P6-operator-unbound-legacy-public-read.result.md"],
+      "closureCondition": "定向真实进程资格已在 f5df474a49760898dae001daf49cb652ef39811a 通过。最终 release 汇总应引用本资格；该汇总仍待完成，不要求为了重新否定或重复本行而重跑定向用例。"
     },
     {
       "id": "submitted-decision-corruption",
