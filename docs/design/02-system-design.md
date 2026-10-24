@@ -1,18 +1,35 @@
 # Arbor System Design Specification
 
-**Version:** 1.22
+**Version:** 1.23
 
-**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, and accepted S2-RDG-01 governance addenda
+**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, S2-RDG-01, and RAI-DG-02 governance addenda
 
-**Supersedes:** v1.21
+**Supersedes:** v1.22
 
-**Date:** 2026-10-24
+**Date:** 2026-10-25
 
 **Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.7`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
 
 **Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
+
+**Governance changes (v1.22 → v1.23): accepted RAI-DG-02 terminal Provider failure hold**
+
+Accepted under `ACCEPT_RAI_DG_02_TERMINAL_PROVIDER_FAILURE_HOLD_V2` on
+2026-10-25; fixed proposal raw SHA-256
+`FA1AFC6675E040698F69E5EE29C67DE92EA10D54228D476A6DA27E2A98B8FA93`.
+An exact terminal non-retryable Provider failure
+(`AuthenticationFailed | RequestRejected | ProtocolViolation`) with a complete
+Execution/AgentLoopStep/ProviderTurn/final-Attempt/Manifest chain creates a
+query-derived hold for the exact Open Work revision. Historical repeated
+Executions are valid individually proven sources and deduplicate for
+presentation. The Work remains Open; only authorized revision-advancing
+`SteerWork` resumes execution, while an authorized terminal Work transition
+makes retry-oriented presentation inactive without deleting evidence. P10 is
+read-only and query-derived; no Attention row, ACK, timer, backoff, config
+reload or telemetry becomes scheduler authority. Partial, retryable,
+cross-scope or malformed evidence never produces a guessed hold.
 
 **Governance changes (v1.21 → v1.22): accepted S2-RDG-01 Work contract revision**
 
@@ -715,6 +732,15 @@ revision 不因重启、队列确认或 Attention 投影进度而重新运行。
 `SteerWork` 推进 Work revision 才使旧 revision 的 hold 不再匹配；源事实继续保留
 供审计。该 gate 不取消 Work、不设 same-revision dismiss，也不改变其他 Work 或
 Deliverable 语义（DID §8.18A.1）。
+
+RAI-DG-02 在同一 exact-revision gate 上增加
+`TerminalProviderFailureSettlement`：仅当 WorkEpisode Execution 已结算为
+`Failed(ProviderFailure:<terminal-kind>)`，且结算 Step、失败 Turn、最终
+`TerminalFailure + Stop` Attempt 及 Manifest 精确一致时成立。一个有效源即
+建立 hold；历史多 Execution 只是多个可验证候选，不是基数冲突。
+`RateLimited | ProviderUnavailable | StreamInterrupted` 即使耗尽预算或超时也
+不属于此源。Work 终态化可使 ActionRequired 表达不再活跃，但不删除
+失败证据。
 
 ## 3.5 Execution
 

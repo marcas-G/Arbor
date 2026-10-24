@@ -109,6 +109,19 @@ Classification (R-07 / NEW-10 — corrects the earlier "additive" claim):
   removal/reinterpretation of `ModelCapability` is a MAJOR change.
 - This is a P12 phase contract revision; DID top-level semantics are unchanged.
 
+**RAI-DG-02 accepted integration rule:** the closed terminal set
+`AuthenticationFailed | RequestRejected | ProtocolViolation` may participate
+in the exact Work-revision hold only when the durable final Attempt is
+`TerminalFailure` with retry decision `Stop` and the owning P3 Turn/Step/
+Manifest chain is exact. The retryable set
+`RateLimited | ProviderUnavailable | StreamInterrupted` never becomes this
+source because of budget/deadline exhaustion or final Execution reason text.
+Telemetry, backoff, credential/config reload and adapter health remain
+non-authoritative and cannot release or create the hold. P12 qualification
+must preserve provider taxonomy tests while adding the accepted negative and
+terminal-chain integration cases; no adapter-specific error or raw provider
+content enters the public fact.
+
 ## 6. Non-`read`/`patch`/`shell` tools via the generic seam
 
 The P4 seam is generic already; P12 adds tools through it without touching the pipeline:
