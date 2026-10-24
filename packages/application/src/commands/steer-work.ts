@@ -20,6 +20,7 @@ import {
   emitHumanIntervention,
   isHumanOriginatedPrincipal,
 } from "../human-intervention.js";
+import { invalidVerificationMissionReason } from "../verification-mission-validation.js";
 
 /** P6 `04` §2. Human steer payload; the guidance ContentRef enters the
  * target Workspace Inbox (bounded view), never a Session write. The base
@@ -80,11 +81,8 @@ export const makeSteerWorkHandler = (
   dependencies: SteerWorkDependencies,
 ): CommandHandler<SteerWorkPayload, SteerWorkResult> => ({
   commandType: "SteerWork",
-  // The public envelope/result shape remains backward-compatible: legacy
-  // guidance and typed operations are disjoint payload alternatives under
-  // the existing receipt schema. The semantic fingerprint includes the
-  // complete payload, so amendments cannot alias historical guidance.
-  schemaVersion: "1",
+  schemaVersion: "2",
+  priorReceiptSchemaVersions: ["1"],
   authority: {
     tag: "SteerWorkAuthority",
     targetMatches: (authority, payload) =>
@@ -133,6 +131,17 @@ export const makeSteerWorkHandler = (
               kind: "DirectionGuidance" as const,
               guidance: payload.steer.guidance,
             };
+      if (operation.kind === "ContractAmendment") {
+        const invalidMission = invalidVerificationMissionReason(
+          operation.amendment.verificationMission,
+        );
+        if (invalidMission !== null) {
+          return commandErr({
+            _tag: "InvalidVerificationMission",
+            reason: invalidMission,
+          });
+        }
+      }
       if (
         operation.kind === "ContractAmendment" &&
         dependencies.revisions === undefined

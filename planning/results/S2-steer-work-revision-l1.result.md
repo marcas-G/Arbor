@@ -6,8 +6,10 @@ does not claim L2 public-process qualification, restart qualification, or
 release readiness.
 
 The accepted S2 implementation adds typed `DirectionGuidance` and full
-`ContractAmendment` payloads while retaining the existing SteerWork result and
-receipt schema. Both operations advance Work revision through full-field CAS;
+`ContractAmendment` payloads while retaining the SteerWork result shape. New
+commands use receipt schema v2; schema v1 remains registered for exact legacy
+guidance replay, and its version-specific decoder rejects operation payloads.
+Both operations advance Work revision through full-field CAS;
 production composition appends the exact immutable contract snapshot in the
 same Gateway transaction. Initial `AssignWork` writes the revision-0 snapshot.
 P52 backfills only each legacy Work's exact current revision, explicitly
@@ -22,7 +24,9 @@ Focused evidence on this branch:
 
 - Domain Work and external command codec tests: PASS.
 - P6 Steer / Critical Steer and P8 StartVerification tests: PASS, including a
-  full ContractAmendment CAS/history append case and exact-revision mission
+  full ContractAmendment CAS/history append case, zero-business-write rejects
+  for incomplete/non-required missions and mixed payloads, exact v1 replay via
+  the v2 handler, same-ID v2 amendment conflict, and exact-revision mission
   mismatch rejection.
 - P52 disposable-schema migration tests: PASS, including current-snapshot
   backfill, append-only update/delete rejection, and schema rollback on failed

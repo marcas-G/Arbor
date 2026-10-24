@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CommandInputContractRegistry,
   decodeCommandPayload,
+  decodeCommandPayloadForSchemaVersion,
   decodeExternalCommand,
 } from "../src/external-command-codec.js";
 
@@ -469,6 +470,56 @@ describe("external wire-v1 command payload codec", () => {
           },
         },
       }).ok,
+    ).toBe(true);
+  });
+
+  it("keeps the v1 decoder DirectionGuidance-only while the v2 decoder accepts typed operations", () => {
+    const common = {
+      workId: `wrk_${UUID_V7}`,
+      workspaceId: `ws_${UUID_V7}`,
+      expectedWorkRevision: 3,
+      provenance: { source: "HumanInput" },
+    };
+    const directionGuidance = {
+      ...common,
+      steer: { severity: "Normal", guidance: "use a smaller batch" },
+    };
+    const amendment = {
+      ...common,
+      steer: {
+        severity: "Normal",
+        operation: {
+          kind: "ContractAmendment",
+          amendment: {
+            objective: "new objective",
+            why: "human changed the intended result",
+            constraints: [],
+            completionExpectation: "new result is verified",
+            verificationMission: {
+              goal: "verify the new result",
+              criteria: [
+                {
+                  criterionId: "result",
+                  requirement: "result matches",
+                  required: true,
+                },
+              ],
+              riskRequirements: [],
+            },
+          },
+        },
+      },
+    };
+
+    expect(
+      decodeCommandPayloadForSchemaVersion("SteerWork", "1", directionGuidance)
+        .ok,
+    ).toBe(true);
+    expect(
+      decodeCommandPayloadForSchemaVersion("SteerWork", "1", amendment).ok,
+    ).toBe(false);
+    expect(
+      decodeCommandPayloadForSchemaVersion("SteerWork", "2", amendment).ok,
     ).toBe(true);
   });
 

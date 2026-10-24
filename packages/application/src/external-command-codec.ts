@@ -117,7 +117,8 @@ export type CommandInputIssueRule =
   | "range"
   | "enum"
   | "unknown-field"
-  | "unsupported-command";
+  | "unsupported-command"
+  | "unsupported-version";
 
 export interface CommandInputIssue {
   readonly path: ReadonlyArray<string | number>;
@@ -1017,6 +1018,20 @@ export const decodeCommandPayload = (
 ): DecodeCommandPayloadResult<ExternalCommandPayloadMap[typeof commandType]> =>
   ExternalCommandDecoder.decode(commandType, payload);
 
+/** Version-specific decoder used by receipt/replay qualification. SteerWork
+ * v1 is frozen to the legacy guidance payload; the explicit operation union is
+ * only valid under schema v2. The external command endpoint defaults to the
+ * current v2 contract while retaining legacy-guidance compatibility. */
+export const decodeCommandPayloadForSchemaVersion = (
+  commandType: RegisteredCommandType,
+  schemaVersion: "1" | "2",
+  payload: unknown,
+): DecodeCommandPayloadResult => {
+  const decoded = decodeAgainstRule(payloadRules[commandType], payload);
+  if (!decoded.ok || commandType !== "SteerWork") return decoded;
+  return validateSteerWorkPayloadVersion(payload, schemaVersion, decoded);
+};
+
 export const decodeExternalCommand = (
   envelope: unknown,
 ): DecodeExternalCommandResult =>
@@ -1063,15 +1078,51 @@ function decodeCommandPayloadForContract(
     };
   }
   const hasOperation = Object.hasOwn(steer, "operation");
+  return validateSteerWorkPayloadVersion(
+    payload,
+    hasOperation ? "2" : "1",
+    decoded,
+  );
+}
+
+function validateSteerWorkPayloadVersion(
+  payload: unknown,
+  schemaVersion: "1" | "2",
+  decoded: DecodeCommandPayloadResult,
+): DecodeCommandPayloadResult {
+  const input = payload as {
+    readonly steer?: Record<string, unknown>;
+  };
+  const steer = input.steer;
+  if (steer === undefined || typeof steer !== "object" || steer === null) {
+    return {
+      ok: false,
+      issues: [{ path: ["steer"], rule: "format" }],
+    };
+  }
+  const hasOperation = Object.hasOwn(steer, "operation");
   const hasLegacyGuidance = Object.hasOwn(steer, "guidance");
   const hasLegacyScope = Object.hasOwn(steer, "scope");
   const validLegacy =
     !hasOperation && hasLegacyGuidance && typeof steer.guidance === "string";
   const validTyped = hasOperation && !hasLegacyGuidance && !hasLegacyScope;
-  if (!validLegacy && !validTyped) {
+  if (
+    (schemaVersion === "1" && !validLegacy) ||
+    (schemaVersion === "2" && !validTyped) ||
+    (!validLegacy && !validTyped)
+  ) {
     return {
       ok: false,
-      issues: [{ path: ["steer"], rule: "format" }],
+      issues: [
+        {
+          path: ["steer", schemaVersion === "1" ? "operation" : "guidance"],
+          rule:
+            (hasOperation && schemaVersion === "1") ||
+            (!hasOperation && schemaVersion === "2")
+              ? "unsupported-version"
+              : "format",
+        },
+      ],
     };
   }
   return decoded;
