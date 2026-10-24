@@ -20,6 +20,7 @@ const previousResult = {
   manifestSha256: "manifest",
   gitSha: "base",
   gitDirty: false,
+  selectedFiles,
   groups: [
     { name: "build", exitCode: 0 },
     { name: "functionalVitest", exitCode: 1 },
@@ -74,6 +75,87 @@ test("a changed direct test invalidates only that test evidence", () => {
     "tests/b.test.ts",
     "tests/ui.spec.ts",
   ]);
+});
+
+test("an additive manifest inherits old passes and executes every new file", () => {
+  const expandedFiles = [
+    "tests/a.test.ts",
+    "tests/new.functional.test.ts",
+    "tests/b.test.ts",
+    "tests/ui.spec.ts",
+  ];
+  const plan = buildResumePlan({
+    profileName: "release",
+    manifestSha256: "new-manifest",
+    selectedFiles: expandedFiles,
+    groupFiles: {
+      functionalVitest: expandedFiles.slice(0, 3),
+      functionalUi: expandedFiles.slice(3),
+    },
+    previousResult,
+    previousVitestProgress,
+    changedPaths: [
+      "planning/testing/manifest.json",
+      "scripts/testing/check-manifest.mjs",
+      "scripts/testing/manifest.test.mjs",
+      "planning/testing/README.md",
+      "tests/new.functional.test.ts",
+    ],
+    currentGitDirty: false,
+  });
+  assert.equal(plan.compatible, true);
+  assert.equal(plan.manifestMode, "additive");
+  assert.deepEqual(plan.addedFiles, ["tests/new.functional.test.ts"]);
+  assert.deepEqual(plan.inheritedFiles, ["tests/a.test.ts"]);
+  assert.deepEqual(plan.executionFiles, [
+    "tests/new.functional.test.ts",
+    "tests/b.test.ts",
+    "tests/ui.spec.ts",
+  ]);
+});
+
+test("an additive manifest rejects removal, reorder, or non-test additions", () => {
+  for (const nextFiles of [
+    ["tests/b.test.ts", "tests/a.test.ts", "tests/ui.spec.ts"],
+    ["tests/a.test.ts", "tests/ui.spec.ts"],
+    [...selectedFiles, "packages/runtime/src/not-a-test.ts"],
+  ]) {
+    const plan = buildResumePlan({
+      profileName: "release",
+      manifestSha256: "new-manifest",
+      selectedFiles: nextFiles,
+      groupFiles: { functionalVitest: nextFiles },
+      previousResult,
+      previousVitestProgress,
+      changedPaths: [
+        "planning/testing/manifest.json",
+        ...nextFiles.filter((path) => !selectedFiles.includes(path)),
+      ],
+      currentGitDirty: false,
+    });
+    assert.equal(plan.compatible, false, JSON.stringify(nextFiles));
+  }
+});
+
+test("additive compatibility requires the manifest and every new file in the diff", () => {
+  const expandedFiles = [...selectedFiles, "tests/new.test.ts"];
+  for (const changedPaths of [
+    ["tests/new.test.ts"],
+    ["planning/testing/manifest.json"],
+  ]) {
+    const plan = buildResumePlan({
+      profileName: "release",
+      manifestSha256: "new-manifest",
+      selectedFiles: expandedFiles,
+      groupFiles: { functionalVitest: expandedFiles },
+      previousResult,
+      previousVitestProgress,
+      changedPaths,
+      currentGitDirty: false,
+    });
+    assert.equal(plan.compatible, false);
+    assert.equal(plan.reason, "additive-manifest-diff-incomplete");
+  }
 });
 
 test("shared source, config, or support changes fail closed to a full run", () => {

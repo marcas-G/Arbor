@@ -9,9 +9,67 @@ const resumeOrchestrationPaths = new Set([
   "scripts/testing/run-suite.mjs",
   "scripts/testing/resume-utils.mjs",
   "scripts/testing/resume-utils.test.mjs",
+  "scripts/testing/runner-startup.test.mjs",
   "scripts/testing/runner-utils.test.mjs",
   "planning/testing/README.md",
 ]);
+
+const additiveManifestPaths = new Set([
+  "planning/testing/manifest.json",
+  "scripts/testing/check-manifest.mjs",
+  "scripts/testing/manifest.test.mjs",
+]);
+
+const isDirectTestFile = (path) =>
+  path.startsWith("tests/") &&
+  (path.endsWith(".test.ts") || path.endsWith(".spec.ts"));
+
+const isNonExecutablePlanningMarkdown = (path) =>
+  path.startsWith("planning/") && path.endsWith(".md");
+
+export function analyzeSelectedFileCompatibility({
+  previousSelectedFiles,
+  selectedFiles,
+  manifestMatches,
+}) {
+  const previous = (previousSelectedFiles ?? []).map(normalized);
+  const current = selectedFiles.map(normalized);
+  const incompatible = (reason) => ({
+    compatible: false,
+    reason,
+    mode: "incompatible",
+    addedFiles: [],
+  });
+
+  if (previous.length === 0) return incompatible("missing-base-selected-files");
+  if (new Set(previous).size !== previous.length)
+    return incompatible("duplicate-base-selected-files");
+  if (new Set(current).size !== current.length)
+    return incompatible("duplicate-current-selected-files");
+
+  let previousCursor = 0;
+  for (const path of current) {
+    if (path === previous[previousCursor]) previousCursor += 1;
+  }
+  if (previousCursor !== previous.length)
+    return incompatible("selected-files-removed-or-reordered");
+
+  const previousSet = new Set(previous);
+  const addedFiles = current.filter((path) => !previousSet.has(path));
+  if (manifestMatches && addedFiles.length > 0)
+    return incompatible("selected-files-changed-without-manifest-change");
+  if (!manifestMatches && addedFiles.length === 0)
+    return incompatible("manifest-changed-without-added-tests");
+  if (!addedFiles.every(isDirectTestFile))
+    return incompatible("manifest-added-non-test-file");
+
+  return {
+    compatible: true,
+    reason: manifestMatches ? "exact-manifest" : "additive-manifest",
+    mode: manifestMatches ? "exact" : "additive",
+    addedFiles,
+  };
+}
 
 export function collectPreviouslyPassedFiles({
   previousResult,
@@ -61,28 +119,59 @@ export function buildResumePlan({
     executionFiles: [...selectedFiles],
     inheritBuild: false,
     ignoredOrchestrationChanges: [],
+    ignoredNonExecutableChanges: [],
+    promotedPendingPaths: [],
+    manifestMode: "incompatible",
+    addedFiles: [],
   });
 
   if (!previousResult || previousResult.profile !== profileName)
     return incompatible("profile-mismatch");
   if (previousResult.status === "running")
     return incompatible("base-run-still-running");
-  if (previousResult.manifestSha256 !== manifestSha256)
-    return incompatible("manifest-mismatch");
   if (!previousResult.gitSha) return incompatible("missing-base-git-sha");
   if (previousResult.gitDirty === true || currentGitDirty === true)
     return incompatible("dirty-tree");
 
   const selected = new Set(selectedFiles.map(normalized));
   const changed = [...new Set(changedPaths.map(normalized))];
+  const changedSet = new Set(changed);
+  const selection = analyzeSelectedFileCompatibility({
+    previousSelectedFiles: previousResult.selectedFiles,
+    selectedFiles,
+    manifestMatches: previousResult.manifestSha256 === manifestSha256,
+  });
+  if (!selection.compatible) return incompatible(selection.reason);
+  if (
+    selection.mode === "additive" &&
+    (!changedSet.has("planning/testing/manifest.json") ||
+      !selection.addedFiles.every((path) => changedSet.has(path)))
+  ) {
+    return incompatible("additive-manifest-diff-incomplete");
+  }
   const ignoredOrchestrationChanges = changed.filter((path) =>
     resumeOrchestrationPaths.has(path),
   );
+  const promotedPendingPaths = new Set(
+    selection.addedFiles
+      .filter((path) => path.startsWith("tests/functional/process/"))
+      .map((path) =>
+        path.replace("tests/functional/process/", "tests/functional/pending/"),
+      ),
+  );
   const sharedChanges = changed.filter(
-    (path) => !selected.has(path) && !resumeOrchestrationPaths.has(path),
+    (path) =>
+      !selected.has(path) &&
+      !resumeOrchestrationPaths.has(path) &&
+      !isNonExecutablePlanningMarkdown(path) &&
+      !promotedPendingPaths.has(path) &&
+      !(selection.mode === "additive" && additiveManifestPaths.has(path)),
   );
   if (sharedChanges.length > 0)
     return incompatible(`shared-input-changed:${sharedChanges.join(",")}`);
+  const ignoredNonExecutableChanges = changed.filter(
+    isNonExecutablePlanningMarkdown,
+  );
 
   const passed = collectPreviouslyPassedFiles({
     previousResult,
@@ -90,7 +179,6 @@ export function buildResumePlan({
     selectedFiles,
     groupFiles,
   });
-  const changedSet = new Set(changed);
   const inheritedFiles = passed.filter((path) => !changedSet.has(path));
   const inheritedSet = new Set(inheritedFiles);
   const executionFiles = selectedFiles.filter(
@@ -105,6 +193,12 @@ export function buildResumePlan({
     executionFiles,
     inheritBuild: successfulGroup(previousResult, "build"),
     ignoredOrchestrationChanges,
+    ignoredNonExecutableChanges,
+    promotedPendingPaths: changed.filter((path) =>
+      promotedPendingPaths.has(path),
+    ),
+    manifestMode: selection.mode,
+    addedFiles: selection.addedFiles,
   };
 }
 

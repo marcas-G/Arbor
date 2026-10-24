@@ -112,6 +112,10 @@ const result = {
         inheritedFiles: [],
         invalidatedFiles: [],
         ignoredOrchestrationChanges: [],
+        ignoredNonExecutableChanges: [],
+        promotedPendingPaths: [],
+        manifestMode: null,
+        addedFiles: [],
       }
     : null,
   groups,
@@ -742,6 +746,10 @@ try {
       inheritedFiles: plan.inheritedFiles,
       invalidatedFiles: plan.invalidatedFiles,
       ignoredOrchestrationChanges: plan.ignoredOrchestrationChanges,
+      ignoredNonExecutableChanges: plan.ignoredNonExecutableChanges,
+      promotedPendingPaths: plan.promotedPendingPaths,
+      manifestMode: plan.manifestMode,
+      addedFiles: plan.addedFiles,
       changedPaths,
     };
     console.log(
