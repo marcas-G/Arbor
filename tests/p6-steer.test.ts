@@ -468,10 +468,14 @@ describe("p6-steer", () => {
         ] as const;
         const invalidMissionAttempts = yield* Effect.forEach(
           invalidMissions,
-          (verificationMission, index) =>
-            Effect.match(
+          (verificationMission, index) => {
+            const commandId = rejectCommandIds[index];
+            if (commandId === undefined) {
+              return Effect.die(new Error("missing invalid-mission test id"));
+            }
+            return Effect.match(
               submitSteer(gateway, {
-                commandId: rejectCommandIds[index],
+                commandId,
                 payload: steerPayload({
                   steer: {
                     severity: "Normal",
@@ -498,7 +502,8 @@ describe("p6-steer", () => {
                   resolution: receipt.resolution,
                 }),
               },
-            ),
+            );
+          },
         );
         const mixedPayload = steerPayload({
           steer: {

@@ -49,6 +49,7 @@ export interface PublicClient {
     projectId: string,
     commandType: string,
     payload: unknown,
+    commandId?: string,
   ) => Promise<{
     readonly status: number;
     readonly payload: Record<string, unknown>;
@@ -125,6 +126,7 @@ export const makePublicClient = (
     projectId: string,
     commandType: string,
     payload: unknown,
+    commandId = functionalId("cmd"),
   ) => {
     const signal = requestSignal();
     return fetch(`${baseUrl}/commands`, {
@@ -135,7 +137,7 @@ export const makePublicClient = (
       },
       body: JSON.stringify({
         commandType,
-        commandId: functionalId("cmd"),
+        commandId,
         projectId,
         actor: "user:local",
         issuedAt: new Date().toISOString(),
