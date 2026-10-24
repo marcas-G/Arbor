@@ -77,7 +77,7 @@ export const runConversationCheckpointCompaction = (
     }>;
     readonly completeProviderTurn?: (
       activity: ExecutionActivity,
-      attemptNo: number,
+      attemptNo?: number,
     ) => Effect.Effect<"Continue" | "Stop">;
     readonly checkpointStore: ConversationCheckpointStoreService;
     readonly providerTurns: ProviderTurnStoreService;
@@ -267,29 +267,39 @@ export const runConversationCheckpointCompaction = (
       if (providerAdmission?.decision === "Stop") {
         return { _tag: "SafetyStop" as const };
       }
-      result = yield* deps.providerRuntime.runTurn({
-        providerTurnId,
-        executionId: input.execution.executionId,
-        sessionId: input.execution.sessionId,
-        contextEpoch: currentEpoch,
-        modelRef: input.modelRef,
-        ...(input.secretRef === undefined
-          ? {}
-          : { secretRef: input.secretRef }),
-        outputContractRef,
-        manifestJson,
-        request,
-      });
+      const providerResult = yield* Effect.match(
+        deps.providerRuntime.runTurn({
+          providerTurnId,
+          executionId: input.execution.executionId,
+          sessionId: input.execution.sessionId,
+          contextEpoch: currentEpoch,
+          modelRef: input.modelRef,
+          ...(input.secretRef === undefined
+            ? {}
+            : { secretRef: input.secretRef }),
+          outputContractRef,
+          manifestJson,
+          request,
+        }),
+        {
+          onFailure: (cause) => ({ ok: false as const, cause }),
+          onSuccess: (value) => ({ ok: true as const, value }),
+        },
+      );
       if (
         providerAdmission !== undefined &&
         deps.completeProviderTurn !== undefined &&
         (yield* deps.completeProviderTurn(
           providerAdmission.activity,
-          result.attemptNo,
+          providerResult.ok ? providerResult.value.attemptNo : undefined,
         )) === "Stop"
       ) {
         return { _tag: "SafetyStop" as const };
       }
+      if (!providerResult.ok) {
+        return yield* Effect.fail(providerResult.cause);
+      }
+      result = providerResult.value;
     } else {
       return yield* Effect.fail({
         _tag: "ConversationCompactionReceiptNotReplayable" as const,

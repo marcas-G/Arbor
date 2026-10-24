@@ -906,14 +906,17 @@ export const AgentLoopDriverLive = (
             });
           const completeProviderTurn = (
             activity: ExecutionActivity,
-            attemptNo: number,
+            attemptNo?: number,
           ) =>
             Effect.gen(function* () {
-              if (leaseGeneration === undefined && attemptNo === 0) {
+              if (
+                leaseGeneration === undefined &&
+                (attemptNo === undefined || attemptNo === 0)
+              ) {
                 return "Continue" as const;
               }
               return yield* admit(activity, {
-                retryCount: attemptNo,
+                ...(attemptNo === undefined ? {} : { retryCount: attemptNo }),
                 inFlight: "end",
                 ...(leaseGeneration !== undefined ? { leaseGeneration } : {}),
                 observedAt: yield* now(),

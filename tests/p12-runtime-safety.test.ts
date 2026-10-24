@@ -969,10 +969,10 @@ describe("P12-008 end-to-end violation -> Interrupted(RuntimeSafetyStop), Work O
             workspaceId,
             episodeJson: JSON.stringify({
               _tag: "WorkEpisode",
-              workId: "work-runtime-safety",
+              workId: String(workId),
               targetWorkRevision: 0,
             }),
-            workId: "work-runtime-safety",
+            workId,
             workProjectId: targetProjectId,
             workWorkspaceId: workspaceId,
             workRevision: 0,

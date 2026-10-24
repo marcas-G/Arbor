@@ -170,7 +170,7 @@ export interface ModelDecisionDependencies {
   }>;
   readonly completeProviderTurn: (
     activity: ExecutionActivity,
-    attemptNo: number,
+    attemptNo?: number,
   ) => Effect.Effect<"Continue" | "Stop">;
   readonly failure: (cause: unknown) => ExecutionDriverError;
   readonly now: () => Effect.Effect<string>;
@@ -6162,7 +6162,6 @@ export const runModelDecision = (
         if (providerAdmission !== undefined) {
           const endDecision = yield* completeProviderTurn(
             providerAdmission.activity,
-            0,
           );
           if (endDecision === "Stop") {
             return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
