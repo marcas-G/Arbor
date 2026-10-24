@@ -37,6 +37,12 @@ interface S2ExecutionRow {
   readonly settled_at: string | null;
 }
 
+interface S2WorkRow {
+  readonly work_id: string;
+  readonly lifecycle: string;
+  readonly revision: number;
+}
+
 interface S2EventRow {
   readonly event_type: string;
   readonly caused_by_command_id: string | null;
@@ -65,6 +71,11 @@ const readS2Snapshot = (databaseFile: string) => {
   db.exec("BEGIN");
   try {
     return {
+      works: db
+        .prepare(
+          "SELECT work_id, lifecycle, revision FROM works ORDER BY work_id",
+        )
+        .all() as unknown as S2WorkRow[],
       revisions: db
         .prepare(
           `SELECT work_id, work_revision, contract_json, record_kind,
@@ -145,6 +156,11 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
     let amendedClaimRequested = false;
     let verificationReadIssued = false;
     let criticalGateArmed = false;
+    let criticalHeldResponseWouldClaimCompletion = false;
+    let criticalHeldProviderCall:
+      | ProductionFixture["providerCalls"][number]
+      | undefined;
+    let criticalProviderCallCountAtGate = 0;
     let signalCriticalGate!: () => void;
     let releaseCriticalGate!: () => void;
     const criticalGateReached = new Promise<void>((resolve) => {
@@ -256,6 +272,7 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
             };
           }
           if (context.includes(directionGuidance) && criticalGateArmed) {
+            criticalHeldResponseWouldClaimCompletion = true;
             verificationReadIssued = false;
             return {
               _tag: "ToolCall",
@@ -277,7 +294,7 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
 
         return { _tag: "Text", text: `Observed ${marker}.` };
       },
-      beforeResponse: async (call) => {
+      beforeResponse: async (call, index) => {
         const context = JSON.stringify(call.messages);
         if (
           criticalGateArmed &&
@@ -285,6 +302,8 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
           call.tools.some((tool) => tool.function?.name === "claim_completion")
         ) {
           criticalGateArmed = false;
+          criticalHeldProviderCall = call;
+          criticalProviderCallCountAtGate = index + 1;
           signalCriticalGate();
           await criticalGateReleased;
           return "respond";
@@ -398,6 +417,21 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
       60_000,
     );
     await criticalGateReached;
+    const heldProviderCall = criticalHeldProviderCall;
+    if (heldProviderCall === undefined) {
+      throw new Error(
+        "S2 Critical Steer did not capture its held Provider request",
+      );
+    }
+    expect(criticalHeldResponseWouldClaimCompletion).toBe(true);
+    expect(JSON.stringify(heldProviderCall.messages)).toContain(
+      directionGuidance,
+    );
+    expect(
+      heldProviderCall.tools.some(
+        (tool) => tool.function?.name === "claim_completion",
+      ),
+    ).toBe(true);
     const activeExecutionId = currentV1?.activeExecution?.executionId;
     if (activeExecutionId === undefined) {
       throw new Error("S2 Critical Steer setup has no exact active main");
@@ -483,16 +517,34 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
             execution.settled_at !== null,
         ),
     );
-    expect(
-      quiesced.providerTurns.filter(
-        (turn) => turn.execution_id === activeExecutionId,
-      ),
-    ).toEqual(preStopProviderTurns);
+    // This request was already sent before Critical committed. Its response
+    // may settle durably, but no new Provider request may begin after commit.
+    expect(fixture.providerCalls).toHaveLength(criticalProviderCallCountAtGate);
+    const quiescedProviderTurns = quiesced.providerTurns.filter(
+      (turn) => turn.execution_id === activeExecutionId,
+    );
+    expect([
+      preStopProviderTurns.length,
+      preStopProviderTurns.length + 1,
+    ]).toContain(quiescedProviderTurns.length);
     expect(
       quiesced.toolInvocations.filter(
         (invocation) => invocation.execution_id === activeExecutionId,
       ),
     ).toEqual(preStopToolInvocations);
+    expect(
+      quiesced.works.find((work) => work.work_id === rootWork.workId),
+    ).toMatchObject({ lifecycle: "Open", revision: 2 });
+    expect(
+      quiesced.events
+        .slice(beforeCritical.events.length)
+        .map((event) => event.event_type),
+    ).not.toContain("WorkOutcomeAccepted");
+    expect(
+      quiesced.events
+        .slice(beforeCritical.events.length)
+        .map((event) => event.event_type),
+    ).not.toContain("WorkCompleted");
 
     const staleAcceptance = await client.rawCommand(
       project.projectId,
