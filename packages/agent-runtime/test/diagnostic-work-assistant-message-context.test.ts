@@ -14,7 +14,7 @@ import {
 } from "@arbor/model-context";
 import {
   type AgentLoopStepRecord,
-  type PortableModelRequest,
+  portableInputItems,
   type SessionEntryRecord,
   sha256Hex,
 } from "@arbor/ports";
@@ -76,8 +76,8 @@ const initialInput = sessionEntry(
   "input:work-bootstrap",
 );
 
-const persistedPlainAssistantOutput = (text: string): SessionEntryRecord =>
-  sessionEntry(
+const persistedPlainAssistantOutput = (text: string): SessionEntryRecord => ({
+  ...sessionEntry(
     2,
     "ModelOutput",
     {
@@ -89,7 +89,13 @@ const persistedPlainAssistantOutput = (text: string): SessionEntryRecord =>
     },
     "ProviderTurn",
     `${providerTurnInferenceId(executionId, 0)}:assistant`,
-  );
+  ),
+  source: {
+    kind: "ProviderTurn",
+    ref: `${providerTurnInferenceId(executionId, 0)}:assistant`,
+    contentHash: sha256Hex(JSON.stringify({ text, finishReason: "Stop" })),
+  },
+});
 
 const persistedToolCall = (
   sequence: number,
@@ -208,13 +214,6 @@ const compileProjectedRequest = (
   });
 };
 
-const compiledV2InputItems = (request: PortableModelRequest) => {
-  if (request.requestVersion !== 2) {
-    throw new Error("diagnostic projection must compile a v2 request");
-  }
-  return request.inputItems;
-};
-
 const loopStep = (turn: number): AgentLoopStepRecord => ({
   identity: { executionId, logicalStepNo: turn, repairAttempt: 0 },
   providerTurnId: providerTurnInferenceId(executionId, turn),
@@ -276,8 +275,8 @@ const runPlainStopWorkStep = async (turn: number) => {
   return { result, transitions, successors };
 };
 
-describe("diagnostic: WorkspaceWork text-only Stop continuity", () => {
-  it("persists output but leaves next provider-neutral projected input unchanged, then advances the same Execution", async () => {
+describe("S4-CONTEXT-DG-01: WorkspaceWork text-only Stop continuity", () => {
+  it("projects the accepted output into the next provider request, then advances the same Execution", async () => {
     const outputText = "I have finished.";
     const beforeOutput = projectSessionTimeline([initialInput]);
     const afterPersistedOutput = projectSessionTimeline([
@@ -289,26 +288,38 @@ describe("diagnostic: WorkspaceWork text-only Stop continuity", () => {
       firstSequence: 1,
       lastSequence: 2,
     });
-    expect(afterPersistedOutput.inputItems).toEqual(beforeOutput.inputItems);
-    expect(afterPersistedOutput.contextRefs).toEqual(beforeOutput.contextRefs);
+    expect(afterPersistedOutput.inputItems).toEqual([
+      ...beforeOutput.inputItems,
+      {
+        _tag: "Message",
+        role: "assistant",
+        text: outputText,
+      },
+    ]);
+    expect(afterPersistedOutput.contextRefs).toEqual([
+      ...beforeOutput.contextRefs,
+      `session:ProviderTurn:${providerTurnInferenceId(executionId, 0)}:assistant`,
+    ]);
     expect(
       projectedInputFingerprint([
         initialInput,
         persistedPlainAssistantOutput(outputText),
       ]),
-    ).toBe(projectedInputFingerprint([initialInput]));
-    expect(afterPersistedOutput.inputItems).not.toContainEqual({
-      _tag: "Message",
-      role: "assistant",
-      text: outputText,
-    });
+    ).not.toBe(projectedInputFingerprint([initialInput]));
     const beforeRequest = compileProjectedRequest([initialInput], 0);
     const nextRequest = compileProjectedRequest(
       [initialInput, persistedPlainAssistantOutput(outputText)],
       1,
     );
-    expect(nextRequest.request).toEqual(beforeRequest.request);
-    expect(nextRequest.manifest.compiledRequestHash).toBe(
+    expect(portableInputItems(nextRequest.request)).toContainEqual({
+      _tag: "Message",
+      role: "assistant",
+      text: outputText,
+    });
+    expect(portableInputItems(nextRequest.request)).not.toEqual(
+      portableInputItems(beforeRequest.request),
+    );
+    expect(nextRequest.manifest.compiledRequestHash).not.toBe(
       beforeRequest.manifest.compiledRequestHash,
     );
     expect(nextRequest.manifest.inputFrontier).toEqual({
@@ -391,11 +402,11 @@ describe("diagnostic: WorkspaceWork text-only Stop continuity", () => {
     expect(projectedInputFingerprint(toolEntries)).not.toBe(
       projectedInputFingerprint(assistantOnly),
     );
-    expect(compiledV2InputItems(controlRequest.request)).not.toEqual(
-      compiledV2InputItems(assistantRequest.request),
+    expect(portableInputItems(controlRequest.request)).not.toEqual(
+      portableInputItems(assistantRequest.request),
     );
-    expect(compiledV2InputItems(toolRequest.request)).not.toEqual(
-      compiledV2InputItems(assistantRequest.request),
+    expect(portableInputItems(toolRequest.request)).not.toEqual(
+      portableInputItems(assistantRequest.request),
     );
     expect(controlRequest.manifest.compiledRequestHash).not.toBe(
       assistantRequest.manifest.compiledRequestHash,
@@ -413,17 +424,5 @@ describe("diagnostic: WorkspaceWork text-only Stop continuity", () => {
       "StepEffectsCommitted",
     ]);
     expect(finalTurn.successors).toEqual([]);
-  });
-
-  it.skip("pending owner decision: project the settled assistant output as a DataOnly assistant message on the next Work turn", () => {
-    const projection = projectSessionTimeline([
-      initialInput,
-      persistedPlainAssistantOutput("I have finished."),
-    ]);
-    expect(projection.inputItems).toContainEqual({
-      _tag: "Message",
-      role: "assistant",
-      text: "I have finished.",
-    });
   });
 });
