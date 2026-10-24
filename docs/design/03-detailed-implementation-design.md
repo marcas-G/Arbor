@@ -1,10 +1,32 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.58\
+**Version:** 1.59\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.57\
-**Date:** 2026-10-21\
+**Supersedes:** v1.58\
+**Date:** 2026-10-24\
 **Depends on:** `Arbor System Design Specification v1.21`
+
+**Governance changes (v1.58 → v1.59): S3 AnyProducer producer evidence and settled-wait visibility**
+
+- Accepted token `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`, package SHA-256
+  `5b558d26b4140631f5c7a14bb743b1e42a9d8992d50feee1a3d2c3c98353b7c8`;
+  proposal SHA-256 (accepted manifest member)
+  `1fb00a66dda47365028ce9c347a49e2e887a7a9faba101296197bc01e95a8ca4`;
+  reviewed manifest SHA-256
+  `3f6183c868f136c6d69e2a2e9963704759e2e5ccf2cc9df9148c137296877fb0`.
+  Acceptance record:
+  `planning/results/S3-any-producer-wait-package-acceptance-20261024.record.md`.
+- P7 `01` §2 owns the accepted model-authored `DeclareDependency(AnyProducer)`
+  evidence gate and exact replay-first order. The P7 canonical Command, matcher,
+  Dependency lifecycle, coordinator, and wake semantics are unchanged.
+- P10 `02` §1 owns the read-only APW-3 Attention derivation for an eligible
+  settled AnyProducer wait. It reuses the existing `WaitingOnVacantProducer`
+  label/target/dedup family, and does not add DDL, a migration, a new public
+  Attention source literal, event, receipt, wake reason, or persistent marker.
+- This acceptance authorizes only the design landing. Source implementation,
+  migrations, and real-provider qualification require separate explicit
+  implementation authorization. S3 remains unqualified until its public
+  end-to-end journey passes.
 
 **Governance changes (v1.57 → v1.58): ProviderTurnId V2 closed encoding**
 
