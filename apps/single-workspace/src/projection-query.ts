@@ -1,4 +1,5 @@
 import type { ConversationResponseStatus } from "@arbor/api-contracts";
+import { satisfactionCommandId } from "@arbor/application";
 import type {
   DomainEvent,
   ExecutionSettlement,
@@ -21,15 +22,20 @@ import {
   AgentLoopStepStore,
   AttentionProjectionStore,
   Clock,
+  CommandStore,
   CurrentSandboxAuthoritySnapshotPort,
+  DeliverableRepository,
   DependencyRepository,
   DomainEventJournal,
   EvidenceRepository,
   ExecutableApprovalStore,
   ExecutionRepository,
+  FormationFulfillmentStore,
+  FormationProposalStore,
   MessageStore,
   P4SandboxOutcomeReadPort,
   ProjectionQueryPort,
+  ProjectRepository,
   ProviderTurnStore,
   RecoveryAttentionFactStore,
   RetryVerificationOriginRepository,
@@ -51,6 +57,7 @@ import {
   WorkWaitStore,
 } from "@arbor/ports";
 import type {
+  AnyProducerSettledWaitFact,
   AttentionReadDeps,
   AttentionSourceExecutionBinding,
   ConversationHistoryCursor,
@@ -78,6 +85,11 @@ import {
 } from "@arbor/projection-runtime";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+import {
+  type AnyProducerEvidenceDependencies,
+  collectAnyProducerEvidenceFacts,
+  isSettledAnyProducerWaitEligible,
+} from "./any-producer-evidence.js";
 import { buildSandboxPolicyCandidateReadV2 } from "./sandbox-policy-candidate-read.js";
 
 interface ConversationJobViewRow {
@@ -279,6 +291,17 @@ const projectionQueryService = (
     const blockersOption = yield* Effect.serviceOption(WorkBlockerStore);
     const blockers = Option.getOrUndefined(blockersOption);
     const dependencies = yield* DependencyRepository;
+    const projectRepository = yield* Effect.serviceOption(ProjectRepository);
+    const formationProposals = yield* Effect.serviceOption(
+      FormationProposalStore,
+    );
+    const formationFulfillments = yield* Effect.serviceOption(
+      FormationFulfillmentStore,
+    );
+    const deliverableRepository = yield* Effect.serviceOption(
+      DeliverableRepository,
+    );
+    const commandStore = yield* Effect.serviceOption(CommandStore);
     const verifications = yield* VerificationRepository;
     const evidence = yield* EvidenceRepository;
     const acceptances = yield* AcceptanceRepository;
@@ -554,6 +577,169 @@ const projectionQueryService = (
         }),
       );
 
+    const listAnyProducerSettledWaits = (projectId: ProjectId) =>
+      inTx(
+        Effect.gen(function* () {
+          if (
+            Option.isNone(projectRepository) ||
+            Option.isNone(formationProposals) ||
+            Option.isNone(formationFulfillments) ||
+            Option.isNone(deliverableRepository) ||
+            Option.isNone(commandStore)
+          ) {
+            return yield* Effect.fail(
+              new Error("APW-3 canonical evidence stores are unavailable"),
+            );
+          }
+          const project = yield* projectRepository.value.findById(projectId);
+          if (Option.isNone(project) || project.value.lifecycle !== "Open") {
+            return [];
+          }
+          const workspaceRows = yield* sql.unsafe<{
+            readonly workspace_id: string;
+          }>(
+            "SELECT workspace_id FROM workspaces WHERE project_id = ? ORDER BY workspace_id",
+            [projectId],
+          );
+          const workspaceIds: WorkspaceId[] = [];
+          for (const row of workspaceRows) {
+            const workspace = yield* workspaces.findById(
+              row.workspace_id as WorkspaceId,
+            );
+            if (
+              Option.isSome(workspace) &&
+              workspace.value.projectId === projectId &&
+              workspace.value.lifecycle === "Active"
+            ) {
+              workspaceIds.push(workspace.value.workspaceId);
+            }
+          }
+          const activeExecutions = yield* executions.findUnsettledExecutions();
+          if (
+            activeExecutions.some(
+              (execution) =>
+                execution.projectId === projectId &&
+                execution.state.status === "Active",
+            )
+          ) {
+            return [];
+          }
+          const projectWorks = yield* Effect.forEach(
+            workspaceIds,
+            (workspaceId) => works.listByWorkspace(workspaceId),
+            { concurrency: 1 },
+          );
+          const openWorks = projectWorks
+            .flat()
+            .filter(
+              (work) =>
+                work.projectId === projectId && work.lifecycle === "Open",
+            );
+          const waitsSnapshot = yield* waits.listActive();
+          const evidenceDependencies: AnyProducerEvidenceDependencies = {
+            projects: projectRepository.value,
+            workspaces,
+            listWorkspaceIdsByProject: (targetProjectId) =>
+              Effect.map(
+                sql.unsafe<{ readonly workspace_id: string }>(
+                  "SELECT workspace_id FROM workspaces WHERE project_id = ? ORDER BY workspace_id",
+                  [targetProjectId],
+                ),
+                (rows) => rows.map((row) => row.workspace_id as WorkspaceId),
+              ),
+            works,
+            proposals: formationProposals.value,
+            fulfillments: formationFulfillments.value,
+            deliverables: deliverableRepository.value,
+            tx,
+          };
+          const out: AnyProducerSettledWaitFact[] = [];
+          for (const dependency of yield* dependencies.listUnsatisfiedByProject(
+            projectId,
+          )) {
+            if (
+              dependency.state !== "Unsatisfied" ||
+              dependency.producerBinding._tag !== "AnyProducer"
+            ) {
+              continue;
+            }
+            const consumerWork = openWorks.find(
+              (work) => work.workId === dependency.consumerWorkId,
+            );
+            if (consumerWork === undefined) continue;
+            const wait = waitsSnapshot.find(
+              (candidate) => candidate.workId === dependency.consumerWorkId,
+            );
+            if (
+              wait === undefined ||
+              wait.waitSpec.mode !== "Any" ||
+              !wait.waitSpec.conditions.some(
+                (condition) =>
+                  condition._tag === "DependencyChanged" &&
+                  condition.dependencyId === dependency.dependencyId &&
+                  Number(condition.observedRevision) ===
+                    Number(dependency.revision),
+              )
+            ) {
+              continue;
+            }
+            const evidence = yield* collectAnyProducerEvidenceFacts(
+              evidenceDependencies,
+              {
+                projectId,
+                consumerWorkId: dependency.consumerWorkId,
+                expectedDeliverable: dependency.expectedDeliverable,
+              },
+            );
+            let deliverableMayConverge = false;
+            for (const candidate of evidence.matchingDeliverables) {
+              const receipt = yield* commandStore.value.findResolution(
+                satisfactionCommandId(
+                  candidate.deliverableId as never,
+                  dependency.dependencyId,
+                  dependency.revision,
+                ),
+              );
+              if (
+                Option.isNone(receipt) ||
+                (receipt.value.resolution !== "Committed" &&
+                  receipt.value.resolution !== "TerminalRejected")
+              ) {
+                deliverableMayConverge = true;
+                break;
+              }
+            }
+            if (
+              !isSettledAnyProducerWaitEligible({
+                projectId,
+                projectOpen: evidence.projectOpen,
+                projectHasActiveExecution: false,
+                dependency,
+                consumerWork,
+                wait,
+                evidence,
+                matchingDeliverableMayConverge: deliverableMayConverge,
+              })
+            ) {
+              continue;
+            }
+            const owner = yield* workspaces.findById(consumerWork.workspaceId);
+            if (
+              Option.isNone(owner) ||
+              owner.value.projectId !== projectId ||
+              owner.value.lifecycle !== "Active"
+            ) {
+              continue;
+            }
+            out.push({
+              dependencyId: dependency.dependencyId,
+              consumerWorkspaceId: owner.value.workspaceId,
+            });
+          }
+          return out;
+        }),
+      );
+
     const attention: AttentionReadDeps = {
       listWorkspacesByProject,
       listWorksByWorkspace: (workspaceId) =>
@@ -563,6 +749,13 @@ const projectionQueryService = (
       listOpenVerifications: () => inTx(verifications.listOpen()),
       listUnsatisfiedDependencies: (projectId) =>
         inTx(dependencies.listUnsatisfiedByProject(projectId)),
+      ...(Option.isSome(projectRepository) &&
+      Option.isSome(formationProposals) &&
+      Option.isSome(formationFulfillments) &&
+      Option.isSome(deliverableRepository) &&
+      Option.isSome(commandStore)
+        ? { listAnyProducerSettledWaits }
+        : {}),
       findDependency: (dependencyId) =>
         inTx(dependencies.findById(dependencyId as never)),
       readEvents,
