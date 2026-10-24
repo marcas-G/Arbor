@@ -1,6 +1,6 @@
 # RAI-DG-02 — Terminal Provider failure exact Work-revision hold
 
-**Version:** v1 fixed governance proposal draft
+**Version:** v2 fixed governance proposal draft
 
 **Status:** awaiting independent review and manual acceptance. This draft does
 not modify `docs/design/**`, authorize production code, register a migration,
@@ -42,7 +42,7 @@ blind/backoff retry loop.
 Suggested manual acceptance token:
 
 ```text
-ACCEPT_RAI_DG_02_TERMINAL_PROVIDER_FAILURE_HOLD_V1
+ACCEPT_RAI_DG_02_TERMINAL_PROVIDER_FAILURE_HOLD_V2
 ```
 
 Acceptance authorizes only the exact owner landing package below. Code,
@@ -101,18 +101,22 @@ For canonical Work `w` at revision `r`, define
 `terminalProviderFailureHeld(w,r)` only when all conditions below hold in one
 consistent read:
 
-1. A unique Execution exists in the same Project and owning Workspace with
-   exact WorkEpisode binding `(w,r)`.
+1. Enumerate zero or more candidate Executions in the same Project and owning
+   Workspace with exact WorkEpisode binding `(w,r)`. Each candidate
+   `executionId` must resolve to exactly one Execution row; repeated failed
+   Executions for the same Work revision are allowed historical evidence and
+   do not make the source ambiguous by cardinality alone.
 2. The Execution is settled `Failed(ExecutionFailure(reason))`, with exact
    reason `ProviderFailure:<kind>` and `<kind>` in the closed terminal set
    `AuthenticationFailed | RequestRejected | ProtocolViolation`.
-3. A unique `agent_loop_steps` row for that Execution is
+3. Exactly one settlement-producing `agent_loop_steps` row for each candidate
+   Execution is
    `SettlementProposed`, contains byte-equivalent settlement semantics, and
    binds the exact settlement-producing `providerTurnId`. The Step's
    `(logicalStepNo, repairAttempt)` is retained as source identity.
-4. That unique ProviderTurn belongs to the same Execution and Session, binds a
+4. Exactly one ProviderTurn for that Step belongs to the same Execution and Session, binds a
    valid Manifest and Output Contract, and is durably `finish_reason=Failed`.
-5. The Turn has one final settled ProviderAttempt whose outcome is
+5. The Turn has exactly one final settled ProviderAttempt whose outcome is
    `TerminalFailure`, whose `provider_error_kind` equals `<kind>`, whose
    failure taxonomy version is recognized, and whose durable retry decision is
    `Stop` because the kind is not retry eligible.
@@ -120,10 +124,10 @@ consistent read:
    earlier Step/Turn in the same Execution does not disqualify the source and
    must not be mistaken for the settlement-producing Turn.
 
-`RateLimited`, `ProviderUnavailable` and `StreamInterrupted` are not sources
-while the existing safe-retry policy remains live. A retryable failure that
-later exhausts into a distinct non-Provider ExecutionFailure is outside this
-source. `ModelOutputContractViolation`, `ContextUnsatisfiable`, tool failures,
+`RateLimited`, `ProviderUnavailable` and `StreamInterrupted` are never sources
+for this predicate, including after retry-budget or deadline exhaustion and
+regardless of the final Execution reason text. Only the three closed terminal
+kinds with `TerminalFailure + Stop` qualify. `ModelOutputContractViolation`, `ContextUnsatisfiable`, tool failures,
 denied actions, safety stops, unresolved effects and ConversationResponse
 Episodes retain their existing contracts.
 
@@ -159,6 +163,8 @@ The bounded source identity returned to Runtime is:
 type TerminalProviderFailureSource = {
   readonly sourceKind: "TerminalProviderFailureSettlement";
   readonly executionId: ExecutionId;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
   readonly providerTurnId: ProviderTurnId;
   readonly attemptNo: number;
   readonly failureKind:
@@ -185,12 +191,12 @@ the same predicate inside its existing `BEGIN IMMEDIATE` transaction.
 | Current durable state | Result |
 |---|---|
 | Open Work `r`, terminal source bound exactly to `r` | `Noop(WorkReadmissionHeld)`; no new Execution/Provider/action/command |
-| Source belongs to another Work, child, sibling, Workspace, Project or revision | no effect on this Work; normal rules apply |
+| Source belongs to another Work, child, sibling, Workspace or Project | no effect on this Work; normal rules apply |
 | Source revision lower than canonical current revision | immutable audit evidence only; not an active hold |
 | Source revision higher than canonical revision, or binding is malformed/ambiguous | typed integrity failure; no admission |
 | Non-Work Episode terminal Provider failure | outside this RAI amendment; owning episode lifecycle applies |
 | Authorized `SteerWork` commits `r -> r+1` | old hold becomes stale; `r+1` is evaluated by ordinary rules |
-| Restart, timer, polling, P10 ACK/rebuild, config reload, daemon replacement | hold remains |
+| Restart, timer, polling, unrelated Attention ACK/rebuild, config reload, daemon replacement | hold remains |
 
 The hold does not mutate Work lifecycle, currentWorkId, Work contract,
 Dependency, Deliverable, Verification, Acceptance, Permission, Sandbox or
@@ -209,9 +215,12 @@ human/Parent `SteerWork` authority and exact expected Work revision:
   Work contract itself changes.
 - Normal or Critical severity keeps existing P6 semantics. A settled failed
   Execution is not a Stop target; no synthetic Stop is created.
-- The old failure evidence remains immutable and inspectable. The Attention row
-  becomes inactive solely because its exact source revision no longer equals
-  canonical current revision.
+- The old failure evidence remains immutable and inspectable. The derived hold
+  and ActionRequired row are active only while the canonical Work is `Open` at
+  the exact source revision. `SteerWork r -> r+1` is the only v1 path that
+  resumes execution. An independently authorized transition to `Completed` or
+  `Cancelled` also makes the retry-oriented row inactive without deleting or
+  rewriting its source evidence.
 
 An infrastructure operator may fix credentials, deployment configuration or
 Provider adapter code, but that external repair alone does not authorize a new
@@ -222,7 +231,14 @@ this package.
 
 ### 5. Typed information and user surface
 
-P10 adds one source literal `TerminalProviderFailure` with severity
+P10 adds two query-derived source literals. Neither is backed by an event,
+outbox, queue, projection marker or new table; P10 derives both in the same
+read transaction and freshness barrier from the P2-owned proof query over the
+canonical terminal chain. There is therefore no consumer ACK, offset, reset or
+marker rebuild for these sources. Acknowledging other materialized Attention
+rows cannot clear the admission hold or either query-derived row.
+
+The valid-source literal is `TerminalProviderFailure` with severity
 `ActionRequired`, targeted to the exact owning Workspace. Its public safe
 fields are:
 
@@ -251,6 +267,24 @@ existing Steer affordance pre-bound to canonical `workId + revision`. It does
 not add a one-click blind retry. The immutable P3 Attempt/Turn evidence remains
 the technical source; the read model is only presentation.
 
+`occurredAt` is the exact validated final ProviderAttempt `settledAt`. A
+missing, malformed or non-canonical UTC instant is an integrity failure, never
+query time and never a P10 clock value.
+
+The integrity literal is `TerminalProviderFailureIntegrity`, severity
+`ActionRequired`, with fixed summary “Arbor cannot safely verify a terminal
+provider-failure recovery record. Execution remains blocked; inspect the
+bounded integrity code before retrying.” Its `failureCode` is the exact closed
+`ReadmissionGateIntegrityFailure` reason. When the Execution's Project,
+Workspace, Work and revision binding is uniquely provable, target that owning
+Workspace and deduplicate by
+`terminal-provider-failure-integrity:<executionId>:<logicalStepNo>:<repairAttempt>:<failureCode>`.
+If even that Episode binding is missing or contradictory, target the Project
+root Workspace using the uniquely proven Execution Project; if the Project is
+not uniquely provable, the read fails with bounded
+`ProjectionIntegrityFailure` and returns no guessed row. Integrity rows expose
+only typed codes and bounded identities, never raw JSON or provider content.
+
 This bounded typed fact is useful operational information rather than an
 exception crash. It is not automatically inserted into a new Provider request:
 the Provider may be rejecting that very request shape. The human's explicit
@@ -260,9 +294,12 @@ Steer supplies any safe recovery guidance to the next Work Episode.
 
 No new gate table or source fact table is required. The existing Execution,
 AgentLoopStep, ProviderTurn, ProviderAttempt, Manifest and Episode binding form
-the source ledger. The query must validate exact uniqueness and equality; it
-must not choose `latest`, parse Session text, inspect response bodies, or infer
-the Work from `currentWorkId` or Attention target.
+the source ledger. The query enumerates all candidate Executions for the exact
+Work tuple, then validates uniqueness and equality inside each candidate
+Execution/Step/Turn/Attempt/Manifest chain; historical repetition across
+different Execution identities is valid. The query must not choose `latest`,
+parse Session text, inspect response bodies, or infer the Work from
+`currentWorkId` or Attention target.
 
 Extend the existing RAI integrity union with bounded reasons as needed:
 
@@ -279,25 +316,27 @@ SourceProviderAttemptMismatch
 SourceManifestMissing
 SourceManifestMismatch
 FailureTaxonomyUnsupported
-FailureFingerprintMismatch
+FailureOccurrenceTimeInvalid
 ```
 
 An invalid candidate returns `ReadmissionGateIntegrityFailure` and commits no
 Execution. It is not silently ignored and is not attached to a guessed Work.
 
-For historical databases, uniquely provable existing chains become active
+For historical databases, individually provable existing chains become active
 derived holds without rewriting their rows. Multiple repeated chains with the
 same fingerprint deduplicate in P10 but all remain audit evidence. Any
-ambiguous/malformed chain fails closed and requires an operator-visible
-integrity Attention; it is never automatically repaired or migrated by
-guessing. Whether an existing user database may be upgraded remains governed
-by the separate migration/upgrade qualification and is not authorized here.
+ambiguous/malformed chain fails closed and produces the query-derived bounded
+integrity surface defined in §5; it is never automatically repaired or
+migrated by guessing. Whether an existing user database may be upgraded
+remains governed by the separate migration/upgrade qualification and is not
+authorized here.
 
 ### 7. Crash and recovery
 
-- Before the terminal Attempt/Turn and settlement-producing Step are durably
-  complete, existing P3/P9 recovery resumes the same Turn/Execution and cannot
-  infer a hold from partial evidence.
+- Before the terminal Attempt, ProviderTurn `finish_reason=Failed`, and
+  settlement-producing Step are each durably complete, existing P3/P9
+  recovery resumes the same Turn/Execution and cannot infer a hold from any
+  partial prefix.
 - P2 may commit the final Execution settlement only after the exact chain is
   durable and validated. Once settlement commits, the derived source exists.
 - After settlement commit, a daemon crash cannot permit a new same-revision
@@ -306,8 +345,11 @@ by the separate migration/upgrade qualification and is not authorized here.
 - Classification and authoritative admission read the source in consistent
   snapshots; the `BEGIN IMMEDIATE` recheck closes the race with concurrent
   settlement or Steer.
-- A Steer race linearizes by commit order. Before `r -> r+1`, `r` is held;
-  after it, only `r+1` can be admitted.
+- A synchronized settlement/admission/Steer race linearizes by SQLite commit
+  order. Before `r -> r+1`, `r` is held; after it, only `r+1` can be admitted.
+  Two connections or daemons may observe candidates concurrently, but the
+  transaction-time gate permits at most one new-revision Execution and zero
+  same-revision admission after the terminal chain commits.
 
 ## Owner landing package
 
@@ -357,12 +399,14 @@ itself to obtain green.
    succeeds with a tool action, next Turn is `RequestRejected`; prove one
    terminal Attempt, one failed Execution, one hold/Attention and no loop.
 3. **Restart:** kill immediately before and after terminal Attempt settlement,
-   Step `SettlementProposed`, and final Execution settlement. Recovery either
-   completes the same chain or observes the hold; it never starts a second
-   same-revision Execution.
+   ProviderTurn `finish_reason=Failed` commit, Step `SettlementProposed`, and
+   final Execution settlement. Every partial chain produces no guessed hold
+   and no new admission; recovery either completes the same chain or observes
+   the hold, never a second same-revision Execution.
 4. **Retryable negatives:** RateLimited, ProviderUnavailable and
-   StreamInterrupted retain bounded same-Turn ProviderAttempt retry. They do
-   not create this hold while retry is eligible.
+   StreamInterrupted retain their existing bounded retry semantics. Exercise
+   eligible retry, retry-budget exhaustion and deadline exhaustion; none
+   creates this hold, regardless of the final Execution reason text.
 5. **Other-category negatives:** output-contract repair, ContextUnsatisfiable,
    denied tool action, RuntimeSafetyStop, OutcomeUnknown and P17 response
    failure follow existing owners with no reclassification.
@@ -375,9 +419,12 @@ itself to obtain green.
    preserves the Work contract, failure audit and source records, removes old
    active Attention, and admits at most one `r+1` Execution. Repeat with crash
    immediately before/after Steer commit.
-9. **Projection lag/rebuild:** P10 lag, ACK, reset, rebuild and restart never
-   weaken admission or revive a stale old-revision row. Hundreds of equivalent
-   legacy rows deduplicate to one current Attention.
+9. **Query-derived presentation and lifecycle:** scheduler classification,
+   P10 Attention and Work Detail use one consistent canonical snapshot;
+   acknowledging unrelated materialized rows, restart and query repetition
+   never weaken admission. Hundreds of equivalent historical rows deduplicate
+   to one current Attention. Steer, CompleteWork and CancelWork each make the
+   old retry-oriented row inactive according to §4 without deleting evidence.
 10. **No unsafe mutation:** assert Work stays Open, no automatic CancelWork,
     CompleteWork, Verification, Acceptance, WorkWait, timer, Permission,
     Sandbox, ResourceBoundary or provider-config mutation.
@@ -391,6 +438,15 @@ itself to obtain green.
 13. **Existing gates:** focused P2/P3/P6/P7/P9/P10/P12 suites,
     `pnpm check`, complete-coverage `pnpm test:functional`, package test, and
     the real S2 journey pass on one committed candidate.
+14. **Settlement/admission/Steer race:** synchronize two independent SQLite
+    connections and two daemons around the final terminal settlement,
+    Work-bound admission recheck and Steer commit. Assert commit-order
+    linearization, zero same-revision admission and at most one new-revision
+    Execution.
+15. **Historical repetition:** open a read-only disposable copy of the retained
+    617-failure fixture, or an equivalent generated fixture with hundreds of
+    exact repetitions, and prove one hold/Attention without rewriting source
+    rows. Malformed variants expose only the bounded integrity surface.
 
 ## Explicit non-claims
 

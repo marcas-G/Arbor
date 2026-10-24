@@ -86,11 +86,14 @@
       "id": "submitted-decision-corruption",
       "name": "Submitted DecisionEpisode 损坏的终态处置",
       "owner": "Decision Runtime / Manual Governance",
-      "status": "BLOCKED",
+      "status": "PASS",
       "evidenceClass": ["process"],
-      "exactSha": null,
-      "evidence": ["planning/results/current-recovery-closure-audit-772ba5d7.result.md"],
-      "closureCondition": "Owner 冻结 durable terminal/Attention/reconciliation 语义并授权后，精确损坏用例在真实进程恢复矩阵通过；不得将隔离负例解释成 PASS。"
+      "exactSha": "eece5de33dfed3af631ab4da10d45e3a74fff1f2",
+      "evidence": [
+        "planning/results/AH10-P41-submitted-decision-binding-process-qualification.result.md",
+        "planning/results/submitted-decision-closure-requalification-2026-10-24.result.md"
+      ],
+      "closureCondition": "已接受的 P41 fact-first 处置保留原 Command/选择，阻止 Provider/动作重放，公开一条 ActionRequired，并仅由授权 Stop 完成一致收尾；Workspace/Manifest 提交前后四案已在同一 SHA 、零 retry 下通过。"
     },
     {
       "id": "native-os-sandbox",
@@ -104,13 +107,13 @@
     },
     {
       "id": "existing-database-upgrade",
-      "name": "已有用户数据库升级支持范围",
+      "name": "首发数据库支持范围：仅全新 schema 52",
       "owner": "Persistence / Release Engineering",
-      "status": "BLOCKED",
+      "status": "PASS",
       "evidenceClass": ["process", "package"],
-      "exactSha": null,
-      "evidence": ["planning/results/release-candidate-convergence-772ba5d7.result.md", "planning/results/current-recovery-closure-audit-772ba5d7.result.md"],
-      "closureCondition": "若首发支持既有库升级，须有明确授权以及在线/保留用户库升级、失败恢复和备份恢复资格；若不支持，安装器必须拒绝/引导到明确受支持的新库路径，不能把 disposable migration 当作用户库资格。"
+      "exactSha": "eece5de33dfed3af631ab4da10d45e3a74fff1f2",
+      "evidence": ["planning/results/release-candidate-convergence-772ba5d7.result.md", "planning/results/S2-schema52-convergence.result.md", "planning/results/fresh-schema52-release-scope-2026-10-24.result.md"],
+      "closureCondition": "首发只支持离线 fresh 创建的 schema 52；普通启动拒绝 38–51 及更新版本，不自动迁移。操作文档明确禁止对保留用户数据使用 copy/resume-copy。未来支持旧库须另行资格化。"
     },
     {
       "id": "full-local-gates",
