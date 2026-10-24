@@ -6,18 +6,23 @@ import { describe, expect, it } from "vitest";
 import {
   AcceptanceRepositoryLive,
   ClockLive,
+  CommandStoreLive,
   ConsumerDeadLetterStoreLive,
   ConsumerOffsetStoreLive,
+  DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
   EvidenceRepositoryLive,
   ExecutionRepositoryLive,
+  FormationFulfillmentStoreLive,
+  FormationProposalStoreLive,
   IdGeneratorLive,
   InboxProjectionStoreLive,
   layer,
   MessageStoreLive,
   P8_MIGRATIONS,
   ProjectionStoreLive,
+  ProjectRepositoryLive,
   rebuildProjection,
   runConsumerBatch,
   runMigrations,
@@ -1383,8 +1388,13 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
       const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
       const stores = Layer.mergeAll(
         Layer.provide(TransactionPortLive, infra),
+        Layer.provide(ProjectRepositoryLive, infra),
         Layer.provide(WorkspaceRepositoryLive, infra),
         Layer.provide(WorkRepositoryLive, infra),
+        Layer.provide(DeliverableRepositoryLive, infra),
+        Layer.provide(FormationProposalStoreLive, infra),
+        Layer.provide(FormationFulfillmentStoreLive, infra),
+        Layer.provide(CommandStoreLive, infra),
         Layer.provide(ExecutionRepositoryLive, infra),
         Layer.provide(WorkWaitStoreLive, infra),
         Layer.provide(DependencyRepositoryLive, infra),
@@ -1831,7 +1841,13 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
     );
     const mission: VerificationMission = {
       goal: "g",
-      criteria: [],
+      criteria: [
+        {
+          criterionId: "human-intervention-proof",
+          requirement: "the intervention remains revision-bound",
+          required: true,
+        },
+      ],
       riskRequirements: [],
     };
     const humanActor = p7TestActor;
@@ -1873,7 +1889,13 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         ) => ({
           workId: work,
           workspaceId: p7RootWorkspace,
-          steer: { severity, guidance: `cnt-acc-steer-${severity}` },
+          steer: {
+            severity,
+            operation: {
+              kind: "DirectionGuidance" as const,
+              guidance: `cnt-acc-steer-${severity}`,
+            },
+          },
           expectedWorkRevision: parse(WorkRevision)(revision),
           provenance: { source: "HumanInput" as const },
         });
@@ -1891,7 +1913,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
               commandType: "SteerWork",
               projectId: p7Project,
               actor,
-              schemaVersion: "1",
+              schemaVersion: "2",
               payload,
             }),
             projectId: p7Project,
