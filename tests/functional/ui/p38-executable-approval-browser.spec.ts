@@ -910,13 +910,49 @@ test("P38 browser approval resumes the same action under explicitly configured T
     throw new Error(
       "P38 browser approval diagnostic identity was not captured",
     );
+  const completedDiagnosticContext = {
+    ...diagnosticContext,
+    approveCommand: approveCommandEvidence,
+  };
+  await expect
+    .poll(
+      () => {
+        const snapshot = readP38BrowserFailureSnapshot(
+          fixture?.databaseFile ?? "",
+          fixture?.workspaceDirectory ?? "",
+          completedDiagnosticContext,
+        );
+        const approval = snapshot.approval as
+          | { readonly state?: string }
+          | undefined;
+        const action = snapshot.action as
+          | { readonly state?: string }
+          | undefined;
+        const invocations = snapshot.invocations as Array<{
+          readonly settlement_kind?: string | null;
+        }>;
+        const toolResults = snapshot.toolResults as ReadonlyArray<unknown>;
+        return {
+          approvalState: approval?.state ?? null,
+          actionState: action?.state ?? null,
+          invocationSettlements: invocations.map(
+            (invocation) => invocation.settlement_kind ?? null,
+          ),
+          toolResultCount: toolResults.length,
+        };
+      },
+      { timeout: 45_000 },
+    )
+    .toEqual({
+      approvalState: "Consumed",
+      actionState: "Applied",
+      invocationSettlements: ["Success"],
+      toolResultCount: 1,
+    });
   const completedSnapshot = readP38BrowserFailureSnapshot(
     fixture.databaseFile,
     fixture.workspaceDirectory,
-    {
-      ...diagnosticContext,
-      approveCommand: approveCommandEvidence,
-    },
+    completedDiagnosticContext,
   );
   const completedApproval = completedSnapshot.approval as {
     readonly approval_id: string;
