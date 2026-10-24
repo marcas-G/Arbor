@@ -11,31 +11,34 @@ Audit scope: read-only review of frozen design, current source/test inventory, a
 This is the current delivery index. The module matrix, S1–S4 disposition, and
 open-gate list below are the historical 2026-10-20 audit of
 `e94a204a7988417eead9bc0fc6a301140d2f7ca9`; read them as history, not as
-current status. The current audited candidate is `bba9ba84`. It includes the
+current status. The current audited candidate is `5b8482c9`. It includes the
 reviewed P38 UX, Critical Steer option A, bounded P39 writer lock, S2 Wait
-eligibility, real S2/S3/S4 harnesses, S3 non-Work safety Attention handling,
-failure-fixture retention, the corrected and reviewed S4-B public oracle, and
-the synthetic V6 policy-drift qualification.
+eligibility and revision implementation, real S2/S3/S4 harnesses, S3 non-Work
+safety Attention handling, failure-fixture retention, the corrected and
+reviewed S4-B public oracle, and the synthetic V6 policy-drift qualification.
+`pnpm check` passes on this exact candidate; see
+[`pnpm-check-5b8482c9.result.md`](pnpm-check-5b8482c9.result.md).
 
 Four governance gaps had fixed packages with independent reviews at Blocking =
 0. S2 has since been accepted, landed, reviewed, implemented and qualified at
-the scoped scripted public-process layer below. The other three gaps remain
-gated on manual acceptance, exact owner-document landing/review, and separate
-implementation authorization; their code implementation has not started.
+the scoped scripted public-process layer below. S3, S4-CONTEXT-DG-01 and
+P12-DG-01 have also been accepted, landed, authorized and implemented at the
+scoped layers cited below. These implementations do not close their broader
+scenario/release qualification.
 
 | Governance gap | Integrated plan | Manual acceptance token | Conditional implementation authorization |
 |---|---|---|---|
 | S2-RDG-01 — SteerWork revision contract | `d1523c17`; [fixed-package review](S2-steer-work-revision-fixed-package.review.md), Blocking = 0 | `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1` (accepted; implementation authorization was separately granted after owner landing review) | Implemented and landing-reviewed; scripted L2 public-process journey PASS at `410695f9`. Real-provider S2 remains OPEN. |
-| S3 — AnyProducer settled-wait eligibility | `218b3de3` / `1b13acac`; [fixed-package review](S3-any-producer-wait-fixed-package.review.md), Blocking = 0 | `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1` (acceptance authorizes design landing only) | Separate explicit implementation authorization after owner landing; the plan does not specify or issue an implementation-authorization token. |
-| S4-CONTEXT-DG-01 — assistant-message projection | `bba9ba84`; [Option A review](S4-CONTEXT-DG-01-option-a-independent-review-20261024.result.md), Blocking = 0 | `ACCEPT_S4_CONTEXT_DG_01_ASSISTANT_MESSAGE_PROJECTION_OPTION_A` | Separate explicit authorization after acceptance and owner landing review; real S4-B qualification also requires separate authorization. The plan does not specify or issue an implementation-authorization token. |
-| P12-DG-01 — D2/D4 progress convergence | `869a4b2f` / `390a0cf0`; [revision-2 review](P12-DG-01-d2-d4-progress-convergence-independent-review-rev2-20261024.result.md), Blocking = 0 | `ACCEPT_P12_DG_01_D2_D4_PROGRESS_CONVERGENCE` | Separate explicit P12 implementation authorization after acceptance; the plan does not specify or issue an implementation-authorization token. **Implementation has not started.** |
+| S3 — AnyProducer settled-wait eligibility | `218b3de3` / `1b13acac`; [fixed-package review](S3-any-producer-wait-fixed-package.review.md), Blocking = 0 | `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1` (accepted and landed) | Implemented with focused build/tests and a scripted public denial-slice result; full S3 real-provider journey remains OPEN. See [implementation result](S3-any-producer-wait-implementation-20261024.result.md). |
+| S4-CONTEXT-DG-01 — assistant-message projection | `bba9ba84`; [Option A review](S4-CONTEXT-DG-01-option-a-independent-review-20261024.result.md), Blocking = 0 | `ACCEPT_S4_CONTEXT_DG_01_ASSISTANT_MESSAGE_PROJECTION_OPTION_A` (accepted and landed) | Deterministic implementation and focused verification PASS; real S4-B remains OPEN. See [implementation result](S4-CONTEXT-DG-01-assistant-message-projection-implementation.result.md). |
+| P12-DG-01 — D2/D4 progress convergence | `869a4b2f` / `390a0cf0`; [revision-2 review](P12-DG-01-d2-d4-progress-convergence-independent-review-rev2-20261024.result.md), Blocking = 0 | `ACCEPT_P12_DG_01_D2_D4_PROGRESS_CONVERGENCE` (accepted and landed) | Wave 1 implementation is integrated with focused tests/typecheck; not full P12 or release qualification. See [implementation result](P12-DG-01-implementation-wave-1.result.md). |
 
-The S2 acceptance and conditional implementation authority have since been
+The S2 acceptance and conditional implementation authority have been
 exercised; the S2 owner landing/review, implementation, and scoped scripted
 public-process result are recorded at the exact candidate in the S2 addendum
-below. The other proposed acceptance tokens have not been exercised. Their
-reviews close package-review blockers only; they do not accept semantics,
-authorize source changes, close S3/S4/P12, or change release readiness.
+below. The other accepted packages likewise have scoped implementation and
+review evidence, but do not close broader S3/S4/P12 qualification or change
+release readiness.
 
 The evidence remains segmented across SHAs. No one SHA has a complete passing
 `pnpm check`, `pnpm test:functional` release profile, and
@@ -62,7 +65,7 @@ test `tests/functional/package/clean-checkout.functional.test.ts` was deferred.
 
 | Final gate | Status |
 |---|---|
-| `pnpm check` on one current candidate | OPEN |
+| `pnpm check` on one current candidate | **PASS** at `5b8482c9a1c1712e2298630c3b52df581541fd9e`; see [run record](pnpm-check-5b8482c9.result.md) |
 | Complete `pnpm test:functional` with `completeCoverage: true` on one SHA | OPEN |
 | `pnpm test:package` on the same candidate | OPEN |
 | Representative real-provider S1–S4 journey and restart qualification on that candidate | OPEN |
@@ -95,12 +98,12 @@ The source-of-truth chain is `docs/design/00-problem-goals.md` → `docs/design/
 |---|---|---|---|
 | S1 — long-running goal to Work, Verification, Parent Acceptance | **Partial** | `F23-s1-s4-public-journey-alignment.result.md` reports deterministic public-process 4/4, including goal/approval, Work, Verification/Acceptance and restart. MAC-P1 separately has historical public-process/hard-restart and real-provider B01/B03/B11 evidence. | The configured real-provider S1 attempt is **NOT PASS**: Work effect happened, but verifier orphaned at Unknown; no Acceptance or completion. Repeat after authorized orphan handling on a release candidate. |
 | S2 — observe, drill down, steer, govern | **Partial** | D10 browser/UI contract closure; F23 public black-box verifies exact approval visibility and SteerWork revision advance plus later provider turn. On exact candidate `410695f9`, the S2 revision-semantics scripted public-process journey passed 1/1, including Normal guidance, exact Critical Stop, old-verification rejection, restart/replay and new-revision verification/acceptance. The bounded real immediate-Stop slice also passed with public StopExecution and hard-restart proof. | The L2 journey uses a scripted Provider and covers one public-process path only. Real-provider S2/model behavior, broader S2 branches, full functional/release gates and browser coverage remain OPEN; do not infer S2 scenario closure. |
-| S3 — Parent/Child collaboration, dependency, exception escalation | **Partial** | MAC-P2/P3/P4 scoped contracts; F19 forward/reverse order; F23 S1/S3 public formation journey. P37 crash matrix is split across two runs. | The real S3 rerun stalled on a settled `AnyProducer` wait with no producer. The fixed package is reviewed Blocking=0 and awaits user acceptance; implementation requires separate authorization. AH7 remains partial; AH10 takeover is not closed; P6 operator-only rebuild and Native candidate gaps remain. Current release gate has not passed. |
-| S4 — idle continuity, interruption, recovery and re-entry | **Partial** | S4-A has a real-provider fail-closed hard-restart PASS: the pending second response was not replayed and restart durably converged to `NeedsAttention(UnknownFailure)`. Focused black-box and P37/AH14/AH19 real-process slices remain scoped evidence. | The corrected-oracle S4-B attempt at `ac9625d9` timed out before obtaining a genuine held `shell Get-Date` response. Capture/DB evidence shows the WorkspaceWork request advertised `shell`, but Provider responses selected text and `wait`; four attempts ended `ConnectTimeout`, while successful responses did not contain shell tool calls. No EAP, P1, restart, or approval boundary was reached. S4-B remains OPEN; there is no approval-hard-restart qualification or full release suite on the current candidate. AH7/AH10 boundaries remain open. |
+| S3 — Parent/Child collaboration, dependency, exception escalation | **Partial** | MAC-P2/P3/P4 scoped contracts; F19 forward/reverse order; F23 S1/S3 public formation journey; APW-1/APW-3 implementation and scripted public denial slice are integrated. | The real S3 rerun stalled on a settled `AnyProducer` wait with no producer. The accepted package is implemented at scoped layers, but full real S3 collaboration remains OPEN. AH7 remains partial; AH10 takeover is not closed; P6 operator-only rebuild and Native candidate gaps remain. |
+| S4 — idle continuity, interruption, recovery and re-entry | **Partial** | S4-A has a real-provider fail-closed hard-restart PASS; assistant-message projection implementation and deterministic focused verification are integrated. | The corrected-oracle S4-B attempt at `ac9625d9` timed out before obtaining a genuine held `shell Get-Date` response. No EAP, P1, restart, or approval boundary was reached. S4-B remains OPEN; there is no approval-hard-restart qualification or full release suite on the current candidate. AH7/AH10 boundaries remain open. |
 
 ## Exact gate and configured-run record
 
-- `pnpm check`: latest full PASS found is `1ef6e8f5` (`planning/results/pnpm-check-1ef6e8f5.result.md`), an ancestor of audited HEAD. No exact-e94 full check result is recorded.
+- `pnpm check`: exact candidate `5b8482c9a1c1712e2298630c3b52df581541fd9e` PASS; see `planning/results/pnpm-check-5b8482c9.result.md`. This does not establish the functional, package, real-provider, or Native OS gates.
 - `pnpm test:functional`: latest full PASS found is `6ee3ccd9` (`planning/results/P36-integrated-full-qualification.result.md`), with Vitest 40 files/171 tests, Playwright 7/7, and F20. It is historical and predates current schema-50/sandbox changes. No full run at e94 is recorded.
 - Package/clean checkout: F20 passed in the same older P36 functional run. The current `pnpm test:package` has no e94 PASS record; a separate D2 checkpoint records F20 failure on a schema-48 fixture against schema-50 runtime. This is neither an e94 result nor a reason to claim the package gate green.
 - Real configured provider and restart: `first-release-acceptance.result.md` and `isolated-s1-real-provider-partial-20261012.result.md` are the latest explicit records located. The first shows greeting/approval plus a CreateProject post-commit convergence failure; the isolated S1 run shows real Work effect but Unknown/VerifierOrphan, no Acceptance/completion/restart. No real-config completed S1–S4 restart is evidenced at e94.
@@ -111,8 +114,8 @@ The source-of-truth chain is `docs/design/00-problem-goals.md` → `docs/design/
 1. Complete the approved Native sandbox CandidateRead / V6-E/F sequence without changing the frozen P9 terminal outcome; Stage E's reviewed proposal is not accepted or implementation authorization.
 2. Finish remaining AH7/AH10 recovery boundaries. Preserve per-action and split-run scopes; do not infer whole-matrix closure from named green process cases.
 3. Verify the exact cumulative offline 0045→0050 upgrade path on disposable sources/targets and align operator documentation to schema 50.
-4. Run `pnpm check`, `pnpm test:functional`, and `pnpm test:package` on one clean, committed candidate SHA; current result records leave these final integrated gates open.
-5. Keep real-provider S1–S4 journeys separately scoped: S2 immediate Stop has one bounded PASS while Normal awaits user acceptance and implementation authorization of its reviewed revision package; S3 awaits user acceptance of its reviewed AnyProducer package and separate implementation authorization; S4-A fail-closed has a bounded PASS, while corrected S4-B has one real attempt that failed before approval/restart and needs a separately authorized follow-up. Do not combine these slices into S1–S4 closure or a release claim. Resolve the recorded S1 VerifierOrphan through the frozen authorized human path before expecting completion.
+4. `pnpm check` is PASS on exact candidate `5b8482c9`; run `pnpm test:functional` and `pnpm test:package` on one clean, committed candidate SHA. The complete release gate remains open.
+5. Keep real-provider S1–S4 journeys separately scoped: S2 has bounded immediate-Stop and scripted revision-semantics evidence, while real Normal remains open after its unchanged-mission failure; S3's accepted implementation and scripted denial slice do not qualify its full real journey; S4-A fail-closed has a bounded PASS, while corrected S4-B has one real attempt that failed before approval/restart. Do not combine these slices into S1–S4 closure or a release claim. Resolve the recorded S1 VerifierOrphan through the frozen authorized human path before expecting completion.
 6. Keep Native OS Sandbox claims disabled until the actual signed helper, production provider, filesystem/network/broker/stop enforcement, and cross-process qualification are all evidenced.
 
-The historical module matrix remains scoped to `e94a204a`; the current integration snapshot above is updated for candidate `68ff989f`. This update does not change `docs/design/**`, authorize pending semantics, broaden Native/V6 qualification, or claim release readiness.
+The historical module matrix remains scoped to `e94a204a`; the current integration snapshot above is updated for candidate `5b8482c9`. This update does not change `docs/design/**`, broaden Native/V6 qualification, or claim release readiness.
