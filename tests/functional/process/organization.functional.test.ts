@@ -1364,10 +1364,6 @@ describe("release-functional long-lived responsibility", () => {
       } finally {
         competed.close();
       }
-      await runF18Stage(run, "stop-competing-daemon", async () => {
-        await additionalDaemon?.crash();
-        return { stopped: additionalDaemon !== undefined };
-      });
       const accepted = await waitForF18PublicStage(
         fixture,
         project.projectId,
@@ -1421,6 +1417,14 @@ describe("release-functional long-lived responsibility", () => {
         completed.nodes.find((node) => node.workspaceId === child.workspaceId)
           ?.currentWork,
       ).toBeUndefined();
+      await runF18Stage(run, "stop-competing-daemon", async () => {
+        // Both recovery daemons are valid candidates for the downstream parent
+        // InboxEpisode. Stop the competitor only after that episode has reached
+        // its public terminal facts; killing it earlier can inject an unrelated
+        // provider-call crash into this F18 reconciliation qualification.
+        await additionalDaemon?.crash();
+        return { stopped: additionalDaemon !== undefined };
+      });
       expect(
         unexpectedF18DaemonErrors(fixture.daemonErrors, expectedCrashMarker),
       ).toEqual([]);
