@@ -183,3 +183,18 @@ and live-lease process 2/2; Store 3/3). The copied-holder diagnostic run had a
 strict RED, and its remaining Runtime diagnostics were not rerun after removing
 a duplicate Store case. This does not change the matrix's broad scenario
 coverage grades or close AH7.
+
+## 2026-10-24 S3 AnyProducer public-process addendum
+
+On exact candidate `617c34d6fea03e311701a7570df962bb84534f87`, the scripted
+public-process case
+`tests/functional/process/s3-any-producer-wait-recovery.functional.test.ts`
+passed with command
+`pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/s3-any-producer-wait-recovery.functional.test.ts --maxWorkers=1 --retry=0 --no-file-parallelism`
+(exit 0, 1 file / 1 test, test 14,000 ms, total 36.13 s). It proves only the
+public denial/recovery slice for an unsupported AnyProducer declaration: no
+Dependency or WorkWait is committed and the model asks the user for
+clarification. The provider is scripted. This is not real-model or real-provider
+evidence, does not change the `PB@24598` historical baseline, and does not close
+the broader S3 coordination/wait/integration scenario or S3 real-provider
+qualification. Keep the existing S3 model-evaluation and end-to-end gaps open.
