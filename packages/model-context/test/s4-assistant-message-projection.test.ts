@@ -4,10 +4,19 @@ import {
   providerTurnInferenceId,
   SessionId,
 } from "@arbor/domain";
-import { type SessionEntryRecord, sha256Hex } from "@arbor/ports";
+import {
+  encodeReasoningAttachment,
+  PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
+  type ReasoningAttachment,
+  type SessionEntryRecord,
+  sha256Hex,
+} from "@arbor/ports";
 import { describe, expect, it } from "vitest";
 import { projectCompressibleHistory } from "../src/history-context.js";
-import { projectSessionTimeline } from "../src/projector.js";
+import {
+  decideSessionProjection,
+  projectSessionTimeline,
+} from "../src/projector.js";
 
 const executionId = parse(ExecutionId)(
   "exe_00000000-0000-7000-8000-000000000117",
@@ -38,6 +47,35 @@ const validAssistantEntry: SessionEntryRecord = {
     kind: "ProviderTurn",
     ref: assistantSourceRef,
     contentHash: assistantContentHash,
+  },
+};
+const bindingFingerprint = `p16fp_${"a".repeat(64)}`;
+const reasoningBlobRef = "reasoning-blob-ref";
+const reasoningAttachment: ReasoningAttachment = {
+  attachmentType: "provider-reasoning-v1",
+  modelRef: "model-deepseek",
+  protocolFamily: "openai-chat-completions-sse",
+  bindingFingerprint,
+  opaquePayload: "opaque synthetic reasoning",
+  receivedAt: "2026-10-24T00:00:01.000Z",
+};
+const reasoningPayload = {
+  _tag: "AttachmentRef" as const,
+  ref: reasoningBlobRef,
+  mediaType: PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
+  trust: "DataOnly" as const,
+  providerTurnId,
+};
+const reasoningEntry: SessionEntryRecord = {
+  sessionId,
+  sequence: 8,
+  entryKind: "ModelOutput",
+  payload: reasoningPayload,
+  createdAt: "2026-10-24T00:00:01.000Z",
+  source: {
+    kind: "ProviderTurnReasoning",
+    ref: `${providerTurnId}:reasoning`,
+    contentHash: sha256Hex(JSON.stringify(reasoningPayload)),
   },
 };
 
@@ -74,6 +112,81 @@ describe("S4-CONTEXT-DG-01 AssistantMessage projection", () => {
       },
     });
     expect(history.compressibleInputItemIndexes).toEqual([0]);
+  });
+
+  it("injects an opaque reasoning attachment only for the exact model/protocol/binding", () => {
+    const matching = projectSessionTimeline(
+      [validAssistantEntry, reasoningEntry],
+      bindingFingerprint,
+      false,
+      {
+        modelRef: "model-deepseek",
+        protocolFamily: "openai-chat-completions-sse",
+        bindingFingerprint,
+      },
+      new Map([
+        [reasoningBlobRef, encodeReasoningAttachment(reasoningAttachment)],
+      ]),
+    );
+    expect(matching.inputItems).toEqual([
+      { _tag: "Message", role: "assistant", text: outputText },
+      {
+        _tag: "ReasoningAttachment",
+        providerTurnId,
+        modelRef: "model-deepseek",
+        protocolFamily: "openai-chat-completions-sse",
+        bindingFingerprint,
+        opaquePayload: "opaque synthetic reasoning",
+      },
+    ]);
+    expect(matching.reasoningAttachmentRefs).toEqual([
+      {
+        messageId: providerTurnId,
+        modelRef: "model-deepseek",
+        protocolFamily: "openai-chat-completions-sse",
+        bindingFingerprint,
+        decision: "Inject",
+      },
+    ]);
+
+    const differentBinding = projectSessionTimeline(
+      [validAssistantEntry, reasoningEntry],
+      `p16fp_${"b".repeat(64)}`,
+      false,
+      {
+        modelRef: "model-deepseek",
+        protocolFamily: "openai-chat-completions-sse",
+        bindingFingerprint: `p16fp_${"b".repeat(64)}`,
+      },
+      new Map([
+        [reasoningBlobRef, encodeReasoningAttachment(reasoningAttachment)],
+      ]),
+    );
+    expect(differentBinding.inputItems).toEqual([
+      { _tag: "Message", role: "assistant", text: outputText },
+    ]);
+    expect(differentBinding.reasoningAttachmentRefs?.[0]?.decision).toBe(
+      "Preserve",
+    );
+  });
+
+  it("fails closed when a durable reasoning ref has no valid blob", () => {
+    expect(
+      decideSessionProjection(
+        [validAssistantEntry, reasoningEntry],
+        bindingFingerprint,
+        false,
+        {
+          modelRef: "model-deepseek",
+          protocolFamily: "openai-chat-completions-sse",
+          bindingFingerprint,
+        },
+        new Map([[reasoningBlobRef, new TextEncoder().encode("not-json")]]),
+      ),
+    ).toMatchObject({
+      _tag: "Blocked",
+      reason: "ContradictoryTimeline",
+    });
   });
 
   it.each([

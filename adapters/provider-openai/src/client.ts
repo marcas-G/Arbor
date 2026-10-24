@@ -86,6 +86,7 @@ const OPENAI_CHAT_COMPATIBILITY = {
     "ToolResult",
     "ControlResult",
     "ContextUpdate",
+    "ReasoningAttachment",
   ],
 } as const satisfies PortableRequestCompatibility;
 
@@ -136,8 +137,22 @@ const lowerInputItem = (
     case "CompactionCheckpoint":
     case "AttachmentRef":
       throw new OpenAISdkError(400, "portable_request_incompatible");
+    case "ReasoningAttachment":
+      throw new OpenAISdkError(400, "portable_reasoning_attachment_orphan");
   }
 };
+
+const lowerToolCalls = (
+  calls: ReadonlyArray<Extract<PortableInputItem, { _tag: "ToolCall" }>>,
+): ReadonlyArray<Readonly<Record<string, unknown>>> =>
+  calls.map((call) => ({
+    id: call.callRef,
+    type: "function",
+    function: {
+      name: call.toolName,
+      arguments: call.argumentsJson,
+    },
+  }));
 
 const lowerInputItems = (
   items: ReadonlyArray<PortableInputItem>,
@@ -145,6 +160,47 @@ const lowerInputItems = (
   const lowered: Array<Readonly<Record<string, unknown>>> = [];
   for (let index = 0; index < items.length; ) {
     const item = items[index] as PortableInputItem;
+    if (item._tag === "Message" && item.role === "assistant") {
+      let cursor = index + 1;
+      const reasoning =
+        items[cursor]?._tag === "ReasoningAttachment"
+          ? (items[cursor] as Extract<
+              PortableInputItem,
+              { _tag: "ReasoningAttachment" }
+            >)
+          : undefined;
+      if (
+        reasoning !== undefined &&
+        (reasoning.protocolFamily !== "openai-chat-completions-sse" ||
+          !/^p16fp_[0-9a-f]{64}$/.test(reasoning.bindingFingerprint))
+      ) {
+        throw new OpenAISdkError(
+          400,
+          "portable_reasoning_attachment_binding_invalid",
+        );
+      }
+      if (reasoning !== undefined) cursor += 1;
+      const calls: Array<Extract<PortableInputItem, { _tag: "ToolCall" }>> = [];
+      while (cursor < items.length && items[cursor]?._tag === "ToolCall") {
+        calls.push(
+          items[cursor] as Extract<PortableInputItem, { _tag: "ToolCall" }>,
+        );
+        cursor += 1;
+      }
+      if (reasoning !== undefined || calls.length > 0) {
+        lowered.push({
+          role: "assistant",
+          content:
+            calls.length > 0 && item.text.length === 0 ? null : item.text,
+          ...(reasoning === undefined
+            ? {}
+            : { reasoning_content: reasoning.opaquePayload }),
+          ...(calls.length === 0 ? {} : { tool_calls: lowerToolCalls(calls) }),
+        });
+        index = cursor;
+        continue;
+      }
+    }
     if (item._tag !== "ToolCall") {
       lowered.push(lowerInputItem(item));
       index += 1;
@@ -160,14 +216,7 @@ const lowerInputItems = (
     lowered.push({
       role: "assistant",
       content: null,
-      tool_calls: calls.map((call) => ({
-        id: call.callRef,
-        type: "function",
-        function: {
-          name: call.toolName,
-          arguments: call.argumentsJson,
-        },
-      })),
+      tool_calls: lowerToolCalls(calls),
     });
   }
   return lowered;

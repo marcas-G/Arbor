@@ -4,7 +4,12 @@ import type {
   PortableToolResultStatus,
   SessionEntryRecord,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import {
+  decodeReasoningAttachment,
+  PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
+  reasoningAttachmentAdmissible,
+  sha256Hex,
+} from "@arbor/ports";
 import type { InstructionFragment } from "./prompt.js";
 
 /** Bounded recent Timeline window consumed by ContextProjector. The limit is
@@ -29,6 +34,19 @@ export interface SessionTimelineProjection {
     readonly bindingMatches: boolean;
   };
   readonly instructionFragments: ReadonlyArray<InstructionFragment>;
+  readonly reasoningAttachmentRefs?: ReadonlyArray<{
+    readonly messageId: string;
+    readonly modelRef: string;
+    readonly protocolFamily: string;
+    readonly bindingFingerprint: string;
+    readonly decision: "Preserve" | "Inject" | "DiscardForCompaction";
+  }>;
+}
+
+export interface ReasoningProjectionBinding {
+  readonly modelRef: string;
+  readonly protocolFamily: string;
+  readonly bindingFingerprint: string;
 }
 
 export interface SessionFrontier {
@@ -80,10 +98,16 @@ export const projectSessionTimeline = (
   entries: ReadonlyArray<SessionEntryRecord>,
   bindingFingerprint?: string,
   nativeSupported = false,
+  reasoningBinding?: ReasoningProjectionBinding,
+  reasoningAttachmentBlobs: ReadonlyMap<string, Uint8Array> = new Map(),
 ): SessionTimelineProjection => {
   const inputItems: PortableInputItem[] = [];
   const contextRefs: string[] = [];
   const callRefs = new Set<string>();
+  const reasoningAttachmentRefs: NonNullable<
+    SessionTimelineProjection["reasoningAttachmentRefs"]
+  >[number][] = [];
+  let lastAssistantProviderTurnId: string | undefined;
   const latestCheckpoint = entries
     .filter((entry) => {
       if (typeof entry.payload !== "object" || entry.payload === null) {
@@ -101,6 +125,7 @@ export const projectSessionTimeline = (
     const payload = entry.payload as Record<string, unknown>;
     switch (payload._tag) {
       case "UserMessage": {
+        lastAssistantProviderTurnId = undefined;
         const source = payload.source as Record<string, unknown> | undefined;
         if (source?.kind === "HumanConversation") break;
         if (typeof payload.text !== "string") break;
@@ -127,6 +152,55 @@ export const projectSessionTimeline = (
         }
         inputItems.push({ _tag: "Message", role: "assistant", text });
         contextRefs.push(refOf(entry));
+        lastAssistantProviderTurnId = providerTurnId;
+        break;
+      }
+      case "AttachmentRef": {
+        if (payload.mediaType !== PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE) {
+          lastAssistantProviderTurnId = undefined;
+          break;
+        }
+        const providerTurnId = payload.providerTurnId;
+        const ref = payload.ref;
+        if (
+          entry.entryKind !== "ModelOutput" ||
+          !isProviderTurnId(providerTurnId) ||
+          providerTurnId !== lastAssistantProviderTurnId ||
+          typeof ref !== "string" ||
+          ref.length === 0 ||
+          payload.trust !== "DataOnly" ||
+          entry.source?.kind !== "ProviderTurnReasoning" ||
+          entry.source.ref !== `${providerTurnId}:reasoning` ||
+          entry.source.contentHash !== sha256Hex(JSON.stringify(payload))
+        ) {
+          break;
+        }
+        const bytes = reasoningAttachmentBlobs.get(ref);
+        const attachment =
+          bytes === undefined ? undefined : decodeReasoningAttachment(bytes);
+        if (attachment === undefined) break;
+        const inject =
+          reasoningBinding !== undefined &&
+          isFullBindingFingerprint(reasoningBinding.bindingFingerprint) &&
+          reasoningAttachmentAdmissible(attachment, reasoningBinding);
+        reasoningAttachmentRefs.push({
+          messageId: providerTurnId,
+          modelRef: attachment.modelRef,
+          protocolFamily: attachment.protocolFamily,
+          bindingFingerprint: attachment.bindingFingerprint,
+          decision: inject ? "Inject" : "Preserve",
+        });
+        if (inject) {
+          inputItems.push({
+            _tag: "ReasoningAttachment",
+            providerTurnId: providerTurnId as never,
+            modelRef: attachment.modelRef,
+            protocolFamily: attachment.protocolFamily,
+            bindingFingerprint: attachment.bindingFingerprint,
+            opaquePayload: attachment.opaquePayload,
+          });
+          contextRefs.push(refOf(entry));
+        }
         break;
       }
       case "ToolCall":
@@ -147,6 +221,7 @@ export const projectSessionTimeline = (
         contextRefs.push(refOf(entry));
         break;
       case "ToolResult":
+        lastAssistantProviderTurnId = undefined;
         if (typeof payload.callRef !== "string") break;
         inputItems.push({
           _tag: "ToolResult",
@@ -164,6 +239,7 @@ export const projectSessionTimeline = (
         contextRefs.push(refOf(entry));
         break;
       case "ControlResult":
+        lastAssistantProviderTurnId = undefined;
         if (typeof payload.callRef !== "string") break;
         inputItems.push({
           _tag: "ControlResult",
@@ -180,6 +256,7 @@ export const projectSessionTimeline = (
         contextRefs.push(refOf(entry));
         break;
       case "ContextUpdate":
+        lastAssistantProviderTurnId = undefined;
         inputItems.push({
           _tag: "ContextUpdate",
           sourceRef: String(payload.sourceRef ?? refOf(entry)),
@@ -193,6 +270,7 @@ export const projectSessionTimeline = (
         contextRefs.push(refOf(entry));
         break;
       case "CompactionCheckpoint":
+        lastAssistantProviderTurnId = undefined;
         if (entry.sequence !== latestCheckpoint?.sequence) break;
         if (payload.implementation === "ProviderNative") {
           const source = entry.source;
@@ -271,6 +349,7 @@ export const projectSessionTimeline = (
         contextRefs.push(refOf(entry));
         break;
       default: {
+        lastAssistantProviderTurnId = undefined;
         if (entry.entryKind !== "Observation") break;
         const observation = payload.observation as
           | Record<string, unknown>
@@ -294,6 +373,9 @@ export const projectSessionTimeline = (
       lastSequence: entries.at(-1)?.sequence ?? null,
     },
     ...(nativeCheckpoint === undefined ? {} : { nativeCheckpoint }),
+    ...(reasoningAttachmentRefs.length === 0
+      ? {}
+      : { reasoningAttachmentRefs }),
     // Projected Session data is always data-only. Canonical instructions are
     // assembled by their owning source and cannot emerge from Timeline text.
     instructionFragments: [],
@@ -325,7 +407,44 @@ export const decideSessionProjection = (
   entries: ReadonlyArray<SessionEntryRecord>,
   bindingFingerprint?: string,
   nativeSupported = false,
+  reasoningBinding?: ReasoningProjectionBinding,
+  reasoningAttachmentBlobs: ReadonlyMap<string, Uint8Array> = new Map(),
 ): SessionProjectionDecision => {
+  let adjacentAssistantProviderTurnId: string | undefined;
+  for (const entry of entries) {
+    const payload = payloadOf(entry);
+    if (payload?._tag === "AssistantMessage") {
+      adjacentAssistantProviderTurnId = isProviderTurnId(payload.providerTurnId)
+        ? payload.providerTurnId
+        : undefined;
+      continue;
+    }
+    if (
+      payload?._tag === "AttachmentRef" &&
+      payload.mediaType === PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE
+    ) {
+      const providerTurnId = payload.providerTurnId;
+      if (
+        !isProviderTurnId(providerTurnId) ||
+        providerTurnId !== adjacentAssistantProviderTurnId ||
+        entry.entryKind !== "ModelOutput" ||
+        payload.trust !== "DataOnly" ||
+        entry.source?.kind !== "ProviderTurnReasoning" ||
+        entry.source.ref !== `${providerTurnId}:reasoning` ||
+        entry.source.contentHash !== sha256Hex(JSON.stringify(payload))
+      ) {
+        return {
+          _tag: "Blocked",
+          reason: "ContradictoryTimeline",
+          callRefs: [],
+          closedFrontier: closedFrontierBefore(entries, entry.sequence),
+        };
+      }
+      adjacentAssistantProviderTurnId = undefined;
+      continue;
+    }
+    adjacentAssistantProviderTurnId = undefined;
+  }
   const calls = new Map<
     string,
     { readonly sequence: number; readonly toolName: string }
@@ -334,6 +453,26 @@ export const decideSessionProjection = (
   for (const entry of entries) {
     const payload = payloadOf(entry);
     if (payload === undefined) continue;
+    if (
+      payload._tag === "AttachmentRef" &&
+      payload.mediaType === PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE
+    ) {
+      const ref = typeof payload.ref === "string" ? payload.ref : "";
+      const bytes = reasoningAttachmentBlobs.get(ref);
+      if (
+        ref.length === 0 ||
+        bytes === undefined ||
+        decodeReasoningAttachment(bytes) === undefined
+      ) {
+        return {
+          _tag: "Blocked",
+          reason: "ContradictoryTimeline",
+          callRefs: [],
+          closedFrontier: closedFrontierBefore(entries, entry.sequence),
+        };
+      }
+      continue;
+    }
     if (payload._tag === "ToolCall") {
       if (
         typeof payload.callRef !== "string" ||
@@ -398,6 +537,8 @@ export const decideSessionProjection = (
       entries,
       bindingFingerprint,
       nativeSupported,
+      reasoningBinding,
+      reasoningAttachmentBlobs,
     ),
   };
 };

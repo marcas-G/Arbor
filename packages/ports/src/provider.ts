@@ -113,6 +113,22 @@ export interface PortableAttachmentRef {
   readonly trust: "CanonicalInstruction" | "InstructionCandidate" | "DataOnly";
 }
 
+/**
+ * Provider-native reasoning attached to one historical assistant turn.
+ *
+ * Model Context is the only layer allowed to select this item for a request.
+ * The payload is opaque: portable consumers may bind and forward it, but must
+ * never parse or rewrite it. Protocol adapters own the final wire field.
+ */
+export interface PortableReasoningAttachment {
+  readonly _tag: "ReasoningAttachment";
+  readonly providerTurnId: ProviderTurnId;
+  readonly modelRef: string;
+  readonly protocolFamily: string;
+  readonly bindingFingerprint: string;
+  readonly opaquePayload: string;
+}
+
 export type PortableInputItem =
   | PortableMessage
   | PortableToolCall
@@ -120,7 +136,8 @@ export type PortableInputItem =
   | PortableControlResult
   | PortableContextUpdate
   | PortableCompactionCheckpoint
-  | PortableAttachmentRef;
+  | PortableAttachmentRef
+  | PortableReasoningAttachment;
 
 export type PortableInputItemKind = PortableInputItem["_tag"];
 export type PortableOperationKind =

@@ -71,6 +71,7 @@ import {
   canonicalizeLegacyAdoptionEvidenceV1,
   isValidConversationCheckpointBinding,
   LEGACY_ADOPTION_MISSING,
+  PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
   sha256Hex,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -119,6 +120,7 @@ export interface ModelDecisionOptions {
   readonly secretRef?: SecretRef;
   readonly executionPolicyOverrides?: ProviderExecutionPolicyOverrides;
   readonly providerRef?: string;
+  readonly protocolFamily?: string;
   readonly onProviderProgress?:
     | ((executionId: string, event: ProviderRuntimeProgress) => void)
     | undefined;
@@ -730,6 +732,48 @@ export const runModelDecision = (
     capability.portableRequestCompatibility?.operationKinds.includes(
       "CompactionNative",
     ) === true;
+  const reasoningProjectionBinding =
+    options.protocolFamily !== undefined &&
+    /^p16fp_[0-9a-f]{64}$/.test(currentBindingFingerprint)
+      ? {
+          modelRef: capability.modelRef,
+          protocolFamily: options.protocolFamily,
+          bindingFingerprint: currentBindingFingerprint,
+        }
+      : undefined;
+  const loadReasoningAttachmentBlobs = (
+    entries: ReadonlyArray<SessionEntryRecord>,
+  ): Effect.Effect<ReadonlyMap<string, Uint8Array>, ExecutionDriverError> => {
+    const refs = [
+      ...new Set(
+        entries.flatMap((entry) => {
+          if (typeof entry.payload !== "object" || entry.payload === null) {
+            return [];
+          }
+          const payload = entry.payload as Record<string, unknown>;
+          return payload._tag === "AttachmentRef" &&
+            payload.mediaType === PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE &&
+            typeof payload.ref === "string" &&
+            payload.ref.length > 0
+            ? [payload.ref]
+            : [];
+        }),
+      ),
+    ];
+    if (refs.length === 0) return Effect.succeed(new Map());
+    if (dependencies.blobs === undefined) {
+      return Effect.fail(
+        failure({ _tag: "ReasoningRoundTripBlobStoreUnavailable" }),
+      );
+    }
+    const blobs = dependencies.blobs;
+    return Effect.forEach(refs, (ref) =>
+      blobs.get(ref).pipe(
+        Effect.mapError(failure),
+        Effect.map((bytes) => [ref, bytes] as const),
+      ),
+    ).pipe(Effect.map((entries) => new Map(entries)));
+  };
   const isConversationResponseExecution =
     conversationResponseEpisode(input.execution) !== null;
   return Effect.gen(function* () {
@@ -3075,10 +3119,14 @@ export const runModelDecision = (
       let recentSessionEntries = conversationExecution
         ? conversationTimeline(recentTimeline)
         : recentTimeline;
+      let reasoningAttachmentBlobs =
+        yield* loadReasoningAttachmentBlobs(recentSessionEntries);
       let projectionDecision = decideSessionProjection(
         recentSessionEntries,
         currentBindingFingerprint,
         providerNativeSupported,
+        reasoningProjectionBinding,
+        reasoningAttachmentBlobs,
       );
       if (
         projectionDecision._tag === "Blocked" &&
@@ -3170,10 +3218,14 @@ export const runModelDecision = (
           if (conversationExecution) {
             recentSessionEntries = conversationTimeline(recentSessionEntries);
           }
+          reasoningAttachmentBlobs =
+            yield* loadReasoningAttachmentBlobs(recentSessionEntries);
           projectionDecision = decideSessionProjection(
             recentSessionEntries,
             currentBindingFingerprint,
             providerNativeSupported,
+            reasoningProjectionBinding,
+            reasoningAttachmentBlobs,
           );
         }
       }
@@ -3195,6 +3247,8 @@ export const runModelDecision = (
                 ),
             currentBindingFingerprint,
             providerNativeSupported,
+            reasoningProjectionBinding,
+            reasoningAttachmentBlobs,
           );
         } else {
           const settlement = safetyStop(
@@ -4068,6 +4122,8 @@ export const runModelDecision = (
             postCheckpointEntries,
             currentBindingFingerprint,
             providerNativeSupported,
+            reasoningProjectionBinding,
+            reasoningAttachmentBlobs,
           );
           if (postCheckpointProjection.nativeCheckpoint !== undefined) {
             return yield* Effect.fail(
@@ -5021,6 +5077,8 @@ export const runModelDecision = (
               postCheckpointEntries,
               currentBindingFingerprint,
               providerNativeSupported,
+              reasoningProjectionBinding,
+              reasoningAttachmentBlobs,
             );
             if (postCheckpointProjection.nativeCheckpoint !== undefined) {
               return yield* Effect.fail(
@@ -5581,6 +5639,17 @@ export const runModelDecision = (
           ...(messageContextRefs.length > 0 ? { messageContextRefs } : {}),
           ...(options.providerRef !== undefined
             ? { providerRef: options.providerRef }
+            : {}),
+          ...(options.protocolFamily !== undefined
+            ? { protocolFamily: options.protocolFamily }
+            : {}),
+          ...((sessionProjection.reasoningAttachmentRefs?.length ?? 0) > 0
+            ? {
+                reasoningAttachmentRefs:
+                  sessionProjection.reasoningAttachmentRefs as NonNullable<
+                    typeof sessionProjection.reasoningAttachmentRefs
+                  >,
+              }
             : {}),
         }),
         {

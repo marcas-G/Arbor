@@ -50,6 +50,25 @@ describe("P3 decodeTurn", () => {
     }
   });
 
+  it("reassembles reasoning chunks byte-for-byte without parsing them", () => {
+    const result = decodeTurn(
+      events([
+        { _tag: "ReasoningDelta", text: 'opaque:{"step":' },
+        { _tag: "ReasoningDelta", text: "1}" },
+        {
+          _tag: "ToolCallProposed",
+          callRef: "call-reasoned",
+          toolName: "read",
+          argumentsJson: '{"path":"README.md"}',
+        },
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.output.reasoningOpaquePayload).toBe('opaque:{"step":1}');
+    }
+  });
+
   it("rejects tool calls without turn identity, arguments, or unique call identity", () => {
     expect(
       decodeTurn([

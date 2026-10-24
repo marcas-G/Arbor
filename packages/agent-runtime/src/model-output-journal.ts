@@ -5,12 +5,18 @@ import type {
   AgentLoopStepFence,
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
+  BlobStorePortService,
   ExecutionDriverError,
+  ReasoningAttachment,
   SessionEpochConflict,
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import {
+  encodeReasoningAttachment,
+  PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
+  sha256Hex,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { sessionFence } from "./agent-loop-policy.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
@@ -27,6 +33,7 @@ export interface ModelOutputJournalDependencies {
   readonly loopStepFence?: AgentLoopStepFence;
   readonly tx: TransactionPortService;
   readonly sessions: SessionRepositoryService;
+  readonly blobs?: Pick<BlobStorePortService, "put">;
   readonly failure: (cause: unknown) => ExecutionDriverError;
   readonly now: () => Effect.Effect<string>;
   readonly qualificationProbe?: AgentLoopQualificationProbe;
@@ -86,6 +93,48 @@ export const recordAcceptedModelOutput = (
       toolInvocations: decodedOutput.toolInvocations,
     };
     let currentLoopStep = dependencies.currentLoopStep;
+    let reasoningAttachmentItem:
+      | Extract<
+          import("@arbor/ports").SessionItem,
+          { readonly _tag: "AttachmentRef" }
+        >
+      | undefined;
+    if (
+      decodedOutput.reasoningOpaquePayload !== undefined &&
+      (currentLoopStep === undefined ||
+        currentLoopStep.state === "ProviderResultAvailable")
+    ) {
+      const protocolFamily = preparedTurn.manifest.protocolFamily;
+      const bindingFingerprint =
+        preparedTurn.manifest.resolvedModelBindingFingerprint;
+      if (
+        dependencies.blobs === undefined ||
+        protocolFamily === undefined ||
+        !/^p16fp_[0-9a-f]{64}$/.test(bindingFingerprint ?? "")
+      ) {
+        return yield* Effect.fail(
+          failure({ _tag: "ReasoningRoundTripBindingUnavailable" }),
+        );
+      }
+      const attachment: ReasoningAttachment = {
+        attachmentType: "provider-reasoning-v1",
+        modelRef: preparedTurn.manifest.modelRef,
+        protocolFamily,
+        bindingFingerprint: bindingFingerprint as string,
+        opaquePayload: decodedOutput.reasoningOpaquePayload,
+        receivedAt: currentLoopStep?.updatedAt ?? (yield* now()),
+      };
+      const ref = yield* dependencies.blobs
+        .put(encodeReasoningAttachment(attachment))
+        .pipe(Effect.mapError(failure));
+      reasoningAttachmentItem = {
+        _tag: "AttachmentRef",
+        ref,
+        mediaType: PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
+        trust: "DataOnly",
+        providerTurnId: preparedTurn.manifest.providerTurnId,
+      };
+    }
 
     if (
       currentLoopStep !== undefined &&
@@ -149,6 +198,28 @@ export const recordAcceptedModelOutput = (
                     sha256Hex(JSON.stringify(modelOutputPayload)),
                     loopStepFence,
                   );
+              if (reasoningAttachmentItem !== undefined) {
+                if (!typed) {
+                  return yield* Effect.fail(
+                    failure({ _tag: "ReasoningRoundTripTimelineUnavailable" }),
+                  );
+                }
+                yield* sessions.appendItemIdempotent(
+                  input.execution.sessionId,
+                  {
+                    item: reasoningAttachmentItem,
+                    contextEpoch: outputEpoch as never,
+                    source: {
+                      kind: "ProviderTurnReasoning",
+                      ref: `${preparedTurn.manifest.providerTurnId}:reasoning`,
+                    },
+                    contentHash: sha256Hex(
+                      JSON.stringify(reasoningAttachmentItem),
+                    ),
+                  },
+                  loopStepFence,
+                );
+              }
               if (typed) {
                 for (const invocation of decodedOutput.toolInvocations) {
                   const item = {
@@ -206,6 +277,11 @@ export const recordAcceptedModelOutput = (
         }
       }
     } else {
+      if (reasoningAttachmentItem !== undefined) {
+        return yield* Effect.fail(
+          failure({ _tag: "ReasoningRoundTripTimelineUnavailable" }),
+        );
+      }
       yield* tx
         .transact(
           sessions.appendEntry(
