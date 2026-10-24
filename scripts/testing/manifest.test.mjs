@@ -7,6 +7,7 @@ import {
   validateManifest,
   validateRepoRelativePath,
 } from "./check-manifest.mjs";
+import { planTestImpact } from "./plan-test-impact.mjs";
 
 const manifest = JSON.parse(
   readFileSync(
@@ -127,4 +128,53 @@ test("core and functional Vitest inventories must not overlap", () => {
   assert.deepEqual(overlap, [
     "tests/capability/black-box/s1-s4-public-api.test.ts",
   ]);
+});
+
+test("impact planner selects only the UI lane for a known Web change", () => {
+  const plan = planTestImpact(["apps/web/src/pages/work.tsx"]);
+  assert.deepEqual(plan.selectedLanes, ["ui"]);
+  assert.equal(plan.lanes.ui.scope, "selected-lane");
+  assert.equal(plan.completeCoverage, false);
+});
+
+test("shared runtime changes escalate core and process to full lanes", () => {
+  const plan = planTestImpact(["packages/agent-runtime/src/agent-loop-driver.ts"]);
+  assert.deepEqual(plan.selectedLanes, ["core", "process"]);
+  assert.ok(plan.highRiskTags.includes("shared-runtime"));
+  assert.equal(plan.lanes.core.scope, "full-lane");
+  assert.equal(plan.lanes.process.scope, "full-lane");
+  assert.equal(plan.completeCoverage, false);
+});
+
+test("unknown paths conservatively select every lane and explain why", () => {
+  const plan = planTestImpact(["vendor/generated/opaque-output.bin"]);
+  assert.equal(plan.mode, "conservative-unknown");
+  assert.deepEqual(plan.selectedLanes, [
+    "quick",
+    "core",
+    "process",
+    "ui",
+    "provider",
+    "package",
+  ]);
+  assert.ok(plan.lanes.provider.reasons.some((reason) => reason.includes("unknown path")));
+  assert.equal(plan.completeCoverage, false);
+});
+
+test("provider-facing changes keep real-provider qualification explicit", () => {
+  const plan = planTestImpact(["adapters/provider-openai/src/client.ts"]);
+  assert.ok(plan.selectedLanes.includes("provider"));
+  assert.match(plan.realProviderL3, /not-run/);
+  assert.equal(plan.completeCoverage, false);
+});
+
+test("schema and permission labels escalate their owning lanes", () => {
+  const schema = planTestImpact(["adapters/persistence-sqlite/src/migrations/0052.ts"]);
+  assert.ok(schema.highRiskTags.includes("schema"));
+  assert.equal(schema.lanes.package.scope, "full-lane");
+  assert.equal(schema.lanes.process.scope, "full-lane");
+
+  const permission = planTestImpact(["packages/agent-runtime/src/permission-policy.ts"]);
+  assert.ok(permission.highRiskTags.includes("permissions"));
+  assert.equal(permission.lanes.ui.scope, "full-lane");
 });
