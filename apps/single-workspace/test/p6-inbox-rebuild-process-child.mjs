@@ -101,7 +101,7 @@ const runQualifiedSqliteMaintenance = (
               : true;
             process.stdout.write("P6_TEST_AFTER_MAINTENANCE\n");
             if (proceed) {
-              settings.onPhase?.("p40-p51-continuation");
+              settings.onPhase?.("p40-p52-continuation");
               yield* continuation(primary, permit);
               process.stdout.write("P6_TEST_AFTER_CONTINUATION\n");
             }

@@ -416,7 +416,9 @@ const upgradeSchema52Suffix = async (
   await runPrimary(
     databaseFilename,
     Effect.gen(function* () {
-      yield* runMigrations([P52_WORK_CONTRACT_REVISION_MIGRATION]);
+      yield* runMigrations([P52_WORK_CONTRACT_REVISION_MIGRATION], {
+        allowOfflineOnly: true,
+      });
     }),
   );
   const version = await readUserVersion(databaseFilename);
@@ -426,6 +428,18 @@ const upgradeSchema52Suffix = async (
       `Schema-52 disposable fixture upgrade ended at user_version ${version}, expected 52.`,
       version,
     );
+  }
+  const database = new DatabaseSync(databaseFilename, { readOnly: true });
+  try {
+    if (database.prepare("PRAGMA foreign_key_check").all().length > 0) {
+      throw new Schema42TestDatabaseSetupError(
+        "SCHEMA42_SETUP_FAILED",
+        "Schema-52 disposable fixture upgrade produced foreign-key violations.",
+        52,
+      );
+    }
+  } finally {
+    database.close();
   }
   await checkpointSqlite(databaseFilename);
 };

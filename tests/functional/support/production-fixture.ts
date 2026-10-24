@@ -14,7 +14,7 @@ import {
 } from "./daemon-process-lifecycle.js";
 import { safeHandshakeFailure } from "./safe-handshake-failure.js";
 import {
-  cloneFunctionalSchema48Database,
+  cloneFunctionalCurrentSchemaDatabase,
   createFunctionalFixtureDirectory,
   removeFunctionalFixtureDirectory,
 } from "./schema44-bootstrap.js";
@@ -597,7 +597,7 @@ export const startProductionFixture = async (input: {
     workspaceDirectory = join(directory, "workspace");
     mkdirSync(workspaceDirectory, { recursive: true });
     writeFileSync(join(workspaceDirectory, "proof.txt"), "FUNCTIONAL_VERIFIED");
-    const clones = await cloneFunctionalSchema48Database(directory);
+    const clones = await cloneFunctionalCurrentSchemaDatabase(directory);
     databaseFile = clones.databaseFile;
     await input.setupProbe?.({ stage: "after-clone", directory });
     provider = await startProvider(
