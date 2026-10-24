@@ -152,7 +152,7 @@ const submitSteer = (
       commandType: "SteerWork",
       projectId: p7Project,
       actor,
-      schemaVersion: "1",
+      schemaVersion: "2",
       payload,
     }),
     projectId: p7Project,
