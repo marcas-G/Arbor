@@ -1,6 +1,6 @@
 # P6 — 06 Acceptance Stories
 
-**Authority:** S1.4 步骤 1–6, S2 §3–§7; DID v1.9 §11 P6, §5.4, v1.47 P8 UnboundLegacy route amendment, and v1.52 operator rebuild / v1 route-command qualification; P5 `05`（验收故事风格先例）; P6 `01`–`05`（含 D1–D4 约束断言）.
+**Authority:** S1.4 步骤 1–6, S2 v1.7 §3–§8; DID v1.59 §11 P6, §5.4, v1.47 P8 UnboundLegacy route amendment, and v1.52 operator rebuild / v1 route-command qualification; P5 `05`（验收故事风格先例）; P6 `01`–`05`（含 D1–D4 约束断言）.
 **Status:** FROZEN (manual governance adoption).
 
 全部故事使用 deterministic Fake Provider（沿 P5 决策），同一 durable DB，`apps/` 既有 composition root 扩展，不新建第二套 runtime。
@@ -45,11 +45,23 @@
 
 ## 5. Story E — Human Steer（S2 切片）
 
-1. 用户对 depth=1 Workspace 的 Open Work 发 `SteerWork(Normal)`。
-2. 断言：无执行中断；`WorkSteered` revision++；下次 admission Context 含 guidance（bounded）。
-3. `SteerWork(Critical)`：同一提交边界内 `WorkSteered` + `StopExecution`；active main 进入 quiescence，无新 ProviderTurn/ToolInvocation/spawn。
+1. 用户对 depth=1 Workspace 的 Open Work 明确选择 `DirectionGuidance` 或完整 `ContractAmendment` 并提交 `SteerWork(Normal)`。
+2. 断言：无执行中断；两类操作都 revision++ 且记录完整快照；DirectionGuidance 保持 contract 不变并产生 `WorkSteered`，ContractAmendment 完整替换 contract 并产生 versioned `WorkAmended`；下次 admission 使用 canonical current contract，方向 guidance 独立标示。
+3. `SteerWork(Critical)` 对同两类 typed operation 使用相同 Work CAS/history semantics，并在同一提交边界内发出相应 `WorkSteered`/`WorkAmended` + `StopExecution`；事务内 active main 进入 quiescence，无新 ProviderTurn/ToolInvocation/spawn；Stop 失败则整体回滚。
 4. Work 保持 Open；reevaluation 后重新 admission（恢复自治，S2 §7）。
 5. sibling 对该 Work 发 steer → `AuthorityDenied`。
+
+**S2-RDG-01 governance acceptance (design only):** the same human SteerWork
+may carry a non-normative `DirectionGuidance` or an explicit complete
+`ContractAmendment`; legacy schema-v1 and `scope="Constraint"` mean guidance
+only. An amendment advances the exact open Work revision once and records the
+complete replacement snapshot; a partial/stale/unauthorized amendment has no
+partial Work/history/Inbox/event commit. Normal/Critical share those contract,
+CAS, history and replay semantics; Critical only adds the existing exact
+Stop/quiescence leg. A new Verification uses the current revision's canonical
+mission. An old Open Verification remains on its immutable old mission and can
+conclude only for its old revision; it cannot satisfy new-revision Acceptance
+or CompleteWork. Implementation and qualification remain separately gated.
 
 ## 6. Story F — Prompt Program 版本纪律（D4 约束）
 
