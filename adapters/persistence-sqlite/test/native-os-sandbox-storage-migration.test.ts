@@ -56,9 +56,9 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
         offlineOnly: true,
       },
     );
-    expect(CURRENT_SCHEMA_VERSION).toBe(51);
+    expect(CURRENT_SCHEMA_VERSION).toBe(52);
     expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-6)).toEqual([
-      46, 47, 48, 49, 50, 51,
+      47, 48, 49, 50, 51, 52,
     ]);
     const fingerprint = (requires: number, name: string, sql: string) =>
       createHash("sha256")
@@ -137,7 +137,7 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
               user_version: number;
             }
           ).user_version,
-        ).toBe(51);
+        ).toBe(52);
         expect(
           db
             .prepare(
