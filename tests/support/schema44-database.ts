@@ -17,6 +17,7 @@ import {
   P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
   P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
   P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
+  P52_WORK_CONTRACT_REVISION_MIGRATION,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
   runP39SqliteMaintenance,
@@ -67,7 +68,7 @@ export interface Schema42TestDatabaseOptions {
     readonly p39ReportFilename: string;
   }) => void;
   /** Internal target selector for a current schema-44 runtime fixture. */
-  readonly targetSchemaVersion?: 42 | 44 | 45 | 46 | 47 | 48 | 50 | 51;
+  readonly targetSchemaVersion?: 42 | 44 | 45 | 46 | 47 | 48 | 50 | 51 | 52;
 }
 
 export interface Schema42TestDatabaseFactory {
@@ -202,6 +203,7 @@ export const upgradeSchema44ToCurrentTestDatabase = async (input: {
   await upgradeSchema48Suffix(input.databaseFilename);
   await upgradeSchema50Suffix(input.databaseFilename);
   await upgradeSchema51Suffix(input.databaseFilename);
+  await upgradeSchema52Suffix(input.databaseFilename);
 
   const database = new DatabaseSync(input.databaseFilename, { readOnly: true });
   try {
@@ -402,6 +404,26 @@ const upgradeSchema51Suffix = async (
     throw new Schema42TestDatabaseSetupError(
       "SCHEMA42_SETUP_FAILED",
       `Schema-51 disposable fixture upgrade ended at user_version ${version}, expected 51.`,
+      version,
+    );
+  }
+  await checkpointSqlite(databaseFilename);
+};
+
+const upgradeSchema52Suffix = async (
+  databaseFilename: string,
+): Promise<void> => {
+  await runPrimary(
+    databaseFilename,
+    Effect.gen(function* () {
+      yield* runMigrations([P52_WORK_CONTRACT_REVISION_MIGRATION]);
+    }),
+  );
+  const version = await readUserVersion(databaseFilename);
+  if (version !== 52) {
+    throw new Schema42TestDatabaseSetupError(
+      "SCHEMA42_SETUP_FAILED",
+      `Schema-52 disposable fixture upgrade ended at user_version ${version}, expected 52.`,
       version,
     );
   }
@@ -824,7 +846,8 @@ export const createSchema42TestDatabase = async (
       options.targetSchemaVersion === 47 ||
       options.targetSchemaVersion === 48 ||
       options.targetSchemaVersion === 50 ||
-      options.targetSchemaVersion === 51
+      options.targetSchemaVersion === 51 ||
+      options.targetSchemaVersion === 52
         ? `arbor-schema${options.targetSchemaVersion}-test-`
         : options.targetSchemaVersion === 44
           ? "arbor-schema44-test-"
@@ -852,15 +875,23 @@ export const createSchema42TestDatabase = async (
       options.targetSchemaVersion === 47 ||
       options.targetSchemaVersion === 48 ||
       options.targetSchemaVersion === 50 ||
-      options.targetSchemaVersion === 51
+      options.targetSchemaVersion === 51 ||
+      options.targetSchemaVersion === 52
     ) {
       await upgradeSchema44TestDatabase({
         databaseFilename,
         p39ReportFilename,
         beforeP39Maintenance: options.beforeP39Maintenance,
       });
-      if (options.targetSchemaVersion === 51) {
+      if (options.targetSchemaVersion === 52) {
         await upgradeSchema44ToCurrentTestDatabase({ databaseFilename });
+      } else if (options.targetSchemaVersion === 51) {
+        await upgradeSchema45Suffix(databaseFilename);
+        await upgradeSchema46Suffix(databaseFilename);
+        await upgradeSchema47Suffix(databaseFilename);
+        await upgradeSchema48Suffix(databaseFilename);
+        await upgradeSchema50Suffix(databaseFilename);
+        await upgradeSchema51Suffix(databaseFilename);
       } else {
         await upgradeSchema45Suffix(databaseFilename);
         if (options.targetSchemaVersion === 46)
@@ -988,7 +1019,8 @@ export const createSchema42TestDatabaseFactory = async (
       options.targetSchemaVersion === 47 ||
       options.targetSchemaVersion === 48 ||
       options.targetSchemaVersion === 50 ||
-      options.targetSchemaVersion === 51
+      options.targetSchemaVersion === 51 ||
+      options.targetSchemaVersion === 52
         ? `arbor-schema${options.targetSchemaVersion}-template-`
         : options.targetSchemaVersion === 44
           ? "arbor-schema44-template-"
@@ -1011,7 +1043,8 @@ export const createSchema42TestDatabaseFactory = async (
           options.targetSchemaVersion === 47 ||
           options.targetSchemaVersion === 48 ||
           options.targetSchemaVersion === 50 ||
-          options.targetSchemaVersion === 51
+          options.targetSchemaVersion === 51 ||
+          options.targetSchemaVersion === 52
           ? `arbor-schema${options.targetSchemaVersion}-clone-`
           : options.targetSchemaVersion === 44
             ? "arbor-schema44-clone-"

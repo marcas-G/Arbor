@@ -304,7 +304,7 @@ const seedActionAndApproval = (
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     expect(CURRENT_MIGRATION_BASELINE).toBe(CURRENT_SCHEMA_VERSION);
-    expect(CURRENT_SCHEMA_VERSION).toBe(51);
+    expect(CURRENT_SCHEMA_VERSION).toBe(52);
     expect(CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual([
       ...P38_MIGRATIONS.map(({ id }) => id),
       40,
@@ -319,6 +319,7 @@ const seedActionAndApproval = (
       49,
       50,
       51,
+      52,
     ]);
     expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
     const binding = immutableApprovalBinding(
