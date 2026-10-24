@@ -457,6 +457,8 @@ const actionHandlerFromRegistry = (
   messageRows: ReadonlyMap<string, unknown> = new Map(),
   closedCorrelations: ReadonlySet<string> = new Set(),
   sideEffects?: { blobWrites: number },
+  anyProducerEvidence: () => Effect.Effect<boolean> = () =>
+    Effect.succeed(true),
 ) => {
   const blobBytes = new Map<string, Uint8Array>();
   const handlers = makeSingleWorkspaceControlActionHandlers({
@@ -543,6 +545,7 @@ const actionHandlerFromRegistry = (
         ),
       listActiveChildren: () => Effect.succeed([]),
     },
+    anyProducerEvidence,
   } as never);
   const handler = handlers.find((candidate) => candidate.action === action);
   if (handler === undefined) throw new Error(`missing ${action} handler`);
@@ -1013,13 +1016,48 @@ describe("AH10 receipt-first DeclareDependency takeover", () => {
     gateway: CommandGatewayService,
     receipts: ReadonlyMap<string, unknown>,
     dependencyRows: ReadonlyMap<string, unknown>,
+    anyProducerEvidence?: () => Effect.Effect<boolean>,
   ) =>
     actionHandlerFromRegistry(
       "DeclareDependency",
       gateway,
       receipts,
       dependencyRows,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      anyProducerEvidence,
     );
+
+  it("rejects a new AnyProducer action without evidence before Command submission", async () => {
+    const calls: Array<GatewayEnvelope<unknown>> = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        calls.push(envelope);
+        return Effect.fail(new Error("unexpected gateway call"));
+      },
+    } as unknown as CommandGatewayService;
+    const handler = makeDependencyHandler(gateway, new Map(), new Map(), () =>
+      Effect.succeed(false),
+    );
+    const result = await runControlHandler(
+      handler,
+      dependencyAction,
+      0,
+      dependencyInvocation,
+    );
+    expect(result).toMatchObject({
+      _tag: "Rejected",
+      cause: {
+        _tag: "AgentActionRejected",
+        code: "action/precondition",
+        correction: "ChooseAlternative",
+      },
+    });
+    expect(calls).toEqual([]);
+  });
 
   it("uses a new CommandId after gen0 FencingRejected", async () => {
     const receipts = new Map<string, unknown>();

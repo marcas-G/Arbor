@@ -1,28 +1,32 @@
 # S3 AnyProducer Settled-Wait Implementation Plan
 
-**Status: PLAN ONLY — design package is not accepted and implementation is not
-authorized.** This file schedules no source changes until both governance gates
-below are satisfied.
+**Status: IMPLEMENTATION AUTHORIZED — source work may proceed after the exact
+design landing passed independent consistency review (`Blocking = 0`).** The
+separately authorized real-provider qualification remains out of scope.
 
-**Planning base:** `366b83045aa59338c8c416179c55de66334b9b9e`
-**Planning branch/worktree:** `codex/s3-any-producer-impl-plan` at
-`C:\Users\ThinkPad\.codex\worktrees\s3-impl-plan\Arbor`
+**Implementation base:** `0b19c187d9c33be74be06af19c57400e4ea9ec12`
+**Implementation branch/worktree:** `codex/s3-design-landing` at
+`C:\Users\ThinkPad\.codex\worktrees\s3-design-landing\Arbor`
 **Fixed package:** `planning/manifests/s3-any-producer-settled-wait-governance-package.manifest.json`
 **Package SHA-256:** `5b558d26b4140631f5c7a14bb743b1e42a9d8992d50feee1a3d2c3c98353b7c8`
-**Suggested decision token:** `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`
-**Review:** p41 record commit `96ba2801dfa7e411d667f83d446b33e4c6b7aaba`,
-Blocking = 0. Review is not acceptance or implementation authorization.
+**Design acceptance token:** `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`
+**Conditional implementation token:**
+`AUTHORIZE_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_IMPLEMENTATION_AFTER_LANDING_REVIEW`
+**Post-landing review:** commit `0b19c187d9c33be74be06af19c57400e4ea9ec12`,
+Blocking = 0.
 
 ## Authorization gates
 
-1. The manual governor must accept the exact manifest/package identity. Per the
-   package, this authorizes **design landing only** in the owning P7/P10 docs.
-2. Source work below starts only after a separate explicit implementation
-   authorization. Neither gate is satisfied by this planning task, the RED, or
-   the S3 real-provider failure evidence.
-3. `docs/design/**` remains frozen until the accepted design landing package is
-   applied under the governor's authority. This implementation plan must not
-   edit it.
+1. The manual governor accepted the exact manifest/package identity and the
+   accepted P7/P10 design package was landed under that authority.
+2. The manual governor separately granted conditional implementation
+   authorization. Its condition is satisfied by the independent post-landing
+   consistency review at `Blocking = 0`; source work may proceed.
+3. Real-provider qualification is explicitly excluded and remains gated on
+   separate explicit run authorization. No real Provider, private Provider
+   configuration, or real-provider fixture is used by this implementation.
+4. `docs/design/**` remains frozen during implementation; the accepted landing
+   is complete and is not reopened by this source work.
 
 The failed real S3 evidence is in
 `planning/results/real-public-s3-collaboration-rerun-20261024.result.md`; the
@@ -126,13 +130,15 @@ test force a tool call to obtain PASS.
   qualification is strictly serial, last; no concurrent real-provider cases,
   no automatic retries, and no real runs while any action/projection RED
   remains.
-- Heavy build/full functional slots belong to the root orchestrator. The plan
-  stage performs no build, test, daemon, or Provider run.
+- Heavy build/full functional slots belong to the root orchestrator. This
+  implementation may run focused unit/integration tests and the scripted
+  public-process regression; it does not run real Provider qualification.
 
 ## Explicit non-scope
 
-No implementation, design-doc edit, migration, SQL schema change, new public
-view/action/event/Attention source, new durable fact/receipt, P7 coordinator or
-wake rewrite, Acceptance/Verification change, private provider configuration
-inspection, daemon launch, or real-provider attempt is authorized by this
-plan.
+No design-doc edit, migration, SQL schema change, new public view/action/event/
+Attention source, new durable fact/receipt, P7 coordinator or wake rewrite,
+Acceptance/Verification change, private Provider configuration inspection, or
+real-provider attempt is authorized by this plan. Focused in-process tests and
+the scripted public-process regression do not qualify S3 or authorize its real-
+provider journey.

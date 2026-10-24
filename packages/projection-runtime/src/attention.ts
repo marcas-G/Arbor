@@ -135,6 +135,12 @@ export interface VacantProducerCandidateFact {
   readonly consumerWorkId: WorkId;
 }
 
+/** APW-3 candidate already reduced from a single canonical snapshot. */
+export interface AnyProducerSettledWaitFact {
+  readonly dependencyId: string;
+  readonly consumerWorkspaceId: WorkspaceId;
+}
+
 /** GAP-01 join input: producer workspace vacancy facts
  * (`works(no Open Work) ∧ ¬Retired`). */
 export interface WorkspaceVacancyFact {
@@ -160,6 +166,7 @@ export interface AttentionFacts {
   readonly openVerifications: ReadonlyArray<OpenVerificationFact>;
   readonly executionSettlements: ReadonlyArray<ExecutionSettlementFact>;
   readonly vacantProducerCandidates: ReadonlyArray<VacantProducerCandidateFact>;
+  readonly anyProducerSettledWaits?: ReadonlyArray<AnyProducerSettledWaitFact>;
   readonly workspaceVacancies: ReadonlyArray<WorkspaceVacancyFact>;
   readonly workOwners: ReadonlyArray<WorkOwnerFact>;
   readonly workBlockers?: ReadonlyArray<WorkBlocker>;
@@ -397,6 +404,18 @@ export const deriveAttentionRows = (
       targetWorkspaceId: target,
       dedupKey: vacantProducerDedupKey(candidate.dependencyId),
       summary: `dependency ${candidate.dependencyId} waits on vacant producer workspace ${candidate.producerWorkspaceId} (no Open Work, not retired)`,
+      occurredAt: null,
+    });
+  }
+
+  for (const candidate of facts.anyProducerSettledWaits ?? []) {
+    rows.push({
+      source: "WaitingOnVacantProducer",
+      severity: "Attention",
+      targetWorkspaceId: candidate.consumerWorkspaceId,
+      dedupKey: vacantProducerDedupKey(candidate.dependencyId),
+      summary:
+        "An AnyProducer dependency is waiting with no eligible producer route.",
       occurredAt: null,
     });
   }
