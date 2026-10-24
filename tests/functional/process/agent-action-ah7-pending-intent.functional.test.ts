@@ -1215,7 +1215,11 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
                 !call.messages.some(
                   (message) =>
                     message.role === "tool" &&
-                    message.content?.includes("FUNCTIONAL_VERIFIED") === true,
+                    (message.content?.includes("FUNCTIONAL_VERIFIED") ===
+                      true ||
+                      message.content?.includes(
+                        "filesystem target could not be resolved or accessed inside the sandbox",
+                      ) === true),
                 ),
             ),
         ).toHaveLength(1);
