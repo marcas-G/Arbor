@@ -119,6 +119,25 @@ repeat any settled ProviderTurn/action. ProviderNative continuation is reused
 only for the exact complete binding; otherwise the owner frontier is rebuilt
 portably from retained HumanMessage sources.
 
+Under accepted S4-CONTEXT-DG-01
+(`ACCEPT_S4_CONTEXT_DG_01_ASSISTANT_MESSAGE_PROJECTION_OPTION_A`), a successful
+WorkspaceWork output with `finishReason=Stop`, non-empty text and no
+ToolInvocations does not itself settle or complete the Work. If the existing
+loop continues the same Execution to another ProviderTurn, that request must
+receive the exact accepted AssistantMessage from the same
+Responsibility-bound Workspace Session through the §2 DataOnly C3 projection
+(or its exact active checkpoint representation). This adds no retry authority
+or new loop branch; the existing finite `MAX_TURNS`, RuntimeSafetyObservation
+generation, RuntimeSafety policy/counters, settlement, rate limits, and
+stop/fencing rules are unchanged. Assistant text is not canonical progress, a
+CompletionClaim, or settlement evidence. Context may naturally change
+subsequent model-selected activity; this contract does not adjudicate
+P12-DG-01 or alter its D2/D4 observation/counter semantics.
+
+The rule is same-Session only. ConversationResponseEpisode continues to use
+its separate P14/P17 RootWorkspaceId-owned Conversation history/checkpoint and
+must not consume Work Session AssistantMessages.
+
 ## 3. `decodeTurn` and invocation routing
 
 ```ts
