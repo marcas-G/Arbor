@@ -65,10 +65,10 @@ after the SQLite commit but before the Committed record.
   empty/pristine/initialized sidecar state, then retries the same paths and
   requires Created/Prepared/Committed. The previously observed retry failure
   did not reproduce under this serialized run.
-- Read-surface scope: the P6 integration test calls the production
-  `viewQueryFaceWithRetryAvailability` module and repository directly, proving
-  module-level current-Parent authorization, foreign-human/Agent denial, and
-  read-not-consume state. This is not an HTTP/public-route/daemon qualification.
+- Read-surface follow-up: the original P6 integration test proved only the
+  module boundary. Commit `baacc105` adds the real operator → schema 52 →
+  production daemon → public HTTP qualification; see
+  `planning/results/F23-P6-operator-unbound-legacy-public-read.result.md`.
 - P39 Windows security/timeout test after these changes: PASS, 7/7. The P45
   migration/security targeted group had previously passed 11/11. Existing ACL
   checks remain enabled; no production ACL is bypassed.
@@ -106,5 +106,6 @@ policy; they are untracked and excluded from the commit. Process inspection
 found no related live test process. No temporary database is an online or
 preserved database.
 
-No HTTP/public-route/daemon read-surface qualification or phase closure is
-claimed. The implementation remains subject to independent review.
+The scoped HTTP/public-route/daemon read-surface qualification now passes and
+is recorded separately. No broader F23/P6 phase or release closure is claimed;
+the implementation remains subject to independent review.
