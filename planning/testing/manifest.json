@@ -93,6 +93,7 @@
       "tests/functional/process/f21-open3-activation-recovery.functional.test.ts",
       "tests/functional/process/f21-open3-p10-full-rebuild.functional.test.ts",
       "tests/functional/process/f23-exact-tuple-receipt-integrity.functional.test.ts",
+      "tests/functional/process/f23-p6-operator-unbound-legacy-public-read.functional.test.ts",
       "tests/functional/process/f23-receipt-tuple-ordering.functional.test.ts",
       "tests/functional/process/f23-retry-verification-permanent-replay.functional.test.ts",
       "tests/functional/process/human-steer.functional.test.ts",

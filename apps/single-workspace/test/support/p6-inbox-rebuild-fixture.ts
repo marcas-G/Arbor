@@ -3,14 +3,19 @@ import { DatabaseSync } from "node:sqlite";
 /** Seed only the P6-owned historical facts into a closed trusted schema-48
  * clone.  Schema construction/P39 qualification belongs to the shared factory
  * and is deliberately not repeated per process case. */
-export const seedP6InboxRebuildFixture = (databaseFilename: string): void => {
+export const seedP6InboxRebuildFixture = (
+  databaseFilename: string,
+  options: { readonly route?: "DirectParent" | "Root" } = {},
+): void => {
   const db = new DatabaseSync(databaseFilename);
   try {
     db.exec("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE");
     const projectId = "prj_p6_operator_fixture";
     const rootWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-01234567a455";
     const parentWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-01234567a457";
-    const ownerWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-01234567a458";
+    const nestedOwnerWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-01234567a458";
+    const ownerWorkspaceId =
+      options.route === "Root" ? rootWorkspaceId : nestedOwnerWorkspaceId;
     const commandId = "cmd_018f2b3c-4d5e-7abc-8def-01234567a459";
     const admittedAt = "2026-10-18T00:00:00.000Z";
     db.prepare(
@@ -35,10 +40,14 @@ export const seedP6InboxRebuildFixture = (databaseFilename: string): void => {
       ) VALUES (?, ?, NULL, 'root', '{}',0,'{}',0,'{}','ses_p6_root',
         NULL,'{}',0,0,'Active','t0','t0')`,
     ).run(rootWorkspaceId, projectId);
-    for (const [workspaceId, sessionId, parentId] of [
-      [parentWorkspaceId, "ses_p6_parent", rootWorkspaceId],
-      [ownerWorkspaceId, "ses_p6_owner", parentWorkspaceId],
-    ] as const) {
+    const nestedWorkspaces =
+      options.route === "Root"
+        ? []
+        : ([
+            [parentWorkspaceId, "ses_p6_parent", rootWorkspaceId],
+            [nestedOwnerWorkspaceId, "ses_p6_owner", parentWorkspaceId],
+          ] as const);
+    for (const [workspaceId, sessionId, parentId] of nestedWorkspaces) {
       db.prepare(
         `INSERT INTO sessions (
           session_id,binding_kind,workspace_id,execution_id,context_epoch,created_at
