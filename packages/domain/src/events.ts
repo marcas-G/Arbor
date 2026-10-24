@@ -55,6 +55,12 @@ export const WorkSteered = Schema.TaggedStruct("WorkSteered", {
   toRevision: Schema.Number,
   severity: Schema.String,
 });
+export const WorkAmended = Schema.TaggedStruct("WorkAmended", {
+  workId: Schema.String,
+  fromRevision: Schema.Number,
+  toRevision: Schema.Number,
+  severity: Schema.String,
+});
 
 export const WorkBlockerResolved = Schema.TaggedStruct("WorkBlockerResolved", {
   blockerId: Schema.String,
@@ -436,6 +442,7 @@ export const DomainEventPayload = Schema.Union([
   WorkCompleted,
   WorkCancelled,
   WorkSteered,
+  WorkAmended,
   WorkBlockerResolved,
   WorkBlockerSuperseded,
   DependencyDeclared,
@@ -498,6 +505,7 @@ export const EVENT_CATALOG = {
   WorkCompleted,
   WorkCancelled,
   WorkSteered,
+  WorkAmended,
   WorkBlockerResolved,
   WorkBlockerSuperseded,
   DependencyDeclared,

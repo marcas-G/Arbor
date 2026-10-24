@@ -293,6 +293,23 @@ const verificationMission = object({
   ),
   riskRequirements: stringArray,
 });
+const workContractSnapshot = object({
+  objective: string,
+  why: string,
+  constraints: stringArray,
+  completionExpectation: string,
+  verificationMission,
+});
+const steerOperation = union("kind", {
+  DirectionGuidance: object({
+    kind: literal("DirectionGuidance"),
+    guidance: string,
+  }),
+  ContractAmendment: object({
+    kind: literal("ContractAmendment"),
+    amendment: workContractSnapshot,
+  }),
+});
 const executionEpisodeBinding = union("_tag", {
   WorkEpisode: object({
     _tag: literal("WorkEpisode"),
@@ -731,8 +748,9 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
     workspaceId: id("WorkspaceId"),
     steer: object({
       severity: enumRule("Normal", "Critical"),
-      guidance: string,
+      guidance: optional(string),
       scope: optional(enumRule("Direction", "Constraint")),
+      operation: optional(steerOperation),
     }),
     expectedWorkRevision: workRevision,
     provenance: object({ source: literal("HumanInput") }),
@@ -949,7 +967,7 @@ export const makeCommandInputContractRegistry = (
         externalOriginAllowed:
           !externalOriginPolicies[commandType].startsWith("reject external"),
         decodePayload: (payload) =>
-          decodeAgainstRule(payloadRules[commandType], payload),
+          decodeCommandPayloadForContract(commandType, payload),
       },
     ]),
   );
@@ -1027,6 +1045,37 @@ const decodeAgainstRule = (
   }
   return { ok: true, value };
 };
+
+function decodeCommandPayloadForContract(
+  commandType: RegisteredCommandType,
+  payload: unknown,
+): DecodeCommandPayloadResult {
+  const decoded = decodeAgainstRule(payloadRules[commandType], payload);
+  if (!decoded.ok || commandType !== "SteerWork") return decoded;
+  const input = payload as {
+    readonly steer?: Record<string, unknown>;
+  };
+  const steer = input.steer;
+  if (steer === undefined || typeof steer !== "object" || steer === null) {
+    return {
+      ok: false,
+      issues: [{ path: ["steer"], rule: "format" }],
+    };
+  }
+  const hasOperation = Object.hasOwn(steer, "operation");
+  const hasLegacyGuidance = Object.hasOwn(steer, "guidance");
+  const hasLegacyScope = Object.hasOwn(steer, "scope");
+  const validLegacy =
+    !hasOperation && hasLegacyGuidance && typeof steer.guidance === "string";
+  const validTyped = hasOperation && !hasLegacyGuidance && !hasLegacyScope;
+  if (!validLegacy && !validTyped) {
+    return {
+      ok: false,
+      issues: [{ path: ["steer"], rule: "format" }],
+    };
+  }
+  return decoded;
+}
 
 const compareIssues = (
   left: CommandInputIssue,
@@ -1284,6 +1333,13 @@ const decodeEnvelopeWithRegistry = (
   });
   const decoded = decodeAgainstRule(envelopeRule, envelope);
   if (!decoded.ok) return decoded;
+  if (commandType === "SteerWork") {
+    const validatedPayload = decodeCommandPayloadForContract(
+      "SteerWork",
+      envelope.payload,
+    );
+    if (!validatedPayload.ok) return validatedPayload;
+  }
   if (commandType === "DecideSandboxPolicy") {
     const decodedEnvelope = decoded.value as {
       readonly payload: Record<string, unknown>;
