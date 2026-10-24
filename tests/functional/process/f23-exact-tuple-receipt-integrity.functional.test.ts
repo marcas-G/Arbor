@@ -33,7 +33,7 @@ import {
   p7RootWorkspace,
   p7SeedProject,
 } from "../../support/p7-app.js";
-import { createSchema46TestDatabaseFactory } from "../../support/schema44-database.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../support/schema44-database.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -47,7 +47,7 @@ import {
 const fixtures: ProductionFixture[] = [];
 const schemaDatabases: Array<{ cleanup: () => void }> = [];
 let schemaDatabaseFactory:
-  | Awaited<ReturnType<typeof createSchema46TestDatabaseFactory>>
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
   | undefined;
 
 const body = (value: unknown) => JSON.stringify(value);
@@ -141,8 +141,8 @@ afterEach(async () => {
 });
 
 beforeAll(async () => {
-  schemaDatabaseFactory = await createSchema46TestDatabaseFactory({
-    prefix: ".f23-exact-tuple-schema45-",
+  schemaDatabaseFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".f23-exact-tuple-current-schema-",
   });
 }, 120_000);
 

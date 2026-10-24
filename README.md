@@ -11,21 +11,21 @@ pnpm install --frozen-lockfile
 pnpm build
 ```
 
-Before the first start, create a schema 42 database with `fresh` (or upgrade an existing stopped database with `copy` as shown below). Then set `ARBOR_DB` to that completed database and start Arbor:
+Before the first start, create a schema 52 database with `fresh`. Then set `ARBOR_DB` to that completed database and start Arbor. This release candidate qualifies fresh disposable databases only; upgrading a preserved user database is not yet a supported release operation.
 
 First create or choose the local parent directory for the database, P39 report, and manifest. It must already exist and pass the P39 protected-directory checks for a local volume and the required owner/ACL. Creating the directory does not guarantee those checks will pass. For example:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path 'C:\Arbor Data'
 node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
-  --database 'C:\Arbor Data\arbor-v42.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v42-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v42-manifest.jsonl'
-$env:ARBOR_DB = 'C:\Arbor Data\arbor-v42.db'
+  --database 'C:\Arbor Data\arbor-v52.db' `
+  --p39-report-db 'C:\Arbor Data\arbor-v52-p39-report.db' `
+  --copy-manifest 'C:\Arbor Data\arbor-v52-manifest.jsonl'
+$env:ARBOR_DB = 'C:\Arbor Data\arbor-v52.db'
 pnpm start
 ```
 
-Startup requires the selected database to already be exactly at schema 42. The daemon does not upgrade it on startup. `pnpm start` builds the Web client and runs the daemon in the foreground. Press `Ctrl+C` to stop it; run `pnpm start` again to restart. Set `ARBOR_HTTP_PORT` before starting to select another port. Keep the daemon stopped while copying or upgrading its database. For an existing database, stop Arbor and complete the `copy` operation below before pointing `ARBOR_DB` to its upgraded copy and starting.
+Startup requires the selected database to already be exactly at schema 52. The daemon does not upgrade it on startup. `pnpm start` builds the Web client and runs the daemon in the foreground. Press `Ctrl+C` to stop it; run `pnpm start` again to restart. Set `ARBOR_HTTP_PORT` before starting to select another port. Keep the daemon stopped while copying or upgrading its database. For an existing database, stop Arbor and complete the `copy` operation below before pointing `ARBOR_DB` to its upgraded copy and starting.
 
 PowerShell accepts quoted paths with spaces. For example:
 
@@ -35,9 +35,11 @@ $env:ARBOR_HTTP_PORT = '8788'
 pnpm start
 ```
 
-## Database schema 42
+## Database schema 52
 
-The current runtime requires schema version 42 before startup. It does not apply migrations at startup. An older database must first be upgraded offline; do not start Arbor against a database at any other version.
+The current runtime requires schema version 52 before startup. It does not apply migrations at startup. An older database must first be upgraded offline; do not start Arbor against a database at any other version.
+
+The offline copy upgrader accepts trusted source schemas 36–38 and 44–52 for disposable qualification fixtures. Existing databases outside those prefixes are rejected. Until the preserved-database release gate closes, do not use `copy` or `resume-copy` on user data or treat their availability as production upgrade support.
 
 The examples below assume the repository root is the current directory. First create or choose the local parent directory for the target, P39 report, and manifest; it must already exist and pass P39 local-volume and owner/ACL protection checks. `New-Item -ItemType Directory -Force` can create the directory but does not guarantee it will pass those checks. For each new `fresh` or `copy` job, use separate, new target, P39 report, and copy-manifest paths. A `resume-copy` job must reuse the exact source, target, report, and manifest paths from its interrupted `copy`; do not allocate replacement paths for a resume. `copy` accepts source schema versions 36, 37, or 38 only. Keep the source daemon stopped and the source database unchanged through completion. Never point the operator at a live database or use the upgraded copy until the command reports success. The command validates the report and manifest chain as part of its operation. The manifest records local path metadata: retain it on the machine where the upgrade ran and redact it before sharing. Keep the original database as the rollback point; on success, explicitly point `ARBOR_DB` at the upgraded copy before restarting Arbor.
 
@@ -51,19 +53,19 @@ For a brand-new empty database:
 
 ```powershell
 node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
-  --database 'C:\Arbor Data\arbor-v42.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v42-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v42-manifest.jsonl'
+  --database 'C:\Arbor Data\arbor-v52.db' `
+  --p39-report-db 'C:\Arbor Data\arbor-v52-p39-report.db' `
+  --copy-manifest 'C:\Arbor Data\arbor-v52-manifest.jsonl'
 ```
 
-For an existing database, stop Arbor first, then create and upgrade a separate copy. Preserve the original file unchanged:
+For development qualification with a disposable database, stop Arbor first, then create and upgrade a separate copy. Preserve the original file unchanged. This path is not yet approved for preserved user data:
 
 ```powershell
 node '.\apps\single-workspace\dist\schema-upgrade.js' --mode copy `
   --source-database 'C:\Arbor Data\arbor-slice.db' `
-  --database 'C:\Arbor Data\arbor-v42-copy.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v42-copy-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v42-copy-manifest.jsonl'
+  --database 'C:\Arbor Data\arbor-v52-copy.db' `
+  --p39-report-db 'C:\Arbor Data\arbor-v52-copy-p39-report.db' `
+  --copy-manifest 'C:\Arbor Data\arbor-v52-copy-manifest.jsonl'
 ```
 
 If that copy operation stops partway through, keep the same source stopped and unchanged, then resume with the exact same source, target, report, and manifest paths:
@@ -71,15 +73,15 @@ If that copy operation stops partway through, keep the same source stopped and u
 ```powershell
 node '.\apps\single-workspace\dist\schema-upgrade.js' --mode resume-copy `
   --source-database 'C:\Arbor Data\arbor-slice.db' `
-  --database 'C:\Arbor Data\arbor-v42-copy.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v42-copy-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v42-copy-manifest.jsonl'
+  --database 'C:\Arbor Data\arbor-v52-copy.db' `
+  --p39-report-db 'C:\Arbor Data\arbor-v52-copy-p39-report.db' `
+  --copy-manifest 'C:\Arbor Data\arbor-v52-copy-manifest.jsonl'
 ```
 
 Only after the upgrade reports success, use the new copy:
 
 ```powershell
-$env:ARBOR_DB = 'C:\Arbor Data\arbor-v42-copy.db'
+$env:ARBOR_DB = 'C:\Arbor Data\arbor-v52-copy.db'
 pnpm start
 ```
 

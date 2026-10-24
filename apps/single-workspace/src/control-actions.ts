@@ -542,6 +542,12 @@ const findPriorCommandReceipt = (input: {
           storedSchemaVersion,
         )
       ) {
+        if (
+          prior.value.resolution === "Committed" &&
+          input.onCommittedDecodeFailure !== undefined
+        ) {
+          return yield* input.onCommittedDecodeFailure(priorCommandId);
+        }
         return yield* Effect.fail(
           actionOperationalFailure(input.operation)(
             "prior Command receipt schema is not registered for strict replay",

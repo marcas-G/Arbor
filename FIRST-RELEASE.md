@@ -13,32 +13,32 @@ pnpm install --frozen-lockfile
 pnpm build
 ```
 
-首次启动前，先离线创建 schema 42 数据库，再将 `ARBOR_DB` 指向它并启动 Arbor。已有数据库则按下文 `copy` 操作完成后指向升级副本：
+首次启动前，先离线创建 schema 52 数据库，再将 `ARBOR_DB` 指向它并启动 Arbor。当前发布候选只资格化全新、可丢弃的数据库；已保留用户数据库的升级尚不是受支持的发布操作。
 
 先创建或选择本机父目录。父目录必须已存在，并通过 P39 的本地卷、owner 和 ACL 保护校验。创建目录本身不保证能通过这些校验：
 
 ```powershell
 New-Item -ItemType Directory -Force -Path 'C:\Arbor Data'
 node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
-  --database 'C:\Arbor Data\arbor-v42.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v42-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v42-manifest.jsonl'
-$env:ARBOR_DB = 'C:\Arbor Data\arbor-v42.db'
+  --database 'C:\Arbor Data\arbor-v52.db' `
+  --p39-report-db 'C:\Arbor Data\arbor-v52-p39-report.db' `
+  --copy-manifest 'C:\Arbor Data\arbor-v52-manifest.jsonl'
+$env:ARBOR_DB = 'C:\Arbor Data\arbor-v52.db'
 pnpm start
 ```
 
-daemon 只接受已是 schema 42 的数据库；启动不执行迁移或升级。`pnpm start` 构建 Web 客户端，并以前台方式启动本机 daemon。浏览器打开 `http://127.0.0.1:8787`。按 `Ctrl+C` 停止，重新执行 `pnpm start` 重启。可用 `ARBOR_HTTP_PORT` 更改端口，`ARBOR_DB` 指定 SQLite 文件。PowerShell 路径包含空格时使用单引号。
+daemon 只接受已是 schema 52 的数据库；启动不执行迁移或升级。`pnpm start` 构建 Web 客户端，并以前台方式启动本机 daemon。浏览器打开 `http://127.0.0.1:8787`。按 `Ctrl+C` 停止，重新执行 `pnpm start` 重启。可用 `ARBOR_HTTP_PORT` 更改端口，`ARBOR_DB` 指定 SQLite 文件。PowerShell 路径包含空格时使用单引号。
 
 ```powershell
 $env:ARBOR_DB = 'C:\Users\Example User\Arbor Data\arbor.db'
 pnpm start
 ```
 
-## Schema 42 与旧库升级
+## Schema 52 与旧库升级
 
-当前启动 gate 精确要求 `PRAGMA user_version = 42`。普通启动不应用迁移。未达到 schema 42 的数据库必须先通过离线 `schema:upgrade` 完成升级，不要直接启动。
+当前启动 gate 精确要求 `PRAGMA user_version = 52`。普通启动不应用迁移。未达到 schema 52 的数据库必须先通过离线 `schema:upgrade` 完成升级，不要直接启动。
 
-升级只能针对停止服务后的本机数据库进行。先正常停止 Arbor，并确认没有其他进程使用源库。先创建或选择目标、P39 报告库和 manifest 所在的本机父目录；它必须已存在且通过 P39 本地卷、owner 和 ACL 保护校验。`New-Item -ItemType Directory -Force` 可创建目录，但不保证目录符合这些保护条件。`copy` 仅支持 schema 36、37、38 的源库。整个复制和续跑期间源库必须停机、只读且保持不变。对于新的 `fresh` 或 `copy` 作业，目标、P39 报告库和 manifest 必须各自是独立的新路径；`resume-copy` 必须复用中断作业原有的源、目标、报告和 manifest 路径。严禁把在线数据库交给升级器，也不要把目标路径指向源库。
+以下 `copy` / `resume-copy` 流程仅用于可丢弃数据库的开发资格验证，不得用于保留用户数据。资格验证只能针对停止服务后的本机数据库进行。先正常停止 Arbor，并确认没有其他进程使用源库。先创建或选择目标、P39 报告库和 manifest 所在的本机父目录；它必须已存在且通过 P39 本地卷、owner 和 ACL 保护校验。`New-Item -ItemType Directory -Force` 可创建目录，但不保证目录符合这些保护条件。`copy` 支持经验证的 schema 36–38 和 44–52 源库。其他 schema 版本不在本发布候选的支持范围内。整个复制和续跑期间源库必须停机、只读且保持不变。对于新的 `fresh` 或 `copy` 作业，目标、P39 报告库和 manifest 必须各自是独立的新路径；`resume-copy` 必须复用中断作业原有的源、目标、报告和 manifest 路径。严禁把在线数据库交给升级器，也不要把目标路径指向源库。
 
 先构建升级器：
 
@@ -50,9 +50,9 @@ pnpm build
 
 ```powershell
 node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
-  --database 'C:\Arbor Data\arbor-v42.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v42-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v42-manifest.jsonl'
+  --database 'C:\Arbor Data\arbor-v52.db' `
+  --p39-report-db 'C:\Arbor Data\arbor-v52-p39-report.db' `
+  --copy-manifest 'C:\Arbor Data\arbor-v52-manifest.jsonl'
 ```
 
 升级现有库时使用 `copy`。源库保留为原样回滚点，目标是单独的副本：
@@ -60,9 +60,9 @@ node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
 ```powershell
 node '.\apps\single-workspace\dist\schema-upgrade.js' --mode copy `
   --source-database 'C:\Arbor Data\arbor-slice.db' `
-  --database 'C:\Arbor Data\arbor-v42-copy.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v42-copy-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v42-copy-manifest.jsonl'
+  --database 'C:\Arbor Data\arbor-v52-copy.db' `
+  --p39-report-db 'C:\Arbor Data\arbor-v52-copy-p39-report.db' `
+  --copy-manifest 'C:\Arbor Data\arbor-v52-copy-manifest.jsonl'
 ```
 
 若中断，使用 `resume-copy` 并提供完全相同的源库、目标库、报告库和 manifest 路径；源库仍须停机且未改变：
@@ -70,15 +70,15 @@ node '.\apps\single-workspace\dist\schema-upgrade.js' --mode copy `
 ```powershell
 node '.\apps\single-workspace\dist\schema-upgrade.js' --mode resume-copy `
   --source-database 'C:\Arbor Data\arbor-slice.db' `
-  --database 'C:\Arbor Data\arbor-v42-copy.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v42-copy-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v42-copy-manifest.jsonl'
+  --database 'C:\Arbor Data\arbor-v52-copy.db' `
+  --p39-report-db 'C:\Arbor Data\arbor-v52-copy-p39-report.db' `
+  --copy-manifest 'C:\Arbor Data\arbor-v52-copy-manifest.jsonl'
 ```
 
-升级器在成功返回前会验证 P39 report 的结构与证据、manifest 链和摘要，并确认只读重开的目标确为 schema 42。manifest 含本机路径元数据，只在运行升级的本机留存；分享前先脱敏。命令报错或拒绝时，不要切换数据库；保留源库和诊断文件以便检查。成功后保留原库作为回滚点，再显式切换并启动：
+升级器在成功返回前会验证 P39 report 的结构与证据、manifest 链和摘要，并确认只读重开的目标确为 schema 52。manifest 含本机路径元数据，只在运行升级的本机留存；分享前先脱敏。命令报错或拒绝时，不要切换数据库；保留源库和诊断文件以便检查。成功后保留原库作为回滚点，再显式切换并启动：
 
 ```powershell
-$env:ARBOR_DB = 'C:\Arbor Data\arbor-v42-copy.db'
+$env:ARBOR_DB = 'C:\Arbor Data\arbor-v52-copy.db'
 pnpm start
 ```
 
