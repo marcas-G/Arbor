@@ -38,6 +38,15 @@ Executable-approval/restart boundary. S3 AnyProducer, S4 assistant-message
 projection, and P12 D2/D4 implementations are accepted/landed with scoped
 verification, not full-scenario closures.
 
+Current recovery disposition is further reconciled by
+[`current-recovery-closure-audit-772ba5d7.result.md`](../results/current-recovery-closure-audit-772ba5d7.result.md):
+supported v1 AH7 DG-01/02/03 paths, registered AH10 paths (including
+Deliver/P8/P41), and the AH14 ambiguous-legacy Attention files pass the
+current default matrix. This does not promote four exact pending
+verification/P8/F23 cases, qualify P6 public reads, resolve Submitted
+DecisionEpisode corruption semantics, qualify Native OS or real-provider
+behavior, or authorize an existing-database upgrade.
+
 ## Public journey and subsystem evidence
 
 | Area | Evidence found | Grade and remaining qualification |

@@ -30,6 +30,9 @@ AnyProducer, S4 assistant-message projection, and P12 D2/D4 implementations
 have scoped deterministic verification but do not qualify the full scenarios.
 Current open-item dispositions are summarized in
 [`full-delivery-convergence-matrix-2026-10-20.md`](../results/full-delivery-convergence-matrix-2026-10-20.md).
+The current recovery audit supersedes older blanket AH7/AH10/AH14 OPEN labels
+for supported v1 default paths on this candidate; see
+[`current-recovery-closure-audit-772ba5d7.result.md`](../results/current-recovery-closure-audit-772ba5d7.result.md).
 
 ## Delivery matrix
 
