@@ -155,6 +155,7 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
     });
 
     const fixture = await startProductionFixture({
+      admitWorkspaceDirectory: true,
       isolatedPortHandshake: true,
       reply: (call) => {
         const context = JSON.stringify(call.messages);
