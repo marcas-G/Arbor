@@ -27,12 +27,17 @@ node scripts/testing/run-suite.mjs release --resume-from .test-results/<run-id>
 
 The new result remains self-contained and auditable. Its `result-manifest.json`
 records the source run, Git diff, inherited passed files, invalidated files and
-the files actually executed. Resume is accepted only when the profile and
-manifest match, both Git trees are clean, and every change since the source run
-is either a directly selected test file or one of the audited resume-runner
-files. A changed direct test is rerun. Any production, shared fixture/support,
-configuration, dependency, or other repository change rejects inheritance and
-falls back to the complete profile.
+the files actually executed. Resume is accepted only when the profile matches,
+both Git trees are clean, and every change since the source run is either a
+directly selected test file, a non-executable planning Markdown file, or one of
+the audited resume-runner files. A changed direct test is rerun. A manifest may
+only grow: the old selected files must remain an ordered subset, additions must
+be direct test files present in the Git diff, and every added file is executed.
+The manifest validator/test and a pending-to-process promotion with the same
+filename are the only extra changes admitted for this additive case. Any
+removal, reorder, production, shared fixture/support, configuration, dependency,
+or other repository change rejects inheritance and falls back to the complete
+profile.
 
 Vitest files are inherited only from durable per-file PASS checkpoints.
 Playwright files are inherited only when the entire prior Playwright group
