@@ -666,6 +666,12 @@ export const buildSingleWorkspaceLayer = (
   if (modelEntry === undefined) {
     throw new Error(`model catalog: unknown modelRef "${modelRef}"`);
   }
+  const modelAdapter = providerRegistry.find(modelEntry.adapterId);
+  if (modelAdapter === undefined) {
+    throw new Error(
+      `provider registry: unknown catalog adapterId "${modelEntry.adapterId}"`,
+    );
+  }
   if (
     config.provider !== undefined &&
     config.provider.adapterId !== modelEntry.adapterId
@@ -1098,6 +1104,7 @@ export const buildSingleWorkspaceLayer = (
             ...(deploymentBinding !== undefined
               ? { providerRef: deploymentBinding.adapter.adapterId }
               : {}),
+            protocolFamily: modelAdapter.profile.protocolFamily,
             onProviderProgress: publishConversationProgress,
             ...(config.qualificationProbe !== undefined
               ? { qualificationProbe: config.qualificationProbe }

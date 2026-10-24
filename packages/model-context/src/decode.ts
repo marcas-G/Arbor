@@ -120,6 +120,10 @@ export interface ModelOutput {
   readonly text: string;
   readonly toolInvocations: ReadonlyArray<ToolInvocation>;
   readonly finishReason: ProviderFinishReason;
+  /** Byte-order-preserving concatenation of provider reasoning chunks. The
+   * value remains opaque; Model Context may retain or discard it, never parse
+   * or rewrite it. */
+  readonly reasoningOpaquePayload?: string;
 }
 
 export type DecodeResult =
@@ -145,6 +149,7 @@ export const decodeTurn = (
   events: ReadonlyArray<CanonicalProviderEvent>,
 ): DecodeResult => {
   let text = "";
+  let reasoningOpaquePayload = "";
   let finishReason: ProviderFinishReason = "Stop";
   const toolInvocations: ToolInvocation[] = [];
   const callRefs = new Set<string>();
@@ -195,6 +200,8 @@ export const decodeTurn = (
         providerTurnId = event.providerTurnId;
         break;
       case "ReasoningDelta":
+        reasoningOpaquePayload += event.text;
+        break;
       case "UsageReported":
       case "ContinuationState":
       case "TurnFailed":
@@ -210,5 +217,15 @@ export const decodeTurn = (
     return violation("turn produced neither text nor a tool invocation");
   }
 
-  return { ok: true, output: { text, toolInvocations, finishReason } };
+  return {
+    ok: true,
+    output: {
+      text,
+      toolInvocations,
+      finishReason,
+      ...(reasoningOpaquePayload.length === 0
+        ? {}
+        : { reasoningOpaquePayload }),
+    },
+  };
 };

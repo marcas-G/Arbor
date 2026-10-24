@@ -58,6 +58,8 @@ export interface ModelContextPlan {
   readonly conversationContextRefs?: ReadonlyArray<string>;
   readonly messageContextRefs?: ReadonlyArray<string>;
   readonly providerRef?: string;
+  readonly protocolFamily?: string;
+  readonly reasoningAttachmentRefs?: ModelContextManifest["reasoningAttachmentRefs"];
   /** Optional content table: contentRef -> instruction body text. When
    * present, compiled instructions carry the resolved text instead of the
    * bare reference (P3 `05` compile semantics). */
@@ -71,6 +73,7 @@ export interface ModelContextPlan {
 
 export interface ModelContextManifest {
   readonly providerRef?: string;
+  readonly protocolFamily?: string;
   readonly providerTurnId: ProviderTurnId;
   readonly executionId: ExecutionId;
   readonly sessionId: SessionId;
@@ -261,6 +264,9 @@ export const compileTurn = (input: {
     ...(input.plan.providerRef !== undefined
       ? { providerRef: input.plan.providerRef }
       : {}),
+    ...(input.plan.protocolFamily !== undefined
+      ? { protocolFamily: input.plan.protocolFamily }
+      : {}),
     providerTurnId: input.providerTurnId,
     executionId: input.executionId,
     sessionId: input.sessionId,
@@ -278,6 +284,10 @@ export const compileTurn = (input: {
       ...(input.plan.conversationContextRefs ?? []),
       ...(input.plan.messageContextRefs ?? []),
     ],
+    ...(input.plan.reasoningAttachmentRefs !== undefined &&
+    input.plan.reasoningAttachmentRefs.length > 0
+      ? { reasoningAttachmentRefs: input.plan.reasoningAttachmentRefs }
+      : {}),
     skillRefs: input.plan.skills.map((skill) => ({
       skillId: skill.skillId,
       revision: skill.revision,

@@ -268,6 +268,8 @@ export interface AgentLoopDriverOptions {
   }) => Effect.Effect<void, unknown>;
   /** Adapter identity recorded on manifests (P14 conversation audit). */
   readonly providerRef?: string;
+  /** Exact protocol family used to bind P16 reasoning attachments. */
+  readonly protocolFamily?: string;
   /** Presentation-only progress tap (conversation streaming): receives every
    * ProviderRuntimeProgress event tagged with the driving executionId. It
    * must never affect model/execution semantics (the provider runtime
@@ -1046,6 +1048,9 @@ export const AgentLoopDriverLive = (
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
               sessions,
+              ...(Option.isSome(blobStoreOption)
+                ? { blobs: blobStoreOption.value }
+                : {}),
               failure,
               now,
               ...(options.qualificationProbe === undefined

@@ -78,6 +78,16 @@ export interface PrepareTurnInput {
   readonly messageContextRefs?: ReadonlyArray<string>;
   /** Adapter identity recorded on the manifest (composition-provided). */
   readonly providerRef?: string;
+  /** Exact protocol family and Model Context attachment decisions for P16
+   * reasoning round-trip. */
+  readonly protocolFamily?: string;
+  readonly reasoningAttachmentRefs?: ReadonlyArray<{
+    readonly messageId: string;
+    readonly modelRef: string;
+    readonly protocolFamily: string;
+    readonly bindingFingerprint: string;
+    readonly decision: "Preserve" | "Inject" | "DiscardForCompaction";
+  }>;
   readonly stepContext?: {
     readonly logicalStepNo: number;
     readonly repairAttempt: number;
@@ -226,6 +236,15 @@ export const ModelContextLive: Layer.Layer<
               : {}),
             ...(input.providerRef !== undefined
               ? { providerRef: input.providerRef }
+              : {}),
+            ...(input.protocolFamily !== undefined
+              ? { protocolFamily: input.protocolFamily }
+              : {}),
+            ...(input.reasoningAttachmentRefs !== undefined &&
+            input.reasoningAttachmentRefs.length > 0
+              ? {
+                  reasoningAttachmentRefs: input.reasoningAttachmentRefs,
+                }
               : {}),
             ...(input.instructionContents !== undefined &&
             input.instructionContents.size > 0

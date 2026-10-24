@@ -247,6 +247,91 @@ describe("OpenAI-compatible fetch provider", () => {
     ]);
   });
 
+  it("replays reasoning_content on the same assistant message as its tool_calls", async () => {
+    let observedBody: Record<string, unknown> | undefined;
+    const client = OpenAICompatibleFetchClient({
+      baseUrl: "http://provider.test/v1",
+      fetch: async (_input, init) => {
+        observedBody = JSON.parse(init.body) as Record<string, unknown>;
+        return eventStream({
+          choices: [{ delta: { content: "continued" }, finish_reason: "stop" }],
+        });
+      },
+    });
+    const providerTurnId = parse(ProviderTurnId)(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789a8",
+    );
+    const typedRequest: PortableModelRequestV2 = {
+      requestVersion: 2,
+      operationKind: "Inference",
+      modelRef: "model-live",
+      instructions: [],
+      inputItems: [
+        { _tag: "Message", role: "user", text: "inspect it" },
+        { _tag: "Message", role: "assistant", text: "" },
+        {
+          _tag: "ReasoningAttachment",
+          providerTurnId,
+          modelRef: "model-live",
+          protocolFamily: "openai-chat-completions-sse",
+          bindingFingerprint: `p16fp_${"a".repeat(64)}`,
+          opaquePayload: "synthetic opaque reasoning payload",
+        },
+        {
+          _tag: "ToolCall",
+          callRef: "call-reasoned",
+          toolName: "read",
+          argumentsJson: '{"path":"README.md"}',
+        },
+        {
+          _tag: "ToolResult",
+          callRef: "call-reasoned",
+          toolName: "read",
+          status: "Succeeded",
+          outputText: "contents",
+          observationRef: "obs-reasoned",
+          artifactRefs: [],
+          truncated: false,
+        },
+      ],
+      toolDefinitions: [],
+      outputContractRef: "tool-invocation-v1",
+      budget: { maxOutputTokens: 64 },
+      cacheHints: [],
+    };
+
+    await expect(
+      chunks(client, SecretMaterial.of("test-only-key"), typedRequest),
+    ).resolves.toEqual([
+      { type: "response_started" },
+      { type: "text", text: "continued" },
+      { type: "completed", finishReason: "stop" },
+    ]);
+    expect(observedBody?.messages).toEqual([
+      { role: "user", content: "inspect it" },
+      {
+        role: "assistant",
+        content: null,
+        reasoning_content: "synthetic opaque reasoning payload",
+        tool_calls: [
+          {
+            id: "call-reasoned",
+            type: "function",
+            function: {
+              name: "read",
+              arguments: '{"path":"README.md"}',
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call-reasoned",
+        content: "contents",
+      },
+    ]);
+  });
+
   it("rejects unsupported typed items before sending provider bytes", async () => {
     let calls = 0;
     const client = OpenAICompatibleFetchClient({

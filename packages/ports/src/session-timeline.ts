@@ -7,6 +7,10 @@ import type {
 } from "@arbor/domain";
 import type { PortableToolResultStatus } from "./provider.js";
 
+/** Typed Session attachment carrier for P16 reasoning round-trip state. */
+export const PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE =
+  "application/vnd.arbor.provider-reasoning+json";
+
 export type SessionItemTrust =
   | "CanonicalInstruction"
   | "InstructionCandidate"
@@ -95,6 +99,9 @@ export type SessionItem =
       readonly mediaType: string;
       readonly filename?: string;
       readonly trust: SessionItemTrust;
+      /** Present only for the provider-reasoning attachment subtype. The
+       * payload itself remains in the content-addressed BlobStore. */
+      readonly providerTurnId?: ProviderTurnId;
     };
 
 export type SessionItemType = SessionItem["_tag"];
@@ -147,8 +154,12 @@ export const sessionEntryKindOf = (
   | "ContextUpdate" => {
   switch (item._tag) {
     case "UserMessage":
-    case "AttachmentRef":
       return "Input";
+    case "AttachmentRef":
+      return item.mediaType === PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE &&
+        item.providerTurnId !== undefined
+        ? "ModelOutput"
+        : "Input";
     case "AssistantMessage":
     case "ToolCall":
       return "ModelOutput";
