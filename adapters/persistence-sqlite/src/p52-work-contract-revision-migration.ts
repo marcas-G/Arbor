@@ -23,6 +23,25 @@ interface LegacyWorkRow {
   readonly updated_at: string;
 }
 
+export const makeLegacyCurrentWorkContractRevision = (work: LegacyWorkRow) => {
+  const contract: WorkContractSnapshot = {
+    objective: work.objective,
+    why: work.why,
+    constraints: JSON.parse(work.constraints) as ReadonlyArray<string>,
+    completionExpectation: work.completion_expectation,
+    verificationMission: JSON.parse(work.verification_mission),
+  };
+  const contractJson = canonicalWorkContractJson(contract);
+  return {
+    workId: work.work_id,
+    workRevision: Number(work.revision),
+    contractJson,
+    contractSha256: sha256Hex(contractJson),
+    provenanceJson: work.provenance,
+    recordedAt: work.updated_at,
+  };
+};
+
 const backfillCurrentWorkSnapshots = (
   unknownSql: unknown,
   _context?: MigrationApplyContext,
@@ -36,26 +55,19 @@ const backfillCurrentWorkSnapshots = (
          FROM works ORDER BY work_id`,
     );
     for (const work of works) {
-      const contract: WorkContractSnapshot = {
-        objective: work.objective,
-        why: work.why,
-        constraints: JSON.parse(work.constraints) as ReadonlyArray<string>,
-        completionExpectation: work.completion_expectation,
-        verificationMission: JSON.parse(work.verification_mission),
-      };
-      const canonical = canonicalWorkContractJson(contract);
+      const revision = makeLegacyCurrentWorkContractRevision(work);
       yield* sql.unsafe(
         `INSERT INTO work_contract_revisions (
            work_id, work_revision, contract_json, contract_sha256,
            record_kind, source_command_id, actor, provenance_json, recorded_at
          ) VALUES (?, ?, ?, ?, 'LegacyCurrentSnapshot', NULL, NULL, ?, ?)`,
         [
-          work.work_id,
-          Number(work.revision),
-          canonical,
-          sha256Hex(canonical),
-          work.provenance,
-          work.updated_at,
+          revision.workId,
+          revision.workRevision,
+          revision.contractJson,
+          revision.contractSha256,
+          revision.provenanceJson,
+          revision.recordedAt,
         ],
       );
     }
@@ -101,7 +113,11 @@ export const P52_WORK_CONTRACT_REVISION_MIGRATION: MigrationFile & {
 } = {
   id: 52,
   name: "work_contract_revision_history",
+  offlineOnly: true,
   sql: P52_WORK_CONTRACT_REVISION_DDL,
   requiresUserVersion: 51,
   onApply: backfillCurrentWorkSnapshots,
 };
+
+export const P52_WORK_CONTRACT_REVISION_FINGERPRINT =
+  "10635709b1a896a0bc7a92a0c15c3f00fcc446f6e1d26bb4e71ae0bcbfe4e298";
