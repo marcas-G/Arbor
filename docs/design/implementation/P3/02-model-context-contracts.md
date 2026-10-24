@@ -137,16 +137,55 @@ Session filtering or the 64-row limit cannot evict them.
 
 The selected-row eligible union remains the P2 `SessionItem` set:
 `UserMessage`, `AssistantMessage`, `ToolCall`, `ToolResult`, `ControlResult`,
-`ContextUpdate`, `CompactionCheckpoint`, and `AttachmentRef`. Existing P3
-projection conditions remain unchanged: UserMessage excludes
+`ContextUpdate`, `CompactionCheckpoint`, and `AttachmentRef`. P3 projects only
+the following typed payloads: UserMessage excludes
 `source.kind=HumanConversation` and requires string `text`; ToolCall requires
 string `callRef`, `toolRef` and `argumentsJson`; ToolResult and ControlResult
 require string `callRef`; ContextUpdate uses its normalized projection; only
 the latest CompactionCheckpoint is eligible, with Summary `summaryText` or
 ProviderNative source/epoch/opaque-ref/binding validation; Observation
 fallbacks expose string `payload.observation.text` only for
-`entryKind=Observation`. Other types with no existing projector branch remain
-unprojected; no fallback representation is introduced.
+`entryKind=Observation`. The accepted S4-CONTEXT-DG-01 projection below defines
+the exact AssistantMessage branch. Other types with no explicit projector
+branch remain unprojected; no fallback representation is introduced.
+
+### Accepted S4-CONTEXT-DG-01 AssistantMessage projection (2026-10-24)
+
+For a subsequent Provider context consuming the same Responsibility-bound
+Workspace Session, P3 projects each selected, accepted, exactly sourced typed
+`AssistantMessage` in Session sequence order as one portable assistant-role
+message:
+
+```ts
+{ readonly _tag: "Message"; readonly role: "assistant"; readonly text: string }
+```
+
+Projection requires `entryKind=ModelOutput`, payload `_tag=AssistantMessage`,
+an exact non-empty payload `providerTurnId=T`, `contentRef="provider:T:assistant"`,
+and Session source `{ kind: "ProviderTurn", ref: "T:assistant" }`. The payload
+must contain the accepted writer's string `text` and string `finishReason`; the
+source content hash must equal the accepted-output writer's SHA-256 over the
+exact `{ text, finishReason }` pair. The message's context reference is the
+Session entry's exact source reference and it appears once. This binding is
+validated as a whole; P3 must not infer identity or content from neighboring
+rows, free text, request captures, or AgentLoopStep numbers. Missing,
+mismatched, malformed, unsupported, or unprovable legacy rows contribute no
+AssistantMessage and follow the existing typed P2/P3 integrity failure
+boundary; they are never upgraded by fallback.
+
+The projected item is `AuthenticatedAgent` provenance, C3 history, and
+`instructionCapability=DataOnly`. It is not an InstructionFragment, canonical
+Work fact, permission/authority fact, tool call, effect, plan state,
+CompletionClaim, or proof of progress. Its text cannot authorize an action,
+satisfy a Work or Verification condition, or enable completion.
+
+The existing frontier rules above apply without refill: pre-checkpoint
+AssistantMessages are eligible only within the P2-selected latest 64 rows;
+post-checkpoint projection uses the exact checkpoint plus the unsummarized
+typed frontier after it. Existing compaction may represent assistant history
+in a Summary only when that content was actually represented;
+`retainedFrontier` cannot claim omitted text. No checkpoint, expanded window,
+fallback reconstruction, context budget, or `NeedsCompaction` policy changes.
 
 After a typed Work checkpoint, the active frontier is the exact checkpoint
 sequence followed by every unsummarized typed Session entry after it. The
@@ -167,6 +206,12 @@ settlement. ProviderNative reuse requires exact complete
 ResolvedModelBinding equality; mismatch rebuilds portable Summary from the
 retained HumanMessage prefix. This defines projection semantics only and does
 not choose the owner-state storage port or physical session binding.
+
+This episode boundary is unchanged by S4-CONTEXT-DG-01: ConversationResponse
+continues to read only the P14/P17 RootWorkspaceId-owned Conversation history
+and checkpoint. It must never read or merge Workspace Work Session
+AssistantMessages. InboxEpisode and DecisionEpisode likewise retain their
+existing exact episode and Session owners.
 
 ## 6. Plan, prepared turn, manifest
 

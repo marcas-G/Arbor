@@ -75,6 +75,36 @@ numeric default change         -> eval run; acceptance may be re-tuned
 A failing suite blocks the change; the harness reports which program revision
 and manifest hash regressed.
 
+### Accepted S4-CONTEXT-DG-01 projection eval obligations (2026-10-24)
+
+The deterministic/model-light P3 eval and integration coverage for accepted
+same-Session AssistantMessage projection must exercise these contracts and
+record the exact program/manifest hashes:
+
+- valid exact ProviderTurn/contentRef/source/content-hash binding yields one
+  assistant-role DataOnly C3 item in sequence order; missing, malformed,
+  mismatched, or unsupported legacy binding yields no inferred message and
+  follows the typed integrity boundary;
+- output append changes the next newly prepared same-Session portable request
+  and request hash; the actual SessionRepository-selected frontier is covered,
+  not only a hand-built projector input;
+- the pre-checkpoint latest-64 selection does not refill filtered rows, and
+  post-checkpoint projection uses the exact checkpoint and unsummarized typed
+  frontier; Summary coverage claims only content actually represented;
+- ToolCall/ToolResult/ControlResult chronology and projection remain intact;
+- text-only WorkspaceWork `Stop` with no ToolInvocation remains nonterminal
+  when the existing same-Execution loop continues, and the next request sees
+  that exact accepted output without treating text as canonical progress or
+  completion;
+- pinned ProviderTurn replay does not duplicate the accepted Session append or
+  recompile an already prepared Manifest; ConversationResponse remains isolated
+  to its P14/P17 RootWorkspaceId-owned history/checkpoint.
+
+These obligations do not change the eval harness's fake/recorded-provider
+determinism contract or authorize live Provider evaluation. They do not change
+`RuntimeSafetyObservation` generation, P12 D2/D4 update rules, `MAX_TURNS`,
+settlement, or stop/fencing policy; P12-DG-01 remains a separate owner question.
+
 ## 6. Must Not Decide
 
 - No program text for feature-phase-owned families.
