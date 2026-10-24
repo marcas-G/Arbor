@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { buildProcessSpec, resolvePnpmInvocation } from "./runner-utils.mjs";
+import "./resume-utils.test.mjs";
 
 test("Windows runner passes paths with spaces as individual native process arguments", () => {
   const workspace = mkdtempSync(
