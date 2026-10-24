@@ -1,6 +1,20 @@
 # S4-CONTEXT-DG-01 — AssistantMessage omitted from subsequent WorkspaceWork context
 
-Status: **OPEN — manual owner clarification required**
+Status: **CLOSED — Option A accepted, landed, implemented, and independently reviewed**
+
+## Resolution — 2026-10-24
+
+Manual governance accepted
+`ACCEPT_S4_CONTEXT_DG_01_ASSISTANT_MESSAGE_PROJECTION_OPTION_A` and
+conditionally authorized implementation with
+`AUTHORIZE_S4_CONTEXT_DG_01_ASSISTANT_MESSAGE_PROJECTION_IMPLEMENTATION_AFTER_LANDING_REVIEW`.
+The owner landing is recorded by `6147e273`, its Blocking=0 review by
+`25c05ec6`, implementation by `ae29e97c`, and independent implementation
+review by `915b39f6` (Blocking=0). Strictly sourced AssistantMessage output now
+re-enters the same Responsibility-bound Workspace Session as assistant-role
+DataOnly C3 context while preserving frontier, checkpoint, replay, authority,
+completion, and P14/P17 Conversation isolation boundaries. Real S4-B recovery
+qualification remains a release-validation item, not an open design gap.
 Discovered against candidate: `4de305bb6e81f98688f40d98e817d5b4d7da19b4`
 Evidence: [S4 Work AssistantMessage context diagnostic](../results/s4-work-assistant-message-context-diagnostic.result.md)
 Governance draft: [Option A proposal](../proposals/S4-CONTEXT-DG-01-assistant-message-projection-governance-draft.md) (unaccepted)
