@@ -1,6 +1,6 @@
 # P1 — 04 SQLite Schema
 
-**Authority:** DID v1.6 §9.1–§9.9, §9.13, §12.11, §3.1–§3.3; accepted P41/0041 storage, FT-DG-01 OPEN-1/OPEN-2 owner amendments, and DID v1.52 F23 P6 operator rebuild / v1 route-command qualification.
+**Authority:** DID v1.59 §3.3/§9.3/§12.11; DID v1.6 §9.1–§9.9/§9.13/§3.1–§3.3; accepted P41/0041 storage, FT-DG-01 OPEN-1/OPEN-2 owner amendments, and DID v1.52 F23 P6 operator rebuild / v1 route-command qualification.
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Closes:** P1-DG-07 (cyclic FKs, mapping, root uniqueness), P1-DG-08
 (`resource_ownership` lifecycle), P1-DG-09 (retention/delete + migration),
@@ -44,6 +44,16 @@ Only the Arbor Runtime writes this DB (DID §9.2).
 Later-phase tables (`work_waits` ↔ `Dependency`, `work_acceptances` ↔
 `Acceptance`, `executions`, `execution_leases`, `verifications`, …) are owned
 by their phases; their mapping is authoritative in the owning phase.
+
+**Accepted S2-RDG-01 logical storage constraint (DID v1.59):** every Work
+revision must have a durable, append-only complete Work contract snapshot
+addressable by exact `(WorkId, WorkRevision)`, with provenance/source-command,
+time and canonical digest sufficient for audit. AssignWork writes the initial
+snapshot and every semantic revision writer retains the matching snapshot.
+Legacy migration may mark only the exact current Work row as
+`LegacyCurrentSnapshot` / history unavailable; it must not infer prior
+revisions. This clause freezes the logical storage guarantee only; it does not
+name a physical table, columns, encoding, index, DDL, or migration number.
 
 ## 3. DDL
 
