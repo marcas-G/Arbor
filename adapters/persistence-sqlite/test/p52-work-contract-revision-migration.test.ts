@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { createSchema51TestDatabase } from "../../../tests/support/schema44-database.js";
 import {
   layer,
+  P52_WORK_CONTRACT_REVISION_FINGERPRINT,
   P52_WORK_CONTRACT_REVISION_MIGRATION,
   runMigrations,
 } from "../src/index.js";
@@ -90,13 +91,27 @@ const applyP52 = (filename: string) =>
   Effect.runPromise(
     Effect.scoped(
       Effect.provide(
-        runMigrations([P52_WORK_CONTRACT_REVISION_MIGRATION]),
+        runMigrations([P52_WORK_CONTRACT_REVISION_MIGRATION], {
+          allowOfflineOnly: true,
+        }),
         layer({ filename }),
       ),
     ),
   );
 
 describe("P52 Work contract revision history migration", () => {
+  it("pins the exact offline P52 descriptor predecessor and fingerprint", () => {
+    expect(P52_WORK_CONTRACT_REVISION_MIGRATION).toMatchObject({
+      id: 52,
+      name: "work_contract_revision_history",
+      requiresUserVersion: 51,
+      offlineOnly: true,
+    });
+    expect(P52_WORK_CONTRACT_REVISION_FINGERPRINT).toBe(
+      "10635709b1a896a0bc7a92a0c15c3f00fcc446f6e1d26bb4e71ae0bcbfe4e298",
+    );
+  });
+
   it("backfills only each exact current Work row as history-unavailable", async () => {
     const fixture = await createSchema51TestDatabase();
     try {
@@ -145,6 +160,7 @@ describe("P52 Work contract revision history migration", () => {
           },
         });
         expect(String(rows[0]?.contract_sha256)).toMatch(/^[0-9a-f]{64}$/);
+        expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
         expect(() =>
           db
             .prepare(
@@ -167,23 +183,30 @@ describe("P52 Work contract revision history migration", () => {
     }
   }, 180_000);
 
-  it("rolls back schema and version if the disposable migration fails", async () => {
+  it("rolls back schema, P52 backfill, and version if onApply fails after its writes", async () => {
     const fixture = await createSchema51TestDatabase();
     try {
+      await seedLegacyCurrentWork(fixture.databaseFilename);
+      const originalOnApply = P52_WORK_CONTRACT_REVISION_MIGRATION.onApply;
+      if (originalOnApply === undefined) throw new Error("P52 onApply missing");
       const failingMigration = {
         ...P52_WORK_CONTRACT_REVISION_MIGRATION,
-        sql: `${P52_WORK_CONTRACT_REVISION_MIGRATION.sql}\nINSERT INTO missing_s2_table VALUES (1);`,
+        onApply: (sql: unknown, context: unknown) =>
+          Effect.gen(function* () {
+            yield* originalOnApply(sql, context as never);
+            return yield* Effect.die(new Error("inject P52 backfill rollback"));
+          }),
       };
       await expect(
         Effect.runPromise(
           Effect.scoped(
             Effect.provide(
-              runMigrations([failingMigration]),
+              runMigrations([failingMigration], { allowOfflineOnly: true }),
               layer({ filename: fixture.databaseFilename }),
             ),
           ),
         ),
-      ).rejects.toThrow();
+      ).rejects.toThrow("inject P52 backfill rollback");
       const db = new DatabaseSync(fixture.databaseFilename, { readOnly: true });
       try {
         expect(
@@ -194,6 +217,13 @@ describe("P52 Work contract revision history migration", () => {
           db
             .prepare(
               "SELECT name FROM sqlite_master WHERE type='table' AND name='work_contract_revisions'",
+            )
+            .all(),
+        ).toEqual([]);
+        expect(
+          db
+            .prepare(
+              "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'work_contract_revisions_%'",
             )
             .all(),
         ).toEqual([]);
