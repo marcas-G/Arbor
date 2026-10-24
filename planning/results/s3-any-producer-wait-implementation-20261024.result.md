@@ -75,3 +75,33 @@ These unit/build/regression results do not qualify S3. The scripted public
 process regression still needs one run after the required Web assets are built.
 The real public S3 journey remains a separate serial gate and requires separate
 explicit run authorization; the implementation token does not authorize it.
+
+## Independent-review follow-up
+
+The follow-up review's APW-3 query/coverage blocker is addressed in the
+subsequent commit. The full read-side query is now a shared
+`apps/single-workspace/src/any-producer-attention.ts` function called by both
+production `projection-query` and the P10 SQLite fixture adapter. The former
+pending RED was promoted to `tests/p10-any-producer-attention.test.ts` and runs
+under the normal test suite; it no longer injects a precomputed candidate.
+
+The P10 SQLite regression now executes the actual query against canonical
+Project, Work, Dependency, WorkWait, Execution, formation, Deliverable and
+Command receipt stores. It covers fresh/stale/cleared Wait, active Project
+Execution, Pending formation, matching Deliverable with absent or retryable
+receipt (suppress Attention), matching Deliverable with Committed or
+TerminalRejected receipt (surface Attention), and a before/after database
+snapshot assertion for zero writes. The APW-3 pure reducer matrix remains as a
+separate unit layer.
+
+APW-1 regression now has explicit cases for evidence absence (ModelUsable
+rejection, zero Gateway calls), exact current receipt replay before checking
+changed evidence, and prior-generation Committed receipt replay while the
+subsequent evidence callback would reject. The direct P7 command path remains
+covered by the acceptance/coordinator suites.
+
+Follow-up verification: the focused combined run passes **5 files / 71 tests**;
+single-workspace build and Biome pass. Full test TypeScript checking remains
+blocked only by the same four unrelated `PortableModelRequest.inputItems`
+diagnostics listed above. No public process, daemon or Provider was started for
+this follow-up.
