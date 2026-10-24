@@ -147,10 +147,19 @@ describe("external command codec registry parity", () => {
         ...makeP15CommandHandlers(unused).map((handler) => handler.commandType),
       );
     }
-    if (productionArray.includes("...makeP2CommandHandlers(")) {
+    if (
+      productionArray.includes("...makeP2CommandHandlers(") ||
+      productionArray.includes("...p2Handlers")
+    ) {
       productionHandlerTypes.push(
         ...makeP2CommandHandlers(unused).map((handler) => handler.commandType),
       );
+    }
+    // Production wraps SteerWork with the Critical Steer/Stop composite before
+    // placing it in the handler array, so the source inventory sees the bound
+    // variable rather than a direct factory call.
+    if (productionArray.includes("criticalSteerHandler")) {
+      productionHandlerTypes.push(makeSteerWorkHandler(unused).commandType);
     }
 
     const registry = makeCommandInputContractRegistry(productionHandlerTypes);
