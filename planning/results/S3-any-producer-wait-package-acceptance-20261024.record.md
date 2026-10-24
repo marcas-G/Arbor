@@ -1,9 +1,12 @@
 # S3 AnyProducer Settled-Wait Package — Acceptance Record
 
-**Status:** ACCEPTED — design landing only.  
-**Decision token:** `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`  
+**Status:** ACCEPTED — design landing only.
+
+**Decision token:** `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`
+
 **Accepted:** 2026-10-24 by the manual governor (explicit user acceptance in
-the current conversation).  
+the current conversation).
+
 **Implementation:** NOT AUTHORIZED; requires a separate explicit token.
 
 ## Exact accepted identity
