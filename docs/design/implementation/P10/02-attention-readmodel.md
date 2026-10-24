@@ -160,11 +160,14 @@ P10 calls the P2-owned exact terminal-chain proof query inside the same read
 transaction/freshness barrier and adds no event, outbox, queue, marker, offset
 or table. `TerminalProviderFailure` is `ActionRequired`, targets the exact
 owning Workspace, exposes only the closed terminal code, exact Work revision,
-validated final-Attempt `settledAt`, fixed safe summary and dedup
+validated final-Attempt `settledAt`, exact fixed summary
+“The model provider rejected this Work execution. Review the provider
+configuration or request compatibility, then explicitly steer the Work to
+retry.” and dedup
 `terminal-provider-failure:<workId>:<revision>:<failureFingerprint>`.
 Equivalent historical Executions select the earliest validated witness by
-`(execution.admittedAt, executionId, providerTurnId, attemptNo)` while all
-remain audit evidence.
+`(execution.admittedAt, executionId, logicalStepNo, repairAttempt,
+providerTurnId, attemptNo)` while all remain audit evidence.
 
 `TerminalProviderFailureIntegrity` exposes only the closed
 `ReadmissionGateIntegrityFailure` code and bounded identities. If the
@@ -172,8 +175,13 @@ Execution's Project/Workspace/Work/revision is uniquely provable it targets
 that Workspace; if only the Execution Project is uniquely provable it targets
 the Project root; otherwise the view fails with bounded
 `ProjectionIntegrityFailure` and guesses nothing. Its fixed summary is
-path/content-free. Missing or invalid Attempt time is integrity failure, never
-query time.
+“Arbor cannot safely verify a terminal provider-failure recovery record.
+Execution remains blocked; inspect the bounded integrity code before
+retrying.” Its dedup key is
+`terminal-provider-failure-integrity:<executionId>:<logicalStepNo>:<repairAttempt>:<failureCode>`.
+Missing or invalid Attempt time is integrity failure, never query time; because
+the frozen row requires `occurredAt`, `FailureOccurrenceTimeInvalid` returns
+bounded `ProjectionIntegrityFailure` and no guessed row.
 
 Both rows are active only while canonical Work is Open at the exact revision.
 Steer revision advance or authorized Work terminalization makes retry-oriented
