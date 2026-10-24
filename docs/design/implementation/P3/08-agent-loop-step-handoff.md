@@ -226,6 +226,26 @@ the unique `ModelOutput`, verifies `contentHash`, and advances
 `decodedOutputHash`. Same source + same hash returns the existing sequence;
 same source + different hash is an invariant conflict and produces Attention.
 
+### Accepted S4-CONTEXT-DG-01 output projection binding (2026-10-24)
+
+For an accepted typed `AssistantMessage`, P3 context projection validates the
+exact existing output identity: `entryKind=ModelOutput`, payload
+`providerTurnId=T`, `contentRef="provider:T:assistant"`, source kind
+`ProviderTurn`, source ref `T:assistant`, string `text` and `finishReason`,
+and source content hash equal to the accepted-output writer's SHA-256 over
+`{ text, finishReason }`. The projector cannot attach a message to another
+ProviderTurn or reconstruct it from Session text. The projected content is
+DataOnly C3 context for the same Responsibility-bound Workspace Session; it
+does not alter the durable AgentLoopStep state machine or action ledger.
+
+Recovery of a completed ProviderTurn continues to decode its pinned canonical
+result with its pinned decoder and converge the same idempotent Session output
+once. Projection does not duplicate or reinterpret the accepted output. An
+already prepared ProviderTurn/Manifest remains immutable and is replayed from
+its stored request/result; it is never recompiled with the new projection.
+Only a newly prepared ProviderTurn can bind the newly projected context.
+ConversationResponse history remains on its independent P14/P17 owner.
+
 ## 7. Action ledger and unresolved-side-effect gate
 
 ```ts
