@@ -134,10 +134,10 @@ const readManifest = (): FunctionalSchema44Manifest => {
   return { ...manifest, root };
 };
 
-/** Copy the closed schema-44 template, then upgrade a private clone to the
- * current ordinary runtime schema (including exact P51 and P52 offline data
- * backfills). Historical export names below are aliases only. */
-export const cloneFunctionalCurrentSchemaDatabase = async (
+/** Copy the closed schema-44 template and stop at the exact historical
+ * schema-48 boundary. This is intentionally exposed only to functional tests
+ * that qualify an operator whose accepted input contract is schema 48. */
+export const replaceFunctionalFixtureWithSchema48Source = async (
   directory: string,
 ): Promise<{ readonly databaseFile: string; readonly reportFile: string }> => {
   const manifest = readManifest();
@@ -203,6 +203,60 @@ export const cloneFunctionalCurrentSchemaDatabase = async (
       database.exec(statement);
     }
     database.exec("PRAGMA user_version = 48");
+    if (database.prepare("PRAGMA foreign_key_check").all().length > 0) {
+      throw new Error("Functional 44→48 fixture failed foreign_key_check");
+    }
+    database.exec("COMMIT");
+  } catch (cause) {
+    try {
+      if (database.isTransaction) database.exec("ROLLBACK");
+    } catch {
+      /* connection close rolls back the disposable fixture transaction */
+    }
+    throw cause;
+  } finally {
+    database.close();
+  }
+  const schema48 = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const version = Number(
+      (
+        schema48.prepare("PRAGMA user_version").get() as {
+          user_version: number;
+        }
+      ).user_version,
+    );
+    if (version !== 48) {
+      throw new Error(
+        `Functional historical clone ended at ${version}; expected schema 48.`,
+      );
+    }
+  } finally {
+    schema48.close();
+  }
+  return { databaseFile, reportFile };
+};
+
+/** Upgrade an exact disposable schema-48 image through the ordinary accepted
+ * migration prefix to the current runtime schema. */
+export const upgradeFunctionalSchema48DatabaseToCurrent = async (
+  databaseFile: string,
+): Promise<void> => {
+  const database = new DatabaseSync(databaseFile);
+  try {
+    database.exec("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE");
+    const version = Number(
+      (
+        database.prepare("PRAGMA user_version").get() as {
+          user_version: number;
+        }
+      ).user_version,
+    );
+    if (version !== 48) {
+      throw new Error(
+        `Functional schema-48 upgrade requires exact source 48; found ${version}.`,
+      );
+    }
     for (const migration of [
       P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
       P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
@@ -213,7 +267,7 @@ export const cloneFunctionalCurrentSchemaDatabase = async (
       database.exec(`PRAGMA user_version = ${migration.id}`);
     }
     if (database.prepare("PRAGMA foreign_key_check").all().length > 0) {
-      throw new Error("Functional 44→50 fixture failed foreign_key_check");
+      throw new Error("Functional 48→50 fixture failed foreign_key_check");
     }
     database.exec("COMMIT");
   } catch (cause) {
@@ -266,7 +320,17 @@ export const cloneFunctionalCurrentSchemaDatabase = async (
   } finally {
     currentSchema.close();
   }
-  return { databaseFile, reportFile };
+};
+
+/** Copy the closed schema-44 template, then upgrade a private clone to the
+ * current ordinary runtime schema (including exact P51 and P52 offline data
+ * backfills). Historical export names below are aliases only. */
+export const cloneFunctionalCurrentSchemaDatabase = async (
+  directory: string,
+): Promise<{ readonly databaseFile: string; readonly reportFile: string }> => {
+  const clone = await replaceFunctionalFixtureWithSchema48Source(directory);
+  await upgradeFunctionalSchema48DatabaseToCurrent(clone.databaseFile);
+  return clone;
 };
 
 /** Historical aliases retained for existing test call sites; every helper

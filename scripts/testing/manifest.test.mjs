@@ -18,7 +18,7 @@ const manifest = JSON.parse(
 test("checked-in profile inventory matches the configured functional suites", () => {
   const result = validateManifest(manifest);
   assert.equal(result.ok, true, result.errors?.join("\n"));
-  assert.equal(result.functionalVitestFiles, 62);
+  assert.equal(result.functionalVitestFiles, 63);
   assert.equal(result.functionalUiFiles, 6);
 });
 
