@@ -156,7 +156,7 @@ const upgradeHistoricalAttentionFixtureToSchema51 = async (
   });
   const schema51 = new DatabaseSync(databaseFile, { readOnly: true });
   try {
-    expect(CURRENT_SCHEMA_VERSION).toBe(51);
+    expect(CURRENT_SCHEMA_VERSION).toBe(52);
     expect(
       Number(
         (
@@ -165,7 +165,7 @@ const upgradeHistoricalAttentionFixtureToSchema51 = async (
           }
         ).user_version,
       ),
-    ).toBe(51);
+    ).toBe(52);
     expect(schema51.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
 
     const projects = schema51

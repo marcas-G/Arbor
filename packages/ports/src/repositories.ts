@@ -169,6 +169,19 @@ export interface WorkRepositoryService {
     >,
     newRevision: Work["revision"],
   ) => Effect.Effect<void, WorkRepositoryError, TransactionScope>;
+  readonly replaceContractIfRevision: (
+    workId: WorkId,
+    expectedRevision: Work["revision"],
+    contract: Pick<
+      Work,
+      | "objective"
+      | "why"
+      | "constraints"
+      | "completionExpectation"
+      | "verificationMission"
+    >,
+    newRevision: Work["revision"],
+  ) => Effect.Effect<void, WorkRepositoryError, TransactionScope>;
   readonly completeIfRevision: (
     workId: WorkId,
     expectedRevision: Work["revision"],

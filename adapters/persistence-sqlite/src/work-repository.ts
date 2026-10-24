@@ -134,6 +134,26 @@ export const WorkRepositoryLive: Layer.Layer<
             expectedRevision,
           ],
         ),
+      replaceContractIfRevision: (
+        workId,
+        expectedRevision,
+        contract,
+        newRevision,
+      ) =>
+        cas(
+          "UPDATE works SET objective = ?, why = ?, constraints = ?, completion_expectation = ?, verification_mission = ?, revision = ?, updated_at = ? WHERE work_id = ? AND revision = ? AND lifecycle = 'Open'",
+          (now) => [
+            contract.objective,
+            contract.why,
+            json(contract.constraints),
+            contract.completionExpectation,
+            json(contract.verificationMission),
+            newRevision,
+            now,
+            workId,
+            expectedRevision,
+          ],
+        ),
       completeIfRevision: (workId, expectedRevision) =>
         cas(
           "UPDATE works SET lifecycle = 'Completed', updated_at = ? WHERE work_id = ? AND revision = ?",
