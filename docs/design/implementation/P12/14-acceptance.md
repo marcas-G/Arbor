@@ -70,7 +70,7 @@ Mechanical evidence only; mirrors the P11 `p11-acceptance` / `p11-closure` patte
 | EC-6 | StorageScaleAssessment + DurabilityEnvelope + snapshot pruning/retention (`05`) | `tests/p12-storage.test.ts` | "checked-in artifact verdict ∈ {SQLiteSufficient, PostgreSQLRequired}; measurements cover every declared envelope dimension; `assessStorage(envelope,[])` → `InsufficientEvidence` (negative test only); restore drill evidence; RPO/RTO declared; snapshot pruning: pruned-but-referenced refused (typed), unreferenced pruned, canonical records untouched" |
 | EC-7 | Remote Worker transport/identity (`06`) | `tests/p12-remote-worker.test.ts` | "mediated mutation = fence+mutate+resolve+event one tx; no worker DB; stale incarnation rejected" |
 | EC-8 | ToolCatalogPort model-facing (`07`) | `tests/p12-toolcatalog.test.ts` | "real description/schema/version resolved; no placeholder in compiled request" |
-| EC-9 | §8.16A D1–D6 (`08`) | `tests/p12-runtime-safety.test.ts` | "each dimension drives Interrupted(RuntimeSafetyStop), Work Open; reset on trigger" |
+| EC-9 | §8.16A D1–D6, including accepted P12-DG-01 D2/D4 producer and semantic-fingerprint qualification (`08`) | `tests/p12-runtime-safety.test.ts`; focused P3 producer/fingerprint tests below | "each dimension drives Interrupted(RuntimeSafetyStop), Work Open; shared progress resets D2/D4; request/action fingerprints and pre-network admission are exact" |
 | EC-10 | Region-encoding convergence (`09`) | `tests/p12-region-encoding.test.ts` | "resolver emits frozen object encoding; narrow invalidation reachable without re-wrapping" |
 | EC-11 | Transport shells (`10`) | `tests/p12-transport.test.ts` | "renders api-contracts DTOs; forwards Command; no canonical write; daemons wired; Search deferral recorded (no query semantics invented)" |
 | EC-12 | Real providers/tools (`12`) | `tests/p12-providers-tools.test.ts` | "real adapter + catalog + capability replace fakes; non-minimal tool through unchanged P4 pipeline" |
@@ -101,6 +101,26 @@ These architecture tests are part of EC-1 (`pnpm check`) and the closure gate:
 | B7 | StorageScaleAssessment + DurabilityEnvelope | `tests/p12-storage.test.ts` | "PostgreSQL adapter absent unless verdict = PostgreSQLRequired; restore drill evidence" |
 | B8 | Remote Worker transport / identity boundary | `tests/p12-remote-worker.test.ts` | "remote worker has no DB credential; transport version mismatch → typed rejection" |
 | B9 | Plugin SDK / compatibility / trust model | `tests/p12-plugin-sdk.test.ts` | "PluginSdkApiVersion MAJOR mismatch rejected; unregistered project tool not invocable" |
+
+### 3.2A Accepted P12-DG-01 D2/D4 producer qualification
+
+The shared-progress and semantic-fingerprint cases are part of EC-9
+qualification under `ACCEPT_P12_DG_01_D2_D4_PROGRESS_CONVERGENCE`; they do not
+create a new counter, port field, persistence schema, migration, or P12 closure
+claim. Retain the existing gate tests and add the following focused cases:
+
+| Test owner / target | Required oracle |
+|---|---|
+| `tests/p12-runtime-safety.test.ts` | One `durableProgress=true` clears D2 fingerprints and resets D4 together; false/absent preserves D2 and increments D4; thresholds, restart reset, `MAX_TURNS=24`, and stop settlement stay unchanged. |
+| P3 ProviderTurn producer test | Each new Inference, Summary/Native, Conversation checkpoint, and P20 overflow/replacement ProviderTurn uses its operation-kind-scoped existing request hash after compilation and before ProviderRuntime; Stop means zero ProviderRuntime calls; ProviderAttempt retries reuse the admission and only report D1/D5 end observations. |
+| P3 AgentAction fingerprint test | Same route/tool and semantically equal JSON arguments with reordered object keys/new callRef yield the same D2 fingerprint; materially changed arguments, route or action name yield distinct fingerprints. No callRef/ProviderTurnId becomes semantic identity. |
+| P3 durable-progress producer test | Newly committed successful sourced ToolResult/ControlResult or attributable authoritative mutation sets the shared signal; Failed/Denied/Rejected/Interrupted/OutcomeUnknown and failed persistence fallback do not. ProviderResult/ModelOutput, Step/cursor and P9 recovery/handoff alone are false. |
+| P9 replay integration test | A pinned settled-result replay makes no new Provider request or D2/D4 admission; old result/Step/cursor evidence is false. Only a new qualifying action/effect committed while replay is consumed can contribute to the following new ProviderTurn. Reconciliation/unknown-effect precedence remains unchanged. |
+
+The P3 cases may be grouped in focused package test files, but the result must
+name each test and map it to this table. Process qualification uses only a
+deterministic local fake Provider and disposable state; no real Provider is
+required for P12-DG-01.
 
 ### 3.3 Closure invariants → architecture test (E-22)
 

@@ -461,6 +461,19 @@ execution-runtime → ports + agent-runtime
 9. Each repair/next-turn predecessor identifies exactly one successor.
 10. Process-local `AgentAction` is never persisted.
 
+### Accepted P12-DG-01 D2/D4 progress interaction
+
+The P3 producer follows the shared D2/D4 `durableProgress` rule in P12 `08`:
+only a newly committed successful terminal sourced AgentAction outcome or an
+attributable authoritative application/canonical mutation sets the signal.
+Provider-result replay, ModelOutput/AssistantMessage, AgentLoopStep/cursor
+progression and recovery/handoff bookkeeping do not count by themselves. A
+P9 settled-result replay is not a new ProviderTurn boundary and makes no new
+Provider call or D2/D4 admission. It can contribute progress to the next new
+ProviderTurn only if replay processing commits a qualifying new action/effect;
+otherwise `durableProgress=false`. ReconciliationPending and OutcomeUnknown
+remain governed by the existing unresolved-side-effect gate.
+
 ### SCRC v1.22 Compaction identity rule
 
 Compaction does not add a `Compacting` business/AgentLoopStep state. It is a

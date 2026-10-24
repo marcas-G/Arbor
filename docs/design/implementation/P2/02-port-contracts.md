@@ -263,7 +263,7 @@ type SafetyDecision = "Continue" | "Stop";
 
 type RuntimeSafetyObservation = {
   readonly retryCount?: number;                // D1: 0-based retry ordinal
-  readonly durableProgress?: boolean;          // D4: progress since previous turn boundary
+  readonly durableProgress?: boolean;          // P12-DG-01 shared D2/D4 progress since previous new ProviderTurn boundary
   readonly chainDepth?: number;                // D3: tool recursion / chaining depth
   readonly inFlight?: "begin" | "end";         // D5: lease-scoped in-flight gauge
   readonly leaseGeneration?: LeaseGeneration;  // D5: generation the gauge is scoped to
@@ -285,6 +285,15 @@ interface RuntimeSafetyGateService {
 > optional** and carries the D1/D3/D4/D5/D6 signals the frozen
 > `ExecutionActivity` does not. P2 gating ownership is unchanged (P3 reports;
 > P2 decides); numeric thresholds remain configuration.
+
+> **P12-DG-01 propagation (2026-10-24).** The existing optional
+> `durableProgress` observation is the shared D2/D4 reset signal: `true` clears
+> D2 fingerprint history and resets D4's consecutive no-progress counter at a
+> new ProviderTurn boundary; `false` or absence does neither. P2 retains the
+> existing per-dimension count/threshold algorithms and gate/port shape; the
+> D2 reset trigger is intentionally changed to this shared signal. P3 owns
+> producing the signal under the P12 `08` success/authoritative-commit
+> definition; D2/D4 ownership and detailed source semantics remain in P12 `08`.
 
 - P2 owns execution-wide enforcement (max transient retries, repeated action
   fingerprints, recursion depth, consecutive no-progress turns, concurrency
