@@ -1,4 +1,5 @@
 import type {
+  Sha256,
   WorkBlocker,
   WorkId,
   WorkspaceId,
@@ -29,6 +30,8 @@ export type AttentionSource =
   | "SandboxRecoveryBindingFailure"
   | "SandboxPolicyDecisionRequired"
   | "F18VerificationSignalReconciliation"
+  | "TerminalProviderFailure"
+  | "TerminalProviderFailureIntegrity"
   | "WorkEpisodeBlocked"
   | "VerifierOrphan"
   | "WaitingOnVacantProducer";
@@ -49,6 +52,25 @@ export interface AttentionRow {
   readonly workId?: WorkId;
   readonly verificationId?: string;
   readonly targetWorkRevision?: number;
+  readonly terminalProviderFailure?:
+    | {
+        readonly kind: "TerminalProviderFailure";
+        readonly workId: WorkId;
+        readonly workRevision: number;
+        readonly occurredAt: string;
+        readonly failureCode:
+          | "AuthenticationFailed"
+          | "RequestRejected"
+          | "ProtocolViolation";
+        readonly failureFingerprint: Sha256;
+      }
+    | {
+        readonly kind: "TerminalProviderFailureIntegrity";
+        readonly workId?: WorkId;
+        readonly workRevision?: number;
+        readonly occurredAt: string;
+        readonly failureCode: string;
+      };
 }
 
 // --- fact inputs (extracted journal rows / canonical-state joins) ---

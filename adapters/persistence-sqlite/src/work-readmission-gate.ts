@@ -1,8 +1,11 @@
-import type { ExecutionId } from "@arbor/domain";
+import type { ExecutionId, ProviderTurnId, Sha256 } from "@arbor/domain";
 import {
   type ReadmissionGateIntegrityFailure,
   type ReadmissionSourceKind,
   type ReadmissionTargetMismatch,
+  sha256Hex,
+  type TerminalProviderFailureKind,
+  type TerminalProviderFailureSource,
   TransactionScope,
   WorkReadmissionGateStore,
 } from "@arbor/ports";
@@ -23,6 +26,8 @@ interface ExecutionRow {
   readonly project_id: string;
   readonly binding_kind: string;
   readonly workspace_id: string;
+  readonly session_id: string;
+  readonly admitted_at: string;
   readonly episode_kind: string | null;
   readonly episode_ref: string | null;
   readonly episode_revision: number | null;
@@ -31,6 +36,39 @@ interface ExecutionRow {
   readonly settled_at: string | null;
   readonly stop_requested_at: string | null;
   readonly episode_json: string | null;
+}
+
+interface TerminalStepRow {
+  readonly logical_step_no: number;
+  readonly repair_attempt: number;
+  readonly provider_turn_id: string;
+  readonly manifest_id: string | null;
+  readonly state: string;
+  readonly settlement_json: string | null;
+}
+
+interface TerminalTurnRow {
+  readonly provider_turn_id: string;
+  readonly execution_id: string;
+  readonly session_id: string;
+  readonly manifest_id: string | null;
+  readonly output_contract_ref: string;
+  readonly settled_at: string | null;
+  readonly finish_reason: string | null;
+  readonly manifest_execution_id: string | null;
+  readonly manifest_session_id: string | null;
+  readonly manifest_provider_turn_id: string | null;
+  readonly compiled_request_hash: string | null;
+  readonly manifest_json: string | null;
+}
+
+interface TerminalAttemptRow {
+  readonly attempt_no: number;
+  readonly settled_at: string | null;
+  readonly outcome: string;
+  readonly provider_error_kind: string | null;
+  readonly failure_taxonomy_version: string;
+  readonly retry_decision: string | null;
 }
 
 interface ExecutionScopeRow {
@@ -217,6 +255,39 @@ const outcomeUnknown = (row: ExecutionRow): boolean => {
   return true;
 };
 
+const terminalProviderFailureKind = (
+  row: ExecutionRow,
+): TerminalProviderFailureKind | null => {
+  if (row.settled_at === null || row.settlement_kind !== "Failed") return null;
+  let value: Record<string, unknown> | null;
+  try {
+    value = record(decodeJson(row.settlement_json ?? ""));
+  } catch {
+    throw new Error("SettlementMalformed");
+  }
+  const failure = record(value?.failure);
+  if (
+    value?._tag !== "Failed" ||
+    failure?._tag !== "ExecutionFailure" ||
+    typeof failure.reason !== "string"
+  ) {
+    throw new Error("SettlementMalformed");
+  }
+  const prefix = "ProviderFailure:";
+  if (!failure.reason.startsWith(prefix)) return null;
+  const kind = failure.reason.slice(prefix.length);
+  return kind === "AuthenticationFailed" ||
+    kind === "RequestRejected" ||
+    kind === "ProtocolViolation"
+    ? kind
+    : null;
+};
+
+const isCanonicalUtc = (value: string): boolean => {
+  const millis = Date.parse(value);
+  return Number.isFinite(millis) && new Date(millis).toISOString() === value;
+};
+
 const isFailureCode = (kind: FactRow["fact_kind"], code: string): boolean =>
   kind === "DeliverReplayFact"
     ? [
@@ -315,7 +386,8 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
           const executions = yield* run(
             sql.unsafe<ExecutionRow>(
               `SELECT e.execution_id, e.project_id, e.binding_kind,
-                      e.workspace_id, e.episode_kind, e.episode_ref,
+                      e.workspace_id, e.session_id, e.admitted_at,
+                      e.episode_kind, e.episode_ref,
                       e.episode_revision, e.settlement_kind,
                       e.settlement_json, e.settled_at, e.stop_requested_at,
                       s.episode_json
@@ -336,6 +408,298 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
           const executionsById = new Map(
             executions.map((row) => [row.execution_id, row]),
           );
+
+          const terminalCandidates: Array<{
+            readonly execution: ExecutionRow;
+            readonly failureKind: TerminalProviderFailureKind;
+          }> = [];
+          for (const execution of executions) {
+            if (execution.workspace_id !== input.workspaceId) continue;
+            try {
+              const failureKind = terminalProviderFailureKind(execution);
+              if (failureKind !== null) {
+                terminalCandidates.push({ execution, failureKind });
+              }
+            } catch {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SettlementMalformed",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+          }
+          terminalCandidates.sort((left, right) => {
+            const admitted = left.execution.admitted_at.localeCompare(
+              right.execution.admitted_at,
+            );
+            return admitted !== 0
+              ? admitted
+              : left.execution.execution_id.localeCompare(
+                  right.execution.execution_id,
+                );
+          });
+
+          for (const candidate of terminalCandidates) {
+            const execution = candidate.execution;
+            if (execution.episode_json === null) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceEpisodeStateMissing",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            const decoded = exactEpisode(execution);
+            if (decoded.episode === undefined) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  decoded.reason,
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            if (decoded.episode._tag !== "WorkEpisode") continue;
+            if (
+              decoded.episode.workId !== input.workId ||
+              decoded.episode.targetWorkRevision === undefined
+            ) {
+              continue;
+            }
+            if (decoded.episode.targetWorkRevision < input.workRevision) {
+              continue;
+            }
+            if (decoded.episode.targetWorkRevision > input.workRevision) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "FutureWorkRevision",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+
+            const stepRows = yield* run(
+              sql.unsafe<TerminalStepRow>(
+                `SELECT logical_step_no, repair_attempt, provider_turn_id,
+                        manifest_id, state, settlement_json
+                   FROM agent_loop_steps
+                  WHERE execution_id = ? AND state = 'SettlementProposed'
+                  ORDER BY logical_step_no, repair_attempt`,
+                [execution.execution_id],
+              ),
+            );
+            if (stepRows.length === 0) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceSettlementStepMissing",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            if (stepRows.length !== 1) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceSettlementStepNonUnique",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            const step = stepRows[0] as TerminalStepRow;
+            if (
+              step.settlement_json === null ||
+              step.settlement_json !== execution.settlement_json
+            ) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceSettlementMismatch",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+
+            const turnRows = yield* run(
+              sql.unsafe<TerminalTurnRow>(
+                `SELECT t.provider_turn_id, t.execution_id, t.session_id,
+                        t.manifest_id, t.output_contract_ref, t.settled_at,
+                        t.finish_reason,
+                        m.execution_id AS manifest_execution_id,
+                        m.session_id AS manifest_session_id,
+                        m.provider_turn_id AS manifest_provider_turn_id,
+                        m.compiled_request_hash, m.manifest_json
+                   FROM provider_turns AS t
+                   LEFT JOIN model_context_manifests AS m
+                     ON m.manifest_id = t.manifest_id
+                    AND m.provider_turn_id = t.provider_turn_id
+                  WHERE t.provider_turn_id = ?`,
+                [step.provider_turn_id],
+              ),
+            );
+            if (turnRows.length === 0) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceProviderTurnMissing",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            if (turnRows.length !== 1) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceProviderTurnNonUnique",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            const turn = turnRows[0] as TerminalTurnRow;
+            if (
+              turn.execution_id !== execution.execution_id ||
+              turn.session_id !== execution.session_id ||
+              turn.provider_turn_id !== step.provider_turn_id ||
+              turn.finish_reason !== "Failed" ||
+              turn.settled_at === null
+            ) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceProviderTurnMismatch",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            if (
+              turn.manifest_id === null ||
+              (step.manifest_id !== null &&
+                turn.manifest_id !== step.manifest_id) ||
+              turn.manifest_json === null ||
+              turn.manifest_execution_id !== execution.execution_id ||
+              turn.manifest_session_id !== execution.session_id ||
+              turn.manifest_provider_turn_id !== turn.provider_turn_id ||
+              typeof turn.compiled_request_hash !== "string" ||
+              turn.compiled_request_hash.length === 0 ||
+              turn.output_contract_ref.length === 0
+            ) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  turn.manifest_json === null
+                    ? "SourceManifestMissing"
+                    : "SourceManifestMismatch",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            let manifest: Record<string, unknown> | null;
+            try {
+              manifest = record(decodeJson(turn.manifest_json));
+            } catch {
+              manifest = null;
+            }
+            const bindingFingerprint =
+              manifest?.resolvedModelBindingFingerprint;
+            if (
+              manifest?.providerTurnId !== turn.provider_turn_id ||
+              manifest.executionId !== execution.execution_id ||
+              manifest.sessionId !== execution.session_id ||
+              manifest.logicalStepNo !== Number(step.logical_step_no) ||
+              manifest.repairAttempt !== Number(step.repair_attempt) ||
+              manifest.compiledRequestHash !== turn.compiled_request_hash ||
+              manifest.outputContractRef !== turn.output_contract_ref ||
+              typeof bindingFingerprint !== "string" ||
+              !/^p16fp_[0-9a-f]{64}$/u.test(bindingFingerprint)
+            ) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceManifestMismatch",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+
+            const attempts = yield* run(
+              sql.unsafe<TerminalAttemptRow>(
+                `SELECT attempt_no, settled_at, outcome, provider_error_kind,
+                        failure_taxonomy_version, retry_decision
+                   FROM provider_attempts
+                  WHERE provider_turn_id = ?
+                  ORDER BY attempt_no`,
+                [turn.provider_turn_id],
+              ),
+            );
+            if (attempts.length === 0) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceProviderAttemptMissing",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            const attempt = attempts.at(-1) as TerminalAttemptRow;
+            if (
+              !Number.isSafeInteger(attempt.attempt_no) ||
+              attempt.attempt_no < 0 ||
+              attempt.settled_at === null ||
+              attempt.outcome !== "TerminalFailure" ||
+              attempt.provider_error_kind !== candidate.failureKind ||
+              attempt.retry_decision !== "Stop"
+            ) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceProviderAttemptMismatch",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            if (attempt.failure_taxonomy_version !== "phase1-v2") {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "FailureTaxonomyUnsupported",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            if (!isCanonicalUtc(attempt.settled_at)) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "FailureOccurrenceTimeInvalid",
+                  execution.execution_id as ExecutionId,
+                  "TerminalProviderFailureSettlement",
+                ),
+              );
+            }
+            const failureFingerprint = sha256Hex(
+              JSON.stringify({
+                version: "terminal-provider-failure-v1",
+                failureKind: candidate.failureKind,
+                failureTaxonomyVersion: attempt.failure_taxonomy_version,
+                resolvedModelBindingFingerprint: bindingFingerprint,
+                compiledRequestHash: turn.compiled_request_hash,
+                outputContractRef: turn.output_contract_ref,
+              }),
+            ) as Sha256;
+            return Option.some({
+              sourceKind: "TerminalProviderFailureSettlement",
+              executionId: execution.execution_id as ExecutionId,
+              logicalStepNo: Number(step.logical_step_no),
+              repairAttempt: Number(step.repair_attempt),
+              providerTurnId: turn.provider_turn_id as ProviderTurnId,
+              attemptNo: Number(attempt.attempt_no),
+              failureKind: candidate.failureKind,
+              failureFingerprint,
+            } satisfies TerminalProviderFailureSource);
+          }
           const facts = yield* run(
             sql.unsafe<FactRow>(
               `SELECT attention_fact_id, event_id, project_id, execution_id,
@@ -384,7 +748,10 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
             });
           const candidates: Array<{
             readonly executionId: ExecutionId;
-            readonly kind: ReadmissionSourceKind;
+            readonly kind: Exclude<
+              ReadmissionSourceKind,
+              "TerminalProviderFailureSettlement"
+            >;
             readonly fact?: FactRow;
             readonly event?: EventRow;
           }> = [];

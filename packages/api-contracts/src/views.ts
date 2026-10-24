@@ -75,6 +75,8 @@ export type AttentionSource =
   | "SandboxRecoveryBindingFailure"
   | "SandboxPolicyDecisionRequired"
   | "F18VerificationSignalReconciliation"
+  | "TerminalProviderFailure"
+  | "TerminalProviderFailureIntegrity"
   | "VerifierOrphan"
   | "VacantProducer";
 
@@ -91,6 +93,8 @@ export const ATTENTION_SOURCES: ReadonlyArray<AttentionSource> = [
   "SandboxRecoveryBindingFailure",
   "SandboxPolicyDecisionRequired",
   "F18VerificationSignalReconciliation",
+  "TerminalProviderFailure",
+  "TerminalProviderFailureIntegrity",
   "VerifierOrphan",
   "VacantProducer",
 ];
@@ -200,6 +204,57 @@ export interface AttentionReq {
   readonly projectId: ProjectId;
 }
 
+export type TerminalProviderFailureIntegrityCode =
+  | "ReadmissionTargetMissing"
+  | "ReadmissionTargetScopeMismatch"
+  | "ReadmissionTargetRevisionMismatch"
+  | "SourceExecutionMissing"
+  | "SourceExecutionNonUnique"
+  | "SourceEpisodeStateMissing"
+  | "SourceEpisodeStateNonUnique"
+  | "EpisodeMalformed"
+  | "EpisodeVersionUnsupported"
+  | "SourceFactEventMismatch"
+  | "SourceEventExecutionMismatch"
+  | "SourceProjectMismatch"
+  | "SourceWorkspaceMismatch"
+  | "WorkMissing"
+  | "WorkScopeMismatch"
+  | "FutureWorkRevision"
+  | "SettlementMalformed"
+  | "SourceSettlementStepMissing"
+  | "SourceSettlementStepNonUnique"
+  | "SourceSettlementMismatch"
+  | "SourceProviderTurnMissing"
+  | "SourceProviderTurnNonUnique"
+  | "SourceProviderTurnMismatch"
+  | "SourceProviderAttemptMissing"
+  | "SourceProviderAttemptNonUnique"
+  | "SourceProviderAttemptMismatch"
+  | "SourceManifestMissing"
+  | "SourceManifestMismatch"
+  | "FailureTaxonomyUnsupported"
+  | "FailureOccurrenceTimeInvalid";
+
+export type TerminalProviderFailureView =
+  | {
+      readonly kind: "TerminalProviderFailure";
+      readonly workId: WorkId;
+      readonly workRevision: WorkRevision;
+      readonly occurredAt: string;
+      readonly failureCode:
+        | "AuthenticationFailed"
+        | "RequestRejected"
+        | "ProtocolViolation";
+    }
+  | {
+      readonly kind: "TerminalProviderFailureIntegrity";
+      readonly workId?: WorkId | undefined;
+      readonly workRevision?: WorkRevision | undefined;
+      readonly occurredAt: string;
+      readonly failureCode: TerminalProviderFailureIntegrityCode;
+    };
+
 export interface AttentionRow {
   readonly source: AttentionSource;
   readonly severity: AttentionSeverity;
@@ -207,6 +262,7 @@ export interface AttentionRow {
   readonly dedupKey: string;
   readonly summaryRef: string;
   readonly occurredAt: string;
+  readonly terminalProviderFailure?: TerminalProviderFailureView | undefined;
   readonly failureCode?: string;
   /** Present only for a verifier-orphan row; binds any recovery UI to the
    * exact open Verification and Work snapshot that produced this Attention. */
@@ -278,6 +334,7 @@ export interface WorkDetailRes {
   readonly revision: WorkRevision;
   readonly acceptedResult?: AcceptedWorkResult | undefined;
   readonly blockedEpisode?: BlockedWorkEpisode | undefined;
+  readonly terminalProviderFailure?: TerminalProviderFailureView | undefined;
 }
 
 export type BlockedActionDenialCategory =

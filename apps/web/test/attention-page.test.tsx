@@ -168,6 +168,39 @@ describe("W-06 关注事项页（只读）", () => {
     expect(urls.every((url) => url.startsWith("/views/"))).toBe(true);
   });
 
+  it("renders terminal Provider failure code and exact Work revision without a retry action", async () => {
+    installAttention({
+      dto: {
+        rows: [
+          {
+            source: "TerminalProviderFailure",
+            severity: "ActionRequired",
+            targetWorkspaceId: "ws_1",
+            dedupKey: `terminal-provider-failure:wrk_1:2:${"a".repeat(64)}`,
+            summaryRef:
+              "The model provider rejected this Work execution. Review the provider configuration or request compatibility, then explicitly steer the Work to retry.",
+            occurredAt: "2026-10-25T00:00:01.000Z",
+            terminalProviderFailure: {
+              kind: "TerminalProviderFailure",
+              workId: "wrk_1",
+              workRevision: 2,
+              occurredAt: "2026-10-25T00:00:01.000Z",
+              failureCode: "RequestRejected",
+            },
+          },
+        ],
+      },
+    });
+    renderAttention();
+    await waitFor(() =>
+      expect(screen.getByText("RequestRejected")).toBeTruthy(),
+    );
+    expect(screen.getByText("2")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /重新验证|Retry Verification/iu }),
+    ).toBeNull();
+  });
+
   it("severity 分组顺序：ActionRequired 组在前；组头 danger/attention Badge + 计数", async () => {
     installAttention();
     renderAttention();

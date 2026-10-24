@@ -6,6 +6,7 @@ import type {
   ViewId,
   Work,
   WorkId,
+  WorkRevision,
   WorkspaceId,
 } from "@arbor/domain";
 import type {
@@ -230,6 +231,18 @@ const planView = (
                 ...(row.targetWorkRevision === undefined
                   ? {}
                   : { targetWorkRevision: row.targetWorkRevision }),
+                ...(row.terminalProviderFailure === undefined
+                  ? {}
+                  : {
+                      terminalProviderFailure: {
+                        kind: row.terminalProviderFailure.kind,
+                        workId: row.terminalProviderFailure.workId,
+                        workRevision: row.terminalProviderFailure
+                          .workRevision as WorkRevision,
+                        occurredAt: row.terminalProviderFailure.occurredAt,
+                        failureCode: row.terminalProviderFailure.failureCode,
+                      },
+                    }),
               })),
             }),
           ),

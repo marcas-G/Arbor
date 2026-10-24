@@ -12,6 +12,7 @@ import type {
 import type {
   ProjectionIntegrityFailure,
   ProjectionNotFound,
+  TerminalProviderFailureSource,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ProjectionReadError } from "../errors.js";
@@ -39,6 +40,16 @@ export interface WorkDetailView extends WorkDetailRequest {
   readonly revision: Work["revision"];
   readonly acceptedResult?: AcceptedWorkResultView;
   readonly blockedEpisode?: BlockedWorkEpisodeView;
+  readonly terminalProviderFailure?: {
+    readonly kind: "TerminalProviderFailure";
+    readonly workId: WorkId;
+    readonly workRevision: number;
+    readonly occurredAt: string;
+    readonly failureCode:
+      | "AuthenticationFailed"
+      | "RequestRejected"
+      | "ProtocolViolation";
+  };
 }
 
 export interface BlockedWorkEpisodeView {
@@ -81,6 +92,18 @@ export interface WorkDetailDeps {
   readonly findExecutionSettlement?: (
     executionId: WorkBlocker["openCycleId"],
   ) => Effect.Effect<Option.Option<ExecutionSettlement>, ProjectionReadError>;
+  readonly findTerminalProviderFailure?: (input: {
+    readonly projectId: ProjectId;
+    readonly workspaceId: WorkspaceId;
+    readonly workId: WorkId;
+    readonly workRevision: number;
+  }) => Effect.Effect<
+    Option.Option<{
+      readonly source: TerminalProviderFailureSource;
+      readonly occurredAt: string;
+    }>,
+    ProjectionReadError
+  >;
 }
 
 const notFound: ProjectionNotFound = {
@@ -241,6 +264,19 @@ export const deriveWorkDetail = (
         };
       }
     }
+    const terminalProviderFailure =
+      work.lifecycle === "Open" &&
+      deps.findTerminalProviderFailure !== undefined
+        ? yield* deps.findTerminalProviderFailure({
+            projectId: work.projectId,
+            workspaceId: work.workspaceId,
+            workId: work.workId,
+            workRevision: work.revision,
+          })
+        : Option.none<{
+            readonly source: TerminalProviderFailureSource;
+            readonly occurredAt: string;
+          }>();
     return {
       workId: work.workId,
       projectId: work.projectId,
@@ -252,5 +288,16 @@ export const deriveWorkDetail = (
       revision: work.revision,
       ...(acceptedResult === undefined ? {} : { acceptedResult }),
       ...(blockedEpisode === undefined ? {} : { blockedEpisode }),
+      ...(Option.isNone(terminalProviderFailure)
+        ? {}
+        : {
+            terminalProviderFailure: {
+              kind: "TerminalProviderFailure" as const,
+              workId: work.workId,
+              workRevision: work.revision,
+              occurredAt: terminalProviderFailure.value.occurredAt,
+              failureCode: terminalProviderFailure.value.source.failureKind,
+            },
+          }),
     };
   });

@@ -46,11 +46,13 @@ import {
   SandboxProviderUnavailableStore,
   sameSandboxPolicyPreIntentRequirement,
   sha256Hex,
+  type TerminalProviderFailureSource,
   ToolCatalogPort,
   TransactionPort,
   type TransactionScope,
   VerificationRepository,
   WorkBlockerStore,
+  WorkReadmissionGateStore,
   WorkRepository,
   WorkspaceRepository,
   WorkWaitStore,
@@ -69,6 +71,7 @@ import type {
   InboxViewDeps,
   ProjectionQueryRuntimeDeps,
   SpecialistSettlementFact,
+  TerminalProviderFailureAttentionFact,
   TranscriptDeps,
   TreeViewDeps,
   UsageDeps,
@@ -195,6 +198,7 @@ export type ProjectionQueryWiringServices =
   | ExecutionRepository
   | WorkWaitStore
   | WorkBlockerStore
+  | WorkReadmissionGateStore
   | DependencyRepository
   | VerificationRepository
   | EvidenceRepository
@@ -284,6 +288,7 @@ const projectionQueryService = (
     const waits = yield* WorkWaitStore;
     const blockersOption = yield* Effect.serviceOption(WorkBlockerStore);
     const blockers = Option.getOrUndefined(blockersOption);
+    const readmissionGate = yield* WorkReadmissionGateStore;
     const dependencies = yield* DependencyRepository;
     const projectRepository = yield* Effect.serviceOption(ProjectRepository);
     const formationProposals = yield* Effect.serviceOption(
@@ -332,6 +337,35 @@ const projectionQueryService = (
 
     const inTx = <A>(body: Effect.Effect<A, unknown, TransactionScope>) =>
       tx.transact(body).pipe(Effect.mapError(projectionReadError));
+
+    const readTerminalFailureOccurrence = (
+      source: TerminalProviderFailureSource,
+    ) =>
+      Effect.gen(function* () {
+        const rows = yield* sql.unsafe<{ readonly settled_at: string | null }>(
+          `SELECT settled_at
+             FROM provider_attempts
+            WHERE provider_turn_id = ? AND attempt_no = ?`,
+          [source.providerTurnId, source.attemptNo],
+        );
+        const occurredAt = rows[0]?.settled_at ?? null;
+        const millis =
+          occurredAt === null ? Number.NaN : Date.parse(occurredAt);
+        if (
+          rows.length !== 1 ||
+          occurredAt === null ||
+          !Number.isFinite(millis) ||
+          new Date(millis).toISOString() !== occurredAt
+        ) {
+          return yield* Effect.fail({
+            _tag: "TerminalProviderFailureOccurrenceUnavailable",
+            executionId: source.executionId,
+            providerTurnId: source.providerTurnId,
+            attemptNo: source.attemptNo,
+          });
+        }
+        return occurredAt;
+      });
 
     const listWorkspacesByProject = (projectId: ProjectId) =>
       inTx(
@@ -617,7 +651,51 @@ const projectionQueryService = (
       ).pipe(Effect.mapError(projectionReadError));
     };
 
+    const listTerminalProviderFailures = (projectId: ProjectId) =>
+      inTx(
+        Effect.gen(function* () {
+          const rows = yield* sql.unsafe<{
+            work_id: string;
+            workspace_id: string;
+            revision: number;
+          }>(
+            `SELECT work_id, workspace_id, revision
+               FROM works
+              WHERE project_id = ? AND lifecycle = 'Open'
+              ORDER BY workspace_id, work_id`,
+            [projectId],
+          );
+          const out: Array<TerminalProviderFailureAttentionFact> = [];
+          for (const row of rows) {
+            const found = yield* readmissionGate.hasBlockingSource({
+              projectId,
+              workspaceId: row.workspace_id as WorkspaceId,
+              workId: row.work_id as WorkId,
+              workRevision: Number(row.revision) as WorkRevision,
+            });
+            if (
+              Option.isSome(found) &&
+              found.value.sourceKind === "TerminalProviderFailureSettlement"
+            ) {
+              const occurrence = yield* readTerminalFailureOccurrence(
+                found.value,
+              );
+              out.push({
+                projectId,
+                workspaceId: row.workspace_id as WorkspaceId,
+                workId: row.work_id as WorkId,
+                workRevision: Number(row.revision),
+                source: found.value,
+                occurredAt: occurrence,
+              });
+            }
+          }
+          return out;
+        }),
+      );
+
     const attention: AttentionReadDeps = {
+      listTerminalProviderFailures,
       listWorkspacesByProject,
       listWorksByWorkspace: (workspaceId) =>
         inTx(works.listByWorkspace(workspaceId)),
@@ -1307,6 +1385,32 @@ const projectionQueryService = (
                 ? Option.some(execution.state.settlement)
                 : Option.none(),
             ),
+          ),
+        ),
+      findTerminalProviderFailure: (input) =>
+        inTx(
+          Effect.flatMap(
+            readmissionGate.hasBlockingSource({
+              projectId: input.projectId,
+              workspaceId: input.workspaceId,
+              workId: input.workId,
+              workRevision: input.workRevision as WorkRevision,
+            }),
+            (found) => {
+              const terminal = Option.filter(
+                found,
+                (
+                  source,
+                ): source is import("@arbor/ports").TerminalProviderFailureSource =>
+                  source.sourceKind === "TerminalProviderFailureSettlement",
+              );
+              if (Option.isNone(terminal)) return Effect.succeed(Option.none());
+              return Effect.map(
+                readTerminalFailureOccurrence(terminal.value),
+                (occurredAt) =>
+                  Option.some({ source: terminal.value, occurredAt }),
+              );
+            },
           ),
         ),
     };

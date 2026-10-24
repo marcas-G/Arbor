@@ -26,8 +26,12 @@ export function planTestImpact(changedPaths, map = impactMap) {
   const highRiskTags = new Set();
 
   const addLane = (lane, reason, full = false) => {
-    if (!map.lanes[lane]) throw new Error(`impact map references unknown lane: ${lane}`);
-    const current = selected.get(lane) ?? { scope: "selected-lane", reasons: [] };
+    if (!map.lanes[lane])
+      throw new Error(`impact map references unknown lane: ${lane}`);
+    const current = selected.get(lane) ?? {
+      scope: "selected-lane",
+      reasons: [],
+    };
     if (full) current.scope = "full-lane";
     current.reasons.push(reason);
     selected.set(lane, current);
@@ -50,14 +54,22 @@ export function planTestImpact(changedPaths, map = impactMap) {
       if (patterns.length === 0) continue;
       highRiskTags.add(rule.tag);
       for (const lane of rule.lanes) {
-        addLane(lane, `high-risk ${rule.tag}: ${path} matches ${patterns.join(", ")}`, true);
+        addLane(
+          lane,
+          `high-risk ${rule.tag}: ${path} matches ${patterns.join(", ")}`,
+          true,
+        );
       }
     }
   }
 
   if (unknownPaths.length > 0) {
     for (const lane of laneOrder) {
-      addLane(lane, `unknown path(s) require conservative full-lane selection: ${unknownPaths.join(", ")}`, true);
+      addLane(
+        lane,
+        `unknown path(s) require conservative full-lane selection: ${unknownPaths.join(", ")}`,
+        true,
+      );
     }
   }
 
@@ -99,7 +111,9 @@ function runGit(args) {
     windowsHide: true,
   });
   if (result.error || result.status !== 0) {
-    throw new Error(result.error?.message ?? result.stderr.trim() ?? "git failed");
+    throw new Error(
+      result.error?.message ?? result.stderr.trim() ?? "git failed",
+    );
   }
   return result.stdout
     .split(/\r?\n/)
@@ -129,7 +143,8 @@ function parseArguments(args) {
       if (!base) throw new Error("--base requires a Git ref");
     } else if (args[index] === "--changed") {
       const path = args[++index];
-      if (!path) throw new Error("--changed requires a repository-relative path");
+      if (!path)
+        throw new Error("--changed requires a repository-relative path");
       changedPaths.push(path);
     } else if (args[index] === "--help" || args[index] === "-h") {
       return { help: true };
@@ -140,11 +155,16 @@ function parseArguments(args) {
   if (base && changedPaths.length > 0)
     throw new Error("use either --base or --changed, not both");
   if (!base && changedPaths.length === 0)
-    throw new Error("provide --base <ref> or one or more --changed <path> values");
+    throw new Error(
+      "provide --base <ref> or one or more --changed <path> values",
+    );
   return { base, changedPaths };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   try {
     const args = parseArguments(process.argv.slice(2));
     if (args.help) {
@@ -152,11 +172,15 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         "Usage: node scripts/testing/plan-test-impact.mjs --base <git-ref> | --changed <path> [--changed <path> ...]",
       );
     } else {
-      const changes = args.base ? changedPathsSince(args.base) : args.changedPaths;
+      const changes = args.base
+        ? changedPathsSince(args.base)
+        : args.changedPaths;
       console.log(JSON.stringify(planTestImpact(changes), null, 2));
     }
   } catch (error) {
-    console.error(`test impact planner: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `test impact planner: ${error instanceof Error ? error.message : String(error)}`,
+    );
     process.exitCode = 2;
   }
 }

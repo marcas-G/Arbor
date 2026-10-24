@@ -31,6 +31,8 @@ const p39SpawnModule =
   "adapters/persistence-sqlite/src/p39-windows-security.ts";
 const trustedLocalSpawnModule =
   "adapters/sandbox-local/src/trusted-local-process.ts";
+const windowsNativeBuildModule =
+  "adapters/sandbox-windows/scripts/build-native-host.mjs";
 const p39QueryCallers = new Set([
   "adapters/persistence-sqlite/src/p39-report-database.ts",
   "adapters/persistence-sqlite/src/p39-windows-security.ts",
@@ -170,8 +172,9 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
   const findings: string[] = [];
   const isP39 = path === p39SpawnModule;
   const isTrustedLocal = path === trustedLocalSpawnModule;
+  const isWindowsNativeBuild = path === windowsNativeBuildModule;
   const nativeSpecifierIndex =
-    isP39 || isTrustedLocal
+    isP39 || isTrustedLocal || isWindowsNativeBuild
       ? tokens.findIndex(
           (token) =>
             token.value === "node:child_process" &&
@@ -193,7 +196,10 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
         SyntaxKind.LastTemplateToken,
       ].includes(token.kind) &&
       forbiddenNativeModuleFragment.test(token.value) &&
-      !((isP39 || isTrustedLocal) && index === nativeSpecifierIndex)
+      !(
+        (isP39 || isTrustedLocal || isWindowsNativeBuild) &&
+        index === nativeSpecifierIndex
+      )
     ) {
       findings.push(
         `${path}: forbidden process module value ${JSON.stringify(token.value)}`,
@@ -311,6 +317,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
       nativeSpawnIdentifiers.has(callName) &&
       isCall &&
       !(isP39 && callName === "execFileSync") &&
+      !(isWindowsNativeBuild && callName === "execFileSync") &&
       !(isTrustedLocal && callName === "execFile")
     ) {
       findings.push(`${path}: unregistered native process call ${callName}`);
@@ -622,7 +629,11 @@ describe("SandboxProcessPort architecture boundary", () => {
       .map(normalized)
       .sort();
     expect(directNativeModules).toEqual(
-      [p39SpawnModule, trustedLocalSpawnModule].sort(),
+      [
+        p39SpawnModule,
+        trustedLocalSpawnModule,
+        windowsNativeBuildModule,
+      ].sort(),
     );
     const source = readFileSync(
       join(repoRoot, trustedLocalSpawnModule),
