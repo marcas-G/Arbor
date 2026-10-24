@@ -728,3 +728,21 @@ erase the first-run test-harness failure. The deterministic deadline test
 oracle repair is tracked separately. This batch does not close AH7, AH10,
 AH18, AH19, F21, F23, or SCRC-008; FT-DG-02 implementation and F22 browser
 qualification are tracked separately and now complete.
+
+## Current release and recovery status — 2026-10-24
+
+At candidate `772ba5d713032fbccd7623264f5b664bee22f4a9`, `pnpm check`, the
+complete-coverage scripted release functional profile, and `pnpm test:package`
+pass; see `planning/results/release-candidate-convergence-772ba5d7.result.md`.
+The current recovery audit
+(`planning/results/current-recovery-closure-audit-772ba5d7.result.md`)
+supersedes older blanket OPEN labels for supported-v1 AH7 DG-01/02/03 paths,
+registered AH10 (including Deliver/P8/P41) paths, and AH14 ambiguous-legacy
+Attention on that candidate. It does not claim whole product/recovery closure:
+four exact pending verification/P8/F23 cases await default promotion; P6
+public read and Submitted DecisionEpisode corruption semantics remain open;
+Native OS support, real-provider journeys, and existing database upgrade are
+not qualified. Copied same-holder ToolRuntime concurrency is explicitly
+unsupported; shell@3 remains NonIdempotent and legacy shell@2 fails closed
+without trusted proof. This addendum does not change `docs/design/**` or
+authorize preserved-database access.

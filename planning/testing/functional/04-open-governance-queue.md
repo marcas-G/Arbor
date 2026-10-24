@@ -47,3 +47,43 @@ AH18 另有待补的实现/进程资格窗口：ordinal-0 OverflowCompaction lin
 窗口；真实 second terminal overflow 崩溃矩阵也未完成；不得据此宣布 AH18 关闭。
 AH19 仍开放 ProviderNative match/mismatch portable rebuild 与 Native checkpoint
 recovery；Summary AH17 两侧资格不覆盖该 profile。
+
+## Current candidate recovery disposition — 2026-10-24
+
+This addendum supersedes the historical table above only for the explicitly
+listed supported-v1 paths on candidate
+`772ba5d713032fbccd7623264f5b664bee22f4a9`. The current complete-coverage
+release run passed the active registered matrix (64 selected files; compatible
+resume recorded), as detailed in
+`planning/results/release-candidate-convergence-772ba5d7.result.md` and
+`planning/results/current-recovery-closure-audit-772ba5d7.result.md`.
+
+- AH7 accepted DG-01/DG-02/DG-03 supported-v1 production paths pass this
+  candidate's default matrix. Copied same-holder concurrent ToolRuntime
+  invocation is explicitly unsupported, not a product promise. shell@3 remains
+  NonIdempotent; legacy shell@2 remains fail-closed without trusted proof.
+- Registered AH10 paths—including Deliver, verification actions and P41—and
+  AH14 ambiguous-legacy Attention pass in the current default matrix. Do not
+  carry older blanket AH10 Deliver/AH14 Attention blockers forward for these
+  registered paths.
+- P8 and F23 core production paths are implemented and pass at their
+  registered/default scope. Four exact cases are still awaiting default
+  promotion; `test_dependency_selection_audit` is migrating them:
+  `tests/functional/pending/ah10-verification-recorded-at-fingerprint.functional.test.ts`,
+  `tests/functional/pending/p8-conclusion-criteria-snapshot.functional.test.ts`,
+  `tests/functional/pending/f23-retry-verification-permanent-replay.functional.test.ts`,
+  and `tests/functional/pending/f23-exact-tuple-receipt-integrity.functional.test.ts`.
+- The Submitted DecisionEpisode corruption terminalization semantics choice
+  remains owner-governed and open. P6 public read qualification remains open;
+  the operator-only offline rebuild is not public read evidence.
+- Native OS enforcement, real-provider S1–S4 qualification, and existing
+  online/preserved-user-database upgrade remain separate open gates.
+
+For the current candidate, the live promotion/decision queue is limited to
+those four tests, P6 public read qualification, and Submitted DecisionEpisode
+corruption terminalization semantics. Native OS support, real-provider
+qualification, and existing-database migration are separate environment or
+authorization gates rather than unresolved AH7/AH10/AH14 production paths.
+Read the dated table above as history for entries outside this current scope;
+do not use its old AH7/AH10/AH14 blanket OPEN statements to override the
+candidate-specific audit.

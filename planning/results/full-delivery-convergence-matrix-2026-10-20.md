@@ -43,7 +43,11 @@ release readiness.
 
 These local gates now pass on one exact SHA. They do not include real-provider
 qualification, Native OS sandbox support, existing online/user database
-upgrade, or the broader release-readiness claim.
+upgrade, or the broader release-readiness claim. Recovery dispositions for
+this candidate are reconciled in
+[`current-recovery-closure-audit-772ba5d7.result.md`](current-recovery-closure-audit-772ba5d7.result.md);
+do not use historical AH7/AH10/AH14 blanket OPEN labels below as current
+status for supported v1 registered paths.
 
 | Area | Verified evidence | Current limit |
 |---|---|---|
@@ -55,7 +59,7 @@ upgrade, or the broader release-readiness claim.
 | Port handshake and online F21 replay | On `0dd274`, port-handshake passed 33/33 and the F21 online replay case passed 1/1. On `d89103`, F21 full-rebuild passed 2/2. | These are separate file/case runs, not a complete functional suite. |
 | Critical Steer | Option A is accepted and integrated on `1732dba7`: one external SteerWork receipt owns the same-transaction Work correction and exact StopExecution. If the transaction has no active main, Steer and HumanInput commit without a Stop event; if a main appears or changes after preparation, P12 authority is re-resolved for the transaction-time current Execution. Targeted integration tests passed 17/17, including concurrent advisory-miss convergence, exact stale-target rebinding, no-active replay, and complete rollback when Stop rejects. Root/test TypeScript typecheck passed. | The design/implementation gap is closed at the targeted layer, but no daemon/process or full release qualification has yet run for Critical Steer. |
 | S2 — revision semantics / scripted public process | On exact candidate `410695f9fa1b58905d42c33b5ac0f9d1ad7e17c2`, the scripted public-process S2 L2 test passed 1/1 (test 44.593 s, total 64.79 s): DirectionGuidance preserves the exact contract; Critical amendment records revision 2 and Stops the exact active Execution; a held pre-commit ProviderTurn may settle, but no action/completion follows on that stopped Execution; stale old Verification is rejected; restart/same-CommandId replay yields one receipt; revision-2 Verification/Acceptance succeeds. Record: [S2-steer-work-revision-l2.result.md](S2-steer-work-revision-l2.result.md). | This is one scripted-provider journey, not real-provider/model qualification, full S2 coverage, or a release-suite pass. The real Normal Steer run correctly exposed the former unchanged-mission limitation; the accepted S2 revision contract is implemented, but the real-provider S2 journey remains OPEN. The separately qualified real immediate-Stop slice is recorded at [S2-real-immediate-stop-qualification-2026-10-24.result.md](S2-real-immediate-stop-qualification-2026-10-24.result.md). |
-| Real-provider S3 | APW-1/APW-3 are accepted and implemented with focused/scripted evidence; the real rerun on `34adf883` completed 11/11 Provider responses but settled with only a Parent, an Unsatisfied `AnyProducer` wait, no Child/producer, no active Execution and no Attention. | S3 remains unqualified. This run exposed a separate no-producer wait/recovery design gap; the APW-1/APW-3 implementation does not itself resolve that state. Do not retry the real journey until the owner-governed disposition and implementation/qualification scope are settled. See [S3 real rerun](real-public-s3-collaboration-rerun-20261024.result.md). |
+| Real-provider S3 | APW-1/APW-3 are accepted and implemented with focused/scripted evidence; the real rerun on `34adf883` completed 11/11 Provider responses but settled with only a Parent, an Unsatisfied `AnyProducer` wait, no Child/producer, no active Execution and no Attention. | S3 remains unqualified: the recorded real journey did not reach Child execution, delivery, verification, or acceptance. This failure remains part of the real-provider qualification gap and does not negate the scoped APW implementation/default tests. See [S3 real rerun](real-public-s3-collaboration-rerun-20261024.result.md). |
 | Real-provider S4 | S4-A has a bounded real-provider fail-closed restart PASS. | S4-B remains unqualified: recorded real runs did not reach the approval/restart boundary (one lacked an exact shell call; another completed the file through an already-authorized patch and therefore had no pending Executable approval). Test-source preparation is not a real S4-B qualification. See [S4-B result](real-public-s4-b-approval-hard-restart-20261024.result.md). |
 | Native OS sandbox | Providers remain Experimental/Unavailable; no Supported or usable real OS sandbox provider is established. A Windows 10 LPAC opt-out A/B probe denied the outside-file read that regular AppContainer allowed, but failed Workspace/Temp positive controls. The synthetic V6 pre-intent CandidateRead/P1/P4/P9 registry-drift/restart file now passes 11/11: policy selection precedes EAP consumption, stale selection has no mutation, exact current selection reaches typed `ProviderVersionMismatch/NoEffect`, and restart/bindings converge. | LPAC still lacks required positive filesystem/Temp behavior, signed production helper qualification and Supported provider tuples. V6 is synthetic policy/runtime evidence only and does not establish real OS enforcement. |
 
@@ -83,17 +87,15 @@ group passed 10/10. The current package run passed clean-checkout 1/1. The
   AnyProducer wait; S4-A has a bounded fail-closed restart PASS, while S4-B
   has not reached its Executable-approval/restart oracle. These are separate
   from the scripted release suite.
-- **S3 owner gap:** accepted APW-1/APW-3 implementation does not dispose of
-  the observed settled Parent wait with no Child/producer. The real rerun
-  raises this as a separate owner-governed gap; do not retry the real journey
-  until that disposition and implementation/qualification scope are settled.
-- **Recovery completeness:** AH7 remains PARTIAL for remaining recovery and
-  concurrency cells; AH10 remains PARTIAL, including old-generation Deliver
-  fencing and verification replay/snapshot concerns; AH14's ambiguous legacy
-  evidence still lacks durable public Attention; AH19 retains specified
-  frontier/checkpoint edge cases. See
-  [`AH-recovery-cross-generation-matrix-audit.md`](AH-recovery-cross-generation-matrix-audit.md)
-  and its more recent AH7/AH10/AH14/AH19 results.
+- **Recovery:** supported v1 AH7 DG-01/02/03 paths, registered AH10 paths
+  (including Deliver/P8/P41), and AH14 ambiguous legacy Attention pass the
+  current default matrix. Same-holder copied concurrency is explicitly
+  unsupported; do not count it as a failed product promise. Four exact
+  verification/P8/F23 cases are still awaiting default promotion, and the
+  Submitted DecisionEpisode corruption semantics choice remains open. P6
+  public read qualification is separate from the completed operator-only
+  rebuild. See
+  [`current-recovery-closure-audit-772ba5d7.result.md`](current-recovery-closure-audit-772ba5d7.result.md).
 - **Native OS sandbox:** no provider is Supported; synthetic V6 and the LPAC
   opt-out probe are not production enforcement. Keep this capability disabled
   or explicitly outside the release claim until the provider/security
@@ -130,8 +132,8 @@ The source-of-truth chain is `docs/design/00-problem-goals.md` → `docs/design/
 |---|---|---|---|
 | S1 — long-running goal to Work, Verification, Parent Acceptance | **Partial** | A bounded real-provider lifecycle slice passed 1/1 (public Work/effect/independent Verification PASS/Acceptance/Completed/restart read). | Its test and runtime source SHAs differ (`c69e87c7` / `53c36a77`), and it is one bounded task, not the complete S1 scenario on this release candidate. |
 | S2 — observe, drill down, steer, govern | **Partial** | The scripted revision-semantics journey passes 1/1 and a separate real immediate-Stop slice passes with restart. | Real Normal Steer previously ended in Verification FAIL before the revision-contract implementation; it has not been requalified with the final contract on this candidate. Full S2/model behavior remains OPEN. |
-| S3 — Parent/Child collaboration, dependency, exception escalation | **Partial** | MAC-P2/P3/P4 scoped contracts; F19 forward/reverse order; F23 S1/S3 public formation journey; APW-1/APW-3 implementation and scripted public denial slice are integrated. | The real S3 rerun stalled on a settled `AnyProducer` wait with no producer. The accepted package is implemented at scoped layers, but full real S3 collaboration remains OPEN. AH7 remains partial; AH10 takeover is not closed; P6 operator-only rebuild and Native candidate gaps remain. |
-| S4 — idle continuity, interruption, recovery and re-entry | **Partial** | S4-A has a real-provider fail-closed hard-restart PASS; assistant-message projection implementation and deterministic focused verification are integrated. | The corrected-oracle S4-B attempt at `ac9625d9` timed out before obtaining a genuine held `shell Get-Date` response. No EAP, P1, restart, or approval boundary was reached. S4-B remains OPEN; there is no approval-hard-restart qualification or full release suite on the current candidate. AH7/AH10 boundaries remain open. |
+| S3 — Parent/Child collaboration, dependency, exception escalation | **Partial** | MAC-P2/P3/P4 scoped contracts; F19 forward/reverse order; F23 S1/S3 public formation journey; APW-1/APW-3 implementation and scripted public denial slice are integrated. | The real S3 rerun stalled on a settled `AnyProducer` wait with no producer. The accepted package is implemented at scoped layers, but full real S3 collaboration remains OPEN. P6 public read qualification and Native candidate gaps remain. |
+| S4 — idle continuity, interruption, recovery and re-entry | **Partial** | S4-A has a real-provider fail-closed hard-restart PASS; assistant-message projection implementation and deterministic focused verification are integrated. | The corrected-oracle S4-B attempt at `ac9625d9` timed out before obtaining a genuine held `shell Get-Date` response. No EAP, P1, restart, or approval boundary was reached. S4-B remains OPEN; there is no approval-hard-restart qualification or full real-provider S4 journey on this candidate. |
 
 ## Exact gate and configured-run record
 
@@ -143,11 +145,11 @@ The source-of-truth chain is `docs/design/00-problem-goals.md` → `docs/design/
 
 ## Open release gates
 
-1. Keep Native OS Sandbox claims disabled until a real provider is Supported and filesystem/network/broker/stop enforcement and cross-process qualification pass; synthetic V6 is not this evidence.
-2. Finish remaining AH7/AH10/AH14/AH19 recovery boundaries; preserve per-action and split-run scopes and owner-governed semantics.
-3. Retain the schema-52 disposable upgrade evidence; any preserved/online database operation requires explicit user authorization and its approved offline upgrade/recovery procedure.
-4. The local `pnpm check`, complete-coverage `pnpm test:functional`, and `pnpm test:package` gates pass on exact candidate `772ba5d7`; remaining blockers are not these local gates.
-5. Keep real-provider S1–S4 journeys separately scoped: S2 has bounded immediate-Stop and scripted revision-semantics evidence, while real Normal remains open after its unchanged-mission failure; S3's accepted implementation and scripted denial slice do not qualify its full real journey; S4-A fail-closed has a bounded PASS, while corrected S4-B has one real attempt that failed before approval/restart. Do not combine these slices into S1–S4 closure or a release claim. Resolve the recorded S1 VerifierOrphan through the frozen authorized human path before expecting completion.
-6. Keep Native OS Sandbox claims disabled until the actual signed helper, production provider, filesystem/network/broker/stop enforcement, and cross-process qualification are all evidenced.
+1. Complete default promotion and exact-SHA qualification for the four named pending verification/P8/F23 cases; see the current recovery audit.
+2. Complete P6 public read qualification and resolve the Submitted DecisionEpisode corruption terminalization choice under its owning contract.
+3. Keep Native OS Sandbox claims disabled until a real provider is Supported and filesystem/network/broker/stop enforcement and cross-process qualification pass; synthetic V6 is not this evidence.
+4. Retain the schema-52 disposable upgrade evidence; any preserved/online database operation requires explicit user authorization and its approved offline upgrade/recovery procedure.
+5. Keep real-provider S1–S4 journeys separately scoped: S1 is one bounded slice with separate source SHAs; S2 Normal remains open after its Verification failure; S3's real run stalled on an AnyProducer wait; S4-A fail-closed passed, while S4-B did not reach approval/restart. Do not combine these slices into S1–S4 closure or a release claim.
+6. The local `pnpm check`, complete-coverage `pnpm test:functional`, and `pnpm test:package` gates pass on exact candidate `772ba5d7`; remaining blockers are not these local gates.
 
 The historical module matrix remains scoped to `e94a204a`; the current integration snapshot above is updated for candidate `772ba5d7`. This update does not change `docs/design/**`, broaden Native/V6 qualification, or claim release readiness.

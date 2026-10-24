@@ -78,6 +78,9 @@ export function collectPreviouslyPassedFiles({
   groupFiles,
 }) {
   const selected = new Set(selectedFiles.map(normalized));
+  const previouslySelected = new Set(
+    (previousResult.selectedFiles ?? []).map(normalized),
+  );
   const passed = new Set(
     (previousResult.passedFiles ?? [])
       .map(normalized)
@@ -95,7 +98,7 @@ export function collectPreviouslyPassedFiles({
     if (!successfulGroup(previousResult, groupName)) continue;
     for (const file of files) {
       const path = normalized(file);
-      if (selected.has(path)) passed.add(path);
+      if (selected.has(path) && previouslySelected.has(path)) passed.add(path);
     }
   }
   return [...passed].sort();

@@ -28,15 +28,18 @@ database, or release readiness. Those remain separate gates.
   ended in a terminal Verification FAIL; S3's latest real run stalled on a
   settled no-producer AnyProducer wait; S4-A has a bounded fail-closed restart
   PASS, while S4-B has not reached its Executable-approval/restart oracle.
-- **S3 governance:** the accepted APW-1/APW-3 implementation does not dispose
-  of the observed Parent wait with no Child/producer. The real rerun raises
-  this as a separate owner-governed gap; do not retry that journey until its
-  disposition and implementation/qualification scope are settled.
-- **Recovery:** AH7 remains partial for remaining recovery/concurrency cells;
-  AH10 remains partial, including old-generation Deliver fencing and
-  verification replay/snapshot concerns; AH14's ambiguous legacy evidence
-  still lacks durable public Attention; AH19 retains specified
-  frontier/checkpoint edge cases.
+- **Recovery:** the [current recovery closure audit](current-recovery-closure-audit-772ba5d7.result.md)
+  supersedes older blanket labels for supported v1 paths on this candidate:
+  registered AH7 DG-01/02/03, registered AH10 (including Deliver,
+  verification actions and P41), and AH14 ambiguous-legacy Attention pass the
+  current default matrix. Same-holder copied concurrency remains explicitly
+  unsupported; shell@3 remains NonIdempotent; legacy shell@2 remains
+  fail-closed without trusted proof.
+- **Still open:** four exact verification/P8/F23 cases are awaiting default
+  promotion; P6 public read qualification and Submitted DecisionEpisode
+  corruption semantics remain open; Native OS, real-provider, and existing
+  database gates remain separate. See the current recovery audit for exact
+  paths and boundaries.
 - **Native OS sandbox:** no provider is Supported. Synthetic V6 and the LPAC
   probe do not establish production OS enforcement; keep Native isolation out
   of the release claim until a supported provider and enforcement qualification

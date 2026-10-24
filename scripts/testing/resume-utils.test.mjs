@@ -236,6 +236,23 @@ test("a fully successful Playwright group is inherited only as a whole", () => {
   assert.deepEqual(passed, ["tests/a.test.ts", "tests/ui.spec.ts"]);
 });
 
+test("a newly added Playwright file is never inherited from an old group pass", () => {
+  const expandedFiles = [...selectedFiles, "tests/new-ui.spec.ts"];
+  const passed = collectPreviouslyPassedFiles({
+    previousResult: {
+      ...previousResult,
+      groups: [...previousResult.groups, { name: "functionalUi", exitCode: 0 }],
+    },
+    previousVitestProgress,
+    selectedFiles: expandedFiles,
+    groupFiles: {
+      functionalVitest: expandedFiles.slice(0, 2),
+      functionalUi: expandedFiles.slice(2),
+    },
+  });
+  assert.deepEqual(passed, ["tests/a.test.ts", "tests/ui.spec.ts"]);
+});
+
 test("composite evidence claims completeness only with every file and a build", () => {
   const base = {
     status: "passed",
