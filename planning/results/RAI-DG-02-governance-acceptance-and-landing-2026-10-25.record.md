@@ -65,3 +65,28 @@ An independent post-landing consistency review must confirm the proposal hash,
 owner scope, version chain, negative boundaries and absence of unaccepted
 semantics. Only after that review reports Blocking = 0 may the governor issue a
 separate implementation authorization token.
+
+## Corrective landing after independent review round 1
+
+Round 1 is preserved in
+`planning/results/RAI-DG-02-postlanding-review-round1-2026-10-25.result.md`
+and reported Blocking=3/Nonblocking=0. The correction applies only semantics
+already present in the accepted V2 hash:
+
+- P2 now freezes the complete `TerminalProviderFailureSource`, closed return
+  union, exact integrity reasons and shared deterministic witness order.
+- P10 now freezes additive terminal detail objects on Attention/WorkDetail,
+  exact summaries/dedup identities and no-row behavior when canonical
+  `occurredAt` cannot be proved.
+- P12 `14` now freezes all 15 required qualification rows.
+
+| Corrected owner file | pre-correction Git blob | corrected post SHA-256 |
+|---|---|---|
+| `docs/design/implementation/P2/02-port-contracts.md` | `db4c352789ac6f98ab43f500d585db3a50730ce8` | `124A00088442018A356B71D9060AFC750B22D744CF8C57D5552684F61126E71A` |
+| `docs/design/implementation/P10/02-attention-readmodel.md` | `82c3821c7e39dd45607452212ccc5027b32a8b53` | `4DBFD5A3D6677250427A3921D3B60285B6F4B7901674C82AB62C6F413480ADF6` |
+| `docs/design/implementation/P10/05-surface-actions-transport.md` | `0f26cc668fdaa2cff168e5bce2be60e762ad5d1c` | `886DB5B97ECBD843E5E6632BF88F440D2E0A41DDBADAB4086585572F7ABA9E5B` |
+| `docs/design/implementation/P12/14-acceptance.md` | `c22b9a0ab837c73fc23bd2edfcfe3d8fcde61bc1` | `F8D7DB68102F2423F35870EA0A5828BC65EF51A3A265A73CE849262F43B35B71` |
+
+The accepted proposal bytes remain unchanged. The correction adds no code,
+migration, schema, database access or implementation authorization. A second
+independent review is required.

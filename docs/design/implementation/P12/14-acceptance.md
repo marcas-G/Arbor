@@ -36,6 +36,57 @@ One end-to-end story proving the production/extensibility plane (doc set `01`–
     enforced at the context boundary; operating envelope measured     -> `13`
 ```
 
+## 1A. RAI-DG-02 mandatory qualification matrix
+
+The accepted V2 package requires every item below before implementation or
+release closure. State tests use fresh SQLite; process tests use a real daemon,
+public commands, real process termination and zero test retry.
+
+1. Each closed terminal kind creates one hold after the first failed Work
+   Execution and zero second same-revision Execution/Provider request.
+2. Exact S2 sequence: prior conversation/tool success, then RequestRejected;
+   prove one terminal Attempt, one failed Execution, one hold/Attention and no
+   loop.
+3. Kill before/after final Attempt settlement, failed ProviderTurn commit,
+   Step `SettlementProposed`, and Execution settlement; every partial prefix
+   creates no guessed hold/admission.
+4. RateLimited, ProviderUnavailable and StreamInterrupted negatives cover
+   eligible retry, retry-budget exhaustion and deadline exhaustion; none
+   creates the terminal source regardless of final Execution reason.
+5. Output repair, ContextUnsatisfiable, denied action, RuntimeSafetyStop,
+   OutcomeUnknown and P17 response failure retain their existing owners.
+6. Missing/duplicate/conflicting Step, Turn, Attempt, Manifest, taxonomy,
+   occurrence time and Episode facts return bounded integrity failure, zero
+   admission and no guessed identity.
+7. Child/parent/sibling, other Work/revision/Workspace/Project and non-Work
+   Episode failures do not cross-hold.
+8. Authorized DirectionGuidance Steer `r→r+1` preserves contract/evidence,
+   makes old presentation inactive and admits at most one `r+1` Execution;
+   kill before/after Steer commit.
+9. Query-derived P10 Attention/Work Detail and scheduler classification share
+   one canonical snapshot; unrelated ACK/rebuild/restart cannot weaken the
+   gate. Hundreds of equivalent historical rows deduplicate to one row.
+   Steer, CompleteWork and CancelWork lifecycle presentation are covered.
+10. Work remains Open absent authorized terminal governance; no automatic
+    Cancel/Complete/Verification/Acceptance/WorkWait/timer/Permission/Sandbox/
+    ResourceBoundary/provider-config mutation occurs.
+11. Public API, UI, logs and result files expose only closed code/fixed summary
+    and bounded identities; no provider body/request, reasoning, credential,
+    prompt, resource path or transport metadata leaks.
+12. Independently qualify the provider request compatibility/reasoning
+    round-trip defect; a passing hold does not make real S2 pass.
+13. Focused P2/P3/P6/P7/P9/P10/P12 suites, `pnpm check`, complete-coverage
+    release functional, package and real S2 all pass on one committed
+    candidate.
+14. Synchronize two independent SQLite connections and two daemons around
+    terminal settlement, Work admission and Steer; prove commit-order
+    linearization, zero same-revision admission and at most one new-revision
+    Execution.
+15. Read a disposable copy of the retained 617-failure fixture, or generate an
+    equivalent hundreds-of-repetitions fixture; prove one hold/Attention with
+    no source rewrite, and bounded integrity presentation for malformed
+    variants.
+
 ## 2. Exit criteria
 
 1. `pnpm check` green (lint + typecheck + architecture + test).

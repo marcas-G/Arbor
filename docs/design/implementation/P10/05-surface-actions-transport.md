@@ -27,7 +27,7 @@ interface ProjectionQueryPort {
 
 ```ts
 TreeViewReq        = { projectId, depth? }                     → nodes[{workspaceId, parentWorkspaceId|null, name, status, currentWork?, subtreeAttention{attention, actionRequired}, usageSummary? }]
-AttentionReq       = { projectId }                             → rows[{source, severity, targetWorkspaceId, dedupKey, summaryRef, occurredAt }]
+AttentionReq       = { projectId }                             → rows[{source, severity, targetWorkspaceId, dedupKey, summaryRef, occurredAt, terminalProviderFailure? }]
 WorkspaceDetailReq = { workspaceId }                           → { responsibility, boundary, currentWork?, pendingWorks[], executionSummary?, dependencies[], inboxUnconsumed[], verification?, auditTimeline[] }
 CurrentWorkReq     = { workspaceId }                           → { workId?, objective, status, revision, activeExecution? } | null
 VerificationReq    = { workId }                                → { verificationId?, targetWorkRevision?, verdict?, criteriaResults[], evidenceRefs[], acceptance? }
@@ -35,8 +35,27 @@ DependencyReq      = { projectId | workspaceId }               → rows[{depende
 TranscriptReq      = { workspaceId, sessionId?, cursor?, limit } → { entries[{kind, summaryRef, at}], nextCursor? }   // first production read path over session_entries
 UsageReq           = { projectId, groupBy: "workspace"|"subtree"|"project" } → rows[{workspaceId, tokens, cost, turns }]
 InboxViewReq       = { workspaceId }                           → { unconsumed[InboxEntryView] }
-WorkDetailReq      = { projectId, workspaceId, workId }        → { workId, projectId, workspaceId, objective, why, completionExpectation, lifecycle, revision, acceptedResult?, blockedEpisode? }
+WorkDetailReq      = { projectId, workspaceId, workId }        → { workId, projectId, workspaceId, objective, why, completionExpectation, lifecycle, revision, acceptedResult?, blockedEpisode?, terminalProviderFailure? }
 ```
+
+```ts
+type TerminalProviderFailureView =
+  | { readonly kind: "TerminalProviderFailure";
+      readonly workId: WorkId;
+      readonly workRevision: WorkRevision;
+      readonly failureCode:
+        | "AuthenticationFailed" | "RequestRejected" | "ProtocolViolation" }
+  | { readonly kind: "TerminalProviderFailureIntegrity";
+      readonly workId?: WorkId;
+      readonly workRevision?: WorkRevision;
+      readonly failureCode: ReadmissionGateIntegrityFailure["reasonCode"] };
+```
+
+For an Attention row, `terminalProviderFailure` is present if and only if
+`source` is one of the two RAI-DG-02 literals. `occurredAt` is the validated
+final ProviderAttempt `settledAt`; if no canonical occurrence instant can be
+proved, the query returns bounded `ProjectionIntegrityFailure` rather than a
+row with guessed/query time. Work Detail uses the same object and exact proof.
 
 `blockedEpisode` is an optional read-only current Work-revision summary with
 the source Episode ID and one item per current blocker: blockerId, disposition,
@@ -124,9 +143,11 @@ Accepted RAI-DG-02 adds the non-persisted literals
 `TerminalProviderFailure` and `TerminalProviderFailureIntegrity` to the same
 closed `AttentionSource` union and `ATTENTION_SOURCES`. They use the existing
 Attention row transport shape and add no endpoint, command or retry action.
-The valid row carries the closed terminal failure code and exact Work revision;
-the integrity row carries the closed bounded integrity code. Both use the
-fixed summaries and exact target/occurredAt rules in `02`; raw Provider,
+The valid row carries `terminalProviderFailure.kind`, the closed terminal
+failure code, exact `workId` and Work revision; the integrity row carries the
+closed bounded integrity code and only those optional Work fields that are
+uniquely proven. Both use the fixed summaries and exact target/occurredAt rules
+in `02`; raw Provider,
 request, response, manifest, SQL and parser material remain internal. The
 existing Steer command surface is the only recovery action.
 

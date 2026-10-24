@@ -395,6 +395,28 @@ type ReadmissionSourceKind =
   | "ReconciliationEscalationEvent"
   | "TerminalProviderFailureSettlement";
 
+type TerminalProviderFailureSource = {
+  readonly sourceKind: "TerminalProviderFailureSettlement";
+  readonly executionId: ExecutionId;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly providerTurnId: ProviderTurnId;
+  readonly attemptNo: number;
+  readonly failureKind:
+    | "AuthenticationFailed"
+    | "RequestRejected"
+    | "ProtocolViolation";
+  readonly failureFingerprint: Sha256;
+};
+
+type ReadmissionBlockingSource =
+  | { readonly sourceKind: Exclude<
+        ReadmissionSourceKind,
+        "TerminalProviderFailureSettlement"
+      >;
+      readonly executionId: ExecutionId }
+  | TerminalProviderFailureSource;
+
 interface WorkReadmissionGateStoreService {
   readonly hasBlockingSource: (input: {
     readonly projectId: ProjectId;
@@ -402,8 +424,7 @@ interface WorkReadmissionGateStoreService {
     readonly workId: WorkId;
     readonly workRevision: WorkRevision;
   }) => Effect.Effect<
-    Option.Option<{ readonly sourceKind: ReadmissionSourceKind;
-                    readonly executionId: ExecutionId }>,
+    Option.Option<ReadmissionBlockingSource>,
     ReadmissionTargetMismatch | ReadmissionGateIntegrityFailure,
     TransactionScope
   >;
@@ -448,7 +469,14 @@ type ReadmissionGateIntegrityFailure = {
     | "EpisodeVersionUnsupported" | "SourceFactEventMismatch"
     | "SourceEventExecutionMismatch" | "SourceProjectMismatch"
     | "SourceWorkspaceMismatch" | "WorkMissing" | "WorkScopeMismatch"
-    | "FutureWorkRevision" | "SettlementMalformed";
+    | "FutureWorkRevision" | "SettlementMalformed"
+    | "SourceSettlementStepMissing" | "SourceSettlementStepNonUnique"
+    | "SourceSettlementMismatch" | "SourceProviderTurnMissing"
+    | "SourceProviderTurnNonUnique" | "SourceProviderTurnMismatch"
+    | "SourceProviderAttemptMissing" | "SourceProviderAttemptNonUnique"
+    | "SourceProviderAttemptMismatch" | "SourceManifestMissing"
+    | "SourceManifestMismatch" | "FailureTaxonomyUnsupported"
+    | "FailureOccurrenceTimeInvalid";
 };
 
 type ReadmissionTargetMismatch = {
@@ -463,8 +491,7 @@ type ReadmissionTargetMismatch = {
 
 type WorkAdmissionBlock =
   | { readonly _tag: "WorkReadmissionHeld";
-      readonly sourceKind: ReadmissionSourceKind;
-      readonly executionId: ExecutionId }
+      readonly source: ReadmissionBlockingSource }
   | ReadmissionTargetMismatch
   | ReadmissionGateIntegrityFailure;
 ```
@@ -496,6 +523,13 @@ are not current sources. The same query is callable by P10 as a read-only proof
 source, but P10 results and ACK state are never read by this gate. Work-bound
 `AdmitExecution` rechecks the predicate inside its existing transaction, so
 settlement/admission/Steer races linearize by commit order.
+
+When multiple valid terminal candidates exist, choose the bounded witness by
+unsigned deterministic tuple
+`(execution.admittedAt, executionId, logicalStepNo, repairAttempt,
+providerTurnId, attemptNo)`. P10 uses this same order for drill-down witness
+selection. The predicate is true when any valid source exists; ordering never
+turns historical repetition into an integrity failure.
 
 ## 8. WorkWaitStore and SchedulerTimerStore
 
