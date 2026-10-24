@@ -424,6 +424,87 @@ describe("external wire-v1 command payload codec", () => {
     });
   });
 
+  it("keeps legacy SteerWork schema-v1 as direction guidance and accepts an explicit complete amendment", () => {
+    const common = {
+      workId: `wrk_${UUID_V7}`,
+      workspaceId: `ws_${UUID_V7}`,
+      expectedWorkRevision: 3,
+      provenance: { source: "HumanInput" },
+    };
+    expect(
+      decodeCommandPayload("SteerWork", {
+        ...common,
+        steer: {
+          severity: "Normal",
+          guidance: "try the alternative method",
+          scope: "Constraint",
+        },
+      }).ok,
+    ).toBe(true);
+
+    expect(
+      decodeCommandPayload("SteerWork", {
+        ...common,
+        steer: {
+          severity: "Critical",
+          operation: {
+            kind: "ContractAmendment",
+            amendment: {
+              objective: "deliver the corrected output",
+              why: "the human changed the accepted outcome",
+              constraints: ["keep the audit trail"],
+              completionExpectation: "the corrected output is verified",
+              verificationMission: {
+                goal: "verify the corrected output",
+                criteria: [
+                  {
+                    criterionId: "corrected-output",
+                    requirement: "output matches the new exact result",
+                    required: true,
+                  },
+                ],
+                riskRequirements: [],
+              },
+            },
+          },
+        },
+      }).ok,
+    ).toBe(true);
+  });
+
+  it.each([
+    ["partial contract", { objective: "new", why: "why" }],
+    [
+      "legacy guidance mixed with amendment",
+      {
+        guidance: "not an amendment",
+        operation: {
+          kind: "ContractAmendment",
+          amendment: {
+            objective: "new",
+            why: "why",
+            constraints: [],
+            completionExpectation: "done",
+            verificationMission: {
+              goal: "verify",
+              criteria: [],
+              riskRequirements: [],
+            },
+          },
+        },
+      },
+    ],
+  ])("rejects malformed SteerWork operation: %s", (_name, steer) => {
+    const result = decodeCommandPayload("SteerWork", {
+      workId: `wrk_${UUID_V7}`,
+      workspaceId: `ws_${UUID_V7}`,
+      expectedWorkRevision: 3,
+      provenance: { source: "HumanInput" },
+      steer: { severity: "Normal", ...steer },
+    });
+    expect(result.ok).toBe(false);
+  });
+
   it.each([
     ["legacy Coordination focus only", { _tag: "Coordination" }],
     ["missing episode", undefined],

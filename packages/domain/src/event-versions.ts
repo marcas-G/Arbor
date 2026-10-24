@@ -25,6 +25,7 @@ const OTHER_EVENT_V1_NAMES = [
   "WorkCompleted",
   "WorkCancelled",
   "WorkSteered",
+  "WorkAmended",
   "WorkBlockerResolved",
   "WorkBlockerSuperseded",
   "DependencyDeclared",

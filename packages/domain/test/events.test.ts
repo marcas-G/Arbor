@@ -39,6 +39,7 @@ const EXPECTED_EVENTS = [
   "WorkCompleted",
   "WorkCancelled",
   "WorkSteered",
+  "WorkAmended",
   "WorkBlockerResolved",
   "WorkBlockerSuperseded",
   "DependencyDeclared",
