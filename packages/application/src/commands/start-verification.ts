@@ -219,6 +219,8 @@ export const makeStartVerificationHandler = (
       }
       if (
         canonicalContract === undefined ||
+        canonicalWorkContractJson(canonicalContract) !==
+          canonicalWorkContractJson(expectedContract) ||
         canonicalWorkContractJson({
           ...canonicalContract,
           verificationMission: payload.missionSnapshot,
