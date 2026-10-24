@@ -60,7 +60,7 @@
       "evidenceClass": ["process", "real-provider"],
       "exactSha": null,
       "evidence": ["planning/results/RAI-DG-02-real-S2-terminal-provider-failure-busy-loop.result.md", "planning/proposals/RAI-DG-02-terminal-provider-failure-readmission-hold-draft.md", "planning/results/RAI-DG-02-governance-acceptance-and-landing-2026-10-25.record.md"],
-      "closureCondition": "V2 已人工接受并落地 SD v1.23 / DID v1.61；待独立落地复审 Blocking=0 后另行授权实现。实现必须使首个精确终态失败阻止同 revision 再执行，重启仍 hold，公开 Attention 安全且授权 Steer revision advance 后才恢复；Provider 适配故障另行修复并通过 S2。"
+      "closureCondition": "V2 已人工接受并落地 SD v1.23 / DID v1.61，独立落地复审 Blocking=0/Nonblocking=0。待单独 implementation authorization。实现必须使首个精确终态失败阻止同 revision 再执行，重启仍 hold，公开 Attention 安全且授权 Steer revision advance 后才恢复；Provider 适配故障另行修复并通过 S2。"
     },
     {
       "id": "recovery-pending-cases",
