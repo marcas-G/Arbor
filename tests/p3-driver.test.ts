@@ -38,17 +38,20 @@ import {
   type AgentExecutionState,
   CommandId,
   type CommandSubmissionContext,
+  ContextEpochNumber,
   type Execution,
   ExecutionId,
   Principal,
   ProjectId,
   parse,
+  providerTurnInferenceId,
   SessionId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
   ModelContext,
   ModelContextLive,
+  projectSessionTimeline,
   type TurnProfileResolverService,
 } from "../packages/model-context/src/index.js";
 import {
@@ -71,6 +74,7 @@ import {
   type RuntimeSafetyGateService,
   SessionRepository,
   SkillRegistry,
+  sha256Hex,
   TransactionPort,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
@@ -353,6 +357,7 @@ const makeApp = (
   return Layer.mergeAll(
     infra,
     driver,
+    sessions,
     providerRuntime,
     modelContext,
     capabilityLayer,
@@ -497,6 +502,7 @@ const seedCurrentConversation = (input: {
   readonly body: string;
   readonly commandId: CommandId;
   readonly fingerprint: string;
+  readonly includeForeignWorkAssistant?: boolean;
 }) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
@@ -558,6 +564,39 @@ const seedCurrentConversation = (input: {
                      NULL, NULL, ?, 't', NULL, NULL, NULL, NULL)`,
           [executionId, projectId, workspaceId, input.messageId, sessionId],
         );
+        if (input.includeForeignWorkAssistant === true) {
+          const foreignWorkExecutionId = parse(ExecutionId)(
+            "exe_00000000-0000-7000-8000-000000000117",
+          );
+          const foreignWorkProviderTurnId = providerTurnInferenceId(
+            foreignWorkExecutionId,
+            0,
+          );
+          const foreignText = "WORK SESSION OUTPUT MUST NOT ENTER CHAT";
+          const payload = {
+            _tag: "AssistantMessage",
+            providerTurnId: foreignWorkProviderTurnId,
+            contentRef: `provider:${foreignWorkProviderTurnId}:assistant`,
+            text: foreignText,
+            finishReason: "Stop",
+          };
+          yield* sql.unsafe(
+            `INSERT INTO session_entries (
+               session_id, sequence, entry_kind, item_type, schema_version,
+               context_epoch, payload_json, created_at, source_kind, source_ref,
+               content_hash
+             ) VALUES (?, 0, 'ModelOutput', 'AssistantMessage', 2, 0, ?, 't',
+                       'ProviderTurn', ?, ?)`,
+            [
+              sessionId,
+              JSON.stringify(payload),
+              `${foreignWorkProviderTurnId}:assistant`,
+              sha256Hex(
+                JSON.stringify({ text: foreignText, finishReason: "Stop" }),
+              ),
+            ],
+          );
+        }
         yield* sql.unsafe(
           `INSERT INTO execution_leases (
              execution_id, worker_id, worker_incarnation_id, generation,
@@ -824,6 +863,266 @@ describe("P3-013 agent driver", () => {
     );
 
     expect(settlement._tag).toBe("Completed");
+  });
+
+  it("projects a real typed Session frontier through ModelContext.prepareTurn", async () => {
+    const app = makeApp([textTurn]);
+    const prepared = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const sessions = yield* SessionRepository;
+        const tx = yield* TransactionPort;
+        const outputTurnId = providerTurnInferenceId(executionId, 0);
+        const sourceRef = `${outputTurnId}:assistant`;
+        const outputText = "Accepted prior assistant output.";
+        const outputWrite = {
+          item: {
+            _tag: "AssistantMessage" as const,
+            providerTurnId: outputTurnId,
+            contentRef: `provider:${outputTurnId}:assistant`,
+            text: outputText,
+            finishReason: "Stop",
+          },
+          contextEpoch: parse(ContextEpochNumber)(0),
+          source: { kind: "ProviderTurn", ref: sourceRef },
+          contentHash: sha256Hex(
+            JSON.stringify({ text: outputText, finishReason: "Stop" }),
+          ),
+        };
+        const fence = {
+          executionId,
+          workerId: context.workerId as string,
+          workerIncarnationId: context.workerIncarnationId as string,
+          fencingGeneration: context.fencingGeneration as never,
+        };
+        const firstAppend = yield* tx.transact(
+          sessions.appendItemIdempotent(sessionId, outputWrite, fence),
+        );
+        const replayAppend = yield* tx.transact(
+          sessions.appendItemIdempotent(sessionId, outputWrite, fence),
+        );
+
+        const frontier = yield* tx.transact(
+          sessions.listWorkActiveFrontier(sessionId),
+        );
+        const projection = projectSessionTimeline(frontier);
+        const modelContext = yield* ModelContext;
+        const preparation = yield* modelContext.prepareTurn({
+          executionId,
+          sessionId,
+          contextEpoch: parse(ContextEpochNumber)(0),
+          providerTurnId: providerTurnInferenceId(executionId, 1),
+          binding: { _tag: "WorkspaceExecution", workspaceId } as never,
+          workspaceId,
+          cognitiveMode: "execute",
+          program: {
+            programId: "s4-context-projection-test",
+            revision: 1,
+            hash: "s4-context-projection-test",
+            family: "WorkExecutionProgram",
+            slots: [],
+            outputContractRefs: [],
+            evalSetRef: "s4-context-projection-test",
+          },
+          fragments: [],
+          contextFragments: [],
+          budget: {
+            modelWindow: 8000,
+            outputReserve: 512,
+            protocolReserve: 100,
+            toolReserve: 100,
+          },
+          controlBasis: {
+            projectPolicyRevision: 0,
+            workspacePolicyRevision: 0,
+            responsibilityRevision: 0,
+            resourceBoundaryRevision: 0,
+            authorizationDigest: "s4-context-projection-test",
+            environmentRevision: "s4-context-projection-test",
+          },
+          maxOutputTokens: 512,
+          bodySkillIds: [],
+          turnProfile: {
+            purpose: "WorkspaceWork",
+            profileVersion: "turn-profile-v1",
+            outputContractRef: "tool-invocation-v1",
+            executableTools: [],
+            controlTools: [],
+            contextPolicyRef: "s4-context-projection-test",
+            fingerprint: "s4-context-projection-test",
+          },
+          inputItems: projection.inputItems,
+          messageContextRefs: projection.contextRefs,
+          stepContext: {
+            logicalStepNo: 1,
+            repairAttempt: 0,
+            inputFrontier: projection.frontier,
+            fingerprint: "s4-context-projection-test",
+            bindingFingerprint: "s4-context-projection-test",
+          },
+        });
+        return {
+          frontier,
+          projection,
+          preparation,
+          sourceRef,
+          outputText,
+          firstAppend,
+          replayAppend,
+        };
+      }),
+      app,
+    );
+
+    expect(prepared.frontier).toHaveLength(1);
+    expect(prepared.firstAppend.inserted).toBe(true);
+    expect(prepared.replayAppend).toMatchObject({
+      inserted: false,
+      sequence: prepared.firstAppend.sequence,
+    });
+    expect(prepared.projection.contextRefs).toEqual([
+      `session:ProviderTurn:${prepared.sourceRef}`,
+    ]);
+    expect(prepared.preparation._tag).toBe("Ready");
+    if (prepared.preparation._tag !== "Ready") return;
+    expect(
+      portableInputItems(prepared.preparation.turn.request),
+    ).toContainEqual({
+      _tag: "Message",
+      role: "assistant",
+      text: prepared.outputText,
+    });
+    expect(prepared.preparation.turn.manifest.contextRefs).toContain(
+      prepared.projection.contextRefs[0],
+    );
+  });
+
+  it("honors the real 64-row Work frontier and exact post-checkpoint suffix", async () => {
+    const app = makeApp([textTurn]);
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const sessions = yield* SessionRepository;
+        const tx = yield* TransactionPort;
+        const fence = {
+          executionId,
+          workerId: context.workerId as string,
+          workerIncarnationId: context.workerIncarnationId as string,
+          fencingGeneration: context.fencingGeneration as never,
+        };
+        const epoch0 = parse(ContextEpochNumber)(0);
+        const appendAssistant = (
+          step: number,
+          contextEpoch: ContextEpochNumber,
+        ) => {
+          const providerTurnId = providerTurnInferenceId(executionId, step);
+          const text = `assistant-output-${step}`;
+          return tx.transact(
+            sessions.appendItemIdempotent(
+              sessionId,
+              {
+                item: {
+                  _tag: "AssistantMessage" as const,
+                  providerTurnId,
+                  contentRef: `provider:${providerTurnId}:assistant`,
+                  text,
+                  finishReason: "Stop",
+                },
+                contextEpoch,
+                source: {
+                  kind: "ProviderTurn",
+                  ref: `${providerTurnId}:assistant`,
+                },
+                contentHash: sha256Hex(
+                  JSON.stringify({ text, finishReason: "Stop" }),
+                ),
+              },
+              fence,
+            ),
+          );
+        };
+        for (let step = 0; step < 66; step += 1) {
+          yield* appendAssistant(step, epoch0);
+        }
+        const preCheckpoint = yield* tx.transact(
+          sessions.listWorkActiveFrontier(sessionId),
+        );
+        const preProjection = projectSessionTimeline(preCheckpoint);
+
+        const epoch1 = parse(ContextEpochNumber)(1);
+        const checkpoint = {
+          _tag: "CompactionCheckpoint" as const,
+          implementation: "Summary" as const,
+          fromEpoch: epoch0,
+          toEpoch: epoch1,
+          retainedFrontierRef: "session-frontier:1-66",
+          summaryRef: "a".repeat(64),
+          summaryText: "Covered: assistant-output-2 and assistant-output-65.",
+          bindingFingerprint: null,
+        };
+        const checkpointCommit = yield* tx.transact(
+          sessions.commitCompaction(
+            sessionId,
+            {
+              expectedEpoch: epoch0,
+              nextEpoch: epoch1,
+              checkpoint,
+              source: { kind: "CompactionTurn", ref: "s4-frontier-checkpoint" },
+              contentHash: sha256Hex(JSON.stringify(checkpoint)),
+            },
+            fence,
+          ),
+        );
+        yield* appendAssistant(66, epoch1);
+        const postCheckpoint = yield* tx.transact(
+          sessions.listWorkActiveFrontier(sessionId),
+        );
+        const postProjection = projectSessionTimeline(postCheckpoint);
+        return {
+          preCheckpoint,
+          preProjection,
+          checkpointCommit,
+          postCheckpoint,
+          postProjection,
+        };
+      }),
+      app,
+    );
+
+    expect(result.preCheckpoint).toHaveLength(64);
+    expect(result.preCheckpoint[0]?.sequence).toBe(2);
+    expect(result.preCheckpoint.at(-1)?.sequence).toBe(65);
+    expect(result.preProjection.inputItems).toHaveLength(64);
+    expect(result.preProjection.inputItems).not.toContainEqual(
+      expect.objectContaining({ text: "assistant-output-0" }),
+    );
+    expect(result.preProjection.inputItems).not.toContainEqual(
+      expect.objectContaining({ text: "assistant-output-1" }),
+    );
+    expect(result.preProjection.inputItems).toContainEqual(
+      expect.objectContaining({ text: "assistant-output-2" }),
+    );
+    expect(result.preProjection.inputItems).toContainEqual(
+      expect.objectContaining({ text: "assistant-output-65" }),
+    );
+    expect(result.postCheckpoint.map((entry) => entry.sequence)).toEqual([
+      result.checkpointCommit.sequence,
+      result.checkpointCommit.sequence + 1,
+    ]);
+    expect(result.postProjection.inputItems).toEqual([
+      {
+        _tag: "Message",
+        role: "system",
+        text: "[Continuation checkpoint]\nCovered: assistant-output-2 and assistant-output-65.",
+      },
+      {
+        _tag: "Message",
+        role: "assistant",
+        text: "assistant-output-66",
+      },
+    ]);
   });
 
   it("uses the terminal attempt classification for an ordinary failure under P19", async () => {
@@ -1128,6 +1427,7 @@ describe("P3-013 agent driver", () => {
               "cmd_018f2b3c-4d5e-7abc-8def-0123456789a4",
             ),
             fingerprint: "fp-conversation-action",
+            includeForeignWorkAssistant: true,
           });
           return yield* drive(
             gate,
@@ -1145,6 +1445,15 @@ describe("P3-013 agent driver", () => {
     });
     expect(requests).toHaveLength(2);
     expect(progressAtProviderBoundary).toEqual([false, true]);
+    expect(
+      requests.flatMap((request) => portableInputItems(request)),
+    ).not.toContainEqual(
+      expect.objectContaining({
+        _tag: "Message",
+        role: "assistant",
+        text: "WORK SESSION OUTPUT MUST NOT ENTER CHAT",
+      }),
+    );
     expect(
       requests[1] === undefined ? [] : portableInputItems(requests[1]),
     ).toEqual(
