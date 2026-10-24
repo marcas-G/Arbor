@@ -24,13 +24,13 @@ describe("schema-upgrade qualification layering", () => {
       "validates every migration predecessor and accepted descriptor hash in-process",
     );
     for (const representative of [
-      "serializes two competing CLI resumes at the prepared P51 commit boundary",
-      "creates a P51 fresh target without accepting a source",
-      "upgrades an exact schema-48 copy through pinned 0049/0050/0051 prefixes",
+      "serializes two competing CLI resumes at the prepared P52 commit boundary",
+      "creates a P52 fresh target without accepting a source",
+      "upgrades an exact schema-48 copy through pinned 0049/0050/0051/0052 prefixes",
       "refuses a schema-48 copy with an unreconciled NULL grant revision",
       "upgrades an exact disposable schema44 copy",
-      "upgrades an exact disposable schema46 copy through offline migrations 0047–0051",
-      "upgrades an exact disposable schema47 copy through offline migrations 0048–0051 and resumes as a no-op",
+      "upgrades an exact disposable schema46 copy through offline migrations 0047–0052",
+      "upgrades an exact disposable schema47 copy through offline migrations 0048–0052 and resumes as a no-op",
     ]) {
       expect(suite).toContain(representative);
     }
