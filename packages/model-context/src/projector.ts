@@ -1,8 +1,10 @@
+import { ProviderTurnId, parse } from "@arbor/domain";
 import type {
   PortableInputItem,
   PortableToolResultStatus,
   SessionEntryRecord,
 } from "@arbor/ports";
+import { sha256Hex } from "@arbor/ports";
 import type { InstructionFragment } from "./prompt.js";
 
 /** Bounded recent Timeline window consumed by ContextProjector. The limit is
@@ -64,6 +66,16 @@ const refOf = (entry: SessionEntryRecord): string =>
     ? `session:${entry.sequence}`
     : `session:${entry.source.kind}:${entry.source.ref}`;
 
+const isProviderTurnId = (value: unknown): value is string => {
+  if (typeof value !== "string") return false;
+  try {
+    parse(ProviderTurnId)(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const projectSessionTimeline = (
   entries: ReadonlyArray<SessionEntryRecord>,
   bindingFingerprint?: string,
@@ -93,6 +105,27 @@ export const projectSessionTimeline = (
         if (source?.kind === "HumanConversation") break;
         if (typeof payload.text !== "string") break;
         inputItems.push({ _tag: "Message", role: "user", text: payload.text });
+        contextRefs.push(refOf(entry));
+        break;
+      }
+      case "AssistantMessage": {
+        const providerTurnId = payload.providerTurnId;
+        const text = payload.text;
+        const finishReason = payload.finishReason;
+        if (
+          entry.entryKind !== "ModelOutput" ||
+          !isProviderTurnId(providerTurnId) ||
+          payload.contentRef !== `provider:${providerTurnId}:assistant` ||
+          typeof text !== "string" ||
+          typeof finishReason !== "string" ||
+          entry.source?.kind !== "ProviderTurn" ||
+          entry.source.ref !== `${providerTurnId}:assistant` ||
+          entry.source.contentHash !==
+            sha256Hex(JSON.stringify({ text, finishReason }))
+        ) {
+          break;
+        }
+        inputItems.push({ _tag: "Message", role: "assistant", text });
         contextRefs.push(refOf(entry));
         break;
       }
