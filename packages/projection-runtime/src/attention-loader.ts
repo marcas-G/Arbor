@@ -34,6 +34,7 @@ import {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
+  type AnyProducerSettledWaitFact,
   type AssignWorkBindingFailureEventFact,
   type AttentionFacts,
   type AttentionRow,
@@ -151,6 +152,12 @@ export interface AttentionReadDeps {
   readonly listUnsatisfiedDependencies: (
     projectId: ProjectId,
   ) => Effect.Effect<ReadonlyArray<Dependency>, ProjectionReadError>;
+  readonly listAnyProducerSettledWaits?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<AnyProducerSettledWaitFact>,
+    ProjectionReadError
+  >;
   readonly findDependency: (
     dependencyId: string,
   ) => Effect.Effect<Option.Option<Dependency>, ProjectionReadError>;
@@ -1163,6 +1170,11 @@ export const loadAttentionFacts = (
       });
     }
 
+    const anyProducerSettledWaits =
+      deps.listAnyProducerSettledWaits === undefined
+        ? []
+        : yield* deps.listAnyProducerSettledWaits(projectId);
+
     return {
       unfulfillableEvents,
       deadlockEvents,
@@ -1184,6 +1196,7 @@ export const loadAttentionFacts = (
       openVerifications: openVerificationFacts,
       executionSettlements,
       vacantProducerCandidates,
+      anyProducerSettledWaits,
       workspaceVacancies,
       workOwners,
       workBlockers,

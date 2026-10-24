@@ -110,6 +110,7 @@ import {
   type MessageStoreService,
   PermissionGrantRepository,
   type PermissionGrantRepositoryService,
+  ProjectRepository,
   ProviderTurnStore,
   type ProviderTurnStoreService,
   RecoveryAttentionFactStore,
@@ -133,6 +134,11 @@ import {
   type WorkWaitStoreService,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
+import {
+  type AnyProducerEvidenceRequest,
+  hasAnyProducerEvidence,
+} from "./any-producer-evidence.js";
 import { commitDurableControlActionEffect } from "./durable-control-action-effect.js";
 import {
   type ResolveWorkBlockerActionDependencies,
@@ -276,6 +282,9 @@ export interface DeclareDependencyDependencies {
   readonly works: WorkRepositoryService;
   readonly clock: ClockService;
   readonly tx: TransactionPortService;
+  readonly anyProducerEvidence?: (
+    request: AnyProducerEvidenceRequest,
+  ) => Effect.Effect<boolean, unknown>;
 }
 
 export interface ProduceDeliverableDependencies {
@@ -3063,6 +3072,163 @@ const declareDependencyHandler = (
         occurrence,
         context,
       );
+      if (action.producerBinding._tag === "AnyProducer") {
+        if (context._tag === "ExecutionOrigin") {
+          if (
+            dependencies.commandReceipts === undefined ||
+            dependencies.commandHandlerRegistry === undefined
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("DeclareDependency.currentReceipt")(
+                "receipt lookup and registered decoder are required for AnyProducer admission",
+              ),
+            );
+          }
+          const exact = yield* dependencies.tx.transact(
+            dependencies.commandReceipts.findResolution(commandId),
+          );
+          if (Option.isSome(exact)) {
+            const registered =
+              dependencies.commandHandlerRegistry.lookup("DeclareDependency");
+            if (
+              Option.isNone(registered) ||
+              registered.value.commandType !== "DeclareDependency" ||
+              (exact.value.schemaVersion !== registered.value.schemaVersion &&
+                !(registered.value.priorReceiptSchemaVersions ?? []).includes(
+                  exact.value.schemaVersion,
+                ))
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.currentReceipt")(
+                  "current Command receipt schema is not registered",
+                ),
+              );
+            }
+            const expectedFingerprint = semanticRequestFingerprint({
+              commandType: "DeclareDependency",
+              projectId: execution.projectId,
+              actor: context.principal as never,
+              schemaVersion: exact.value.schemaVersion,
+              payload,
+            });
+            const decoded = yield* decodeRegisteredCommandReceipt<unknown>(
+              exact.value,
+              "DeclareDependency",
+              exact.value.schemaVersion,
+            );
+            if (
+              exact.value.commandId !== commandId ||
+              exact.value.projectId !== execution.projectId ||
+              exact.value.fingerprintAlgorithmVersion !==
+                FINGERPRINT_ALGORITHM_VERSION ||
+              exact.value.semanticRequestFingerprint !== expectedFingerprint
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.currentReceipt")(
+                  "current Command receipt does not bind the exact action",
+                ),
+              );
+            }
+            if (decoded.resolution._tag === "TerminalRejected") {
+              return {
+                _tag: "Observation" as const,
+                source: "Runtime" as const,
+                observation: {
+                  text: `DeclareDependency rejected: ${JSON.stringify(decoded.resolution.error)}`,
+                  truncated: false,
+                },
+              };
+            }
+            const result = decoded.resolution.result as {
+              readonly dependencyId?: unknown;
+              readonly consumerWorkId?: unknown;
+              readonly state?: unknown;
+              readonly revision?: unknown;
+            };
+            if (
+              result.dependencyId !== dependencyId ||
+              result.consumerWorkId !== workId ||
+              result.state !== "Unsatisfied" ||
+              result.revision !== 0
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.currentReceipt")(
+                  "current Committed result does not match the pinned action",
+                ),
+              );
+            }
+            if (dependencies.dependencyRecords === undefined) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.currentReceipt")(
+                  "canonical Dependency lookup is required to replay a Committed receipt",
+                ),
+              );
+            }
+            const [canonicalDependency, canonicalConsumer] = yield* Effect.all(
+              [
+                dependencies.tx.transact(
+                  dependencies.dependencyRecords.findById(dependencyId),
+                ),
+                dependencies.tx.transact(dependencies.works.findById(workId)),
+              ],
+              { concurrency: 1 },
+            );
+            const expectedRoles = [
+              ...action.expectedDeliverable.requiredArtifactRoles,
+            ].sort();
+            if (
+              Option.isNone(canonicalDependency) ||
+              Option.isNone(canonicalConsumer) ||
+              canonicalConsumer.value.projectId !== execution.projectId ||
+              canonicalDependency.value.dependencyId !== dependencyId ||
+              canonicalDependency.value.consumerWorkId !== workId ||
+              canonicalDependency.value.producerBinding._tag !==
+                action.producerBinding._tag ||
+              canonicalDependency.value.expectedDeliverable.kind !==
+                action.expectedDeliverable.kind ||
+              JSON.stringify(
+                [
+                  ...canonicalDependency.value.expectedDeliverable
+                    .requiredArtifactRoles,
+                ].sort(),
+              ) !== JSON.stringify(expectedRoles)
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.currentReceipt")(
+                  "Committed receipt has no exact matching canonical Dependency",
+                ),
+              );
+            }
+            return {
+              _tag: "Observation" as const,
+              source: "Runtime" as const,
+              observation: {
+                text: `DependencyDeclared(${dependencyId}, Unsatisfied)`,
+                truncated: false,
+              },
+            };
+          }
+        }
+        if (dependencies.anyProducerEvidence === undefined) {
+          return yield* Effect.fail(
+            actionOperationalFailure("DeclareDependency.evidence")(
+              "AnyProducer evidence reader is unavailable",
+            ),
+          );
+        }
+        const hasEvidence = yield* dependencies.anyProducerEvidence({
+          projectId: execution.projectId,
+          consumerWorkId: workId,
+          expectedDeliverable: action.expectedDeliverable,
+        });
+        if (!hasEvidence) {
+          return yield* Effect.fail(
+            actionError(
+              "No eligible producer evidence exists for this AnyProducer dependency yet.",
+            ),
+          );
+        }
+      }
       const receipt = yield* dependencies.gateway.execute<
         DeclareDependencyPayload,
         DeclareDependencyResult
@@ -4634,6 +4800,8 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
       const waits = yield* WorkWaitStore;
       const workspaces = yield* WorkspaceRepository;
       const proposals = yield* FormationProposalStore;
+      const projects = yield* Effect.serviceOption(ProjectRepository);
+      const sql = yield* Effect.serviceOption(SqlClient);
       const fulfillments = yield* Effect.serviceOption(
         FormationFulfillmentStore,
       );
@@ -4676,6 +4844,34 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
           proposals,
           ...(Option.isSome(fulfillments)
             ? { fulfillments: fulfillments.value }
+            : {}),
+          ...(Option.isSome(projects) &&
+          Option.isSome(fulfillments) &&
+          Option.isSome(sql)
+            ? {
+                anyProducerEvidence: (request: AnyProducerEvidenceRequest) =>
+                  hasAnyProducerEvidence(
+                    {
+                      projects: projects.value,
+                      workspaces,
+                      listWorkspaceIdsByProject: (projectId) =>
+                        Effect.map(
+                          sql.value.unsafe<{ workspace_id: string }>(
+                            "SELECT workspace_id FROM workspaces WHERE project_id = ? ORDER BY workspace_id",
+                            [projectId],
+                          ),
+                          (rows) =>
+                            rows.map((row) => row.workspace_id as never),
+                        ),
+                      works,
+                      proposals,
+                      fulfillments: fulfillments.value,
+                      deliverables,
+                      tx,
+                    },
+                    request,
+                  ),
+              }
             : {}),
           ...(Option.isSome(placement) ? { placement: placement.value } : {}),
           inbox,
