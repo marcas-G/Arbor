@@ -64,17 +64,16 @@
 - The scripted public-process attempt did not reach the test body: fixture
   startup returned HTTP 503 because `web dist`/`webStaticIndex` is absent in
   this worktree. This is a startup prerequisite failure, not an APW behavior
-  failure. It was not retried after diagnosis. No daemon/process from the
-  attempt remains running.
+  failure. The later run below used the built Web assets and reached the case.
 - No real Provider, private Provider configuration, or live database was
   accessed.
 
 ## Qualification boundary
 
-These unit/build/regression results do not qualify S3. The scripted public
-process regression still needs one run after the required Web assets are built.
-The real public S3 journey remains a separate serial gate and requires separate
-explicit run authorization; the implementation token does not authorize it.
+The one scripted public-process slice is qualified only at the scope stated
+below; it does not qualify S3 end-to-end. The real public S3 journey remains a
+separate serial gate and requires separate explicit run authorization; the
+implementation token does not authorize it.
 
 ## Independent-review follow-up
 
@@ -105,3 +104,18 @@ single-workspace build and Biome pass. Full test TypeScript checking remains
 blocked only by the same four unrelated `PortableModelRequest.inputItems`
 diagnostics listed above. No public process, daemon or Provider was started for
 this follow-up.
+
+## Scripted public-process qualification slice
+
+- Exact candidate: `617c34d6fea03e311701a7570df962bb84534f87`.
+- Exact command:
+  `pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/s3-any-producer-wait-recovery.functional.test.ts --maxWorkers=1 --retry=0 --no-file-parallelism`
+- Terminal result: exit 0; **1 file / 1 test PASS**; case duration 14,000 ms,
+  total duration 36.13 s.
+- Qualified scope: over the public process, an unsupported AnyProducer attempt
+  with no eligible producer evidence is rejected; no Dependency is committed,
+  no WorkWait is created, and the model asks the user for clarification.
+- The provider in this process test is scripted. This is narrow public-process
+  evidence only; it is not a live-model or real-provider result and does not
+  qualify the full S3 Parent/Child collaboration, delivery, verification and
+  acceptance journey. S3 real-provider qualification remains **OPEN**.

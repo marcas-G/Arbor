@@ -100,3 +100,19 @@ invocation was interrupted and does not count as PASS. P39 maintenance and
 P40/P41 sources were not integrated. No Vitest, daemon, browser, or full gate
 was run during this integration; the full-release blocker row above remains in
 force.
+
+## 2026-10-24 S3 AnyProducer public-process addendum
+
+On exact candidate `617c34d6fea03e311701a7570df962bb84534f87`, the scripted
+public-process case
+`tests/functional/process/s3-any-producer-wait-recovery.functional.test.ts`
+passed with command
+`pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/s3-any-producer-wait-recovery.functional.test.ts --maxWorkers=1 --retry=0 --no-file-parallelism`
+(exit 0, 1 file / 1 test, test 14,000 ms, total 36.13 s). This qualifies only
+the public APW-1 denial slice: unsupported AnyProducer without eligible
+producer evidence commits no Dependency or WorkWait and leads to a clarification
+request. The case uses a scripted provider; it is not real-model evidence and
+does not qualify the full S3 Parent/Child delivery, verification and acceptance
+journey. S3 real-provider qualification remains OPEN. This candidate-specific
+result does not alter the historical v19-baseline rows or the outstanding
+full-gate, P37/P38, P39–P41, existing-database-upgrade, or real-provider gates.
