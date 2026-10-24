@@ -18,6 +18,7 @@ import {
   P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
   P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
   P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
+  P52_WORK_CONTRACT_REVISION_MIGRATION,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
   splitStatements,
@@ -133,8 +134,10 @@ const readManifest = (): FunctionalSchema44Manifest => {
   return { ...manifest, root };
 };
 
-/** Copy both closed template databases into an ACL-protected case directory. */
-export const cloneFunctionalSchema50Database = async (
+/** Copy the closed schema-44 template, then upgrade a private clone to the
+ * current ordinary runtime schema (including exact P51 and P52 offline data
+ * backfills). Historical export names below are aliases only. */
+export const cloneFunctionalCurrentSchemaDatabase = async (
   directory: string,
 ): Promise<{ readonly databaseFile: string; readonly reportFile: string }> => {
   const manifest = readManifest();
@@ -233,18 +236,58 @@ export const cloneFunctionalSchema50Database = async (
       ),
     ),
   );
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        runMigrations([P52_WORK_CONTRACT_REVISION_MIGRATION], {
+          allowOfflineOnly: true,
+        }),
+        layer({ filename: databaseFile }),
+      ),
+    ),
+  );
+  const currentSchema = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const currentVersion = Number(
+      (
+        currentSchema.prepare("PRAGMA user_version").get() as {
+          user_version: number;
+        }
+      ).user_version,
+    );
+    if (
+      currentVersion !== 52 ||
+      currentSchema.prepare("PRAGMA foreign_key_check").all().length > 0
+    ) {
+      throw new Error(
+        `Functional disposable schema upgrade ended at ${currentVersion} or failed foreign_key_check; expected schema 52.`,
+      );
+    }
+  } finally {
+    currentSchema.close();
+  }
   return { databaseFile, reportFile };
 };
 
-/** Historical call sites use this name for the current disposable fixture. */
-export const cloneFunctionalSchema48Database = cloneFunctionalSchema50Database;
-
-/** Historical names retained for existing test call sites; fixtures track the
- * current ordinary runtime schema, while migration tests use exact versions. */
-export const cloneFunctionalSchema47Database = cloneFunctionalSchema50Database;
-export const cloneFunctionalSchema46Database = cloneFunctionalSchema50Database;
-export const cloneFunctionalSchema45Database = cloneFunctionalSchema50Database;
-export const cloneFunctionalSchema44Database = cloneFunctionalSchema50Database;
+/** Historical aliases retained for existing test call sites; every helper
+ * now returns a current-schema disposable clone. Tests for exact historical
+ * versions use `tests/support/schema44-database.ts` instead. */
+export const cloneFunctionalSchema50Database =
+  cloneFunctionalCurrentSchemaDatabase;
+export const cloneFunctionalSchema51Database =
+  cloneFunctionalCurrentSchemaDatabase;
+export const cloneFunctionalSchema52Database =
+  cloneFunctionalCurrentSchemaDatabase;
+export const cloneFunctionalSchema48Database =
+  cloneFunctionalCurrentSchemaDatabase;
+export const cloneFunctionalSchema47Database =
+  cloneFunctionalCurrentSchemaDatabase;
+export const cloneFunctionalSchema46Database =
+  cloneFunctionalCurrentSchemaDatabase;
+export const cloneFunctionalSchema45Database =
+  cloneFunctionalCurrentSchemaDatabase;
+export const cloneFunctionalSchema44Database =
+  cloneFunctionalCurrentSchemaDatabase;
 
 export const createFunctionalFixtureDirectory = (): string => {
   const manifest = readManifest();
