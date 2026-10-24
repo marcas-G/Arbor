@@ -26,6 +26,11 @@ const setup = () => {
     workId: WORK,
     projectId: PROJECT,
     workspaceId: OWNER,
+    objective: "produce independently verifiable proof",
+    why: "exercise the exact RetryVerification handoff",
+    constraints: ["preserve the revision-bound verification mission"],
+    completionExpectation: "the proof is independently verified",
+    verificationMission: mission,
     revision: 1,
     lifecycle: "Open",
   };
