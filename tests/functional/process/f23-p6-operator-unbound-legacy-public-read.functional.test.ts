@@ -16,10 +16,10 @@ import {
 
 const execFileAsync = promisify(execFile);
 const fixtures: ProductionFixture[] = [];
-const projectId = "prj_p6_operator_fixture";
+const projectId = "prj_018f2b3c-4d5e-7abc-8def-01234567a451";
 const rootWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-01234567a455";
-const workId = "wrk_p6_operator_fixture";
-const verificationId = "ver_p6_operator_fixture";
+const workId = "wrk_018f2b3c-4d5e-7abc-8def-01234567a456";
+const verificationId = "ver_018f2b3c-4d5e-7abc-8def-01234567a45a";
 const commandId = "cmd_018f2b3c-4d5e-7abc-8def-01234567a459";
 const rawReceiptId = "provider-request-raw-private-018f2b3c";
 const rawPath = "C:\\private\\operator\\source.json";
@@ -102,7 +102,22 @@ describe("F23/P6 operator UnboundLegacy public read qualification", () => {
         const source = await replaceFunctionalFixtureWithSchema48Source(
           event.directory,
         );
-        seedP6InboxRebuildFixture(source.databaseFile, { route: "Root" });
+        seedP6InboxRebuildFixture(source.databaseFile, {
+          route: "Root",
+          // The qualification reads a historical disposition; keeping its
+          // source Work terminal prevents the production scheduler from
+          // admitting unrelated Agent work while the HTTP read is tested.
+          workLifecycle: "Completed",
+          ids: {
+            projectId,
+            rootSessionId: "ses_018f2b3c-4d5e-7abc-8def-01234567a452",
+            parentSessionId: "ses_018f2b3c-4d5e-7abc-8def-01234567a453",
+            ownerSessionId: "ses_018f2b3c-4d5e-7abc-8def-01234567a454",
+            workId,
+            verificationId,
+            commandId,
+          },
+        });
         const seeded = new DatabaseSync(source.databaseFile);
         try {
           seeded
@@ -195,7 +210,15 @@ describe("F23/P6 operator UnboundLegacy public read qualification", () => {
           readonly target?: Readonly<Record<string, unknown>>;
         }>;
       }>("inbox-view", { workspaceId: rootWorkspaceId });
-    const first = await readInbox();
+    let first: Awaited<ReturnType<typeof readInbox>>;
+    try {
+      first = await readInbox();
+    } catch (cause) {
+      throw new Error(
+        `P6 public Inbox read failed; daemon=${fixture.daemonErrors.join(" | ") || "<empty>"}`,
+        { cause },
+      );
+    }
     expect(first.unconsumed).toEqual([
       {
         entryKey: `retry-verification-unbound:${commandId}`,
