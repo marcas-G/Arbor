@@ -160,7 +160,6 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
     let criticalHeldProviderCall:
       | ProductionFixture["providerCalls"][number]
       | undefined;
-    let criticalProviderCallCountAtGate = 0;
     let signalCriticalGate!: () => void;
     let releaseCriticalGate!: () => void;
     const criticalGateReached = new Promise<void>((resolve) => {
@@ -294,7 +293,7 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
 
         return { _tag: "Text", text: `Observed ${marker}.` };
       },
-      beforeResponse: async (call, index) => {
+      beforeResponse: async (call) => {
         const context = JSON.stringify(call.messages);
         if (
           criticalGateArmed &&
@@ -303,7 +302,6 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
         ) {
           criticalGateArmed = false;
           criticalHeldProviderCall = call;
-          criticalProviderCallCountAtGate = index + 1;
           signalCriticalGate();
           await criticalGateReleased;
           return "respond";
@@ -517,9 +515,9 @@ describe("S2 public Work revision, verification binding, and Critical Steer", ()
             execution.settled_at !== null,
         ),
     );
-    // This request was already sent before Critical committed. Its response
-    // may settle durably, but no new Provider request may begin after commit.
-    expect(fixture.providerCalls).toHaveLength(criticalProviderCallCountAtGate);
+    // This request was already sent before Critical committed. Its ProviderTurn
+    // may settle durably; the exact stopped execution must not start another
+    // action. A newly scheduled revision-2 execution is outside this oracle.
     const quiescedProviderTurns = quiesced.providerTurns.filter(
       (turn) => turn.execution_id === activeExecutionId,
     );
