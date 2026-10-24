@@ -1,13 +1,21 @@
 # S3 AnyProducer Settled-Wait Package — Acceptance Record
 
-**Status:** ACCEPTED — design landing only.
+**Status:** ACCEPTED — design landing, with conditional implementation
+authorization.
 
 **Decision token:** `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`
 
 **Accepted:** 2026-10-24 by the manual governor (explicit user acceptance in
 the current conversation).
 
-**Implementation:** NOT AUTHORIZED; requires a separate explicit token.
+**Implementation authorization token:**
+`AUTHORIZE_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_IMPLEMENTATION_AFTER_LANDING_REVIEW`
+
+**Implementation authority:** Granted conditionally. It may be exercised only
+after an independent post-landing consistency review reports `Blocking = 0`.
+No source implementation is authorized before that review is complete.
+Real-provider qualification is outside this authorization and requires separate
+explicit authorization.
 
 ## Exact accepted identity
 
@@ -50,11 +58,12 @@ WorkspaceBound vacant-producer source are otherwise unchanged.
 
 ## Authorization boundary
 
-The token authorizes the exact design landing above only. It does **not**
-authorize source implementation, tests or process qualification that change
-product behavior, migrations, schema/API changes, a real-provider rerun, or a
-claim that S3 is qualified. The implementation plan in
-`planning/tasks/s3-any-producer-settled-wait-implementation-plan.md` remains
-gated on separate explicit implementation authorization. No code, test,
-migration, config, or real-provider evidence is changed as part of this
-acceptance record.
+The acceptance token authorizes the exact design landing above. The separate
+implementation token grants implementation authority conditionally, exercisable
+only after independent post-landing consistency review reports `Blocking = 0`.
+Before that review, no source implementation is authorized. This conditional
+authority does not authorize migrations or schema/API changes beyond the exact
+accepted package, nor does it authorize real-provider qualification or a claim
+that S3 is qualified; real-provider qualification requires separate explicit
+authorization. No code, test, migration, config, or real-provider evidence is
+changed as part of this acceptance record.
