@@ -16,6 +16,21 @@ This document inventories delivery evidence against the latest accepted Problem 
 
 Full completion requires every applicable row below to meet its criterion, all governance blockers to be resolved by the owning authority, the latest candidate to pass the full gates, and old-database upgrade to pass on an approved equivalent fixture before any preserved user database is touched.
 
+## Current candidate status addendum — 2026-10-24
+
+The v19 audit baseline and its rows below remain historical. On current
+candidate `5b8482c9a1c1712e2298630c3b52df581541fd9e`, `pnpm check` passed in
+one continuous run; see
+[`pnpm-check-5b8482c9.result.md`](../results/pnpm-check-5b8482c9.result.md).
+This does not change the status of the other release gates: complete
+`pnpm test:functional`, `pnpm test:package`, representative real-provider
+journeys, Native OS sandbox support, and release readiness remain **OPEN**.
+S3 AnyProducer, S4 assistant-message projection, and P12 D2/D4 progress
+convergence have accepted/landed implementations with scoped deterministic
+verification; this does not qualify full S3/S4/P12 or close their wider release
+gaps. See the current integration snapshot in
+[`full-delivery-convergence-matrix-2026-10-20.md`](../results/full-delivery-convergence-matrix-2026-10-20.md).
+
 ## Delivery matrix
 
 | Module / contract owner | Latest accepted contract and evidence identity | Integrated implementation state at v19 | Evidence level at v19 | Open gap, authorization, or distinction | Completion criterion and dependencies |

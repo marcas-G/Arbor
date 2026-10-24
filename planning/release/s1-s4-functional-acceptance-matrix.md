@@ -20,7 +20,21 @@ The following evidence labels are used throughout:
 | `Component` | Unit, adapter, application, architecture or scripted fixture coverage. Proves encoded mechanics, not whole-product behavior. |
 | `Source only` | Test code/probe exists but no terminal passing run is recorded. |
 | `Open` | No adequate evidence located, or explicitly blocked by a design/implementation gap. |
+
 | `Model eval missing` | Deterministic fake-provider paths exist, but semantic behavior has not been assessed with a real model or an explicit evaluator. |
+
+## Current candidate addendum — 2026-10-24
+
+The detailed matrix below remains an audit of its named historical baseline.
+On current candidate `5b8482c9a1c1712e2298630c3b52df581541fd9e`, the full
+`pnpm check` command passed once continuously; see
+[`pnpm-check-5b8482c9.result.md`](../results/pnpm-check-5b8482c9.result.md).
+The full functional suite, package/clean-checkout gate, representative
+real-provider S1–S4 qualification, Native OS sandbox support, and release
+readiness remain **OPEN**. S3 AnyProducer, S4 assistant-message projection,
+and P12 D2/D4 progress convergence implementations are now accepted/landed
+and have scoped deterministic verification; none of those implementation
+results alone closes its broader scenario or release qualification.
 
 ## Public journey and subsystem evidence
 
