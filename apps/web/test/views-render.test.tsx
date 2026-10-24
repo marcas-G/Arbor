@@ -31,6 +31,7 @@ import {
   verificationUnknownEnum,
   workDetailBlocked,
   workDetailMinimal,
+  workDetailTerminalProviderFailure,
   workDetailTypical,
   workDetailUnknownEnum,
 } from "../src/views/fixtures.js";
@@ -167,6 +168,16 @@ describe("work-detail", () => {
     ).toBeTruthy();
     expect(screen.queryByText("已完成")).toBeNull();
     expect(screen.queryByText("验收结果")).toBeNull();
+  });
+
+  it("renders terminal Provider failure code, exact occurrence time and Work revision without retry", () => {
+    render(<WorkDetailView view={workDetailTerminalProviderFailure} />);
+    expect(screen.getByRole("status", { name: "模型提供方失败" })).toBeTruthy();
+    expect(screen.getByText("RequestRejected")).toBeTruthy();
+    expect(screen.getAllByText("修订版本 2").length).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: /重新验证|Retry Verification/iu }),
+    ).toBeNull();
   });
 });
 

@@ -592,6 +592,17 @@ export const workDetailBlocked: WorkDetailRes = {
     ],
   },
 };
+export const workDetailTerminalProviderFailure: WorkDetailRes = {
+  ...workDetailMinimal,
+  revision: workRevision(2),
+  terminalProviderFailure: {
+    kind: "TerminalProviderFailure",
+    workId: workDetailMinimal.workId,
+    workRevision: workRevision(2),
+    occurredAt: "2026-10-25T00:00:01.000Z",
+    failureCode: "RequestRejected",
+  },
+};
 export const workDetailUnknownEnum: WorkDetailRes = {
   ...workDetailTypical,
   lifecycle: "Paused" as never,

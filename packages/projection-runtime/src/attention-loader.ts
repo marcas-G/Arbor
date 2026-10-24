@@ -22,6 +22,7 @@ import type {
   SandboxRecoveryBindingFailureProjectionRow,
   SubmittedDecisionBindingAttentionFact,
   SubmittedDecisionBindingAttentionProjectionRow,
+  TerminalProviderFailureSource,
   ToolObservationReplayAttentionProjectionRow,
   VerificationSignalReconciliationAttentionProjectionRow,
   WorkspaceResourceActivationAttentionProjectionRow,
@@ -122,10 +123,25 @@ export interface AttentionProjectionIntegrityFailure
   readonly reasonCode: AttentionSourceIntegrityReason;
 }
 
+export interface TerminalProviderFailureAttentionFact {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly workId: WorkId;
+  readonly workRevision: number;
+  readonly source: TerminalProviderFailureSource;
+  readonly occurredAt: string;
+}
+
 /** Read faces the Attention read-model derives from (read-only over
  * canonical tables + journal; injected — the package itself owns no
  * storage and never writes). */
 export interface AttentionReadDeps {
+  readonly listTerminalProviderFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<TerminalProviderFailureAttentionFact>,
+    ProjectionReadError
+  >;
   readonly listWorkspacesByProject: (
     projectId: ProjectId,
   ) => Effect.Effect<ReadonlyArray<Workspace>, ProjectionReadError>;
@@ -1419,6 +1435,32 @@ export const deriveProjectAttention = (
           summary:
             "A sandbox policy decision is required before execution can continue.",
           occurredAt: row.intentAt,
+        })),
+      ];
+    }
+    if (deps.listTerminalProviderFailures !== undefined) {
+      const failures = yield* deps.listTerminalProviderFailures(projectId);
+      rows = [
+        ...rows.filter((row) => row.source !== "TerminalProviderFailure"),
+        ...failures.map((fact) => ({
+          source: "TerminalProviderFailure" as const,
+          severity: "ActionRequired" as const,
+          targetWorkspaceId: fact.workspaceId,
+          dedupKey: `terminal-provider-failure:${fact.workId}:${String(fact.workRevision)}:${fact.source.failureFingerprint}`,
+          summary:
+            "The model provider rejected this Work execution. Review the provider configuration or request compatibility, then explicitly steer the Work to retry.",
+          occurredAt: fact.occurredAt,
+          failureCode: fact.source.failureKind,
+          workId: fact.workId,
+          targetWorkRevision: fact.workRevision,
+          terminalProviderFailure: {
+            kind: "TerminalProviderFailure" as const,
+            workId: fact.workId,
+            workRevision: fact.workRevision,
+            occurredAt: fact.occurredAt,
+            failureCode: fact.source.failureKind,
+            failureFingerprint: fact.source.failureFingerprint,
+          },
         })),
       ];
     }

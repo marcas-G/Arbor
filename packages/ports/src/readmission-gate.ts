@@ -1,6 +1,8 @@
 import type {
   ExecutionId,
   ProjectId,
+  ProviderTurnId,
+  Sha256,
   WorkId,
   WorkRevision,
   WorkspaceId,
@@ -14,7 +16,34 @@ export type ReadmissionSourceKind =
   | "OutcomeUnknownSettlement"
   | "DeliverReplayFact"
   | "AssignWorkBindingFact"
-  | "ReconciliationEscalationEvent";
+  | "ReconciliationEscalationEvent"
+  | "TerminalProviderFailureSettlement";
+
+export type TerminalProviderFailureKind =
+  | "AuthenticationFailed"
+  | "RequestRejected"
+  | "ProtocolViolation";
+
+export interface TerminalProviderFailureSource {
+  readonly sourceKind: "TerminalProviderFailureSettlement";
+  readonly executionId: ExecutionId;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly providerTurnId: ProviderTurnId;
+  readonly attemptNo: number;
+  readonly failureKind: TerminalProviderFailureKind;
+  readonly failureFingerprint: Sha256;
+}
+
+export type ReadmissionBlockingSource =
+  | {
+      readonly sourceKind: Exclude<
+        ReadmissionSourceKind,
+        "TerminalProviderFailureSettlement"
+      >;
+      readonly executionId: ExecutionId;
+    }
+  | TerminalProviderFailureSource;
 
 export interface ReadmissionTargetMismatch {
   readonly _tag: "ReadmissionTargetMismatch";
@@ -53,7 +82,20 @@ export interface ReadmissionGateIntegrityFailure {
     | "WorkMissing"
     | "WorkScopeMismatch"
     | "FutureWorkRevision"
-    | "SettlementMalformed";
+    | "SettlementMalformed"
+    | "SourceSettlementStepMissing"
+    | "SourceSettlementStepNonUnique"
+    | "SourceSettlementMismatch"
+    | "SourceProviderTurnMissing"
+    | "SourceProviderTurnNonUnique"
+    | "SourceProviderTurnMismatch"
+    | "SourceProviderAttemptMissing"
+    | "SourceProviderAttemptNonUnique"
+    | "SourceProviderAttemptMismatch"
+    | "SourceManifestMissing"
+    | "SourceManifestMismatch"
+    | "FailureTaxonomyUnsupported"
+    | "FailureOccurrenceTimeInvalid";
 }
 
 export type ReadmissionGateStoreError =
@@ -61,8 +103,7 @@ export type ReadmissionGateStoreError =
 
 export interface WorkReadmissionHeld {
   readonly _tag: "WorkReadmissionHeld";
-  readonly sourceKind: ReadmissionSourceKind;
-  readonly executionId: ExecutionId;
+  readonly source: ReadmissionBlockingSource;
 }
 
 export type WorkAdmissionBlock =
@@ -77,10 +118,7 @@ export interface WorkReadmissionGateStoreService {
     readonly workId: WorkId;
     readonly workRevision: WorkRevision;
   }) => Effect.Effect<
-    Option.Option<{
-      readonly sourceKind: ReadmissionSourceKind;
-      readonly executionId: ExecutionId;
-    }>,
+    Option.Option<ReadmissionBlockingSource>,
     | ReadmissionTargetMismatch
     | ReadmissionGateIntegrityFailure
     | ReadmissionGateStoreError,

@@ -16,6 +16,7 @@ const lifecycleLabel = (view: WorkDetailRes): string => {
 export function WorkDetailView({ view }: { readonly view: WorkDetailRes }) {
   const accepted = view.acceptedResult;
   const blocked = view.blockedEpisode;
+  const terminalProviderFailure = view.terminalProviderFailure;
   return (
     <Card title="工作目标">
       <div className="arbor-view-stack">
@@ -34,6 +35,19 @@ export function WorkDetailView({ view }: { readonly view: WorkDetailRes }) {
             {view.completionExpectation || <Empty>未提供完成标准</Empty>}
           </span>
         </div>
+        {terminalProviderFailure === undefined ? null : (
+          <section aria-label="模型提供方失败" role="status">
+            <h3>模型提供方拒绝了本修订版本</h3>
+            <p>
+              工作仍保持进行中，系统不会自动重试。检查提供方配置或请求兼容性后，请显式纠正工作以推进新修订版本。
+            </p>
+            <div className="arbor-badge-row">
+              <EnumBadge label={terminalProviderFailure.failureCode} />
+              <span>修订版本 {terminalProviderFailure.workRevision}</span>
+              <TimeText at={terminalProviderFailure.occurredAt} />
+            </div>
+          </section>
+        )}
         {blocked === undefined ? null : (
           <section aria-label="工作受阻" role="status">
             <h3>本轮执行已阻断</h3>

@@ -127,7 +127,7 @@ export const makeAdmitExecutionHandler = (
         if (Option.isSome(hold)) {
           return yield* Effect.fail<AdmitExecutionHandlerFailure>({
             _tag: "WorkReadmissionHeld",
-            ...hold.value,
+            source: hold.value,
           });
         }
       }

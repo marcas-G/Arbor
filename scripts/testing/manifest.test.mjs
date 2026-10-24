@@ -19,7 +19,7 @@ const manifest = JSON.parse(
 test("checked-in profile inventory matches the configured functional suites", () => {
   const result = validateManifest(manifest);
   assert.equal(result.ok, true, result.errors?.join("\n"));
-  assert.equal(result.functionalVitestFiles, 63);
+  assert.equal(result.functionalVitestFiles, 64);
   assert.equal(result.functionalUiFiles, 6);
 });
 
@@ -138,7 +138,9 @@ test("impact planner selects only the UI lane for a known Web change", () => {
 });
 
 test("shared runtime changes escalate core and process to full lanes", () => {
-  const plan = planTestImpact(["packages/agent-runtime/src/agent-loop-driver.ts"]);
+  const plan = planTestImpact([
+    "packages/agent-runtime/src/agent-loop-driver.ts",
+  ]);
   assert.deepEqual(plan.selectedLanes, ["core", "process"]);
   assert.ok(plan.highRiskTags.includes("shared-runtime"));
   assert.equal(plan.lanes.core.scope, "full-lane");
@@ -157,7 +159,11 @@ test("unknown paths conservatively select every lane and explain why", () => {
     "provider",
     "package",
   ]);
-  assert.ok(plan.lanes.provider.reasons.some((reason) => reason.includes("unknown path")));
+  assert.ok(
+    plan.lanes.provider.reasons.some((reason) =>
+      reason.includes("unknown path"),
+    ),
+  );
   assert.equal(plan.completeCoverage, false);
 });
 
@@ -169,12 +175,16 @@ test("provider-facing changes keep real-provider qualification explicit", () => 
 });
 
 test("schema and permission labels escalate their owning lanes", () => {
-  const schema = planTestImpact(["adapters/persistence-sqlite/src/migrations/0052.ts"]);
+  const schema = planTestImpact([
+    "adapters/persistence-sqlite/src/migrations/0052.ts",
+  ]);
   assert.ok(schema.highRiskTags.includes("schema"));
   assert.equal(schema.lanes.package.scope, "full-lane");
   assert.equal(schema.lanes.process.scope, "full-lane");
 
-  const permission = planTestImpact(["packages/agent-runtime/src/permission-policy.ts"]);
+  const permission = planTestImpact([
+    "packages/agent-runtime/src/permission-policy.ts",
+  ]);
   assert.ok(permission.highRiskTags.includes("permissions"));
   assert.equal(permission.lanes.ui.scope, "full-lane");
 });

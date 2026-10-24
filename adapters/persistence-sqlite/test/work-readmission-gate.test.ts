@@ -193,6 +193,112 @@ const seed = (
     );
   });
 
+const terminalSettlement = (kind: string) => ({
+  _tag: "Failed" as const,
+  failure: {
+    _tag: "ExecutionFailure" as const,
+    reason: `ProviderFailure:${kind}`,
+  },
+});
+
+const seedTerminalProviderFailureChain = (
+  kind:
+    | "AuthenticationFailed"
+    | "RequestRejected"
+    | "ProtocolViolation" = "RequestRejected",
+  options: {
+    readonly omitStep?: boolean;
+    readonly taxonomy?: string;
+    readonly retryDecision?: string;
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const tx = yield* TransactionPort;
+    const providerTurnId = "ptn_018f2b3c-4d5e-7abc-8def-0123456789c1";
+    const manifestId = "mft_terminal_provider_failure";
+    const settlementJson = JSON.stringify(terminalSettlement(kind));
+    yield* tx.transact(
+      Effect.gen(function* () {
+        yield* sql.unsafe(
+          `INSERT INTO provider_turns (
+            provider_turn_id, execution_id, session_id, context_epoch,
+            model_ref, output_contract_ref, manifest_id, started_at,
+            settled_at, finish_reason, usage_json, created_at,
+            execution_policy_json, turn_deadline_at
+          ) VALUES (?, ?, ?, 0, 'model-a', 'agent-action-v1', ?, ?, ?,
+                    'Failed', '{}', ?, NULL, NULL)`,
+          [
+            providerTurnId,
+            executionId,
+            sessionId,
+            manifestId,
+            "2026-10-25T00:00:00.000Z",
+            "2026-10-25T00:00:02.000Z",
+            "2026-10-25T00:00:00.000Z",
+          ],
+        );
+        yield* sql.unsafe(
+          `INSERT INTO model_context_manifests (
+            manifest_id, provider_turn_id, execution_id, session_id,
+            context_epoch, model_ref, compiled_request_hash, manifest_json,
+            created_at, portable_request_json
+          ) VALUES (?, ?, ?, ?, 0, 'model-a', ?, ?, ?, NULL)`,
+          [
+            manifestId,
+            providerTurnId,
+            executionId,
+            sessionId,
+            "b".repeat(64),
+            JSON.stringify({
+              providerTurnId,
+              executionId,
+              sessionId,
+              logicalStepNo: 0,
+              repairAttempt: 0,
+              compiledRequestHash: "b".repeat(64),
+              outputContractRef: "agent-action-v1",
+              resolvedModelBindingFingerprint: `p16fp_${"a".repeat(64)}`,
+            }),
+            "2026-10-25T00:00:00.000Z",
+          ],
+        );
+        yield* sql.unsafe(
+          `INSERT INTO provider_attempts (
+            provider_turn_id, attempt_no, started_at, settled_at, outcome,
+            provider_error_kind, failure_taxonomy_version, retry_safety,
+            retry_decision, retry_reason
+          ) VALUES (?, 0, ?, ?, 'TerminalFailure', ?, ?, 'UnsafeReplay', ?,
+                    'terminal provider failure')`,
+          [
+            providerTurnId,
+            "2026-10-25T00:00:00.000Z",
+            "2026-10-25T00:00:01.000Z",
+            kind,
+            options.taxonomy ?? "phase1-v2",
+            options.retryDecision ?? "Stop",
+          ],
+        );
+        if (options.omitStep !== true) {
+          yield* sql.unsafe(
+            `INSERT INTO agent_loop_steps (
+              execution_id, logical_step_no, repair_attempt, provider_turn_id,
+              manifest_id, state, next_action_index, settlement_json, revision,
+              updated_at
+            ) VALUES (?, 0, 0, ?, ?, 'SettlementProposed', 0, ?, 0, ?)`,
+            [
+              executionId,
+              providerTurnId,
+              manifestId,
+              settlementJson,
+              "2026-10-25T00:00:02.000Z",
+            ],
+          );
+        }
+      }),
+    );
+  });
+
 const seedOtherWorkspaceExecution = Effect.gen(function* () {
   const sql = yield* SqlClient;
   const tx = yield* TransactionPort;
@@ -1018,6 +1124,67 @@ describe("P2 WorkReadmissionGateStore", () => {
         }
       }),
     ));
+
+  it.each([
+    "AuthenticationFailed",
+    "RequestRejected",
+    "ProtocolViolation",
+  ] as const)(
+    "derives the complete %s Provider failure source from the exact durable chain",
+    (kind) =>
+      runDb(
+        Effect.gen(function* () {
+          const settlement = terminalSettlement(kind);
+          yield* seed(settlement);
+          yield* seedTerminalProviderFailureChain(kind);
+          const found = yield* query();
+          expect(Option.isSome(found)).toBe(true);
+          if (Option.isSome(found)) {
+            expect(found.value).toMatchObject({
+              sourceKind: "TerminalProviderFailureSettlement",
+              executionId,
+              logicalStepNo: 0,
+              repairAttempt: 0,
+              attemptNo: 0,
+              failureKind: kind,
+            });
+            expect(
+              "failureFingerprint" in found.value
+                ? found.value.failureFingerprint
+                : "",
+            ).toMatch(/^[0-9a-f]{64}$/u);
+          }
+        }),
+      ),
+  );
+
+  it("fails closed when the settlement-producing Step is missing", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed(terminalSettlement("ProtocolViolation"));
+        yield* seedTerminalProviderFailureChain("ProtocolViolation", {
+          omitStep: true,
+        });
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SourceSettlementStepMissing"',
+          );
+        }
+      }),
+    ));
+
+  it.each(["RateLimited", "ProviderUnavailable", "StreamInterrupted"] as const)(
+    "does not hold retryable %s failures even when the Execution failed",
+    (kind) =>
+      runDb(
+        Effect.gen(function* () {
+          yield* seed(terminalSettlement(kind));
+          expect(Option.isNone(yield* query())).toBe(true);
+        }),
+      ),
+  );
 
   it("recognizes every closed DeliverReplay and AssignWork binding failure code", () =>
     runDb(

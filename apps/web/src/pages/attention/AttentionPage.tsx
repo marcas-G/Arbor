@@ -120,6 +120,20 @@ function AttentionInspection({
             <MonoText>{row.dedupKey}</MonoText>
           </dd>
         </div>
+        {row.terminalProviderFailure === undefined ? null : (
+          <>
+            <div>
+              <dt>Provider failure</dt>
+              <dd>
+                <StatusBadge label={row.terminalProviderFailure.failureCode} />
+              </dd>
+            </div>
+            <div>
+              <dt>Work revision</dt>
+              <dd>{row.terminalProviderFailure.workRevision ?? "不可证明"}</dd>
+            </div>
+          </>
+        )}
         {row.source === "VerifierOrphan" &&
         row.workId !== undefined &&
         row.verificationId !== undefined &&
