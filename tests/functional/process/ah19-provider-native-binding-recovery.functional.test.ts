@@ -3405,8 +3405,33 @@ describe("AH19 ProviderNative binding recovery", () => {
       "qualify the fixed pre-checkpoint row bound across restart",
     );
     const heldWorkRequest = holdFirstWorkProviderRequest(workSeed);
+    const rootReply = approvedRootWorkReply(marker, workSeed);
     const fixture = await startProductionFixture({
-      reply: approvedRootWorkReply(marker, workSeed),
+      reply: (call, index) => {
+        const available = new Set(
+          call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        );
+        if (
+          available.has("claim_completion") &&
+          available.has("wait") &&
+          JSON.stringify(call.messages).includes(workSeed.objective)
+        ) {
+          return {
+            _tag: "ToolCall",
+            name: "wait",
+            arguments: {
+              reason: `AH19 pre-checkpoint fixture pauses the current Work ${marker}`,
+              waitSpec: {
+                mode: "Any",
+                conditions: [{ _tag: "Manual" }],
+              },
+            },
+          };
+        }
+        return rootReply(call, index);
+      },
       beforeResponse: heldWorkRequest.beforeResponse,
       daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
     });
