@@ -26,15 +26,17 @@ The following evidence labels are used throughout:
 ## Current candidate addendum — 2026-10-24
 
 The detailed matrix below remains an audit of its named historical baseline.
-On current candidate `5b8482c9a1c1712e2298630c3b52df581541fd9e`, the full
-`pnpm check` command passed once continuously; see
-[`pnpm-check-5b8482c9.result.md`](../results/pnpm-check-5b8482c9.result.md).
-The full functional suite, package/clean-checkout gate, representative
-real-provider S1–S4 qualification, Native OS sandbox support, and release
-readiness remain **OPEN**. S3 AnyProducer, S4 assistant-message projection,
-and P12 D2/D4 progress convergence implementations are now accepted/landed
-and have scoped deterministic verification; none of those implementation
-results alone closes its broader scenario or release qualification.
+Current candidate `772ba5d713032fbccd7623264f5b664bee22f4a9` passes the local
+`pnpm check`, complete-coverage release functional profile, and package gate;
+see [`release-candidate-convergence-772ba5d7.result.md`](../results/release-candidate-convergence-772ba5d7.result.md).
+These gates do not qualify live-provider behavior, Native OS sandbox support,
+or an existing online/user database upgrade. Real-provider S1–S4 qualification
+and release readiness remain **OPEN**. S1's recorded real pass uses separate
+test/runtime SHAs; S2 Normal had a terminal Verification FAIL; S3 stalled at a
+settled no-producer AnyProducer wait; S4-B did not reach its
+Executable-approval/restart boundary. S3 AnyProducer, S4 assistant-message
+projection, and P12 D2/D4 implementations are accepted/landed with scoped
+verification, not full-scenario closures.
 
 ## Public journey and subsystem evidence
 

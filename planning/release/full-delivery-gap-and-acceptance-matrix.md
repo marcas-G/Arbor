@@ -18,17 +18,17 @@ Full completion requires every applicable row below to meet its criterion, all g
 
 ## Current candidate status addendum — 2026-10-24
 
-The v19 audit baseline and its rows below remain historical. On current
-candidate `5b8482c9a1c1712e2298630c3b52df581541fd9e`, `pnpm check` passed in
-one continuous run; see
-[`pnpm-check-5b8482c9.result.md`](../results/pnpm-check-5b8482c9.result.md).
-This does not change the status of the other release gates: complete
-`pnpm test:functional`, `pnpm test:package`, representative real-provider
-journeys, Native OS sandbox support, and release readiness remain **OPEN**.
-S3 AnyProducer, S4 assistant-message projection, and P12 D2/D4 progress
-convergence have accepted/landed implementations with scoped deterministic
-verification; this does not qualify full S3/S4/P12 or close their wider release
-gaps. See the current integration snapshot in
+The v19 audit baseline and its rows below remain historical. Current candidate
+`772ba5d713032fbccd7623264f5b664bee22f4a9` passes `pnpm check`, the release
+functional profile with `completeCoverage=true`, and `pnpm test:package`;
+details are in
+[`release-candidate-convergence-772ba5d7.result.md`](../results/release-candidate-convergence-772ba5d7.result.md).
+This closes those local scripted/process/browser/package gates only. Real
+provider qualification, Native OS sandbox support, existing online/user
+database migration, and release readiness remain **OPEN**. Accepted S3
+AnyProducer, S4 assistant-message projection, and P12 D2/D4 implementations
+have scoped deterministic verification but do not qualify the full scenarios.
+Current open-item dispositions are summarized in
 [`full-delivery-convergence-matrix-2026-10-20.md`](../results/full-delivery-convergence-matrix-2026-10-20.md).
 
 ## Delivery matrix
