@@ -169,8 +169,28 @@ const seed = Effect.gen(function* () {
       );
       const work = (id: WorkId) =>
         sql.unsafe(
-          "INSERT INTO works (work_id, project_id, workspace_id, objective, why, constraints, completion_expectation, verification_mission, provenance, revision, lifecycle, created_at, updated_at) VALUES (?,?,?,'o','w','[]','c','{}','{}',0,'Open','t','t')",
-          [id, PROJECT, WS],
+          "INSERT INTO works (work_id, project_id, workspace_id, objective, why, constraints, completion_expectation, verification_mission, provenance, revision, lifecycle, created_at, updated_at) VALUES (?,?,?,'o','w','[]','c',?,'{}',0,'Open','t','t')",
+          [
+            id,
+            PROJECT,
+            WS,
+            JSON.stringify({
+              goal: "verify the outcome",
+              criteria: [
+                {
+                  criterionId: "c1",
+                  requirement: "tests pass",
+                  required: true,
+                },
+                {
+                  criterionId: "c2",
+                  requirement: "lint clean",
+                  required: false,
+                },
+              ],
+              riskRequirements: [],
+            }),
+          ],
         );
       yield* work(WORK_1);
       yield* work(WORK_2);
