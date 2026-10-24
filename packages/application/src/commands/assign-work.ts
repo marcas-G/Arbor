@@ -15,6 +15,7 @@ import type {
   PendingDomainEvent,
   PermissionGrantRepositoryService,
   ProjectRepositoryService,
+  WorkContractRevisionRepositoryService,
   WorkRepositoryService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
@@ -51,6 +52,8 @@ export interface AssignWorkDependencies {
   readonly projects: ProjectRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly works: WorkRepositoryService;
+  /** Production composition supplies P52-backed revision history. */
+  readonly revisions?: Pick<WorkContractRevisionRepositoryService, "append">;
   readonly executions?: Pick<ExecutionRepositoryService, "findById">;
   readonly bindings?: Pick<AssignWorkTargetBindingRepositoryService, "insert">;
   readonly grants?: Pick<PermissionGrantRepositoryService, "findById">;
@@ -446,6 +449,24 @@ export const makeAssignWorkHandler = (
         }
       }
       yield* dependencies.works.create(assigned.value);
+      if (dependencies.revisions !== undefined) {
+        yield* dependencies.revisions.append({
+          workId: assigned.value.workId,
+          workRevision: assigned.value.revision,
+          contract: {
+            objective: assigned.value.objective,
+            why: assigned.value.why,
+            constraints: assigned.value.constraints,
+            completionExpectation: assigned.value.completionExpectation,
+            verificationMission: assigned.value.verificationMission,
+          },
+          kind: "Initial",
+          sourceCommandId: envelope.commandId,
+          actor: envelope.actor,
+          provenance: assigned.value.provenance,
+          recordedAt: envelope.issuedAt,
+        });
+      }
 
       const events: PendingDomainEvent[] = [
         {

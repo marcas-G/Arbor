@@ -1,6 +1,7 @@
 import {
-  type SteerWorkInput,
-  steerWork,
+  amendWorkContract,
+  directionGuideWork,
+  type WorkContractSnapshot,
   type WorkId,
   type WorkRevision,
   type WorkspaceId,
@@ -9,6 +10,7 @@ import type {
   InboxProjectionStoreService,
   PendingDomainEvent,
   WorkBlockerStoreService,
+  WorkContractRevisionRepositoryService,
   WorkRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -26,16 +28,29 @@ import {
 export interface SteerWorkPayload {
   readonly workId: WorkId;
   readonly workspaceId: WorkspaceId;
-  readonly steer: {
-    readonly severity: "Normal" | "Critical";
-    readonly guidance: string;
-    readonly scope?: "Direction" | "Constraint";
-  };
+  readonly steer:
+    | {
+        /** Legacy schema-v1: guidance only, including scope=Constraint. */
+        readonly severity: "Normal" | "Critical";
+        readonly guidance: string;
+        readonly scope?: "Direction" | "Constraint";
+      }
+    | {
+        readonly severity: "Normal" | "Critical";
+        readonly operation: SteerOperation;
+      };
   readonly expectedWorkRevision: WorkRevision;
   readonly provenance: {
     readonly source: "HumanInput";
   };
 }
+
+export type SteerOperation =
+  | { readonly kind: "DirectionGuidance"; readonly guidance: string }
+  | {
+      readonly kind: "ContractAmendment";
+      readonly amendment: WorkContractSnapshot;
+    };
 
 export interface SteerWorkResult {
   readonly workId: WorkId;
@@ -47,7 +62,12 @@ export interface SteerWorkResult {
 }
 
 export interface SteerWorkDependencies {
-  readonly works: Pick<WorkRepositoryService, "findById" | "refineIfRevision">;
+  readonly works: Pick<
+    WorkRepositoryService,
+    "findById" | "refineIfRevision" | "replaceContractIfRevision"
+  >;
+  /** Omitted only by legacy P6 test fixtures; production composition wires the P52-backed store. */
+  readonly revisions?: Pick<WorkContractRevisionRepositoryService, "append">;
   readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert"> &
     Partial<Pick<InboxProjectionStoreService, "admitUpsertSequenced">>;
   readonly blockers?: Pick<
@@ -60,6 +80,10 @@ export const makeSteerWorkHandler = (
   dependencies: SteerWorkDependencies,
 ): CommandHandler<SteerWorkPayload, SteerWorkResult> => ({
   commandType: "SteerWork",
+  // The public envelope/result shape remains backward-compatible: legacy
+  // guidance and typed operations are disjoint payload alternatives under
+  // the existing receipt schema. The semantic fingerprint includes the
+  // complete payload, so amendments cannot alias historical guidance.
   schemaVersion: "1",
   authority: {
     tag: "SteerWorkAuthority",
@@ -102,46 +126,111 @@ export const makeSteerWorkHandler = (
         });
       }
 
-      // Semantic steer does not rewrite protected fields here: the guidance
-      // rides the Inbox; the domain transition carries the WorkRevision
-      // increment (DID §2.3) and would surface AuthorityDenied if a producer
-      // path ever weakened protected requirements.
-      const input: SteerWorkInput = {
-        authorized: true,
-        weakensProtectedRequirements: false,
-      };
-      const steered = steerWork(work, input);
+      const operation =
+        "operation" in payload.steer
+          ? payload.steer.operation
+          : {
+              kind: "DirectionGuidance" as const,
+              guidance: payload.steer.guidance,
+            };
+      if (
+        operation.kind === "ContractAmendment" &&
+        dependencies.revisions === undefined
+      ) {
+        return yield* Effect.die(
+          new Error("WorkContractRevisionRepositoryUnavailable"),
+        );
+      }
+      const steered =
+        operation.kind === "DirectionGuidance"
+          ? directionGuideWork(work, { authorized: true })
+          : amendWorkContract(work, {
+              authorized: true,
+              contract: operation.amendment,
+            });
       if (!steered.ok) {
         return commandErr(steered.error);
       }
       const next = steered.value;
-      yield* dependencies.works.refineIfRevision(
-        payload.workId,
-        work.revision,
-        {
-          objective: next.objective,
-          completionExpectation: next.completionExpectation,
-          verificationMission: next.verificationMission,
-        },
-        next.revision,
-      );
+      const nextContract: WorkContractSnapshot = {
+        objective: next.objective,
+        why: next.why,
+        constraints: next.constraints,
+        completionExpectation: next.completionExpectation,
+        verificationMission: next.verificationMission,
+      };
+      if (dependencies.revisions === undefined) {
+        // Historical P6 harnesses use pre-P52 schemas and exercise only the
+        // existing legacy DirectionGuidance route. Production composition
+        // always supplies the history repository.
+        yield* dependencies.works.refineIfRevision(
+          payload.workId,
+          work.revision,
+          {
+            objective: next.objective,
+            completionExpectation: next.completionExpectation,
+            verificationMission: next.verificationMission,
+          },
+          next.revision,
+        );
+      } else {
+        yield* dependencies.works.replaceContractIfRevision(
+          payload.workId,
+          work.revision,
+          nextContract,
+          next.revision,
+        );
+        yield* dependencies.revisions.append({
+          workId: payload.workId,
+          workRevision: next.revision,
+          contract: nextContract,
+          kind: operation.kind,
+          sourceCommandId: envelope.commandId,
+          actor: envelope.actor,
+          provenance: payload.provenance,
+          recordedAt: envelope.issuedAt,
+        });
+      }
+
+      const interventionSummary =
+        operation.kind === "DirectionGuidance"
+          ? operation.guidance
+          : operation.amendment.why;
+      const workEvent: PendingDomainEvent =
+        operation.kind === "DirectionGuidance"
+          ? {
+              projectId: envelope.projectId,
+              eventType: "WorkSteered",
+              eventVersion: 1,
+              occurredAt: envelope.issuedAt,
+              aggregateRef: payload.workId,
+              actor: envelope.actor,
+              causedByCommandId: envelope.commandId,
+              payload: {
+                workId: payload.workId,
+                fromRevision: work.revision,
+                toRevision: next.revision,
+                severity: payload.steer.severity,
+              },
+            }
+          : {
+              projectId: envelope.projectId,
+              eventType: "WorkAmended",
+              eventVersion: 1,
+              occurredAt: envelope.issuedAt,
+              aggregateRef: payload.workId,
+              actor: envelope.actor,
+              causedByCommandId: envelope.commandId,
+              payload: {
+                workId: payload.workId,
+                fromRevision: work.revision,
+                toRevision: next.revision,
+                severity: payload.steer.severity,
+              },
+            };
 
       const events: PendingDomainEvent[] = [
-        {
-          projectId: envelope.projectId,
-          eventType: "WorkSteered",
-          eventVersion: 1,
-          occurredAt: envelope.issuedAt,
-          aggregateRef: payload.workId,
-          actor: envelope.actor,
-          causedByCommandId: envelope.commandId,
-          payload: {
-            workId: payload.workId,
-            fromRevision: work.revision,
-            toRevision: next.revision,
-            severity: payload.steer.severity,
-          },
-        },
+        workEvent,
         // P10 `06` §2 (inherited evolution — P6 not reopened): the same
         // semantic transaction pairs the WorkSteered event (frozen P6
         // `04` §2 payload above) with HumanInterventionApplied, kind by
@@ -151,7 +240,7 @@ export const makeSteerWorkHandler = (
           commandId: envelope.commandId,
           actor: envelope.actor,
           targetWorkspaceId: payload.workspaceId,
-          summaryRef: payload.steer.guidance,
+          summaryRef: interventionSummary,
           occurredAt: envelope.issuedAt,
           kind:
             payload.steer.severity === "Critical" ? "CriticalSteer" : "Steer",
@@ -191,7 +280,10 @@ export const makeSteerWorkHandler = (
         recipientWorkspaceId: payload.workspaceId,
         entryKey: `steer:${payload.workId}:${next.revision}`,
         kind: "HumanInput",
-        summary: `${payload.steer.severity} steer: ${payload.steer.guidance}`,
+        summary:
+          operation.kind === "DirectionGuidance"
+            ? `${payload.steer.severity} steer: ${operation.guidance}`
+            : `${payload.steer.severity} contract amendment: ${operation.amendment.objective}`,
         admittedAt: envelope.issuedAt,
       } as const;
       if (

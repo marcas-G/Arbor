@@ -373,6 +373,7 @@ export { runRecovery };
 export const p7SeedWork = (
   workId: import("../../packages/domain/dist/index.js").WorkId,
   commandId: import("../../packages/domain/dist/index.js").CommandId,
+  verificationMission?: import("../../packages/domain/dist/index.js").VerificationMission,
 ) =>
   Effect.gen(function* () {
     const gateway = yield* CommandGateway;
@@ -387,7 +388,11 @@ export const p7SeedWork = (
       why: "seed",
       constraints: [],
       completionExpectation: "green",
-      verificationMission: { goal: "g", criteria: [], riskRequirements: [] },
+      verificationMission: verificationMission ?? {
+        goal: "g",
+        criteria: [],
+        riskRequirements: [],
+      },
       provenance: { predecessorWorkId: null, reason: "seed" },
       revision: parse(WorkRevision)(0),
     };

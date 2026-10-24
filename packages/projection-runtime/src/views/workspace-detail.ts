@@ -154,6 +154,7 @@ export interface WorkspaceDetailDeps {
 export const AUDIT_TIMELINE_EVENT_TYPES: ReadonlyArray<EventTypeName> = [
   "HumanInterventionApplied",
   "WorkSteered",
+  "WorkAmended",
   "DecisionRecorded",
 ];
 

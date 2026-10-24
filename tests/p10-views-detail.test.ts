@@ -573,6 +573,7 @@ describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
     expect([...AUDIT_TIMELINE_EVENT_TYPES]).toEqual([
       "HumanInterventionApplied",
       "WorkSteered",
+      "WorkAmended",
       "DecisionRecorded",
     ]);
     const reversed = [4, 2].map(
