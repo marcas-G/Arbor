@@ -1,6 +1,6 @@
 # Test profiles
 
-`planning/testing/manifest.json` is the checked inventory for the configured functional test files. `pnpm test:manifest` verifies that its 58 functional Vitest paths and 6 UI paths still match the committed Vitest and Playwright configuration.
+`planning/testing/manifest.json` is the checked inventory for the configured functional test files. `pnpm test:manifest` verifies that its 62 functional Vitest paths and 6 UI paths still match the committed Vitest and Playwright configuration.
 
 | Command | Selected inventory | Coverage claim |
 |---|---|---|
@@ -9,7 +9,7 @@
 | `pnpm test:functional:crash-sentinels` / `pnpm test:crash-sentinels` | Curated process, lease, and provider handoff sentinels | Named sentinels only; not all AH10 handlers or AH1–AH19 qualification |
 | `pnpm test:functional:package` / `pnpm test:package` | Clean committed-checkout F20 case | Package boundary only |
 | `pnpm test:ui` | All six configured browser files | Browser suite only |
-| `pnpm test:functional` / `pnpm test:release` / `pnpm test:all` | All 58 configured Vitest files and all 6 UI files | Full configured deterministic functional inventory |
+| `pnpm test:functional` / `pnpm test:release` / `pnpm test:all` | All 62 configured Vitest files and all 6 UI files | Full configured deterministic functional inventory |
 
 The runner writes an initial `running` JSON result and Markdown summary atomically before it starts external commands. It refreshes these files as groups and commands progress. When it catches SIGINT, SIGTERM, an uncaught exception, or an unhandled rejection, it records `interrupted`, leaves `completeCoverage` false, and records the active group, command, exit code, and signal when available. Abrupt termination such as SIGKILL can leave the last persisted `running` result visible.
 

@@ -117,7 +117,7 @@ const concludeDependencies = (clock: { now: () => Effect.Effect<string> }) =>
     return makeSingleWorkspaceControlActionHandlers(dependencies);
   });
 
-describe("pending P8 durable ConcludeVerification criterion snapshot", () => {
+describe("P8 durable ConcludeVerification criterion snapshot", () => {
   it("persists every criterion result in the concluded Verification snapshot", async () => {
     const database = await createSchema46TestDatabase();
     cleanups.push(database.cleanup);

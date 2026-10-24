@@ -157,7 +157,7 @@ const createSchemaDatabase = () => {
   return database;
 };
 
-describe("pending F23 exact-tuple receipt integrity", () => {
+describe("F23 exact-tuple receipt integrity", () => {
   it("rejects a valid-JSON wrong-shape exact Committed result without mutation", async () => {
     const sentinel = `F23-RESULT-SHAPE-${crypto.randomUUID()}`;
     const fixture = await startProductionFixture({
@@ -315,7 +315,7 @@ describe("pending F23 exact-tuple receipt integrity", () => {
           criteria: [],
           riskRequirements: [],
         },
-        reason: "pending receipt integrity qualification",
+        reason: "receipt integrity qualification",
       },
       invocation: {
         providerTurnId,
@@ -527,7 +527,7 @@ describe("pending F23 exact-tuple receipt integrity", () => {
             criteria: [],
             riskRequirements: [],
           },
-          reason: "pending P9 receipt disposition qualification",
+          reason: "P9 receipt disposition qualification",
         },
         invocation: {
           providerTurnId,
@@ -628,7 +628,7 @@ describe("pending F23 exact-tuple receipt integrity", () => {
           criteria: [],
           riskRequirements: [],
         },
-        reason: "pending P9 fact transaction qualification",
+        reason: "P9 fact transaction qualification",
       },
       invocation: {
         providerTurnId,
