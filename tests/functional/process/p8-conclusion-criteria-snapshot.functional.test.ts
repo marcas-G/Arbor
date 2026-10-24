@@ -49,7 +49,7 @@ import {
   p7SeedWork,
   p7TestPrincipal,
 } from "../../support/p7-app.js";
-import { createSchema46TestDatabase } from "../../support/schema44-database.js";
+import { createCurrentSchemaTestDatabase } from "../../support/schema44-database.js";
 
 const sourceWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789d2" as never;
 const verifierExecutionId = parse(ExecutionId)(
@@ -119,7 +119,7 @@ const concludeDependencies = (clock: { now: () => Effect.Effect<string> }) =>
 
 describe("P8 durable ConcludeVerification criterion snapshot", () => {
   it("persists every criterion result in the concluded Verification snapshot", async () => {
-    const database = await createSchema46TestDatabase();
+    const database = await createCurrentSchemaTestDatabase();
     cleanups.push(database.cleanup);
     const directory = database.directory;
     const app = buildSingleWorkspaceLayer({

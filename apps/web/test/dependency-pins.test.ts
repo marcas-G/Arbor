@@ -17,7 +17,7 @@ const PINNED_RUNTIME = {
   react: "19.3.0",
   "react-dom": "19.3.0",
   "react-hook-form": "7.88.0",
-  zod: "4.6.5",
+  zod: "4.6.6",
   "react-virtuoso": "4.18.15",
 } as const;
 

@@ -1,11 +1,12 @@
 import { join } from "node:path";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeSingleWorkspaceControlActionHandlers } from "../../../apps/single-workspace/src/control-actions.js";
 import { buildSingleWorkspaceLayer } from "../../../apps/single-workspace/src/index.js";
 import {
   CommandGateway,
+  CommandHandlerRegistry,
   newUuid7,
   semanticRequestFingerprint,
 } from "../../../packages/application/src/index.js";
@@ -52,7 +53,7 @@ import {
   p7TestActor,
   p7TestPrincipal,
 } from "../../support/p7-app.js";
-import { createSchema46TestDatabase } from "../../support/schema44-database.js";
+import { createCurrentSchemaTestDatabase } from "../../support/schema44-database.js";
 
 const sourceWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789d1" as never;
 const verifierExecutionId = parse(ExecutionId)(
@@ -99,6 +100,7 @@ const recordDependencies = (clock: { now: () => Effect.Effect<string> }) =>
       journal: yield* DomainEventJournal,
       ids: yield* IdGenerator,
       commandReceipts: yield* CommandStore,
+      commandHandlerRegistry: yield* CommandHandlerRegistry,
       plans: yield* LocalPlanStore,
       decisions: yield* DecisionRequestStore,
       verifications: yield* VerificationRepository,
@@ -131,7 +133,7 @@ const recordDependencies = (clock: { now: () => Effect.Effect<string> }) =>
 
 describe("AH10 RecordVerificationEvidence recordedAt retry fingerprint", () => {
   it("keeps the first durable ActionIntent time across owner-generation takeover", async () => {
-    const database = await createSchema46TestDatabase();
+    const database = await createCurrentSchemaTestDatabase();
     cleanups.push(database.cleanup);
     const directory = database.directory;
     const databaseFile = database.databaseFilename;
@@ -398,7 +400,7 @@ describe("AH10 RecordVerificationEvidence recordedAt retry fingerprint", () => {
       >,
     );
     expect(Exit.isSuccess(result.first)).toBe(true);
-    expect(result.clockValues).toHaveLength(2);
+    expect(result.clockValues).toEqual(["recorded-at-1"]);
     expect(result.firstFingerprint).toBe(result.secondFingerprint);
     expect(result.receipt).toMatchObject({
       command_id: expectedCommandId,
@@ -406,6 +408,8 @@ describe("AH10 RecordVerificationEvidence recordedAt retry fingerprint", () => {
       semantic_request_fingerprint: result.firstFingerprint,
     });
     expect(result.evidence).toHaveLength(1);
-    expect(Exit.isSuccess(result.second)).toBe(true);
+    if (Exit.isFailure(result.second)) {
+      throw new Error(Cause.pretty(result.second.cause));
+    }
   });
 });

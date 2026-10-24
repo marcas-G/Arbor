@@ -382,7 +382,7 @@ export const parseSchemaUpgradeArguments = (
 
 export const schemaUpgradeUsage = (): string =>
   [
-    "Offline P39–P50 schema upgrade (operator-selected disposable target)",
+    "Offline P39–P52 schema upgrade (operator-selected disposable target)",
     "  --mode fresh --database <new-target> --p39-report-db <new-report> --copy-manifest <new-manifest>",
     "  --mode copy --source-database <offline-source> --database <new-copy> --p39-report-db <new-report> --copy-manifest <new-manifest>",
     "  --mode resume-copy --source-database <same-source> --database <same-copy> --p39-report-db <same-report> --copy-manifest <same-manifest>",
