@@ -138,19 +138,6 @@ test("F22 a completed Work remains visible from its original page", async ({
     safeDetails: {},
   });
 
-  const privacyPage = await page.context().newPage();
-  const viewRequests: Array<{
-    readonly view: string;
-    readonly request: unknown;
-  }> = [];
-  await privacyPage.route(`${fixture.baseUrl}/views/**`, async (route) => {
-    const url = new URL(route.request().url());
-    viewRequests.push({
-      view: url.pathname.split("/").at(-1) ?? "",
-      request: route.request().postDataJSON(),
-    });
-    await route.continue();
-  });
   const workRoute = (
     routeProject: string,
     routeWorkspace: string,
@@ -170,7 +157,19 @@ test("F22 a completed Work remains visible from its original page", async ({
       workId: `wrk_${crypto.randomUUID()}`,
     },
   ]) {
-    viewRequests.length = 0;
+    const privacyPage = await page.context().newPage();
+    const viewRequests: Array<{
+      readonly view: string;
+      readonly request: unknown;
+    }> = [];
+    await privacyPage.route(`${fixture.baseUrl}/views/**`, async (route) => {
+      const url = new URL(route.request().url());
+      viewRequests.push({
+        view: url.pathname.split("/").at(-1) ?? "",
+        request: route.request().postDataJSON(),
+      });
+      await route.continue();
+    });
     await privacyPage.goto(
       workRoute(target.projectId, target.workspaceId, target.workId),
     );
@@ -181,8 +180,8 @@ test("F22 a completed Work remains visible from its original page", async ({
       expect(request).toEqual(target);
     }
     await expect(privacyPage.getByText(`Complete ${marker}.`)).toHaveCount(0);
+    await privacyPage.close();
   }
-  await privacyPage.close();
   await fixture.restart();
 
   await page.goto(workUrl);
