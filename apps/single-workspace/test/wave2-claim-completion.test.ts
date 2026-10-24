@@ -51,6 +51,9 @@ const workspaceId = parse(WorkspaceId)(ids.workspace);
 const sessionId = parse(SessionId)(ids.session);
 const executionId = parse(ExecutionId)(ids.execution);
 const workId = parse(WorkId)(ids.work);
+const producerEvidenceWorkId = parse(WorkId)(
+  "wrk_018f2b3c-4d5e-7abc-8def-0123456789b3",
+);
 const dependencyId = "dep_018f2b3c-4d5e-7abc-8def-0123456789b2";
 const principal = parse(Principal)("worker:a");
 const actor = parse(Actor)("user:test");
@@ -220,6 +223,7 @@ const runTurns = (
   _turns: ReadonlyArray<ReadonlyArray<unknown>>,
   options: {
     readonly withDependency?: boolean;
+    readonly withAnyProducerEvidence?: boolean;
     readonly advanceWorkRevisionAfterAdmission?: boolean;
     readonly verificationStates?: ReadonlyArray<"Open" | "Concluded">;
   } = {},
@@ -236,6 +240,22 @@ const runTurns = (
           workId,
           JSON.stringify({ _tag: "WorkspaceBound", workspaceId }),
           JSON.stringify({ kind: "report", requiredArtifactRoles: [] }),
+        ],
+      );
+    }
+    if (options.withAnyProducerEvidence === true) {
+      yield* sql.unsafe(
+        "INSERT INTO works (work_id, project_id, workspace_id, objective, why, constraints, completion_expectation, verification_mission, provenance, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,'Open',0,'t','t')",
+        [
+          producerEvidenceWorkId,
+          projectId,
+          workspaceId,
+          "eligible AnyProducer source",
+          "qualify the APW-1 positive path",
+          "[]",
+          "produce a matching deliverable",
+          "{}",
+          "{}",
         ],
       );
     }
@@ -1247,7 +1267,10 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
   it("MAC-P3 exposes DeclareDependency and persists an Unsatisfied exact contract", async () => {
     const { app } = setupApp([declareDependencyTurn]);
     const result = await Effect.runPromise(
-      Effect.provide(runTurns([declareDependencyTurn]), app),
+      Effect.provide(
+        runTurns([declareDependencyTurn], { withAnyProducerEvidence: true }),
+        app,
+      ),
     ).finally(cleanupFixture);
     expect(result.settlement).toMatchObject({
       _tag: "Completed",
