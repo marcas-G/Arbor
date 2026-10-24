@@ -2,12 +2,14 @@
 
 Date: 2026-10-24
 Status: **MANUALLY ACCEPTED; EXACT OWNER CONTRACT LANDING RECORDED; INDEPENDENT POST-LANDING REVIEW PENDING**
-Implementation: **NOT AUTHORIZED**
+Implementation: **CONDITIONAL AUTHORIZATION GRANTED; NOT EXERCISABLE UNTIL INDEPENDENT POST-LANDING REVIEW IS BLOCKING = 0**
 
 ## Decision and fixed package identity
 
 - Manual decision token: ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1
 - Acceptance date: 2026-10-24
+- Conditional implementation authorization token: AUTHORIZE_S2_STEER_WORK_REVISION_IMPLEMENTATION_AFTER_LANDING_REVIEW
+- Implementation authorization state: granted on 2026-10-24, conditional on independent owner-landing review with Blocking = 0; no implementation may begin before that condition is met.
 - Fixed package source: planning/proposals/S2-steer-work-revision-contract-governance-draft.md
 - Proposal SHA-256 (UTF-8/LF-normalized): C878BBF615F92ED43125C79EFDC0F021F062FEE97BF740795889B65B44394088
 - Failure-evidence result SHA-256: 459EA1187E12E409FAF5605A140F4659A864AC4330B24F2686F2ED9AAD7BE1E2
@@ -65,6 +67,6 @@ Problem & Goals v1.3 is unchanged. P10/P13/P14 route, DTO, Effect-signature and 
 
 ## Authorization boundary and audit
 
-This acceptance authorizes only the exact owner-document landing package. It does not authorize implementation, production/tests, Effect or DTO changes, migration activation, deployment, Provider/daemon qualification, or any database access/write. The P1/P6/P8 implementation contract, physical DDL and migration number, P10/P13/P14 API/UI contracts and qualification plan remain gated on a separate explicit implementation authorization. No tests or provider/daemon journeys were run for this design landing.
+The ACCEPT token authorizes only the exact owner-document landing package. The separate implementation token above conditionally authorizes the S2-RDG-01 source implementation only after independent post-landing review is Blocking = 0. Until then no code, tests, migration implementation, or other implementation actions may begin. The conditional implementation authorization excludes real-Provider qualification, migration activation, deployment, and any read/write of existing or preserved databases; any later real-provider or migration-activation action requires its own explicit authorization and disposable-data scope. No tests or provider/daemon journeys were run for this design landing.
 
-No implementation authorization token is recorded because none was granted. Independent post-landing consistency review is pending; S2-RDG-01 must not be reported as fully review-closed until that review records its disposition.
+Independent post-landing consistency review is pending; the conditional implementation authorization is not yet exercisable. S2-RDG-01 must not be reported as fully review-closed until that review records its disposition.
