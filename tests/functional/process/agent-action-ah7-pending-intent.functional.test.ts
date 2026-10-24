@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "../../../adapters/persistence-sqlite/src/index.js";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
 import {
   type AhProbeHit,
@@ -880,16 +881,16 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           );
         }
         if (expectedSettlement === "ExpectedFailure") {
-          const schema46 = new DatabaseSync(fixture.databaseFile, {
+          const currentSchema = new DatabaseSync(fixture.databaseFile, {
             readOnly: true,
           });
           try {
-            const version = schema46.prepare("PRAGMA user_version").get() as
-              | { readonly user_version?: number }
-              | undefined;
-            expect(Number(version?.user_version)).toBe(48);
+            const version = currentSchema
+              .prepare("PRAGMA user_version")
+              .get() as { readonly user_version?: number } | undefined;
+            expect(Number(version?.user_version)).toBe(CURRENT_SCHEMA_VERSION);
           } finally {
-            schema46.close();
+            currentSchema.close();
           }
           const raw = rawTargetInvocations[0];
           if (raw === undefined || raw.observation_json === null) {
