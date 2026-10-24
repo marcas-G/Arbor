@@ -89,7 +89,7 @@ interface CompactionDependencies {
   }>;
   readonly completeProviderTurn?: (
     activity: ExecutionActivity,
-    attemptNo: number,
+    attemptNo?: number,
   ) => Effect.Effect<"Continue" | "Stop">;
   /** Explicit test-only crash boundary; absent in production. */
   readonly qualificationProbe?: AgentLoopQualificationProbe;
@@ -242,7 +242,7 @@ export const runSummaryCompaction = (
     ) {
       const endDecision = yield* deps.completeProviderTurn(
         providerAdmission.activity,
-        providerResult.ok ? providerResult.value.attemptNo : 0,
+        providerResult.ok ? providerResult.value.attemptNo : undefined,
       );
       if (endDecision === "Stop") return { _tag: "SafetyStop" as const };
     }
@@ -374,7 +374,7 @@ export const runNativeCompaction = (
     ) {
       const endDecision = yield* deps.completeProviderTurn(
         providerAdmission.activity,
-        providerResult.ok ? providerResult.value.attemptNo : 0,
+        providerResult.ok ? providerResult.value.attemptNo : undefined,
       );
       if (endDecision === "Stop") return { _tag: "SafetyStop" as const };
     }

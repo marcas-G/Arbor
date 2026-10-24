@@ -257,6 +257,109 @@ describe("AH19 Conversation checkpoint blob-before-owner commit", () => {
     ]);
   });
 
+  it("ends the ProviderTurn lease bracket on provider failure and preserves its cause", async () => {
+    const execution = {
+      executionId: currentExecutionId,
+      projectId,
+      workspaceId,
+      sessionId: "ses_current" as never,
+      binding: {
+        _tag: "WorkspaceExecution",
+        workspaceId,
+        episode: {
+          _tag: "ConversationResponseEpisode",
+          messageId: currentMessageId as never,
+          responseJobRevision: 0,
+        },
+      },
+      admittedAt: "2026-10-17T00:00:00.000Z",
+      stopRequestedAt: null,
+      state: { status: "Active", settlement: null },
+    } as Execution;
+    const providerFailure = {
+      _tag: "ProviderFailure" as const,
+      kind: "ProviderUnavailable" as const,
+    };
+    const sequence: Array<string> = [];
+    const completedAttemptNos: Array<number | undefined> = [];
+    const result = await Effect.runPromise(
+      Effect.flip(
+        runConversationCheckpointCompaction(
+          {
+            execution,
+            logicalStepNo: 3,
+            owner: { ...owner, contextEpoch: 2 as never },
+            sources: [source],
+            coveredThrough: {
+              createdAt: priorMessage.createdAt,
+              messageId: priorMessage.messageId,
+            },
+            currentMessageId,
+            currentResponseJob: {
+              messageId: currentMessageId as never,
+              projectId,
+              rootWorkspaceId: workspaceId,
+              state: {
+                _tag: "Running",
+                attemptNo: 0,
+                executionId: currentExecutionId,
+              },
+              revision: 1,
+              nextAttemptNo: 1,
+            } as never,
+            checkpointKind: "Summary",
+            bindingFingerprint,
+            modelRef: "model-openai",
+            fence: {
+              executionId: currentExecutionId,
+              workerId: "worker:ah19",
+              workerIncarnationId: "incarnation:ah19",
+              fencingGeneration: 0 as never,
+            },
+            updatedAt: "2026-10-17T00:00:02.000Z",
+          },
+          {
+            providerRuntime: {
+              runTurn: () => {
+                sequence.push("provider");
+                return Effect.fail(providerFailure);
+              },
+            } as never,
+            checkpointStore: {
+              commit: () => Effect.die("must not commit"),
+            } as never,
+            providerTurns: {
+              findSettledResult: () => Effect.succeed({ _tag: "NotFound" }),
+              findManifestByTurn: () => Effect.succeed(null),
+            } as never,
+            blobs: {
+              put: () => Effect.die("must not write summary blob"),
+            } as never,
+            tx: {
+              transact: (effect: Effect.Effect<unknown, unknown>) => effect,
+            } as never,
+            admitProviderTurn: () => {
+              sequence.push("gate");
+              return Effect.succeed({
+                activity: { _tag: "ProviderTurn", fingerprint: "gate" },
+                decision: "Continue" as const,
+              });
+            },
+            completeProviderTurn: (_activity, attemptNo) => {
+              sequence.push("end");
+              completedAttemptNos.push(attemptNo);
+              return Effect.succeed("Continue" as const);
+            },
+          },
+        ),
+      ),
+    );
+
+    expect(result).toEqual(providerFailure);
+    expect(sequence).toEqual(["gate", "provider", "end"]);
+    expect(completedAttemptNos).toEqual([undefined]);
+  });
+
   it("leaves an allowed orphan Summary Blob when the owner CAS fails", async () => {
     const execution = {
       executionId: currentExecutionId,
