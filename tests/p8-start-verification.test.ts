@@ -72,7 +72,7 @@ const makeP8App = () =>
 const seed = Effect.gen(function* () {
   yield* runMigrations(P8_MIGRATIONS);
   yield* p7SeedProject;
-  const receipt = yield* p7SeedWork(WORK_1, ASSIGN_CMD);
+  const receipt = yield* p7SeedWork(WORK_1, ASSIGN_CMD, missionOf());
   expect(receipt.resolution._tag).toBe("Committed");
 });
 
@@ -226,6 +226,37 @@ describe("p8-start-verification", () => {
       }),
       makeP8App(),
     );
+  });
+
+  it("rejects a mission snapshot that differs from the exact current Work contract", async () => {
+    const result = await runP7(
+      Effect.gen(function* () {
+        yield* seed;
+        const tx = yield* TransactionPort;
+        const handler = yield* makeHandler;
+        const outcome = yield* tx.transact(
+          handler.execute(
+            envelopeOf(
+              CMD("0123456789e1"),
+              payloadOf({
+                verificationId: VER("0003"),
+                missionSnapshot: missionOf({
+                  goal: "caller tries to replace canonical goal",
+                }),
+              }),
+            ),
+            context,
+          ),
+        );
+        const stored = yield* tx.transact(
+          (yield* VerificationRepository).findById(VER("0003")),
+        );
+        return { outcome, stored };
+      }),
+      makeP8App(),
+    );
+    expectRejected(result.outcome, "InvalidVerificationMission");
+    expect(Option.isNone(result.stored)).toBe(true);
   });
 
   it("binds targetEnvironmentRevision from EnvironmentRevisionStore.current on an executable mission", async () => {

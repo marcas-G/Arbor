@@ -346,6 +346,96 @@ describe("p6-steer", () => {
     expect(result.events[0]?.severity).toBe("Critical");
   });
 
+  it("ContractAmendment replaces the full contract and appends the exact immutable revision snapshot", async () => {
+    const result = await runSteer(
+      Effect.gen(function* () {
+        yield* seedWork;
+        const works = yield* WorkRepository;
+        const inbox = yield* InboxProjectionStore;
+        const tx = yield* TransactionPort;
+        const appended: Array<unknown> = [];
+        const handler = makeSteerWorkHandler({
+          works,
+          inbox,
+          revisions: {
+            append: (input) => Effect.sync(() => void appended.push(input)),
+          },
+        });
+        const payload = steerPayload({
+          steer: {
+            severity: "Normal",
+            operation: {
+              kind: "ContractAmendment",
+              amendment: {
+                objective: "amended objective",
+                why: "amended rationale",
+                constraints: ["keep the migration isolated"],
+                completionExpectation: "all focused checks pass",
+                verificationMission: {
+                  goal: "verify amended contract",
+                  criteria: [
+                    {
+                      criterionId: "focused",
+                      requirement: "focused checks pass",
+                      required: true,
+                    },
+                  ],
+                  riskRequirements: [],
+                },
+              },
+            },
+          },
+        });
+        const outcome = yield* tx.transact(
+          handler.execute(
+            {
+              commandType: "SteerWork",
+              commandId: steerCommandId,
+              projectId: p6Project,
+              actor: p6TestActor,
+              issuedAt: "amended-at",
+              payload,
+            },
+            { _tag: "External", principal: p6TestPrincipal },
+          ),
+        );
+        const stored = yield* tx.transact(works.findById(workId));
+        return { outcome, stored, appended };
+      }),
+      makeSteerApp(),
+    );
+    expect(result.outcome.ok).toBe(true);
+    expect(Option.isSome(result.stored)).toBe(true);
+    if (Option.isSome(result.stored)) {
+      expect(result.stored.value).toMatchObject({
+        revision: 1,
+        objective: "amended objective",
+        why: "amended rationale",
+        constraints: ["keep the migration isolated"],
+        completionExpectation: "all focused checks pass",
+      });
+    }
+    expect(result.appended).toEqual([
+      expect.objectContaining({
+        workId,
+        workRevision: 1,
+        kind: "ContractAmendment",
+        sourceCommandId: steerCommandId,
+        recordedAt: "amended-at",
+        contract: expect.objectContaining({
+          objective: "amended objective",
+          why: "amended rationale",
+          constraints: ["keep the migration isolated"],
+        }),
+      }),
+    ]);
+    if (result.outcome.ok) {
+      expect(
+        result.outcome.value.events.map((event) => event.eventType),
+      ).toContain("WorkAmended");
+    }
+  });
+
   it("rejects the frozen rejection table (04 §2)", async () => {
     const program = Effect.gen(function* () {
       yield* seedWork;
