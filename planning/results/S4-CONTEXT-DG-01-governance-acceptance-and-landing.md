@@ -3,7 +3,8 @@
 **Decision date:** 2026-10-24
 **Accepted token:** `ACCEPT_S4_CONTEXT_DG_01_ASSISTANT_MESSAGE_PROJECTION_OPTION_A`
 **Decision:** ACCEPTED for the exact Option A semantic landing below.
-**Production implementation authorization:** NOT GRANTED.
+**Conditional implementation token:** `AUTHORIZE_S4_CONTEXT_DG_01_ASSISTANT_MESSAGE_PROJECTION_IMPLEMENTATION_AFTER_LANDING_REVIEW`
+**Implementation authorization:** GRANTED, exercisable only after independent landing review reports Blocking = 0.
 **Real Provider/daemon qualification authorization:** NOT GRANTED.
 
 ## Fixed package identity
@@ -84,7 +85,9 @@ authorized by this acceptance.
 
 This record and the four-file owner landing are the exact accepted governance
 application. Independent post-landing consistency review is **PENDING**; the
-landing must not be treated as self-reviewed. Once that review is complete,
-implementation still requires a separate explicit authorization. This
-acceptance record grants no production-code, test, migration, real Provider,
-deployment, or release-claim authority.
+landing must not be treated as self-reviewed. The conditional implementation
+token above has been granted, but it may be exercised only after that review
+reports Blocking = 0. Until then, production code and tests remain out of
+scope. The conditional implementation authorization does not include real
+Provider/daemon qualification, migration, deployment, or release claims; those
+require separate explicit authorization.
