@@ -128,7 +128,10 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
           P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
         ]),
       ).toBe(1);
-      expect(await run(fixture.databaseFilename)).toBe(1);
+      expect(
+        CURRENT_MIGRATIONS.filter(({ id }) => id > 50).map(({ id }) => id),
+      ).toEqual([51, 52]);
+      expect(await run(fixture.databaseFilename)).toBe(2);
       const db = new DatabaseSync(fixture.databaseFilename, { readOnly: true });
       try {
         expect(
