@@ -16,6 +16,8 @@ import {
   type ResourceOwnershipRepositoryService,
   SessionRepository,
   type SessionRepositoryService,
+  WorkContractRevisionRepository,
+  type WorkContractRevisionRepositoryService,
   WorkRepository,
   type WorkRepositoryService,
   WorkspaceRepository,
@@ -45,6 +47,10 @@ export interface P1CommandDependencies {
   readonly activations?: WorkspaceResourceActivationStoreService;
   readonly projectResourceProfiles?: ProjectResourceProfilePortService;
   readonly works: WorkRepositoryService;
+  readonly workContractRevisions?: Pick<
+    WorkContractRevisionRepositoryService,
+    "append"
+  >;
   readonly resourceOwnership?: Pick<
     ResourceOwnershipRepositoryService,
     "listActiveByWorkspace" | "releaseClaim"
@@ -69,10 +75,12 @@ export const makeP1CommandHandlers = (
     unknown,
     unknown
   >,
-  makeAssignWorkHandler(dependencies) as unknown as CommandHandler<
-    unknown,
-    unknown
-  >,
+  makeAssignWorkHandler({
+    ...dependencies,
+    ...(dependencies.workContractRevisions === undefined
+      ? {}
+      : { revisions: dependencies.workContractRevisions }),
+  }) as unknown as CommandHandler<unknown, unknown>,
   ...(dependencies.resourceOwnership === undefined
     ? []
     : [
@@ -126,6 +134,9 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
       WorkspaceResourceActivationStore,
     );
     const works = yield* WorkRepository;
+    const workContractRevisions = yield* Effect.serviceOption(
+      WorkContractRevisionRepository,
+    );
     const projectResourceProfiles = yield* Effect.serviceOption(
       ProjectResourceProfilePort,
     );
@@ -139,6 +150,9 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
       works,
       ...(Option.isSome(projectResourceProfiles)
         ? { projectResourceProfiles: projectResourceProfiles.value }
+        : {}),
+      ...(Option.isSome(workContractRevisions)
+        ? { workContractRevisions: workContractRevisions.value }
         : {}),
     });
     return CommandHandlerRegistry.of({

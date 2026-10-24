@@ -74,6 +74,7 @@ import {
   SessionRepository,
   VerificationRepository,
   type VerificationRepositoryService,
+  WorkContractRevisionRepository,
   WorkReadmissionGateStore,
   WorkRepository,
   WorkspaceRepository,
@@ -126,6 +127,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
   | EvidenceRepository
   | ExecutionRepository
   | WorkWaitStore
+  | WorkContractRevisionRepository
   | FormationProposalStore
   | InboxProjectionStore
   | MessageStore
@@ -152,6 +154,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         ProjectResourceProfilePort,
       );
       const works = yield* WorkRepository;
+      const workContractRevisions = yield* WorkContractRevisionRepository;
       const clock = yield* Effect.serviceOption(Clock);
       const executions = yield* ExecutionRepository;
       const executableApprovalsService = yield* Effect.serviceOption(
@@ -259,6 +262,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
       }
       const steerHandler = makeSteerWorkHandler({
         works,
+        revisions: workContractRevisions,
         inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
       });
       const criticalSteerHandler = makeCriticalSteerCommandHandler({
@@ -276,6 +280,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
             ? { activations: activations.value }
             : {}),
           works,
+          workContractRevisions,
           resourceOwnership,
           ...(Option.isSome(projectResourceProfiles)
             ? { projectResourceProfiles: projectResourceProfiles.value }
@@ -398,9 +403,10 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
           verifications,
           acceptances,
         }) as unknown as CommandHandler<unknown, unknown>,
-        makeStartVerificationHandler(
-          verifierStart,
-        ) as unknown as CommandHandler<unknown, unknown>,
+        makeStartVerificationHandler({
+          ...verifierStart,
+          workContractRevisions,
+        }) as unknown as CommandHandler<unknown, unknown>,
         makeRecordVerificationEvidenceHandler({
           verifications,
           evidence,
