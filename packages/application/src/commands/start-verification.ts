@@ -18,8 +18,10 @@ import type {
   TransactionScope,
   VerificationRepositoryError,
   VerificationRepositoryService,
+  WorkContractRevisionRepositoryService,
   WorkRepositoryService,
 } from "@arbor/ports";
+import { canonicalWorkContractJson } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
 import type { CommandHandler } from "../gateway.js";
@@ -55,6 +57,11 @@ export interface StartVerificationResult {
 
 export interface StartVerificationDependencies {
   readonly works: Pick<WorkRepositoryService, "findById">;
+  /** Production P52 history binds the mission to the exact immutable Work revision. */
+  readonly workContractRevisions?: Pick<
+    WorkContractRevisionRepositoryService,
+    "findByWorkRevision"
+  >;
   readonly verifications: Pick<
     VerificationRepositoryService,
     "insert" | "findOpenByWorkRevision"
@@ -188,6 +195,39 @@ export const makeStartVerificationHandler = (
         return commandErr({
           _tag: "InvalidVerificationMission",
           reason: invalidMission,
+        });
+      }
+
+      const expectedContract = {
+        objective: work.objective,
+        why: work.why,
+        constraints: work.constraints,
+        completionExpectation: work.completionExpectation,
+        verificationMission: work.verificationMission,
+      };
+      let canonicalContract: typeof expectedContract | undefined =
+        expectedContract;
+      if (dependencies.workContractRevisions !== undefined) {
+        const snapshot =
+          yield* dependencies.workContractRevisions.findByWorkRevision(
+            payload.workId,
+            payload.observedWorkRevision,
+          );
+        canonicalContract = Option.isSome(snapshot)
+          ? snapshot.value.contract
+          : undefined;
+      }
+      if (
+        canonicalContract === undefined ||
+        canonicalWorkContractJson({
+          ...canonicalContract,
+          verificationMission: payload.missionSnapshot,
+        }) !== canonicalWorkContractJson(canonicalContract)
+      ) {
+        return commandErr({
+          _tag: "InvalidVerificationMission",
+          reason:
+            "mission snapshot does not match the immutable Work contract at the observed revision",
         });
       }
 
