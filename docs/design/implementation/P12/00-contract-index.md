@@ -135,9 +135,29 @@ P12 phase closures and does not claim F21 qualification or FT-DG-01 completion.
 `08` additionally records the AgentLoopStep write/scheduling obligations adopted by
 DID v1.20: every durable handoff transition validates the full lease-holder
 triple; long immediately-ready loops yield so TTL/3 renewal can commit; durable
-AgentLoopStep monotone progression counts as D4 progress evidence. This is a
-cross-phase successor contract, not implementation authorization and not a
-reopening of P12's historical completion.
+AgentLoopStep monotone progression remains durable P9 recovery evidence but
+does not by itself set the P12-DG-01 shared D2/D4 `durableProgress` signal. This
+is a cross-phase successor contract, not implementation authorization and not
+a reopening of P12's historical completion.
+
+### Accepted P12-DG-01 — D2/D4 shared progress signal (2026-10-24)
+
+Under `ACCEPT_P12_DG_01_D2_D4_PROGRESS_CONVERGENCE` (accepted fixed-package
+SHA-256 `8E737E2F0E4C423D7A4AAD05B3F44CAA3E9C618DA1E451F3AB7F5C8F60AA5E71`),
+P2's existing `durableProgress` observation is the shared D2/D4 reset signal.
+P3 reports true only for a newly committed successful terminal sourced
+AgentAction outcome or an attributable authoritative application/canonical
+mutation. Typed unsuccessful outcomes remain model-visible but do not reset
+either safety history. Provider result/ModelOutput-only commits, Session text,
+AgentLoopStep state/cursor progression, and P9 replay/handoff bookkeeping do
+not count by themselves. P2 retains its existing counter algorithms, P3
+producer ownership and the existing observation-port shape. The exact owner
+semantics and acceptance evidence are recorded in
+`planning/results/P12-DG-01-d2-d4-progress-convergence-acceptance-and-landing.record.md`.
+
+Implementation authorization is separate and conditional on a post-landing
+review reporting Blocking = 0. No implementation or P12 closure is implied by
+this design landing.
 
 **Propagation status (B-2 reconciliation).** TR-1/2/5/6/8/9/10/11 are propagated
 back to their owning frozen contracts as documentation reconciliation (no

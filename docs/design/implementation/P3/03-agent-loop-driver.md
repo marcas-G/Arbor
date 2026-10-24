@@ -154,8 +154,40 @@ decodeTurn(pinnedCanonicalEvents, pinnedDecoderVersion)
 - `Stop` → the driver returns
   `Interrupted(RuntimeSafetyStop(reason))`; the P2 runtime settles; Work stays
   Open; Attention is emitted. Safety never auto-cancels Work.
-- P3 supplies only activity observations (fingerprints, kind); P2 owns the
-  counters and the execution-wide envelope.
+- P3 supplies activity identity and observation signals; P2 owns the counters
+  and the execution-wide envelope.
+- **P12-DG-01 shared D2/D4 producer.** The P3 producer reports the existing
+  `RuntimeSafetyObservation.durableProgress` boolean only after a newly
+  committed successful terminal sourced AgentAction outcome or an attributable
+  authoritative application/canonical mutation. Typed Failed/Denied/Rejected,
+  Interrupted and OutcomeUnknown results remain model-visible where the
+  existing path requires them but do not set progress. ProviderResult/ModelOutput,
+  Session text, AgentLoopStep/cursor progression and P9 recovery/handoff records
+  do not count by themselves. P2 consumes this same boolean to clear D2
+  fingerprint history and reset D4 at the next new ProviderTurn boundary; the
+  existing port shape and P2 counter algorithms are unchanged.
+- **P12-DG-01 ProviderTurn D2 identity.** Each new ProviderTurn's exact
+  PortableModelRequest and operation-specific manifest identity are compiled
+  before the RuntimeSafetyGate admission and before any ProviderRuntime call.
+  D2 uses an `operationKind`-namespaced form of the existing stable opaque hash
+  for that path: Inference uses `compiledRequestHash`; Summary/Native compaction
+  and Conversation checkpoint/overflow paths retain their existing request
+  hash. The fingerprint is neither a ProviderTurnId/loop ordinal nor an
+  authority fingerprint. ProviderAttempt retries remain within the admitted
+  ProviderTurn and update only their existing D1/D5 observation; they do not
+  create another D2/D4 admission.
+- **P12-DG-01 AgentAction D2 identity.** ToolInvocation fingerprints bind the
+  resolved route kind, tool/action name and canonical semantic arguments, not
+  callRef or other per-invocation identity. The canonical-argument helper is
+  internal to P3; its qualification requires reordered object keys to compare
+  equal and materially different arguments/route/name to remain distinct. It
+  does not alter P4 input hashes, RecoveryBinding, or any persisted codec.
+- A P9 settled-result replay is not a new ProviderTurn boundary: it consumes
+  the exact pinned result without another safety admission or Provider request.
+  Old ProviderResult/Step/cursor/handoff evidence is not progress. A new
+  qualifying action/effect commit made while consuming the replay may
+  accumulate for the next new ProviderTurn; an unresolved effect still follows
+  the existing P9 reconciliation gate.
 - Every durable AgentLoopStep/action transition is a short fenced transaction.
   Long Provider/event/action loops must yield scheduling so TTL/3 renewal can
   commit; write-before-renew is only a mitigation, never a recovery mechanism.
