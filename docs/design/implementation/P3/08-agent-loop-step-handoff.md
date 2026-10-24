@@ -132,6 +132,23 @@ interface AgentLoopStepRecord {
 }
 ```
 
+### RAI-DG-02 terminal Provider evidence chain
+
+For a WorkEpisode terminal Provider source, P3 identifies the one
+settlement-producing Step and preserves its exact `(logicalStepNo,
+repairAttempt)`, ProviderTurn and Manifest binding. The Turn must be durably
+`finish_reason=Failed`; its final settled Attempt must be `TerminalFailure`,
+carry the same closed terminal kind and recognized taxonomy, and record retry
+decision `Stop`. Earlier successful Steps/Turns in the Execution remain valid
+history and are not mistaken for the terminal source.
+
+This addendum does not change Provider failure classification or retry policy.
+`RateLimited`, `ProviderUnavailable` and `StreamInterrupted` remain outside
+the terminal-hold source even when their budget/deadline exhausts. Before the
+Attempt, failed Turn, Step settlement proposal and Execution settlement are
+each durable, partial prefixes do not authorize a hold or a new Provider
+request. Raw provider/request/response content never enters the bounded source.
+
 `decoderVersion` is fixed before `ProviderResultAvailable → OutputAccepted`.
 If the pinned decoder is unavailable, recovery produces durable Attention; it
 must not reinterpret output with a newer decoder.

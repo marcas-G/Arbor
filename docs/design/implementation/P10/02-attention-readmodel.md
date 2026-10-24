@@ -154,6 +154,34 @@ readmission source even without a P10 row. It does not synthesize Attention
 unless an existing P10 source fact exists. Attention rows, subtree counts,
 queue position and consumer ACK never create or release a Runtime hold.
 
+### RAI-DG-02 query-derived terminal Provider presentation
+
+P10 calls the P2-owned exact terminal-chain proof query inside the same read
+transaction/freshness barrier and adds no event, outbox, queue, marker, offset
+or table. `TerminalProviderFailure` is `ActionRequired`, targets the exact
+owning Workspace, exposes only the closed terminal code, exact Work revision,
+validated final-Attempt `settledAt`, fixed safe summary and dedup
+`terminal-provider-failure:<workId>:<revision>:<failureFingerprint>`.
+Equivalent historical Executions select the earliest validated witness by
+`(execution.admittedAt, executionId, providerTurnId, attemptNo)` while all
+remain audit evidence.
+
+`TerminalProviderFailureIntegrity` exposes only the closed
+`ReadmissionGateIntegrityFailure` code and bounded identities. If the
+Execution's Project/Workspace/Work/revision is uniquely provable it targets
+that Workspace; if only the Execution Project is uniquely provable it targets
+the Project root; otherwise the view fails with bounded
+`ProjectionIntegrityFailure` and guesses nothing. Its fixed summary is
+path/content-free. Missing or invalid Attempt time is integrity failure, never
+query time.
+
+Both rows are active only while canonical Work is Open at the exact revision.
+Steer revision advance or authorized Work terminalization makes retry-oriented
+presentation inactive without deleting source evidence. P10 ACK, restart,
+polling and rebuild have no effect on the P2/P7 admission hold. Work Detail
+uses the same proof and offers only the existing exact-revision Steer action;
+there is no blind retry control.
+
 ### Accepted AH7-DG-02 ReconciliationEscalated projection (DID v1.40)
 
 The existing P9 `ReconciliationEscalated{executionId,

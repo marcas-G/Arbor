@@ -115,6 +115,14 @@ closed event contract and are not expanded by this P6 landing.
   supersedes its Open blockers atomically. Revisions and typed events remain
   auditable; no historical Blocked evidence is deleted.
 
+- For an accepted RAI-DG-02 terminal Provider hold, the same authenticated
+  exact-revision `SteerWork(DirectionGuidance | ContractAmendment)` advances
+  `r→r+1` and is the sole v1 execution-resumption path. Provider credential or
+  configuration repair, time passage, restart and Attention acknowledgement do
+  not authorize retry. An independently authorized CompleteWork/CancelWork
+  makes retry-oriented presentation inactive without deleting the immutable
+  terminal Provider chain. No same-revision RetryWork command is introduced.
+
 ## 3. HumanInput 通道
 
 - Human steer 输入是 `AuthenticatedHuman` provenance 的 Message（DID §8.4A），进入目标 Workspace Inbox（02 §4 Admission：验证来源、authority、结构）。

@@ -1,10 +1,24 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.60\
+**Version:** 1.61\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.59\
-**Date:** 2026-10-24\
-**Depends on:** `Arbor System Design Specification v1.22`
+**Supersedes:** v1.60\
+**Date:** 2026-10-25\
+**Depends on:** `Arbor System Design Specification v1.23`
+
+**Governance changes (v1.60 → v1.61): accepted RAI-DG-02 terminal Provider failure hold**
+
+Accepted under `ACCEPT_RAI_DG_02_TERMINAL_PROVIDER_FAILURE_HOLD_V2` on
+2026-10-25; fixed proposal raw SHA-256
+`FA1AFC6675E040698F69E5EE29C67DE92EA10D54228D476A6DA27E2A98B8FA93`.
+The exact Work-revision readmission gate gains the closed
+`TerminalProviderFailureSettlement` source. P2 derives it from existing
+Execution/Step/Turn/Attempt/Manifest rows; P7 consumes it and Work-bound
+admission rechecks it transactionally. P10 derives bounded valid/integrity
+presentation in the same read snapshot and is never admission authority. No
+DDL, migration, persisted gate/Attention marker, automatic retry, WorkWait or
+Work lifecycle variant is introduced by this design landing. Implementation,
+existing-database use and release qualification remain separately gated.
 
 **Governance changes (v1.59 → v1.60): accepted S2-RDG-01 Work contract revision**
 
@@ -5450,6 +5464,43 @@ rebuild state. Accepted proposal SHA-256
 `0CEB2DAA2E6128F86CBD1CAA185B9847EAAB240360011F94425E0856F39AA106`;
 acceptance and prior landing review evidence are in
 `planning/results/RAI-DG-01-governance-acceptance-and-landing.md`.
+
+#### RAI-DG-02 TerminalProviderFailureSettlement addendum
+
+Extend `ReadmissionSourceKind` with
+`TerminalProviderFailureSettlement`. For exact Open Work tuple
+`(projectId, workspaceId, workId, revision)`, enumerate zero or more candidate
+WorkEpisode Executions. Each candidate identity and its settlement-producing
+`(logicalStepNo, repairAttempt)` Step, failed ProviderTurn, final settled
+ProviderAttempt and Manifest must be individually unique and exact. A source
+exists only for `AuthenticationFailed | RequestRejected | ProtocolViolation`
+with final `TerminalFailure`, recognized taxonomy and durable retry decision
+`Stop`; one valid candidate is sufficient. Historical repeated Executions do
+not create ambiguity and P10 deduplicates equivalent fingerprints.
+
+The bounded source carries `executionId`, `logicalStepNo`, `repairAttempt`,
+`providerTurnId`, `attemptNo`, closed `failureKind`, and
+`failureFingerprint = SHA-256(canonical terminal-provider-failure-v1 tuple)`.
+The tuple contains failure kind/taxonomy, resolved model binding fingerprint,
+compiled request hash and output-contract ref; it excludes timestamps, raw
+provider/request/response text, credentials and transport diagnostics.
+
+Missing, duplicate or conflicting facts inside one candidate chain, future
+revision, unsupported taxonomy, or invalid final-Attempt occurrence time
+returns `ReadmissionGateIntegrityFailure` and admits nothing. Partial chain,
+retryable kind (including budget/deadline exhaustion), cross-scope source,
+non-Work Episode and lower stale revision create no current hold. P2 and P10
+read the same canonical proof contract; P10 exposes query-derived
+`TerminalProviderFailure` or bounded `TerminalProviderFailureIntegrity`
+without event/queue/ACK/offset/marker. `occurredAt` is the validated final
+Attempt `settledAt`.
+
+The hold is active only while canonical Work is Open at the exact revision.
+Authorized `SteerWork r→r+1` is the sole v1 resumption path. An authorized
+Completed/Cancelled transition makes retry-oriented presentation inactive but
+does not erase evidence. Attempt, failed-Turn, Step and Execution commit
+prefixes never justify a guessed hold; final settlement/admission/Steer races
+linearize at the existing `BEGIN IMMEDIATE` admission recheck.
 
 ## 8.19 ModelContext Manifest
 

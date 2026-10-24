@@ -7,6 +7,14 @@
 P10-owned `work-detail` DTO; this does not reopen P13 or alter command,
 transport, or canonical lifecycle semantics.
 
+**RAI-DG-02 additive rendering amendment (2026-10-25):** render the P10-owned
+`TerminalProviderFailure` and `TerminalProviderFailureIntegrity` source/code,
+fixed summary, occurredAt, target and exact Work revision without client-side
+inference. The only recovery affordance is the existing Steer form pre-bound
+to server-supplied `workId + revision`; no Retry button, timer, automatic
+submission, Provider-config mutation or client authority is added. Unknown
+future codes retain the ordinary unknown-enum presentation rule.
+
 ## 1. 通用规则
 
 1. 渲染输入**只有** `ViewResponseMap[V]` DTO（+ Problem）；组件不得接受
@@ -23,9 +31,9 @@ transport, or canonical lifecycle semantics.
 | ViewId | 主呈现 | 关键组件语义 |
 |---|---|---|
 | `responsibility-tree` | 缩进树（root 顶部；depth 参数控件）；节点卡 = name + `WorkspaceStatusLabel` 徽章 + `subtreeAttention`（attention/actionRequired 计数，>0 高亮）+ `currentWork.objective` 摘要 + `usageSummary`（tokens/cost；cost=`Unknown` 原样呈现 "unknown"，≠0） | 节点点击 → `workspace-detail` 下钻（本文件 §4 导航） |
-| `attention` | 按 severity 分组列表（ActionRequired 在前）；行 = source 徽章 + summaryRef + occurredAt + target 链接 | 行点击 → 目标 workspace 下钻；`AttentionSeverity`/`AttentionSource` 未知值原样（I5） |
+| `attention` | 按 severity 分组列表（ActionRequired 在前）；行 = source 徽章 + summaryRef + occurredAt + target 链接；terminal Provider 行显示闭集 failure/integrity code 与 exact Work revision | 行点击 → 目标 workspace 下钻；`AttentionSeverity`/`AttentionSource` 未知值原样（I5）；terminal Provider 只链接既有 Steer，无盲重试 |
 | `workspace-detail` | 单 workspace 全景：responsibility 摘要、boundary、currentWork、pendingWorks 列表、executionSummary、dependencies 表（state 徽章 + satisfiedBy 链接）、inboxUnconsumed 计数列表、verification（criteriaResults 表：required 标记 + verdict 徽章 + evidenceRefs；acceptance 块）、auditTimeline（sequence + eventType + at，mono） | 各 ID 链接跳转对应下钻；`pendingWorks` 行**不是**选择控件（`02` §4）；activeExecution 卡带"停止该执行"紧急控件（`02` §2 StopExecution，显式确认） |
-| `work-detail` | 精确 `{projectId, workspaceId, workId}` 的只读 Work 页面：objective/why/completionExpectation、revision、canonical lifecycle；有精确绑定时呈现 Acceptance 与 PASS Verification 摘要；有当前 Blocked WorkEpisode 时显示每个 safe denial category、bounded request/observation refs 与恢复指导 | `Open + acceptedResult` 呈现“已验收、待完成”；`Completed` 呈现“已完成”；`Cancelled` 呈现已取消；Blocked explanation 仅来自精确 WorkBlocker/settlement facts；证据明细仍由 Verification view 提供；不从 Workspace/Session 推断生命周期 |
+| `work-detail` | 精确 `{projectId, workspaceId, workId}` 的只读 Work 页面：objective/why/completionExpectation、revision、canonical lifecycle；有精确绑定时呈现 Acceptance 与 PASS Verification 摘要；有当前 Blocked WorkEpisode 时显示 safe denial facts；有 RAI-DG-02 源时显示闭集 Provider/integrity code、occurredAt 与 exact revision | `Open + acceptedResult` 呈现“已验收、待完成”；`Completed` 呈现“已完成”；`Cancelled` 呈现已取消；Blocked/terminal-Provider explanation 仅来自精确 canonical proof；证据明细仍由 Verification view 提供；不从 Workspace/Session 推断生命周期 |
 | `current-work` | 单卡：objective + status + activeExecution（executionId + admittedAt）；`null` → 空态"无当前工作" | 空态不得提供"去选择"动作（`02` §4） |
 | `verification` | criteriaResults 全表 + evidenceRefs + acceptance 状态块 | verdict 徽章三态 + 未知值原样 |
 | `dependency-view` | 依赖行表：consumer → binding → state → satisfiedBy；project 范围与 workspace 范围两个查询形态（DTO req 二选一） | state 徽章；行内无任何变更动作（变更走 `02` 矩阵，v1 无 dependency 类 Human-actionable） |

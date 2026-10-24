@@ -392,7 +392,8 @@ type ReadmissionSourceKind =
   | "OutcomeUnknownSettlement"
   | "DeliverReplayFact"
   | "AssignWorkBindingFact"
-  | "ReconciliationEscalationEvent";
+  | "ReconciliationEscalationEvent"
+  | "TerminalProviderFailureSettlement";
 
 interface WorkReadmissionGateStoreService {
   readonly hasBlockingSource: (input: {
@@ -474,6 +475,27 @@ SQLite or parser text. P7 propagates integrity errors through
 the query in its commit transaction and commits no Execution on a hold or
 integrity failure. Never infer Work identity from Session, `currentWorkId`,
 Message, Attention target, or Parent Workspace.
+
+**RAI-DG-02 accepted addendum.** For
+`TerminalProviderFailureSettlement`, enumerate all candidate WorkEpisode
+Executions bound to the requested tuple; do not require a single Execution for
+the Work revision. Each candidate must have one exact settlement-producing
+Step `(logicalStepNo, repairAttempt)`, failed ProviderTurn, final settled
+ProviderAttempt and Manifest. A valid candidate returns the bounded source
+identity including those Step fields, `providerTurnId`, `attemptNo`, the
+closed terminal kind and fingerprint. The closed source kinds are
+`AuthenticationFailed | RequestRejected | ProtocolViolation` with
+`TerminalFailure + Stop`. Retryable kinds never qualify, including exhausted
+or deadline outcomes.
+
+Extend `ReadmissionGateIntegrityFailure.reasonCode` for exact Step/Turn/
+Attempt/Manifest missing, non-unique and mismatch cases, unsupported taxonomy,
+and invalid occurrence time. Higher revision and malformed/ambiguous chains
+fail closed; lower revision, partial chain, cross-scope and non-Work Episode
+are not current sources. The same query is callable by P10 as a read-only proof
+source, but P10 results and ACK state are never read by this gate. Work-bound
+`AdmitExecution` rechecks the predicate inside its existing transaction, so
+settlement/admission/Steer races linearize by commit order.
 
 ## 8. WorkWaitStore and SchedulerTimerStore
 

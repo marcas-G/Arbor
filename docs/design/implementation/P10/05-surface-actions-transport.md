@@ -120,6 +120,16 @@ failure code and DecisionEpisode/provider binding identifiers remain internal.
 The exact accepted proposal SHA-256 is
 `10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`.
 
+Accepted RAI-DG-02 adds the non-persisted literals
+`TerminalProviderFailure` and `TerminalProviderFailureIntegrity` to the same
+closed `AttentionSource` union and `ATTENTION_SOURCES`. They use the existing
+Attention row transport shape and add no endpoint, command or retry action.
+The valid row carries the closed terminal failure code and exact Work revision;
+the integrity row carries the closed bounded integrity code. Both use the
+fixed summaries and exact target/occurredAt rules in `02`; raw Provider,
+request, response, manifest, SQL and parser material remain internal. The
+existing Steer command surface is the only recovery action.
+
 P10's source-specific activation Attention projection store atomically
 reconciles this key set from the current P1 intent table, lists/replaces the
 project's Pending rows during rebuild, and resets this source for the project.

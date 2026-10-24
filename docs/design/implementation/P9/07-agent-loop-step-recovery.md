@@ -31,6 +31,18 @@ This adds no SideEffectSemantics or Execution settlement variant.
 
 ## 1. Recovery order extension
 
+**RAI-DG-02 accepted recovery addendum.** Startup and takeover must establish
+the exact terminal chain in order: final Attempt settlement, ProviderTurn
+`finish_reason=Failed`, settlement-producing Step proposal, then Execution
+settlement. A crash on either side of any boundary resumes/converges the same
+Execution; no partial prefix is reinterpreted as a hold and no second
+same-revision Execution is admitted. After final settlement commit, the P2
+query-derived source is visible before scheduler admission. P9 never
+reconstructs the source from Provider text, Session output, an Attention row
+or a replacement request. Historical repeated exact chains remain immutable
+audit evidence; malformed chains fail closed through the bounded integrity
+contract rather than repair-by-guessing.
+
 P2's nine-step recovery order remains. During “reconcile external reality” and
 “settle deterministic outcomes”, P9 adds the following per-Execution order:
 
