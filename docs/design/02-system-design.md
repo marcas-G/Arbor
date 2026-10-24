@@ -1,18 +1,34 @@
 # Arbor System Design Specification
 
-**Version:** 1.21
+**Version:** 1.22
 
-**Status:** FROZEN — Minimal Architecture Convergence and Native OS Sandbox governance addendum
+**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, and accepted S2-RDG-01 governance addenda
 
-**Supersedes:** v1.20
+**Supersedes:** v1.21
 
-**Date:** 2026-10-19
+**Date:** 2026-10-24
 
-**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.6`
+**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.7`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
 
 **Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
+
+**Governance changes (v1.21 → v1.22): accepted S2-RDG-01 Work contract revision**
+
+Accepted under `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1` on 2026-10-24;
+fixed proposal SHA-256
+`C878BBF615F92ED43125C79EFDC0F021F062FEE97BF740795889B65B44394088`.
+The original responsibility unit remains in place when a human updates a
+Work's normative Goal/Constraint/Outcome contract. Direction guidance is
+non-normative; a contract amendment is an explicit human-authored complete
+replacement bound to the exact current Work revision. Contract revisions have
+immutable, complete history semantics; unavailable legacy history is not
+reconstructed. Verification remains exact-revision-bound. Normal/Critical
+change only interruption timing, not authoring, contract, history, or
+Verification semantics. This acceptance authorizes this owner-contract landing
+only; implementation, DDL, API, UI, migration, and database actions remain
+separately gated.
 
 **Governance changes (v1.18 → v1.19): AH19 Conversation checkpoint owner × P17 Job authority reconciliation**
 
@@ -675,6 +691,22 @@ Open | Completed | Cancelled
 ```
 
 Waiting、Blocked、Verifying、Running 等尽量由 Execution、Dependency、Inbox、Verification 等事实推导，不作为复杂 canonical status。
+
+Work 的规范 contract 是 Objective、Why、Constraints、Completion
+Expectations 与 Verification Mission 的完整组合。方向指导只改变方法，
+不得改写该 contract；人类规范性修订必须是一个显式、typed 的
+`ContractAmendment`，并提交完整 replacement snapshot，不能从 guidance
+文字推断或做隐式 patch/merge。每次被接受的 Work revision 都对应完整、
+不可变且可审计的 contract snapshot；历史读取以精确 `(WorkId,
+WorkRevision)` 为准。迁移中只有当前 Work 行可证明的快照可标为 legacy
+current-only；更早 revision 不可证明时必须显示不可用，不得从 Inbox、
+Session、事件、Verification 或模型文本重建。
+
+`DirectionGuidance` 与 `ContractAmendment` 都由人类在精确 Workspace→Work
+权限和当前 `WorkRevision` 上提交；stale revision 不 rebase，Work 保持
+Open。两者都使 WorkRevision 恰增一，且每次接受的方向指导也要为新
+revision 保留相同的完整规范快照。normal/critical 不改变以上语义；Critical
+只在既有 P6/P2 边界上追加 quiescence，永不隐式 CancelWork 或 CompleteWork。
 
 Work-bound `Interrupted(RuntimeSafetyStop)`、本设计冻结的 P9 恢复阻断事实，或
 `OutcomeUnknown(ReconciliationRequired(nonempty refs))` 对其精确绑定的
@@ -1374,6 +1406,14 @@ Command 不是事实；Message 到达不表示 Agent 已经理解；Event 描述
 
 `CancelWork` 是治理事实，`StopExecution` 是运行时控制，二者分离。Cancel Work 可以先成为 Canonical Truth，同时相关 Execution 继续完成 quiescence/reconciliation。
 
+Normal Steer 的普通修正可表达为 `DirectionGuidance`，只影响方法和后续
+Context；凡是改变目标、约束、完成条件或 Verification 判据的调整，必须
+另行明确提交完整、human-authored `ContractAmendment`。旧 SteerWork
+`scope="Constraint"` 仅作方向指导兼容解释，不是规范变更权威。Normal 与
+Critical 共用相同的类型、权限、CAS、revision history、receipt 与
+Verification 语义；Critical 的唯一额外行为仍是此处冻结的精确
+Stop/quiescence 路径。
+
 ## 7.4 Inbox
 
 重要输入持久进入 Workspace Inbox。Inbox 表示尚未被目标 Workspace 的 durable
@@ -1678,6 +1718,17 @@ Mission 来源于：
 - domain/tool-derived defaults。
 
 Producer 可以提出强化或修订建议，但不能单方面降低标准。
+这些来源用于建立 Work 的 canonical VerificationMission；一旦 materialize
+到某个 WorkRevision，该 revision 的完整 mission snapshot 即为新的权威，
+不得在每次 StartVerification 时由提示词、message 或 defaults 再合并/改写。
+人类需要变更 outcome/criteria 时必须提交完整 ContractAmendment。
+
+Work 的 canonical `VerificationMission` 由其当前完整 contract 所有。每次新的
+Verification 必须绑定提交时 exact current `WorkRevision` 并从该 revision 的
+canonical mission 建立不可变快照；提示词、Inbox 或 Agent 不能覆盖它。Work
+revision 前移不改写或自动取消已经运行的 Verification：旧 Open Verification
+继续在自身旧 mission/revision 上收集证据并可结论化，旧结果及旧 revision wake
+保留审计，但不得满足新 revision 的 Acceptance / CompleteWork。
 
 ## 9.5 Requirement 与 Method 分离
 
@@ -1986,6 +2037,11 @@ Work 目标与 revision；只有同一 Work/revision 的 canonical Acceptance �
 Work 已 Completed；accepted-but-open 仍显示为 `Open`。Work Detail 不改变
 Workspace Detail 的 Current/Pending Work，也不改变 Current Work view。
 
+Work Detail 及相关的 Verification / Inbox 展示应能识别当前 contract revision、
+其完整快照是否可用，以及旧 Verification/Acceptance 绑定的 revision；不可证明
+的 legacy 历史必须明确不可用。具体查询路由和 DTO 由 P10/P13/P14 owning contracts
+确定，不从 Session 或事件推测历史 contract。
+
 不存在的 Work 与不属于请求 project/workspace 的 Work 返回同一 typed
 NotFound/404，不泄漏目标是否存在或其任何 Work、Acceptance、Verification 内容。
 
@@ -2252,7 +2308,12 @@ Domain Core + Persistence/Event Journal
 - Query / Steer / Stop / Governance Change；
 - Human Override；
 - Intervention Summary 向治理祖先传播；
-- 干预后 Agent 恢复自治。
+- 人类可分别给出只改变方法的 DirectionGuidance，或显式提交完整
+  ContractAmendment；普通文字与旧 `scope="Constraint"` 不隐式更改 canonical
+  VerificationMission；
+- Normal/Critical 的 Work contract、CAS、revision history 和 Verification 语义相同；
+  Critical 仅追加既有 exact Stop/quiescence 行为；
+- 干预后 Agent 恢复自治；旧 revision Verification 不应用于新 Work revision。
 
 无结构性断链。
 

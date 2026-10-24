@@ -1,10 +1,28 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.59\
+**Version:** 1.60\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.58\
+**Supersedes:** v1.59\
 **Date:** 2026-10-24\
-**Depends on:** `Arbor System Design Specification v1.21`
+**Depends on:** `Arbor System Design Specification v1.22`
+
+**Governance changes (v1.59 → v1.60): accepted S2-RDG-01 Work contract revision**
+
+Accepted under `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1` on 2026-10-24;
+fixed proposal SHA-256
+`C878BBF615F92ED43125C79EFDC0F021F062FEE97BF740795889B65B44394088`.
+This owner landing freezes typed `DirectionGuidance` versus explicit
+human-authored `ContractAmendment`, full replacement only, exact WorkRevision
+CAS, immutable revision history, receipt/replay identity, and the existing
+Normal/Critical split. Work contract history is a logical append-only
+WorkId/WorkRevision ledger; its physical table, encoding, Effect signatures,
+wire version number, DDL, DTOs, and UI routes remain owned implementation
+details, not decisions made by this landing. P1 preserves exact old receipt
+tuple behavior; P6 shares the same contract mutation for Normal/Critical; P8
+uses the exact canonical mission for new Verification and preserves old
+revision snapshots/wakes. Design acceptance authorizes owner-document landing
+only: no implementation, migration, test, provider, deployment, or database
+write is authorized here.
 
 **Governance changes (v1.58 → v1.59): S3 AnyProducer producer evidence and settled-wait visibility**
 
@@ -2505,7 +2523,7 @@ WorkRevision
 DependencyRevision
 ```
 
-`WorkRevision` 是 `Work` identity 内部单调递增的 semantic revision：Work 创建时从初始 revision 开始，`RefineWork` / semantic `SteerWork` 使其递增；`Deliverable.sourceWorkRevision`、`Verification.targetWorkRevision`、`Acceptance.targetWorkRevision` 都用它绑定具体 Work version。`DependencyRevision` 同理用于 `Dependency.revision` / `targetDependencyRevision` / `satisfiedAtDependencyRevision`。
+`WorkRevision` 是 `Work` identity 内部单调递增的 semantic revision：Work 创建时从初始 revision 开始；每个被接受的 `DirectionGuidance` 或 `ContractAmendment`、以及其他语义 `RefineWork` 都使其恰增一。`Deliverable.sourceWorkRevision`、`Verification.targetWorkRevision`、`Acceptance.targetWorkRevision` 都用它绑定具体 Work version。`DependencyRevision` 同理用于 `Dependency.revision` / `targetDependencyRevision` / `satisfiedAtDependencyRevision`。
 
 `WorkRevision` / `DependencyRevision` 是 scoped ordinal / branded value，**不是** Entity Identity：不加入 §2.1 Typed IDs，也不加 prefix。
 
@@ -2599,6 +2617,15 @@ Open → Cancelled
 Completed / Cancelled 默认 terminal。
 
 Producer 不得自行削弱 Objective / CompletionExpectation / required VerificationMission。
+
+Work contract 是 `Objective`、`Why`、完整 `Constraints`、
+`CompletionExpectation` 与结构化 `VerificationMission` 的完整组合。
+`DirectionGuidance` 只改变方法，完整规范 contract 保持不变；
+`ContractAmendment` 是 human-authored、针对 exact 当前 WorkRevision 的完整
+replacement snapshot，不支持 patch/merge、省略字段继承、从自由文本推断，
+也不能由 Agent `RefineWork` 或 Claim Completion 冒充。两种已接受 Steer
+操作都在同一 Work identity 内产生新 revision；Work 保持 Open。Revision
+前移不改写较早的 Work contract、Verification、Acceptance 或其事件/receipt。
 
 ## 3.4 Execution
 
@@ -3408,6 +3435,7 @@ WorkRefined
 WorkCompleted
 WorkCancelled
 WorkSteered
+WorkAmended
 
 DependencyDeclared
 DependencySatisfied
@@ -5687,6 +5715,19 @@ CREATE INDEX assign_work_binding_attention_target
   ON assign_work_binding_attention_facts(project_id, target_workspace_id, first_detected_at);
 ```
 
+Work Revision History is a required logical persistence capability: every
+WorkRevision has one complete immutable Work contract snapshot keyed by exact
+`(WorkId, WorkRevision)`, with author/provenance, source command, time, and
+canonical digest sufficient for exact read and audit. AssignWork creates the
+initial snapshot; every semantic Work revision writer, including RefineWork,
+DirectionGuidance and ContractAmendment, retains its corresponding full
+snapshot. Migration may backfill only the exact current Work row as
+`LegacyCurrentSnapshot` / history unavailable; earlier revisions that cannot
+be proven remain unavailable and are never reconstructed from Inbox, Session,
+events, summaries, model text, or Verification tasks. This is a semantic
+storage guarantee only: no table name, column set, encoding, DDL, or migration
+number is frozen by S2-RDG-01.
+
 `authority_evidence_json` is the versioned full typed union snapshot. Its
 variant check and composite foreign keys enforce project consistency and the
 same-project direct-child target→Parent edge. Transactional validation checks
@@ -7250,7 +7291,7 @@ normalizedRegion
 | Primary Session | ReplacePrimarySession | PrimarySessionReplaced | Workspace + SessionRepository | application | no Active Main Execution |
 | Work assignment | AssignWork | WorkAssigned | WorkRepository | application | Work belongs to target Workspace |
 | Current Work | SelectCurrentWork | CurrentWorkChanged | Workspace + WorkRepository | application | ≤1 current; target Open |
-| Work semantic revision | RefineWork / SteerWork | WorkRefined / WorkSteered | WorkRepository | application | canonical requirement change increments revision |
+| Work semantic revision | RefineWork / SteerWork(DirectionGuidance or ContractAmendment) | WorkRefined / versioned WorkSteered or WorkAmended | WorkRepository + logical Work Revision History | application | exact authority + current WorkRevision CAS; complete immutable snapshot; direction guidance cannot change contract; amendment is explicit human complete replacement |
 | Work completion | CompleteWork | WorkCompleted | Work + Acceptance + Verification repositories | application | PASS + Acceptance bind current Work revision |
 | Work cancellation | CancelWork | WorkCancelled | WorkRepository | application | only Open → Cancelled |
 | Dependency | DeclareDependency / SatisfyDependency | DependencyDeclared / DependencySatisfied | DependencyRepository | application | satisfaction binds current dependency revision |
@@ -7346,13 +7387,30 @@ ReactivateRetiredWorkspace
 | Current | Operation | Preconditions | Next |
 |---|---|---|---|
 | absent | AssignWork | valid Workspace + authority | Open |
-| Open | RefineWork / semantic SteerWork | authority; producer cannot weaken protected upstream requirements | Open, revision++ |
+| Open | RefineWork | producer authority; producer cannot weaken protected upstream requirements | Open, revision++; retain complete immutable contract snapshot |
+| Open | SteerWork(DirectionGuidance) | authenticated HumanInput; exact Work/Workspace authority; current expected WorkRevision | Open, revision++; canonical contract unchanged; retain complete snapshot for the new revision |
+| Open | SteerWork(ContractAmendment) | authenticated HumanInput; exact Work/Workspace authority; current expected WorkRevision; complete replacement valid | Open, revision++; replace complete canonical contract and retain its immutable snapshot |
 | Open | CompleteWork | current-revision PASS Verification + current-revision Acceptance | Completed; if current, clear `workspace.currentWorkId` atomically |
 | Open | CancelWork | governance authority | Cancelled; if current, clear `workspace.currentWorkId` atomically; request quiescence of focused active Execution |
 | Completed | any lifecycle mutation | — | **illegal** |
 | Cancelled | any lifecycle mutation | — | **illegal** |
 
 `Current/Pending/Blocked/Verifying/Running` 都是 relation/projection，不进入 Work lifecycle。
+
+Legacy SteerWork schema-v1 inputs, including `scope="Constraint"`, are
+DirectionGuidance only. ContractAmendment requires a new SteerWork schema
+version and an explicit discriminator; its V1 authoring form is a complete
+replacement, not patch/merge or omitted-field inheritance. P1 owns the exact
+versioned receipt compatibility; no existing receipt, event, or Work snapshot
+is relabeled or rewritten.
+
+StartVerification uses the canonical VerificationMission for the exact
+observed current WorkRevision. Caller/model/Inbox text cannot replace that
+mission. An old Open Verification remains immutable and may conclude on its
+old mission/revision; its wake remains exact to the old `(WorkId,
+targetWorkRevision)`, and its PASS/FAIL/UNKNOWN cannot satisfy current-revision
+Acceptance or CompleteWork. Work revision advance does not cancel or relabel
+the old Verification.
 
 ### Execution
 

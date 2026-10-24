@@ -1,8 +1,8 @@
 # Arbor 核心场景定义（S1–S4）
 
-**Version:** 1.6
-**Status:** FROZEN — Minimal Architecture Convergence and Native OS Sandbox governance addendum
-**Date:** 2026-10-19
+**Version:** 1.7
+**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox and accepted S2-RDG-01 governance addenda
+**Date:** 2026-10-24
 **Depends on:** `Arbor Problem Definition & Goals v1.3`
 **Owns:** S1–S4 的参与者、端到端行为、分支、异常与恢复的用户可感知语义  
 **Does not own:** Domain Entity、Runtime/module、数据库、Command/Event、状态机、接口、技术实现
@@ -545,6 +545,8 @@ Agent 吸收纠错后继续自行：
 Main Agent 处理第一层影响，深层工作自行吸收与自己相关的变化。
 
 如果变化只是目标、约束或接口调整，原责任单元继续存在并更新其工作；如果变化已经改变“谁长期负责什么”，系统不得仅为了方便把一个长期责任节点静默搬到新的 Parent。应形成正式的责任交接：建立新的承接责任单元、交接必要事实/产物/未完成事项，再让旧责任单元退出日常工作。历史关系仍然可追踪。
+
+局部纠错必须区分两种不同意图：只要求 Agent 改变方法的方向指导，以及明确改变 Work 必须产出什么、约束或验证判据的 Work contract 修订。普通文字、包括旧版 `scope="Constraint"`，不会隐式变成规范性修订。需要改变规范性目标或完成条件时，人类必须在精确当前 Work revision 上提交完整、明确的 contract replacement；不能由 Agent 从自由文本补齐、推断或弱化。Direction guidance 与 contract amendment 都保留原责任单元，Normal 不抢占，Critical 才按现有强中断路径处理；两者之后都由 Agent 自主继续。
 
 ## S2.5 场景原则
 
@@ -1107,6 +1109,23 @@ If the timestamp or stored binding-hash format is corrupt, the read fails
 closed through the existing corruption path rather than inventing public
 Attention identity or time. Existing provider-unavailable fact Attention is
 unchanged.
+
+## Governance addendum — S2 Work contract revision (v1.7)
+
+Accepted under `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1` on 2026-10-24;
+fixed proposal SHA-256
+`C878BBF615F92ED43125C79EFDC0F021F062FEE97BF740795889B65B44394088`.
+Direction guidance changes method only and cannot alter Work acceptance
+criteria. A normative Goal/Constraint/Outcome change is a separate typed,
+human-authored `ContractAmendment` using a complete replacement snapshot;
+free text and legacy `scope="Constraint"` are never promoted implicitly.
+The change remains on the same responsibility unit and Work, advances its
+exact revision, and preserves independent Verification/Parent Acceptance.
+Normal and Critical apply the same amendment semantics; Critical additionally
+uses the existing Stop/quiescence behavior. Old Verification remains bound to
+its old mission and revision, and its result cannot accept or complete the new
+revision. The acceptance is design-only: it does not authorize implementation,
+migration, UI, Provider, or database activity.
 
 The user journey is the same active Execution throughout. A missing/stale
 policy pauses the exact already-persisted process-capable invocation before

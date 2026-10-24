@@ -9,6 +9,19 @@
 `CreateProject`, `CreateChildWorkspace`, `AssignWork` (DID §11 P1). All other
 commands close in their owning phase.
 
+**Accepted S2-RDG-01 command identity constraint (DID v1.59):** SteerWork
+DirectionGuidance and ContractAmendment are distinct semantic operations.
+Legacy SteerWork schema-v1 payloads are interpreted only as DirectionGuidance;
+ContractAmendment requires an explicit discriminator under a new command schema
+version. Its exact version label/wire representation remains an implementation
+contract detail. The existing P1 receipt tuple and strict decoder remain the
+only replay boundary: exact same-version/same-fingerprint replay returns the
+original receipt, while a changed operation, expected revision, provenance or
+complete replacement snapshot under the same CommandId is
+IdempotencyConflict. No receipt rewrite, schema relabel, or alternate
+fingerprint is authorized by this addendum. The external codec's versioning
+choice remains with its owning contract and is not fixed here.
+
 ## 2. Failure vocabulary (DID §6A.15)
 
 ```text

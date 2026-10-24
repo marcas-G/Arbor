@@ -1,6 +1,6 @@
 # P8 — 03 Chain Consumers & Wake (DRAFT for contract review)
 
-**Authority:** DID v1.11 §6A.6:1897-1906, §3.4:1116, §8.16, §5.4, §8.18; v1.9 G4; §12.2:3850-3852; S1 步骤 9; P5 `04` §3（交接点）, P7 wake-sink 先例。
+**Authority:** DID v1.59 §3.3/§5.4/§8.18/§12.11; v1.11 §6A.6/§3.4; v1.9 G4; S1 步骤 9; S2-RDG-01 accepted revision binding; P5 `04` §3（交接点）, P7 wake-sink 先例。
 **Status:** DRAFT (first draft for contract review; GQ4/GQ5 decided per v1.11)。
 
 ## 1. Consumer A：CompletionClaimed → StartVerification
@@ -54,6 +54,14 @@ ConcludeVerification 提交事务内（照 P7 `06` §2 SatisfyDependency 先例�
 ```
 
 - `VerificationChanged` WakeCondition 形状（v1.11 G2 已裁决）：work-level `{ workId, targetWorkRevision }`；P0 scheduler.ts 旧形 `{verificationId, observedRevision}` 按 M-1 迁移（类型修改 + 持久 WaitSpec 行迁移 + P2/P3 回归）；refine → revision 前移 → 旧 wait 自然失效（与 DependencyChanged 同构）。
+
+**Accepted S2-RDG-01 revision behavior (DID v1.59):** a Verification opened
+before Work revision advance remains bound to its immutable old mission and
+targetWorkRevision. Its conclusion releases/wakes only the exact old
+`(WorkId, targetWorkRevision)` condition; it does not release or satisfy a
+new-revision Wait, Acceptance, or CompleteWork. The old Verification is not
+automatically cancelled or relabelled. New verification starts only from the
+canonical mission of the exact current Work revision.
 
 ## 4. Must Not Decide
 
