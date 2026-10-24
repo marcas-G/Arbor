@@ -6,7 +6,7 @@ import type {
   CommandGatewayService,
   GatewayEnvelope,
 } from "@arbor/application";
-import { newUuid7 } from "@arbor/application";
+import { newUuid7, semanticRequestFingerprint } from "@arbor/application";
 import {
   CommandId,
   DecisionId,
@@ -61,12 +61,14 @@ type FakeReceipt =
         readonly _tag: "Committed";
         readonly result: unknown;
       };
+      readonly semanticRequestFingerprint?: string;
     }
   | {
       readonly resolution: {
         readonly _tag: "TerminalRejected";
         readonly error: unknown;
       };
+      readonly semanticRequestFingerprint?: string;
     };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -94,7 +96,7 @@ const toStoredCommandResolution = (
         commandId: parse(CommandId)(commandId),
         projectId,
         semanticRequestFingerprint: parse(SemanticRequestFingerprint)(
-          "ah10-test-fingerprint",
+          receipt.semanticRequestFingerprint ?? "ah10-test-fingerprint",
         ),
         schemaVersion: "1",
         fingerprintAlgorithmVersion: 1,
@@ -108,7 +110,7 @@ const toStoredCommandResolution = (
         commandId: parse(CommandId)(commandId),
         projectId,
         semanticRequestFingerprint: parse(SemanticRequestFingerprint)(
-          "ah10-test-fingerprint",
+          receipt.semanticRequestFingerprint ?? "ah10-test-fingerprint",
         ),
         schemaVersion: "1",
         fingerprintAlgorithmVersion: 1,
@@ -359,6 +361,9 @@ const consumerWork = {
   readonly lifecycle: "Open";
   readonly revision: WorkRevision;
 };
+const boundDependencyConsumerWorkId = parse(WorkId)(
+  "wrk_018f2b3c-4d5e-7abc-8def-0123456789a1",
+);
 
 const dependencyAction = {
   _tag: "DeclareDependency" as const,
@@ -1059,6 +1064,92 @@ describe("AH10 receipt-first DeclareDependency takeover", () => {
     expect(calls).toEqual([]);
   });
 
+  it("replays an exact current receipt before consulting changed producer evidence", async () => {
+    const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+    const commandId = `cmd_${newUuid7("declare-dependency-command", occurrence)}`;
+    const dependencyId = `dep_${newUuid7("declare-dependency", occurrence)}`;
+    const payload = {
+      dependencyId,
+      consumerWorkId: boundDependencyConsumerWorkId,
+      producerBinding: dependencyAction.producerBinding,
+      expectedDeliverable: {
+        kind: dependencyAction.expectedDeliverable.kind,
+        requiredArtifactRoles: [],
+      },
+      expectedConsumerWorkRevision: consumerWork.revision,
+      revision: 0,
+    };
+    const fingerprint = semanticRequestFingerprint({
+      commandType: "DeclareDependency",
+      projectId,
+      actor: principal,
+      schemaVersion: "1",
+      payload,
+    });
+    const receipts = new Map([
+      [
+        commandId,
+        {
+          resolution: {
+            _tag: "Committed" as const,
+            result: {
+              dependencyId,
+              consumerWorkId: boundDependencyConsumerWorkId,
+              state: "Unsatisfied" as const,
+              revision: 0,
+            },
+          },
+          semanticRequestFingerprint: fingerprint,
+        },
+      ],
+    ]);
+    const dependencyRows = new Map([
+      [
+        dependencyId,
+        {
+          dependencyId,
+          consumerWorkId: boundDependencyConsumerWorkId,
+          producerBinding: dependencyAction.producerBinding,
+          expectedDeliverable: payload.expectedDeliverable,
+          revision: 0,
+          state: "Unsatisfied",
+          satisfiedByDeliverableId: null,
+          satisfiedAtDependencyRevision: null,
+        },
+      ],
+    ]);
+    let evidenceChecks = 0;
+    const gateway = {
+      execute: () => Effect.fail(new Error("unexpected gateway call")),
+    } as unknown as CommandGatewayService;
+    const handler = makeDependencyHandler(
+      gateway,
+      receipts,
+      dependencyRows,
+      () => {
+        evidenceChecks += 1;
+        return Effect.succeed(false);
+      },
+    );
+
+    const result = await runControlHandler(
+      handler,
+      dependencyAction,
+      0,
+      dependencyInvocation,
+    );
+    expect(result).toMatchObject({
+      _tag: "Accepted",
+      outcome: {
+        _tag: "Observation",
+        observation: {
+          text: `DependencyDeclared(${dependencyId}, Unsatisfied)`,
+        },
+      },
+    });
+    expect(evidenceChecks).toBe(0);
+  });
+
   it("uses a new CommandId after gen0 FencingRejected", async () => {
     const receipts = new Map<string, unknown>();
     const dependencyRows = new Map<string, unknown>();
@@ -1142,6 +1233,7 @@ describe("AH10 receipt-first DeclareDependency takeover", () => {
     const receipts = new Map<string, unknown>();
     const dependencyRows = new Map<string, unknown>();
     const calls: string[] = [];
+    let evidenceChecks = 0;
     const gateway = {
       execute: (envelope: GatewayEnvelope<unknown>) => {
         const commandId = String(envelope.commandId);
@@ -1178,7 +1270,15 @@ describe("AH10 receipt-first DeclareDependency takeover", () => {
         return Effect.succeed(committed);
       },
     } as unknown as CommandGatewayService;
-    const handler = makeDependencyHandler(gateway, receipts, dependencyRows);
+    const handler = makeDependencyHandler(
+      gateway,
+      receipts,
+      dependencyRows,
+      () => {
+        evidenceChecks += 1;
+        return Effect.succeed(evidenceChecks === 1);
+      },
+    );
 
     await runControlHandler(handler, dependencyAction, 0, dependencyInvocation);
     const dependencyId = [...dependencyRows.keys()][0];
@@ -1205,6 +1305,7 @@ describe("AH10 receipt-first DeclareDependency takeover", () => {
       },
     });
     expect(calls).toHaveLength(1);
+    expect(evidenceChecks).toBe(1);
   });
 
   it("fails closed when a Committed receipt has no canonical Dependency row", async () => {

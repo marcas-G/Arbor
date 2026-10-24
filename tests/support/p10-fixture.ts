@@ -3,10 +3,14 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   AcceptanceRepositoryLive,
   ClockLive,
+  CommandStoreLive,
+  DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
   EvidenceRepositoryLive,
   ExecutionRepositoryLive,
+  FormationFulfillmentStoreLive,
+  FormationProposalStoreLive,
   IdGeneratorLive,
   InboxProjectionStoreLive,
   layer,
@@ -15,6 +19,7 @@ import {
   makeRecoveryAttentionFactStoreLive,
   P8_MIGRATIONS,
   P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
+  ProjectRepositoryLive,
   runMigrations,
   splitStatements,
   TransactionPortLive,
@@ -23,6 +28,9 @@ import {
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
 } from "../../adapters/persistence-sqlite/src/index.js";
+import type { AnyProducerAttentionDependencies } from "../../apps/single-workspace/src/any-producer-attention.js";
+import { listAnyProducerSettledWaits } from "../../apps/single-workspace/src/any-producer-attention.js";
+import type { AnyProducerEvidenceDependencies } from "../../apps/single-workspace/src/any-producer-evidence.js";
 import { DependencyAwareRunnableWorkSourceLive } from "../../apps/single-workspace/src/runnable-source-p7.js";
 import type {
   DomainEvent,
@@ -39,11 +47,16 @@ import {
 } from "../../packages/domain/dist/index.js";
 import {
   AcceptanceRepository,
+  CommandStore,
+  DeliverableRepository,
   DependencyRepository,
   DomainEventJournal,
   EvidenceRepository,
   ExecutionRepository,
+  FormationFulfillmentStore,
+  FormationProposalStore,
   MessageStore,
+  ProjectRepository,
   RunnableWorkSource,
   TransactionPort,
   VerificationRepository,
@@ -118,11 +131,16 @@ export const makeP10App = (
     : undefined;
   const stores = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
+    Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(DependencyRepositoryLive, infra),
+    Layer.provide(DeliverableRepositoryLive, infra),
+    Layer.provide(FormationProposalStoreLive, infra),
+    Layer.provide(FormationFulfillmentStoreLive, infra),
+    Layer.provide(CommandStoreLive, infra),
     NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(EvidenceRepositoryLive, infra),
@@ -185,6 +203,11 @@ export const makeP10Deps = (): Effect.Effect<
   | ExecutionRepository
   | WorkWaitStore
   | DependencyRepository
+  | ProjectRepository
+  | DeliverableRepository
+  | FormationProposalStore
+  | FormationFulfillmentStore
+  | CommandStore
   | VerificationRepository
   | EvidenceRepository
   | AcceptanceRepository
@@ -200,6 +223,11 @@ export const makeP10Deps = (): Effect.Effect<
     const executions = yield* ExecutionRepository;
     const waits = yield* WorkWaitStore;
     const dependencies = yield* DependencyRepository;
+    const projects = yield* ProjectRepository;
+    const deliverables = yield* DeliverableRepository;
+    const proposals = yield* FormationProposalStore;
+    const fulfillments = yield* FormationFulfillmentStore;
+    const commands = yield* CommandStore;
     const verifications = yield* VerificationRepository;
     const evidence = yield* EvidenceRepository;
     const acceptances = yield* AcceptanceRepository;
@@ -435,6 +463,33 @@ export const makeP10Deps = (): Effect.Effect<
       listOpenVerifications: () => inTx(verifications.listOpen()),
       listUnsatisfiedDependencies: (projectId) =>
         inTx(dependencies.listUnsatisfiedByProject(projectId)),
+      listAnyProducerSettledWaits: (projectId) =>
+        listAnyProducerSettledWaits(
+          {
+            evidence: {
+              projects,
+              workspaces,
+              listWorkspaceIdsByProject: (targetProjectId) =>
+                Effect.map(
+                  sql.unsafe<{ readonly workspace_id: string }>(
+                    "SELECT workspace_id FROM workspaces WHERE project_id = ? ORDER BY workspace_id",
+                    [targetProjectId],
+                  ),
+                  (rows) => rows.map((row) => row.workspace_id as WorkspaceId),
+                ),
+              works,
+              proposals,
+              fulfillments,
+              deliverables,
+              tx,
+            } satisfies AnyProducerEvidenceDependencies,
+            executions,
+            waits,
+            dependencies,
+            commandReceipts: commands,
+          } satisfies AnyProducerAttentionDependencies,
+          projectId,
+        ).pipe(Effect.mapError(projectionReadError)),
       findDependency: (dependencyId) =>
         inTx(dependencies.findById(dependencyId as never)),
       readEvents,
