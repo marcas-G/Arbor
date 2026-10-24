@@ -6,13 +6,16 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { hostname } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateManifest } from "./check-manifest.mjs";
+import { buildResumePlan, qualifiesCompleteCoverage } from "./resume-utils.mjs";
 import { buildProcessSpec, resolvePnpmInvocation } from "./runner-utils.mjs";
 import {
   collectEnvironmentRedactionValues,
@@ -26,6 +29,7 @@ const manifestBytes = readFileSync(manifestPath);
 const manifest = JSON.parse(manifestBytes.toString("utf8"));
 const profileName = process.argv[2];
 const validateOnly = process.argv.includes("--validate-only");
+const resumeOptionIndex = process.argv.indexOf("--resume-from");
 
 function fail(message) {
   console.error(`test runner: ${message}`);
@@ -47,8 +51,34 @@ const runId = `${new Date().toISOString().replaceAll(/[:.]/g, "-")}-${process.pi
 const resultDirectory = join(root, ".test-results", runId);
 const resultsRoot = dirname(resultDirectory);
 mkdirSync(resultsRoot, { recursive: true });
+let resumeSource = null;
+if (resumeOptionIndex >= 0) {
+  const supplied = process.argv[resumeOptionIndex + 1];
+  if (!supplied || supplied.startsWith("--"))
+    fail("--resume-from requires a .test-results run directory");
+  const candidate = resolve(root, supplied);
+  const stats = statSync(candidate, { throwIfNoEntry: false });
+  if (!stats?.isDirectory())
+    fail(`resume directory does not exist: ${supplied}`);
+  const realResultsRoot = realpathSync(resultsRoot);
+  const realCandidate = realpathSync(candidate);
+  const resultRelative = relative(realResultsRoot, realCandidate);
+  if (
+    isAbsolute(resultRelative) ||
+    resultRelative === ".." ||
+    resultRelative.startsWith("..\\") ||
+    resultRelative.startsWith("../")
+  ) {
+    fail("--resume-from must name a directory inside .test-results");
+  }
+  const previousResult = parseJson(join(realCandidate, "result-manifest.json"));
+  if (!previousResult)
+    fail("resume directory has no readable result-manifest.json");
+  resumeSource = { directory: realCandidate, result: previousResult };
+}
 const startedAt = new Date();
 const selectedFiles = profile.groups.flatMap((group) => manifest.groups[group]);
+let executionFiles = [...selectedFiles];
 const groups = [];
 const manifestSha256 = createHash("sha256").update(manifestBytes).digest("hex");
 const result = {
@@ -69,6 +99,21 @@ const result = {
     ).toISOString(),
   },
   selectedFiles,
+  executionFiles,
+  passedFiles: [],
+  resume: resumeSource
+    ? {
+        sourceDirectory: resumeSource.directory,
+        sourceRunId: resumeSource.result.runId ?? null,
+        sourceGitSha: resumeSource.result.gitSha ?? null,
+        compatible: null,
+        reason: "pending",
+        inheritedBuild: false,
+        inheritedFiles: [],
+        invalidatedFiles: [],
+        ignoredOrchestrationChanges: [],
+      }
+    : null,
   groups,
   current: null,
   signal: null,
@@ -113,6 +158,10 @@ function summaryMarkdown() {
     `- Git SHA: ${result.gitSha ?? "pending"}${result.gitDirty ? " (dirty at start)" : ""}`,
     `- Complete coverage: ${result.completeCoverage}`,
     `- Selected test files: ${selectedFiles.length}`,
+    `- Executed test files: ${result.executionFiles.length}`,
+    `- Inherited passed files: ${result.resume?.inheritedFiles.length ?? 0}`,
+    `- Resume source: ${result.resume?.sourceDirectory ?? "none"}`,
+    `- Resume compatibility: ${result.resume ? `${result.resume.compatible} (${result.resume.reason})` : "not requested"}`,
     `- Exit code: ${result.exitCode ?? "pending"}`,
     `- Signal: ${result.signal ?? "none"}`,
     `- Current group/command: ${result.current ? `${result.current.group} / ${result.current.command.join(" ")} (elapsed ${result.current.elapsedMs ?? 0} ms; heartbeat ${result.current.lastHeartbeatAt ?? "pending"})` : "none"}`,
@@ -418,7 +467,9 @@ async function captureMetadata(group, label, executable, args) {
 }
 
 async function runTestGroup(groupName) {
-  const files = manifest.groups[groupName];
+  const groupInventory = new Set(manifest.groups[groupName]);
+  const files = executionFiles.filter((path) => groupInventory.has(path));
+  if (files.length === 0) return;
   const runner = files.every((path) => path.endsWith(".spec.ts"))
     ? "playwright"
     : groupName === "quick"
@@ -573,6 +624,24 @@ function finalize() {
   stopCurrentHeartbeat();
   const finishedAt = new Date();
   result.groups = groupRunSummary();
+  const passedFiles = new Set(result.resume?.inheritedFiles ?? []);
+  for (const group of groups) {
+    if (group.exitCode === 0) {
+      for (const file of group.files) passedFiles.add(file);
+      continue;
+    }
+    if (group.runner !== "vitest-functional" && group.runner !== "vitest-unit")
+      continue;
+    const progress = parseJson(
+      join(resultDirectory, `${safe(group.name)}-progress.json`),
+    );
+    for (const file of progress?.files ?? []) {
+      if (file.status !== "passed") continue;
+      const path = String(file.relativeFile ?? file.file).replaceAll("\\", "/");
+      if (selectedFiles.includes(path)) passedFiles.add(path);
+    }
+  }
+  result.passedFiles = [...passedFiles].sort();
   if (pendingSignal) {
     result.status = "interrupted";
     result.signal = pendingSignal;
@@ -581,15 +650,15 @@ function finalize() {
   } else if (result.status === "running") {
     result.status = result.exitCode === 0 ? "passed" : "failed";
   }
-  result.completeCoverage =
-    result.status === "passed" &&
-    profile.completeCoverage === true &&
-    groups.some(
-      (group) => group.name === "functionalVitest" && group.exitCode === 0,
-    ) &&
-    groups.some(
-      (group) => group.name === "functionalUi" && group.exitCode === 0,
-    );
+  result.completeCoverage = qualifiesCompleteCoverage({
+    status: result.status,
+    profileCompleteCoverage: profile.completeCoverage,
+    selectedFiles,
+    passedFiles: result.passedFiles,
+    buildRequired: profile.build === true,
+    inheritedBuild: result.resume?.inheritedBuild === true,
+    groups,
+  });
   result.finishedAt = finishedAt.toISOString();
   result.durationMs = finishedAt.getTime() - startedAt.getTime();
   result.current = result.current
@@ -627,10 +696,69 @@ try {
     );
     result.environment.pnpm = pnpmVersion;
   }
+  if (!stopRequested && resumeSource) {
+    const previousProgress = parseJson(
+      join(resumeSource.directory, "functionalVitest-progress.json"),
+    );
+    const changedOutput = await captureMetadata(
+      "metadata",
+      "git-diff-resume-base",
+      "git",
+      [
+        "diff",
+        "--name-only",
+        "--diff-filter=ACDMRTUXB",
+        resumeSource.result.gitSha,
+        result.gitSha,
+      ],
+    );
+    const changedPaths = changedOutput
+      .split(/\r?\n/u)
+      .map((path) => path.trim().replaceAll("\\", "/"))
+      .filter(Boolean);
+    const groupFiles = Object.fromEntries(
+      profile.groups.map((groupName) => [
+        groupName,
+        manifest.groups[groupName],
+      ]),
+    );
+    const plan = buildResumePlan({
+      profileName,
+      manifestSha256,
+      selectedFiles,
+      groupFiles,
+      previousResult: resumeSource.result,
+      previousVitestProgress: previousProgress,
+      changedPaths,
+      currentGitDirty: result.gitDirty,
+    });
+    executionFiles = plan.executionFiles;
+    result.executionFiles = [...executionFiles];
+    result.resume = {
+      ...result.resume,
+      compatible: plan.compatible,
+      reason: plan.reason,
+      inheritedBuild: plan.inheritBuild,
+      inheritedFiles: plan.inheritedFiles,
+      invalidatedFiles: plan.invalidatedFiles,
+      ignoredOrchestrationChanges: plan.ignoredOrchestrationChanges,
+      changedPaths,
+    };
+    console.log(
+      plan.compatible
+        ? `Resume accepted: inherited ${plan.inheritedFiles.length}; executing ${executionFiles.length}.`
+        : `Resume rejected (${plan.reason}); executing the full ${executionFiles.length} files.`,
+    );
+  }
   if (!stopRequested) result.current = null;
   persistManifest();
 
-  if (profile.build && !stopRequested && result.status === "running")
+  if (
+    profile.build &&
+    result.resume?.inheritedBuild !== true &&
+    !stopRequested &&
+    result.status === "running"
+  )
     await runBuild();
   if (profile.webTypecheck && !stopRequested && result.status === "running") {
     const group = {
