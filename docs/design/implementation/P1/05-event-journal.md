@@ -1,6 +1,6 @@
 # P1 — 05 Event Journal
 
-**Authority:** DID v1.6 §2.3, §5.1–§5.4, §9.9
+**Authority:** DID v1.59 §2.3/§5.3/§9.3; DID v1.6 §5.1–§5.4/§9.9
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Closes:** P1-DG-06 (sequence scope, `eventVersion` policy, offset atomicity).
 
@@ -138,7 +138,7 @@ registry below; no EventVersion=2 or upcast is introduced for it.
 The accepted F18 Verification v2 decision supersedes the global numeric
 reader ceiling above for all new implementations and writes. The authoritative
 capability is the exact `(eventType, eventVersion)` pair. `EVENT_CATALOG` is a
-closed registry and must equal the following 57 event names exactly:
+closed registry and must equal the following 58 event names exactly:
 
 ```text
 ProjectCreated, ProjectPolicyChanged, ProjectRenamed, ProjectClosed,
@@ -146,7 +146,7 @@ WorkspaceCreated, WorkspaceResourceActivationChanged, ResponsibilityChanged,
 ResourceBoundaryChanged, ResourceOwnershipChanged, WorkspacePolicyChanged,
 WorkspaceRetired, WorkspaceLineageRecorded, PrimarySessionReplaced,
 WorkAssigned, CurrentWorkChanged, WorkRefined, WorkCompleted, WorkCancelled,
-WorkSteered, WorkBlockerResolved, WorkBlockerSuperseded, DependencyDeclared,
+WorkSteered, WorkAmended, WorkBlockerResolved, WorkBlockerSuperseded, DependencyDeclared,
 DependencySatisfied, DependencyContractRevised, DependencyWithdrawn,
 DependencyMarkedUnfulfillable, DeadlockAttentionRequested,
 ReconciliationEscalated, AssignWorkTargetBindingEscalated,
@@ -163,9 +163,17 @@ ControlApprovalResolved, ExecutableApprovalRequested,
 ExecutableApprovalResolved, VerificationConcluded
 ```
 
+Accepted S2-RDG-01 adds the distinct versioned `WorkAmended` event for a
+human-authored Work `ContractAmendment`; `WorkSteered` v1 remains the
+DirectionGuidance event. The S2 acceptance does not define a new payload
+field set or alter historical event bytes; any payload schema is frozen by its
+owning event contract before implementation.
+
 The only legal new writer pair for `VerificationConcluded` is v2. Its strict
-historical v1 pair remains reader-only. Each of the other 56 names has only
-the v1 writer and reader pair. There is no default version. A writer validates
+historical v1 pair remains reader-only. `WorkAmended` has only the v1 writer
+and reader pair; the new event does not version or alter historical
+`WorkSteered` v1. Each of the other 56 names has only the v1 writer and reader
+pair. There is no default version. A writer validates
 the exact pair before sequence allocation or event insertion; an unsupported
 new pair is a writer defect and leaves no journal mutation. A reader validates
 exact membership before decoding. Unknown event type v1, any non-Verification

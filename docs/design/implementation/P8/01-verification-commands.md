@@ -1,6 +1,6 @@
 # P8 — 01 Verification / Acceptance Commands
 
-**Authority:** DID v1.10 §3.5/§3.6/§4.2/§5.3/§12.10/§12.11 (Work + Verification truth tables), §12.8 C7; SD v1.3 §9.1/§9.6/§9.7; 不变量 22/23/49; P0 domain（verification.ts/work.ts/dependency.ts Acceptance 冻结实现）。
+**Authority:** DID v1.59 §3.3/§3.6/§4.2/§5.3/§12.10/§12.11 (Work + Verification truth tables), §12.8 C7; SD v1.22 §3.4/§9.1/§9.4/§9.6/§9.7; 不变量 22/23/49; P0 domain（verification.ts/work.ts/dependency.ts Acceptance 冻结实现）。
 **Status:** FROZEN — DID v1.27 VDC + Verifier Execution Settlement addenda.
 
 FT-DG-03: registered strict codecs and typed internal semantic validators
@@ -301,3 +301,21 @@ OrphanConclusionAuthority   { projectId, workId, verificationId, expectedWorkRev
 - No P7 satisfaction/质量正交破坏（v1.10 G2）。
 - No evidence domain event、No new WakeCondition/WakeReason。
 - No Environment change 生产（P11）；No Attention 呈现（P10）。
+
+## Accepted S2-RDG-01 Work revision / Verification binding (DID v1.59)
+
+Accepted token `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1`, proposal SHA-256
+`C878BBF615F92ED43125C79EFDC0F021F062FEE97BF740795889B65B44394088`.
+Every new Verification is created from the canonical `VerificationMission`
+for the exact current WorkRevision. A caller/model/Inbox value cannot override
+the canonical mission; the exact API may either carry a value that is checked
+against that source or use a separately versioned owner contract. Once
+created, `missionSnapshot` and `targetWorkRevision` are immutable. An old Open
+Verification may continue collecting evidence and conclude on its old
+snapshot/revision; its conclusion/wake is only for that old
+`(WorkId, targetWorkRevision)`. It cannot satisfy Acceptance or CompleteWork
+for a newer Work revision. Revision advance does not auto-cancel or relabel
+the old Verification or its verifier execution. A new revision needs its own
+exact-revision Verification and current-revision Parent Acceptance. No v2
+Verification row/event/result/receipt/wake snapshot is rewritten by this
+addendum. Implementation remains separately unauthorized.

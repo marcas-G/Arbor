@@ -83,7 +83,7 @@ granted.
 | DID v1.7 G5（generic ExecutionBound admission；P6 owns spawn semantics） | `01` §3 |
 | DID §8.15 AgentDirective + P3 `03` §3 载荷名 | `01` §2, `02` §2 |
 | DID §4.2 命令清单（SteerWork/SendMessage/RecordDecision） | `02` §3, `04` §2 |
-| DID §12.10 表（SendMessage→MessageSent；SteerWork→WorkSteered） | `02` §3, `04` §2 |
+| DID §12.10 表（SendMessage→MessageSent；SteerWork→WorkSteered / WorkAmended） | `02` §3, `04` §2 |
 | SD §7.2 work-plane primitives（P6 子集：Query/Reply/Report/DecisionRequest） | `02` §1 |
 | SD §7.4–§7.5 Inbox / Admission→Promotion→Consumption | `02` §4 |
 | SD §8.1–§8.3 authority model / capability ceiling | `03` |

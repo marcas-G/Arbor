@@ -1,6 +1,6 @@
 # P1 — 03 Transaction Model
 
-**Authority:** DID v1.6 §7.4, §12.6, §6.3, §6A.15, §9.1, §9.7; accepted DID v1.52 F23 P6 operator rebuild / v1 route-command qualification.
+**Authority:** DID v1.59 §7.4/§9.3/§12.6/§12.10–§12.11; DID v1.6 §6.3/§6A.15/§9.1/§9.7; accepted DID v1.52 F23 P6 operator rebuild / v1 route-command qualification.
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Implements:** concrete transaction mechanism; supports P1-DG-02 / P1-DG-04.
 
@@ -128,6 +128,17 @@ unchanged, no handler/canonical/event/receipt write occurs, and no
 
 Atomic: canonical state, optional P8 retry origin (for successful
 RetryVerification), Committed receipt, and Events.
+
+**Accepted S2-RDG-01 transaction constraint (DID v1.59):** one SteerWork
+DirectionGuidance or ContractAmendment is one semantic Command and one
+TransactionScope. Exact Work revision CAS, Work row replacement when applicable,
+the complete revision-history snapshot, versioned Work event, P6 Inbox and
+HumanIntervention facts, and the single Gateway receipt commit atomically. The
+existing Critical Steer StopExecution child handler remains inside that same
+outer transaction and receipt; no nested/second Gateway command is created. A
+failed exact Stop authority/handler or any transaction participant rolls the
+whole Critical Steer back. This does not choose repository signatures, DDL, or
+event payload fields, and does not change P1 receipt ordering.
 
 **FT-DG-01 OPEN-3 operational successor:** a non-empty Profile CreateProject
 also writes its `WorkspaceResourceActivationIntent(Pending)` and
