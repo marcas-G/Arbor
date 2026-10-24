@@ -25,6 +25,7 @@ import { canonicalWorkContractJson } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
 import type { CommandHandler } from "../gateway.js";
+import { invalidVerificationMissionReason } from "../verification-mission-validation.js";
 
 /** P8 `01` §1. Starts the one-Open Verification bound to an Open Work at
  * the caller's observed revision. The owner Workspace snapshot (v1.11 G4)
@@ -86,42 +87,6 @@ export interface StartVerificationDependencies {
     "current"
   >;
 }
-
-/** v1.11 G1 + P8 `04` §5 minimal mission schema: non-empty goal, every
- * criterion carries criterionId + requirement text + required flag, at
- * least one required criterion. */
-const missionInvalidReason = (mission: VerificationMission): string | null => {
-  if (typeof mission.goal !== "string" || mission.goal.length === 0) {
-    return "mission goal must be a non-empty string";
-  }
-  if (!Array.isArray(mission.criteria)) {
-    return "mission criteria must be an array";
-  }
-  for (const criterion of mission.criteria) {
-    if (
-      typeof criterion.criterionId !== "string" ||
-      criterion.criterionId.length === 0
-    ) {
-      return "every criterion requires a non-empty criterionId";
-    }
-    if (
-      typeof criterion.requirement !== "string" ||
-      criterion.requirement.length === 0
-    ) {
-      return "every criterion requires requirement text";
-    }
-    if (typeof criterion.required !== "boolean") {
-      return "every criterion carries the required flag";
-    }
-  }
-  if (!mission.criteria.some((criterion) => criterion.required)) {
-    return "mission requires at least one required criterion";
-  }
-  if (!Array.isArray(mission.riskRequirements)) {
-    return "mission riskRequirements must be an array";
-  }
-  return null;
-};
 
 /** Event digest (§1): goal + criteria count summary — deterministic from
  * the persisted missionSnapshot. */
@@ -190,7 +155,9 @@ export const makeStartVerificationHandler = (
         });
       }
 
-      const invalidMission = missionInvalidReason(payload.missionSnapshot);
+      const invalidMission = invalidVerificationMissionReason(
+        payload.missionSnapshot,
+      );
       if (invalidMission !== null) {
         return commandErr({
           _tag: "InvalidVerificationMission",

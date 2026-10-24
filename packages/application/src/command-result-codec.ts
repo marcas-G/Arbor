@@ -560,6 +560,15 @@ const resultDecoders: ResultDecoderRegistry = {
         toRevision: workRevision,
         severity: oneOf("Normal", "Critical"),
       }),
+    "2": (value) =>
+      objectWith(value, {
+        workId: id("WorkId"),
+        workspaceId: id("WorkspaceId"),
+        lifecycle: literal("Open"),
+        fromRevision: workRevision,
+        toRevision: workRevision,
+        severity: oneOf("Normal", "Critical"),
+      }),
   },
   AcceptWorkOutcome: {
     "1": (value) =>

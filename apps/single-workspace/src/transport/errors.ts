@@ -131,7 +131,8 @@ export interface InvalidCommandPayloadIssue {
     | "range"
     | "enum"
     | "unknown-field"
-    | "unsupported-command";
+    | "unsupported-command"
+    | "unsupported-version";
 }
 
 export const invalidCommandPayloadProblem = (input: {

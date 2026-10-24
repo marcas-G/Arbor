@@ -20,6 +20,7 @@ import {
   makeSteerWorkHandler,
   type SteerWorkPayload,
 } from "../packages/application/src/commands/steer-work.js";
+import { decodeCommandPayload } from "../packages/application/src/external-command-codec.js";
 import {
   type AssignWorkPayload,
   CommandGateway,
@@ -81,7 +82,13 @@ const rejectCommandIds = [
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789c4",
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789c5",
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789c6",
-].map((id) => parse(CommandId)(id)) as ReadonlyArray<CommandId>;
+].map((id) => parse(CommandId)(id)) as [
+  CommandId,
+  CommandId,
+  CommandId,
+  CommandId,
+  CommandId,
+];
 
 const SteerRegistryLive: Layer.Layer<
   CommandHandlerRegistry,
@@ -262,7 +269,7 @@ const submitSteer = (
       commandType: "SteerWork",
       projectId: p6Project,
       actor,
-      schemaVersion: "1",
+      schemaVersion: "2",
       payload: args.payload,
     }),
     projectId: p6Project,
@@ -436,6 +443,121 @@ describe("p6-steer", () => {
     }
   });
 
+  it("rejects incomplete, non-required, and mixed-v1/v2 amendments before Work, Inbox, or event writes", async () => {
+    const result = await runSteer(
+      Effect.gen(function* () {
+        yield* seedWork;
+        const gateway = yield* CommandGateway;
+        const invalidMissions = [
+          {
+            goal: "mission without criteria",
+            criteria: [],
+            riskRequirements: [],
+          },
+          {
+            goal: "mission without a required criterion",
+            criteria: [
+              {
+                criterionId: "optional",
+                requirement: "optional evidence only",
+                required: false,
+              },
+            ],
+            riskRequirements: [],
+          },
+        ] as const;
+        const invalidMissionAttempts = yield* Effect.forEach(
+          invalidMissions,
+          (verificationMission, index) =>
+            Effect.match(
+              submitSteer(gateway, {
+                commandId: rejectCommandIds[index],
+                payload: steerPayload({
+                  steer: {
+                    severity: "Normal",
+                    operation: {
+                      kind: "ContractAmendment",
+                      amendment: {
+                        objective: "bad mission amendment",
+                        why: "must be rejected without persistence",
+                        constraints: [],
+                        completionExpectation: "not accepted",
+                        verificationMission,
+                      },
+                    },
+                  },
+                }),
+              }),
+              {
+                onFailure: (error) => ({
+                  _tag: "DecodeRejected" as const,
+                  error,
+                }),
+                onSuccess: (receipt) => ({
+                  _tag: "Receipt" as const,
+                  resolution: receipt.resolution,
+                }),
+              },
+            ),
+        );
+        const mixedPayload = steerPayload({
+          steer: {
+            severity: "Normal",
+            guidance: "legacy field must not mix with v2 operation",
+            operation: {
+              kind: "ContractAmendment",
+              amendment: {
+                objective: "mixed amendment",
+                why: "invalid union payload",
+                constraints: [],
+                completionExpectation: "not accepted",
+                verificationMission: {
+                  goal: "valid mission",
+                  criteria: [
+                    {
+                      criterionId: "valid",
+                      requirement: "required",
+                      required: true,
+                    },
+                  ],
+                  riskRequirements: [],
+                },
+              },
+            },
+          } as never,
+        });
+        const mixedAttempt = decodeCommandPayload("SteerWork", mixedPayload);
+        const events = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          return yield* sql.unsafe<{ readonly count: number }>(
+            "SELECT COUNT(*) AS count FROM domain_events WHERE event_type IN ('WorkSteered', 'WorkAmended')",
+          );
+        });
+        return {
+          invalidMissionAttempts,
+          mixedAttempt,
+          work: yield* workRow,
+          entries: yield* inboxEntries,
+          events,
+        };
+      }),
+      makeSteerApp(),
+    );
+    for (const attempt of result.invalidMissionAttempts) {
+      expect(attempt._tag).toBe("Receipt");
+      if (attempt._tag === "Receipt") {
+        expect(attempt.resolution).toMatchObject({
+          _tag: "TerminalRejected",
+          error: { _tag: "InvalidVerificationMission" },
+        });
+      }
+    }
+    expect(result.mixedAttempt.ok).toBe(false);
+    expect(result.work[0]?.revision).toBe(0);
+    expect(result.entries).toHaveLength(0);
+    expect(result.events[0]?.count).toBe(0);
+  });
+
   it("rejects the frozen rejection table (04 §2)", async () => {
     const program = Effect.gen(function* () {
       yield* seedWork;
@@ -525,5 +647,86 @@ describe("p6-steer", () => {
     expect(result.work[0]?.revision).toBe(1);
     expect(result.events).toHaveLength(1);
     expect(result.entries).toHaveLength(1);
+  });
+
+  it("replays an exact v1 guidance receipt through v2 and rejects a same-ID v2 amendment tuple", async () => {
+    const result = await runSteer(
+      Effect.gen(function* () {
+        yield* seedWork;
+        const gateway = yield* CommandGateway;
+        const payload = steerPayload();
+        const original = yield* submitSteer(gateway, {
+          commandId: steerCommandId,
+          payload,
+        });
+        const sql = yield* SqlClient;
+        yield* sql.unsafe(
+          `UPDATE commands
+              SET schema_version = '1', semantic_request_fingerprint = ?
+            WHERE command_id = ?`,
+          [
+            semanticRequestFingerprint({
+              commandType: "SteerWork",
+              projectId: p6Project,
+              actor: p6TestActor,
+              schemaVersion: "1",
+              payload,
+            }),
+            steerCommandId,
+          ],
+        );
+        const replay = yield* submitSteer(gateway, {
+          commandId: steerCommandId,
+          payload,
+        });
+        const amendment = yield* submitSteer(gateway, {
+          commandId: steerCommandId,
+          payload: steerPayload({
+            steer: {
+              severity: "Normal",
+              operation: {
+                kind: "ContractAmendment",
+                amendment: {
+                  objective: "different tuple",
+                  why: "the new v2 operation must not alias v1",
+                  constraints: [],
+                  completionExpectation: "distinct",
+                  verificationMission: {
+                    goal: "verify distinct tuple",
+                    criteria: [
+                      {
+                        criterionId: "tuple",
+                        requirement: "different request",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                },
+              },
+            },
+          }),
+        });
+        return {
+          original,
+          replay,
+          amendment,
+          work: yield* workRow,
+          entries: yield* inboxEntries,
+          events: yield* steeredEvents,
+        };
+      }),
+      makeSteerApp(),
+    );
+    expect(result.original.schemaVersion).toBe("2");
+    expect(result.replay.schemaVersion).toBe("1");
+    expect(result.replay.resolution._tag).toBe("Committed");
+    expect(result.amendment.resolution).toMatchObject({
+      _tag: "TerminalRejected",
+      error: { _tag: "IdempotencyConflict" },
+    });
+    expect(result.work[0]?.revision).toBe(1);
+    expect(result.entries).toHaveLength(1);
+    expect(result.events).toHaveLength(1);
   });
 });
