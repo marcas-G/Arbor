@@ -29,6 +29,7 @@ import {
   SessionRepositoryLive,
   TransactionPortLive,
   VerificationRepositoryLive,
+  WorkContractRevisionRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
@@ -101,6 +102,7 @@ import type {
   SessionRepository,
   TransactionPort,
   VerificationRepository,
+  WorkContractRevisionRepository,
   WorkRepository,
   WorkspaceRepository,
   WorkWaitStore,
@@ -296,6 +298,7 @@ type DbServices =
   | ResourceOwnershipRepository
   | WorkspaceRepository
   | ExecutionRepository
+  | WorkContractRevisionRepository
   | WorkRepository
   | MessageStore
   | PermissionGrantRepository
@@ -318,6 +321,7 @@ const makeApp = (databaseFile = ":memory:"): Layer.Layer<DbServices> => {
     Layer.provide(ResourceOwnershipRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
+    Layer.provide(WorkContractRevisionRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
