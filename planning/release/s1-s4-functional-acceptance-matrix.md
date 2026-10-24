@@ -198,3 +198,31 @@ clarification. The provider is scripted. This is not real-model or real-provider
 evidence, does not change the `PB@24598` historical baseline, and does not close
 the broader S3 coordination/wait/integration scenario or S3 real-provider
 qualification. Keep the existing S3 model-evaluation and end-to-end gaps open.
+
+## 2026-10-24 S2 SteerWork revision scripted-process addendum
+
+On exact candidate `410695f9fa1b58905d42c33b5ac0f9d1ad7e17c2`,
+`tests/functional/process/s2-steer-work-revision.functional.test.ts` passed
+1/1 with retry 0; test 44,593 ms, total 64.79 s. Command:
+
+```text
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/s2-steer-work-revision.functional.test.ts --maxWorkers=1 --retry=0 --no-file-parallelism
+```
+
+This scripted public-process journey covers DirectionGuidance,
+revision-2 ContractAmendment, exact Critical Stop binding, old-Verification
+rejection, hard restart and same-command replay, then revision-2 Verification
+and Acceptance. For the stopped Execution, the oracle permits the held
+pre-commit ProviderTurn to settle but requires no ToolInvocation or completion;
+a newly scheduled revision-2 Execution is not part of that exact-execution
+quiescence assertion.
+
+This is one deterministic-provider process qualification, not real-provider or
+model-quality evidence, not full S2 scenario closure, and not a complete release
+gate. It does not change the audit labels and scope of the historical
+`24598bb` baseline above. The two oracle corrections are documented in
+[`S2-steer-work-revision-l2.result.md`](../results/S2-steer-work-revision-l2.result.md):
+first, allow the already-held request's durable ProviderTurn; second, remove a
+global provider-call count because a revision-2 Execution may legitimately be
+scheduled after the stopped revision-1 Execution settles. Real-provider S2 and
+the broader S1–S4 matrix remain OPEN.
