@@ -1455,6 +1455,15 @@ describe("P3-013 agent driver", () => {
       }),
     );
     expect(
+      requests.flatMap((request) => portableInputItems(request)),
+    ).not.toContainEqual(
+      expect.objectContaining({
+        _tag: "Message",
+        role: "assistant",
+        text: "WORK SESSION OUTPUT MUST NOT ENTER CHAT",
+      }),
+    );
+    expect(
       requests[1] === undefined ? [] : portableInputItems(requests[1]),
     ).toEqual(
       expect.arrayContaining([
