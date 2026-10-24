@@ -3,7 +3,6 @@ import type {
   AgentExecutionState,
   Execution,
   ExecutionSettlement,
-  LeaseGeneration,
 } from "@arbor/domain";
 import {
   ContextEpochNumber,
@@ -59,7 +58,6 @@ import type {
   ProviderRuntimeService,
   ProviderTurnStoreService,
   RecoveryAttentionFactStoreService,
-  RuntimeSafetyObservation,
   SecretRef,
   SessionEntryRecord,
   SessionRepositoryService,
@@ -163,13 +161,19 @@ export interface ModelDecisionDependencies {
   readonly workspaceKnowledge?: WorkspaceKnowledgePortService;
   readonly workspacePlacement?: WorkspacePlacementPortService;
   readonly options: ModelDecisionOptions;
-  readonly admit: (
+  readonly admitProviderTurn: (
+    operationKind: import("@arbor/ports").PortableOperationKind,
+    compiledRequestHash: string,
+  ) => Effect.Effect<{
+    readonly activity: ExecutionActivity;
+    readonly decision: "Continue" | "Stop";
+  }>;
+  readonly completeProviderTurn: (
     activity: ExecutionActivity,
-    observation: RuntimeSafetyObservation,
+    attemptNo: number,
   ) => Effect.Effect<"Continue" | "Stop">;
   readonly failure: (cause: unknown) => ExecutionDriverError;
   readonly now: () => Effect.Effect<string>;
-  readonly leaseGeneration?: LeaseGeneration;
 }
 
 interface SubmittedDecisionReplayInput {
@@ -679,7 +683,6 @@ const validateConversationCheckpointReceipt = (input: {
 export const runModelDecision = (
   dependencies: ModelDecisionDependencies,
   turn: number,
-  activity: ExecutionActivity,
   initialRepairAttempt = 0,
 ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> => {
   const {
@@ -704,11 +707,22 @@ export const runModelDecision = (
     workspaceKnowledge,
     workspacePlacement,
     options,
-    admit,
+    admitProviderTurn,
+    completeProviderTurn,
     failure,
     now,
-    leaseGeneration,
   } = dependencies;
+  const compactionDependencies = {
+    providerRuntime,
+    sessions,
+    tx,
+    ...(providerTurns === undefined ? {} : { providerTurns }),
+    admitProviderTurn,
+    completeProviderTurn,
+    ...(options.qualificationProbe === undefined
+      ? {}
+      : { qualificationProbe: options.qualificationProbe }),
+  };
   const currentBindingFingerprint =
     capability.bindingFingerprint ??
     `legacy:${capability.providerRef ?? options.providerRef ?? "provider"}:${capability.modelRef}`;
@@ -1007,7 +1021,7 @@ export const runModelDecision = (
               currentBindingFingerprint &&
             priorReceipt._tag === "Unsettled"
           ) {
-            yield* runCompaction(
+            const startupCompaction = yield* runCompaction(
               {
                 execution: input.execution,
                 logicalStepNo: sourceIdentity.logicalStepNo,
@@ -1029,14 +1043,20 @@ export const runModelDecision = (
                   request: frontier.request,
                 },
               },
-              { providerRuntime, sessions, tx },
+              compactionDependencies,
             ).pipe(Effect.mapError(failure));
+            if ("_tag" in startupCompaction) {
+              return {
+                _tag: "Settle",
+                settlement: safetyStop("RuntimeSafetyStop"),
+              };
+            }
           } else if (
             priorReceipt._tag === "SettledFailure" ||
             priorReceipt._tag === "SettledSuccess" ||
             priorReceipt._tag === "Unsettled"
           ) {
-            yield* runSummaryCompaction(
+            const startupCompaction = yield* runSummaryCompaction(
               {
                 execution: input.execution,
                 logicalStepNo: sourceIdentity.logicalStepNo,
@@ -1052,8 +1072,14 @@ export const runModelDecision = (
                 inputItems: frontier.inputItems,
                 fence: loopStepFence,
               },
-              { providerRuntime, sessions, tx },
+              compactionDependencies,
             ).pipe(Effect.mapError(failure));
+            if ("_tag" in startupCompaction) {
+              return {
+                _tag: "Settle",
+                settlement: safetyStop("RuntimeSafetyStop"),
+              };
+            }
           } else {
             return yield* Effect.fail(
               failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
@@ -2177,17 +2203,14 @@ export const runModelDecision = (
                         ...(yield* loadWorkCompactionPinning()),
                         fence: loopStepFence,
                       },
-                      {
-                        providerRuntime,
-                        sessions,
-                        tx,
-                        ...(options.qualificationProbe === undefined
-                          ? {}
-                          : {
-                              qualificationProbe: options.qualificationProbe,
-                            }),
-                      },
+                      compactionDependencies,
                     ).pipe(Effect.mapError(failure));
+                    if ("_tag" in compacted) {
+                      return {
+                        _tag: "Settle",
+                        settlement: safetyStop("RuntimeSafetyStop"),
+                      };
+                    }
                     replacementEpoch = Number(compacted.newEpoch);
                   } else {
                     // The checkpoint already committed in the prior
@@ -2819,7 +2842,7 @@ export const runModelDecision = (
                   : { qualificationProbe: options.qualificationProbe }),
               },
               {
-                providerRuntime,
+                ...compactionDependencies,
                 checkpointStore: dependencies.conversationCheckpoints,
                 providerTurns:
                   providerTurns ??
@@ -2836,6 +2859,9 @@ export const runModelDecision = (
                 tx,
               },
             ).pipe(Effect.mapError(failure));
+            if ("_tag" in compacted) {
+              return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
+            }
             if (
               compacted.checkpointKind !== "Summary" ||
               compacted.newEpoch !==
@@ -4213,15 +4239,11 @@ export const runModelDecision = (
               ...(yield* loadWorkCompactionPinning()),
               fence: loopStepFence,
             },
-            {
-              providerRuntime,
-              sessions,
-              tx,
-              ...(options.qualificationProbe === undefined
-                ? {}
-                : { qualificationProbe: options.qualificationProbe }),
-            },
+            compactionDependencies,
           ).pipe(Effect.mapError(failure));
+          if ("_tag" in rebuilt) {
+            return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
+          }
           if (options.qualificationProbe !== undefined) {
             yield* Effect.promise(
               () =>
@@ -5085,15 +5107,11 @@ export const runModelDecision = (
                 ...(yield* loadWorkCompactionPinning()),
                 fence: loopStepFence,
               },
-              {
-                providerRuntime,
-                sessions,
-                tx,
-                ...(options.qualificationProbe === undefined
-                  ? {}
-                  : { qualificationProbe: options.qualificationProbe }),
-              },
+              compactionDependencies,
             ).pipe(Effect.mapError(failure));
+            if ("_tag" in rebuilt) {
+              return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
+            }
             if (
               Number(rebuilt.newEpoch) !==
               Number(sourceSession.value.contextEpoch) + 1
@@ -5427,7 +5445,7 @@ export const runModelDecision = (
                     : { qualificationProbe: options.qualificationProbe }),
                 },
                 {
-                  providerRuntime,
+                  ...compactionDependencies,
                   checkpointStore: dependencies.conversationCheckpoints,
                   providerTurns,
                   blobs: dependencies.blobs,
@@ -5466,15 +5484,11 @@ export const runModelDecision = (
                   ? {}
                   : { nativeRecovery: resumeOverflowNativeCompactionInput }),
               },
-              {
-                providerRuntime,
-                sessions,
-                tx,
-                ...(options.qualificationProbe === undefined
-                  ? {}
-                  : { qualificationProbe: options.qualificationProbe }),
-              },
+              compactionDependencies,
             ).pipe(Effect.mapError(failure));
+        if ("_tag" in compacted) {
+          return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
+        }
         if (
           compacted.providerTurnId !== resumeOverflowCompactionProviderTurnId ||
           Number(compacted.newEpoch) !== Number(stepContext.contextEpoch) + 1
@@ -5608,7 +5622,7 @@ export const runModelDecision = (
           capability.portableRequestCompatibility?.operationKinds.includes(
             "CompactionNative",
           ) === true;
-        yield* runCompaction(
+        const compacted = yield* runCompaction(
           {
             execution: input.execution,
             logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
@@ -5635,15 +5649,11 @@ export const runModelDecision = (
             fence: loopStepFence,
             nativeSupported,
           },
-          {
-            providerRuntime,
-            sessions,
-            tx,
-            ...(options.qualificationProbe === undefined
-              ? {}
-              : { qualificationProbe: options.qualificationProbe }),
-          },
+          compactionDependencies,
         ).pipe(Effect.mapError(failure));
+        if ("_tag" in compacted) {
+          return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
+        }
         continue;
       }
 
@@ -6127,6 +6137,15 @@ export const runModelDecision = (
           );
         }
       }
+      const providerAdmission = replayPersistedContextLimit
+        ? undefined
+        : yield* admitProviderTurn(
+            preparation.turn.manifest.operationKind ?? "Inference",
+            preparation.turn.manifest.compiledRequestHash,
+          );
+      if (providerAdmission?.decision === "Stop") {
+        return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
+      }
       const providerResult = replayPersistedContextLimit
         ? {
             ok: false as const,
@@ -6140,6 +6159,15 @@ export const runModelDecision = (
             onSuccess: (value) => ({ ok: true as const, value }),
           });
       if (!providerResult.ok) {
+        if (providerAdmission !== undefined) {
+          const endDecision = yield* completeProviderTurn(
+            providerAdmission.activity,
+            0,
+          );
+          if (endDecision === "Stop") {
+            return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
+          }
+        }
         if (isProviderTurnBindingChanged(providerResult.cause)) {
           return yield* proposeSettlement(
             providerTurnBindingChangedSettlement(),
@@ -6311,7 +6339,7 @@ export const runModelDecision = (
                       : { qualificationProbe: options.qualificationProbe }),
                   },
                   {
-                    providerRuntime,
+                    ...compactionDependencies,
                     checkpointStore: dependencies.conversationCheckpoints,
                     providerTurns,
                     blobs: dependencies.blobs,
@@ -6346,15 +6374,11 @@ export const runModelDecision = (
                   fence: overflowFence,
                   nativeSupported,
                 },
-                {
-                  providerRuntime,
-                  sessions,
-                  tx,
-                  ...(options.qualificationProbe === undefined
-                    ? {}
-                    : { qualificationProbe: options.qualificationProbe }),
-                },
+                compactionDependencies,
               ).pipe(Effect.mapError(failure));
+          if ("_tag" in compacted) {
+            return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
+          }
           overflowReplacementProviderTurnId =
             makeOverflowReplacementProviderTurnId(
               input.execution.executionId,
@@ -6450,13 +6474,11 @@ export const runModelDecision = (
       // ProviderRuntime, so the gate sees actual transient retries
       // (retry never creates a new ProviderTurn — DID §6A.9). The
       // end bracket is not a D4 turn boundary.
-      if (leaseGeneration !== undefined || providerRun.attemptNo > 0) {
-        const endDecision = yield* admit(activity, {
-          retryCount: providerRun.attemptNo,
-          inFlight: "end",
-          ...(leaseGeneration !== undefined ? { leaseGeneration } : {}),
-          observedAt: yield* now(),
-        });
+      if (providerAdmission !== undefined) {
+        const endDecision = yield* completeProviderTurn(
+          providerAdmission.activity,
+          providerRun.attemptNo,
+        );
         if (endDecision === "Stop") {
           return {
             _tag: "Settle",

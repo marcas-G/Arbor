@@ -14,6 +14,7 @@ import {
 } from "@arbor/model-context";
 import {
   type AgentLoopStepRecord,
+  type PortableModelRequest,
   type SessionEntryRecord,
   sha256Hex,
 } from "@arbor/ports";
@@ -207,6 +208,13 @@ const compileProjectedRequest = (
   });
 };
 
+const compiledV2InputItems = (request: PortableModelRequest) => {
+  if (request.requestVersion !== 2) {
+    throw new Error("diagnostic projection must compile a v2 request");
+  }
+  return request.inputItems;
+};
+
 const loopStep = (turn: number): AgentLoopStepRecord => ({
   identity: { executionId, logicalStepNo: turn, repairAttempt: 0 },
   providerTurnId: providerTurnInferenceId(executionId, turn),
@@ -383,11 +391,11 @@ describe("diagnostic: WorkspaceWork text-only Stop continuity", () => {
     expect(projectedInputFingerprint(toolEntries)).not.toBe(
       projectedInputFingerprint(assistantOnly),
     );
-    expect(controlRequest.request.inputItems).not.toEqual(
-      assistantRequest.request.inputItems,
+    expect(compiledV2InputItems(controlRequest.request)).not.toEqual(
+      compiledV2InputItems(assistantRequest.request),
     );
-    expect(toolRequest.request.inputItems).not.toEqual(
-      assistantRequest.request.inputItems,
+    expect(compiledV2InputItems(toolRequest.request)).not.toEqual(
+      compiledV2InputItems(assistantRequest.request),
     );
     expect(controlRequest.manifest.compiledRequestHash).not.toBe(
       assistantRequest.manifest.compiledRequestHash,

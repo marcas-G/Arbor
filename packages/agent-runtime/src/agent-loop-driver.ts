@@ -33,6 +33,7 @@ import {
   InboxProjectionStore,
   LocalPlanStore,
   ModelCapabilityPort,
+  type PortableOperationKind,
   ProjectRepository,
   type ProviderExecutionPolicyOverrides,
   ProviderRuntime,
@@ -51,11 +52,7 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { executeAgentLoopActions } from "./agent-loop-actions.js";
-import {
-  MAX_TURNS,
-  type ModelDecisionOutcome,
-  safetyStop,
-} from "./agent-loop-policy.js";
+import { MAX_TURNS, type ModelDecisionOutcome } from "./agent-loop-policy.js";
 import { completeAgentLoopStep } from "./agent-loop-step-completion.js";
 import {
   decodeExhaustedRepairDisposition,
@@ -78,6 +75,7 @@ import {
   runModelDecision,
 } from "./model-decision.js";
 import { recordAcceptedModelOutput } from "./model-output-journal.js";
+import { providerTurnSafetyFingerprint } from "./p12-safety-identity.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
 
@@ -880,6 +878,47 @@ export const AgentLoopDriverLive = (
               observation,
             );
           let progressedSinceBoundary = false;
+          const admitProviderTurn = (
+            operationKind: PortableOperationKind,
+            compiledRequestHash: string,
+          ) =>
+            Effect.gen(function* () {
+              const activity: ExecutionActivity = {
+                _tag: "ProviderTurn",
+                fingerprint: providerTurnSafetyFingerprint(
+                  operationKind,
+                  compiledRequestHash,
+                ),
+              };
+              const decision = yield* admit(activity, {
+                retryCount: 0,
+                chainDepth: 0,
+                durableProgress: progressedSinceBoundary,
+                ...(leaseGeneration !== undefined
+                  ? { inFlight: "begin" as const, leaseGeneration }
+                  : {}),
+                observedAt: yield* now(),
+              });
+              if (decision === "Continue") {
+                progressedSinceBoundary = false;
+              }
+              return { activity, decision } as const;
+            });
+          const completeProviderTurn = (
+            activity: ExecutionActivity,
+            attemptNo: number,
+          ) =>
+            Effect.gen(function* () {
+              if (leaseGeneration === undefined && attemptNo === 0) {
+                return "Continue" as const;
+              }
+              return yield* admit(activity, {
+                retryCount: attemptNo,
+                inFlight: "end",
+                ...(leaseGeneration !== undefined ? { leaseGeneration } : {}),
+                observedAt: yield* now(),
+              });
+            });
 
           // P3 `06` §3: bounded `ModelOutputContractViolation` repair. A
           // violated output is NOT a provider transport failure: re-invoke
@@ -889,7 +928,6 @@ export const AgentLoopDriverLive = (
           // Interrupted for a safety/looping signal).
           const decideModelOutput = (
             turn: number,
-            activity: ExecutionActivity,
             repairAttempt: number,
           ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
             runModelDecision(
@@ -931,7 +969,8 @@ export const AgentLoopDriverLive = (
                   : {}),
                 workspaces,
                 options,
-                admit,
+                admitProviderTurn,
+                completeProviderTurn,
                 failure,
                 now,
                 ...(loopSteps === undefined ? {} : { loopSteps }),
@@ -943,10 +982,8 @@ export const AgentLoopDriverLive = (
                         recoveryAttentionFactStoreOption.value,
                     }
                   : {}),
-                ...(leaseGeneration === undefined ? {} : { leaseGeneration }),
               },
               turn,
-              activity,
               repairAttempt,
             );
 
@@ -979,32 +1016,7 @@ export const AgentLoopDriverLive = (
                   .pipe(Effect.mapError(failure));
               }
             }
-            const activity: ExecutionActivity = {
-              _tag: "ProviderTurn",
-              fingerprint: `turn-${turn}`,
-            };
-            // D4: durable progress since the previous turn boundary. The
-            // driver holds the journal capability and reports the boolean;
-            // the gate only counts it. D5: begin-bracket the provider call.
-            const decision = yield* admit(activity, {
-              retryCount: 0,
-              chainDepth: 0,
-              durableProgress: progressedSinceBoundary,
-              ...(leaseGeneration !== undefined
-                ? { inFlight: "begin" as const, leaseGeneration }
-                : {}),
-              observedAt: yield* now(),
-            });
-            if (decision === "Stop") {
-              return safetyStop("RuntimeSafetyStop");
-            }
-            progressedSinceBoundary = false;
-
-            const modelDecision = yield* decideModelOutput(
-              turn,
-              activity,
-              repairAttempt,
-            );
+            const modelDecision = yield* decideModelOutput(turn, repairAttempt);
             if (modelDecision._tag === "Settle") {
               return modelDecision.settlement;
             }
