@@ -14,7 +14,9 @@ import type {
   ConversationCheckpointSourceManifestV1,
   ConversationCheckpointStoreService,
   ConversationResponseJob,
+  ExecutionActivity,
   PortableModelRequestV2,
+  PortableOperationKind,
   ProviderRunResult,
   ProviderRuntimeService,
   ProviderTurnStoreService,
@@ -66,6 +68,17 @@ export const runConversationCheckpointCompaction = (
   },
   deps: {
     readonly providerRuntime: ProviderRuntimeService;
+    readonly admitProviderTurn?: (
+      operationKind: PortableOperationKind,
+      compiledRequestHash: string,
+    ) => Effect.Effect<{
+      readonly activity: ExecutionActivity;
+      readonly decision: "Continue" | "Stop";
+    }>;
+    readonly completeProviderTurn?: (
+      activity: ExecutionActivity,
+      attemptNo: number,
+    ) => Effect.Effect<"Continue" | "Stop">;
     readonly checkpointStore: ConversationCheckpointStoreService;
     readonly providerTurns: ProviderTurnStoreService;
     readonly blobs: Pick<BlobStorePortService, "put">;
@@ -126,7 +139,7 @@ export const runConversationCheckpointCompaction = (
       input.checkpointKind === "Summary"
         ? "compaction-result-v1"
         : "provider-native-compaction-v1";
-    const operationKind =
+    const operationKind: PortableOperationKind =
       input.checkpointKind === "Summary"
         ? "CompactionSummary"
         : "CompactionNative";
@@ -244,6 +257,16 @@ export const runConversationCheckpointCompaction = (
           _tag: "ConversationCompactionReceiptMismatch" as const,
         });
       }
+      const providerAdmission =
+        deps.admitProviderTurn === undefined
+          ? undefined
+          : yield* deps.admitProviderTurn(
+              manifest.operationKind,
+              manifest.compiledRequestHash,
+            );
+      if (providerAdmission?.decision === "Stop") {
+        return { _tag: "SafetyStop" as const };
+      }
       result = yield* deps.providerRuntime.runTurn({
         providerTurnId,
         executionId: input.execution.executionId,
@@ -257,6 +280,16 @@ export const runConversationCheckpointCompaction = (
         manifestJson,
         request,
       });
+      if (
+        providerAdmission !== undefined &&
+        deps.completeProviderTurn !== undefined &&
+        (yield* deps.completeProviderTurn(
+          providerAdmission.activity,
+          result.attemptNo,
+        )) === "Stop"
+      ) {
+        return { _tag: "SafetyStop" as const };
+      }
     } else {
       return yield* Effect.fail({
         _tag: "ConversationCompactionReceiptNotReplayable" as const,

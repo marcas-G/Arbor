@@ -7,9 +7,12 @@ import {
   providerTurnSummaryCompactionId,
 } from "@arbor/domain";
 import type {
+  ExecutionActivity,
   PortableInputItem,
   PortableModelRequestV2,
+  PortableOperationKind,
   ProviderRuntimeService,
+  ProviderTurnStoreService,
   SecretRef,
   SessionCompactionCommit,
   SessionRepositoryService,
@@ -74,8 +77,20 @@ export interface SummaryCompactionInput {
 
 interface CompactionDependencies {
   readonly providerRuntime: ProviderRuntimeService;
+  readonly providerTurns?: ProviderTurnStoreService;
   readonly sessions: SessionRepositoryService;
   readonly tx: TransactionPortService;
+  readonly admitProviderTurn?: (
+    operationKind: PortableOperationKind,
+    compiledRequestHash: string,
+  ) => Effect.Effect<{
+    readonly activity: ExecutionActivity;
+    readonly decision: "Continue" | "Stop";
+  }>;
+  readonly completeProviderTurn?: (
+    activity: ExecutionActivity,
+    attemptNo: number,
+  ) => Effect.Effect<"Continue" | "Stop">;
   /** Explicit test-only crash boundary; absent in production. */
   readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
@@ -166,7 +181,7 @@ export const runSummaryCompaction = (
       modelRef: input.modelRef,
       outputContractRef: "compaction-result-v1",
       compiledRequestHash: sha256Hex(JSON.stringify(request)),
-      operationKind: "CompactionSummary",
+      operationKind: "CompactionSummary" as const,
       logicalStepNo: input.logicalStepNo,
       ...(input.sourceAgentLoopStep === undefined
         ? {}
@@ -185,17 +200,54 @@ export const runSummaryCompaction = (
         ? {}
         : { controlBasis: input.controlBasis }),
     };
-    const result = yield* deps.providerRuntime.runTurn({
-      providerTurnId,
-      executionId: input.execution.executionId,
-      sessionId: input.execution.sessionId,
-      contextEpoch: input.currentEpoch,
-      modelRef: input.modelRef,
-      ...(input.secretRef === undefined ? {} : { secretRef: input.secretRef }),
-      outputContractRef: "compaction-result-v1",
-      manifestJson: JSON.stringify(manifest),
-      request,
-    });
+    const settledReceipt =
+      deps.providerTurns === undefined
+        ? undefined
+        : yield* deps.tx.transact(
+            deps.providerTurns.findSettledResult(providerTurnId),
+          );
+    const providerAdmission =
+      settledReceipt?._tag === "SettledSuccess" ||
+      deps.admitProviderTurn === undefined
+        ? undefined
+        : yield* deps.admitProviderTurn(
+            manifest.operationKind,
+            manifest.compiledRequestHash,
+          );
+    if (providerAdmission?.decision === "Stop") {
+      return { _tag: "SafetyStop" as const };
+    }
+    const providerResult = yield* Effect.match(
+      deps.providerRuntime.runTurn({
+        providerTurnId,
+        executionId: input.execution.executionId,
+        sessionId: input.execution.sessionId,
+        contextEpoch: input.currentEpoch,
+        modelRef: input.modelRef,
+        ...(input.secretRef === undefined
+          ? {}
+          : { secretRef: input.secretRef }),
+        outputContractRef: "compaction-result-v1",
+        manifestJson: JSON.stringify(manifest),
+        request,
+      }),
+      {
+        onFailure: (cause) => ({ ok: false as const, cause }),
+        onSuccess: (value) => ({ ok: true as const, value }),
+      },
+    );
+    if (
+      providerAdmission !== undefined &&
+      deps.completeProviderTurn !== undefined
+    ) {
+      const endDecision = yield* deps.completeProviderTurn(
+        providerAdmission.activity,
+        providerResult.ok ? providerResult.value.attemptNo : 0,
+      );
+      if (endDecision === "Stop") return { _tag: "SafetyStop" as const };
+    }
+    if (!providerResult.ok) return yield* Effect.fail(providerResult.cause);
+    const result = providerResult.value;
     const summary = result.events
       .flatMap((event) => (event._tag === "TextDelta" ? [event.text] : []))
       .join("")
@@ -279,18 +331,55 @@ export const runNativeCompaction = (
         ? {}
         : { controlBasis: input.controlBasis }),
     };
-    const result = yield* deps.providerRuntime.runTurn({
-      providerTurnId,
-      executionId: input.execution.executionId,
-      sessionId: input.execution.sessionId,
-      contextEpoch: input.currentEpoch,
-      modelRef: input.modelRef,
-      ...(input.secretRef === undefined ? {} : { secretRef: input.secretRef }),
-      outputContractRef: request.outputContractRef,
-      manifestJson:
-        input.nativeRecovery?.manifestJson ?? JSON.stringify(manifest),
-      request,
-    });
+    const settledReceipt =
+      deps.providerTurns === undefined
+        ? undefined
+        : yield* deps.tx.transact(
+            deps.providerTurns.findSettledResult(providerTurnId),
+          );
+    const providerAdmission =
+      settledReceipt?._tag === "SettledSuccess" ||
+      deps.admitProviderTurn === undefined
+        ? undefined
+        : yield* deps.admitProviderTurn(
+            manifest.operationKind,
+            manifest.compiledRequestHash,
+          );
+    if (providerAdmission?.decision === "Stop") {
+      return { _tag: "SafetyStop" as const };
+    }
+    const providerResult = yield* Effect.match(
+      deps.providerRuntime.runTurn({
+        providerTurnId,
+        executionId: input.execution.executionId,
+        sessionId: input.execution.sessionId,
+        contextEpoch: input.currentEpoch,
+        modelRef: input.modelRef,
+        ...(input.secretRef === undefined
+          ? {}
+          : { secretRef: input.secretRef }),
+        outputContractRef: request.outputContractRef,
+        manifestJson:
+          input.nativeRecovery?.manifestJson ?? JSON.stringify(manifest),
+        request,
+      }),
+      {
+        onFailure: (cause) => ({ ok: false as const, cause }),
+        onSuccess: (value) => ({ ok: true as const, value }),
+      },
+    );
+    if (
+      providerAdmission !== undefined &&
+      deps.completeProviderTurn !== undefined
+    ) {
+      const endDecision = yield* deps.completeProviderTurn(
+        providerAdmission.activity,
+        providerResult.ok ? providerResult.value.attemptNo : 0,
+      );
+      if (endDecision === "Stop") return { _tag: "SafetyStop" as const };
+    }
+    if (!providerResult.ok) return yield* Effect.fail(providerResult.cause);
+    const result = providerResult.value;
     const opaqueItemRef = result.events.find(
       (event) => event._tag === "ContinuationState",
     )?.stateRef;

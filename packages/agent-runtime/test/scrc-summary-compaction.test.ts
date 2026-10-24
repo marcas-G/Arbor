@@ -78,9 +78,12 @@ describe("SCRC Summary Compaction Coordinator", () => {
   it("runs an explicit compaction turn then commits checkpoint + next epoch", async () => {
     let observed: ProviderRunInput | undefined;
     let committed: unknown;
+    const sequence: Array<string> = [];
+    const admissions: Array<{ kind: string; hash: string }> = [];
     const sourceSecretRef = secretRef("secret://deployment/model-a");
     const providerRuntime = {
       runTurn: (input: ProviderRunInput) => {
+        sequence.push("provider");
         observed = input;
         return Effect.succeed({
           attemptNo: 0,
@@ -120,7 +123,23 @@ describe("SCRC Summary Compaction Coordinator", () => {
             fencingGeneration: 0 as never,
           },
         },
-        { providerRuntime, sessions, tx },
+        {
+          providerRuntime,
+          sessions,
+          tx,
+          admitProviderTurn: (kind, hash) => {
+            sequence.push("gate");
+            admissions.push({ kind, hash });
+            return Effect.succeed({
+              activity: {
+                _tag: "ProviderTurn",
+                fingerprint: `${kind}:${hash}`,
+              },
+              decision: "Continue" as const,
+            });
+          },
+          completeProviderTurn: () => Effect.succeed("Continue" as const),
+        },
       ),
     );
     expect(observed?.request).toMatchObject({
@@ -133,6 +152,17 @@ describe("SCRC Summary Compaction Coordinator", () => {
       controlBasis: workControlBasis,
     });
     expect(observed?.secretRef).toBe(sourceSecretRef);
+    const manifest = JSON.parse(observed?.manifestJson ?? "{}") as {
+      operationKind: string;
+      compiledRequestHash: string;
+    };
+    expect(sequence).toEqual(["gate", "provider"]);
+    expect(admissions).toEqual([
+      {
+        kind: "CompactionSummary",
+        hash: manifest.compiledRequestHash,
+      },
+    ]);
     expect(committed).toMatchObject({
       expectedEpoch: 0,
       nextEpoch: 1,
@@ -196,6 +226,8 @@ describe("SCRC Summary Compaction Coordinator", () => {
   it("binds a provider-native opaque checkpoint to the resolved binding", async () => {
     let committed: unknown;
     let observed: ProviderRunInput | undefined;
+    const sequence: Array<string> = [];
+    const admissions: Array<{ kind: string; hash: string }> = [];
     const sourceSecretRef = secretRef("secret://deployment/model-a");
     const result = await Effect.runPromise(
       runNativeCompaction(
@@ -220,6 +252,7 @@ describe("SCRC Summary Compaction Coordinator", () => {
         {
           providerRuntime: {
             runTurn: (input) => {
+              sequence.push("provider");
               observed = input;
               return Effect.succeed({
                 attemptNo: 0,
@@ -241,6 +274,18 @@ describe("SCRC Summary Compaction Coordinator", () => {
                 return { sequence: 1, inserted: true, newEpoch: 1 as never };
               }),
           } as unknown as SessionRepositoryService,
+          admitProviderTurn: (kind, hash) => {
+            sequence.push("gate");
+            admissions.push({ kind, hash });
+            return Effect.succeed({
+              activity: {
+                _tag: "ProviderTurn",
+                fingerprint: `${kind}:${hash}`,
+              },
+              decision: "Continue" as const,
+            });
+          },
+          completeProviderTurn: () => Effect.succeed("Continue" as const),
           tx,
         },
       ),
@@ -252,6 +297,17 @@ describe("SCRC Summary Compaction Coordinator", () => {
       controlBasis: workControlBasis,
     });
     expect(observed?.secretRef).toBe(sourceSecretRef);
+    const manifest = JSON.parse(observed?.manifestJson ?? "{}") as {
+      operationKind: string;
+      compiledRequestHash: string;
+    };
+    expect(sequence).toEqual(["gate", "provider"]);
+    expect(admissions).toEqual([
+      {
+        kind: "CompactionNative",
+        hash: manifest.compiledRequestHash,
+      },
+    ]);
     expect(committed).toMatchObject({
       checkpoint: {
         implementation: "ProviderNative",

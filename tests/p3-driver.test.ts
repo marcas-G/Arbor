@@ -729,6 +729,89 @@ const proposeWorkspaceTurn = [
 ];
 
 describe("P3-013 agent driver", () => {
+  it("admits a compiled ProviderTurn immediately before ProviderRuntime and proves Stop makes no call", async () => {
+    const sequence: Array<string> = [];
+    const admissionFingerprints: Array<string> = [];
+    let compiledFingerprint: string | undefined;
+    let providerCalls = 0;
+    const providerRuntime = Layer.succeed(ProviderRuntime, {
+      runTurn: (input) => {
+        providerCalls += 1;
+        sequence.push("provider");
+        const manifest = JSON.parse(input.manifestJson) as {
+          operationKind: string;
+          compiledRequestHash: string;
+        };
+        compiledFingerprint = `provider-turn:${manifest.operationKind}:${manifest.compiledRequestHash}`;
+        return Effect.succeed({
+          events: [
+            {
+              _tag: "TurnStarted" as const,
+              providerTurnId: input.providerTurnId,
+              attemptNo: 2,
+              modelRef: input.request.modelRef,
+            },
+            ...textTurn,
+          ],
+          attemptNo: 2,
+          retryDecisions: [],
+        });
+      },
+    });
+    const app = makeApp([], { providerRuntime });
+    const continueGate: RuntimeSafetyGateService = {
+      admitActivity: (_executionId, activity, observation) => {
+        if (
+          activity._tag === "ProviderTurn" &&
+          observation?.inFlight !== "end"
+        ) {
+          sequence.push("gate");
+          admissionFingerprints.push(activity.fingerprint);
+        }
+        return Effect.succeed("Continue" as const);
+      },
+    };
+    const admitted = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P17_MIGRATIONS);
+        yield* seed;
+        return yield* drive(continueGate);
+      }),
+      app,
+    );
+    expect(admitted._tag).toBe("Completed");
+    expect(sequence.indexOf("gate")).toBeGreaterThanOrEqual(0);
+    expect(sequence.indexOf("gate")).toBeLessThan(sequence.indexOf("provider"));
+    expect(admissionFingerprints).toEqual([compiledFingerprint]);
+
+    providerCalls = 0;
+    let stoppedFingerprint: string | undefined;
+    const stopGate: RuntimeSafetyGateService = {
+      admitActivity: (_executionId, activity, observation) => {
+        if (
+          activity._tag === "ProviderTurn" &&
+          observation?.inFlight !== "end"
+        ) {
+          stoppedFingerprint = activity.fingerprint;
+          return Effect.succeed("Stop" as const);
+        }
+        return Effect.succeed("Continue" as const);
+      },
+    };
+    const stoppedApp = makeApp([], { providerRuntime });
+    const stopped = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P17_MIGRATIONS);
+        yield* seed;
+        return yield* drive(stopGate);
+      }),
+      stoppedApp,
+    );
+    expect(stopped._tag).toBe("Interrupted");
+    expect(stoppedFingerprint).toMatch(/^provider-turn:Inference:[0-9a-f]+$/);
+    expect(providerCalls).toBe(0);
+  });
+
   it("runs an ordinary Prepared step against the P17 schema without reading overflow links", async () => {
     const app = makeApp([textTurn]);
     const settlement = await run(
@@ -987,6 +1070,18 @@ describe("P3-013 agent driver", () => {
 
   it("carries a conversation-safe control result into the next turn before answering", async () => {
     const requests: PortableModelRequest[] = [];
+    const progressAtProviderBoundary: Array<boolean | undefined> = [];
+    const gate: RuntimeSafetyGateService = {
+      admitActivity: (_executionId, activity, observation) => {
+        if (
+          activity._tag === "ProviderTurn" &&
+          observation?.inFlight !== "end"
+        ) {
+          progressAtProviderBoundary.push(observation?.durableProgress);
+        }
+        return Effect.succeed("Continue" as const);
+      },
+    };
     const observationMarker = "ProposalRecorded(fpr_test); awaiting approval";
     let call = 0;
     const proposalHandler: AgentActionHandler = {
@@ -1035,7 +1130,7 @@ describe("P3-013 agent driver", () => {
             fingerprint: "fp-conversation-action",
           });
           return yield* drive(
-            allowGate,
+            gate,
             currentConversationContext,
             conversationExecution(messageId),
           );
@@ -1049,6 +1144,7 @@ describe("P3-013 agent driver", () => {
       result: { _tag: "ConversationResponseProduced", messageId },
     });
     expect(requests).toHaveLength(2);
+    expect(progressAtProviderBoundary).toEqual([false, true]);
     expect(
       requests[1] === undefined ? [] : portableInputItems(requests[1]),
     ).toEqual(
@@ -1063,13 +1159,23 @@ describe("P3-013 agent driver", () => {
 
   it("uses one persisted overflow chain and replacement inference", async () => {
     const operations: string[] = [];
+    const manifestIdentities: Array<{ kind: string; hash: string }> = [];
+    const admittedProviderFingerprints: Array<string> = [];
     const providerRuntime = Layer.succeed(ProviderRuntime, {
       runTurn: (input) => {
+        const manifest = JSON.parse(input.manifestJson) as {
+          operationKind?: string;
+          compiledRequestHash: string;
+        };
         const operation =
           input.request.requestVersion === 2
             ? input.request.operationKind
             : "Inference";
         operations.push(operation);
+        manifestIdentities.push({
+          kind: manifest.operationKind ?? "Inference",
+          hash: manifest.compiledRequestHash,
+        });
         if (operations.length === 1) {
           return Effect.fail({
             _tag: "ProviderFailure" as const,
@@ -1101,11 +1207,22 @@ describe("P3-013 agent driver", () => {
         });
       },
     });
+    const gate: RuntimeSafetyGateService = {
+      admitActivity: (_executionId, activity, observation) => {
+        if (
+          activity._tag === "ProviderTurn" &&
+          observation?.inFlight !== "end"
+        ) {
+          admittedProviderFingerprints.push(activity.fingerprint);
+        }
+        return Effect.succeed("Continue" as const);
+      },
+    };
     const app = makeApp([], { providerRuntime });
     const program = Effect.gen(function* () {
       yield* runMigrations(P20_MIGRATIONS);
       yield* seed;
-      const settlement = yield* drive(allowGate);
+      const settlement = yield* drive(gate);
       const sql = yield* SqlClient;
       const links = yield* sql.unsafe<{
         role: string;
@@ -1121,6 +1238,11 @@ describe("P3-013 agent driver", () => {
       result: { _tag: "CoordinationCompleted" },
     });
     expect(operations).toEqual(["Inference", "CompactionSummary", "Inference"]);
+    expect(admittedProviderFingerprints).toEqual(
+      manifestIdentities.map(
+        ({ kind, hash }) => `provider-turn:${kind}:${hash}`,
+      ),
+    );
     expect(result.links).toHaveLength(3);
     expect(new Set(result.links.map((link) => link.role))).toEqual(
       new Set(["Inference", "OverflowCompaction", "OverflowReplacement"]),
@@ -1403,8 +1525,20 @@ describe("P3-013 agent driver", () => {
         const first = yield* Effect.exit(
           drive(allowGate, currentConversationContext, exactExecution),
         );
+        const replayProviderAdmissions: Array<string> = [];
+        const replayGate: RuntimeSafetyGateService = {
+          admitActivity: (_executionId, activity, observation) => {
+            if (
+              activity._tag === "ProviderTurn" &&
+              observation?.inFlight !== "end"
+            ) {
+              replayProviderAdmissions.push(activity.fingerprint);
+            }
+            return Effect.succeed("Continue" as const);
+          },
+        };
         const second = yield* drive(
-          allowGate,
+          replayGate,
           currentConversationContext,
           exactExecution,
         );
@@ -1424,6 +1558,7 @@ describe("P3-013 agent driver", () => {
           attemptCount: Number(attempts[0]?.count ?? 0),
           outputCount: Number(outputs[0]?.count ?? 0),
           stepState: steps[0]?.state,
+          replayProviderAdmissions,
         };
       });
       return run(program, app);
@@ -1436,6 +1571,7 @@ describe("P3-013 agent driver", () => {
     expect(result.attemptCount).toBe(1);
     expect(result.outputCount).toBe(1);
     expect(result.stepState).toBe("SettlementProposed");
+    expect(result.replayProviderAdmissions).toEqual([]);
   });
 
   it("rolls back the sourced answer when the OutputAccepted step transition is interrupted", async () => {
@@ -1642,6 +1778,18 @@ describe("P3-013 agent driver", () => {
   });
 
   it("returns invalid control arguments to the model and accepts a corrected action", async () => {
+    const progressAtProviderBoundary: Array<boolean | undefined> = [];
+    const gate: RuntimeSafetyGateService = {
+      admitActivity: (_executionId, activity, observation) => {
+        if (
+          activity._tag === "ProviderTurn" &&
+          observation?.inFlight !== "end"
+        ) {
+          progressAtProviderBoundary.push(observation?.durableProgress);
+        }
+        return Effect.succeed("Continue" as const);
+      },
+    };
     const app = makeApp([
       invalidSendMessageTurn,
       sendMessageTurn("corrected question"),
@@ -1650,7 +1798,7 @@ describe("P3-013 agent driver", () => {
       Effect.gen(function* () {
         yield* runMigrations(P19_MIGRATIONS);
         yield* seed;
-        const driven = yield* driveAndCount(allowGate);
+        const driven = yield* driveAndCount(gate);
         const sql = yield* SqlClient;
         const results = yield* sql.unsafe<{ payload_json: string }>(
           "SELECT payload_json FROM session_entries WHERE item_type = 'ControlResult' ORDER BY sequence",
@@ -1685,10 +1833,23 @@ describe("P3-013 agent driver", () => {
         "ModelCorrectable:InvalidControlArguments",
       ),
     });
+    expect(progressAtProviderBoundary).toEqual([false, false]);
   });
 
   it("returns a semantic action rejection to the model without hiding it as an exception", async () => {
     let attempts = 0;
+    const progressAtProviderBoundary: Array<boolean | undefined> = [];
+    const gate: RuntimeSafetyGateService = {
+      admitActivity: (_executionId, activity, observation) => {
+        if (
+          activity._tag === "ProviderTurn" &&
+          observation?.inFlight !== "end"
+        ) {
+          progressAtProviderBoundary.push(observation?.durableProgress);
+        }
+        return Effect.succeed("Continue" as const);
+      },
+    };
     const handler: AgentActionHandler = {
       action: "SendMessage",
       handle: () => {
@@ -1720,7 +1881,7 @@ describe("P3-013 agent driver", () => {
       Effect.gen(function* () {
         yield* runMigrations(P19_MIGRATIONS);
         yield* seed;
-        const driven = yield* driveAndCount(allowGate);
+        const driven = yield* driveAndCount(gate);
         const sql = yield* SqlClient;
         const results = yield* sql.unsafe<{ payload_json: string }>(
           "SELECT payload_json FROM session_entries WHERE item_type = 'ControlResult' ORDER BY sequence",
@@ -1742,6 +1903,7 @@ describe("P3-013 agent driver", () => {
       disposition: "ModelUsable:action/target-unavailable",
       outputText: expect.stringContaining("selected recipient"),
     });
+    expect(progressAtProviderBoundary).toEqual([false, false]);
   });
 
   it("closes a rejected control call with a durable ControlResult before interruption", async () => {

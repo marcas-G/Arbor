@@ -144,6 +144,8 @@ describe("AH19 Conversation checkpoint blob-before-owner commit", () => {
     } as Execution;
     let capturedManifest: Record<string, unknown> | undefined;
     let capturedRequest: unknown;
+    const sequence: Array<string> = [];
+    const admissions: Array<{ kind: string; hash: string }> = [];
     await Effect.runPromiseExit(
       runConversationCheckpointCompaction(
         {
@@ -182,6 +184,7 @@ describe("AH19 Conversation checkpoint blob-before-owner commit", () => {
         {
           providerRuntime: {
             runTurn: (input: ProviderRunInput) => {
+              sequence.push("provider");
               capturedManifest = JSON.parse(input.manifestJson) as Record<
                 string,
                 unknown
@@ -213,6 +216,18 @@ describe("AH19 Conversation checkpoint blob-before-owner commit", () => {
           blobs: {
             put: () => Effect.succeed("blob:summary" as never),
           } as never,
+          admitProviderTurn: (kind, hash) => {
+            sequence.push("gate");
+            admissions.push({ kind, hash });
+            return Effect.succeed({
+              activity: {
+                _tag: "ProviderTurn",
+                fingerprint: `${kind}:${hash}`,
+              },
+              decision: "Continue" as const,
+            });
+          },
+          completeProviderTurn: () => Effect.succeed("Continue" as const),
           tx: {
             transact: (effect: Effect.Effect<unknown, unknown>) => effect,
           } as never,
@@ -233,6 +248,13 @@ describe("AH19 Conversation checkpoint blob-before-owner commit", () => {
         currentAdmissionJobRevision: 0,
       },
     });
+    expect(sequence).toEqual(["gate", "provider"]);
+    expect(admissions).toEqual([
+      {
+        kind: "CompactionSummary",
+        hash: capturedManifest?.compiledRequestHash,
+      },
+    ]);
   });
 
   it("leaves an allowed orphan Summary Blob when the owner CAS fails", async () => {

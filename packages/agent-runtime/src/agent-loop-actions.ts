@@ -64,6 +64,10 @@ import {
 } from "./control.js";
 import type { ControlActionAuthorizerService } from "./control-authorization.js";
 import { checkFreshness, requirementForAction } from "./freshness.js";
+import {
+  agentActionSafetyFingerprint,
+  isDurableSuccessfulActionProgress,
+} from "./p12-safety-identity.js";
 import { matchesPersistedModelOutput } from "./persisted-model-output.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
@@ -1631,7 +1635,11 @@ export const executeAgentLoopActions = (
       const activityDecision = yield* admit(
         {
           _tag: "ToolInvocation",
-          fingerprint: `tool:${invocation.toolName}:${invocation.callRef}`,
+          fingerprint: agentActionSafetyFingerprint(
+            route._tag,
+            invocation.toolName,
+            invocation.argumentsJson,
+          ),
         },
         { chainDepth: 1, observedAt: yield* now() },
       );
@@ -1737,7 +1745,8 @@ export const executeAgentLoopActions = (
             if (!persisted) {
               observations.push({ source: "Runtime", observation });
             }
-            durableProgress = true;
+            // A persisted corrective failure is model-visible, but it is not
+            // successful progress for the shared P12 D2/D4 signal.
             continue;
           }
           const settlement = safetyStop("ExecutableToolInvocationRejected");
@@ -1848,7 +1857,12 @@ export const executeAgentLoopActions = (
             observation: executed.outcome.observation,
           });
         }
-        durableProgress = true;
+        durableProgress =
+          durableProgress ||
+          isDurableSuccessfulActionProgress({
+            persistenceCommitted: persisted,
+            status: executed.outcome.status ?? "Succeeded",
+          });
         continue;
       }
 
@@ -1881,7 +1895,6 @@ export const executeAgentLoopActions = (
           if (!persisted) {
             observations.push({ source: "Runtime", observation });
           }
-          durableProgress = true;
           continue;
         }
         const settlement = safetyStop(
@@ -2107,7 +2120,8 @@ export const executeAgentLoopActions = (
           { status: "Denied", disposition: "AuthorizationDenied" },
         );
         if (!persisted) observations.push({ source: "Runtime", observation });
-        durableProgress = true;
+        // Authorization denial is a durable, corrective outcome, not
+        // successful progress for D2/D4.
         continue;
       }
 
@@ -2165,7 +2179,6 @@ export const executeAgentLoopActions = (
           if (!persisted) {
             observations.push({ source: "Runtime", observation });
           }
-          durableProgress = true;
           continue;
         }
         const settlement = safetyStop("ControlActionHandlerRejected");
@@ -2270,7 +2283,6 @@ export const executeAgentLoopActions = (
             },
           );
           if (!persisted) observations.push({ source: "Runtime", observation });
-          durableProgress = true;
           continue;
         }
         yield* persistActionSettlement(blocked);
@@ -2304,7 +2316,12 @@ export const executeAgentLoopActions = (
           observation: handled.outcome.observation,
         });
       }
-      durableProgress = true;
+      durableProgress =
+        durableProgress ||
+        isDurableSuccessfulActionProgress({
+          persistenceCommitted: persisted,
+          status: "Succeeded",
+        });
     }
 
     return {
