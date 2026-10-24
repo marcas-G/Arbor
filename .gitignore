@@ -21,6 +21,7 @@ playwright-report/
 .arbor-functional-schema44-*/
 arbor-schema*-clone-*/
 p12-runtime-safety-template-*/
+.arbor-p39-writer-*.sqlite*
 
 # Local provider configuration — may contain inline credentials
 arbor.config.json
