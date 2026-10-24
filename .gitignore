@@ -16,5 +16,11 @@ capability.config.json
 .test-results/
 playwright-report/
 
+# Disposable local database/workspace fixtures created by functional and
+# runtime-safety tests. Their manifests are evidence, not repository source.
+.arbor-functional-schema44-*/
+arbor-schema*-clone-*/
+p12-runtime-safety-template-*/
+
 # Local provider configuration — may contain inline credentials
 arbor.config.json
