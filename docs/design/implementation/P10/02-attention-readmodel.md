@@ -17,6 +17,15 @@ SHA-256 `040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`;
 runtime implementation remains separately gated, and migration 0037 depends
 on P36 integration.
 
+**Accepted S3 AnyProducer settled-wait amendment (DID v1.59):** P10 APW-3
+derives a read-only Attention row for legacy AnyProducer waits under the exact
+idle/no-producer predicate below. It reuses the existing `WaitingOnVacantProducer`
+view label, target, and dedup family. No schema, marker, event, public source
+literal, or dismiss/repair action is added. Accepted under package SHA-256
+`5b558d26b4140631f5c7a14bb743b1e42a9d8992d50feee1a3d2c3c98353b7c8` and
+token `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`; the acceptance authorizes
+design landing only, not implementation.
+
 ## 1. Fact sources → severity → target (frozen mapping)
 
 | Source | Fact carrier | Severity (SD §12.3) | Target |
@@ -42,6 +51,47 @@ the row until the existing P10 freshness barrier catches up. Only after that
 barrier may the UI confirm the old row is absent, and the immutable
 `Unknown(Orphaned)` conclusion remains inspectable.
 | Vacant producer (P7-GAP-01) | derived: dependencies(Unsatisfied ∧ WorkspaceBound) × works(无 Open Work ∧ ¬Retired) | Attention | consumer workspace (view label `WaitingOnVacantProducer`) |
+| Settled AnyProducer wait (APW-3) | derived canonical-state predicate: current-revision `DependencyChanged` WorkWait on an Unsatisfied AnyProducer Dependency; Open consumer Work with no active WorkEpisode; project idle; no Pending formation decision or Approved-but-unapplied producer; and no APW-3 producer evidence | Attention | consumer workspace (same existing `WaitingOnVacantProducer` label) |
+
+### Accepted APW-3 — settled AnyProducer wait (2026-10-24)
+
+This is a live, read-only derivation; it does not add a P7 wait-for edge or
+deadlock. In one canonical read snapshot, emit the existing Attention row only
+when all of these hold:
+
+1. The Dependency is `Unsatisfied`, its binding is `AnyProducer`, and the
+   consumer Work has an active `DependencyChanged` WorkWait for that exact
+   Dependency whose `observedRevision` equals the current Dependency revision.
+   Revision-mismatched/stale waits are suppressed.
+2. The consumer Work is `Open` and has no active WorkEpisode Execution.
+3. The legacy producer-evidence predicate is empty. It includes the APW-1
+   evidence categories for another same-Project Open Work or an exact
+   Approved-but-materializing FormationFulfillment, plus any matching
+   persisted Deliverable whose deterministic P7 satisfaction CommandId has
+   neither a `Committed` nor `TerminalRejected` exact receipt. A matching
+   Deliverable with a missing or retryable/nonterminal receipt may still
+   converge and suppress this row. A Committed receipt is terminal; a
+   TerminalRejected receipt is not a convergence candidate and is not retried
+   by this amendment.
+4. No Project Execution is active, there is no current Pending
+   FormationProposal, and there is no Approved-but-unapplied producer
+   fulfillment. These facts mean the Project is idle with no authorized
+   producer transition; a Pending proposal is not producer evidence and its
+   existing Governance Inbox decision remains the action surface.
+
+The row uses source/view label `WaitingOnVacantProducer`, severity `Attention`,
+target = consumer Workspace, and existing dedup key
+`vacant-producer:<dependencyId>`. Its fixed summary is non-content-bearing and
+must not name a producer Workspace that does not exist. No Work objective,
+Message/Inbox text, Provider output, or other untrusted text is consulted.
+
+The row is not authority: it does not mutate the Dependency, clear the
+WorkWait, mark the Dependency `Unfulfillable`, satisfy/wake the consumer, or
+gate readmission. A brief row between a valid current-revision wait and the
+existing P7/P2 wake consumer clearing it is permitted; the row disappears when
+the wait clears, the Dependency becomes terminal, producer evidence appears,
+or the Project ceases to satisfy the idle predicate. Existing WorkspaceBound
+P7-GAP-01 semantics and P7 coordinator/wake semantics are unchanged.
 
 ### RAI-DG-01 Work-revision freshness for active Attention
 
