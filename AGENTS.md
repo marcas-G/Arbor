@@ -746,3 +746,13 @@ not qualified. Copied same-holder ToolRuntime concurrency is explicitly
 unsupported; shell@3 remains NonIdempotent and legacy shell@2 fails closed
 without trusted proof. This addendum does not change `docs/design/**` or
 authorize preserved-database access.
+
+2026-10-25 governance increment: `RAI-DG-02` terminal Provider failure
+same-Work-revision readmission hold was manually accepted under
+`ACCEPT_RAI_DG_02_TERMINAL_PROVIDER_FAILURE_HOLD_V2`, fixed proposal raw
+SHA-256 `FA1AFC6675E040698F69E5EE29C67DE92EA10D54228D476A6DA27E2A98B8FA93`.
+Owner contracts landed as System Design v1.23 / DID v1.61 plus
+P2/P3/P6/P7/P9/P10/P12/P13 addenda. The decision is design-only: independent
+post-landing review and a separate implementation authorization remain
+required. Do not implement, migrate a preserved database, or claim real S2 /
+release closure from the acceptance alone.
