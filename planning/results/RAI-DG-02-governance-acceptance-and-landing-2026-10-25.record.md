@@ -90,3 +90,20 @@ already present in the accepted V2 hash:
 The accepted proposal bytes remain unchanged. The correction adds no code,
 migration, schema, database access or implementation authorization. A second
 independent review is required.
+
+## Narrow corrective landing after independent review round 2
+
+Round 2 is preserved in
+`planning/results/RAI-DG-02-postlanding-review-round2-2026-10-25.result.md`
+and reported Blocking=1/Nonblocking=0. The only remaining omission was the
+accepted Work Detail occurrence time. `TerminalProviderFailureView` now carries
+the exact validated final ProviderAttempt `settledAt` as `occurredAt` for both
+variants; the existing no-row `ProjectionIntegrityFailure` rule still applies
+when that instant cannot be proved.
+
+| Corrected owner file | pre-correction Git blob | corrected post SHA-256 |
+|---|---|---|
+| `docs/design/implementation/P10/05-surface-actions-transport.md` | `5967ac0862cb2b915c4a9192a76a5fdb18193da7` | `ECE7D74BB8664CF455AA6AF345410F7F93161076B8B329780F35CEE651FB4CE3` |
+
+No other owner contract changed. The accepted proposal bytes remain unchanged;
+round 3 independent review is required before implementation authorization.

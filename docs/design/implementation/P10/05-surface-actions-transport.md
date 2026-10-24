@@ -43,11 +43,13 @@ type TerminalProviderFailureView =
   | { readonly kind: "TerminalProviderFailure";
       readonly workId: WorkId;
       readonly workRevision: WorkRevision;
+      readonly occurredAt: string; // exact validated final ProviderAttempt.settledAt
       readonly failureCode:
         | "AuthenticationFailed" | "RequestRejected" | "ProtocolViolation" }
   | { readonly kind: "TerminalProviderFailureIntegrity";
       readonly workId?: WorkId;
       readonly workRevision?: WorkRevision;
+      readonly occurredAt: string; // present only when exact source time is provable
       readonly failureCode: ReadmissionGateIntegrityFailure["reasonCode"] };
 ```
 
