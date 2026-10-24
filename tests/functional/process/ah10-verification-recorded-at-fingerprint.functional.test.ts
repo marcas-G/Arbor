@@ -129,7 +129,7 @@ const recordDependencies = (clock: { now: () => Effect.Effect<string> }) =>
     return makeSingleWorkspaceControlActionHandlers(dependencies);
   });
 
-describe("pending AH10 RecordVerificationEvidence recordedAt retry fingerprint", () => {
+describe("AH10 RecordVerificationEvidence recordedAt retry fingerprint", () => {
   it("keeps the first durable ActionIntent time across owner-generation takeover", async () => {
     const database = await createSchema46TestDatabase();
     cleanups.push(database.cleanup);

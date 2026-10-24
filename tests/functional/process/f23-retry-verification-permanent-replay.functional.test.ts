@@ -115,7 +115,7 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
 
-describe("pending F23 P8 RetryVerification permanent exact replay", () => {
+describe("F23 P8 RetryVerification permanent exact replay", () => {
   it("returns the original receipt for the same CommandId and exact payload after commit", async () => {
     const startupTrace: string[] = [];
     let fixture: ProductionFixture;
@@ -136,7 +136,7 @@ describe("pending F23 P8 RetryVerification permanent exact replay", () => {
     const project = await createFunctionalProject(
       client,
       fixture.workspaceDirectory,
-      "P8 permanent exact replay RED",
+      "P8 permanent exact replay qualification",
     );
     const workId = functionalId("wrk");
     const verificationId = functionalId("ver");
