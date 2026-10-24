@@ -236,7 +236,7 @@ test("a failing release Vitest group finalizes failed without starting Playwrigh
     assert.equal(finalManifest.status, "failed");
     assert.equal(finalManifest.exitCode, 1);
     assert.equal(finalManifest.completeCoverage, false);
-    assert.equal(finalManifest.selectedFiles.length, 62);
+    assert.equal(finalManifest.selectedFiles.length, 64);
     assert.equal(
       finalManifest.selectedFiles.length,
       manifest.groups.functionalVitest.length +
