@@ -18,6 +18,7 @@
     "@arbor/ports": "workspace:*"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "build:native-host": "node ./scripts/build-native-host.mjs"
   }
 }
