@@ -1,0 +1,136 @@
+{
+  "contractVersion": 1,
+  "title": "Arbor 首版 RC 收敛看板",
+  "auditedCandidateSha": "772ba5d713032fbccd7623264f5b664bee22f4a9",
+  "statusPolicy": "状态由人工审阅的资格记录维护；报告器只格式化，不检查文件是否存在，也不推断 PASS。",
+  "evidenceClasses": [
+    "deterministic",
+    "process",
+    "real-provider",
+    "native",
+    "browser",
+    "package"
+  ],
+  "items": [
+    {
+      "id": "scenario-s1",
+      "name": "S1：真实工作闭环与重启读取",
+      "owner": "Runtime / Release Qualification",
+      "status": "OPEN",
+      "evidenceClass": ["real-provider", "process"],
+      "exactSha": null,
+      "evidence": ["planning/results/real-public-s1-lifecycle-qualification-20261023.result.md"],
+      "closureCondition": "在 RC 同一 SHA 和配置下完成公开 Work → effect → 独立 Verification PASS → Parent Acceptance → Completed，重启后公共读取同一结果；测试与生产构建 SHA 一致。"
+    },
+    {
+      "id": "scenario-s2",
+      "name": "S2：Steer 后按新 revision 继续完成",
+      "owner": "Runtime / Provider Integration",
+      "status": "OPEN",
+      "evidenceClass": ["real-provider", "process"],
+      "exactSha": null,
+      "evidence": ["planning/results/S2-steer-work-revision-l2.result.md", "planning/results/release-candidate-convergence-772ba5d7.result.md"],
+      "closureCondition": "在 RC 同一 SHA 上由真实 Provider 完成 Normal Steer、旧 revision 结果拒绝、revision 递增后的 Verification/Acceptance 与重启/replay；不得以 scripted L2 或 immediate Stop 切片代替。"
+    },
+    {
+      "id": "scenario-s3",
+      "name": "S3：Child 形成、交付、依赖满足与接受",
+      "owner": "Runtime / Governance Qualification",
+      "status": "OPEN",
+      "evidenceClass": ["real-provider", "process"],
+      "exactSha": null,
+      "evidence": ["planning/results/real-public-s3-collaboration-rerun-20261024.result.md"],
+      "closureCondition": "先按获批治理合同处理 settled AnyProducer 无 producer 的等待；随后在 RC 同一 SHA 的真实公开流程完成 Child 形成、真实 Deliverable/Delivery、Dependency 满足、独立验证与 Parent 接受。"
+    },
+    {
+      "id": "scenario-s4",
+      "name": "S4：真实 Executable Approval 与硬重启恢复",
+      "owner": "Runtime / Sandbox / Release Qualification",
+      "status": "OPEN",
+      "evidenceClass": ["real-provider", "process", "native"],
+      "exactSha": null,
+      "evidence": ["planning/results/real-public-s4-b-approval-hard-restart-20261024.result.md"],
+      "closureCondition": "真实公开 Work 产生确需审批的 Executable action；证明审批前无 effect、相同绑定经硬重启恢复、用户批准后唯一 effect 成功；并使用首发实际支持的隔离配置。"
+    },
+    {
+      "id": "rai-terminal-provider-hold",
+      "name": "终态 Provider 失败的 Work revision hold",
+      "owner": "P2 / P3 / P7 / P9 / P10 / Governance",
+      "status": "OPEN",
+      "evidenceClass": ["process", "real-provider"],
+      "exactSha": null,
+      "evidence": ["planning/results/RAI-DG-02-real-S2-terminal-provider-failure-busy-loop.result.md", "planning/proposals/RAI-DG-02-terminal-provider-failure-readmission-hold-draft.md"],
+      "closureCondition": "草案经人工接受并完成获准实现；首个精确终态失败即阻止同 revision 再执行，重启仍 hold，公开 Attention 安全且授权 Steer revision advance 后才恢复；Provider 适配故障另行修复并通过 S2。"
+    },
+    {
+      "id": "recovery-pending-cases",
+      "name": "四个恢复/P8/F23 精确用例进入默认矩阵",
+      "owner": "Recovery / Verification",
+      "status": "OPEN",
+      "evidenceClass": ["process", "deterministic"],
+      "exactSha": "772ba5d713032fbccd7623264f5b664bee22f4a9",
+      "evidence": ["planning/results/current-recovery-closure-audit-772ba5d7.result.md", "tests/functional/pending/ah10-verification-recorded-at-fingerprint.functional.test.ts", "tests/functional/pending/p8-conclusion-criteria-snapshot.functional.test.ts", "tests/functional/pending/f23-retry-verification-permanent-replay.functional.test.ts", "tests/functional/pending/f23-exact-tuple-receipt-integrity.functional.test.ts"],
+      "closureCondition": "四案由有权测试选择审计晋升到默认 release manifest，并在最终候选 SHA 上无 retry 全部通过；完整覆盖报告列出四案。"
+    },
+    {
+      "id": "p6-public-read",
+      "name": "F23 UnboundLegacy 的 P6 公共读取资格",
+      "owner": "P6 / Web",
+      "status": "OPEN",
+      "evidenceClass": ["process", "browser"],
+      "exactSha": null,
+      "evidence": ["planning/results/current-recovery-closure-audit-772ba5d7.result.md", "planning/results/F23-P6-operator-unbound-legacy-public-read.result.md"],
+      "closureCondition": "通过正式 public read route 证明目标用户能看到有界 disposition；operator-only offline rebuild 不计作公共读取证据。"
+    },
+    {
+      "id": "submitted-decision-corruption",
+      "name": "Submitted DecisionEpisode 损坏的终态处置",
+      "owner": "Decision Runtime / Manual Governance",
+      "status": "BLOCKED",
+      "evidenceClass": ["process"],
+      "exactSha": null,
+      "evidence": ["planning/results/current-recovery-closure-audit-772ba5d7.result.md"],
+      "closureCondition": "Owner 冻结 durable terminal/Attention/reconciliation 语义并授权后，精确损坏用例在真实进程恢复矩阵通过；不得将隔离负例解释成 PASS。"
+    },
+    {
+      "id": "native-os-sandbox",
+      "name": "首发执行路径的受支持 OS 隔离",
+      "owner": "Sandbox Platform / Security",
+      "status": "BLOCKED",
+      "evidenceClass": ["native", "process"],
+      "exactSha": null,
+      "evidence": ["planning/results/release-candidate-convergence-772ba5d7.result.md"],
+      "closureCondition": "证明首发平台上的 Supported provider 对文件、网络、broker 与停止边界实际强制执行并通过资格矩阵；否则产品配置必须关闭相应执行能力且不宣称 Native 隔离。"
+    },
+    {
+      "id": "existing-database-upgrade",
+      "name": "已有用户数据库升级支持范围",
+      "owner": "Persistence / Release Engineering",
+      "status": "BLOCKED",
+      "evidenceClass": ["process", "package"],
+      "exactSha": null,
+      "evidence": ["planning/results/release-candidate-convergence-772ba5d7.result.md", "planning/results/current-recovery-closure-audit-772ba5d7.result.md"],
+      "closureCondition": "若首发支持既有库升级，须有明确授权以及在线/保留用户库升级、失败恢复和备份恢复资格；若不支持，安装器必须拒绝/引导到明确受支持的新库路径，不能把 disposable migration 当作用户库资格。"
+    },
+    {
+      "id": "full-local-gates",
+      "name": "完整本地检查、功能覆盖与浏览器资格",
+      "owner": "Release Engineering",
+      "status": "PASS",
+      "evidenceClass": ["deterministic", "process", "browser"],
+      "exactSha": "772ba5d713032fbccd7623264f5b664bee22f4a9",
+      "evidence": ["planning/results/release-candidate-convergence-772ba5d7.result.md", ".test-results/2026-10-24T12-31-19-483Z-29480/summary.md"],
+      "closureCondition": "每个最终候选 SHA 均运行 pnpm check 与完整 release functional profile，completeCoverage=true，UI/browser 全通过且零 retry；兼容续跑的 inherited files 必须被报告保留并核对来源 SHA。"
+    },
+    {
+      "id": "package-clean-checkout",
+      "name": "发布包与 clean-checkout 安装资格",
+      "owner": "Release Engineering",
+      "status": "PASS",
+      "evidenceClass": ["package"],
+      "exactSha": "772ba5d713032fbccd7623264f5b664bee22f4a9",
+      "evidence": ["planning/results/release-candidate-convergence-772ba5d7.result.md"],
+      "closureCondition": "在同一最终候选 SHA 上构建发布包，并以干净 checkout/安装环境通过 package gate；包内不依赖开发机残留产物。"
+    }
+  ]
+}
