@@ -872,6 +872,7 @@ describe("AH10 real daemon generation takeover", () => {
     let declarationProviderCalls = 0;
     let probeArmed = false;
     let seedWaitIssued = false;
+    let producerWorkspaceId = "";
     const fixture = await startProductionFixture({
       isolatedPortHandshake: true,
       reply: (call) => {
@@ -928,7 +929,10 @@ describe("AH10 real daemon generation takeover", () => {
             _tag: "ToolCall",
             name: "declare_dependency",
             arguments: {
-              producerBinding: { _tag: "AnyProducer" },
+              producerBinding: {
+                _tag: "WorkspaceBound",
+                workspaceId: producerWorkspaceId,
+              },
               expectedDeliverable: {
                 kind: dependencyKind,
                 requiredArtifactRoles: [],
@@ -948,6 +952,7 @@ describe("AH10 real daemon generation takeover", () => {
       fixture.workspaceDirectory,
       "AH10 committed DeclareDependency receipt recovery",
     );
+    producerWorkspaceId = project.rootWorkspaceId;
     const consumerWork = await admitRootWorkThroughPublicConversation(
       client,
       project,
