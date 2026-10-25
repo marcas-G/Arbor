@@ -121,6 +121,7 @@
       "tests/functional/process/recovery-verdicts.functional.test.ts",
       "tests/functional/process/s2-steer-work-revision.functional.test.ts",
       "tests/functional/process/s3-any-producer-wait-recovery.functional.test.ts",
+      "tests/functional/process/sandbox-policy-v3-source-adoption.functional.test.ts",
       "tests/functional/process/sandbox-policy-v6-registry-drift-restart.functional.test.ts",
       "tests/functional/package/clean-checkout.functional.test.ts"
     ],

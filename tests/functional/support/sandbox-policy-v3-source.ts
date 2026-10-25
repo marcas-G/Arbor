@@ -37,6 +37,46 @@ import { setP39PrivateWindowsAcl } from "../../support/p39-windows-deployment-te
 const hash = (value: string | Uint8Array) =>
   createHash("sha256").update(value).digest("hex");
 
+const reparsePoint = (stats: Stats) =>
+  stats.isSymbolicLink() ||
+  (((stats as typeof stats & { readonly attributes?: number }).attributes ??
+    0) &
+    0x400) !==
+    0;
+
+const artifactError = (path: string, classification: string) =>
+  new Error(`synthetic D2 artifact ${path}: ${classification}`);
+
+const lstatArtifact = (path: string) => {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ENOENT"
+    )
+      return undefined;
+    throw artifactError(path, "LstatFailed");
+  }
+};
+
+const fixedArtifactBytesOrSynthetic = (
+  path: string,
+  syntheticBytes: Buffer,
+): Buffer => {
+  const stats = lstatArtifact(path);
+  if (stats === undefined) return syntheticBytes;
+  if (reparsePoint(stats) || !stats.isFile())
+    throw artifactError(path, "ExistingTargetNotRegularFile");
+  try {
+    return readFileSync(path);
+  } catch {
+    throw artifactError(path, "ExistingTargetUnreadable");
+  }
+};
+
 const limits = {
   wallTimeMs: 60_000,
   stdoutBytes: 8192,
@@ -84,14 +124,22 @@ export const sandboxPolicyV3TestPair = (input?: {
   const enforcementRuleSetDigest = hash(
     encodeSandboxEnforcementRuleSetV1(ruleSet),
   );
-  const sourceArtifactBytes = Buffer.from(
+  const syntheticSourceArtifactBytes = Buffer.from(
     "synthetic V6 qualification-only process host source\n",
     "utf8",
   );
+  const sourceArtifactBytes = fixedArtifactBytesOrSynthetic(
+    paths.source,
+    syntheticSourceArtifactBytes,
+  );
   const compilerArtifactBytes = readFileSync(paths.compiler);
-  const binaryArtifactBytes = Buffer.from(
+  const syntheticBinaryArtifactBytes = Buffer.from(
     "synthetic V6 qualification-only PE artifact; never executed\n",
     "utf8",
+  );
+  const binaryArtifactBytes = fixedArtifactBytesOrSynthetic(
+    paths.binary,
+    syntheticBinaryArtifactBytes,
   );
   const controlArtifactBytes = Buffer.from(
     "synthetic V6 qualification-only control artifact\n",
@@ -366,31 +414,6 @@ export interface SandboxPolicyV3SyntheticArtifactPaths {
   readonly control: string;
   readonly testControlRoot: string;
 }
-
-const reparsePoint = (stats: Stats) =>
-  stats.isSymbolicLink() ||
-  (((stats as typeof stats & { readonly attributes?: number }).attributes ??
-    0) &
-    0x400) !==
-    0;
-
-const artifactError = (path: string, classification: string) =>
-  new Error(`synthetic D2 artifact ${path}: ${classification}`);
-
-const lstatArtifact = (path: string) => {
-  try {
-    return lstatSync(path);
-  } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )
-      return undefined;
-    throw artifactError(path, "LstatFailed");
-  }
-};
 
 /** Test seam for the fixed-path installer. Existing files are adopted only
  * after exact-byte and file-kind checks; cleanup owns only newly created paths. */
