@@ -801,6 +801,180 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
     );
   });
 
+  it("renders bounded terminal provider integrity facts without source content", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedAttention;
+        const deps = yield* makeP10Deps();
+        const integrityFact = {
+          kind: "TerminalProviderFailureIntegrity" as const,
+          projectId: p10Project,
+          workspaceId: p10Root,
+          workId: W_A,
+          workRevision: 4,
+          executionId: "exe_terminal_integrity",
+          logicalStepNo: 3,
+          repairAttempt: 1,
+          occurredAt: "2026-10-26T02:03:04.000Z",
+          failureCode: "SourceManifestMismatch",
+          rawProviderBody: "sensitive-provider-body",
+        };
+        const integrityDeps: AttentionReadDeps = {
+          ...deps.attention,
+          listTerminalProviderFailures: () =>
+            Effect.succeed([integrityFact] as never),
+        };
+
+        const rows = yield* deriveProjectAttention(p10Project, integrityDeps);
+        const row = rows.find(
+          (candidate) =>
+            candidate.source === "TerminalProviderFailureIntegrity",
+        );
+
+        expect(row).toMatchObject({
+          severity: "ActionRequired",
+          targetWorkspaceId: p10Root,
+          dedupKey:
+            "terminal-provider-failure-integrity:exe_terminal_integrity:3:1:SourceManifestMismatch",
+          summary:
+            "Arbor cannot safely verify a terminal provider-failure recovery record. Execution remains blocked; inspect the bounded integrity code before retrying.",
+          occurredAt: "2026-10-26T02:03:04.000Z",
+          workId: W_A,
+          targetWorkRevision: 4,
+          terminalProviderFailure: {
+            kind: "TerminalProviderFailureIntegrity",
+            workId: W_A,
+            workRevision: 4,
+            occurredAt: "2026-10-26T02:03:04.000Z",
+            failureCode: "SourceManifestMismatch",
+          },
+        });
+        expect(JSON.stringify(row)).not.toContain("sensitive-provider-body");
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("keeps one deterministic earliest witness across reads of a large equivalent history", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedAttention;
+        const deps = yield* makeP10Deps();
+        const history = Array.from({ length: 320 }, (_, index) => {
+          const admittedAt = new Date(
+            Date.UTC(2026, 0, 1, 0, 0, index),
+          ).toISOString();
+          return {
+            admittedAt,
+            executionId: `exe_terminal_${String(index).padStart(4, "0")}`,
+            logicalStepNo: 2,
+            repairAttempt: 1,
+            providerTurnId: `pt_terminal_${String(index).padStart(4, "0")}`,
+            attemptNo: 0,
+            failureKind: "RequestRejected" as const,
+            failureFingerprint: "a".repeat(64),
+            occurredAt: admittedAt,
+          };
+        });
+        const earliest = [...history].sort(
+          (left, right) =>
+            left.admittedAt.localeCompare(right.admittedAt) ||
+            left.executionId.localeCompare(right.executionId) ||
+            left.logicalStepNo - right.logicalStepNo ||
+            left.repairAttempt - right.repairAttempt ||
+            left.providerTurnId.localeCompare(right.providerTurnId) ||
+            left.attemptNo - right.attemptNo,
+        )[0];
+        expect(earliest).toBeDefined();
+        if (earliest === undefined) return;
+
+        // The P10 fixture uses a NoHold gate and cannot exercise the SQLite
+        // history election. Model its frozen one-witness port result here;
+        // the P10 assertion covers projection stability across re-reads.
+        const gateWitness = {
+          projectId: p10Project,
+          workspaceId: p10Root,
+          workId: W_A,
+          workRevision: 4,
+          source: {
+            sourceKind: "TerminalProviderFailureSettlement",
+            executionId: earliest.executionId,
+            logicalStepNo: earliest.logicalStepNo,
+            repairAttempt: earliest.repairAttempt,
+            providerTurnId: earliest.providerTurnId,
+            attemptNo: earliest.attemptNo,
+            failureKind: earliest.failureKind,
+            failureFingerprint: earliest.failureFingerprint,
+          },
+          occurredAt: earliest.occurredAt,
+        } as never;
+        const readDeps: AttentionReadDeps = {
+          ...deps.attention,
+          listTerminalProviderFailures: () => Effect.succeed([gateWitness]),
+        };
+        const before = yield* snapshotDatabase();
+        const beforeRebuild = yield* deriveProjectAttention(
+          p10Project,
+          readDeps,
+        );
+        const afterRebuildAndRestart = yield* deriveProjectAttention(
+          p10Project,
+          { ...readDeps },
+        );
+        const firstRows = rowsOf("TerminalProviderFailure", beforeRebuild);
+        const secondRows = rowsOf(
+          "TerminalProviderFailure",
+          afterRebuildAndRestart,
+        );
+        expect(firstRows).toHaveLength(1);
+        expect(secondRows).toHaveLength(1);
+        expect(firstRows[0]?.occurredAt).toBe(earliest.occurredAt);
+        expect(secondRows).toEqual(firstRows);
+        expect(yield* snapshotDatabase()).toBe(before);
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("fails closed with bounded integrity for invalid-time and unprovable terminal evidence", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedAttention;
+        const deps = yield* makeP10Deps();
+        const boundedFailures = [
+          "FailureOccurrenceTimeInvalid",
+          "EpisodeMalformed",
+        ].map((reasonCode) => ({
+          _tag: "ProjectionIntegrityFailure" as const,
+          code: "projection/unavailable" as const,
+          category: "unavailable" as const,
+          correlationId: null,
+          retryDisposition: "non-retryable" as const,
+          safeDetails: {
+            sourceTag: "TerminalProviderFailureIntegrity",
+            executionId: "exe_terminal_integrity",
+            reasonCode,
+          },
+        }));
+        for (const boundedFailure of boundedFailures) {
+          const failingDeps: AttentionReadDeps = {
+            ...deps.attention,
+            listTerminalProviderFailures: () => Effect.fail(boundedFailure),
+          };
+          const failure = yield* Effect.flip(
+            deriveProjectAttention(p10Project, failingDeps),
+          );
+          expect(failure).toEqual(boundedFailure);
+          expect(JSON.stringify(failure)).not.toContain("settled_at");
+        }
+      }),
+      makeP10App(),
+    );
+  });
+
   it("omits old Work Episode Attention immediately across lag/re-read and fails closed on a cross-Workspace binding", async () => {
     const result = await runP10(
       Effect.gen(function* () {

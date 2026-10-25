@@ -288,6 +288,121 @@ const seedDetail = seedCanonical(
 );
 
 describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
+  it("projects a bounded terminal provider integrity result in Work Detail", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        const detail = yield* deriveWorkDetail(
+          { projectId: p10Project, workspaceId: p10Root, workId: W_ROOT },
+          {
+            ...deps.workDetail,
+            findTerminalProviderFailure: () =>
+              Effect.succeed(
+                Option.some({
+                  kind: "TerminalProviderFailureIntegrity" as const,
+                  workId: W_ROOT,
+                  workRevision: 7,
+                  occurredAt: "2026-10-26T02:03:04.000Z",
+                  failureCode: "SourceManifestMismatch",
+                } as never),
+              ),
+          },
+        );
+
+        expect(detail.terminalProviderFailure).toEqual({
+          kind: "TerminalProviderFailureIntegrity",
+          workId: W_ROOT,
+          workRevision: 7,
+          occurredAt: "2026-10-26T02:03:04.000Z",
+          failureCode: "SourceManifestMismatch",
+        });
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("keeps terminal provider presentation tied to the current Open Work revision", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        yield* insertWorkRow(
+          {
+            workId: W_CANCEL,
+            workspaceId: p10Root,
+            objective: "cancelled work",
+            lifecycle: "Cancelled",
+          },
+          p10Project,
+        );
+        yield* insertVerificationRow({
+          verificationId: "ver_terminal_completed",
+          workId: W_DONE,
+          targetWorkRevision: 0,
+          ownerWorkspaceId: p10Root,
+          executionIds: [],
+          state: "Concluded",
+          verdict: "Pass",
+        });
+        yield* insertAcceptanceRow({
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000f1",
+          workId: W_DONE,
+          targetWorkRevision: 0,
+          verificationId: "ver_terminal_completed",
+          actor: "user:gov",
+          acceptedAt: "2026-10-26T00:00:00.000Z",
+        });
+        const deps = yield* makeP10Deps();
+        const openWork = yield* deps.workDetail.findWork(W_ROOT);
+        expect(Option.isSome(openWork)).toBe(true);
+        if (Option.isNone(openWork)) return;
+
+        const queriedRevisions: Array<number> = [];
+        const steered = yield* deriveWorkDetail(
+          { projectId: p10Project, workspaceId: p10Root, workId: W_ROOT },
+          {
+            ...deps.workDetail,
+            findWork: () =>
+              Effect.succeed(
+                Option.some({ ...openWork.value, revision: 8 as never }),
+              ),
+            findTerminalProviderFailure: (input) => {
+              queriedRevisions.push(input.workRevision);
+              return Effect.succeed(Option.none());
+            },
+          },
+        );
+        expect(queriedRevisions).toEqual([8]);
+        expect(steered.terminalProviderFailure).toBeUndefined();
+
+        for (const workId of [W_DONE, W_CANCEL]) {
+          const work = yield* deps.workDetail.findWork(workId);
+          expect(Option.isSome(work)).toBe(true);
+          if (Option.isNone(work)) continue;
+          const detail = yield* deriveWorkDetail(
+            {
+              projectId: p10Project,
+              workspaceId: p10Root,
+              workId,
+            },
+            {
+              ...deps.workDetail,
+              findTerminalProviderFailure: () => {
+                throw new Error(
+                  "terminal read must be skipped after settlement",
+                );
+              },
+            },
+          );
+          expect(detail.terminalProviderFailure).toBeUndefined();
+        }
+      }),
+      makeP10App(),
+    );
+  });
+
   it("projects a candidate choice instead of the singular preconditions union", async () => {
     await runP10(
       Effect.gen(function* () {

@@ -18,6 +18,7 @@ import type {
   LegacyAdoptionAttentionFact,
   LegacyAdoptionAttentionProjectionRow,
   LegacyAdoptionAttentionResolutionFact,
+  ReadmissionGateIntegrityFailure,
   SandboxProviderUnavailableAttentionProjectionRow,
   SandboxRecoveryBindingFailureProjectionRow,
   SubmittedDecisionBindingAttentionFact,
@@ -132,6 +133,22 @@ export interface TerminalProviderFailureAttentionFact {
   readonly occurredAt: string;
 }
 
+export interface TerminalProviderFailureIntegrityAttentionFact {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly workId: WorkId;
+  readonly workRevision: number;
+  readonly executionId: string;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly occurredAt: string;
+  readonly failureCode: ReadmissionGateIntegrityFailure["reasonCode"];
+}
+
+export type TerminalProviderFailureReadFact =
+  | TerminalProviderFailureAttentionFact
+  | TerminalProviderFailureIntegrityAttentionFact;
+
 /** Read faces the Attention read-model derives from (read-only over
  * canonical tables + journal; injected — the package itself owns no
  * storage and never writes). */
@@ -139,8 +156,8 @@ export interface AttentionReadDeps {
   readonly listTerminalProviderFailures?: (
     projectId: ProjectId,
   ) => Effect.Effect<
-    ReadonlyArray<TerminalProviderFailureAttentionFact>,
-    ProjectionReadError
+    ReadonlyArray<TerminalProviderFailureReadFact>,
+    ProjectionReadResultError
   >;
   readonly listWorkspacesByProject: (
     projectId: ProjectId,
@@ -1441,27 +1458,53 @@ export const deriveProjectAttention = (
     if (deps.listTerminalProviderFailures !== undefined) {
       const failures = yield* deps.listTerminalProviderFailures(projectId);
       rows = [
-        ...rows.filter((row) => row.source !== "TerminalProviderFailure"),
-        ...failures.map((fact) => ({
-          source: "TerminalProviderFailure" as const,
-          severity: "ActionRequired" as const,
-          targetWorkspaceId: fact.workspaceId,
-          dedupKey: `terminal-provider-failure:${fact.workId}:${String(fact.workRevision)}:${fact.source.failureFingerprint}`,
-          summary:
-            "The model provider rejected this Work execution. Review the provider configuration or request compatibility, then explicitly steer the Work to retry.",
-          occurredAt: fact.occurredAt,
-          failureCode: fact.source.failureKind,
-          workId: fact.workId,
-          targetWorkRevision: fact.workRevision,
-          terminalProviderFailure: {
-            kind: "TerminalProviderFailure" as const,
-            workId: fact.workId,
-            workRevision: fact.workRevision,
-            occurredAt: fact.occurredAt,
-            failureCode: fact.source.failureKind,
-            failureFingerprint: fact.source.failureFingerprint,
-          },
-        })),
+        ...rows.filter(
+          (row) =>
+            row.source !== "TerminalProviderFailure" &&
+            row.source !== "TerminalProviderFailureIntegrity",
+        ),
+        ...failures.map((fact) =>
+          "source" in fact
+            ? {
+                source: "TerminalProviderFailure" as const,
+                severity: "ActionRequired" as const,
+                targetWorkspaceId: fact.workspaceId,
+                dedupKey: `terminal-provider-failure:${fact.workId}:${String(fact.workRevision)}:${fact.source.failureFingerprint}`,
+                summary:
+                  "The model provider rejected this Work execution. Review the provider configuration or request compatibility, then explicitly steer the Work to retry.",
+                occurredAt: fact.occurredAt,
+                failureCode: fact.source.failureKind,
+                workId: fact.workId,
+                targetWorkRevision: fact.workRevision,
+                terminalProviderFailure: {
+                  kind: "TerminalProviderFailure" as const,
+                  workId: fact.workId,
+                  workRevision: fact.workRevision,
+                  occurredAt: fact.occurredAt,
+                  failureCode: fact.source.failureKind,
+                  failureFingerprint: fact.source.failureFingerprint,
+                },
+              }
+            : {
+                source: "TerminalProviderFailureIntegrity" as const,
+                severity: "ActionRequired" as const,
+                targetWorkspaceId: fact.workspaceId,
+                dedupKey: `terminal-provider-failure-integrity:${fact.executionId}:${fact.logicalStepNo}:${fact.repairAttempt}:${fact.failureCode}`,
+                summary:
+                  "Arbor cannot safely verify a terminal provider-failure recovery record. Execution remains blocked; inspect the bounded integrity code before retrying.",
+                occurredAt: fact.occurredAt,
+                failureCode: fact.failureCode,
+                workId: fact.workId,
+                targetWorkRevision: fact.workRevision,
+                terminalProviderFailure: {
+                  kind: "TerminalProviderFailureIntegrity" as const,
+                  workId: fact.workId,
+                  workRevision: fact.workRevision,
+                  occurredAt: fact.occurredAt,
+                  failureCode: fact.failureCode,
+                },
+              },
+        ),
       ];
     }
     return rows;
