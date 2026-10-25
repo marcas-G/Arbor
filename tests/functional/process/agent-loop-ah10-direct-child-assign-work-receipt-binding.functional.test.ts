@@ -2953,6 +2953,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
                 targetWorkspaceId: string;
                 dedupKey: string;
                 summaryRef: string;
+                failureCode?: string;
+                workId?: string;
               }>;
             }>("attention", { projectId: project.projectId }),
           (view) =>
@@ -2962,6 +2964,110 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
                 completed.bindingAttentionFacts[0]?.attention_fact_id,
             ),
         );
+        const bindingRows = attention.rows.filter(
+          (row) => row.source === "AssignWorkTargetBindingFailure",
+        );
+        const terminalProviderRows = attention.rows.filter(
+          (row) =>
+            row.source === "TerminalProviderFailure" ||
+            row.source === "TerminalProviderFailureIntegrity",
+        );
+        expect(bindingRows).toHaveLength(1);
+        expect(terminalProviderRows).toHaveLength(1);
+        expect(attention.rows.map((row) => row.source).sort()).toEqual([
+          "AssignWorkTargetBindingFailure",
+          "TerminalProviderFailure",
+        ]);
+        expect(new Set(attention.rows.map((row) => row.dedupKey)).size).toBe(
+          attention.rows.length,
+        );
+        const terminalProviderRow = terminalProviderRows[0];
+        if (
+          terminalProviderRow === undefined ||
+          terminalProviderRow.workId === undefined
+        ) {
+          throw new Error(
+            "terminal Provider Attention omitted its Work identity",
+          );
+        }
+        expect(terminalProviderRow).toMatchObject({
+          source: "TerminalProviderFailure",
+          severity: "ActionRequired",
+          failureCode: "RequestRejected",
+        });
+        expect(terminalProviderRow.dedupKey).toMatch(
+          new RegExp(
+            `^terminal-provider-failure:${terminalProviderRow.workId}:0:[a-f0-9]{64}$`,
+            "u",
+          ),
+        );
+        expect(terminalProviderRow.targetWorkspaceId).not.toBe(
+          assignmentParentWorkspaceId,
+        );
+        const terminalProviderEvidence = (() => {
+          const db = new DatabaseSync(recoveryDatabaseFile, {
+            readOnly: true,
+          });
+          try {
+            return db
+              .prepare(
+                `SELECT e.execution_id, e.workspace_id, state.episode_json,
+                        e.settlement_kind, e.settlement_json,
+                        t.provider_turn_id, t.finish_reason,
+                        a.attempt_no, a.outcome, a.provider_error_kind,
+                        a.failure_taxonomy_version, a.retry_decision,
+                        a.settled_at
+                   FROM executions e
+                   LEFT JOIN agent_execution_state state ON state.execution_id = e.execution_id
+                   LEFT JOIN provider_turns t ON t.execution_id = e.execution_id
+                   LEFT JOIN provider_attempts a ON a.provider_turn_id = t.provider_turn_id
+                  WHERE e.project_id = ?
+                  ORDER BY e.execution_id, t.provider_turn_id, a.attempt_no`,
+              )
+              .all(project.projectId) as Array<{
+              execution_id: string;
+              workspace_id: string;
+              episode_json: string | null;
+              settlement_kind: string | null;
+              settlement_json: string | null;
+              provider_turn_id: string | null;
+              finish_reason: string | null;
+              attempt_no: number | null;
+              outcome: string | null;
+              provider_error_kind: string | null;
+              failure_taxonomy_version: string | null;
+              retry_decision: string | null;
+              settled_at: string | null;
+            }>;
+          } finally {
+            db.close();
+          }
+        })();
+        const terminalEvidence = terminalProviderEvidence.filter((row) => {
+          if (row.episode_json === null) return false;
+          const episode = JSON.parse(row.episode_json) as {
+            _tag?: string;
+            workId?: string;
+          };
+          return (
+            episode._tag === "WorkEpisode" &&
+            episode.workId === terminalProviderRow.workId
+          );
+        });
+        expect(terminalEvidence).toHaveLength(1);
+        expect(terminalEvidence[0]).toMatchObject({
+          workspace_id: terminalProviderRow.targetWorkspaceId,
+          settlement_kind: "Failed",
+          settlement_json: expect.stringContaining(
+            "ProviderFailure:RequestRejected",
+          ),
+          finish_reason: "Failed",
+          outcome: "TerminalFailure",
+          provider_error_kind: "RequestRejected",
+          failure_taxonomy_version: "phase1-v2",
+          retry_decision: "Stop",
+          settled_at: expect.any(String),
+        });
         expect(
           attention.rows.filter(
             (row) =>
@@ -2997,14 +3103,26 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         );
         expect(
           tree.nodes.find(
-            (node) => node.workspaceId === assignmentParentWorkspaceId,
+            (node) =>
+              node.workspaceId === terminalProviderRow.targetWorkspaceId,
+          )?.parentWorkspaceId,
+        ).toBe(assignmentParentWorkspaceId);
+        expect(
+          tree.nodes.find(
+            (node) =>
+              node.workspaceId === terminalProviderRow.targetWorkspaceId,
           )?.subtreeAttention,
         ).toMatchObject({ attention: 0, actionRequired: 1 });
         expect(
           tree.nodes.find(
+            (node) => node.workspaceId === assignmentParentWorkspaceId,
+          )?.subtreeAttention,
+        ).toMatchObject({ attention: 0, actionRequired: 2 });
+        expect(
+          tree.nodes.find(
             (node) => node.workspaceId === project.rootWorkspaceId,
           )?.subtreeAttention.actionRequired,
-        ).toBe(1);
+        ).toBe(2);
       } else {
         expect(observation).toHaveLength(1);
         expect(observation[0]?.status, JSON.stringify(observation[0])).toBe(
