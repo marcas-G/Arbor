@@ -90,7 +90,9 @@ if (
   targetBoundary !== "AH14BeforeLegacyAdoptionResolutionCommit" &&
   targetBoundary !== "AH14AfterLegacyAdoptionResolutionCommit" &&
   targetBoundary !== "AH15BeforeInboxPromotionCommit" &&
-  targetBoundary !== "AH15AfterInboxPromotionCommit"
+  targetBoundary !== "AH15AfterInboxPromotionCommit" &&
+  targetBoundary !== "RAI-DG02BeforeFinalAttemptSettlementCommit" &&
+  targetBoundary !== "RAI-DG02AfterFinalAttemptSettlementCommit"
 ) {
   throw new Error("AH test child needs an exact boundary");
 }

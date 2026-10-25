@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -57,7 +58,7 @@ const delay = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 describe("RAI-DG-02 terminal Provider settlement / admission / Steer race", () => {
-  it("serializes settlement and Steer against an independent SQLite writer and survives pre/post-commit daemon kills", async () => {
+  it("linearizes settlement, held-revision admission, and Steer across two daemons and an independent SQLite writer", async () => {
     const marker = `RAI-RACE-${crypto.randomUUID().slice(0, 8)}`;
     let terminalRequestSeen!: () => void;
     let releaseTerminalResponse!: () => void;
@@ -118,6 +119,15 @@ describe("RAI-DG-02 terminal Provider settlement / admission / Steer race", () =
       fixture.workspaceDirectory,
       `RAI terminal race ${marker}`,
     );
+    // Start the second independent daemon before the Provider request begins,
+    // so both daemons participate in the terminal-settlement and scheduler
+    // race without consuming the Provider response deadline during startup.
+    const secondDaemon = await fixture.startAdditionalDaemon({
+      entry: resolve("apps/single-workspace/dist/main.js"),
+    });
+    const secondClient = makePublicClient(secondDaemon.baseUrl);
+    expect(fixture.daemonProcessSnapshot()?.alive).toBe(true);
+    expect(secondDaemon.daemonProcessSnapshot().alive).toBe(true);
 
     await submitHumanMessage(client, project, `Create ${marker}`);
     const approval = await waitForApproval(client, project, marker);
@@ -169,7 +179,16 @@ describe("RAI-DG-02 terminal Provider settlement / admission / Steer race", () =
         ) === true,
       60_000,
     );
+    // Let both scheduler loops observe the durable terminal source. The exact
+    // Work revision remains held and cannot be readmitted after settlement.
+    await delay(2_200);
     expect(executionsFor(fixture.databaseFile, workId)).toHaveLength(1);
+    expect(
+      fixture.providerCalls.filter((call) =>
+        toolNames(call).has("claim_completion"),
+      ),
+    ).toHaveLength(1);
+    expect(secondDaemon.daemonErrors).toEqual([]);
 
     // Kill while the public Steer command is waiting behind a second SQLite
     // writer. No Work revision or new Execution may appear from that request.
@@ -200,18 +219,19 @@ describe("RAI-DG-02 terminal Provider settlement / admission / Steer race", () =
     beforeSteerLock.exec("COMMIT");
     beforeSteerLock.close();
     await preCommitSteer;
-    await fixture.restart();
 
-    const held = await client.view<{
+    const held = await secondClient.view<{
       workId?: string;
       revision: number;
     } | null>("current-work", { workspaceId: project.rootWorkspaceId });
     expect(held).toMatchObject({ workId, revision: 0 });
     expect(executionsFor(fixture.databaseFile, workId)).toHaveLength(1);
+    await delay(1_200);
+    expect(executionsFor(fixture.databaseFile, workId)).toHaveLength(1);
 
     // Once Steer commits, immediately killing the daemon preserves r→r+1 and
     // recovery admits no more than one Execution at the new revision.
-    await client.command(project.projectId, "SteerWork", {
+    await secondClient.command(project.projectId, "SteerWork", {
       workId,
       workspaceId: project.rootWorkspaceId,
       expectedWorkRevision: 0,
@@ -222,6 +242,7 @@ describe("RAI-DG-02 terminal Provider settlement / admission / Steer race", () =
       provenance: { source: "HumanInput" },
     });
     await fixture.crash();
+    await secondDaemon.crash();
     await fixture.restart();
 
     await waitForPublic(
@@ -248,6 +269,7 @@ describe("RAI-DG-02 terminal Provider settlement / admission / Steer race", () =
         (row) => row.episode_revision === 1,
       ),
     ).toHaveLength(1);
+    expect(secondDaemon.daemonErrors).toEqual([]);
     expect(fixture.daemonErrors).toEqual([]);
   }, 180_000);
 });

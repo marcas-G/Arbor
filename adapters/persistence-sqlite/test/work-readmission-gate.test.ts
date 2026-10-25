@@ -205,14 +205,15 @@ const seedTerminalProviderFailureChain = (
   kind:
     | "AuthenticationFailed"
     | "RequestRejected"
-    | "ProtocolViolation" = "RequestRejected",
+    | "ProtocolViolation"
+    | "UnknownProviderFailure" = "RequestRejected",
   options: {
     readonly omitStep?: boolean;
     readonly taxonomy?: string;
     readonly retryDecision?: string;
     readonly occurrenceTime?: string;
     readonly attemptOutcome?: string;
-    readonly providerErrorKind?: string;
+    readonly providerErrorKind?: string | null;
     readonly turnFinishReason?: string;
     readonly malformedManifest?: boolean;
     readonly additionalSettlementStep?: boolean;
@@ -284,7 +285,9 @@ const seedTerminalProviderFailureChain = (
             "2026-10-25T00:00:00.000Z",
             options.occurrenceTime ?? "2026-10-25T00:00:01.000Z",
             options.attemptOutcome ?? "TerminalFailure",
-            options.providerErrorKind ?? kind,
+            options.providerErrorKind === undefined
+              ? kind
+              : options.providerErrorKind,
             options.taxonomy ?? "phase1-v2",
             options.retryDecision ?? "Stop",
           ],
@@ -973,6 +976,23 @@ describe("P2 WorkReadmissionGateStore", () => {
       }),
     ),
   );
+
+  it("blocks same-revision admission when ProcessLost recovery has no durable provider failure kind", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed(terminalSettlement("UnknownProviderFailure"));
+        yield* seedTerminalProviderFailureChain("UnknownProviderFailure", {
+          providerErrorKind: null,
+        });
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SourceProviderAttemptMismatch"',
+          );
+        }
+      }),
+    ));
 
   it("keeps StopRequested settlement outside the gate even without Episode state", () =>
     runDb(
