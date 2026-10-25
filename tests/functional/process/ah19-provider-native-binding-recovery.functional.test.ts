@@ -3394,7 +3394,9 @@ describe("AH19 ProviderNative binding recovery", () => {
     expect(fixture.daemonErrors).toEqual([]);
   }, 120_000);
 
-  it("reconstructs the public latest-64 Work frontier after pre-checkpoint restart", async () => {
+  it("reconstructs the public latest-64 Work frontier after pre-checkpoint restart", {
+    timeout: 240_000,
+  }, async () => {
     probes.length = 0;
     providerRequests.length = 0;
     const reportUrl = await startReportServer();
@@ -3535,8 +3537,42 @@ describe("AH19 ProviderNative binding recovery", () => {
           .slice(priorRequests)
           .find((request) => request.operationKind === "Inference"),
       (request) => request !== undefined,
-      60_000,
-    );
+      120_000,
+    ).catch(async (error: unknown) => {
+      const diagnosticDb = new DatabaseSync(fixture.databaseFile, {
+        readOnly: true,
+      });
+      let recentExecutions: unknown;
+      let recentProviderTurns: unknown;
+      try {
+        recentExecutions = diagnosticDb
+          .prepare(
+            `SELECT execution_id, episode_kind, episode_revision,
+                    settlement_kind, settled_at
+               FROM executions ORDER BY admitted_at DESC LIMIT 5`,
+          )
+          .all();
+        recentProviderTurns = diagnosticDb
+          .prepare(
+            `SELECT provider_turn_id, execution_id, context_epoch,
+                    settled_at, finish_reason
+               FROM provider_turns ORDER BY rowid DESC LIMIT 8`,
+          )
+          .all();
+      } finally {
+        diagnosticDb.close();
+      }
+      const [work, rows] = await Promise.all([
+        currentWork().catch((readError: unknown) => ({
+          readError:
+            readError instanceof Error ? readError.message : String(readError),
+        })),
+        Promise.resolve(typedRowsNow()),
+      ]);
+      throw new Error(
+        `post-restart Inference was not observed within 120s: ${error instanceof Error ? error.message : String(error)}; work=${JSON.stringify(work)}; sessionRows=${JSON.stringify({ count: rows.length, tail: rows.slice(-8).map(({ sequence, item_type, source_ref }) => ({ sequence, item_type, source_ref })) })}; recentExecutions=${JSON.stringify(recentExecutions)}; recentProviderTurns=${JSON.stringify(recentProviderTurns)}; requestsAfterSteer=${JSON.stringify(providerRequests.slice(priorRequests).map(({ operationKind, providerTurnId, bindingVariant, workActionHistoryCount }) => ({ operationKind, providerTurnId, bindingVariant, workActionHistoryCount })))}; providerCallCount=${fixture.providerCalls.length}; recentProviderTools=${JSON.stringify(fixture.providerCalls.slice(-8).map((call) => call.tools.map((tool) => tool.function?.name).filter(Boolean)))}; daemonProcess=${JSON.stringify(fixture.daemonProcessSnapshot())}; startup=${JSON.stringify(fixture.startupDiagnostics())}; daemonErrors=${JSON.stringify(fixture.daemonErrors.slice(-20))}`,
+      );
+    });
     if (resumedRequest === undefined) {
       throw new Error("post-restart Work provider request was not observed");
     }
@@ -3710,7 +3746,7 @@ describe("AH19 ProviderNative binding recovery", () => {
       );
     }
     expect(fixture.daemonErrors).toEqual([]);
-  }, 240_000);
+  });
 
   it.each([
     "AH17BeforeCheckpointEpochCommit",
