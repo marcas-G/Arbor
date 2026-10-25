@@ -16,11 +16,11 @@ test("root-suite files are sorted deterministically and divided into bounded bat
       ["m.test.ts", "z.test.ts"],
     ],
   );
-  assert.equal(DEFAULT_BATCH_SIZE, 20);
+  assert.equal(DEFAULT_BATCH_SIZE, 10);
 });
 
 test("batch size accepts a positive environment override and rejects invalid values", () => {
-  assert.equal(parseBatchSize(undefined), 20);
+  assert.equal(parseBatchSize(undefined), 10);
   assert.equal(parseBatchSize(" 7 "), 7);
   for (const value of ["0", "-2", "1.5", "abc", "9007199254740992"]) {
     assert.throws(() => parseBatchSize(value), new RegExp(BATCH_SIZE_ENV));

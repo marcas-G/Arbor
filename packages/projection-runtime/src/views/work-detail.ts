@@ -12,10 +12,14 @@ import type {
 import type {
   ProjectionIntegrityFailure,
   ProjectionNotFound,
+  ReadmissionGateIntegrityFailure,
   TerminalProviderFailureSource,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import type { ProjectionReadError } from "../errors.js";
+import type {
+  ProjectionReadError,
+  ProjectionReadResultError,
+} from "../errors.js";
 
 export interface WorkDetailRequest {
   readonly projectId: ProjectId;
@@ -40,16 +44,24 @@ export interface WorkDetailView extends WorkDetailRequest {
   readonly revision: Work["revision"];
   readonly acceptedResult?: AcceptedWorkResultView;
   readonly blockedEpisode?: BlockedWorkEpisodeView;
-  readonly terminalProviderFailure?: {
-    readonly kind: "TerminalProviderFailure";
-    readonly workId: WorkId;
-    readonly workRevision: number;
-    readonly occurredAt: string;
-    readonly failureCode:
-      | "AuthenticationFailed"
-      | "RequestRejected"
-      | "ProtocolViolation";
-  };
+  readonly terminalProviderFailure?:
+    | {
+        readonly kind: "TerminalProviderFailure";
+        readonly workId: WorkId;
+        readonly workRevision: number;
+        readonly occurredAt: string;
+        readonly failureCode:
+          | "AuthenticationFailed"
+          | "RequestRejected"
+          | "ProtocolViolation";
+      }
+    | {
+        readonly kind: "TerminalProviderFailureIntegrity";
+        readonly workId?: WorkId;
+        readonly workRevision?: number;
+        readonly occurredAt: string;
+        readonly failureCode: ReadmissionGateIntegrityFailure["reasonCode"];
+      };
 }
 
 export interface BlockedWorkEpisodeView {
@@ -98,11 +110,21 @@ export interface WorkDetailDeps {
     readonly workId: WorkId;
     readonly workRevision: number;
   }) => Effect.Effect<
-    Option.Option<{
-      readonly source: TerminalProviderFailureSource;
-      readonly occurredAt: string;
-    }>,
-    ProjectionReadError
+    Option.Option<
+      | {
+          readonly kind: "TerminalProviderFailure";
+          readonly source: TerminalProviderFailureSource;
+          readonly occurredAt: string;
+        }
+      | {
+          readonly kind: "TerminalProviderFailureIntegrity";
+          readonly workId?: WorkId;
+          readonly workRevision?: number;
+          readonly occurredAt: string;
+          readonly failureCode: ReadmissionGateIntegrityFailure["reasonCode"];
+        }
+    >,
+    ProjectionReadResultError
   >;
 }
 
@@ -273,10 +295,20 @@ export const deriveWorkDetail = (
             workId: work.workId,
             workRevision: work.revision,
           })
-        : Option.none<{
-            readonly source: TerminalProviderFailureSource;
-            readonly occurredAt: string;
-          }>();
+        : Option.none<
+            | {
+                readonly kind: "TerminalProviderFailure";
+                readonly source: TerminalProviderFailureSource;
+                readonly occurredAt: string;
+              }
+            | {
+                readonly kind: "TerminalProviderFailureIntegrity";
+                readonly workId?: WorkId;
+                readonly workRevision?: number;
+                readonly occurredAt: string;
+                readonly failureCode: ReadmissionGateIntegrityFailure["reasonCode"];
+              }
+          >();
     return {
       workId: work.workId,
       projectId: work.projectId,
@@ -291,13 +323,31 @@ export const deriveWorkDetail = (
       ...(Option.isNone(terminalProviderFailure)
         ? {}
         : {
-            terminalProviderFailure: {
-              kind: "TerminalProviderFailure" as const,
-              workId: work.workId,
-              workRevision: work.revision,
-              occurredAt: terminalProviderFailure.value.occurredAt,
-              failureCode: terminalProviderFailure.value.source.failureKind,
-            },
+            terminalProviderFailure:
+              terminalProviderFailure.value.kind ===
+              "TerminalProviderFailureIntegrity"
+                ? {
+                    kind: "TerminalProviderFailureIntegrity" as const,
+                    ...(terminalProviderFailure.value.workId === undefined
+                      ? {}
+                      : { workId: terminalProviderFailure.value.workId }),
+                    ...(terminalProviderFailure.value.workRevision === undefined
+                      ? {}
+                      : {
+                          workRevision:
+                            terminalProviderFailure.value.workRevision,
+                        }),
+                    occurredAt: terminalProviderFailure.value.occurredAt,
+                    failureCode: terminalProviderFailure.value.failureCode,
+                  }
+                : {
+                    kind: "TerminalProviderFailure" as const,
+                    workId: work.workId,
+                    workRevision: work.revision,
+                    occurredAt: terminalProviderFailure.value.occurredAt,
+                    failureCode:
+                      terminalProviderFailure.value.source.failureKind,
+                  },
           }),
     };
   });

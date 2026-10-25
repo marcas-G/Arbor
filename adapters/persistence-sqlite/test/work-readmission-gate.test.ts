@@ -210,6 +210,12 @@ const seedTerminalProviderFailureChain = (
     readonly omitStep?: boolean;
     readonly taxonomy?: string;
     readonly retryDecision?: string;
+    readonly occurrenceTime?: string;
+    readonly attemptOutcome?: string;
+    readonly providerErrorKind?: string;
+    readonly turnFinishReason?: string;
+    readonly malformedManifest?: boolean;
+    readonly additionalSettlementStep?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -227,7 +233,7 @@ const seedTerminalProviderFailureChain = (
             settled_at, finish_reason, usage_json, created_at,
             execution_policy_json, turn_deadline_at
           ) VALUES (?, ?, ?, 0, 'model-a', 'agent-action-v1', ?, ?, ?,
-                    'Failed', '{}', ?, NULL, NULL)`,
+                    ?, '{}', ?, NULL, NULL)`,
           [
             providerTurnId,
             executionId,
@@ -235,6 +241,7 @@ const seedTerminalProviderFailureChain = (
             manifestId,
             "2026-10-25T00:00:00.000Z",
             "2026-10-25T00:00:02.000Z",
+            options.turnFinishReason ?? "Failed",
             "2026-10-25T00:00:00.000Z",
           ],
         );
@@ -257,7 +264,9 @@ const seedTerminalProviderFailureChain = (
               logicalStepNo: 0,
               repairAttempt: 0,
               compiledRequestHash: "b".repeat(64),
-              outputContractRef: "agent-action-v1",
+              outputContractRef: options.malformedManifest
+                ? "different-contract"
+                : "agent-action-v1",
               resolvedModelBindingFingerprint: `p16fp_${"a".repeat(64)}`,
             }),
             "2026-10-25T00:00:00.000Z",
@@ -268,13 +277,14 @@ const seedTerminalProviderFailureChain = (
             provider_turn_id, attempt_no, started_at, settled_at, outcome,
             provider_error_kind, failure_taxonomy_version, retry_safety,
             retry_decision, retry_reason
-          ) VALUES (?, 0, ?, ?, 'TerminalFailure', ?, ?, 'UnsafeReplay', ?,
+          ) VALUES (?, 0, ?, ?, ?, ?, ?, 'UnsafeReplay', ?,
                     'terminal provider failure')`,
           [
             providerTurnId,
             "2026-10-25T00:00:00.000Z",
-            "2026-10-25T00:00:01.000Z",
-            kind,
+            options.occurrenceTime ?? "2026-10-25T00:00:01.000Z",
+            options.attemptOutcome ?? "TerminalFailure",
+            options.providerErrorKind ?? kind,
             options.taxonomy ?? "phase1-v2",
             options.retryDecision ?? "Stop",
           ],
@@ -294,9 +304,217 @@ const seedTerminalProviderFailureChain = (
               "2026-10-25T00:00:02.000Z",
             ],
           );
+          if (options.additionalSettlementStep === true) {
+            yield* sql.unsafe(
+              `INSERT INTO agent_loop_steps (
+                execution_id, logical_step_no, repair_attempt, provider_turn_id,
+                manifest_id, state, next_action_index, settlement_json, revision,
+                updated_at
+              ) VALUES (?, 1, 0, ?, ?, 'SettlementProposed', 0, ?, 0, ?)`,
+              [
+                executionId,
+                "ptn_018f2b3c-4d5e-7abc-8def-0123456789c2",
+                manifestId,
+                settlementJson,
+                "2026-10-25T00:00:02.000Z",
+              ],
+            );
+          }
         }
       }),
     );
+  });
+
+const seedTerminalFailureHistory = (count: number, malformedIndex?: number) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const tx = yield* TransactionPort;
+    yield* tx.transact(
+      Effect.gen(function* () {
+        for (let index = count - 1; index >= 0; index -= 1) {
+          const suffix = index.toString(16).padStart(12, "0");
+          const historyExecutionId = `exe_00000000-0000-4000-8000-${suffix}`;
+          const providerTurnId = `ptn_00000000-0000-4000-8000-${suffix}`;
+          const manifestId = `mft_00000000-0000-4000-8000-${suffix}`;
+          const admittedAt = new Date(
+            Date.UTC(2026, 9, 25, 0, 0, index),
+          ).toISOString();
+          const attemptSettledAt = new Date(
+            Date.parse(admittedAt) + 1_000,
+          ).toISOString();
+          const executionSettledAt = new Date(
+            Date.parse(admittedAt) + 2_000,
+          ).toISOString();
+          const settlement = terminalSettlement("RequestRejected");
+          const settlementJson = JSON.stringify(settlement);
+          const compiledRequestHash = "b".repeat(64);
+          const outputContractRef =
+            index === malformedIndex
+              ? "conflicting-contract"
+              : "agent-action-v1";
+
+          yield* sql.unsafe(
+            `INSERT INTO executions (
+              execution_id, project_id, binding_kind, workspace_id,
+              episode_kind, episode_ref, episode_revision, parent_execution_id,
+              mission, session_id, admitted_at, stop_requested_at,
+              settlement_kind, settlement_json, settled_at
+            ) VALUES (?, ?, 'workspace', ?, 'WorkEpisode', ?, 0,
+                      NULL, NULL, ?, ?, NULL, 'Failed', ?, ?)`,
+            [
+              historyExecutionId,
+              projectId,
+              workspaceId,
+              workId,
+              sessionId,
+              admittedAt,
+              settlementJson,
+              executionSettledAt,
+            ],
+          );
+          yield* sql.unsafe(
+            `INSERT INTO agent_execution_state (
+              execution_id, episode_json, wake_reason, current_mode,
+              active_skill_refs_json, turn_no, recent_directive_refs_json,
+              recent_action_fingerprints_json, updated_at
+            ) VALUES (?, ?, 'Initial', NULL, '[]', 0, '[]', '[]', ?)`,
+            [
+              historyExecutionId,
+              JSON.stringify({
+                _tag: "WorkEpisode",
+                workId,
+                targetWorkRevision: 0,
+              }),
+              admittedAt,
+            ],
+          );
+          yield* sql.unsafe(
+            `INSERT INTO provider_turns (
+              provider_turn_id, execution_id, session_id, context_epoch,
+              model_ref, output_contract_ref, manifest_id, started_at,
+              settled_at, finish_reason, usage_json, created_at,
+              execution_policy_json, turn_deadline_at
+            ) VALUES (?, ?, ?, 0, 'model-a', ?, ?, ?, ?, 'Failed', '{}', ?, NULL, NULL)`,
+            [
+              providerTurnId,
+              historyExecutionId,
+              sessionId,
+              "agent-action-v1",
+              manifestId,
+              admittedAt,
+              executionSettledAt,
+              admittedAt,
+            ],
+          );
+          yield* sql.unsafe(
+            `INSERT INTO model_context_manifests (
+              manifest_id, provider_turn_id, execution_id, session_id,
+              context_epoch, model_ref, compiled_request_hash, manifest_json,
+              created_at, portable_request_json
+            ) VALUES (?, ?, ?, ?, 0, 'model-a', ?, ?, ?, NULL)`,
+            [
+              manifestId,
+              providerTurnId,
+              historyExecutionId,
+              sessionId,
+              compiledRequestHash,
+              JSON.stringify({
+                providerTurnId,
+                executionId: historyExecutionId,
+                sessionId,
+                logicalStepNo: 0,
+                repairAttempt: 0,
+                compiledRequestHash,
+                outputContractRef,
+                resolvedModelBindingFingerprint: `p16fp_${"a".repeat(64)}`,
+              }),
+              admittedAt,
+            ],
+          );
+          yield* sql.unsafe(
+            `INSERT INTO provider_attempts (
+              provider_turn_id, attempt_no, started_at, settled_at, outcome,
+              provider_error_kind, failure_taxonomy_version, retry_safety,
+              retry_decision, retry_reason
+            ) VALUES (?, 0, ?, ?, 'TerminalFailure', 'RequestRejected',
+                      'phase1-v2', 'UnsafeReplay', 'Stop', 'terminal failure')`,
+            [providerTurnId, admittedAt, attemptSettledAt],
+          );
+          yield* sql.unsafe(
+            `INSERT INTO agent_loop_steps (
+              execution_id, logical_step_no, repair_attempt, provider_turn_id,
+              manifest_id, state, next_action_index, settlement_json, revision,
+              updated_at
+            ) VALUES (?, 0, 0, ?, ?, 'SettlementProposed', 0, ?, 0, ?)`,
+            [
+              historyExecutionId,
+              providerTurnId,
+              manifestId,
+              settlementJson,
+              executionSettledAt,
+            ],
+          );
+        }
+      }),
+    );
+  });
+
+const terminalFailureHistorySnapshot = (sql: SqlClient) =>
+  Effect.gen(function* () {
+    const executions = yield* sql.unsafe(
+      `SELECT execution_id, project_id, workspace_id, episode_kind,
+              episode_ref, episode_revision, admitted_at, settlement_kind,
+              settlement_json, settled_at
+         FROM executions WHERE episode_ref = ? ORDER BY execution_id`,
+      [workId],
+    );
+    const states = yield* sql.unsafe(
+      `SELECT execution_id, episode_json, updated_at
+         FROM agent_execution_state
+        WHERE execution_id IN (
+          SELECT execution_id FROM executions WHERE episode_ref = ?
+        ) ORDER BY execution_id`,
+      [workId],
+    );
+    const steps = yield* sql.unsafe(
+      `SELECT execution_id, logical_step_no, repair_attempt, provider_turn_id,
+              manifest_id, state, settlement_json
+         FROM agent_loop_steps
+        WHERE execution_id IN (
+          SELECT execution_id FROM executions WHERE episode_ref = ?
+        ) ORDER BY execution_id, logical_step_no, repair_attempt`,
+      [workId],
+    );
+    const turns = yield* sql.unsafe(
+      `SELECT provider_turn_id, execution_id, session_id, manifest_id,
+              settled_at, finish_reason
+         FROM provider_turns
+        WHERE execution_id IN (
+          SELECT execution_id FROM executions WHERE episode_ref = ?
+        ) ORDER BY provider_turn_id`,
+      [workId],
+    );
+    const manifests = yield* sql.unsafe(
+      `SELECT manifest_id, provider_turn_id, execution_id, manifest_json
+         FROM model_context_manifests
+        WHERE execution_id IN (
+          SELECT execution_id FROM executions WHERE episode_ref = ?
+        ) ORDER BY manifest_id`,
+      [workId],
+    );
+    const attempts = yield* sql.unsafe(
+      `SELECT provider_turn_id, attempt_no, settled_at, outcome,
+              provider_error_kind, failure_taxonomy_version, retry_decision
+         FROM provider_attempts
+        WHERE provider_turn_id IN (
+          SELECT provider_turn_id FROM provider_turns
+           WHERE execution_id IN (
+             SELECT execution_id FROM executions WHERE episode_ref = ?
+           )
+        ) ORDER BY provider_turn_id, attempt_no`,
+      [workId],
+    );
+    return { executions, states, steps, turns, manifests, attempts };
   });
 
 const seedOtherWorkspaceExecution = Effect.gen(function* () {
@@ -1172,6 +1390,263 @@ describe("P2 WorkReadmissionGateStore", () => {
             '"reasonCode":"SourceSettlementStepMissing"',
           );
         }
+      }),
+    ));
+
+  it.each([
+    [
+      "a second SettlementProposed Step",
+      { additionalSettlementStep: true },
+      "SourceSettlementStepNonUnique",
+    ],
+    [
+      "a non-Failed ProviderTurn",
+      { turnFinishReason: "Succeeded" },
+      "SourceProviderTurnMismatch",
+    ],
+    [
+      "a conflicting Manifest",
+      { malformedManifest: true },
+      "SourceManifestMismatch",
+    ],
+    [
+      "an unsupported legacy taxonomy",
+      { taxonomy: "legacy-v1" },
+      "FailureTaxonomyUnsupported",
+    ],
+    [
+      "a noncanonical occurrence time",
+      { occurrenceTime: "2026-10-25T00:00:01Z" },
+      "FailureOccurrenceTimeInvalid",
+    ],
+    [
+      "a nonterminal final Attempt",
+      { attemptOutcome: "RetryableFailure" },
+      "SourceProviderAttemptMismatch",
+    ],
+    [
+      "a conflicting final Attempt kind",
+      { providerErrorKind: "ProtocolViolation" },
+      "SourceProviderAttemptMismatch",
+    ],
+    [
+      "a retrying final Attempt",
+      { retryDecision: "Retry" },
+      "SourceProviderAttemptMismatch",
+    ],
+  ] as const)("fails closed for %s", (_label, options, reasonCode) =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed(terminalSettlement("RequestRejected"));
+        yield* seedTerminalProviderFailureChain("RequestRejected", options);
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            `"reasonCode":"${reasonCode}"`,
+          );
+        }
+      }),
+    ),
+  );
+
+  it("selects the earliest exact terminal witness across hundreds of historical repetitions without rewriting evidence", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed();
+        yield* seedTerminalFailureHistory(200);
+        const sql = yield* SqlClient;
+        const before = yield* terminalFailureHistorySnapshot(sql);
+        const first = yield* query();
+        const second = yield* query();
+        const after = yield* terminalFailureHistorySnapshot(sql);
+
+        expect(Option.isSome(first)).toBe(true);
+        expect(Option.isSome(second)).toBe(true);
+        if (Option.isSome(first) && Option.isSome(second)) {
+          expect(first.value.sourceKind).toBe(
+            "TerminalProviderFailureSettlement",
+          );
+          expect(first.value.executionId).toBe(
+            "exe_00000000-0000-4000-8000-000000000000",
+          );
+          expect(second.value).toEqual(first.value);
+        }
+        expect(before).toEqual(after);
+        expect((before.executions as ReadonlyArray<unknown>).length).toBe(201);
+        expect((before.steps as ReadonlyArray<unknown>).length).toBe(200);
+        expect((before.turns as ReadonlyArray<unknown>).length).toBe(200);
+        expect((before.manifests as ReadonlyArray<unknown>).length).toBe(200);
+        expect((before.attempts as ReadonlyArray<unknown>).length).toBe(200);
+      }),
+    ));
+
+  it("returns bounded integrity for a malformed historical variant and does not rewrite any source", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed();
+        yield* seedTerminalFailureHistory(200, 199);
+        const sql = yield* SqlClient;
+        const before = yield* terminalFailureHistorySnapshot(sql);
+        const exit = yield* Effect.exit(query());
+        const after = yield* terminalFailureHistorySnapshot(sql);
+
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          const encoded = JSON.stringify(exit.cause);
+          expect(encoded).toContain('"_tag":"ReadmissionGateIntegrityFailure"');
+          expect(encoded).toContain('"reasonCode":"SourceManifestMismatch"');
+          expect(encoded).not.toContain("conflicting-contract");
+        }
+        expect(before).toEqual(after);
+      }),
+    ));
+
+  it("does not let a malformed terminal Episode for another Work in the same Workspace cross-hold", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed(terminalSettlement("RequestRejected"));
+        yield* seedTerminalProviderFailureChain("RequestRejected");
+        const sql = yield* SqlClient;
+        const tx = yield* TransactionPort;
+        yield* tx.transact(
+          Effect.gen(function* () {
+            yield* sql.unsafe(
+              `INSERT INTO works (
+                work_id, project_id, workspace_id, objective, why, constraints,
+                completion_expectation, verification_mission, provenance,
+                lifecycle, revision, created_at, updated_at
+              ) VALUES (?, ?, ?, 'sibling objective', 'why', '[]', 'done', '{}', '{}', 'Open', 0, 't0', 't0')`,
+              [otherWorkId, projectId, workspaceId],
+            );
+            yield* sql.unsafe(
+              "UPDATE executions SET episode_ref = ? WHERE execution_id = ?",
+              [otherWorkId, executionId],
+            );
+            yield* sql.unsafe(
+              "UPDATE agent_execution_state SET episode_json = '{broken' WHERE execution_id = ?",
+              [executionId],
+            );
+          }),
+        );
+        expect(Option.isNone(yield* query())).toBe(true);
+      }),
+    ));
+
+  it("does not parse a malformed terminal non-Work Episode as a Work source", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed(terminalSettlement("RequestRejected"));
+        yield* seedTerminalProviderFailureChain("RequestRejected");
+        const sql = yield* SqlClient;
+        const tx = yield* TransactionPort;
+        yield* tx.transact(
+          Effect.gen(function* () {
+            yield* sql.unsafe(
+              `UPDATE executions
+                  SET episode_kind = 'ConversationResponseEpisode',
+                      episode_ref = 'msg_unrelated', episode_revision = 1
+                WHERE execution_id = ?`,
+              [executionId],
+            );
+            yield* sql.unsafe(
+              "UPDATE agent_execution_state SET episode_json = '{broken' WHERE execution_id = ?",
+              [executionId],
+            );
+          }),
+        );
+        expect(Option.isNone(yield* query())).toBe(true);
+      }),
+    ));
+
+  it("fails closed when the exact target binding has malformed Episode state", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed(terminalSettlement("RequestRejected"));
+        yield* seedTerminalProviderFailureChain("RequestRejected");
+        const sql = yield* SqlClient;
+        const tx = yield* TransactionPort;
+        yield* tx.transact(
+          sql.unsafe(
+            "UPDATE agent_execution_state SET episode_json = '{broken' WHERE execution_id = ?",
+            [executionId],
+          ),
+        );
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"EpisodeMalformed"',
+          );
+        }
+      }),
+    ));
+
+  it("does not cross-hold terminal evidence from another Work revision", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed(terminalSettlement("RequestRejected"));
+        yield* seedTerminalProviderFailureChain("RequestRejected");
+        const sql = yield* SqlClient;
+        const tx = yield* TransactionPort;
+        yield* tx.transact(
+          Effect.gen(function* () {
+            yield* sql.unsafe(
+              "UPDATE executions SET episode_revision = 1 WHERE execution_id = ?",
+              [executionId],
+            );
+            yield* sql.unsafe(
+              `UPDATE agent_execution_state
+                  SET episode_json = ?
+                WHERE execution_id = ?`,
+              [
+                JSON.stringify({
+                  _tag: "WorkEpisode",
+                  workId,
+                  targetWorkRevision: 1,
+                }),
+                executionId,
+              ],
+            );
+          }),
+        );
+        expect(Option.isNone(yield* query())).toBe(true);
+      }),
+    ));
+
+  it("does not cross-hold terminal evidence whose Execution belongs to another Workspace", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed(terminalSettlement("RequestRejected"));
+        yield* seedOtherWorkspaceExecution;
+        yield* seedTerminalProviderFailureChain("RequestRejected");
+        const sql = yield* SqlClient;
+        const tx = yield* TransactionPort;
+        yield* tx.transact(
+          sql.unsafe(
+            "UPDATE executions SET workspace_id = ? WHERE execution_id = ?",
+            [otherWorkspaceId, executionId],
+          ),
+        );
+        expect(Option.isNone(yield* query())).toBe(true);
+      }),
+    ));
+
+  it("does not cross-hold terminal evidence from another Project", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed(terminalSettlement("RequestRejected"));
+        yield* seedOtherProjectExecution;
+        yield* seedTerminalProviderFailureChain("RequestRejected");
+        const sql = yield* SqlClient;
+        const tx = yield* TransactionPort;
+        yield* tx.transact(
+          sql.unsafe(
+            "UPDATE executions SET project_id = ? WHERE execution_id = ?",
+            [otherProjectId, executionId],
+          ),
+        );
+        expect(Option.isNone(yield* query())).toBe(true);
       }),
     ));
 

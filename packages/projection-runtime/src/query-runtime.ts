@@ -236,9 +236,18 @@ const planView = (
                   : {
                       terminalProviderFailure: {
                         kind: row.terminalProviderFailure.kind,
-                        workId: row.terminalProviderFailure.workId,
-                        workRevision: row.terminalProviderFailure
-                          .workRevision as WorkRevision,
+                        ...(row.terminalProviderFailure.workId === undefined
+                          ? {}
+                          : {
+                              workId: row.terminalProviderFailure.workId,
+                            }),
+                        ...(row.terminalProviderFailure.workRevision ===
+                        undefined
+                          ? {}
+                          : {
+                              workRevision: row.terminalProviderFailure
+                                .workRevision as WorkRevision,
+                            }),
                         occurredAt: row.terminalProviderFailure.occurredAt,
                         failureCode: row.terminalProviderFailure.failureCode,
                       },

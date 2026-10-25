@@ -7,7 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const require = createRequire(import.meta.url);
 const vitestEntry = require.resolve("vitest");
 const vitestCli = join(dirname(vitestEntry), "vitest.mjs");
-export const DEFAULT_BATCH_SIZE = 20;
+export const DEFAULT_BATCH_SIZE = 10;
 export const BATCH_SIZE_ENV = "ARBOR_CORE_TEST_BATCH_SIZE";
 
 export function parseBatchSize(value, fallback = DEFAULT_BATCH_SIZE) {

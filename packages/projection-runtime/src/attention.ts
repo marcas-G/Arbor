@@ -5,6 +5,7 @@ import type {
   WorkspaceId,
   WorkspaceLifecycle,
 } from "@arbor/domain";
+import type { ReadmissionGateIntegrityFailure } from "@arbor/ports";
 
 // --- P10 `02` §1 frozen vocabulary ---
 
@@ -69,7 +70,7 @@ export interface AttentionRow {
         readonly workId?: WorkId;
         readonly workRevision?: number;
         readonly occurredAt: string;
-        readonly failureCode: string;
+        readonly failureCode: ReadmissionGateIntegrityFailure["reasonCode"];
       };
 }
 

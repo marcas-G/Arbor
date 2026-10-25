@@ -332,6 +332,173 @@ describe("OpenAI-compatible fetch provider", () => {
     ]);
   });
 
+  it("round-trips streamed reasoning_content into the exact next tool-history request", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    let callNo = 0;
+    const client = OpenAICompatibleFetchClient({
+      baseUrl: "http://provider.test/v1",
+      fetch: async (_input, init) => {
+        observedBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+        callNo += 1;
+        return callNo === 1
+          ? eventStream(
+              {
+                choices: [
+                  {
+                    delta: {
+                      reasoning_content: "opaque reasoning ",
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: "call-roundtrip",
+                          type: "function",
+                          function: {
+                            name: "read",
+                            arguments: '{"path":"README.md"}',
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: null,
+                  },
+                ],
+              },
+              {
+                choices: [
+                  {
+                    delta: { reasoning_content: "payload" },
+                    finish_reason: null,
+                  },
+                ],
+              },
+              {
+                choices: [{ delta: {}, finish_reason: "tool_calls" }],
+              },
+            )
+          : eventStream({
+              choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+            });
+      },
+    });
+
+    const firstRequest: PortableModelRequestV2 = {
+      requestVersion: 2,
+      operationKind: "Inference",
+      modelRef: "model-live",
+      instructions: [],
+      inputItems: [{ _tag: "Message", role: "user", text: "read README" }],
+      toolDefinitions: [],
+      outputContractRef: "tool-invocation-v1",
+      budget: { maxOutputTokens: 64 },
+      cacheHints: [],
+    };
+    const firstChunks = await chunks(
+      client,
+      SecretMaterial.of("test-only-key"),
+      firstRequest,
+    );
+    expect(firstChunks).toEqual([
+      { type: "response_started" },
+      { type: "reasoning", text: "opaque reasoning " },
+      { type: "reasoning", text: "payload" },
+      {
+        type: "tool_call",
+        callRef: "call-roundtrip",
+        toolName: "read",
+        argumentsJson: '{"path":"README.md"}',
+      },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+    const reasoningPayload = firstChunks
+      .filter(
+        (chunk): chunk is Extract<OpenAISdkChunk, { type: "reasoning" }> =>
+          chunk.type === "reasoning",
+      )
+      .map((chunk) => chunk.text)
+      .join("");
+    const toolCall = firstChunks.find(
+      (chunk): chunk is Extract<OpenAISdkChunk, { type: "tool_call" }> =>
+        chunk.type === "tool_call",
+    );
+    if (toolCall === undefined) throw new Error("stream omitted tool call");
+
+    const typedRequest: PortableModelRequestV2 = {
+      requestVersion: 2,
+      operationKind: "Inference",
+      modelRef: "model-live",
+      instructions: [],
+      inputItems: [
+        { _tag: "Message", role: "user", text: "read README" },
+        { _tag: "Message", role: "assistant", text: "" },
+        {
+          _tag: "ReasoningAttachment",
+          providerTurnId: parse(ProviderTurnId)(
+            "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          ),
+          modelRef: "model-live",
+          protocolFamily: "openai-chat-completions-sse",
+          bindingFingerprint: `p16fp_${"b".repeat(64)}`,
+          opaquePayload: reasoningPayload,
+        },
+        {
+          _tag: "ToolCall",
+          callRef: toolCall.callRef,
+          toolName: toolCall.toolName,
+          argumentsJson: toolCall.argumentsJson,
+        },
+        {
+          _tag: "ToolResult",
+          callRef: toolCall.callRef,
+          toolName: toolCall.toolName,
+          status: "Succeeded",
+          outputText: "contents",
+          observationRef: "obs-roundtrip",
+          artifactRefs: [],
+          truncated: false,
+        },
+      ],
+      toolDefinitions: [],
+      outputContractRef: "agent-directive-v1",
+      budget: { maxOutputTokens: 64 },
+      cacheHints: [],
+    };
+
+    await expect(
+      chunks(client, SecretMaterial.of("test-only-key"), typedRequest),
+    ).resolves.toEqual([
+      { type: "response_started" },
+      { type: "text", text: "done" },
+      { type: "completed", finishReason: "stop" },
+    ]);
+    expect(observedBodies).toHaveLength(2);
+    expect(observedBodies[0]?.messages).toEqual([
+      { role: "user", content: "read README" },
+    ]);
+    expect(observedBodies[1]?.messages).toEqual([
+      { role: "user", content: "read README" },
+      {
+        role: "assistant",
+        content: null,
+        reasoning_content: "opaque reasoning payload",
+        tool_calls: [
+          {
+            id: toolCall.callRef,
+            type: "function",
+            function: {
+              name: toolCall.toolName,
+              arguments: toolCall.argumentsJson,
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: toolCall.callRef,
+        content: "contents",
+      },
+    ]);
+  });
+
   it("rejects unsupported typed items before sending provider bytes", async () => {
     let calls = 0;
     const client = OpenAICompatibleFetchClient({

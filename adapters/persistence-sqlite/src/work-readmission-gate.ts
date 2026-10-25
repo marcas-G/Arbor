@@ -414,7 +414,22 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
             readonly failureKind: TerminalProviderFailureKind;
           }> = [];
           for (const execution of executions) {
-            if (execution.workspace_id !== input.workspaceId) continue;
+            // Scope from the durable binding columns before decoding any
+            // Episode payload. Malformed evidence for another Work, revision,
+            // Workspace, Project, or Episode must not make this target's
+            // admission unavailable. Once the columns name the exact target,
+            // exactEpisode below still validates their agreement with the
+            // durable Agent Runtime state.
+            if (
+              execution.project_id !== input.projectId ||
+              execution.workspace_id !== input.workspaceId ||
+              execution.binding_kind !== "workspace" ||
+              execution.episode_kind !== "WorkEpisode" ||
+              execution.episode_ref !== input.workId ||
+              Number(execution.episode_revision) !== input.workRevision
+            ) {
+              continue;
+            }
             try {
               const failureKind = terminalProviderFailureKind(execution);
               if (failureKind !== null) {
@@ -441,6 +456,7 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
                 );
           });
 
+          const terminalSources: Array<TerminalProviderFailureSource> = [];
           for (const candidate of terminalCandidates) {
             const execution = candidate.execution;
             if (execution.episode_json === null) {
@@ -689,7 +705,7 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
                 outputContractRef: turn.output_contract_ref,
               }),
             ) as Sha256;
-            return Option.some({
+            terminalSources.push({
               sourceKind: "TerminalProviderFailureSettlement",
               executionId: execution.execution_id as ExecutionId,
               logicalStepNo: Number(step.logical_step_no),
@@ -698,7 +714,11 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
               attemptNo: Number(attempt.attempt_no),
               failureKind: candidate.failureKind,
               failureFingerprint,
-            } satisfies TerminalProviderFailureSource);
+            });
+          }
+          const earliestTerminalSource = terminalSources[0];
+          if (earliestTerminalSource !== undefined) {
+            return Option.some(earliestTerminalSource);
           }
           const facts = yield* run(
             sql.unsafe<FactRow>(
