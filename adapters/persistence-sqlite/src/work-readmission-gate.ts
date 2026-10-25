@@ -283,6 +283,22 @@ const terminalProviderFailureKind = (
     : null;
 };
 
+const unknownProviderFailureSettlement = (row: ExecutionRow): boolean => {
+  if (row.settled_at === null || row.settlement_kind !== "Failed") return false;
+  let value: Record<string, unknown> | null;
+  try {
+    value = record(decodeJson(row.settlement_json ?? ""));
+  } catch {
+    throw new Error("SettlementMalformed");
+  }
+  const failure = record(value?.failure);
+  return (
+    value?._tag === "Failed" &&
+    failure?._tag === "ExecutionFailure" &&
+    failure.reason === "ProviderFailure:UnknownProviderFailure"
+  );
+};
+
 const isCanonicalUtc = (value: string): boolean => {
   const millis = Date.parse(value);
   return Number.isFinite(millis) && new Date(millis).toISOString() === value;
@@ -434,6 +450,65 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
               const failureKind = terminalProviderFailureKind(execution);
               if (failureKind !== null) {
                 terminalCandidates.push({ execution, failureKind });
+              } else if (unknownProviderFailureSettlement(execution)) {
+                const steps = yield* run(
+                  sql.unsafe<TerminalStepRow>(
+                    `SELECT logical_step_no, repair_attempt, provider_turn_id,
+                            manifest_id, state, settlement_json
+                       FROM agent_loop_steps
+                      WHERE execution_id = ? AND state = 'SettlementProposed'
+                      ORDER BY logical_step_no, repair_attempt`,
+                    [execution.execution_id],
+                  ),
+                );
+                if (steps.length !== 1 || steps[0] === undefined) {
+                  return yield* Effect.fail(
+                    makeIntegrity(
+                      steps.length === 0
+                        ? "SourceSettlementStepMissing"
+                        : "SourceSettlementStepNonUnique",
+                      execution.execution_id as ExecutionId,
+                      "TerminalProviderFailureSettlement",
+                    ),
+                  );
+                }
+                const attempts = yield* run(
+                  sql.unsafe<TerminalAttemptRow>(
+                    `SELECT attempt_no, settled_at, outcome, provider_error_kind,
+                            failure_taxonomy_version, retry_decision
+                       FROM provider_attempts
+                      WHERE provider_turn_id = ?
+                      ORDER BY attempt_no`,
+                    [steps[0].provider_turn_id],
+                  ),
+                );
+                const finalAttempt = attempts.at(-1);
+                if (finalAttempt === undefined) {
+                  return yield* Effect.fail(
+                    makeIntegrity(
+                      "SourceProviderAttemptMissing",
+                      execution.execution_id as ExecutionId,
+                      "TerminalProviderFailureSettlement",
+                    ),
+                  );
+                }
+                if (
+                  finalAttempt.provider_error_kind === null &&
+                  finalAttempt.outcome === "TerminalFailure" &&
+                  finalAttempt.retry_decision === "Stop"
+                ) {
+                  // A killed Provider process can leave only ProcessLost
+                  // evidence. It is not one of the closed terminal kinds, so
+                  // retain the same-revision admission barrier as bounded
+                  // integrity instead of inventing a provider failure code.
+                  return yield* Effect.fail(
+                    makeIntegrity(
+                      "SourceProviderAttemptMismatch",
+                      execution.execution_id as ExecutionId,
+                      "TerminalProviderFailureSettlement",
+                    ),
+                  );
+                }
               }
             } catch {
               return yield* Effect.fail(

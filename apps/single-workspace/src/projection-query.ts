@@ -104,6 +104,11 @@ interface ConversationJobViewRow {
   readonly response_execution_id: string | null;
 }
 
+const recordValue = (value: unknown): Record<string, unknown> | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
 const responseStatusOf = (
   row: ConversationJobViewRow,
 ): ConversationResponseStatus | undefined => {
@@ -444,6 +449,19 @@ const projectionQueryService = (
         }
         const execution = executions[0];
         const episodeJson = execution.episode_json;
+        const settlementJson = execution.settlement_json;
+        if (settlementJson === null) return yield* failClosed();
+        let unknownProviderFailureSettlement = false;
+        try {
+          const settlement = recordValue(JSON.parse(settlementJson) as unknown);
+          const failure = recordValue(settlement?.failure);
+          unknownProviderFailureSettlement =
+            settlement?._tag === "Failed" &&
+            failure?._tag === "ExecutionFailure" &&
+            failure.reason === "ProviderFailure:UnknownProviderFailure";
+        } catch {
+          return yield* failClosed();
+        }
         if (episodeJson === null) return yield* failClosed();
         let decodedEpisode: ReturnType<typeof decodeExecutionEpisodeBinding>;
         try {
@@ -527,6 +545,10 @@ const projectionQueryService = (
           [turn.provider_turn_id],
         );
         const attempt = attempts.at(-1);
+        const processLostWithoutFailureKind =
+          error.reasonCode === "SourceProviderAttemptMismatch" &&
+          unknownProviderFailureSettlement &&
+          attempt?.provider_error_kind === null;
         if (
           attempt === undefined ||
           !Number.isSafeInteger(attempt.attempt_no) ||
@@ -535,11 +557,12 @@ const projectionQueryService = (
           !isCanonicalUtcTimestamp(attempt.settled_at) ||
           attempt.outcome !== "TerminalFailure" ||
           attempt.retry_decision !== "Stop" ||
-          ![
-            "AuthenticationFailed",
-            "RequestRejected",
-            "ProtocolViolation",
-          ].includes(attempt.provider_error_kind ?? "")
+          (!processLostWithoutFailureKind &&
+            ![
+              "AuthenticationFailed",
+              "RequestRejected",
+              "ProtocolViolation",
+            ].includes(attempt.provider_error_kind ?? ""))
         ) {
           return yield* failClosed();
         }

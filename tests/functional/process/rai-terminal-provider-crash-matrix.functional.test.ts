@@ -27,6 +27,8 @@ afterEach(async () => {
 });
 
 type Boundary =
+  | "RAI-DG02BeforeFinalAttemptSettlementCommit"
+  | "RAI-DG02AfterFinalAttemptSettlementCommit"
   | "AH4BeforeSettlementProposal"
   | "AH4AfterSettlementProposal"
   | "AH12BeforeSettleGatewaySubmission"
@@ -74,7 +76,11 @@ const terminalProvider =
     return { _tag: "Text", text: `Observed ${marker}` };
   };
 
-const stateSnapshot = (databaseFile: string, workId: string) => {
+const stateSnapshot = (
+  databaseFile: string,
+  workId: string,
+  providerTurnId?: string,
+) => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   db.exec("BEGIN");
   try {
@@ -91,9 +97,13 @@ const stateSnapshot = (databaseFile: string, workId: string) => {
       }>,
       steps: db
         .prepare(
-          "SELECT execution_id, provider_turn_id, state, settlement_json FROM agent_loop_steps WHERE execution_id IN (SELECT execution_id FROM executions WHERE episode_ref = ?) ORDER BY execution_id, logical_step_no, repair_attempt",
+          `SELECT execution_id, provider_turn_id, state, settlement_json FROM agent_loop_steps WHERE execution_id IN (SELECT execution_id FROM executions WHERE episode_ref = ?)${providerTurnId === undefined ? "" : " AND provider_turn_id = ?"} ORDER BY execution_id, logical_step_no, repair_attempt`,
         )
-        .all(workId) as Array<{
+        .all(
+          ...(providerTurnId === undefined
+            ? [workId]
+            : [workId, providerTurnId]),
+        ) as Array<{
         execution_id: string;
         provider_turn_id: string;
         state: string;
@@ -101,18 +111,26 @@ const stateSnapshot = (databaseFile: string, workId: string) => {
       }>,
       turns: db
         .prepare(
-          "SELECT provider_turn_id, settled_at, finish_reason FROM provider_turns WHERE execution_id IN (SELECT execution_id FROM executions WHERE episode_ref = ?) ORDER BY provider_turn_id",
+          `SELECT provider_turn_id, settled_at, finish_reason FROM provider_turns WHERE execution_id IN (SELECT execution_id FROM executions WHERE episode_ref = ?)${providerTurnId === undefined ? "" : " AND provider_turn_id = ?"} ORDER BY provider_turn_id`,
         )
-        .all(workId) as Array<{
+        .all(
+          ...(providerTurnId === undefined
+            ? [workId]
+            : [workId, providerTurnId]),
+        ) as Array<{
         provider_turn_id: string;
         settled_at: string | null;
         finish_reason: string | null;
       }>,
       attempts: db
         .prepare(
-          "SELECT provider_turn_id, attempt_no, settled_at, outcome, provider_error_kind, failure_taxonomy_version, retry_decision FROM provider_attempts WHERE provider_turn_id IN (SELECT provider_turn_id FROM provider_turns WHERE execution_id IN (SELECT execution_id FROM executions WHERE episode_ref = ?)) ORDER BY provider_turn_id, attempt_no",
+          providerTurnId === undefined
+            ? "SELECT provider_turn_id, attempt_no, settled_at, outcome, provider_error_kind, failure_taxonomy_version, retry_decision FROM provider_attempts WHERE provider_turn_id IN (SELECT provider_turn_id FROM provider_turns WHERE execution_id IN (SELECT execution_id FROM executions WHERE episode_ref = ?)) ORDER BY provider_turn_id, attempt_no"
+            : "SELECT provider_turn_id, attempt_no, settled_at, outcome, provider_error_kind, failure_taxonomy_version, retry_decision FROM provider_attempts WHERE provider_turn_id = ? ORDER BY attempt_no",
         )
-        .all(workId) as Array<{
+        .all(
+          ...(providerTurnId === undefined ? [workId] : [providerTurnId]),
+        ) as Array<{
         provider_turn_id: string;
         attempt_no: number;
         settled_at: string | null;
@@ -150,6 +168,8 @@ const executionSettlementEvents = (
 
 describe("RAI-DG-02 terminal Provider failure process crash submatrix", () => {
   for (const boundary of [
+    "RAI-DG02BeforeFinalAttemptSettlementCommit",
+    "RAI-DG02AfterFinalAttemptSettlementCommit",
     "AH4BeforeSettlementProposal",
     "AH4AfterSettlementProposal",
     "AH12BeforeSettleGatewaySubmission",
@@ -212,7 +232,11 @@ describe("RAI-DG-02 terminal Provider failure process crash submatrix", () => {
       }
 
       await fixture.crash();
-      let crashed = stateSnapshot(fixture.databaseFile, workId);
+      let crashed = stateSnapshot(
+        fixture.databaseFile,
+        workId,
+        firstHit.providerTurnId,
+      );
       if (boundary !== initialBoundary) {
         await fixture.restart({
           entry: crashChild,
@@ -227,27 +251,50 @@ describe("RAI-DG-02 terminal Provider failure process crash submatrix", () => {
           const calls = fixture.providerCalls.length;
           await fixture.crash();
           throw new Error(
-            `recovery probe missing at ${boundary}; providerCalls=${calls}; state=${JSON.stringify(stateSnapshot(fixture.databaseFile, workId))}; daemon=${fixture.daemonErrors.join(" | ")}`,
+            `recovery probe missing at ${boundary}; providerCalls=${calls}; state=${JSON.stringify(stateSnapshot(fixture.databaseFile, workId, firstHit.providerTurnId))}; daemon=${fixture.daemonErrors.join(" | ")}`,
           );
         }
         await fixture.crash();
-        crashed = stateSnapshot(fixture.databaseFile, workId);
+        crashed = stateSnapshot(
+          fixture.databaseFile,
+          workId,
+          firstHit.providerTurnId,
+        );
       }
       expect(crashed.executions).toHaveLength(1);
-      expect(crashed.attempts).toEqual([
-        expect.objectContaining({
+      if (boundary === "RAI-DG02BeforeFinalAttemptSettlementCommit") {
+        expect(crashed.attempts).toEqual([
+          expect.objectContaining({
+            provider_turn_id: firstHit.providerTurnId,
+            attempt_no: 0,
+            outcome: "InProgress",
+            settled_at: null,
+            provider_error_kind: null,
+            retry_decision: null,
+          }),
+        ]);
+      } else {
+        expect(crashed.attempts[0]).toMatchObject({
+          provider_turn_id: firstHit.providerTurnId,
           attempt_no: 0,
           outcome: "TerminalFailure",
           provider_error_kind: "RequestRejected",
           failure_taxonomy_version: "phase1-v2",
           settled_at: expect.any(String),
-        }),
-      ]);
-      expect(crashed.attempts[0]?.retry_decision).toBe("Stop");
+          retry_decision: "Stop",
+        });
+      }
+      // The provider's in-flight HTTP result is not durable before this commit.
+      // Recovery must remain on the original Turn/Execution and fail closed
+      // from ProcessLost evidence instead of inventing RequestRejected.
       expect(crashed.executions[0]?.settlement_kind).toBe(
         boundary === "AH12AfterSettleCommandCommit" ? "Failed" : null,
       );
-      if (boundary === "AH4BeforeSettlementProposal") {
+      if (
+        boundary === "AH4BeforeSettlementProposal" ||
+        boundary === "RAI-DG02BeforeFinalAttemptSettlementCommit" ||
+        boundary === "RAI-DG02AfterFinalAttemptSettlementCommit"
+      ) {
         expect(crashed.turns[0]).toMatchObject({
           settled_at: null,
           finish_reason: null,
@@ -260,9 +307,16 @@ describe("RAI-DG-02 terminal Provider failure process crash submatrix", () => {
         });
         expect(crashed.steps[0]?.state).toBe("SettlementProposed");
       }
+      if (boundary === "AH4AfterSettlementProposal") {
+        // AH4's transaction commits ProviderTurn failure and Step proposal
+        // atomically, so the frozen implementation exposes their joint edge.
+        expect(crashed.turns[0]?.finish_reason).toBe("Failed");
+        expect(crashed.steps[0]?.state).toBe("SettlementProposed");
+      }
       if (
         boundary !== "AH12AfterSettleCommandCommit" &&
-        boundary !== "AH4BeforeSettlementProposal"
+        boundary !== "AH4BeforeSettlementProposal" &&
+        !boundary.startsWith("RAI-DG02")
       ) {
         expect(crashed.steps[0]?.settlement_json).toContain(
           "ProviderFailure:RequestRejected",
@@ -272,11 +326,15 @@ describe("RAI-DG-02 terminal Provider failure process crash submatrix", () => {
 
       await fixture.restart();
       const recovered = await waitForPublic(
-        async () => stateSnapshot(fixture.databaseFile, workId),
+        async () =>
+          stateSnapshot(fixture.databaseFile, workId, firstHit.providerTurnId),
         (value) => value.executions[0]?.settlement_kind === "Failed",
         45_000,
       );
-      expect(recovered.executions).toHaveLength(1);
+      expect(
+        recovered.executions,
+        JSON.stringify(recovered.executions),
+      ).toHaveLength(1);
       expect(recovered.steps).toHaveLength(1);
       expect(recovered.steps[0]?.state).toBe("SettlementProposed");
       expect(recovered.turns).toEqual([
@@ -285,7 +343,21 @@ describe("RAI-DG-02 terminal Provider failure process crash submatrix", () => {
           finish_reason: "Failed",
         }),
       ]);
-      expect(recovered.attempts).toEqual(crashed.attempts);
+      if (boundary === "RAI-DG02BeforeFinalAttemptSettlementCommit") {
+        expect(recovered.attempts).toHaveLength(1);
+        expect(recovered.attempts).toEqual([
+          expect.objectContaining({
+            provider_turn_id: firstHit.providerTurnId,
+            attempt_no: 0,
+            outcome: "TerminalFailure",
+            settled_at: expect.any(String),
+            provider_error_kind: null,
+            retry_decision: "Stop",
+          }),
+        ]);
+      } else {
+        expect(recovered.attempts).toEqual(crashed.attempts);
+      }
       const executionId = crashed.executions[0]?.execution_id;
       if (executionId === undefined)
         throw new Error("crashed Execution missing");
@@ -293,11 +365,25 @@ describe("RAI-DG-02 terminal Provider failure process crash submatrix", () => {
         executionSettlementEvents(fixture.databaseFile, executionId),
       ).toHaveLength(1);
       expect(fixture.providerCalls).toHaveLength(callsAtCrash);
+      if (boundary === "RAI-DG02BeforeFinalAttemptSettlementCommit") {
+        const detail = await client.view<{
+          terminalProviderFailure?: { kind: string };
+        }>("work-detail", {
+          projectId: project.projectId,
+          workspaceId: project.rootWorkspaceId,
+          workId,
+        });
+        expect(detail.terminalProviderFailure?.kind).toBe(
+          "TerminalProviderFailureIntegrity",
+        );
+      }
+      const callsAfterRecovery = fixture.providerCalls.length;
       await new Promise((resolveWait) => setTimeout(resolveWait, 1_200));
       expect(
-        stateSnapshot(fixture.databaseFile, workId).executions,
+        stateSnapshot(fixture.databaseFile, workId, firstHit.providerTurnId)
+          .executions,
       ).toHaveLength(1);
-      expect(fixture.providerCalls).toHaveLength(callsAtCrash);
+      expect(fixture.providerCalls).toHaveLength(callsAfterRecovery);
       expect(fixture.daemonErrors).toEqual([]);
     }, 180_000);
   }

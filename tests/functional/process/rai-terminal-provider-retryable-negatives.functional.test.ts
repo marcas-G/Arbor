@@ -388,6 +388,7 @@ describe("RAI-DG-02 retryable Provider failure negatives", () => {
         expect(
           matchingAttempts.every(
             (attempt) =>
+              attempt.attempt_no === 0 &&
               attempt.outcome === "TerminalFailure" &&
               attempt.retry_decision === "Stop",
           ),

@@ -86,6 +86,14 @@ export interface ProviderRuntimeConfig {
           readonly executionId: string;
           readonly attemptNo: number;
           readonly failureKind: ProviderFailure["kind"];
+        }
+      | {
+          readonly boundary:
+            | "RAI-DG02BeforeFinalAttemptSettlementCommit"
+            | "RAI-DG02AfterFinalAttemptSettlementCommit";
+          readonly providerTurnId: string;
+          readonly attemptNo: number;
+          readonly failureKind: ProviderFailure["kind"];
         },
   ) => Promise<void>;
 }
@@ -1502,25 +1510,52 @@ export const ProviderRuntimeLive = (
                 : decision.decision === "Retry"
                   ? "RetryableFailure"
                   : "TerminalFailure";
+              const terminalAttemptSettlement = {
+                outcome,
+                providerErrorKind: attempt.failure.kind,
+                taxonomyVersion: "phase1-v2",
+                observation: activeObservation,
+                ...(activeCheckpoint === null
+                  ? {}
+                  : { continuationCheckpoint: activeCheckpoint }),
+                canonicalEventPrefixJson: JSON.stringify(activeEvents),
+                deliveredPosition: 0,
+                retryDecision: decision,
+              } as const;
+              if (
+                outcome === "TerminalFailure" &&
+                config.qualificationProbe !== undefined
+              ) {
+                yield* Effect.promise(async () => {
+                  await config.qualificationProbe?.({
+                    boundary: "RAI-DG02BeforeFinalAttemptSettlementCommit",
+                    providerTurnId: input.providerTurnId,
+                    attemptNo,
+                    failureKind: attempt.failure.kind,
+                  });
+                });
+              }
               yield* tx.transact(
                 store.settleAttempt(
                   input.providerTurnId,
                   attemptNo,
-                  {
-                    outcome,
-                    providerErrorKind: attempt.failure.kind,
-                    taxonomyVersion: "phase1-v2",
-                    observation: activeObservation,
-                    ...(activeCheckpoint === null
-                      ? {}
-                      : { continuationCheckpoint: activeCheckpoint }),
-                    canonicalEventPrefixJson: JSON.stringify(activeEvents),
-                    deliveredPosition: 0,
-                    retryDecision: decision,
-                  },
+                  terminalAttemptSettlement,
                   settledAt,
                 ),
               );
+              if (
+                outcome === "TerminalFailure" &&
+                config.qualificationProbe !== undefined
+              ) {
+                yield* Effect.promise(async () => {
+                  await config.qualificationProbe?.({
+                    boundary: "RAI-DG02AfterFinalAttemptSettlementCommit",
+                    providerTurnId: input.providerTurnId,
+                    attemptNo,
+                    failureKind: attempt.failure.kind,
+                  });
+                });
+              }
               if (
                 outcome === "RetryableFailure" &&
                 isSummaryCompaction &&
