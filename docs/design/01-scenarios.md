@@ -1,8 +1,8 @@
 # Arbor 核心场景定义（S1–S4）
 
-**Version:** 1.7
-**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox and accepted S2-RDG-01 governance addenda
-**Date:** 2026-10-24
+**Version:** 1.9
+**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, accepted S2-RDG-01, S3 child resource ownership, and first-release sandbox boundary governance addenda
+**Date:** 2026-10-26
 **Depends on:** `Arbor Problem Definition & Goals v1.3`
 **Owns:** S1–S4 的参与者、端到端行为、分支、异常与恢复的用户可感知语义  
 **Does not own:** Domain Entity、Runtime/module、数据库、Command/Event、状态机、接口、技术实现
@@ -1137,3 +1137,42 @@ provider cannot prove a required OS control, no process starts; the durable
 no-effect outcome produces safe Unavailable Attention and the browser does
 not auto-retry. FullAccess is a separately confirmed, non-isolated
 TrustedLocal choice and never an automatic fallback.
+
+## Governance addendum — S3 Child Workspace resource ownership (v1.8)
+
+Accepted under `ACCEPT_S3_CHILD_WORKSPACE_RESOURCE_OWNERSHIP_DELEGATION_V1`
+on 2026-10-26; fixed proposal SHA-256
+`397A56BF13042D32EF0D062146F4A34AF703738A288B4881A5FF48C6DDFE52A2`.
+When a Parent forms a Child, it may explicitly delegate a bounded write region
+as part of the human-governed formation package. After activation, the Child
+can write only within that region; the Parent retains the non-delegated
+remainder. Formation without delegation may still create the Child, but the
+Child's write attempt is denied before filesystem effect. A capability grant
+does not create ownership or widen either Workspace's boundary. Overlap,
+stale boundary/delegation, or changed host mapping is rejected as a visible
+typed failure with no partial ownership change. Reclaim waits for safe Child
+quiescence and transfers ownership atomically. Existing children gain no
+ownership by inference. This addendum changes the observable S3 resource
+ownership outcome; it does not authorize implementation or release
+qualification.
+
+## Governance addendum — Native OS Sandbox first-release boundary (v1.9)
+
+Accepted under `ACCEPT_NATIVE_OS_SANDBOX_FIRST_RELEASE_BOUNDARY_V1` on
+2026-10-26; fixed proposal SHA-256
+`8A5FC8FED5DCED9B6E944397675738F94B43591B23F85869A2D5FA96D6CB32E8`.
+At first release, the human-visible process-execution mode is either
+`Disabled` or `NativeOsSupportedOnly`. The release defaults to `Disabled`;
+shell is absent from the model-facing catalog and process-capable actions are
+blocked before spawn, including stale or replayed actions, with the existing
+safe unavailable status. Native mode is available only for the exact fully
+qualified provider/version/capability/OS-build/profile-and-network tuple.
+For the current Windows candidate this is `ReadOnly × Disabled`; it does not
+claim support for write or network access. If its signed production materials
+and full qualification are unavailable, the release remains Disabled. There
+is no TrustedLocal, FullAccess, alternate-provider, or weaker-control
+fallback. Human approval remains separate from sandbox enforcement. Switching
+mode requires a controlled restart; rollback to Disabled stops new process
+admissions and preserves trust/evidence high-water state. This narrows the
+first-release executable surface without changing S1–S4 goals or authorizing
+implementation, Native qualification, or release.

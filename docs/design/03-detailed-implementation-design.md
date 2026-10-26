@@ -1,10 +1,87 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.61\
+**Version:** 1.63\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.60\
-**Date:** 2026-10-25\
-**Depends on:** `Arbor System Design Specification v1.23`
+**Supersedes:** v1.62\
+**Date:** 2026-10-26\
+**Depends on:** `Arbor System Design Specification v1.24`
+
+**Governance changes (v1.62 → v1.63): accepted Native OS Sandbox first-release boundary**
+
+Accepted under `ACCEPT_NATIVE_OS_SANDBOX_FIRST_RELEASE_BOUNDARY_V1` on
+2026-10-26; proposal raw SHA-256
+`8A5FC8FED5DCED9B6E944397675738F94B43591B23F85869A2D5FA96D6CB32E8`.
+P12 composition owns the startup snapshot at
+`arbor.config.json.runtime.processExecutionMode`, with closed object
+`{version: 1, processExecutionMode: Disabled | NativeOsSupportedOnly}`.
+Missing/invalid/unknown/contradictory configuration is Disabled; no CLI or
+environment-variable override exists. The existing `ARBOR_CONFIG` only
+selects the standard config file. Mode is immutable per daemon and requires a
+controlled restart to change. Disabled omits shell from the compiled
+model-facing catalog and P4 independently blocks received, stale, or replayed
+process actions before spawn. For already durable actions, P4 uses the
+existing same-Execution unavailable/blocked path. In-process bounded
+Read/List/Patch are unaffected. No new persistence or authority source is
+added.
+
+P12 may expose Native mode only for the exact qualified provider/version/
+capability revision/Windows build/`ReadOnly × Disabled` tuple and matching
+signed helper, trust, registry and qualification evidence; otherwise status
+is safely unavailable and there is no spawn. There is no TrustedLocal,
+FullAccess, alternate-provider, or weaker-control fallback in the release
+shell path. Rollback disables new admission and uses existing Stop/settlement
+semantics while preserving monotone trust/authority evidence. This adds no
+schema or migration. Release qualification is conditional: either the exact
+fully qualified signed Native path passes, or the Disabled path proves shell
+absence and zero process/provider/fallback effects for stale or forged calls.
+Both retain the proposal's negative-case coverage and full functional,
+package, clean-clone, and applicable exact-host gates.
+
+This acceptance records the release design and conditional plan only. It
+does not create additional implementation, migration, database, deployment,
+or release authority. Any pre-existing Native implementation authorization
+remains subject to the separately required post-landing review and exact T3
+gates.
+
+**Governance changes (v1.61 → v1.62): accepted S3 Child Workspace resource ownership**
+
+Accepted under `ACCEPT_S3_CHILD_WORKSPACE_RESOURCE_OWNERSHIP_DELEGATION_V1`
+on 2026-10-26; proposal raw SHA-256
+`397A56BF13042D32EF0D062146F4A34AF703738A288B4881A5FF48C6DDFE52A2`.
+P1 owns the durable formation decision/receipt boundary and atomic ownership
+change command/event; P6 owns the Parent-approved Child formation intent and
+post-commit activation lifecycle from the persisted ResourceBoundary and
+delegation; P4 continues validate-only resource admission. The formation
+package carries a bounded optional
+`ResourceOwnershipDelegation`; without it the Child is formed without write
+ownership. A dedicated semantic ownership change binds exact Parent/Child
+identity, expected Workspace/boundary/ownership revisions, delegation source,
+canonical resolved post-image and actor/authority provenance. The ownership
+transaction includes the complete Parent/Child post-image, CAS checks,
+canonical no-overlap evaluation, durable state and event; duplicate activation
+converges by durable formation/delegation identity. P4 cannot create, repair,
+or widen claims. Existing `ResourceOwnershipChanged` may be used only if its
+current version represents the complete atomic transfer; otherwise use a
+versioned event without reinterpreting history.
+
+Persistence retains delegator, exact source identity, claim revision,
+canonical region, source-address snapshot/ref and resolved Environment
+revision with existing claim data. Typed results distinguish stale
+Parent/Child revisions, containment failure, canonical overlap conflict,
+resolver mapping drift, missing delegation, and ownership integrity failure;
+rejection preserves the full ownership post-image. The additive migration is
+transactional and restart-safe, performs no ownership activation, and infers
+no Child ownership: Root claims stay unchanged and legacy Child claims
+without exact durable delegation evidence remain unowned. Exact Command/ADT member names,
+wire/event version, physical schema and migration number are left to the
+authorized phase contract after checking the then-current migration head;
+they are not invented by this owner landing. S3-1…S3-11 from the accepted
+proposal are the qualification matrix, including public-process, real SQLite
+transaction, restart, concurrency, migration and no-effect cases.
+
+This acceptance authorizes design landing and planning only. S3
+implementation, migration activation, database access and release claims
+require separate explicit authorization and the accepted matrix evidence.
 
 **Governance changes (v1.60 → v1.61): accepted RAI-DG-02 terminal Provider failure hold**
 
@@ -2085,11 +2162,26 @@ no Active Main Execution
 currentWorkId == None
 no Open Work
 no Active Child Workspace
-no active ResourceOwnershipClaim
+no active ResourceOwnershipClaim, except an exact Child claim with accepted
+  ResourceOwnershipDelegation provenance consumed by the atomic retirement
+  path below
 no unresolved incoming Dependency whose ProducerBinding is
   WorkspaceBound(thisWorkspace) or WorkBound(a Work owned by thisWorkspace)
   (unless resolved/replaced in the same governance change)
 ```
+
+The sole ownership exception is a Child claim with exact accepted delegation
+provenance. Before retirement, the region must be quiescent with no unresolved
+effect bound to it, or a typed quiescence/recovery path must preserve and
+resolve known in-flight outcomes. One atomic semantic governance change then
+revokes the Child claim, restores the corresponding Parent claim or applies
+another explicitly governed Parent ownership post-image, and marks the Child
+Retired. The transaction evaluates the complete Parent/Child post-image and
+canonical overlap constraints; no intermediate overlap is committed. A
+RetireWorkspace call without that exact provenance, including ordinary and
+legacy no-provenance cases, retains the `no active ResourceOwnershipClaim`
+precondition and fails closed. This does not create an implicit transfer for
+boundary edits or grant revocation.
 
 Retired Workspace 不得 AssignWork、AdmitExecution、CreateChildWorkspace 或修改 Responsibility。`Work.workspaceId` immutable；未完成事项迁移时在 Successor 创建新的 Work，并通过 Provenance 指向被替代 Work，而不是移动原 Work。Session/Memory/Decision/Artifact 的 ownership 也不改写，只通过 bootstrap/reference 派生新的 successor cognition。
 
@@ -7423,7 +7515,7 @@ Workspace 没有 `Running/Waiting/...` lifecycle。合法 canonical structural m
 | UpdateWorkspacePolicy | authority + expected revision | revision++ + workspacePolicyRevision++ |
 | SelectCurrentWork | target Work belongs Workspace + Open; switching cannot conflict with Active Main Execution | change `currentWorkId` only |
 | ReplacePrimarySession | target `WorkspacePrimary`; no Active Main Execution | change `primarySessionId`; existing Execution bindings unchanged |
-| RetireWorkspace | non-Root + no Active Main Execution/Open Work/Active Child/write ownership/no unresolved incoming Dependency with ProducerBinding = WorkspaceBound(this) or WorkBound(a Work owned by this) (unless resolved/replaced in same governance change) | lifecycle = Retired |
+| RetireWorkspace | non-Root + no Active Main Execution/Open Work/Active Child/no unresolved incoming Dependency with ProducerBinding = WorkspaceBound(this) or WorkBound(a Work owned by this) (unless resolved/replaced in same governance change); normally no active write ownership. Sole exception: Child claim with exact accepted delegation provenance, region quiescent or typed recovery resolved, and same transaction revokes Child claim + restores or explicitly governs Parent ownership post-image with no committed overlap | lifecycle = Retired atomically with ownership post-image |
 
 Forbidden ordinary transitions:
 
