@@ -968,6 +968,13 @@ const approveExactPatchIfRequired = async (input: {
   ) => void;
 }) => {
   const deadline = Math.min(input.deadlineAt, Date.now() + JOURNEY_TIMEOUT_MS);
+  let lastCurrentWork: {
+    readonly workId?: string;
+    readonly status?: string;
+    readonly activeExecution?: { readonly executionId: string };
+  } | null = null;
+  let lastUnconsumedInboxCount = 0;
+  let lastGovernanceEntryKeys: ReadonlyArray<string> = [];
   while (Date.now() < deadline) {
     const [inbox, current] = await Promise.all([
       input.client.view<{
@@ -992,10 +999,26 @@ const approveExactPatchIfRequired = async (input: {
         activeExecution?: { executionId: string };
       } | null>("current-work", { workspaceId: input.project.rootWorkspaceId }),
     ]);
+    lastCurrentWork = current;
+    lastUnconsumedInboxCount = inbox.unconsumed.length;
+    lastGovernanceEntryKeys = inbox.unconsumed
+      .filter((entry) => entry.kind === "Governance")
+      .map((entry) => entry.entryKey);
     const approvals = inbox.unconsumed.filter(
       (entry) =>
         entry.kind === "Governance" && /^eap:.+:\d+$/u.test(entry.entryKey),
     );
+    const unexpectedGovernanceEntryKeys = inbox.unconsumed
+      .filter(
+        (entry) =>
+          entry.kind === "Governance" && !/^eap:.+:\d+$/u.test(entry.entryKey),
+      )
+      .map((entry) => entry.entryKey);
+    if (unexpectedGovernanceEntryKeys.length > 0) {
+      throw new Error(
+        `REAL NOT QUALIFIED: Work ${input.workId} created unexpected Governance attention before the target-file effect; entryKeys=${JSON.stringify(unexpectedGovernanceEntryKeys)}`,
+      );
+    }
     if (approvals.length > 1) {
       throw new Error(
         `received multiple Executable approvals while executing ${input.marker}`,
@@ -1056,6 +1079,9 @@ const approveExactPatchIfRequired = async (input: {
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 200));
   }
+  throw new Error(
+    `REAL NOT QUALIFIED: Work ${input.workId} did not produce the exact target-file effect before the S1 deadline; currentWorkStatus=${lastCurrentWork?.status ?? "unavailable"}; activeExecutionId=${lastCurrentWork?.activeExecution?.executionId ?? "none"}; unconsumedInboxEntries=${lastUnconsumedInboxCount}; governanceEntryKeys=${JSON.stringify(lastGovernanceEntryKeys)}`,
+  );
 };
 
 let activeFixture: ProductionFixture | undefined;
@@ -1200,7 +1226,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
     await submitHumanMessage(
       client,
       project,
-      `请完成目标 ${marker}：只在当前项目工作区创建文件 ${proofName}，唯一一行内容严格为 ${proofContent}，并读回核对。完成标准是文件内容精确匹配且经独立核验；如果需要我的批准，请先提出明确的审批请求。不得调用 shell、网络工具或访问其他工作区。`,
+      `请在当前项目工作区直接完成目标 ${marker}：只用 patch 创建文件 ${proofName}，唯一一行内容严格为 ${proofContent}，然后用 read 读回核对。不得创建或提议其他 Workspace、分派子 Work、调用 shell 或网络工具、访问其他工作区，也不要等待其他 Work 或尚未发生的 Verification。如果这项 patch 需要我的批准，请提交该项精确审批并在批准后继续当前 Work。只有文件内容精确匹配后才提交完成声明，供独立核验。`,
     );
     const approval = await waitForExactWorkApproval(
       client,
