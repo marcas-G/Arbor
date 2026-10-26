@@ -1261,3 +1261,58 @@ existing typed integrity error as applicable. P10's combined query returns
 no partial DTO. Every branch is read-only, uses the existing TransactionScope
 and writes no row/event/marker/Attention; P4's effect/approval claim semantics
 are unchanged.
+
+## Accepted Native durable process-mode no-effect Denied V2
+
+Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2`, supplement
+SHA-256
+`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
+This applies only to an exact already-durable, unsettled P4 process-capable
+invocation whose `effect_admission_state` is `NotAdmitted`, and whose P3
+Pending action, P4 intent, Worker lease/fencing triple, and full source tuple
+still match in the same committing transaction. The tuple includes Execution,
+Workspace, ProviderTurn, logical step, repair attempt, LogicalAction, action
+index, callRef, tool name/version, canonical arguments, and approval identity.
+
+Before any `MayHaveStarted` transition, the owning transaction terminalizes
+that same invocation as the mode-selected `Denied`:
+
+| Startup condition | Exact reason code |
+|---|---|
+| `Disabled` | `ProcessExecutionDisabled` |
+| `NativeOsSupportedOnly` without exact current qualified tuple | `NativeOsTupleUnavailable` |
+
+The committed P4 post-image keeps `effect_admission_state=NotAdmitted`, stores
+the exact closed code with `settlement_kind=Denied` and canonical
+`settled_at` in the existing version-1 Denied settlement codec, and leaves
+`result_ref`, all P40 Observation fields, and P40 evidence NULL. It creates no
+P39 admitted effect-attempt row, Sandbox,
+executor/process, Native provider attempt/capability call, or TrustedLocal
+fallback. Existing approval history is unchanged: an approval already
+consumed by this invocation remains consumed by it; this rule consumes no new
+approval. P3 progresses from the exact P4 Denied through its existing
+terminal Denied/terminal-rejection path. Exact replay returns the same denial;
+it never re-admits this invocation after a mode or tuple change. A later
+attempt needs a new model action and ToolInvocationId.
+
+This guarded classification does not apply to `MayHaveStarted`,
+`LegacyUnknown`, stale fencing, already-settled invocations, conflicting
+P3/P4 identities/payloads, or ambiguous joins. Preserve existing
+recovery/interruption/fail-closed behavior; process absence, Disabled mode,
+missing provider call, or restart is not proof of no effect. Crashes before
+denial commit leave the row NotAdmitted for exact guarded retry. Crashes after
+commit replay the same terminal denial with no effect or provider probe.
+
+The accepted persistence supplement supersedes the base Native first-release
+no-migration statement only for these two code values. Migration `0054`
+(requires schema 53 after S3 `0053`; recheck the actual current head before
+assignment) replaces only the existing P40 Denied insert/update trigger
+allowlists as evolved by the existing P44 `ApprovalRejected` amendment,
+retaining every existing predicate and code (including `ApprovalRejected`) and adding
+`ProcessExecutionDisabled` and `NativeOsTupleUnavailable` to both. No DML,
+historical-row rewrite, table/column/event/queue/marker change, or Attention
+backfill is permitted. See P1 `04` for the sequence and migration boundary.
+Conditional implementation authorization is provided under
+`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION` after
+independent post-landing review. This does not authorize migration execution,
+existing-database upgrade, deployment, Native support claims, or release.

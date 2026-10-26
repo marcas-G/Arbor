@@ -1,7 +1,7 @@
 # Arbor 核心场景定义（S1–S4）
 
-**Version:** 1.9
-**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, accepted S2-RDG-01, S3 child resource ownership, and first-release sandbox boundary governance addenda
+**Version:** 1.10
+**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, accepted S2-RDG-01, S3 child resource ownership/carve-outs, and first-release process-mode governance addenda
 **Date:** 2026-10-26
 **Depends on:** `Arbor Problem Definition & Goals v1.3`
 **Owns:** S1–S4 的参与者、端到端行为、分支、异常与恢复的用户可感知语义  
@@ -1176,3 +1176,24 @@ mode requires a controlled restart; rollback to Disabled stops new process
 admissions and preserves trust/evidence high-water state. This narrows the
 first-release executable surface without changing S1–S4 goals or authorizing
 implementation, Native qualification, or release.
+
+## Governance addendum — durable process-mode no-effect denial (v1.10)
+
+Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2` on
+2026-10-26; supplement SHA-256
+`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
+If a shell action already has an exact durable P4 invocation but has not
+entered effect admission, and the daemon is Disabled or lacks its exact
+qualified Native tuple, the same action is terminally denied before it starts.
+The human sees a safe `ProcessExecutionUnavailable` status tied to that exact
+action and execution. No process, provider attempt, Sandbox, fallback, or
+effect is started; the action is not retried after a later mode or tuple
+change. A newly received action while Disabled continues to be rejected
+before P4 invocation intent. If effect may already have started or identity
+cannot be proven, the existing recovery/fail-closed path applies and the
+system does not infer “no effect.” This supplement adds no alternate process
+mode or Native qualification claim.
+
+The acceptance authorizes the exact design supplement and the separately
+stated conditional implementation scope; migration and release qualification
+remain subject to its exact gates.

@@ -154,7 +154,9 @@ type NoEffectDenialCode =
   | "ApprovalConsumedByOtherInvocation"
   | "ResourceResolutionDenied"
   | "ResourceAdmissionDenied"
-  | "ApprovalNoLongerAuthorized";
+  | "ApprovalNoLongerAuthorized"
+  | "ProcessExecutionDisabled"
+  | "NativeOsTupleUnavailable";
 
 /** Historical persisted-row compatibility only; never written by new P4 paths. */
 type LegacyNoEffectDenialCode = "ApprovalRequired";
@@ -174,6 +176,25 @@ error text, determines replay.
   `ApprovalRequired` handoff in `02`; they are not new-write denials.
 - Large raw results live behind `resultRef` (Artifact), never in the observation
   (SD §6.6).
+
+**Accepted Native durable pre-effect Denied supplement V2** (`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`):
+the two additional closed codes apply only to an exact already-durable
+process-capable ToolInvocation that remains `NotAdmitted`. Disabled startup
+mode selects `ProcessExecutionDisabled`; `NativeOsSupportedOnly` without the
+exact qualified tuple selects `NativeOsTupleUnavailable`. They are durable
+P4 `Denied` no-effect results, not `ExpectedFailure` or
+`SandboxProviderUnavailable`. A new shell action received while Disabled
+continues to be rejected before P4 intent. Persisted settlement/replay uses
+the exact code; later mode or tuple changes never re-admit that invocation.
+`MayHaveStarted`, `LegacyUnknown`, stale fence, or unprovable identity remains
+on existing recovery/fail-closed behavior and cannot be classified as no-effect.
+Only immutable startup mode and exact tuple-verification result select these
+codes; provider text, local error strings, profile guesses, and fallback
+providers cannot choose or alter them.
+Implementation is conditionally authorized under
+`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION` after the
+required independent post-landing review; migration execution, existing
+database upgrade, deployment, and release remain outside this authorization.
 
 ## 5. ToolInvocationSettlement
 

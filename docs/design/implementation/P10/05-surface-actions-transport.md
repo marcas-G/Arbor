@@ -624,3 +624,21 @@ Action-first classification for dual mismatch, no partial candidate on
 ambiguity, and unchanged post-intent NotAdmitted behavior. This does not claim the later
 ProviderTurn/drift qualification closed; a P9 provider-unavailable terminal
 Action/Step still admits no later action.
+
+## Accepted Native durable process-mode AttentionSource V2
+
+Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2`, supplement
+SHA-256
+`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
+Add the non-persisted `ProcessExecutionUnavailable` literal to the existing
+closed transport-neutral `AttentionSource` union and `ATTENTION_SOURCES`.
+`AttentionReq` and its row shape, endpoint, ViewId, and Problem vocabulary are
+unchanged. The source exposes only the safe status, exact closed reason code,
+and existing public Execution/action references. P10 `02` owns its exact
+dedup, `occurredAt`, fixed-summary, join, and redaction contract. No provider
+identity/version, raw error, helper path, evidence digest, command/arguments,
+new Attention table, marker, queue, event, or P9 fact is transported.
+Implementation is conditionally authorized under
+`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION` after
+independent post-landing review; migration execution, database upgrade,
+deployment, Native support claims, and release remain separately gated.
