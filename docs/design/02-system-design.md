@@ -1,18 +1,50 @@
 # Arbor System Design Specification
 
-**Version:** 1.23
+**Version:** 1.24
 
 **Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, S2-RDG-01, and RAI-DG-02 governance addenda
 
-**Supersedes:** v1.22
+**Supersedes:** v1.23
 
-**Date:** 2026-10-25
+**Date:** 2026-10-26
 
-**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.7`
+**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.9`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
 
 **Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
+
+**Governance changes (v1.23 → v1.24): accepted S3 child resource ownership and Native OS Sandbox first-release boundary**
+
+- `ACCEPT_S3_CHILD_WORKSPACE_RESOURCE_OWNERSHIP_DELEGATION_V1` (proposal
+  SHA-256
+  `397A56BF13042D32EF0D062146F4A34AF703738A288B4881A5FF48C6DDFE52A2`)
+  freezes explicit Parent delegation as the only source of Child write
+  ownership. Each claim is within both the Child ResourceBoundary and the
+  Parent's active ownership. PermissionGrant cannot widen either limit.
+  Ownership uses resolved canonical regions, preserves global no-overlap,
+  and requires atomic Parent narrowing/splitting when a Child carves a region.
+  Activation/revocation recheck revisions and canonical mapping in one
+  ownership transaction; stale or ambiguous mapping fails closed. Reclaim
+  requires Child quiescence or the existing typed recovery path. P4 remains
+  validate-only. Historical Child ownership is never inferred.
+- `ACCEPT_NATIVE_OS_SANDBOX_FIRST_RELEASE_BOUNDARY_V1` (proposal SHA-256
+  `8A5FC8FED5DCED9B6E944397675738F94B43591B23F85869A2D5FA96D6CB32E8`)
+  freezes the first-release process mode as `Disabled | NativeOsSupportedOnly`.
+  Missing, malformed, unknown-version, unreadable, or contradictory setting
+  means Disabled. The startup snapshot is immutable for that daemon. Disabled
+  removes shell from the model catalog and independently blocks process
+  actions before spawn; bounded in-process Read/List/Patch remain available.
+  Native mode requires the exact currently qualified provider/version/
+  capability/OS-build/profile/network tuple and trust evidence; the Windows
+  candidate is only `ReadOnly × Disabled`. No fallback to TrustedLocal,
+  FullAccess, another provider, or weaker enforcement is permitted. Mode
+  changes require controlled restart; rollback disables new process admission
+  while preserving monotone trust/authority evidence. Approval and sandbox
+  policy remain independent.
+- Both acceptances authorize these owner-document changes only. They do not
+  change Problem & Goals v1.3 or authorize implementation, migration
+  activation, database upgrade, deployment, or release qualification.
 
 **Governance changes (v1.22 → v1.23): accepted RAI-DG-02 terminal Provider failure hold**
 
@@ -975,6 +1007,44 @@ Write ownership 判断针对**规范化后的现实 backing resource**，而不�
   this rule does not imply that the Profile ref/version is independently
   persisted or queryable.
 
+### 4.5.2 Child Workspace write-ownership delegation (accepted S3 contract)
+
+A Child receives formal write ownership only from an explicit durable
+delegation by its direct Parent. The delegation is part of the
+human-governed formation package; absent delegation, formation may succeed but
+the Child has no write claim and P4 resource admission denies the write before
+effect. PermissionGrant authorizes a capability only and never creates or
+widens ownership.
+
+The Environment resolver maps delegated addresses to canonical backing
+regions. Every Child region must be contained by both the Child's persisted
+ResourceBoundary and the Parent's active ownership. The global no-overlap
+invariant applies after canonicalization. Carving a Child region from Parent
+ownership atomically narrows/splits the Parent claim and installs the Child
+claim; if containment, overlap, or an unambiguous split cannot be proven, the
+whole change fails with typed evidence and no partial state. Activation
+rechecks exact Parent/Child/boundary/ownership revisions, source identity,
+canonical mapping and conflicts in the ownership transaction. Mapping drift
+does not rebind an existing delegation. Reclaim/revoke is likewise atomic and
+requires Child quiescence or a typed recovery path that preserves in-flight
+outcomes. Retirement, boundary edits, and grant revocation do not implicitly
+transfer ownership. The accepted-delegation retirement case is the bounded
+exception: retiring a Child with exact accepted delegation provenance consumes
+and revokes that claim in the same atomic semantic governance change. It first
+establishes quiescence or completes a typed recovery path for known in-flight
+effects, then removes the Child claim and restores the Parent's corresponding
+canonical ownership post-image (or applies an explicitly governed alternative
+post-image), and marks the Child Retired in that same commit. The transaction
+has no committed intermediate overlap. Ordinary RetireWorkspace, and any
+legacy Child claim without exact accepted delegation provenance, retain the
+no-active-claim fail-closed precondition. Child onward delegation is disabled
+absent a separate governance change. Historical Child claims are not inferred
+during upgrade.
+
+P4 admission remains validate-only: it reads the exact active claim and
+boundary and rejects missing, stale, overlapping, or out-of-bound ownership;
+it never creates, repairs, or expands a claim.
+
 ## 4.6 Context 隔离
 
 Parent/Child 不复制完整 Context。
@@ -1047,7 +1117,7 @@ Workspace 创建后 Parent 固定；不支持普通 reparent / move / merge 去�
 
 但长期项目允许真正的责任重组。重组统一采用 **replacement, not relocation**：建立新的 Successor Workspace / subtree，显式交接 Responsibility、必要 Context、Open Work 的替代事项、Resource Ownership 与依赖关系，再将旧 Workspace 置为 `Retired`。旧 Workspace 的历史、Session、Memory、Decision、Artifact 与原 parent relation 保持不变。
 
-`WorkspaceLifecycle = Active | Retired`。Retired 是 terminal；Retired Workspace 不再 Assign 新 Work、Admit Execution、创建 Child 或修改 Responsibility。除 Root 外，Workspace 只有在无 Active Main Execution、无 Open Work、无 Active Child、无 active write ownership、且不存在 unresolved incoming Dependency 的 ProducerBinding 指向本 Workspace 或本 Workspace 拥有的 Work（除非在同一治理变更中被解决/替换）后才能 Retire。Root 在 Project Open 时不得 Retire。
+`WorkspaceLifecycle = Active | Retired`。Retired 是 terminal；Retired Workspace 不再 Assign 新 Work、Admit Execution、创建 Child 或修改 Responsibility。除 Root 外，Workspace 只有在无 Active Main Execution、无 Open Work、无 Active Child、无 active write ownership、且不存在 unresolved incoming Dependency 的 ProducerBinding 指向本 Workspace 或本 Workspace 拥有的 Work（除非在同一治理变更中被解决/替换）后才能 Retire。唯一 ownership 例外是具有精确 accepted delegation provenance 的 Child：满足该区域的 quiescence/typed recovery 后，在同一 atomic semantic governance change 中撤销 Child claim、确定 Parent ownership post-image 并将 Child 标记 Retired；不得提交中间重叠状态。普通 RetireWorkspace 与无 provenance 的历史 claim 仍须先无 active write ownership，fail closed。Root 在 Project Open 时不得 Retire。
 
 责任重组可以形成 Supersede / Split / Merge / ResponsibilityTransfer lineage，但 lineage 只记录前后 Identity 的关系，不修改旧 Identity。
 
@@ -1988,6 +2058,40 @@ EnvironmentChanged
 ```
 
 Verification verdict 必须绑定具体 Artifact / Environment Version。
+
+### 11.6 First-release process execution mode (accepted Native boundary)
+
+The first release has one closed, startup-loaded process mode:
+
+```text
+Disabled | NativeOsSupportedOnly
+```
+
+Missing, unreadable, malformed, unknown-version, or contradictory setting
+resolves to `Disabled`. The mode is immutable during a daemon lifetime; a
+change takes effect only after controlled restart and fresh composition and
+qualification. In Disabled mode, shell is absent from the model-facing tool
+catalog and P4 independently rejects any process-capable action before spawn,
+including stale/replayed actions. The existing same-Execution blocked or
+unavailable path remains visible for already durable actions. Bounded
+in-process Read/List/Patch are unaffected.
+
+NativeOsSupportedOnly is available only for the exact fully qualified
+provider/version/capability revision/OS build/profile/network tuple and its
+matching trust and evidence. The initial Windows candidate is
+`windows-restricted-appcontainer-job`, `ReadOnly × Disabled`; this is not a
+claim for WorkspaceWrite, Restricted, or Enabled. Missing or invalid Native
+materials mean unavailable and no spawn. There is no TrustedLocal, FullAccess,
+alternate provider, or weaker-enforcement fallback in this first-release
+shell path. Human approval remains independent and cannot enable process mode
+or widen sandbox policy.
+
+Rollback stops new process admissions, settles or Stops active trees through
+existing interruption semantics, switches the mode to Disabled, and restarts
+the daemon. Monotone trust/authority high-water state and signed evidence are
+preserved; returning to Native requires a fresh current snapshot and every
+qualification gate. This release rule adds no database schema, migration, or
+new authority source.
 
 ---
 
