@@ -8,7 +8,7 @@ import {
 describe("RootConversation bounded Work routing guidance", () => {
   it("routes goals needing hidden executable tools through current Workspace Work", () => {
     const guidance = GENERIC_INSTRUCTION_ASSETS.rootConversationAction;
-    expect(guidance.revision).toBe(7);
+    expect(guidance.revision).toBe(8);
     expect(guidance.text).toContain(
       "RootConversation intentionally has no executable Work tools",
     );
@@ -32,6 +32,12 @@ describe("RootConversation bounded Work routing guidance", () => {
     );
     expect(guidance.text).toContain(
       "An approval only authorizes its exact bounded action; it is not evidence that the Work ran or completed",
+    );
+    expect(guidance.text).toContain(
+      "Verification criteria must be independently decidable from evidence available to the Verifier",
+    );
+    expect(guidance.text).toContain(
+      "never turn an unobservable process claim into a required criterion",
     );
   });
 

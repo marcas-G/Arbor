@@ -222,7 +222,7 @@ interface PublicScenarioState {
   readonly project?: FunctionalProject;
   readonly rootPromptEvidence?: {
     readonly providerRequestId: string;
-    readonly promptAssetRef: "prompt:root-conversation:goal-placement:v7";
+    readonly promptAssetRef: "prompt:root-conversation:goal-placement:v8";
     readonly systemPromptSha256: string;
     readonly routingClauseObserved: true;
     readonly ordinaryConversationBoundaryObserved: true;
@@ -1268,7 +1268,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       ...state,
       rootPromptEvidence: {
         providerRequestId: rootProviderTurn.requestId,
-        promptAssetRef: "prompt:root-conversation:goal-placement:v7",
+        promptAssetRef: "prompt:root-conversation:goal-placement:v8",
         systemPromptSha256: createHash("sha256")
           .update(rootSystemPrompt)
           .digest("hex"),

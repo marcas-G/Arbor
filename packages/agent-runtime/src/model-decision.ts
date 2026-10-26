@@ -797,7 +797,10 @@ export const runModelDecision = (
     let repairFragments: ReadonlyArray<InstructionFragment> = [];
     const readExecutionTimeline = () =>
       executionEpisode(input.execution)?._tag === "WorkEpisode"
-        ? sessions.listWorkActiveFrontier(input.execution.sessionId)
+        ? sessions.listWorkActiveFrontier(
+            input.execution.sessionId,
+            input.execution.executionId,
+          )
         : sessions.listRecentEntries(
             input.execution.sessionId,
             SESSION_TIMELINE_ENTRY_LIMIT,

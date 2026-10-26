@@ -318,11 +318,14 @@ export interface SessionRepositoryService {
   >;
   /** Work-only provider-context frontier. Excludes rows/checkpoints owned by
    * ConversationResponseEpisodes even when both streams share WorkspacePrimary
-   * storage. Before the first typed Work checkpoint, selects the latest 64
-   * Work SessionItems by sequence without causal backfill. After a Work
-   * checkpoint, returns it and every later Work item without that cap. */
+   * storage. When executionId is supplied, provider/action history is limited
+   * to that exact execution. Before the first typed Work checkpoint, selects
+   * the latest 64 eligible Work SessionItems by sequence without causal
+   * backfill. After a Work checkpoint, returns it and every later eligible
+   * Work item without that cap. */
   readonly listWorkActiveFrontier: (
     sessionId: SessionId,
+    executionId?: ExecutionId,
   ) => Effect.Effect<
     ReadonlyArray<SessionEntryRecord>,
     SessionRepositoryError,
