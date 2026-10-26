@@ -551,7 +551,11 @@ it.skipIf(skipReason !== undefined)(
       let parent: WorkspaceNode | undefined;
       let child: WorkspaceNode | undefined;
       let formationDecisionCount = 0;
-      while (Date.now() < deadlineAt && child === undefined) {
+      while (
+        Date.now() < deadlineAt &&
+        (child?.currentWork?.workId === undefined ||
+          parent?.currentWork?.workId === undefined)
+      ) {
         await releaseHeldProviderResponses({
           run,
           released: releasedProviderResponses,
@@ -575,7 +579,10 @@ it.skipIf(skipReason !== undefined)(
             node.name.includes(childName) &&
             node.parentWorkspaceId === parent?.workspaceId,
         );
-        if (child === undefined) {
+        if (
+          child?.currentWork?.workId === undefined ||
+          parent?.currentWork?.workId === undefined
+        ) {
           await new Promise((resolveWait) => setTimeout(resolveWait, 250));
         }
       }
