@@ -579,6 +579,25 @@ it.skipIf(skipReason !== undefined)(
             node.name.includes(childName) &&
             node.parentWorkspaceId === parent?.workspaceId,
         );
+        if (child !== undefined && childPermissionGrant === undefined) {
+          childPermissionGrant = {
+            subjectWorkspaceId: child.workspaceId,
+            capability: "fs:write",
+            targetWorkspaceId: child.workspaceId,
+            expiresAt: new Date(deadlineAt).toISOString(),
+          };
+          await client.command(project.projectId, "GrantPermission", {
+            permissionGrantId: functionalId("pgr"),
+            issuer: "user:local",
+            subject: {
+              _tag: "WorkspaceAgent",
+              workspaceId: childPermissionGrant.subjectWorkspaceId,
+            },
+            capability: childPermissionGrant.capability,
+            target: childPermissionGrant.targetWorkspaceId,
+            expiresAt: childPermissionGrant.expiresAt,
+          });
+        }
         if (
           child?.currentWork?.workId === undefined ||
           parent?.currentWork?.workId === undefined
@@ -604,23 +623,11 @@ it.skipIf(skipReason !== undefined)(
           "S3 formed a Workspace without its approved initial Work",
         );
       }
-      childPermissionGrant = {
-        subjectWorkspaceId: child.workspaceId,
-        capability: "fs:write",
-        targetWorkspaceId: child.workspaceId,
-        expiresAt: new Date(deadlineAt).toISOString(),
-      };
-      await client.command(project.projectId, "GrantPermission", {
-        permissionGrantId: functionalId("pgr"),
-        issuer: "user:local",
-        subject: {
-          _tag: "WorkspaceAgent",
-          workspaceId: childPermissionGrant.subjectWorkspaceId,
-        },
-        capability: childPermissionGrant.capability,
-        target: childPermissionGrant.targetWorkspaceId,
-        expiresAt: childPermissionGrant.expiresAt,
-      });
+      if (childPermissionGrant === undefined) {
+        throw new Error(
+          "S3 did not grant child fs:write before Work admission",
+        );
+      }
       let dependencyBeforeDelivery: PublicDependency | undefined;
       let waitingParent: {
         workId?: string;
