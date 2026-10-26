@@ -53,6 +53,18 @@ describe("RootConversation bounded Work routing guidance", () => {
     );
   });
 
+  it("keeps formation calls concise and syntactically bounded", () => {
+    const proposeWorkspace = controlToolDefinitions().find(
+      (definition) => definition.name === "propose_workspace",
+    );
+    expect(proposeWorkspace?.description).toContain(
+      "omit optional draft arrays when empty",
+    );
+    expect(proposeWorkspace?.description).toContain(
+      "exactly one valid JSON object with no trailing content",
+    );
+  });
+
   it("uses the existing BaseLoop slot to identify the active WorkEpisode executor", () => {
     const workLoop = GENERIC_INSTRUCTION_ASSETS.baseLoop;
     expect(workLoop.contentRef).toBe("prompt:base-agent-protocol:base-loop:v2");

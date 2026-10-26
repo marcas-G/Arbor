@@ -660,7 +660,7 @@ export const controlToolDefinitions =
         stableId: "core.control.propose-workspace",
         name: "propose_workspace",
         description:
-          "Propose a durable child workspace for an independent long-lived responsibility. A human governance decision (Approve/Reject/Modify) is required before the child is created.",
+          "Propose one durable child workspace for an independent long-lived responsibility. Keep arguments concise, omit optional draft arrays when empty, and emit exactly one valid JSON object with no trailing content. A human governance decision (Approve/Reject/Modify) is required before the child is created.",
         schemaJson: PROPOSE_CHILD_WORKSPACE_SCHEMA,
         version: "2",
         requiredCapability: "agent:formation",
