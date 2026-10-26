@@ -316,10 +316,11 @@ export interface SessionRepositoryService {
     SessionRepositoryError,
     TransactionScope
   >;
-  /** Work-only provider-context frontier. Before the first typed checkpoint,
-   * selects the fixed latest 64 persisted SessionItems by sequence without
-   * causal backfill. After a typed checkpoint, returns that checkpoint and
-   * every later typed SessionItem without applying the pre-checkpoint bound. */
+  /** Work-only provider-context frontier. Excludes rows/checkpoints owned by
+   * ConversationResponseEpisodes even when both streams share WorkspacePrimary
+   * storage. Before the first typed Work checkpoint, selects the latest 64
+   * Work SessionItems by sequence without causal backfill. After a Work
+   * checkpoint, returns it and every later Work item without that cap. */
   readonly listWorkActiveFrontier: (
     sessionId: SessionId,
   ) => Effect.Effect<
