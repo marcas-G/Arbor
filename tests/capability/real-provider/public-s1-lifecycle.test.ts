@@ -1226,7 +1226,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
     await submitHumanMessage(
       client,
       project,
-      `请在当前项目工作区直接完成目标 ${marker}：只用 patch 创建文件 ${proofName}，唯一一行内容严格为 ${proofContent}，然后用 read 读回核对。不得创建或提议其他 Workspace、分派子 Work、调用 shell 或网络工具、访问其他工作区，也不要等待其他 Work 或尚未发生的 Verification。如果这项 patch 需要我的批准，请提交该项精确审批并在批准后继续当前 Work。只有文件内容精确匹配后才提交完成声明，供独立核验。`,
+      `请在当前项目工作区直接完成目标 ${marker}：只用 patch 创建文件 ${proofName}，唯一一行内容严格为 ${proofContent}，然后用 read 读回核对。不得创建或提议其他 Workspace、分派子 Work、调用 shell 或网络工具、访问其他工作区，也不要等待其他 Work 或尚未发生的 Verification。如果这项 patch 需要我的批准，请提交该项精确审批并在批准后继续当前 Work。只有文件内容精确匹配后才提交完成声明，供独立核验。verificationMission 的 required criteria 只设置两个可由独立 Verifier 直接观察的结果：文件存在、内容逐字符精确匹配；patch/read/不得调用 shell 或网络/不得扩展 Workspace 等过程约束放入 Work constraints，并在 verificationMission.riskRequirements 中逐条原样保留，不要把 Verifier 看不到的生产执行记录或过程声明设为 criterion。`,
     );
     const approval = await waitForExactWorkApproval(
       client,
