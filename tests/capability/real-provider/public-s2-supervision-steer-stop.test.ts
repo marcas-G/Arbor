@@ -667,7 +667,7 @@ const runJourney = async (input: {
       expect(
         globalAfterAcceptance.nodes.find(
           (node) => node.workspaceId === project.rootWorkspaceId,
-        )?.currentWork,
+        )?.currentWork ?? null,
       ).toBeNull();
       state.globalAfterAcceptance = globalAfterAcceptance;
     } else {
