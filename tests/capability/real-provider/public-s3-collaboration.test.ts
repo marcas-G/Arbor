@@ -537,9 +537,10 @@ it.skipIf(skipReason !== undefined)(
       const baseline = captureWorkspaceSnapshot(fixture.workspaceDirectory);
 
       const request =
-        `请为目标 ${marker} 自主建立清晰、长期的父子责任，并为两个职责各附一个边界明确的初始工作：父工作区名称应含“${parentName}”，负责整合子方证据并交付文件 ${parentFile}，并把标记 ${childWorkMarker} 作为其等待的子工作依据；子工作区名称应含“${childName}”，子方初始工作应包含标记 ${childWorkMarker}，并负责生成唯一文件 ${childFile}。子文件必须只有一行，格式为“${childEvidencePrefix}”后接由子方在执行时自行生成的12位小写字母或数字。父工作区必须依赖这个子工作区的正式交付，等待真实交付到达后读取子文件，将它的完整实际内容原样写入父结果后再完成。` +
-        `只在项目已经准入的资源边界内工作，不扩大目录或权限范围。` +
-        `若子工作写入受阻，请把精确的单次写入请求提交给我审批；只在审批对应的当前子 Work、活动执行和文件写权限后继续。若缺少必要信息或能力，不要编造产物、不要声称验证通过，也不要把通信当成交付；应明确请求补充或保留 Fail/Unknown。所有产物须经过独立验证，父方只在验证通过且确认结果足够后接受。`;
+        `目标 ${marker}。不要先解释、列计划或重复需求，立即用 propose_workspace 分阶段执行；每次只提议一个 Workspace，所有自由文本字段保持简短，责任草案除 purpose 外的可选数组留空。` +
+        `第一步只提议父工作区“${parentName}”，父职责是接收并整合一个直接子工作区的正式交付，最终写入 ${parentFile}。父方 initialWork 必须包含标记 ${childWorkMarker}，并要求父方随后只提议一个直接子工作区“${childName}”，同时给该子方附 initialWork：创建唯一文件 ${childFile}，文件只有一行“${childEvidencePrefix}”加执行时生成的12位小写字母或数字，并在独立验证通过后正式交付。` +
+        `父方必须对该子工作区声明正式依赖并等待真实 Delivery；收到后读取子文件，把完整实际内容原样写入 ${parentFile}，独立验证通过后完成。不得把通信或计划当成交付，不得编造产物。` +
+        `所有操作限于已准入资源边界；不得使用 shell 或网络。子方写文件若需审批，只提交当前子 Work 对 ${childFile} 的精确单次 patch 写入审批。验证 criteria 只包含可由 Verifier 直接观察的文件存在与精确内容，执行方法约束放在 constraints/riskRequirements。`;
       const releasedProviderResponses = new Set<string>();
       await client.command(project.projectId, "SubmitHumanMessage", {
         messageId: functionalId("msg"),
