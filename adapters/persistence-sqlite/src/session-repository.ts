@@ -482,7 +482,7 @@ export const SessionRepositoryLive: Layer.Layer<
           );
           return [...rows].reverse().map(toSessionItemRecord);
         }),
-      listWorkActiveFrontier: (sessionId) =>
+      listWorkActiveFrontier: (sessionId, executionId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           if (!(yield* hasTimelineColumns)) return [];
@@ -490,18 +490,78 @@ export const SessionRepositoryLive: Layer.Layer<
           const workOwnershipFilter = episodeAware
             ? `AND ${WORK_HISTORY_EXCLUDES_CONVERSATION}`
             : "";
+          // A WorkspacePrimary Session is shared by successive Work
+          // executions. Keep ambient/runtime inputs, while limiting model
+          // outputs, tool observations, and control observations to the exact
+          // execution whose ProviderTurn is being prepared. In particular, a
+          // prior execution's terminal assistant message may have no matching
+          // reasoning attachment and must not be replayed into a thinking-mode
+          // provider request.
+          const executionOwnershipFilter =
+            executionId === undefined
+              ? ""
+              : `AND (
+            session_entries.source_kind IS NULL
+            OR session_entries.source_kind NOT IN (
+              'ProviderTurn', 'ProviderTurnCall', 'ProviderTurnReasoning',
+              'CompactionTurn', 'ToolInvocation', 'AgentLoopAction'
+            )
+            OR (
+              session_entries.source_kind IN (
+                'ProviderTurn', 'ProviderTurnCall', 'ProviderTurnReasoning',
+                'CompactionTurn'
+              )
+              AND EXISTS (
+                SELECT 1 FROM provider_turns AS active_provider_turn
+                WHERE active_provider_turn.execution_id = ?
+                  AND active_provider_turn.session_id = session_entries.session_id
+                  AND (
+                    session_entries.source_ref = active_provider_turn.provider_turn_id
+                    OR substr(
+                      session_entries.source_ref,
+                      1,
+                      length(active_provider_turn.provider_turn_id) + 1
+                    ) = active_provider_turn.provider_turn_id || ':'
+                  )
+              )
+            )
+            OR (
+              session_entries.source_kind = 'ToolInvocation'
+              AND EXISTS (
+                SELECT 1 FROM tool_invocations AS active_tool_invocation
+                WHERE active_tool_invocation.execution_id = ?
+                  AND active_tool_invocation.invocation_id = session_entries.source_ref
+              )
+            )
+            OR (
+              session_entries.source_kind = 'AgentLoopAction'
+              AND substr(
+                session_entries.source_ref,
+                1,
+                length('observation_' || ? || '_')
+              ) = 'observation_' || ? || '_'
+            )
+          )`;
+          const executionOwnershipParams =
+            executionId === undefined
+              ? []
+              : [executionId, executionId, executionId, executionId];
           const checkpointRows = yield* run(
             sql.unsafe<{ sequence: number }>(
-              `SELECT sequence FROM session_entries WHERE session_id = ? AND schema_version = 2 AND item_type = 'CompactionCheckpoint' ${workOwnershipFilter} ORDER BY sequence DESC LIMIT 1`,
-              [sessionId],
+              `SELECT sequence FROM session_entries WHERE session_id = ? AND schema_version = 2 AND item_type = 'CompactionCheckpoint' ${workOwnershipFilter} ${executionOwnershipFilter} ORDER BY sequence DESC LIMIT 1`,
+              [sessionId, ...executionOwnershipParams],
             ),
           );
           const checkpointSequence = checkpointRows[0]?.sequence;
           if (checkpointSequence === undefined) {
             const rows = yield* run(
               sql.unsafe<SessionEntryRow>(
-                `SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 ${workOwnershipFilter} ORDER BY sequence DESC LIMIT ?`,
-                [sessionId, WORK_PRECHECKPOINT_ENTRY_LIMIT],
+                `SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 ${workOwnershipFilter} ${executionOwnershipFilter} ORDER BY sequence DESC LIMIT ?`,
+                [
+                  sessionId,
+                  ...executionOwnershipParams,
+                  WORK_PRECHECKPOINT_ENTRY_LIMIT,
+                ],
               ),
             );
             return [...rows].reverse().map(toSessionEntry);
@@ -512,8 +572,8 @@ export const SessionRepositoryLive: Layer.Layer<
           // older legacy and checkpoint-covered rows are outside this frontier.
           const rows = yield* run(
             sql.unsafe<SessionEntryRow>(
-              `SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 AND sequence >= ? ${workOwnershipFilter} ORDER BY sequence`,
-              [sessionId, checkpointSequence],
+              `SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 AND sequence >= ? ${workOwnershipFilter} ${executionOwnershipFilter} ORDER BY sequence`,
+              [sessionId, checkpointSequence, ...executionOwnershipParams],
             ),
           );
           return rows.map(toSessionEntry);
