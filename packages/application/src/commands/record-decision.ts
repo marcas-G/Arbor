@@ -12,6 +12,8 @@ import type {
   FormationProposalStoreService,
   InboxProjectionStoreService,
   PendingDomainEvent,
+  ResourceOwnershipRepositoryService,
+  WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
@@ -47,6 +49,11 @@ export interface RecordDecisionDependencies {
     "admitUpsert" | "markConsumed"
   >;
   readonly fulfillments?: Pick<FormationFulfillmentStoreService, "put">;
+  readonly workspaces?: Pick<WorkspaceRepositoryService, "findById">;
+  readonly resourceOwnership?: Pick<
+    ResourceOwnershipRepositoryService,
+    "listActiveByWorkspace"
+  >;
   readonly originatingWorkspaceOf: (
     record: FormationProposalRecord,
   ) => WorkspaceId;
@@ -77,6 +84,64 @@ export const makeRecordDecisionHandler = (
         });
       }
       const record = existing.value;
+      let delegationApproval: Record<string, unknown> | undefined;
+      if (
+        payload.outcome._tag === "Approve" &&
+        record.proposal.resourceOwnershipDelegation !== undefined
+      ) {
+        if (
+          dependencies.workspaces === undefined ||
+          dependencies.resourceOwnership === undefined
+        ) {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason:
+              "ownership delegation approval requires current Parent ownership evidence",
+          });
+        }
+        const parent = yield* dependencies.workspaces.findById(
+          record.parentWorkspaceId,
+        );
+        if (Option.isNone(parent) || parent.value.lifecycle !== "Active") {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason: "ownership delegation requires an active Parent Workspace",
+          });
+        }
+        const claims =
+          yield* dependencies.resourceOwnership.listActiveByWorkspace(
+            record.parentWorkspaceId,
+          );
+        const parentClaim = claims[0];
+        const parentClaimRevision = parentClaim?.claimRevision;
+        if (
+          claims.length !== 1 ||
+          parentClaim === undefined ||
+          typeof parentClaimRevision !== "number" ||
+          !Number.isSafeInteger(parentClaimRevision) ||
+          parentClaimRevision < 0
+        ) {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason:
+              "ownership delegation requires exactly one active Parent claim with a known revision",
+          });
+        }
+        delegationApproval = {
+          delegationSourceId: `formation:${record.proposalId}:${record.revision}`,
+          formationProposalId: record.proposalId,
+          formationProposalRevision: record.revision,
+          addresses: record.proposal.resourceOwnershipDelegation.addresses,
+          approvedBy: envelope.actor,
+          causedByCommandId: envelope.commandId,
+          parentWorkspaceId: record.parentWorkspaceId,
+          expectedParentWorkspaceRevision: parent.value.revision,
+          expectedChildWorkspaceRevision: 0,
+          expectedParentBoundaryRevision: parent.value.resourceBoundaryRevision,
+          expectedParentOwnershipRevision: parentClaimRevision,
+          expectedChildOwnershipRevision: 0,
+        };
+      }
       const decided = decideFormationProposal(record, {
         expectedProposalRevision: payload.expectedProposalRevision,
         outcome: payload.outcome,
@@ -137,6 +202,7 @@ export const makeRecordDecisionHandler = (
             proposalRevision: fact.proposalRevision,
             decision: fact.decision,
             decidedBy: envelope.actor,
+            ...(delegationApproval === undefined ? {} : { delegationApproval }),
           },
         },
       ];

@@ -30,6 +30,8 @@ export const NO_EFFECT_DENIAL_CODES = [
   "ResourceResolutionDenied",
   "ResourceAdmissionDenied",
   "ApprovalNoLongerAuthorized",
+  "ProcessExecutionDisabled",
+  "NativeOsTupleUnavailable",
 ] as const;
 export type NoEffectDenialCode = (typeof NO_EFFECT_DENIAL_CODES)[number];
 export type TerminalNoEffectDenialCode = Exclude<

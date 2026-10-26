@@ -1123,6 +1123,15 @@ const projectionQueryService = (
                 ) ?? Effect.succeed([]);
               }),
             ),
+      listProjectedProcessExecutionUnavailable: (projectId) =>
+        attentionProjection.listProjectedProcessExecutionUnavailable ===
+        undefined
+          ? Effect.succeed([])
+          : inTx(
+              attentionProjection.listProjectedProcessExecutionUnavailable(
+                projectId,
+              ),
+            ),
       listSandboxRecoveryBindingFailures: (projectId) =>
         attentionProjection.listSandboxRecoveryBindingFailures === undefined
           ? Effect.succeed([])

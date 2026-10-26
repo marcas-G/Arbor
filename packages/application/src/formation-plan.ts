@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  type Actor,
   type ChildWorkspaceProposal,
   CommandId,
   ContextEpochNumber,
@@ -9,6 +10,7 @@ import {
   type Principal,
   type ProjectId,
   parse,
+  type ResourceAddress,
   ResourceBoundaryRevision,
   ResponsibilityRevision,
   Revision,
@@ -100,8 +102,24 @@ export interface FormationCreatePlan {
     readonly workspacePolicy: ReturnType<typeof makeWorkspacePolicy>;
     readonly workspacePolicyRevision: Revision;
     readonly revision: Revision;
+    readonly ownershipDelegationApproval?: FormationDelegationApproval;
   };
   readonly authority: VerifiedCommandAuthority;
+}
+
+export interface FormationDelegationApproval {
+  readonly delegationSourceId: string;
+  readonly formationProposalId: FormationProposalId;
+  readonly formationProposalRevision: number;
+  readonly addresses: ReadonlyArray<ResourceAddress>;
+  readonly approvedBy: Actor;
+  readonly causedByCommandId: CommandId;
+  readonly parentWorkspaceId: WorkspaceId;
+  readonly expectedParentWorkspaceRevision: Revision;
+  readonly expectedChildWorkspaceRevision: Revision;
+  readonly expectedParentBoundaryRevision: ResourceBoundaryRevision;
+  readonly expectedParentOwnershipRevision: number;
+  readonly expectedChildOwnershipRevision: number;
 }
 
 export const formationCreatePlan = (args: {
@@ -110,6 +128,7 @@ export const formationCreatePlan = (args: {
   readonly projectId: ProjectId;
   readonly actor: PendingDomainEvent["actor"];
   readonly principal: Principal;
+  readonly ownershipDelegationApproval?: FormationDelegationApproval;
 }): FormationCreatePlan => {
   const payload = {
     parentWorkspaceId: args.snapshot.parentWorkspaceId,
@@ -135,6 +154,9 @@ export const formationCreatePlan = (args: {
     workspacePolicy: makeWorkspacePolicy(),
     workspacePolicyRevision: parse(Revision)(0),
     revision: parse(Revision)(0),
+    ...(args.ownershipDelegationApproval === undefined
+      ? {}
+      : { ownershipDelegationApproval: args.ownershipDelegationApproval }),
   };
   return {
     payload,
@@ -244,6 +266,81 @@ export const isChildWorkspaceProposal = (
     return false;
   }
   const candidate = value as Record<string, unknown>;
+  const addressKey = (address: unknown): string | null => {
+    if (
+      typeof address !== "object" ||
+      address === null ||
+      Array.isArray(address)
+    )
+      return null;
+    const item = address as Record<string, unknown>;
+    const hasOnly = (...keys: ReadonlyArray<string>) =>
+      Object.keys(item).every((key) => keys.includes(key));
+    switch (item._tag) {
+      case "FileTree":
+        return typeof item.path === "string" &&
+          item.path.length > 0 &&
+          item.path.length <= 4096 &&
+          hasOnly("_tag", "path")
+          ? `FileTree:${item.path}`
+          : null;
+      case "GitWorktree":
+        return typeof item.path === "string" &&
+          item.path.length > 0 &&
+          item.path.length <= 4096 &&
+          (item.repositoryRef === undefined ||
+            (typeof item.repositoryRef === "string" &&
+              item.repositoryRef.length <= 4096)) &&
+          (item.branch === undefined ||
+            (typeof item.branch === "string" && item.branch.length <= 4096)) &&
+          hasOnly("_tag", "path", "repositoryRef", "branch")
+          ? `GitWorktree:${item.path}:${String(item.repositoryRef ?? "")}:${String(item.branch ?? "")}`
+          : null;
+      case "DatabaseNamespace":
+        return typeof item.namespace === "string" &&
+          item.namespace.length > 0 &&
+          item.namespace.length <= 4096 &&
+          hasOnly("_tag", "namespace")
+          ? `DatabaseNamespace:${item.namespace}`
+          : null;
+      case "ExternalResource":
+        return typeof item.address === "string" &&
+          item.address.length > 0 &&
+          item.address.length <= 4096 &&
+          hasOnly("_tag", "address")
+          ? `ExternalResource:${item.address}`
+          : null;
+      default:
+        return null;
+    }
+  };
+  const validOwnershipDelegation = (() => {
+    if (candidate.resourceOwnershipDelegation === undefined) return true;
+    if (
+      typeof candidate.resourceOwnershipDelegation !== "object" ||
+      candidate.resourceOwnershipDelegation === null ||
+      Array.isArray(candidate.resourceOwnershipDelegation)
+    ) {
+      return false;
+    }
+    const delegation = candidate.resourceOwnershipDelegation as Record<
+      string,
+      unknown
+    >;
+    if (
+      Object.keys(delegation).some((key) => key !== "addresses") ||
+      !Array.isArray(delegation.addresses) ||
+      delegation.addresses.length === 0 ||
+      delegation.addresses.length > 16
+    ) {
+      return false;
+    }
+    const delegationKeys = delegation.addresses.map(addressKey);
+    return (
+      delegationKeys.every((key) => key !== null) &&
+      new Set(delegationKeys).size === delegationKeys.length
+    );
+  })();
   const validInitialWork = (() => {
     if (candidate.initialWork === undefined) {
       return true;
@@ -317,6 +414,7 @@ export const isChildWorkspaceProposal = (
     candidate.responsibilityDraft !== null &&
     typeof candidate.resourceBoundaryDraft === "object" &&
     candidate.resourceBoundaryDraft !== null &&
-    validInitialWork
+    validInitialWork &&
+    validOwnershipDelegation
   );
 };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RegionComparator } from "../src/index.js";
 import {
+  addOwnershipExclusion,
   CanonicalResourceRegion,
   claimWithinBoundary,
   DatabaseNamespace,
@@ -8,6 +9,8 @@ import {
   encode,
   FileTree,
   GitWorktree,
+  isEqualityOnlyCanonicalRegion,
+  ownershipRegionRelation,
   parse,
   ResourceAddress,
   ResourceBoundary,
@@ -15,6 +18,7 @@ import {
   ResponsibilityRevision,
   regionContains,
   regionsOverlap,
+  removeOwnershipExclusion,
   sameSpaceConflict,
 } from "../src/index.js";
 
@@ -33,6 +37,31 @@ const intervalComparator: RegionComparator<unknown> = {
     isInterval(a) && isInterval(b) && a.start <= b.start && b.end <= a.end,
   overlaps: (a, b) =>
     isInterval(a) && isInterval(b) && a.start < b.end && b.start < a.end,
+};
+
+const pathComparator: RegionComparator<unknown> = {
+  contains: (a, b) => {
+    const path = (value: unknown) => (value as { path?: string }).path;
+    const left = path(a);
+    const right = path(b);
+    return (
+      left !== undefined &&
+      right !== undefined &&
+      (left === right || right.startsWith(`${left}/`))
+    );
+  },
+  overlaps: (a, b) => {
+    const path = (value: unknown) => (value as { path?: string }).path;
+    const left = path(a);
+    const right = path(b);
+    return (
+      left !== undefined &&
+      right !== undefined &&
+      (left === right ||
+        right.startsWith(`${left}/`) ||
+        left.startsWith(`${right}/`))
+    );
+  },
 };
 
 const region = (
@@ -100,6 +129,56 @@ describe("resource value objects", () => {
 });
 
 describe("region algebra", () => {
+  it("refuses equality-only exclusions so callers use exact claim transfer", () => {
+    const exact = {
+      resourceSpaceId: "external-space",
+      normalizedRegion: {
+        kind: "ExternalResource",
+        address: "https://example.com/resource",
+      },
+    };
+    expect(isEqualityOnlyCanonicalRegion(exact)).toBe(true);
+    expect(
+      addOwnershipExclusion(
+        { allow: exact, exclusions: [] },
+        exact,
+        pathComparator,
+      ),
+    ).toEqual({ _tag: "NotContained" });
+  });
+
+  it("models canonical carve-outs and preserves unrelated exclusions on reclaim", () => {
+    const allow = {
+      resourceSpaceId: "s",
+      normalizedRegion: { path: "/repo", kind: "FileTree" },
+    };
+    const child = {
+      resourceSpaceId: "s",
+      normalizedRegion: { path: "/repo/child", kind: "FileTree" },
+    };
+    const other = {
+      resourceSpaceId: "s",
+      normalizedRegion: { path: "/repo/other", kind: "FileTree" },
+    };
+    const region = { allow, exclusions: [] as ReadonlyArray<typeof child> };
+    const carved = addOwnershipExclusion(region, child, pathComparator);
+    expect(carved._tag).toBe("Contained");
+    if (carved._tag !== "Contained") return;
+    expect(ownershipRegionRelation(carved.region, child, pathComparator)).toBe(
+      "NotContained",
+    );
+    expect(ownershipRegionRelation(carved.region, other, pathComparator)).toBe(
+      "Contained",
+    );
+    const removed = removeOwnershipExclusion(
+      carved.region,
+      child,
+      pathComparator,
+    );
+    expect(removed._tag).toBe("Contained");
+    if (removed._tag === "Contained")
+      expect(removed.region.exclusions).toEqual([]);
+  });
   it("different resourceSpaceId yields no overlap and no containment", () => {
     const a = region("space-1", 0, 10);
     const b = region("space-2", 0, 10);

@@ -41,6 +41,7 @@ export * from "./p49-sandbox-policy-and-grant-provenance-migration.js";
 export * from "./p50-sandbox-provider-unavailable-fact-migration.js";
 export * from "./p51-verification-v2-consumer-reconciliation-migration.js";
 export * from "./p52-work-contract-revision-migration.js";
+export * from "./p53-canonical-ownership-carveouts-migration.js";
 export * from "./permission-grant-repository.js";
 export * from "./project-directory.js";
 export * from "./project-tool-registry.js";

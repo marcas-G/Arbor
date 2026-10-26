@@ -98,6 +98,7 @@
       "tests/functional/process/f23-retry-verification-permanent-replay.functional.test.ts",
       "tests/functional/process/human-steer.functional.test.ts",
       "tests/functional/process/model-output-ah5-ah6.functional.test.ts",
+      "tests/functional/process/native-sandbox-first-release-disabled.functional.test.ts",
       "tests/functional/process/organization.functional.test.ts",
       "tests/functional/process/p37-delivermessage-process-crash.functional.test.ts",
       "tests/functional/process/p38-control-approval-current-assign-work.functional.test.ts",

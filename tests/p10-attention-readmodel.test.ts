@@ -7,6 +7,10 @@ import {
   WorkId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
+import {
+  type ProcessExecutionUnavailableProjectionRow,
+  processExecutionUnavailableAttentionFactIdV1,
+} from "../packages/ports/src/index.js";
 import type {
   AttentionFacts,
   AttentionReadDeps,
@@ -125,6 +129,35 @@ const rowsOf = (
   source: AttentionRow["source"],
   rows: ReadonlyArray<AttentionRow>,
 ): ReadonlyArray<AttentionRow> => rows.filter((row) => row.source === source);
+
+describe("P10 Native process-mode denial identity", () => {
+  it("uses the frozen ordered canonical preimage for its stable attentionFactId", () => {
+    const row = {
+      executionId: "exe_1",
+      workspaceId: "ws_1" as WorkspaceId,
+      invocationId: "tin_1",
+      providerTurnId: "ptn_1",
+      logicalStepNo: 2,
+      repairAttempt: 1,
+      logicalActionId: "lac_1",
+      actionIndex: 3,
+      callRef: "call_1",
+      reasonCode: "ProcessExecutionDisabled",
+    } satisfies Omit<
+      ProcessExecutionUnavailableProjectionRow,
+      "attentionFactId" | "occurredAt" | "projectId"
+    >;
+    expect(processExecutionUnavailableAttentionFactIdV1(row)).toBe(
+      "6c946a78a2803b402a3cdc3df973560356064e0a7671c7853642141290eb7e2d",
+    );
+    expect(
+      processExecutionUnavailableAttentionFactIdV1({
+        ...row,
+        reasonCode: "NativeOsTupleUnavailable",
+      }),
+    ).not.toBe(processExecutionUnavailableAttentionFactIdV1(row));
+  });
+});
 
 describe("AH14 LegacyAdoptionEvidenceInsufficient P10 source", () => {
   it("uses only the exact Execution Workspace, fact dedup, fixed code and safe summary", () => {
@@ -690,6 +723,24 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
                 firstDetectedAt: "2026-10-19T10:00:00.000Z",
               },
             ]),
+          listProjectedProcessExecutionUnavailable: () =>
+            Effect.succeed([
+              {
+                projectId: p10Project,
+                executionId: "exe_native_denied",
+                invocationId: "tin_native_denied",
+                workspaceId: p10Leaf,
+                providerTurnId: "ptn_native_denied",
+                logicalStepNo: 3,
+                repairAttempt: 0,
+                logicalActionId: "lac_native_denied",
+                actionIndex: 1,
+                callRef: "call_native_denied",
+                reasonCode: "ProcessExecutionDisabled" as const,
+                attentionFactId: "att_native_denied",
+                occurredAt: "2026-10-26T10:00:02.000Z",
+              },
+            ]),
           listSandboxRecoveryBindingFailures: () =>
             Effect.succeed([
               {
@@ -722,6 +773,18 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
             summary:
               "Sandbox recovery binding evidence is missing or invalid; execution is paused.",
             occurredAt: "2026-10-19T10:00:01.000Z",
+          },
+        ]);
+        expect(rowsOf("ProcessExecutionUnavailable", rows)).toEqual([
+          {
+            source: "ProcessExecutionUnavailable",
+            severity: "ActionRequired",
+            targetWorkspaceId: p10Leaf,
+            dedupKey: "att_native_denied",
+            summary:
+              "Process execution is disabled for this daemon; the action was not started.",
+            occurredAt: "2026-10-26T10:00:02.000Z",
+            failureCode: "ProcessExecutionDisabled",
           },
         ]);
         expect(yield* snapshotDatabase()).toEqual(before);

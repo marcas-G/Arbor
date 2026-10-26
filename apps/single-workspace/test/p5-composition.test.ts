@@ -1,4 +1,5 @@
-import { CommandGateway } from "@arbor/application";
+import { CommandGateway, RetireWorkspaceService } from "@arbor/application";
+import { CURRENT_SCHEMA_VERSION } from "@arbor/persistence-sqlite";
 import {
   ExecutionScheduler,
   RunnableWorkSource,
@@ -26,7 +27,7 @@ beforeAll(async () => {
 afterAll(() => schema44Factory?.cleanup());
 
 describe("P5 composition root", () => {
-  it("builds the full slice layer over a prestarted schema-52 DB", async () => {
+  it("builds the full slice layer over a prestarted current-schema DB", async () => {
     const fixture = schema44Factory?.create();
     if (fixture === undefined) {
       throw new Error("Schema-44 test database factory was not prepared.");
@@ -44,12 +45,14 @@ describe("P5 composition root", () => {
                 WHERE type = 'table' AND name = 'attention_projection_rows'`,
             );
             yield* CommandGateway;
+            const retirement = yield* RetireWorkspaceService;
             yield* ExecutionScheduler;
             yield* RunnableWorkSource;
             const sandboxProcess = yield* SandboxProcessPort;
             const sandboxProviders = yield* sandboxProcess.capabilities();
             return {
               version: Number(version[0]?.user_version),
+              retireWorkspaceAvailable: typeof retirement.retire === "function",
               attentionTable: attentionTable[0]?.name,
               sandboxProviders,
             };
@@ -60,6 +63,7 @@ describe("P5 composition root", () => {
         ) as Effect.Effect<
           {
             readonly version: number;
+            readonly retireWorkspaceAvailable: boolean;
             readonly attentionTable: string | undefined;
             readonly sandboxProviders: ReadonlyArray<{
               readonly providerId: string;
@@ -73,7 +77,8 @@ describe("P5 composition root", () => {
         >,
       );
       expect(result).toEqual({
-        version: 52,
+        version: CURRENT_SCHEMA_VERSION,
+        retireWorkspaceAvailable: true,
         attentionTable: "attention_projection_rows",
         sandboxProviders: expect.any(Array),
       });

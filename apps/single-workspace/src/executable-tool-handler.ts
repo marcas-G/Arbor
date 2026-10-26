@@ -330,38 +330,6 @@ export const makeExecutableToolHandler = (
           cause: "active ExecutionOrigin is missing its lease-holder triple",
         });
       }
-      const visibleRefs = yield* catalog.visibleRefs().pipe(
-        Effect.mapError((cause) => ({
-          _tag: "AgentActionOperationalFailure" as const,
-          operation: "ToolCatalog.visibleRefs",
-          cause,
-        })),
-      );
-      const matchingRefs = visibleRefs.filter(
-        (ref) => ref.name === invocation.toolName,
-      );
-      if (qualificationProbe !== undefined) {
-        yield* Effect.promise(() =>
-          qualificationProbe({
-            boundary: "P4ExecutableCatalogRefs",
-            executionId: execution.executionId,
-            toolName: invocation.toolName,
-            matchingRefs,
-          }),
-        );
-      }
-      if (matchingRefs.length !== 1) {
-        return yield* Effect.fail({
-          _tag: "AgentActionRejected" as const,
-          code: "action/tool-unavailable" as const,
-          safeMessage:
-            matchingRefs.length === 0
-              ? `tool is not visible: ${invocation.toolName}`
-              : `tool identity is ambiguous: ${invocation.toolName}`,
-          correction: "ChooseAlternative" as const,
-        });
-      }
-      const toolVersion = matchingRefs[0]?.version as string;
       let invocationId = toolInvocationIdFor(
         execution.executionId,
         invocation.callRef,
@@ -380,20 +348,11 @@ export const makeExecutableToolHandler = (
           old.value.executionId === execution.executionId &&
           old.value.workspaceId === execution.workspaceId &&
           old.value.toolName === invocation.toolName &&
-          old.value.toolVersion === toolVersion &&
           old.value.argumentsJson === invocation.argumentsJson
         ) {
           invocationId = oldId;
         }
       }
-      let intent: ToolIntent = {
-        callRef: invocation.callRef,
-        toolName: invocation.toolName,
-        toolVersion,
-        argumentsJson: invocation.argumentsJson,
-        invocationId,
-        approvalId: null,
-      };
       let currentApproval:
         | import("@arbor/ports").ExecutableApprovalRecord
         | undefined;
@@ -417,6 +376,97 @@ export const makeExecutableToolHandler = (
           );
         if (Option.isSome(existing)) currentApproval = existing.value;
       }
+      const visibleRefs = yield* catalog.visibleRefs().pipe(
+        Effect.mapError((cause) => ({
+          _tag: "AgentActionOperationalFailure" as const,
+          operation: "ToolCatalog.visibleRefs",
+          cause,
+        })),
+      );
+      const matchingRefs = visibleRefs.filter(
+        (ref) => ref.name === invocation.toolName,
+      );
+      if (qualificationProbe !== undefined) {
+        yield* Effect.promise(() =>
+          qualificationProbe({
+            boundary: "P4ExecutableCatalogRefs",
+            executionId: execution.executionId,
+            toolName: invocation.toolName,
+            matchingRefs,
+          }),
+        );
+      }
+      let recoveryInvocationRecord: ToolInvocationRecord | undefined;
+      if (
+        recoveryInvocationRecord === undefined &&
+        matchingRefs.length === 0 &&
+        action !== undefined &&
+        recoveryBindingIdentity !== undefined &&
+        legacyLookup !== undefined
+      ) {
+        const existing = yield* legacyLookup(invocationId).pipe(
+          Effect.mapError((cause) => ({
+            _tag: "AgentActionOperationalFailure" as const,
+            operation: "ExactNotAdmittedRecoveryLookup",
+            cause,
+          })),
+        );
+        if (Option.isSome(existing)) {
+          const record = existing.value;
+          const exactApproval =
+            currentApproval !== undefined &&
+            currentApproval.state === "Consumed" &&
+            currentApproval.consumedBy === invocationId &&
+            record.approvalId === currentApproval.approvalId;
+          if (
+            record.invocationId === invocationId &&
+            record.executionId === execution.executionId &&
+            record.workspaceId === execution.workspaceId &&
+            record.toolName === invocation.toolName &&
+            record.argumentsJson === invocation.argumentsJson &&
+            record.effectAdmissionState === "NotAdmitted" &&
+            record.settledAt === null &&
+            record.settlement === null &&
+            exactApproval &&
+            recoveryBindingIdentity.executionId === execution.executionId &&
+            recoveryBindingIdentity.providerTurnId === providerTurnId &&
+            recoveryBindingIdentity.logicalStepNo === action.logicalStepNo &&
+            recoveryBindingIdentity.repairAttempt === action.repairAttempt &&
+            recoveryBindingIdentity.logicalActionId ===
+              action.logicalActionId &&
+            recoveryBindingIdentity.actionIndex === action.actionIndex &&
+            recoveryBindingIdentity.callRef === invocation.callRef
+          ) {
+            recoveryInvocationRecord = record;
+          }
+        }
+      }
+      const toolVersion =
+        matchingRefs.length === 1
+          ? (matchingRefs[0]?.version as string)
+          : recoveryInvocationRecord?.toolVersion;
+      if (
+        (matchingRefs.length !== 1 && recoveryInvocationRecord === undefined) ||
+        toolVersion === undefined
+      ) {
+        return yield* Effect.fail({
+          _tag: "AgentActionRejected" as const,
+          code: "action/tool-unavailable" as const,
+          safeMessage:
+            matchingRefs.length === 0
+              ? `tool is not visible: ${invocation.toolName}`
+              : `tool identity is ambiguous: ${invocation.toolName}`,
+          correction: "ChooseAlternative" as const,
+        });
+      }
+      let intent: ToolIntent = {
+        callRef: invocation.callRef,
+        toolName: invocation.toolName,
+        toolVersion,
+        argumentsJson: invocation.argumentsJson,
+        invocationId,
+        approvalId: null,
+      };
       if (currentApproval !== undefined) {
         // This value comes only from the trusted Executable ActionApproval
         // lookup; no model-facing argument can set it.

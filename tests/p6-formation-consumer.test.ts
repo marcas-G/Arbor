@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -111,7 +111,8 @@ const runConsume = Effect.gen(function* () {
   const workspaces = yield* WorkspaceRepository;
   const tx = yield* TransactionPort;
   const events = yield* journalEvents;
-  return yield* runFormationConsumer(
+  const ownershipActivations: unknown[] = [];
+  const executed = yield* runFormationConsumer(
     events,
     {
       gateway: gw,
@@ -121,12 +122,174 @@ const runConsume = Effect.gen(function* () {
       proposals: {
         findById: (id) => tx.transact(proposals.findById(id)),
       },
+      ownershipWrite: {
+        activateDelegatedOwnership: (input: unknown) => {
+          ownershipActivations.push(input);
+          return Effect.succeed({ _tag: "Activated" } as never);
+        },
+      } as never,
     },
     p6Project,
   );
+  return { executed, ownershipActivations };
 });
 
 describe("P6-004 approve consumer (D1)", () => {
+  it("does not apply an old Approve event to a later Modified-and-Approved snapshot", async () => {
+    const latestProposal = {
+      ...minimalProposal(),
+      name: "revised-child",
+      initialWork: undefined,
+    };
+    const latestSnapshot = {
+      ...admitFormationProposal({
+        proposalId: FPR_1,
+        parentWorkspaceId: p6RootWorkspace,
+        proposal: latestProposal,
+      }),
+      revision: 2,
+      state: "Approved" as const,
+    };
+    const commands: unknown[] = [];
+    const consumed = await Effect.runPromise(
+      runFormationConsumer(
+        [
+          {
+            eventType: "DecisionRecorded",
+            eventId: "evt-old-approve",
+            payload: {
+              proposalId: FPR_1,
+              proposalRevision: 1,
+              decision: "Approve",
+              decidedBy: p6TestActor,
+            },
+          },
+        ],
+        {
+          gateway: {
+            execute: (envelope: unknown) => {
+              commands.push(envelope);
+              return Effect.succeed({
+                resolution: { _tag: "Committed", result: {} },
+              } as never);
+            },
+          } as never,
+          workspaces: {
+            findById: () =>
+              Effect.succeed(
+                Option.some({
+                  resourceBoundary: latestProposal.resourceBoundaryDraft,
+                } as never),
+              ),
+          },
+          proposals: {
+            findById: () => Effect.succeed(Option.some(latestSnapshot)),
+          },
+        },
+        p6Project,
+      ),
+    );
+    expect(consumed).toEqual([]);
+    expect(commands).toEqual([]);
+  });
+
+  it("activates only the exact human-approved delegated subset after Child commit", async () => {
+    const address = { _tag: "FileTree" as const, path: "services/child" };
+    const proposal = {
+      ...minimalProposal(),
+      initialWork: undefined,
+      resourceBoundaryDraft: {
+        ...minimalProposal().resourceBoundaryDraft,
+        addresses: [address],
+      },
+      resourceOwnershipDelegation: { addresses: [address] },
+    };
+    const snapshot = {
+      ...admitFormationProposal({
+        proposalId: FPR_1,
+        parentWorkspaceId: p6RootWorkspace,
+        proposal,
+      }),
+      state: "Approved" as const,
+    };
+    const approval = {
+      delegationSourceId: `formation:${FPR_1}:1`,
+      formationProposalId: FPR_1,
+      formationProposalRevision: 1,
+      addresses: [address],
+      approvedBy: p6TestActor,
+      causedByCommandId: decisionCommandId,
+      parentWorkspaceId: p6RootWorkspace,
+      expectedParentWorkspaceRevision: 0,
+      expectedChildWorkspaceRevision: 0,
+      expectedParentBoundaryRevision: 1,
+      expectedParentOwnershipRevision: 1,
+      expectedChildOwnershipRevision: 0,
+    };
+    const commands: Array<{ commandType: string; payload: unknown }> = [];
+    const activations: unknown[] = [];
+    const consumed = await Effect.runPromise(
+      runFormationConsumer(
+        [
+          {
+            eventType: "DecisionRecorded",
+            eventId: "evt-decision-1",
+            payload: {
+              proposalId: FPR_1,
+              proposalRevision: 1,
+              decision: "Approve",
+              decidedBy: p6TestActor,
+              delegationApproval: approval,
+            },
+          },
+        ],
+        {
+          gateway: {
+            execute: (envelope: { commandType: string; payload: unknown }) => {
+              commands.push(envelope);
+              return Effect.succeed({
+                resolution: { _tag: "Committed", result: {} },
+              } as never);
+            },
+          } as never,
+          workspaces: {
+            findById: () =>
+              Effect.succeed(
+                Option.some({
+                  resourceBoundary: proposal.resourceBoundaryDraft,
+                } as never),
+              ),
+          },
+          proposals: { findById: () => Effect.succeed(Option.some(snapshot)) },
+          ownershipWrite: {
+            activateDelegatedOwnership: (input: unknown) => {
+              activations.push(input);
+              return Effect.succeed({ _tag: "Activated" } as never);
+            },
+          } as never,
+        },
+        p6Project,
+      ),
+    );
+    expect(consumed).toEqual([
+      "CreateChildWorkspace",
+      "ActivateDelegatedOwnership",
+    ]);
+    expect(commands[0]?.commandType).toBe("CreateChildWorkspace");
+    const createPayload = commands[0]?.payload as
+      | { ownershipDelegationApproval?: unknown }
+      | undefined;
+    expect(createPayload?.ownershipDelegationApproval).toEqual(approval);
+    expect(activations).toEqual([
+      {
+        projectId: p6Project,
+        childWorkspaceId: expect.any(String),
+        childResourceBoundaryRevision: 1,
+        delegationSourceId: approval.delegationSourceId,
+      },
+    ]);
+  });
+
   it("executes CreateChildWorkspace + AssignWork after approve; replay is idempotent", async () => {
     const program = Effect.gen(function* () {
       yield* approveSetup;
@@ -145,7 +308,11 @@ describe("P6-004 approve consumer (D1)", () => {
       return { first, second, countsAfterFirst, countsAfterSecond };
     });
     const result = await runP6(program, makeP6App());
-    expect(result.first).toEqual(["CreateChildWorkspace", "AssignWork"]);
+    expect(result.first.executed).toEqual([
+      "CreateChildWorkspace",
+      "AssignWork",
+    ]);
+    expect(result.first.ownershipActivations).toEqual([]);
     // Replay replays the same deterministic command ids: the gateway returns
     // the existing receipts and nothing new is created (D1).
     expect(result.countsAfterSecond).toEqual(result.countsAfterFirst);
@@ -207,7 +374,8 @@ describe("P6-004 approve consumer (D1)", () => {
       return { consumed, workspaces: yield* countRows("workspaces") };
     });
     const result = await runP6(program, makeP6App());
-    expect(result.consumed).toEqual([]);
+    expect(result.consumed.executed).toEqual([]);
+    expect(result.consumed.ownershipActivations).toEqual([]);
     expect(result.workspaces).toBe(1);
   });
 });

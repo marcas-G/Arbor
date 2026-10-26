@@ -6,6 +6,7 @@ import type {
   ExecutionSettlement,
   MessageId,
   MessageKind,
+  ResourceAddress,
   TerminalActionDenial,
   VerificationVerdict,
   WaitSpec,
@@ -182,6 +183,9 @@ export type AgentAction =
             | { readonly _tag: "FileTree"; readonly path: string }
             | { readonly _tag: "GitWorktree"; readonly path: string }
           >;
+        };
+        readonly resourceOwnershipDelegation?: {
+          readonly addresses: ReadonlyArray<ResourceAddress>;
         };
         readonly initialWork?: {
           readonly objective: string;

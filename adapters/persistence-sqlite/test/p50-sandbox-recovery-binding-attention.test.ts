@@ -141,6 +141,16 @@ const listFailures = (now = intentAt) =>
     return yield* tx.transact(list(projectId, now));
   });
 
+const listProcessExecutionUnavailable = () =>
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const attention = yield* AttentionProjectionStorePort;
+    const list = attention.listProjectedProcessExecutionUnavailable;
+    if (list === undefined)
+      throw new Error("Native process denial P10 source is not wired");
+    return yield* tx.transact(list(projectId));
+  });
+
 describe("V21 derived SandboxRecoveryBindingFailure Attention", () => {
   it("is read-only, stable, path-free and hashes the exact nullable binding identity", async () => {
     await Effect.runPromise(
@@ -303,4 +313,99 @@ describe("V21 derived SandboxRecoveryBindingFailure Attention", () => {
       );
     },
   );
+});
+
+describe("Native durable process denial P10 projection", () => {
+  it("requires the exact P3 action to be TerminalRejected and fails closed on a conflicting state", async () => {
+    await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* seedTables;
+          const sql = yield* SqlClient;
+          yield* sql.unsafe(
+            `ALTER TABLE tool_invocation_effect_attempts ADD COLUMN admission_state TEXT`,
+          );
+          for (const column of [
+            "approval_id TEXT",
+            "settlement_kind TEXT",
+            "settlement_json TEXT",
+            "settlement_provenance TEXT",
+            "result_ref TEXT",
+            "observation_format_version TEXT",
+            "observation_json BLOB",
+            "observation_sha256 TEXT",
+            "selected_attempt_no INTEGER",
+            "selected_fact_id TEXT",
+          ]) {
+            yield* sql.unsafe(
+              `ALTER TABLE tool_invocations ADD COLUMN ${column}`,
+            );
+          }
+          const exactBinding = {
+            ...binding(),
+            canonicalArgumentsDigest: canonicalArgumentsDigestV1(
+              JSON.parse(argumentsJson) as unknown,
+            ),
+          };
+          const digest = recoveryBindingV1Digest(exactBinding);
+          yield* sql.unsafe(
+            `UPDATE tool_invocations
+                SET recovery_binding_state = 'Bound',
+                    recovery_binding_sha256 = ?, settled_at = ?,
+                    settlement_kind = 'Denied',
+                    settlement_json = ?, settlement_provenance = 'Ordinary'
+              WHERE invocation_id = ?`,
+            [
+              digest,
+              intentAt,
+              JSON.stringify({
+                _tag: "Denied",
+                reasonCode: "ProcessExecutionDisabled",
+                projectionVersion: 1,
+              }),
+              invocationId,
+            ],
+          );
+          yield* sql.unsafe(
+            `INSERT INTO tool_invocation_recovery_bindings VALUES (?, 1, ?, ?)`,
+            [invocationId, canonicalizeRecoveryBindingV1(exactBinding), digest],
+          );
+          yield* sql.unsafe(
+            `INSERT INTO agent_loop_steps VALUES (?, 0, 0, ?, 'StepEffectsCommitted')`,
+            [executionId, exactBinding.providerTurnId],
+          );
+          yield* sql.unsafe(
+            `INSERT INTO agent_loop_step_actions VALUES (?, 0, 0, 0, ?, ?,
+               'Executable', 'shell', ?, 'TerminalRejected')`,
+            [
+              executionId,
+              exactBinding.logicalActionId,
+              exactBinding.callRef,
+              sha256Hex(argumentsJson),
+            ],
+          );
+          const valid = yield* listProcessExecutionUnavailable();
+          expect(valid).toHaveLength(1);
+
+          yield* sql.unsafe(
+            `UPDATE agent_loop_step_actions SET state = 'Pending'
+              WHERE execution_id = ? AND logical_action_id = ?`,
+            [executionId, exactBinding.logicalActionId],
+          );
+          const conflict = yield* Effect.result(
+            listProcessExecutionUnavailable(),
+          );
+          expect(conflict._tag).toBe("Failure");
+          if (conflict._tag === "Failure") {
+            expect(conflict.failure).toMatchObject({
+              _tag: "PersistenceCorruption",
+              repository: "AttentionProjectionStore",
+              operation: "process-execution-unavailable-read",
+            });
+          }
+        }),
+        appLayer(),
+      ),
+    );
+  });
 });

@@ -15,6 +15,9 @@ export interface CapabilityCeilingInput {
   readonly proposedGrants?: ReadonlyArray<unknown>;
   readonly parentPolicyHardDenies?: ReadonlyArray<string>;
   readonly draftPolicyHardDenies?: ReadonlyArray<string>;
+  /** Set only after ProjectEnvironmentPort proved the complete canonical
+   * draft region set is contained by the current Parent boundary snapshot. */
+  readonly canonicalBoundarySubsetVerified?: boolean;
 }
 
 const addressKey = (address: ResourceAddress): string =>
@@ -25,9 +28,12 @@ export const validateCapabilityCeiling = (
 ): DomainError | null => {
   // 1. Boundary subset: draft ⊆ parent effective boundary.
   const parentKeys = new Set(input.parentBoundary.addresses.map(addressKey));
-  const leaked = input.draftBoundary.addresses.find(
-    (address) => !parentKeys.has(addressKey(address)),
-  );
+  const leaked =
+    input.canonicalBoundarySubsetVerified === true
+      ? undefined
+      : input.draftBoundary.addresses.find(
+          (address) => !parentKeys.has(addressKey(address)),
+        );
   if (leaked !== undefined) {
     return {
       _tag: "AuthorityDenied",

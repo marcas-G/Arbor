@@ -1,6 +1,10 @@
 import type {
+  Actor,
+  CommandId,
   ProjectId,
+  ResourceAddress,
   ResourceBoundaryRevision,
+  Revision,
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
@@ -15,6 +19,26 @@ export interface WorkspaceResourceActivationIntent {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly activatedAt: string | null;
+  /** Present only for an exact Parent-approved S3 ownership delegation. */
+  readonly delegation?: WorkspaceResourceDelegationIntent | null;
+}
+
+/** Durable approval and revision binding for one Child ownership carve-out.
+ * Addresses are the approved subset; canonical meaning is resolved by P11
+ * immediately before the atomic activation transaction. */
+export interface WorkspaceResourceDelegationIntent {
+  readonly delegationSourceId: string;
+  readonly formationProposalId: string;
+  readonly formationProposalRevision: number;
+  readonly addresses: ReadonlyArray<ResourceAddress>;
+  readonly approvedBy: Actor;
+  readonly causedByCommandId: CommandId;
+  readonly parentWorkspaceId: WorkspaceId;
+  readonly expectedParentWorkspaceRevision: Revision;
+  readonly expectedChildWorkspaceRevision: Revision;
+  readonly expectedParentBoundaryRevision: ResourceBoundaryRevision;
+  readonly expectedParentOwnershipRevision: number;
+  readonly expectedChildOwnershipRevision: number;
 }
 
 export type NewWorkspaceResourceActivationIntent = Omit<
@@ -48,6 +72,7 @@ export interface WorkspaceResourceActivationStoreService {
     resourceBoundaryRevision: ResourceBoundaryRevision,
     activatedAt: string,
     updatedAt: string,
+    delegationSourceId?: string,
   ) => Effect.Effect<
     boolean,
     WorkspaceResourceActivationStoreError,

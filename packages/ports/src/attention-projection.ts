@@ -1,5 +1,6 @@
 import type {
   EventId,
+  NoEffectDenialCode,
   ProjectId,
   ResourceBoundaryRevision,
   WorkspaceId,
@@ -18,6 +19,7 @@ import type {
   LegacyAdoptionAttentionFact,
   LegacyAdoptionAttentionResolutionFact,
 } from "./legacy-adoption-attention.js";
+import { sha256Hex } from "./provider-extension.js";
 import type { TransactionScope } from "./session.js";
 import type { ToolObservationReplayFailureCode } from "./tool-observation-evidence.js";
 import type { ToolObservationReplayAttentionFact } from "./tool-observation-replay-attention.js";
@@ -123,6 +125,50 @@ export interface SandboxProviderUnavailableAttentionProjectionRow {
   readonly firstDetectedAt: string;
 }
 
+export type ProcessExecutionUnavailableReasonCode = Extract<
+  NoEffectDenialCode,
+  "ProcessExecutionDisabled" | "NativeOsTupleUnavailable"
+>;
+
+/** Exact internal join used by the read-only P10 durable process denial view. */
+export interface ProcessExecutionUnavailableProjectionRow {
+  readonly projectId: ProjectId;
+  readonly executionId: string;
+  readonly invocationId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly providerTurnId: string;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly logicalActionId: string;
+  readonly actionIndex: number;
+  readonly callRef: string;
+  readonly reasonCode: ProcessExecutionUnavailableReasonCode;
+  readonly attentionFactId: string;
+  readonly occurredAt: string;
+}
+
+export const processExecutionUnavailableAttentionFactIdV1 = (
+  row: Omit<
+    ProcessExecutionUnavailableProjectionRow,
+    "attentionFactId" | "occurredAt" | "projectId"
+  >,
+): string =>
+  sha256Hex(
+    JSON.stringify({
+      version: 1,
+      executionId: row.executionId,
+      workspaceId: row.workspaceId,
+      invocationId: row.invocationId,
+      providerTurnId: row.providerTurnId,
+      logicalStepNo: row.logicalStepNo,
+      repairAttempt: row.repairAttempt,
+      logicalActionId: row.logicalActionId,
+      actionIndex: row.actionIndex,
+      callRef: row.callRef,
+      reasonCode: row.reasonCode,
+    }),
+  );
+
 /** Strict P10 query result derived from the immutable P4 invocation and
  * RecoveryBinding rows. This is never persisted. */
 export interface SandboxRecoveryBindingFailureProjectionRow {
@@ -220,6 +266,13 @@ export interface AttentionProjectionStoreService {
     now: string,
   ) => Effect.Effect<
     ReadonlyArray<SandboxProviderUnavailableAttentionProjectionRow>,
+    AttentionProjectionStoreError,
+    TransactionScope
+  >;
+  readonly listProjectedProcessExecutionUnavailable?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<ProcessExecutionUnavailableProjectionRow>,
     AttentionProjectionStoreError,
     TransactionScope
   >;

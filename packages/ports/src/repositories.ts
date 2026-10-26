@@ -129,6 +129,11 @@ export interface WorkspaceRepositoryService {
     expectedRevision: Revision,
     newRevision: Revision,
   ) => Effect.Effect<void, WorkspaceRepositoryError, TransactionScope>;
+  readonly bumpRevisionIfRevision: (
+    workspaceId: WorkspaceId,
+    expectedRevision: Revision,
+    newRevision: Revision,
+  ) => Effect.Effect<void, WorkspaceRepositoryError, TransactionScope>;
   readonly countActiveChildren: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<number, WorkspaceRepositoryError, TransactionScope>;
@@ -379,6 +384,10 @@ export interface ResourceOwnershipClaimRecord {
   readonly resolvedAtEnvironmentRevision: string;
   readonly createdAt: string;
   readonly releasedAt: string | null;
+  readonly exclusions?: ReadonlyArray<CanonicalResourceRegion>;
+  readonly delegatingWorkspaceId?: WorkspaceId | null;
+  readonly delegationSourceId?: string | null;
+  readonly claimRevision?: number;
 }
 
 export interface ResourceOwnershipRepositoryService {
@@ -392,6 +401,24 @@ export interface ResourceOwnershipRepositoryService {
   readonly insertClaim: (
     claim: ResourceOwnershipClaimRecord,
   ) => Effect.Effect<void, ResourceOwnershipRepositoryError, TransactionScope>;
+  /** Atomically replace the Parent's exact claim post-image and insert the
+   * Child claim. Caller must provide the encompassing BEGIN IMMEDIATE scope. */
+  readonly applyDelegation: (input: {
+    readonly parentClaimId: string;
+    readonly expectedParentClaimRevision: number;
+    readonly parentPostImage: ResourceOwnershipClaimRecord;
+    readonly childClaim: ResourceOwnershipClaimRecord;
+  }) => Effect.Effect<void, ResourceOwnershipRepositoryError, TransactionScope>;
+  readonly applyReclaim: (input: {
+    readonly childClaimId: string;
+    readonly expectedChildClaimRevision: number;
+    readonly childReleasedAt: string;
+    readonly childNextClaimRevision: number;
+    readonly parentClaimId: string | null;
+    readonly expectedParentClaimRevision: number | null;
+    readonly parentPostImage: ResourceOwnershipClaimRecord | null;
+    readonly restoredParentClaim: ResourceOwnershipClaimRecord | null;
+  }) => Effect.Effect<void, ResourceOwnershipRepositoryError, TransactionScope>;
   readonly releaseClaim: (
     claimId: string,
     releasedAt: string,

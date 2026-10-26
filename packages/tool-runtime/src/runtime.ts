@@ -1,3 +1,4 @@
+import { isAbsolute, relative, resolve } from "node:path";
 import type {
   CanonicalResourceRegion,
   ResourceAddress,
@@ -111,7 +112,9 @@ export interface ToolRuntimeQualificationEvent {
     | "AH7AfterEffectAuthorityResolvedBeforeAdmission"
     | "P38StopInvocationLookup"
     | "P38StopEffectAdmissionResult"
-    | "P38P39ClaimBeforeTransaction";
+    | "P38P39ClaimBeforeTransaction"
+    | "NativeProcessModeDenialBeforeCommit"
+    | "NativeProcessModeDenialAfterCommit";
   readonly executionId: string;
   readonly invocationId: string;
   readonly callRef: string;
@@ -127,6 +130,7 @@ export interface ToolRuntimeQualificationEvent {
   readonly priorSettlementKind?: string | null;
   readonly admissionResult?: string;
   readonly admissionDenialReason?: string;
+  readonly denialReasonCode?: NoEffectDenialCode;
   readonly outcomeTag?: "NotOccurred" | "Occurred" | "StillUnknown";
   readonly attemptNo?: 0 | 1;
   readonly factId?: string;
@@ -176,6 +180,48 @@ type FilesystemAddress = Extract<
   { readonly _tag: "FileTree" | "GitWorktree" }
 >;
 
+const requestedFilesystemTarget = (
+  argumentsJson: string,
+  root: FilesystemAddress,
+):
+  | { readonly _tag: "Absent" }
+  | { readonly _tag: "Invalid" }
+  | {
+      readonly _tag: "Address";
+      readonly address: Extract<ResourceAddress, { readonly _tag: "FileTree" }>;
+    } => {
+  try {
+    const parsed = JSON.parse(argumentsJson) as {
+      target?: { readonly mount?: unknown; readonly path?: unknown };
+    };
+    if (parsed.target === undefined) return { _tag: "Absent" };
+    if (
+      parsed.target.mount !== "workspace" ||
+      typeof parsed.target.path !== "string" ||
+      parsed.target.path.length === 0 ||
+      isAbsolute(parsed.target.path)
+    ) {
+      return { _tag: "Invalid" };
+    }
+    const rootPath = resolve(root.path);
+    const targetPath = resolve(rootPath, parsed.target.path);
+    const within = relative(rootPath, targetPath);
+    if (
+      within === ".." ||
+      within.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
+      isAbsolute(within)
+    ) {
+      return { _tag: "Invalid" };
+    }
+    return {
+      _tag: "Address",
+      address: { _tag: "FileTree", path: targetPath },
+    };
+  } catch {
+    return { _tag: "Invalid" };
+  }
+};
+
 const primaryFilesystemAddress = (
   addresses: ReadonlyArray<ResourceAddress>,
 ): FilesystemAddress | undefined => {
@@ -217,6 +263,10 @@ const denialReason = (reasonCode: NoEffectDenialCode): string => {
       return "tool resource admission denied";
     case "ApprovalNoLongerAuthorized":
       return "approval is no longer authorized";
+    case "ProcessExecutionDisabled":
+      return "Process execution is disabled for this daemon; the action was not started.";
+    case "NativeOsTupleUnavailable":
+      return "No qualified Native OS process tuple is available; the action was not started.";
   }
 };
 
@@ -586,6 +636,9 @@ export const ToolRuntimeLive = (
     readonly maxDelegationDepth?: number;
     readonly now?: string;
     readonly qualificationProbe?: ToolRuntimeQualificationProbe;
+    readonly processExecutionMode?: "Disabled" | "NativeOsSupportedOnly";
+    readonly nativeOsSupportedTupleAvailable?: boolean;
+    readonly testOnlyAllowTrustedLocalProcessExecution?: boolean;
   } = {},
 ): Layer.Layer<
   ToolRuntimePort,
@@ -601,6 +654,17 @@ export const ToolRuntimeLive = (
   Layer.effect(
     ToolRuntimePort,
     Effect.gen(function* () {
+      const processExecutionMode = options.processExecutionMode ?? "Disabled";
+      const testOnlyAllowTrustedLocalProcessExecution =
+        options.testOnlyAllowTrustedLocalProcessExecution === true;
+      const nativeOsSupportedTupleAvailable =
+        options.nativeOsSupportedTupleAvailable === true;
+      const processUnavailableReason: NoEffectDenialCode =
+        processExecutionMode === "Disabled"
+          ? "ProcessExecutionDisabled"
+          : "NativeOsTupleUnavailable";
+      const processModeBlocksSpawn =
+        processExecutionMode === "Disabled" || !nativeOsSupportedTupleAvailable;
       const definitions = yield* ToolDefinitionStore;
       const sandbox = yield* SandboxPort;
       const sandboxProcess = yield* Effect.serviceOption(SandboxProcessPort);
@@ -835,6 +899,9 @@ export const ToolRuntimeLive = (
             );
 
             if (policy.kind === "TrustedLocalUnconfinedRuntimePolicy") {
+              if (!testOnlyAllowTrustedLocalProcessExecution) {
+                return unavailable("NativeOsProviderRequired");
+              }
               if (!Option.isSome(trustedLocalProcess)) {
                 return {
                   _tag: "Rejected" as const,
@@ -1509,6 +1576,25 @@ export const ToolRuntimeLive = (
           if (executor === undefined) {
             return denied("InvocationAuthorityDenied");
           }
+          if (
+            executor.processCapability === "SandboxProcess" &&
+            processModeBlocksSpawn &&
+            !testOnlyAllowTrustedLocalProcessExecution
+          ) {
+            const durableInvocation = yield* tx
+              .transact(store.findById(intent.invocationId))
+              .pipe(
+                Effect.mapError(
+                  operationalFailure(
+                    "IntentJournal",
+                    String(intent.invocationId),
+                  ),
+                ),
+              );
+            if (Option.isNone(durableInvocation)) {
+              return denied(processUnavailableReason);
+            }
+          }
           const p39BindingEnabled = Option.isSome(p39Recovery);
           if (
             p39BindingEnabled &&
@@ -1760,6 +1846,7 @@ export const ToolRuntimeLive = (
             sideEffectSemantics: ToolDefinition["sideEffectSemantics"],
             resolvedRegions: ReadonlyArray<CanonicalResourceRegion>,
             reasonCode: NoEffectDenialCode,
+            nativeProcessModeDenial = false,
           ) =>
             Effect.gen(function* () {
               const settledAt = yield* clock.now();
@@ -1846,26 +1933,50 @@ export const ToolRuntimeLive = (
               }
               const recorded = yield* tx
                 .transact(
-                  store.recordNoEffectDenial(
-                    {
-                      invocationId: intent.invocationId,
-                      executionId: context.executionId,
-                      workspaceId: context.workspaceId,
-                      toolName: intent.toolName,
-                      toolVersion: intent.toolVersion,
-                      sideEffectSemantics,
-                      argumentsJson: intent.argumentsJson,
-                      resolvedRegions,
-                      approvalId:
-                        context.executableApproval?.approvalId ??
-                        intent.approvalId,
-                      intentAt: now,
-                    },
-                    reasonCode,
-                    settledAt,
-                    context.executionFence,
-                    settledAt,
-                  ),
+                  Effect.gen(function* () {
+                    const winner = yield* store.recordNoEffectDenial(
+                      {
+                        invocationId: intent.invocationId,
+                        executionId: context.executionId,
+                        workspaceId: context.workspaceId,
+                        toolName: intent.toolName,
+                        toolVersion: intent.toolVersion,
+                        sideEffectSemantics,
+                        argumentsJson: intent.argumentsJson,
+                        resolvedRegions,
+                        approvalId:
+                          context.executableApproval?.approvalId ??
+                          intent.approvalId,
+                        intentAt: now,
+                      },
+                      reasonCode,
+                      settledAt,
+                      context.executionFence,
+                      settledAt,
+                      nativeProcessModeDenial
+                        ? context.recoveryBindingIdentity
+                        : undefined,
+                    );
+                    if (
+                      nativeProcessModeDenial &&
+                      winner !== "ExecutionStopping" &&
+                      options.qualificationProbe !== undefined
+                    ) {
+                      yield* Effect.promise(
+                        () =>
+                          options.qualificationProbe?.({
+                            boundary: "NativeProcessModeDenialBeforeCommit",
+                            executionId: context.executionId,
+                            invocationId: intent.invocationId,
+                            callRef: intent.callRef,
+                            logicalActionId:
+                              context.recoveryBindingIdentity?.logicalActionId,
+                            denialReasonCode: reasonCode,
+                          }) ?? Promise.resolve(),
+                      );
+                    }
+                    return winner;
+                  }),
                 )
                 .pipe(
                   Effect.mapError(
@@ -1875,6 +1986,24 @@ export const ToolRuntimeLive = (
                     ),
                   ),
                 );
+              if (
+                nativeProcessModeDenial &&
+                recorded !== "ExecutionStopping" &&
+                options.qualificationProbe !== undefined
+              ) {
+                yield* Effect.promise(
+                  () =>
+                    options.qualificationProbe?.({
+                      boundary: "NativeProcessModeDenialAfterCommit",
+                      executionId: context.executionId,
+                      invocationId: intent.invocationId,
+                      callRef: intent.callRef,
+                      logicalActionId:
+                        context.recoveryBindingIdentity?.logicalActionId,
+                      denialReasonCode: reasonCode,
+                    }) ?? Promise.resolve(),
+                );
+              }
               if (recorded === "ExecutionStopping") {
                 return yield* persistNoEffectInterruption(
                   Option.isSome(current)
@@ -2148,7 +2277,21 @@ export const ToolRuntimeLive = (
                 "ResourceResolutionDenied",
               );
             }
-            addresses = [address];
+            const exactTarget =
+              executor.processCapability !== "SandboxProcess" &&
+              ["read", "list", "patch"].includes(intent.toolName)
+                ? requestedFilesystemTarget(intent.argumentsJson, address)
+                : ({ _tag: "Absent" } as const);
+            if (exactTarget._tag === "Invalid") {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                [],
+                "ResourceResolutionDenied",
+              );
+            }
+            addresses = [
+              exactTarget._tag === "Address" ? exactTarget.address : address,
+            ];
           } else {
             addresses = legacyResourceArguments(intent.argumentsJson);
           }
@@ -2223,7 +2366,14 @@ export const ToolRuntimeLive = (
               boundaryObserved: resolvedBoundary.observedEnvironmentRevision,
             });
           }
-          const regions = resolved.regions;
+          const regions =
+            priorModelIdentityMatches &&
+            priorRecord !== undefined &&
+            ((priorRecord.settlement === null &&
+              priorRecord.effectAdmissionState === "NotAdmitted") ||
+              priorRecord.settlement?._tag === "Interrupted")
+              ? priorRecord.resolvedRegions
+              : resolved.regions;
           const boundaryRegions = resolvedBoundary.regions;
           const validateCapturedSnapshot = () =>
             Effect.gen(function* () {
@@ -3846,6 +3996,26 @@ export const ToolRuntimeLive = (
                   }) ?? Promise.resolve(),
               );
             }
+          }
+
+          if (
+            executor.processCapability === "SandboxProcess" &&
+            processModeBlocksSpawn &&
+            !testOnlyAllowTrustedLocalProcessExecution &&
+            priorRecord !== undefined &&
+            priorRecord.settlement === null &&
+            priorRecord.effectAdmissionState === "NotAdmitted"
+          ) {
+            // `prior` identity and, when P39 is active, its exact RecoveryBinding
+            // have already been verified above. This uses the existing fenced
+            // Denied CAS: no effect admission, P39 attempt, P40 observation,
+            // sandbox open, executor, or provider call can precede it.
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              regions,
+              processUnavailableReason,
+              true,
+            );
           }
 
           // A NotOccurred proof whose retry gate was denied is already a

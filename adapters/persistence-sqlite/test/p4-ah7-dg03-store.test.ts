@@ -6,6 +6,7 @@ import {
   type LeaseGeneration,
   Principal,
   ProjectId,
+  ProviderTurnId,
   parse,
   SessionId,
   type ToolInvocationId,
@@ -13,6 +14,7 @@ import {
 } from "@arbor/domain";
 import {
   invocationAuthoritySourceRevisionOf,
+  sha256Hex,
   type ToolExecutionContext,
   type ToolInvocationIntent,
   ToolInvocationStore,
@@ -69,11 +71,12 @@ const intent = (
   id: ToolInvocationId,
   withApproval: boolean,
   approvalRef = approvalId,
+  toolName = "write_once",
 ): ToolInvocationIntent => ({
   invocationId: id,
   executionId,
   workspaceId,
-  toolName: "write_once",
+  toolName,
   toolVersion: "1",
   sideEffectSemantics: "NonIdempotent",
   argumentsJson: "{}",
@@ -81,6 +84,45 @@ const intent = (
   approvalId: withApproval ? approvalRef : null,
   intentAt: fenceNow,
 });
+
+const nativeSourceIdentity = {
+  executionId,
+  providerTurnId: parse(ProviderTurnId)(
+    "ptn_018f2b3c-4d5e-7abc-8def-0123456789a2",
+  ),
+  logicalStepNo: 0,
+  repairAttempt: 0,
+  logicalActionId: "lac_native_process_denial",
+  actionIndex: 0,
+  callRef: "call_native_process_denial",
+};
+
+const seedNativeP3Action = (toolName: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    yield* sql.unsafe(
+      `INSERT INTO agent_loop_steps (
+        execution_id, logical_step_no, repair_attempt, provider_turn_id,
+        state, revision, updated_at
+      ) VALUES (?, 0, 0, ?, 'ActionsInProgress', 0, ?)`,
+      [executionId, nativeSourceIdentity.providerTurnId, fenceNow],
+    );
+    yield* sql.unsafe(
+      `INSERT INTO agent_loop_step_actions (
+        execution_id, logical_step_no, repair_attempt, action_index,
+        logical_action_id, call_ref, route_kind, action_kind, input_hash,
+        state, revision, updated_at
+      ) VALUES (?, 0, 0, 0, ?, ?, 'Executable', ?, ?, 'Pending', 0, ?)`,
+      [
+        executionId,
+        nativeSourceIdentity.logicalActionId,
+        nativeSourceIdentity.callRef,
+        toolName,
+        sha256Hex("{}"),
+        fenceNow,
+      ],
+    );
+  });
 
 const makeApp = () => {
   const sqlite = layer({ filename: ":memory:" });
@@ -241,6 +283,122 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
     expect(typeof store.recordNoEffectDenial).toBe("function");
     expect(typeof store.recordNoEffectInterruption).toBe("function");
     expect(typeof store.admitEffect).toBe("function");
+  });
+
+  it("rolls back pre-commit process-mode denial, then commits and replays the exact NotAdmitted denial", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* prepareP36WithLegacyApproval;
+      const tx = yield* TransactionPort;
+      const store = yield* ToolInvocationStore;
+      const deniedIntent = intent(invocationB, false, approvalId, "shell");
+      yield* seedNativeP3Action("shell");
+
+      yield* tx.transact(store.recordIntent(deniedIntent, fence, fenceNow));
+      const preCommit = yield* Effect.exit(
+        tx.transact(
+          Effect.gen(function* () {
+            yield* store.recordNoEffectDenial(
+              deniedIntent,
+              "ProcessExecutionDisabled",
+              fenceNow,
+              fence,
+              fenceNow,
+              nativeSourceIdentity,
+            );
+            return yield* Effect.fail(
+              new Error("qualification pre-commit stop"),
+            );
+          }),
+        ),
+      );
+      expect(Exit.isFailure(preCommit)).toBe(true);
+
+      const afterRollback = yield* tx.transact(store.findById(invocationB));
+      expect(Option.isSome(afterRollback)).toBe(true);
+      if (Option.isSome(afterRollback)) {
+        expect(afterRollback.value).toMatchObject({
+          effectAdmissionState: "NotAdmitted",
+          settlement: null,
+        });
+      }
+
+      const committed = yield* tx.transact(
+        store.recordNoEffectDenial(
+          deniedIntent,
+          "ProcessExecutionDisabled",
+          fenceNow,
+          fence,
+          fenceNow,
+          nativeSourceIdentity,
+        ),
+      );
+      const replayed = yield* tx.transact(
+        store.recordNoEffectDenial(
+          deniedIntent,
+          "ProcessExecutionDisabled",
+          fenceNow,
+          fence,
+          fenceNow,
+          nativeSourceIdentity,
+        ),
+      );
+      const persisted = yield* tx.transact(store.findById(invocationB));
+      return { committed, replayed, persisted };
+    });
+
+    const result = await Effect.runPromise(Effect.provide(program, app));
+    expect(result.committed).toMatchObject({
+      effectAdmissionState: "NotAdmitted",
+      settlement: {
+        _tag: "Denied",
+        reasonCode: "ProcessExecutionDisabled",
+      },
+    });
+    expect(result.replayed).toEqual(result.committed);
+    expect(Option.isSome(result.persisted)).toBe(true);
+    if (Option.isSome(result.persisted)) {
+      expect(result.persisted.value).toEqual(result.committed);
+    }
+  });
+
+  it("does not commit Native process denial when the exact P3 action is no longer Pending", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* prepareP36WithLegacyApproval;
+      const tx = yield* TransactionPort;
+      const store = yield* ToolInvocationStore;
+      const sql = yield* SqlClient;
+      const deniedIntent = intent(invocationC, false, approvalId, "shell");
+      yield* seedNativeP3Action("shell");
+      yield* tx.transact(store.recordIntent(deniedIntent, fence, fenceNow));
+      yield* sql.unsafe(
+        `UPDATE agent_loop_step_actions SET state = 'Applied'
+          WHERE execution_id = ? AND logical_action_id = ?`,
+        [executionId, nativeSourceIdentity.logicalActionId],
+      );
+      const denial = yield* Effect.exit(
+        tx.transact(
+          store.recordNoEffectDenial(
+            deniedIntent,
+            "ProcessExecutionDisabled",
+            fenceNow,
+            fence,
+            fenceNow,
+            nativeSourceIdentity,
+          ),
+        ),
+      );
+      const persisted = yield* tx.transact(store.findById(invocationC));
+      return { denial, persisted };
+    });
+
+    const result = await Effect.runPromise(Effect.provide(program, app));
+    expect(Exit.isFailure(result.denial)).toBe(true);
+    expect(Option.isSome(result.persisted)).toBe(true);
+    if (Option.isSome(result.persisted)) {
+      expect(result.persisted.value.settlement).toBeNull();
+    }
   });
 
   it("preserves migrated approval history while fenced intent rollback remains atomic", async () => {

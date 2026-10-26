@@ -362,6 +362,8 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
           ...(Option.isSome(fulfillments)
             ? { fulfillments: fulfillments.value }
             : {}),
+          workspaces,
+          resourceOwnership,
           originatingWorkspaceOf: (record) => record.parentWorkspaceId,
         }) as unknown as CommandHandler<unknown, unknown>,
         ...(Option.isSome(controlApprovals)

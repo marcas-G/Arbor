@@ -28,7 +28,9 @@ const containsRegion = (a: unknown, b: unknown): boolean => {
   if (
     isRecord(a) &&
     (a.kind === "ExternalResource" ||
-      (isRecord(b) && b.kind === "ExternalResource"))
+      a._tag === "ExternalResource" ||
+      (isRecord(b) &&
+        (b.kind === "ExternalResource" || b._tag === "ExternalResource")))
   ) {
     return keyA === keyB;
   }

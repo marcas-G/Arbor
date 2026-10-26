@@ -33,6 +33,7 @@ import {
   InboxProjectionStore,
   LocalPlanStore,
   ModelCapabilityPort,
+  P39RecoveryEvidenceStore,
   type PortableOperationKind,
   ProjectRepository,
   type ProviderExecutionPolicyOverrides,
@@ -44,6 +45,7 @@ import {
   type SecretRef,
   SessionRepository,
   sha256Hex,
+  ToolInvocationStore,
   TransactionPort,
   WorkRepository,
   WorkspaceKnowledgePort,
@@ -392,12 +394,28 @@ export const AgentLoopDriverLive = (
               .pipe(Effect.mapError(failure)))
               ? configuredLoopSteps
               : undefined;
+          const invocationStoreOption =
+            yield* Effect.serviceOption(ToolInvocationStore);
+          const p39RecoveryOption = yield* Effect.serviceOption(
+            P39RecoveryEvidenceStore,
+          );
           // Resume from the latest durable P9 cursor, not turn zero. Without
           // this, a restart after a completed earlier step can re-open its
           // old executable output and repair later unresolved ToolCalls as
           // interrupted, even though a successor step is already persisted.
           let firstLogicalStepNo = 0;
           let firstRepairAttempt = 0;
+          let exactNotAdmittedRecovery:
+            | {
+                readonly executionId: Execution["executionId"];
+                readonly logicalStepNo: number;
+                readonly repairAttempt: number;
+                readonly providerTurnId: string;
+                readonly logicalActionId: string;
+                readonly actionIndex: number;
+                readonly callRef: string;
+              }
+            | undefined;
           if (loopSteps !== undefined) {
             const persistedSteps = yield* tx
               .transact(loopSteps.listByExecution(input.execution.executionId))
@@ -410,6 +428,90 @@ export const AgentLoopDriverLive = (
             }
             firstLogicalStepNo = cursor.logicalStepNo;
             firstRepairAttempt = cursor.repairAttempt;
+            if (
+              Option.isSome(invocationStoreOption) &&
+              Option.isSome(p39RecoveryOption)
+            ) {
+              const unsettled = yield* tx
+                .transact(
+                  invocationStoreOption.value.findUnsettled(
+                    input.execution.executionId,
+                  ),
+                )
+                .pipe(Effect.mapError(failure));
+              const candidates: (typeof exactNotAdmittedRecovery)[] = [];
+              for (const invocation of unsettled) {
+                if (
+                  invocation.effectAdmissionState !== "NotAdmitted" ||
+                  invocation.settledAt !== null ||
+                  invocation.settlement !== null
+                ) {
+                  continue;
+                }
+                const bindingOption = yield* tx
+                  .transact(
+                    p39RecoveryOption.value.findBinding(
+                      invocation.invocationId,
+                    ),
+                  )
+                  .pipe(Effect.mapError(failure));
+                if (Option.isNone(bindingOption)) {
+                  continue;
+                }
+                const binding = bindingOption.value.value;
+                const source = persistedSteps.find(
+                  (step) =>
+                    step.identity.logicalStepNo === binding.logicalStepNo &&
+                    step.identity.repairAttempt === binding.repairAttempt &&
+                    step.providerTurnId === binding.providerTurnId,
+                );
+                if (
+                  binding.executionId !== input.execution.executionId ||
+                  binding.invocationId !== invocation.invocationId ||
+                  source === undefined ||
+                  (source.state !== "NextStepReady" &&
+                    source.state !== "ActionsInProgress") ||
+                  (source.state === "NextStepReady" &&
+                    source.successor === undefined)
+                ) {
+                  continue;
+                }
+                const actions = yield* tx
+                  .transact(loopSteps.listActions(source.identity))
+                  .pipe(Effect.mapError(failure));
+                const action = actions.find(
+                  (candidate) =>
+                    candidate.actionIndex === binding.actionIndex &&
+                    candidate.logicalActionId === binding.logicalActionId &&
+                    candidate.callRef === binding.callRef,
+                );
+                if (
+                  (action?.state !== "Applied" &&
+                    action?.state !== "Pending") ||
+                  action.routeKind !== "Executable" ||
+                  action.actionKind !== binding.toolName
+                ) {
+                  continue;
+                }
+                candidates.push({
+                  executionId: input.execution.executionId,
+                  logicalStepNo: binding.logicalStepNo,
+                  repairAttempt: binding.repairAttempt,
+                  providerTurnId: binding.providerTurnId,
+                  logicalActionId: binding.logicalActionId,
+                  actionIndex: binding.actionIndex,
+                  callRef: binding.callRef,
+                });
+              }
+              if (candidates.length > 1) {
+                return { _tag: "RecoveryBlocked" } as const;
+              }
+              exactNotAdmittedRecovery = candidates[0];
+              if (exactNotAdmittedRecovery !== undefined) {
+                firstLogicalStepNo = exactNotAdmittedRecovery.logicalStepNo;
+                firstRepairAttempt = exactNotAdmittedRecovery.repairAttempt;
+              }
+            }
             if (persistedSteps.length > 0) {
               const current = persistedSteps.find(
                 (step) =>
@@ -934,6 +1036,11 @@ export const AgentLoopDriverLive = (
           const decideModelOutput = (
             turn: number,
             repairAttempt: number,
+            resumeExactActionStepIdentity?: {
+              readonly executionId: import("@arbor/domain").ExecutionId;
+              readonly logicalStepNo: number;
+              readonly repairAttempt: number;
+            },
           ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
             runModelDecision(
               {
@@ -973,7 +1080,12 @@ export const AgentLoopDriverLive = (
                   ? { decisionRequests: decisionRequestsOption.value }
                   : {}),
                 workspaces,
-                options,
+                options: {
+                  ...options,
+                  ...(resumeExactActionStepIdentity === undefined
+                    ? {}
+                    : { resumeExactActionStepIdentity }),
+                },
                 admitProviderTurn,
                 completeProviderTurn,
                 failure,
@@ -1021,7 +1133,15 @@ export const AgentLoopDriverLive = (
                   .pipe(Effect.mapError(failure));
               }
             }
-            const modelDecision = yield* decideModelOutput(turn, repairAttempt);
+            const modelDecision = yield* decideModelOutput(
+              turn,
+              repairAttempt,
+              exactNotAdmittedRecovery !== undefined &&
+                exactNotAdmittedRecovery.logicalStepNo === turn &&
+                exactNotAdmittedRecovery.repairAttempt === repairAttempt
+                ? exactNotAdmittedRecovery
+                : undefined,
+            );
             if (modelDecision._tag === "Settle") {
               return modelDecision.settlement;
             }
@@ -1077,6 +1197,13 @@ export const AgentLoopDriverLive = (
                 : {
                     executableInvocationHandler:
                       options.executableInvocationHandler,
+                  }),
+              ...(exactNotAdmittedRecovery === undefined ||
+              exactNotAdmittedRecovery.logicalStepNo !== turn ||
+              exactNotAdmittedRecovery.repairAttempt !== repairAttempt
+                ? {}
+                : {
+                    recoverExactNotAdmittedAction: exactNotAdmittedRecovery,
                   }),
               ...(options.recordReconciliationEscalation === undefined
                 ? {}

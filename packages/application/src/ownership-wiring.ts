@@ -1,26 +1,46 @@
 import type {
+  Actor,
   CanonicalResourceRegion,
+  CommandId,
+  Principal,
   ProjectId,
   ResourceAddress,
   ResourceBoundaryRevision,
+  Revision,
   WorkspaceId,
 } from "@arbor/domain";
-import { regionsOverlap } from "@arbor/domain";
+import {
+  canonicalRegionString,
+  regionsOverlap,
+  retireWorkspace,
+} from "@arbor/domain";
 import type {
   ClockService,
+  DependencyRepositoryError,
+  DependencyRepositoryService,
+  DomainEventJournalError,
   EnvironmentError,
   EnvironmentRevisionStoreError,
+  ExecutionRepositoryError,
+  ExecutionRepositoryService,
   IdGeneratorService,
   OwnershipWriteServiceService,
   ProjectEnvironmentPortService,
   ResourceOwnershipClaimRecord,
   ResourceOwnershipRepositoryError,
   ResourceOwnershipRepositoryService,
+  ResourceResolutionStale,
+  ToolInvocationStoreError,
+  ToolInvocationStoreService,
   TransactionOperationalFailure,
   TransactionPortService,
+  WorkRepositoryError,
+  WorkRepositoryService,
+  WorkspaceRepositoryError,
+  WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { resourceRegionComparator } from "@arbor/ports";
-import { Effect } from "effect";
+import { Context, Effect, Option } from "effect";
 
 /** P11 `10` §1 — ownership claim/release wiring (scope-fenced).
  *
@@ -311,6 +331,352 @@ export const enforceRetirePreconditions = (
       } as const;
     }),
   );
+
+// --- C. exact-provenance Child retirement -----------------------------------
+
+export interface RetireWorkspaceRequest {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly expectedRevision: Revision;
+  readonly principal: Principal;
+  readonly commandId: CommandId;
+}
+
+export type RetireWorkspaceOutcome =
+  | {
+      readonly _tag: "Retired";
+      readonly childWorkspaceId: WorkspaceId;
+      readonly parentWorkspaceId: WorkspaceId;
+      readonly delegationSourceId: string;
+      readonly ownership: {
+        readonly _tag: "Reclaimed" | "AlreadyReclaimed";
+        readonly parentClaim: ResourceOwnershipClaimRecord;
+        readonly childClaim: ResourceOwnershipClaimRecord;
+        readonly childRetired: boolean;
+      };
+    }
+  | {
+      readonly _tag: "Refused";
+      readonly reason:
+        | "NotAuthorized"
+        | "WorkspaceNotFound"
+        | "WorkspaceRevisionConflict"
+        | "WorkspaceNotActive"
+        | "RootWorkspace"
+        | "NoExactDelegatedClaim"
+        | "RetirePreconditionFailed";
+      readonly detail?: string;
+    };
+
+export type RetireWorkspaceApplicationError =
+  | DependencyRepositoryError
+  | DomainEventJournalError
+  | EnvironmentError
+  | EnvironmentRevisionStoreError
+  | ExecutionRepositoryError
+  | ResourceOwnershipRepositoryError
+  | ResourceResolutionStale
+  | ToolInvocationStoreError
+  | TransactionOperationalFailure
+  | WorkRepositoryError
+  | WorkspaceRepositoryError;
+
+export interface RetireWorkspaceApplicationDependencies {
+  readonly workspaces: Pick<
+    WorkspaceRepositoryService,
+    "findById" | "hasOpenWork" | "countActiveChildren"
+  >;
+  readonly works: Pick<WorkRepositoryService, "findById">;
+  readonly executions: Pick<
+    ExecutionRepositoryService,
+    "findActiveMainByWorkspace" | "findUnsettledExecutions"
+  >;
+  readonly dependencies: Pick<
+    DependencyRepositoryService,
+    "listUnsatisfiedByProject"
+  >;
+  readonly invocations: Pick<ToolInvocationStoreService, "findUnsettled">;
+  readonly ownership: Pick<
+    ResourceOwnershipRepositoryService,
+    "listActiveByWorkspace" | "listByWorkspace"
+  >;
+  readonly ownershipWrite: Pick<
+    OwnershipWriteServiceService,
+    "reclaimDelegatedOwnership"
+  >;
+  readonly tx: Pick<TransactionPortService, "transact">;
+  readonly isAuthorizedHuman: (principal: Principal) => boolean;
+}
+
+export interface RetireWorkspaceApplicationService {
+  readonly retire: (
+    request: RetireWorkspaceRequest,
+  ) => Effect.Effect<RetireWorkspaceOutcome, RetireWorkspaceApplicationError>;
+}
+
+export class RetireWorkspaceService extends Context.Service<
+  RetireWorkspaceService,
+  RetireWorkspaceApplicationService
+>()("arbor/RetireWorkspaceService") {}
+
+/** The application caller supplies authenticated identity, target, expected
+ * Child revision, and command identity. Provenance, all CAS anchors, and
+ * quiescence facts are read from canonical stores here; callers cannot assert
+ * the negative quiescence facts themselves. The persistence operation then
+ * rechecks the exact provenance/revisions and atomically reclaims ownership
+ * with lifecycle retirement. */
+export const makeRetireWorkspaceApplicationService = (
+  deps: RetireWorkspaceApplicationDependencies,
+): RetireWorkspaceApplicationService => ({
+  retire: (request) => {
+    if (!deps.isAuthorizedHuman(request.principal)) {
+      return Effect.succeed({ _tag: "Refused", reason: "NotAuthorized" });
+    }
+
+    return Effect.gen(function* () {
+      const snapshot = yield* deps.tx.transact(
+        Effect.gen(function* () {
+          const childOption = yield* deps.workspaces.findById(
+            request.workspaceId,
+          );
+          if (Option.isNone(childOption)) return { _tag: "NotFound" } as const;
+          const child = childOption.value;
+          if (child.projectId !== request.projectId) {
+            return { _tag: "NotFound" } as const;
+          }
+          if (child.revision !== request.expectedRevision) {
+            return { _tag: "RevisionConflict" } as const;
+          }
+          if (child.lifecycle !== "Active") {
+            return { _tag: "NotActive" } as const;
+          }
+          if (child.parentWorkspaceId === null) {
+            return { _tag: "Root" } as const;
+          }
+
+          const parentOption = yield* deps.workspaces.findById(
+            child.parentWorkspaceId,
+          );
+          if (
+            Option.isNone(parentOption) ||
+            parentOption.value.projectId !== request.projectId ||
+            parentOption.value.lifecycle !== "Active"
+          ) {
+            return { _tag: "NoExactDelegation" } as const;
+          }
+          const parent = parentOption.value;
+          const childClaims = yield* deps.ownership.listActiveByWorkspace(
+            child.workspaceId,
+          );
+          if (childClaims.length !== 1) {
+            return { _tag: "NoExactDelegation" } as const;
+          }
+          const childClaim = childClaims[0];
+          if (
+            childClaim === undefined ||
+            childClaim.delegatingWorkspaceId !== parent.workspaceId ||
+            typeof childClaim.delegationSourceId !== "string" ||
+            childClaim.delegationSourceId.length === 0 ||
+            !Number.isSafeInteger(childClaim.claimRevision)
+          ) {
+            return { _tag: "NoExactDelegation" } as const;
+          }
+
+          const parentClaims = yield* deps.ownership.listActiveByWorkspace(
+            parent.workspaceId,
+          );
+          const matchingParentClaims = parentClaims.filter((claim) =>
+            (claim.exclusions ?? []).some(
+              (region) =>
+                canonicalRegionString(region) ===
+                canonicalRegionString(childClaim.region),
+            ),
+          );
+          let parentClaimRevision: number | undefined;
+          if (matchingParentClaims.length === 1) {
+            parentClaimRevision = matchingParentClaims[0]?.claimRevision;
+          } else if (matchingParentClaims.length === 0) {
+            // Equality-only regions transfer the complete claim to the Child;
+            // their exact Parent revision is retained as released history.
+            const parentHistory =
+              deps.ownership.listByWorkspace === undefined
+                ? []
+                : yield* deps.ownership.listByWorkspace(parent.workspaceId);
+            const exactReleasedHistory = parentHistory.filter(
+              (claim) =>
+                claim.releasedAt !== null &&
+                canonicalRegionString(claim.region) ===
+                  canonicalRegionString(childClaim.region) &&
+                Number.isSafeInteger(claim.claimRevision),
+            );
+            if (
+              parentClaims.length === 0 &&
+              exactReleasedHistory.length === 1
+            ) {
+              parentClaimRevision = exactReleasedHistory[0]?.claimRevision;
+            }
+          }
+          if (!Number.isSafeInteger(parentClaimRevision)) {
+            return { _tag: "NoExactDelegation" } as const;
+          }
+
+          const activeMain = yield* deps.executions.findActiveMainByWorkspace(
+            child.workspaceId,
+          );
+          const openWork = yield* deps.workspaces.hasOpenWork(
+            child.workspaceId,
+          );
+          const activeChildren = yield* deps.workspaces.countActiveChildren(
+            child.workspaceId,
+          );
+          const unsettledExecutions =
+            (yield* deps.executions.findUnsettledExecutions()).filter(
+              (execution) => execution.workspaceId === child.workspaceId,
+            );
+          const unsettledInvocations = yield* Effect.forEach(
+            unsettledExecutions,
+            (execution) =>
+              deps.invocations.findUnsettled(execution.executionId),
+          );
+          const incomingDependencies =
+            yield* deps.dependencies.listUnsatisfiedByProject(
+              request.projectId,
+            );
+          const incoming = yield* Effect.forEach(
+            incomingDependencies,
+            (dependency) =>
+              Effect.gen(function* () {
+                let producerWorkWorkspaceId: WorkspaceId | null = null;
+                if (dependency.producerBinding._tag === "WorkBound") {
+                  const producer = yield* deps.works.findById(
+                    dependency.producerBinding.workId,
+                  );
+                  if (Option.isSome(producer)) {
+                    producerWorkWorkspaceId = producer.value.workspaceId;
+                  }
+                }
+                return {
+                  dependency,
+                  producerWorkWorkspaceId,
+                  blocks:
+                    dependency.producerBinding._tag === "WorkspaceBound"
+                      ? dependency.producerBinding.workspaceId ===
+                        child.workspaceId
+                      : dependency.producerBinding._tag === "WorkBound" &&
+                        producerWorkWorkspaceId === child.workspaceId,
+                };
+              }),
+          );
+
+          return {
+            _tag: "Ready" as const,
+            child,
+            parent,
+            childClaim,
+            parentClaimRevision: parentClaimRevision as number,
+            activeMain: Option.isSome(activeMain),
+            hasUnsettledExecution: unsettledExecutions.length > 0,
+            openWork: openWork || child.currentWorkId !== null,
+            activeChildren: activeChildren > 0,
+            noUnresolvedEffects: unsettledInvocations.every(
+              (invocations) => invocations.length === 0,
+            ),
+            incoming,
+          };
+        }),
+      );
+
+      if (snapshot._tag === "NotFound") {
+        return { _tag: "Refused", reason: "WorkspaceNotFound" } as const;
+      }
+      if (snapshot._tag === "RevisionConflict") {
+        return {
+          _tag: "Refused",
+          reason: "WorkspaceRevisionConflict",
+        } as const;
+      }
+      if (snapshot._tag === "NotActive") {
+        return { _tag: "Refused", reason: "WorkspaceNotActive" } as const;
+      }
+      if (snapshot._tag === "Root") {
+        return { _tag: "Refused", reason: "RootWorkspace" } as const;
+      }
+      if (snapshot._tag === "NoExactDelegation") {
+        return { _tag: "Refused", reason: "NoExactDelegatedClaim" } as const;
+      }
+
+      const domainCheck = retireWorkspace(snapshot.child, {
+        authorized: true,
+        expectedRevision: request.expectedRevision,
+        isRoot: false,
+        hasActiveMainExecution: snapshot.activeMain,
+        hasOpenWork: snapshot.openWork,
+        hasActiveChildWorkspace: snapshot.activeChildren,
+        // This exact claim is consumed by the atomic ownership operation.
+        hasActiveResourceOwnershipClaim: false,
+        incomingDependencies: snapshot.incoming.map(
+          ({ dependency, producerWorkWorkspaceId }) => ({
+            producerBinding: dependency.producerBinding,
+            producerWorkWorkspaceId,
+            unresolved: true,
+            resolvedOrReplacedInSameGovernanceChange: false,
+          }),
+        ),
+      });
+      if (
+        !domainCheck.ok ||
+        snapshot.hasUnsettledExecution ||
+        !snapshot.noUnresolvedEffects ||
+        snapshot.incoming.some((entry) => entry.blocks)
+      ) {
+        return {
+          _tag: "Refused",
+          reason: "RetirePreconditionFailed",
+          detail: !domainCheck.ok
+            ? domainCheck.error._tag
+            : snapshot.hasUnsettledExecution
+              ? "active execution remains bound to the Child"
+              : !snapshot.noUnresolvedEffects
+                ? "unresolved effect remains bound to the Child region"
+                : "unresolved incoming Dependency is bound to the Child",
+        } as const;
+      }
+
+      const reclaimed = yield* deps.ownershipWrite.reclaimDelegatedOwnership({
+        projectId: request.projectId,
+        childWorkspaceId: snapshot.child.workspaceId,
+        delegationSourceId: snapshot.childClaim.delegationSourceId as string,
+        expectedParentWorkspaceRevision: snapshot.parent.revision,
+        expectedChildWorkspaceRevision: snapshot.child.revision,
+        expectedParentBoundaryRevision:
+          snapshot.parent.resourceBoundaryRevision,
+        expectedChildBoundaryRevision: snapshot.child.resourceBoundaryRevision,
+        expectedParentClaimRevision: snapshot.parentClaimRevision,
+        expectedChildClaimRevision: snapshot.childClaim.claimRevision as number,
+        actor: request.principal as unknown as Actor,
+        causedByCommandId: request.commandId,
+        retireChild: true,
+        quiescence: {
+          noUnresolvedEffects: snapshot.noUnresolvedEffects,
+          noActiveExecution:
+            !snapshot.activeMain && !snapshot.hasUnsettledExecution,
+          noOpenWork: !snapshot.openWork,
+          noActiveChildren: !snapshot.activeChildren,
+          noUnresolvedIncomingDependencies: !snapshot.incoming.some(
+            (entry) => entry.blocks,
+          ),
+        },
+      });
+      return {
+        _tag: "Retired",
+        childWorkspaceId: snapshot.child.workspaceId,
+        parentWorkspaceId: snapshot.parent.workspaceId,
+        delegationSourceId: snapshot.childClaim.delegationSourceId as string,
+        ownership: reclaimed,
+      } as const;
+    });
+  },
+});
 
 /** Operator release face for the worktree-retirement flow (P11 `09` §3,
  * CI-3): given resolved canonical regions, release every ACTIVE claim

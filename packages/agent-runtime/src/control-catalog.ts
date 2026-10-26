@@ -339,6 +339,29 @@ const PROPOSE_CHILD_WORKSPACE_SCHEMA = JSON.stringify({
         },
       },
     },
+    resourceOwnershipDelegation: {
+      type: "object",
+      additionalProperties: false,
+      required: ["addresses"],
+      description:
+        "Optional explicit Parent-to-Child write-ownership delegation. Addresses may be canonical subregions within resourceBoundaryDraft; Runtime proves containment during activation. Omitted means the Child is formed without write ownership.",
+      properties: {
+        addresses: {
+          type: "array",
+          minItems: 1,
+          maxItems: 16,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["_tag", "path"],
+            properties: {
+              _tag: { enum: ["FileTree", "GitWorktree"] },
+              path: { type: "string", minLength: 1, maxLength: 4096 },
+            },
+          },
+        },
+      },
+    },
     initialWork: {
       type: "object",
       additionalProperties: false,

@@ -225,7 +225,12 @@ type Rule =
   | { readonly kind: "literal"; readonly value: string | number | boolean }
   | { readonly kind: "nullable"; readonly inner: Rule }
   | { readonly kind: "optional"; readonly inner: Rule }
-  | { readonly kind: "array"; readonly item: Rule }
+  | {
+      readonly kind: "array";
+      readonly item: Rule;
+      readonly minItems?: number;
+      readonly maxItems?: number;
+    }
   | { readonly kind: "object"; readonly fields: Readonly<Record<string, Rule>> }
   | { readonly kind: "record" }
   | {
@@ -257,7 +262,15 @@ const literal = (value: string | number | boolean): Rule => ({
 });
 const nullable = (inner: Rule): Rule => ({ kind: "nullable", inner });
 const optional = (inner: Rule): Rule => ({ kind: "optional", inner });
-const array = (item: Rule): Rule => ({ kind: "array", item });
+const array = (
+  item: Rule,
+  bounds?: { readonly minItems?: number; readonly maxItems?: number },
+): Rule => ({
+  kind: "array",
+  item,
+  ...(bounds?.minItems === undefined ? {} : { minItems: bounds.minItems }),
+  ...(bounds?.maxItems === undefined ? {} : { maxItems: bounds.maxItems }),
+});
 const object = (fields: Readonly<Record<string, Rule>>): Rule => ({
   kind: "object",
   fields,
@@ -441,6 +454,11 @@ const childWorkspaceProposal = object({
   name: string,
   responsibilityDraft,
   resourceBoundaryDraft: resourceBoundary,
+  resourceOwnershipDelegation: optional(
+    object({
+      addresses: array(resourceAddress, { minItems: 1, maxItems: 16 }),
+    }),
+  ),
   rationale: string,
   initialWork: optional(
     object({
@@ -639,6 +657,22 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
     workspacePolicy: record,
     workspacePolicyRevision: revision,
     revision,
+    ownershipDelegationApproval: optional(
+      object({
+        delegationSourceId: string,
+        formationProposalId: id("FormationProposalId"),
+        formationProposalRevision: integer,
+        addresses: array(resourceAddress, { minItems: 1, maxItems: 16 }),
+        approvedBy: actor,
+        causedByCommandId: id("CommandId"),
+        parentWorkspaceId: id("WorkspaceId"),
+        expectedParentWorkspaceRevision: revision,
+        expectedChildWorkspaceRevision: revision,
+        expectedParentBoundaryRevision: revision,
+        expectedParentOwnershipRevision: integer,
+        expectedChildOwnershipRevision: integer,
+      }),
+    ),
   }),
   AssignWork: object({
     workId: id("WorkId"),
@@ -1269,6 +1303,13 @@ const decodeValue = (
     case "array": {
       if (!Array.isArray(input)) {
         addIssue(issues, path, "type");
+        return INVALID;
+      }
+      if (
+        (rule.minItems !== undefined && input.length < rule.minItems) ||
+        (rule.maxItems !== undefined && input.length > rule.maxItems)
+      ) {
+        addIssue(issues, path, "range");
         return INVALID;
       }
       const output: unknown[] = [];

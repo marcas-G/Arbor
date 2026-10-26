@@ -112,6 +112,11 @@ describe("domain event catalog", () => {
         expect(isSupportedEventWritePair(eventType, 1)).toBe(false);
         expect(isSupportedEventReadPair(eventType, 1)).toBe(true);
         expect(isSupportedEventReadPair(eventType, 2)).toBe(true);
+      } else if (eventType === "ResourceOwnershipChanged") {
+        expect(isSupportedEventWritePair(eventType, 2)).toBe(true);
+        expect(isSupportedEventWritePair(eventType, 1)).toBe(false);
+        expect(isSupportedEventReadPair(eventType, 1)).toBe(true);
+        expect(isSupportedEventReadPair(eventType, 2)).toBe(true);
       } else {
         expect(isSupportedEventWritePair(eventType, 1)).toBe(true);
         expect(isSupportedEventWritePair(eventType, 2)).toBe(false);
@@ -165,6 +170,77 @@ describe("domain event catalog", () => {
     expect(decodeSupportedEventPayload("WorkCompleted", 2, {})._tag).toBe(
       "UnsupportedPair",
     );
+  });
+
+  it("strictly decodes complete ResourceOwnershipChanged v2 post-images", () => {
+    const claim = {
+      claimId: "claim-1",
+      workspaceId: "ws-parent",
+      region: {
+        resourceSpaceId: "filesystem",
+        normalizedRegion: { kind: "FileTree", path: "/repo" },
+      },
+      sourceAddressSnapshot: { _tag: "FileTree", path: "/repo" },
+      resourceBoundaryRevision: 1,
+      resolvedAtEnvironmentRevision: "env-1",
+      createdAt: "2026-10-26T00:00:00.000Z",
+      releasedAt: null,
+      claimRevision: 2,
+      exclusions: [],
+      delegatingWorkspaceId: null,
+      delegationSourceId: null,
+    };
+    const payload = {
+      _tag: "ResourceOwnershipChanged",
+      operation: "Delegated",
+      delegation: {
+        delegationSourceId: "formation:proposal-1:1",
+        formationProposalId: "proposal-1",
+        formationProposalRevision: 1,
+        parentWorkspaceId: "ws-parent",
+        childWorkspaceId: "ws-child",
+        approvedBy: "user:gaolei",
+        causedByCommandId: "cmd-1",
+      },
+      parentClaim: {
+        ...claim,
+        exclusions: [
+          {
+            resourceSpaceId: "filesystem",
+            normalizedRegion: { kind: "FileTree", path: "/repo/child" },
+          },
+        ],
+      },
+      childClaim: {
+        ...claim,
+        claimId: "claim-child",
+        workspaceId: "ws-child",
+        region: {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { kind: "FileTree", path: "/repo/child" },
+        },
+        sourceAddressSnapshot: {
+          _tag: "FileTree",
+          path: "/repo/child",
+        },
+        delegatingWorkspaceId: "ws-parent",
+        delegationSourceId: "formation:proposal-1:1",
+      },
+    };
+    expect(
+      decodeSupportedEventPayload("ResourceOwnershipChanged", 2, payload)._tag,
+    ).toBe("Decoded");
+    expect(
+      decodeSupportedEventPayload("ResourceOwnershipChanged", 2, {
+        ...payload,
+        childClaim: { ...payload.childClaim, delegationSourceId: null },
+      })._tag,
+    ).toBe("MalformedPayload");
+    expect(
+      decodeSupportedEventPayload("ResourceOwnershipChanged", 1, {
+        _tag: "ResourceOwnershipChanged",
+      })._tag,
+    ).toBe("Decoded");
   });
 
   it("excludes high-frequency runtime trace records", () => {
