@@ -1686,6 +1686,18 @@ it.skipIf(skipReason !== undefined)(
           episode_kind: "WorkEpisode",
           episode_ref: workId,
         });
+        await waitWithinDeadline({
+          deadlineAt,
+          label: "public P11 sandbox-policy candidate before issuer grant",
+          read: () =>
+            client.view<{
+              readonly sandboxPolicyCandidateRead?: unknown;
+            }>("workspace-detail", {
+              workspaceId: project.rootWorkspaceId,
+            }),
+          predicate: (detail) =>
+            detail.sandboxPolicyCandidateRead !== undefined,
+        });
         await grantTrustedLocalP11Permission({
           client,
           projectId: project.projectId,
