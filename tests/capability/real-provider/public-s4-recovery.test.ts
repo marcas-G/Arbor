@@ -1633,7 +1633,7 @@ it.skipIf(skipReason !== undefined)(
           "In a WorkspaceWork turn bound to a current Work",
         );
         const heldMessages = heldRequest.messages;
-        const exactWorkAssignmentInHeldRequest =
+        const rootWorkAssignmentLeakedIntoHeldRequest =
           Array.isArray(heldMessages) &&
           heldMessages.some(
             (message) =>
@@ -1643,7 +1643,8 @@ it.skipIf(skipReason !== undefined)(
               (message as { content?: unknown }).content ===
                 `WorkAssigned(${workId}, ${project.rootWorkspaceId})`,
           );
-        expect(exactWorkAssignmentInHeldRequest).toBe(true);
+        expect(rootWorkAssignmentLeakedIntoHeldRequest).toBe(false);
+        expect(JSON.stringify(heldRequest)).toContain(marker);
         const heldStartEvidence = requireBoundProviderRequests(
           providerRequestsMatching(
             readProviderCaptures(run.captureFile),
