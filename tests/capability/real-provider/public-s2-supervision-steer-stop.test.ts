@@ -472,7 +472,39 @@ const runJourney = async (input: {
         expectedWorkRevision: work.revision,
         steer: {
           severity: "Normal",
-          guidance: `纠正：该文件唯一一行应改为 ${correctedContent}。保留当前任务脉络，核验实际内容后再结束。${correctionMarker}`,
+          operation: {
+            kind: "ContractAmendment",
+            amendment: {
+              objective: `在当前项目工作区创建文件 ${fileName}，唯一一行内容严格为 ${correctedContent}，并读回核对。${correctionMarker}`,
+              why: `用户以 Normal Steer 将目标内容纠正为 ${correctedContent}；保留当前任务脉络并按新合同完成。${correctionMarker}`,
+              constraints: [
+                "只使用 patch 创建或修正目标文件，并用 read 读回核对。",
+                "不得使用 shell 或网络。",
+                "不得访问或创建其他 Workspace，也不得分派子 Work。",
+              ],
+              completionExpectation: `当前项目工作区根目录存在 ${fileName}，其内容逐字符严格等于 ${correctedContent}。`,
+              verificationMission: {
+                goal: `独立核验 ${fileName} 存在且内容与纠正后的要求逐字符一致。`,
+                criteria: [
+                  {
+                    criterionId: "file-exists",
+                    requirement: `当前项目工作区根目录存在 ${fileName}。`,
+                    required: true,
+                  },
+                  {
+                    criterionId: "exact-content",
+                    requirement: `read 读回内容逐字符严格等于 ${correctedContent}。`,
+                    required: true,
+                  },
+                ],
+                riskRequirements: [
+                  "不得使用 shell。",
+                  "不得使用网络。",
+                  "不得访问或创建其他 Workspace，也不得分派子 Work。",
+                ],
+              },
+            },
+          },
         },
         provenance: { source: "HumanInput" },
       });
