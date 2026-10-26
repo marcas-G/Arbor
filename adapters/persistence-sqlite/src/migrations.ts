@@ -11,6 +11,7 @@ import { P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION } from "./p49-sandbox
 import { P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION } from "./p50-sandbox-provider-unavailable-fact-migration.js";
 import { P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION } from "./p51-verification-v2-consumer-reconciliation-migration.js";
 import { P52_WORK_CONTRACT_REVISION_MIGRATION } from "./p52-work-contract-revision-migration.js";
+import { P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION } from "./p53-canonical-ownership-carveouts-migration.js";
 
 const DDL = `
 CREATE TABLE projects (
@@ -2567,6 +2568,32 @@ ${p40InvocationObservationGuardsForP44}
 `,
 } satisfies MigrationFile & { readonly requiresUserVersion: 43 };
 
+const p40InvocationObservationGuardsForP54 = (() => {
+  const allowlist =
+    "'ResourceResolutionDenied','ResourceAdmissionDenied','ApprovalNoLongerAuthorized'";
+  if (p40InvocationObservationGuardsForP44.split(allowlist).length - 1 !== 2) {
+    throw new Error(
+      "P40 Denied guard allowlists changed; refusing Native V2 derivation.",
+    );
+  }
+  return p40InvocationObservationGuardsForP44.replaceAll(
+    allowlist,
+    "'ResourceResolutionDenied','ResourceAdmissionDenied','ApprovalNoLongerAuthorized','ProcessExecutionDisabled','NativeOsTupleUnavailable'",
+  );
+})();
+
+/** Native V2 adds only two closed P4 Denied codes to the current P40 guards. */
+export const P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION = {
+  id: 54,
+  name: "native_process_mode_no_effect_denial",
+  requiresUserVersion: 53,
+  sql: `
+DROP TRIGGER tool_invocations_observation_insert_guard;
+DROP TRIGGER tool_invocations_observation_update_guard;
+${p40InvocationObservationGuardsForP54}
+`,
+} satisfies MigrationFile & { readonly requiresUserVersion: 53 };
+
 /**
  * Schema 44 is the current runtime target. P39 remains an exact privileged
  * maintenance-only step and is deliberately absent from this registry; the
@@ -2579,7 +2606,7 @@ export const P43_MIGRATION = {
   sql: P43_BLOCKED_WORKEPISODE_MIGRATION.sql,
 } satisfies MigrationFile & { readonly requiresUserVersion: 42 };
 
-export const CURRENT_SCHEMA_VERSION = 52 as const;
+export const CURRENT_SCHEMA_VERSION = 54 as const;
 export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   ...P38_MIGRATIONS,
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
@@ -2595,5 +2622,7 @@ export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
   P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
   P52_WORK_CONTRACT_REVISION_MIGRATION,
+  P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION,
+  P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
 ]);
 export const CURRENT_MIGRATION_BASELINE = CURRENT_SCHEMA_VERSION;

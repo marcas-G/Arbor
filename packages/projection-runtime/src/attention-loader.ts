@@ -18,6 +18,7 @@ import type {
   LegacyAdoptionAttentionFact,
   LegacyAdoptionAttentionProjectionRow,
   LegacyAdoptionAttentionResolutionFact,
+  ProcessExecutionUnavailableProjectionRow,
   ReadmissionGateIntegrityFailure,
   SandboxProviderUnavailableAttentionProjectionRow,
   SandboxRecoveryBindingFailureProjectionRow,
@@ -280,6 +281,12 @@ export interface AttentionReadDeps {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<SandboxProviderUnavailableAttentionProjectionRow>,
+    ProjectionReadError
+  >;
+  readonly listProjectedProcessExecutionUnavailable?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<ProcessExecutionUnavailableProjectionRow>,
     ProjectionReadError
   >;
   readonly listSandboxRecoveryBindingFailures?: (
@@ -1421,6 +1428,25 @@ export const deriveProjectAttention = (
           summary:
             "Required sandbox capabilities are unavailable; execution did not start.",
           occurredAt: row.firstDetectedAt,
+        })),
+      ];
+    }
+    if (deps.listProjectedProcessExecutionUnavailable !== undefined) {
+      const unavailable =
+        yield* deps.listProjectedProcessExecutionUnavailable(projectId);
+      rows = [
+        ...rows.filter((row) => row.source !== "ProcessExecutionUnavailable"),
+        ...unavailable.map((row) => ({
+          source: "ProcessExecutionUnavailable" as const,
+          severity: "ActionRequired" as const,
+          targetWorkspaceId: row.workspaceId,
+          dedupKey: row.attentionFactId,
+          summary:
+            row.reasonCode === "ProcessExecutionDisabled"
+              ? "Process execution is disabled for this daemon; the action was not started."
+              : "No qualified Native OS process tuple is available; the action was not started.",
+          occurredAt: row.occurredAt,
+          failureCode: row.reasonCode,
         })),
       ];
     }

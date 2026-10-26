@@ -9,6 +9,7 @@ import {
   invocationAuthoritySourceRevisionOf,
   type LeaseFencingRejected,
   type NoEffectDenialCode,
+  sha256Hex,
   type ToolExecutionFence,
   type ToolInvocationIntent,
   type ToolInvocationRecord,
@@ -318,9 +319,27 @@ export const ToolInvocationStoreLive: Layer.Layer<
         settledAt,
         executionFence,
         fenceNow,
+        sourceIdentity,
       ) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          const nativeProcessModeDenial =
+            reasonCode === "ProcessExecutionDisabled" ||
+            reasonCode === "NativeOsTupleUnavailable";
+          if (
+            nativeProcessModeDenial &&
+            (sourceIdentity === undefined ||
+              sourceIdentity.executionId !== invocation.executionId ||
+              invocation.toolName !== "shell")
+          ) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "ToolInvocationStore",
+                "record-no-effect-denial",
+                "Native process denial requires the exact P3 source identity",
+              ),
+            );
+          }
           const gate = yield* checkFenceAndStop(
             invocation.executionId,
             executionFence,
@@ -328,6 +347,82 @@ export const ToolInvocationStoreLive: Layer.Layer<
           );
           if (gate === "ExecutionStopping") return gate;
           const p39RecoveryColumns = yield* hasP39RecoveryColumns();
+          const nativeSourcePredicate =
+            nativeProcessModeDenial && sourceIdentity !== undefined
+              ? ` AND invocation_id = ?
+                  AND execution_id = ?
+                  AND workspace_id = ?
+                  AND tool_name = ?
+                  AND tool_version = ?
+                  AND side_effect_semantics = ?
+                  AND arguments_json = ?
+                  AND resolved_regions_json = ?
+                  AND approval_id IS ?
+                  AND intent_at = ?
+                  AND EXISTS (
+                    SELECT 1
+                      FROM agent_loop_step_actions AS act
+                      JOIN agent_loop_steps AS step
+                        ON step.execution_id = act.execution_id
+                       AND step.logical_step_no = act.logical_step_no
+                       AND step.repair_attempt = act.repair_attempt
+                     WHERE act.execution_id = tool_invocations.execution_id
+                       AND act.logical_step_no = ?
+                       AND act.repair_attempt = ?
+                       AND act.logical_action_id = ?
+                       AND act.action_index = ?
+                       AND act.call_ref = ?
+                       AND act.state = 'Pending'
+                       AND act.route_kind = 'Executable'
+                       AND act.action_kind = tool_invocations.tool_name
+                       AND act.input_hash = ?
+                       AND step.provider_turn_id = ?
+                  )
+                  AND EXISTS (
+                    SELECT 1
+                      FROM executions AS e
+                      JOIN execution_leases AS l
+                        ON l.execution_id = e.execution_id
+                     WHERE e.execution_id = tool_invocations.execution_id
+                       AND e.workspace_id = tool_invocations.workspace_id
+                       AND e.settled_at IS NULL
+                       AND e.stop_requested_at IS NULL
+                       AND l.worker_id = ?
+                       AND l.worker_incarnation_id = ?
+                       AND l.generation = ?
+                       AND l.expires_at > ?
+                  )`
+              : "";
+          const nativeSourceParameters =
+            nativeProcessModeDenial && sourceIdentity !== undefined
+              ? [
+                  invocation.invocationId,
+                  invocation.executionId,
+                  invocation.workspaceId,
+                  invocation.toolName,
+                  invocation.toolVersion,
+                  invocation.sideEffectSemantics,
+                  invocation.argumentsJson,
+                  JSON.stringify(invocation.resolvedRegions),
+                  invocation.approvalId,
+                  invocation.intentAt,
+                  sourceIdentity.logicalStepNo,
+                  sourceIdentity.repairAttempt,
+                  sourceIdentity.logicalActionId,
+                  sourceIdentity.actionIndex,
+                  sourceIdentity.callRef,
+                  sha256Hex(invocation.argumentsJson),
+                  sourceIdentity.providerTurnId,
+                  executionFence.workerId,
+                  executionFence.workerIncarnationId,
+                  executionFence.fencingGeneration,
+                  fenceNow ?? settledAt,
+                ]
+              : [];
+          const nativeReplaySourcePredicate = nativeSourcePredicate.replace(
+            "act.state = 'Pending'",
+            "act.state IN ('Pending', 'TerminalRejected')",
+          );
 
           const existingRows = yield* run(
             sql.unsafe<InvocationRow>(
@@ -338,7 +433,11 @@ export const ToolInvocationStoreLive: Layer.Layer<
           const existing = existingRows[0];
           if (existing !== undefined) {
             const record = toRecord(existing);
-            if (!assertSameIntent(record, invocation)) {
+            if (
+              !assertSameIntent(record, invocation) ||
+              (nativeProcessModeDenial &&
+                existing.intent_at !== invocation.intentAt)
+            ) {
               return yield* Effect.fail(
                 persistenceCorruption(
                   "ToolInvocationStore",
@@ -353,6 +452,26 @@ export const ToolInvocationStoreLive: Layer.Layer<
                 record.settlement.reasonCode === reasonCode &&
                 record.effectAdmissionState === "NotAdmitted"
               ) {
+                if (nativeProcessModeDenial) {
+                  const exactSource = yield* run(
+                    sql.unsafe<{ readonly invocation_id: string }>(
+                      `SELECT invocation_id FROM tool_invocations
+                        WHERE settled_at IS NOT NULL
+                          AND effect_admission_state = 'NotAdmitted'
+                          ${nativeReplaySourcePredicate}`,
+                      nativeSourceParameters,
+                    ),
+                  );
+                  if (exactSource.length !== 1) {
+                    return yield* Effect.fail(
+                      persistenceCorruption(
+                        "ToolInvocationStore",
+                        "record-no-effect-denial",
+                        "committed Native denial no longer matches its exact P3/P4 source or lease",
+                      ),
+                    );
+                  }
+                }
                 return record;
               }
               return yield* Effect.fail(
@@ -379,6 +498,15 @@ export const ToolInvocationStoreLive: Layer.Layer<
             });
             let updated: ReadonlyArray<{ readonly invocation_id: string }>;
             if (p39RecoveryColumns) {
+              if (nativeProcessModeDenial && sourceIdentity === undefined) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "ToolInvocationStore",
+                    "record-no-effect-denial",
+                    "Native process denial source identity is missing",
+                  ),
+                );
+              }
               const stateRows = yield* run(
                 sql.unsafe<{
                   readonly recovery_binding_state: string;
@@ -433,6 +561,7 @@ export const ToolInvocationStoreLive: Layer.Layer<
                         SELECT 1 FROM tool_invocation_effect_attempts AS a
                          WHERE a.invocation_id = tool_invocations.invocation_id
                            AND a.admission_state <> 'NotAdmitted')
+                      ${nativeSourcePredicate}
                     RETURNING invocation_id`,
                   [
                     settledAt,
@@ -440,6 +569,7 @@ export const ToolInvocationStoreLive: Layer.Layer<
                     invocation.invocationId,
                     state.recovery_binding_state,
                     state.recovery_binding_sha256,
+                    ...nativeSourceParameters,
                   ],
                 ),
               );
@@ -451,8 +581,14 @@ export const ToolInvocationStoreLive: Layer.Layer<
                           settlement_json = ?, result_ref = NULL
                     WHERE invocation_id = ? AND settled_at IS NULL
                       AND effect_admission_state = 'NotAdmitted'
+                      ${nativeSourcePredicate}
                     RETURNING invocation_id`,
-                  [settledAt, denialJson, invocation.invocationId],
+                  [
+                    settledAt,
+                    denialJson,
+                    invocation.invocationId,
+                    ...nativeSourceParameters,
+                  ],
                 ),
               );
             }
@@ -466,6 +602,15 @@ export const ToolInvocationStoreLive: Layer.Layer<
               );
             }
           } else {
+            if (nativeProcessModeDenial) {
+              return yield* Effect.fail(
+                persistenceCorruption(
+                  "ToolInvocationStore",
+                  "record-no-effect-denial",
+                  "Native process denial requires an existing durable P4 intent",
+                ),
+              );
+            }
             const denialJson = JSON.stringify({
               _tag: "Denied",
               reasonCode,

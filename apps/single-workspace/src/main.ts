@@ -47,6 +47,7 @@ import {
   projectResourceProfilesFromEnvironment,
 } from "./project-resource-profiles.js";
 import {
+  bindProcessExecutionModeSnapshot,
   findArborConfigFile,
   providerDeploymentOfConfig,
 } from "./provider-config.js";
@@ -58,9 +59,9 @@ import { startWebTransport } from "./transport/server.js";
 
 /** The production composition entry: build the single-workspace slice layer
  * with every frozen production capability assembled (B-7). */
-export const main = (
+export const productionSingleWorkspaceConfig = (
   overrides: Partial<SingleWorkspaceConfig> = {},
-): ReturnType<typeof buildSingleWorkspaceLayer> => {
+): SingleWorkspaceConfig => {
   const authenticator = authenticatorFromEnv();
   // Standard config file (arbor.config.json) is the primary provider source;
   // legacy env vars remain a compatibility fallback; absent both = fake.
@@ -75,25 +76,34 @@ export const main = (
       ? providerDeploymentOfConfig(configFile.config)
       : undefined;
   const deployment = fromConfig?.deployment ?? deploymentFromEnv();
-  return buildSingleWorkspaceLayer({
-    databaseFile: process.env.ARBOR_DB ?? "./arbor-slice.db",
-    ...(process.env.ARBOR_PROJECT_ID !== undefined
-      ? { projectId: process.env.ARBOR_PROJECT_ID as never }
-      : {}),
-    ...(authenticator !== undefined ? { authenticator } : {}),
-    ...(deployment !== undefined
-      ? {
-          deployment,
-          modelRef: deployment.modelRef,
-          secretRef: deployment.secretRef,
-          ...(fromConfig?.secretStore !== undefined
-            ? { secretStore: fromConfig.secretStore }
-            : {}),
-        }
-      : {}),
-    ...overrides,
-  });
+  const compositionOverrides = bindProcessExecutionModeSnapshot(
+    configFile?.ok === true ? configFile.config : undefined,
+    {
+      databaseFile: process.env.ARBOR_DB ?? "./arbor-slice.db",
+      ...(process.env.ARBOR_PROJECT_ID !== undefined
+        ? { projectId: process.env.ARBOR_PROJECT_ID as never }
+        : {}),
+      ...(authenticator !== undefined ? { authenticator } : {}),
+      ...(deployment !== undefined
+        ? {
+            deployment,
+            modelRef: deployment.modelRef,
+            secretRef: deployment.secretRef,
+            ...(fromConfig?.secretStore !== undefined
+              ? { secretStore: fromConfig.secretStore }
+              : {}),
+          }
+        : {}),
+      ...overrides,
+    },
+  );
+  return compositionOverrides;
 };
+
+export const main = (
+  overrides: Partial<SingleWorkspaceConfig> = {},
+): ReturnType<typeof buildSingleWorkspaceLayer> =>
+  buildSingleWorkspaceLayer(productionSingleWorkspaceConfig(overrides));
 
 /** Real-provider wiring (P16 `01` §5 — formalized as a ModelDeployment;
  * construction only, resolution happens in the Composition Root):

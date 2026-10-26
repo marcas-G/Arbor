@@ -125,6 +125,13 @@ export interface ModelDecisionOptions {
     | ((executionId: string, event: ProviderRuntimeProgress) => void)
     | undefined;
   readonly qualificationProbe?: AgentLoopQualificationProbe;
+  /** Exact P4 recovery candidate selected from a bound NotAdmitted invocation.
+   * It permits replaying its persisted ProviderTurn before its successor. */
+  readonly resumeExactActionStepIdentity?: {
+    readonly executionId: Execution["executionId"];
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+  };
 }
 
 export interface ModelDecisionDependencies {
@@ -1422,6 +1429,14 @@ export const runModelDecision = (
           );
         }
       }
+    }
+    const resumeExactActionStepIdentity = options.resumeExactActionStepIdentity;
+    if (
+      resumeExactActionStepIdentity !== undefined &&
+      resumeExactActionStepIdentity.executionId === input.execution.executionId
+    ) {
+      turn = resumeExactActionStepIdentity.logicalStepNo;
+      repairAttempt = resumeExactActionStepIdentity.repairAttempt;
     }
     while (true) {
       const controlBasis = yield* currentControlBasis();

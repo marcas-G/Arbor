@@ -30,6 +30,7 @@ export type AttentionSource =
   | "SandboxProviderUnavailable"
   | "SandboxRecoveryBindingFailure"
   | "SandboxPolicyDecisionRequired"
+  | "ProcessExecutionUnavailable"
   | "F18VerificationSignalReconciliation"
   | "TerminalProviderFailure"
   | "TerminalProviderFailureIntegrity"

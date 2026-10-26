@@ -82,7 +82,7 @@ import {
   type LeaseService,
   OwnershipWriteService,
   type PermissionGrantRepository,
-  type ProjectEnvironmentPort,
+  ProjectEnvironmentPort,
   ProjectionQueryPort,
   ProjectionStore,
   ProjectRepository,
@@ -366,6 +366,7 @@ export type ProductionDaemonServices =
   | ExecutableApprovalStore
   | WorkflowSignalConsumer
   | EnvironmentResolverPort
+  | ProjectEnvironmentPort
   | RecordEnvironmentChange
   | EnvironmentRevisionStore
   | BlobStorePort
@@ -401,6 +402,7 @@ export const ProductionDaemonServiceLive = (
       const attentionProjection = yield* AttentionProjectionStore;
       const activationIntents = yield* WorkspaceResourceActivationStore;
       const ownershipWrite = yield* OwnershipWriteService;
+      const projectEnvironment = yield* ProjectEnvironmentPort;
       const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
       const verificationSignalReconciliation = yield* Effect.serviceOption(
         VerificationSignalReconciliationStore,
@@ -723,6 +725,8 @@ export const ProductionDaemonServiceLive = (
                   put: (record) =>
                     tx.transact(formationFulfillments.put(record)),
                 },
+                ownershipWrite,
+                environment: projectEnvironment,
               },
             }),
             verificationConsumerDaemon({
@@ -919,12 +923,20 @@ export const ProductionDaemonServiceLive = (
             continue;
           }
           yield* Effect.match(
-            ownershipWrite.activatePendingWorkspaceResource(
-              intent.projectId,
-              intent.workspaceId,
-              intent.resourceBoundaryRevision,
-              workspace.value.resourceBoundary.addresses,
-            ),
+            intent.delegation === null || intent.delegation === undefined
+              ? ownershipWrite.activatePendingWorkspaceResource(
+                  intent.projectId,
+                  intent.workspaceId,
+                  intent.resourceBoundaryRevision,
+                  workspace.value.resourceBoundary.addresses,
+                )
+              : ownershipWrite.activateDelegatedOwnership({
+                  projectId: intent.projectId,
+                  childWorkspaceId: intent.workspaceId,
+                  childResourceBoundaryRevision:
+                    intent.resourceBoundaryRevision,
+                  delegationSourceId: intent.delegation.delegationSourceId,
+                }),
             {
               onFailure: () => undefined,
               onSuccess: () => undefined,

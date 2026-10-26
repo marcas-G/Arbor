@@ -1,9 +1,6 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { Effect } from "effect";
-import {
-  main,
-  runDaemonForever,
-} from "../../../apps/single-workspace/dist/main.js";
+import { runDaemonForever } from "../../../apps/single-workspace/dist/main.js";
 import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
@@ -17,6 +14,7 @@ import {
   createAh19StartupDiagnosticProbe,
   createFunctionalDaemonListenReporter,
 } from "./functional-daemon-lifecycle.mjs";
+import { functionalTestMain } from "./functional-test-composition.mjs";
 
 const sourceFilename = process.env.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE;
 if (sourceFilename === undefined || sourceFilename.length === 0) {
@@ -62,7 +60,9 @@ const pauseAtAhBoundary = async (event) => {
   await new Promise(() => {});
 };
 const toolQualificationProbe =
-  targetAhBoundary === "AH7AfterToolIntentCommit"
+  targetAhBoundary === "AH7AfterToolIntentCommit" ||
+  targetAhBoundary === "NativeProcessModeDenialBeforeCommit" ||
+  targetAhBoundary === "NativeProcessModeDenialAfterCommit"
     ? pauseAtAhBoundary
     : undefined;
 const executableToolQualificationProbe = async (event) => {
@@ -116,7 +116,9 @@ const config = {
   // The process test commits an initially current policy, then changes the
   // protected V2 pair and kills this daemon before another scheduler tick.
   tickIntervalMs: Number(process.env.ARBOR_TICK_INTERVAL_MS ?? "60000"),
-  ...(targetAhBoundary === "AH7AfterToolIntentCommit"
+  ...(targetAhBoundary === "AH7AfterToolIntentCommit" ||
+  targetAhBoundary === "NativeProcessModeDenialBeforeCommit" ||
+  targetAhBoundary === "NativeProcessModeDenialAfterCommit"
     ? { toolQualificationProbe: pauseAtAhBoundary }
     : {}),
 };
@@ -124,7 +126,7 @@ const daemonProgram = runDaemonForever(config);
 await Effect.runPromise(
   Effect.provide(
     Effect.scoped(daemonProgram),
-    main({
+    functionalTestMain({
       projectResourceProfiles,
       trustedHostConfigurationSource,
       startupDiagnosticProbe,
@@ -135,5 +137,9 @@ await Effect.runPromise(
         ? {}
         : { toolQualificationProbe }),
     }),
+    {
+      allowTrustedLocalProcessExecution:
+        process.env.ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION === "1",
+    },
   ),
 );

@@ -239,6 +239,11 @@ export const WorkspaceRepositoryLive: Layer.Layer<
           "UPDATE workspaces SET lifecycle = 'Retired', revision = ?, updated_at = ? WHERE workspace_id = ? AND revision = ?",
           (now) => [newRevision, now, workspaceId, expectedRevision],
         ),
+      bumpRevisionIfRevision: (workspaceId, expectedRevision, newRevision) =>
+        cas(
+          "UPDATE workspaces SET revision = ?, updated_at = ? WHERE workspace_id = ? AND revision = ?",
+          (now) => [newRevision, now, workspaceId, expectedRevision],
+        ),
       countActiveChildren: (workspaceId) =>
         Effect.gen(function* () {
           yield* TransactionScope;

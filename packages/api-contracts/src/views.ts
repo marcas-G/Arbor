@@ -74,6 +74,7 @@ export type AttentionSource =
   | "SandboxProviderUnavailable"
   | "SandboxRecoveryBindingFailure"
   | "SandboxPolicyDecisionRequired"
+  | "ProcessExecutionUnavailable"
   | "F18VerificationSignalReconciliation"
   | "TerminalProviderFailure"
   | "TerminalProviderFailureIntegrity"
@@ -92,6 +93,7 @@ export const ATTENTION_SOURCES: ReadonlyArray<AttentionSource> = [
   "SandboxProviderUnavailable",
   "SandboxRecoveryBindingFailure",
   "SandboxPolicyDecisionRequired",
+  "ProcessExecutionUnavailable",
   "F18VerificationSignalReconciliation",
   "TerminalProviderFailure",
   "TerminalProviderFailureIntegrity",

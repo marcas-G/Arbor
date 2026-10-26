@@ -137,6 +137,35 @@ describe("P6-005 formation path + payload shape (unit)", () => {
     expect(isChildWorkspaceProposal(null)).toBe(false);
     expect(isChildWorkspaceProposal(undefined)).toBe(false);
   });
+
+  it("accepts only a bounded unique exact subset for ownership delegation", () => {
+    const address = { _tag: "FileTree" as const, path: "src/child" };
+    const proposal = {
+      ...minimalProposal(),
+      resourceBoundaryDraft: {
+        ...minimalProposal().resourceBoundaryDraft,
+        addresses: [address],
+      },
+      resourceOwnershipDelegation: { addresses: [address] },
+    };
+    expect(isChildWorkspaceProposal(proposal)).toBe(true);
+    expect(
+      isChildWorkspaceProposal({
+        ...proposal,
+        resourceOwnershipDelegation: {
+          addresses: [{ _tag: "FileTree", path: "src/other" }],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isChildWorkspaceProposal({
+        ...proposal,
+        resourceOwnershipDelegation: {
+          addresses: Array.from({ length: 17 }, () => address),
+        },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("P6-005 ProposeChildWorkspace handler (Story B core)", () => {

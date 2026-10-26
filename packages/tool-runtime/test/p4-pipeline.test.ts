@@ -533,6 +533,9 @@ interface PipelineFaults {
 }
 
 interface PipelineTrace {
+  processExecutionMode?: "Disabled" | "NativeOsSupportedOnly";
+  nativeOsSupportedTupleAvailable?: boolean;
+  testOnlyAllowTrustedLocalProcessExecution?: boolean;
   readonly noEffectDenials: Array<string>;
   readonly events: Array<string>;
   approvalConsumer: string | null;
@@ -892,9 +895,12 @@ const app = (
         settledAt: string,
       ) =>
         Effect.sync(() => {
-          trace?.noEffectDenials.push(reasonCode);
-          trace?.events.push("denied");
-          return {
+          if (trace !== undefined) {
+            trace.noEffectDenials.push(reasonCode);
+            trace.events.push("denied");
+            trace.settlementWrites = (trace.settlementWrites ?? 0) + 1;
+          }
+          const deniedRecord = {
             ...invocation,
             effectAdmissionState: "NotAdmitted" as const,
             settledAt,
@@ -904,6 +910,14 @@ const app = (
             },
             resultRef: null,
           };
+          if (
+            trace?.persistSandboxInvocations === true &&
+            trace.persistedSandboxInvocation?.invocationId ===
+              invocation.invocationId
+          ) {
+            trace.persistedSandboxInvocation = deniedRecord;
+          }
+          return deniedRecord;
         }),
       recordNoEffectInterruption: (
         _id: typeof invocationId,
@@ -1202,9 +1216,14 @@ const app = (
             },
           } as never),
         );
-  const toolRuntime = ToolRuntimeLive(
-    [executor],
-    trace === undefined
+  const toolRuntime = ToolRuntimeLive([executor], {
+    processExecutionMode:
+      trace?.processExecutionMode ?? "NativeOsSupportedOnly",
+    nativeOsSupportedTupleAvailable:
+      trace?.nativeOsSupportedTupleAvailable ?? true,
+    testOnlyAllowTrustedLocalProcessExecution:
+      trace?.testOnlyAllowTrustedLocalProcessExecution ?? false,
+    ...(trace === undefined
       ? {}
       : {
           qualificationProbe: async (event) => {
@@ -1217,8 +1236,8 @@ const app = (
               await trace.afterAuthorityResolved?.();
             }
           },
-        },
-  );
+        }),
+  });
   const p39Deps = !p39BindingEnabled
     ? executableApprovalDeps
     : Layer.mergeAll(
@@ -2315,7 +2334,7 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.effectAdmissions).toBe(1);
   });
 
-  it("runs only the exact explicit TrustedLocalUnconfinedV1 runtime branch", async () => {
+  it("rejects a newly received process action before writing intent when Disabled", async () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],
       events: [],
@@ -2323,6 +2342,202 @@ describe("P4 tool runtime pipeline", () => {
       intentWrites: 0,
       effectAdmissions: 0,
       approvalConsumes: 0,
+      processExecutionMode: "Disabled",
+      sandboxCapabilities: [
+        sandboxCapability("bwrap", "Supported", "0.8.0"),
+        sandboxCapability("TrustedLocal", "Supported", "builtin-v1"),
+      ],
+    };
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(processPolicy(processEpisode)),
+    );
+    expect(result).toMatchObject({
+      _tag: "Denied",
+      reasonCode: "ProcessExecutionDisabled",
+      reason:
+        "Process execution is disabled for this daemon; the action was not started.",
+    });
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+    expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
+    expect(trace.intentWrites).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(trace.settlementWrites ?? 0).toBe(0);
+  });
+
+  it("rejects a newly received process action when Native mode has no qualified tuple", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      processExecutionMode: "NativeOsSupportedOnly",
+      nativeOsSupportedTupleAvailable: false,
+    };
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(processPolicy(processEpisode)),
+    );
+    expect(result).toMatchObject({
+      _tag: "Denied",
+      reasonCode: "NativeOsTupleUnavailable",
+      reason:
+        "No qualified Native OS process tuple is available; the action was not started.",
+    });
+    expect(trace.intentWrites).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+    expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
+  });
+
+  it.each([
+    {
+      processExecutionMode: "Disabled" as const,
+      nativeOsSupportedTupleAvailable: true,
+      reasonCode: "ProcessExecutionDisabled" as const,
+    },
+    {
+      processExecutionMode: "NativeOsSupportedOnly" as const,
+      nativeOsSupportedTupleAvailable: false,
+      reasonCode: "NativeOsTupleUnavailable" as const,
+    },
+  ])(
+    "terminalizes an already durable NotAdmitted process action before effect admission ($reasonCode)",
+    async ({
+      processExecutionMode,
+      nativeOsSupportedTupleAvailable,
+      reasonCode,
+    }) => {
+      const trace: PipelineTrace = {
+        noEffectDenials: [],
+        events: [],
+        approvalConsumer: null,
+        intentWrites: 0,
+        effectAdmissions: 0,
+        approvalConsumes: 0,
+        processExecutionMode,
+        nativeOsSupportedTupleAvailable,
+        persistSandboxInvocations: true,
+        sandboxCapabilities: [
+          sandboxCapability("bwrap", "Supported", "0.8.0"),
+          sandboxCapability("TrustedLocal", "Supported", "builtin-v1"),
+        ],
+        persistedSandboxInvocation: {
+          invocationId,
+          executionId,
+          workspaceId,
+          toolName: "read",
+          toolVersion: "2",
+          sideEffectSemantics: "ReadOnly",
+          argumentsJson: '{"target":{"mount":"workspace","path":"."}}',
+          resolvedRegions: [
+            {
+              resourceSpaceId: "filesystem",
+              normalizedRegion: fixtureWorkspaceAddresses[0],
+            },
+          ],
+          approvalId: null,
+          effectAdmissionState: "NotAdmitted",
+          intentAt: "2026-01-01T00:00:00.000Z",
+          settledAt: null,
+          settlement: null,
+          resultRef: null,
+        },
+      };
+      const result = await run(
+        app(false, processExecutor, {}, trace),
+        '{"target":{"mount":"workspace","path":"."}}',
+        null,
+        processContext(processPolicy(processEpisode)),
+      );
+      expect(result).toMatchObject({
+        _tag: "Denied",
+        reasonCode,
+      });
+      expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+      expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
+      expect(trace.intentWrites).toBe(0);
+      expect(trace.effectAdmissions).toBe(0);
+      expect(trace.settlementWrites).toBe(1);
+      expect(trace.persistedSandboxInvocation?.settlement).toEqual({
+        _tag: "Denied",
+        reasonCode,
+      });
+      expect(trace.persistedSandboxInvocation?.effectAdmissionState).toBe(
+        "NotAdmitted",
+      );
+      const replay = await run(
+        app(false, processExecutor, {}, trace),
+        '{"target":{"mount":"workspace","path":"."}}',
+        null,
+        processContext(processPolicy(processEpisode)),
+      );
+      expect(replay).toMatchObject({
+        _tag: "Denied",
+        reasonCode,
+      });
+      expect(trace.effectAdmissions).toBe(0);
+      expect(trace.settlementWrites).toBe(1);
+      expect(trace.persistedSandboxInvocation?.effectAdmissionState).toBe(
+        "NotAdmitted",
+      );
+    },
+  );
+
+  it("does not use TrustedLocal as a Native mode fallback", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      sandboxCapabilities: [],
+    };
+    const policy: SandboxProcessPolicy = {
+      ...processPolicy(processEpisode),
+      kind: "TrustedLocalUnconfinedRuntimePolicy",
+      profile: "FullAccess",
+      providerId: "TrustedLocal",
+      providerVersion: "builtin-v1",
+      capabilityRevision: "builtin-v1",
+      boundary: "TrustedLocal",
+      trustedRuntimeIdentity: "TrustedLocal",
+      trustedRuntimeVersion: "builtin-v1",
+      networkBoundary: "Unconfined",
+    };
+    const result = await run(
+      app(false, processExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      null,
+      processContext(policy),
+    );
+    expect(result).toMatchObject({
+      _tag: "SandboxProviderUnavailable",
+      failureCode: "NativeOsProviderRequired",
+      providerId: "TrustedLocal",
+    });
+    expect(trace.trustedLocalProcessRuns ?? 0).toBe(0);
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+  });
+
+  it("uses TrustedLocal only when the test harness explicitly injects it", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      processExecutionMode: "Disabled",
+      nativeOsSupportedTupleAvailable: false,
+      testOnlyAllowTrustedLocalProcessExecution: true,
       sandboxCapabilities: [],
     };
     const policy: SandboxProcessPolicy = {

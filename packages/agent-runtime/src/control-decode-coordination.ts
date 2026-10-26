@@ -27,6 +27,7 @@ const decodeChildWorkspaceProposal = (
         "rationale",
         "responsibilityDraft",
         "resourceBoundaryDraft",
+        "resourceOwnershipDelegation",
         "initialWork",
       ]) ||
       typeof object.name !== "string" ||
@@ -125,6 +126,59 @@ const decodeChildWorkspaceProposal = (
           readonly path: string;
         },
     );
+    let resourceOwnershipDelegation:
+      | { readonly addresses: ReadonlyArray<(typeof addresses)[number]> }
+      | undefined;
+    if (object.resourceOwnershipDelegation !== undefined) {
+      const rawDelegation = object.resourceOwnershipDelegation;
+      if (
+        typeof rawDelegation !== "object" ||
+        rawDelegation === null ||
+        Array.isArray(rawDelegation)
+      ) {
+        return yield* invalidControlArguments(
+          invocation.toolName,
+          "resourceOwnershipDelegation must be an object",
+        );
+      }
+      const delegation = rawDelegation as Record<string, unknown>;
+      if (
+        !hasOnlyControlFields(delegation, ["addresses"]) ||
+        !Array.isArray(delegation.addresses) ||
+        delegation.addresses.length === 0 ||
+        delegation.addresses.length > 16
+      ) {
+        return yield* invalidControlArguments(
+          invocation.toolName,
+          "resourceOwnershipDelegation.addresses must contain 1 to 16 approved boundary addresses",
+        );
+      }
+      const identity = (item: unknown): string | null => {
+        if (typeof item !== "object" || item === null || Array.isArray(item))
+          return null;
+        const value = item as Record<string, unknown>;
+        return value._tag === "FileTree" || value._tag === "GitWorktree"
+          ? typeof value.path === "string" && value.path.length <= 4096
+            ? `${value._tag}:${value.path}`
+            : null
+          : null;
+      };
+      const delegatedIdentities = delegation.addresses.map(identity);
+      if (
+        delegatedIdentities.some((value) => value === null) ||
+        new Set(delegatedIdentities).size !== delegatedIdentities.length
+      ) {
+        return yield* invalidControlArguments(
+          invocation.toolName,
+          "ownership delegation must contain unique bounded addresses; canonical boundary containment is enforced during activation",
+        );
+      }
+      resourceOwnershipDelegation = {
+        addresses: delegation.addresses as ReadonlyArray<
+          (typeof addresses)[number]
+        >,
+      };
+    }
     let initialWork:
       | Extract<
           AgentAction,
@@ -245,6 +299,9 @@ const decodeChildWorkspaceProposal = (
         interfaces,
       },
       resourceBoundaryDraft: { addresses },
+      ...(resourceOwnershipDelegation === undefined
+        ? {}
+        : { resourceOwnershipDelegation }),
       ...(initialWork === undefined ? {} : { initialWork }),
     };
   });

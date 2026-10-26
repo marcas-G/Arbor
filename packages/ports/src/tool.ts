@@ -451,6 +451,7 @@ export interface ToolInvocationStoreService {
     settledAt: string,
     executionFence: ToolExecutionFence,
     fenceNow?: string,
+    sourceIdentity?: RecoveryBindingSourceIdentity,
   ) => Effect.Effect<
     ToolInvocationRecord | "ExecutionStopping",
     ToolInvocationStoreError,

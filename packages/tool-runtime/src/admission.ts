@@ -1,5 +1,8 @@
 import {
   type CanonicalResourceRegion,
+  isValidOwnershipRegion,
+  ownershipRegionRelation,
+  ownershipRegionsOverlap,
   regionContains,
   type WorkspaceId,
 } from "@arbor/domain";
@@ -54,11 +57,67 @@ export const ResourceAdmissionLive: Layer.Layer<
           }
         }
         if (input.write) {
-          const claims = yield* ownership.listActiveByWorkspace(
-            input.workspaceId,
+          const resourceSpaceIds = [
+            ...new Set(input.regions.map((region) => region.resourceSpaceId)),
+          ];
+          const claimsBySpace = yield* Effect.forEach(
+            resourceSpaceIds,
+            (resourceSpaceId) => ownership.loadActiveConflicts(resourceSpaceId),
           );
+          const claims = claimsBySpace.flat();
+          if (
+            claims.some(
+              (claim) =>
+                !isValidOwnershipRegion(
+                  {
+                    allow: claim.region,
+                    exclusions: claim.exclusions ?? [],
+                  },
+                  resourceRegionComparator,
+                ),
+            )
+          ) {
+            return deny("active ownership claim is malformed");
+          }
+          for (let left = 0; left < claims.length; left += 1) {
+            const leftClaim = claims[left];
+            if (leftClaim === undefined) continue;
+            for (let right = left + 1; right < claims.length; right += 1) {
+              const rightClaim = claims[right];
+              if (
+                rightClaim !== undefined &&
+                ownershipRegionsOverlap(
+                  {
+                    allow: leftClaim.region,
+                    exclusions: leftClaim.exclusions ?? [],
+                  },
+                  {
+                    allow: rightClaim.region,
+                    exclusions: rightClaim.exclusions ?? [],
+                  },
+                  resourceRegionComparator,
+                )
+              ) {
+                return deny("active effective ownership claims overlap");
+              }
+            }
+          }
           for (const region of input.regions) {
-            if (!claims.some((claim) => contains(claim.region, region))) {
+            if (
+              !claims.some(
+                (claim) =>
+                  claim.workspaceId === input.workspaceId &&
+                  claim.region.resourceSpaceId === region.resourceSpaceId &&
+                  ownershipRegionRelation(
+                    {
+                      allow: claim.region,
+                      exclusions: claim.exclusions ?? [],
+                    },
+                    region,
+                    resourceRegionComparator,
+                  ) === "Contained",
+              )
+            ) {
               return deny("region not owned");
             }
           }

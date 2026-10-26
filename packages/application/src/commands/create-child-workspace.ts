@@ -17,9 +17,11 @@ import type {
   PendingDomainEvent,
   SessionRepositoryService,
   WorkspaceRepositoryService,
+  WorkspaceResourceActivationStoreService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
+import type { FormationDelegationApproval } from "../formation-plan.js";
 import type { CommandHandler } from "../gateway.js";
 
 export interface CreateChildWorkspacePayload {
@@ -38,6 +40,7 @@ export interface CreateChildWorkspacePayload {
   readonly workspacePolicy: WorkspacePolicy;
   readonly workspacePolicyRevision: Revision;
   readonly revision: Revision;
+  readonly ownershipDelegationApproval?: FormationDelegationApproval;
 }
 
 export interface CreateChildWorkspaceResult {
@@ -50,6 +53,10 @@ export interface CreateChildWorkspaceResult {
 export interface CreateChildWorkspaceDependencies {
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
+  readonly activations?: Pick<
+    WorkspaceResourceActivationStoreService,
+    "insertPending"
+  >;
 }
 
 export const makeCreateChildWorkspaceHandler = (
@@ -100,6 +107,63 @@ export const makeCreateChildWorkspaceHandler = (
           lifecycle: parentWorkspace.lifecycle,
         });
       }
+      const delegation = payload.ownershipDelegationApproval;
+      if (delegation !== undefined) {
+        const identity = (address: unknown): string | null => {
+          if (
+            typeof address !== "object" ||
+            address === null ||
+            Array.isArray(address)
+          )
+            return null;
+          const value = address as Record<string, unknown>;
+          switch (value._tag) {
+            case "FileTree":
+              return typeof value.path === "string"
+                ? `FileTree:${value.path}`
+                : null;
+            case "GitWorktree":
+              return typeof value.path === "string"
+                ? `GitWorktree:${value.path}:${String(value.repositoryRef ?? "")}:${String(value.branch ?? "")}`
+                : null;
+            case "DatabaseNamespace":
+              return typeof value.namespace === "string"
+                ? `DatabaseNamespace:${value.namespace}`
+                : null;
+            case "ExternalResource":
+              return typeof value.address === "string"
+                ? `ExternalResource:${value.address}`
+                : null;
+            default:
+              return null;
+          }
+        };
+        const delegatedIdentities = delegation.addresses.map(identity);
+        if (
+          dependencies.activations === undefined ||
+          delegation.delegationSourceId !==
+            `formation:${delegation.formationProposalId}:${delegation.formationProposalRevision}` ||
+          delegation.parentWorkspaceId !== payload.parentWorkspaceId ||
+          delegation.expectedParentWorkspaceRevision !==
+            parentWorkspace.revision ||
+          delegation.expectedParentBoundaryRevision !==
+            parentWorkspace.resourceBoundaryRevision ||
+          delegation.expectedChildWorkspaceRevision !== payload.revision ||
+          delegation.expectedParentOwnershipRevision < 0 ||
+          !Number.isSafeInteger(delegation.expectedParentOwnershipRevision) ||
+          delegation.expectedChildOwnershipRevision !== 0 ||
+          delegation.addresses.length === 0 ||
+          delegation.addresses.length > 16 ||
+          delegatedIdentities.some((value) => value === null) ||
+          new Set(delegatedIdentities).size !== delegatedIdentities.length
+        ) {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason:
+              "formation ownership delegation approval binding is invalid or stale",
+          });
+        }
+      }
 
       yield* dependencies.workspaces.create(
         createWorkspace({
@@ -128,6 +192,26 @@ export const makeCreateChildWorkspaceHandler = (
           contextEpoch: payload.primarySession.contextEpoch,
         }),
       );
+      if (delegation !== undefined) {
+        const activationStore = dependencies.activations;
+        if (activationStore === undefined) {
+          return yield* Effect.die(
+            new Error("S3 formation requires the activation intent store"),
+          );
+        }
+        yield* activationStore.insertPending({
+          projectId: envelope.projectId,
+          workspaceId: payload.workspaceId,
+          resourceBoundaryRevision: payload.resourceBoundaryRevision,
+          status: "Pending",
+          createdAt: envelope.issuedAt,
+          updatedAt: envelope.issuedAt,
+          activatedAt: null,
+          delegation: {
+            ...delegation,
+          },
+        });
+      }
 
       const events: PendingDomainEvent[] = [
         {

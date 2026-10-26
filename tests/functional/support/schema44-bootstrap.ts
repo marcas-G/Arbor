@@ -19,6 +19,8 @@ import {
   P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
   P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
   P52_WORK_CONTRACT_REVISION_MIGRATION,
+  P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION,
+  P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
   splitStatements,
@@ -300,6 +302,26 @@ export const upgradeFunctionalSchema48DatabaseToCurrent = async (
       ),
     ),
   );
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        runMigrations([P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION], {
+          allowOfflineOnly: true,
+        }),
+        layer({ filename: databaseFile }),
+      ),
+    ),
+  );
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        runMigrations([P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION], {
+          allowOfflineOnly: true,
+        }),
+        layer({ filename: databaseFile }),
+      ),
+    ),
+  );
   const currentSchema = new DatabaseSync(databaseFile, { readOnly: true });
   try {
     const currentVersion = Number(
@@ -310,11 +332,11 @@ export const upgradeFunctionalSchema48DatabaseToCurrent = async (
       ).user_version,
     );
     if (
-      currentVersion !== 52 ||
+      currentVersion !== 54 ||
       currentSchema.prepare("PRAGMA foreign_key_check").all().length > 0
     ) {
       throw new Error(
-        `Functional disposable schema upgrade ended at ${currentVersion} or failed foreign_key_check; expected schema 52.`,
+        `Functional disposable schema upgrade ended at ${currentVersion} or failed foreign_key_check; expected schema 54.`,
       );
     }
   } finally {
@@ -322,9 +344,9 @@ export const upgradeFunctionalSchema48DatabaseToCurrent = async (
   }
 };
 
-/** Copy the closed schema-44 template, then upgrade a private clone to the
- * current ordinary runtime schema (including exact P51 and P52 offline data
- * backfills). Historical export names below are aliases only. */
+/** Copy the closed schema-44 template, then upgrade a private clone through
+ * the current offline migration prefix. Historical export names below are
+ * aliases only. */
 export const cloneFunctionalCurrentSchemaDatabase = async (
   directory: string,
 ): Promise<{ readonly databaseFile: string; readonly reportFile: string }> => {

@@ -531,6 +531,15 @@ export interface AgentLoopActionDependencies {
   readonly controlRegistry: ControlToolRegistryService;
   readonly controlAuthorizer?: ControlActionAuthorizerService;
   readonly executableInvocationHandler?: ExecutableInvocationHandler;
+  readonly recoverExactNotAdmittedAction?: {
+    readonly executionId: string;
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly providerTurnId: string;
+    readonly logicalActionId: string;
+    readonly actionIndex: number;
+    readonly callRef: string;
+  };
   /** P9-owned durable escalation for an unresolved P4 effect. It runs before
    * P3 persists the terminal OutcomeUnknown action so P9 can use the current
    * Worker fence and unsettled Execution required by DID v1.40. */
@@ -599,6 +608,7 @@ export const executeAgentLoopActions = (
     controlRegistry,
     controlAuthorizer,
     executableInvocationHandler,
+    recoverExactNotAdmittedAction,
     currentControlBasis,
     admit,
     failure,
@@ -894,7 +904,17 @@ export const executeAgentLoopActions = (
         currentLoopStep !== undefined &&
         loopSteps !== undefined &&
         loopStepFence !== undefined &&
-        currentLoopStep.state === "ActionsInProgress"
+        (currentLoopStep.state === "ActionsInProgress" ||
+          (currentLoopStep.state === "NextStepReady" &&
+            recoverExactNotAdmittedAction !== undefined &&
+            recoverExactNotAdmittedAction.executionId ===
+              currentLoopStep.identity.executionId &&
+            recoverExactNotAdmittedAction.logicalStepNo ===
+              currentLoopStep.identity.logicalStepNo &&
+            recoverExactNotAdmittedAction.repairAttempt ===
+              currentLoopStep.identity.repairAttempt &&
+            recoverExactNotAdmittedAction.providerTurnId ===
+              currentLoopStep.providerTurnId))
       ) {
         const existingActions = yield* tx
           .transact(loopSteps.listActions(currentLoopStep.identity))
@@ -931,7 +951,15 @@ export const executeAgentLoopActions = (
             )
             .pipe(Effect.mapError(failure));
         } else if (loopAction.state !== "Pending") {
-          continue;
+          const exactRecovery =
+            loopAction.state === "Applied" &&
+            route._tag === "Executable" &&
+            recoverExactNotAdmittedAction !== undefined &&
+            recoverExactNotAdmittedAction.logicalActionId ===
+              loopAction.logicalActionId &&
+            recoverExactNotAdmittedAction.actionIndex === actionIndex &&
+            recoverExactNotAdmittedAction.callRef === invocation.callRef;
+          if (!exactRecovery) continue;
         }
         if (
           dependencies.qualificationProbe !== undefined &&
@@ -1445,8 +1473,7 @@ export const executeAgentLoopActions = (
             loopAction === undefined ||
             currentLoopStep === undefined ||
             loopSteps === undefined ||
-            loopStepFence === undefined ||
-            currentLoopStep.state !== "ActionsInProgress"
+            loopStepFence === undefined
           ) {
             return false;
           }
@@ -1454,6 +1481,23 @@ export const executeAgentLoopActions = (
           const actionsStep = currentLoopStep;
           const status = resultMetadata.status ?? "Succeeded";
           const disposition = resultMetadata.disposition ?? "Applied";
+          const recoveringAppliedAction =
+            pendingAction.state === "Applied" &&
+            actionsStep.state === "NextStepReady" &&
+            recoverExactNotAdmittedAction !== undefined &&
+            recoverExactNotAdmittedAction.logicalActionId ===
+              pendingAction.logicalActionId &&
+            recoverExactNotAdmittedAction.actionIndex ===
+              pendingAction.actionIndex &&
+            recoverExactNotAdmittedAction.callRef === pendingAction.callRef &&
+            status === "Denied" &&
+            resultMetadata.terminalDenial?._tag === "P4NoEffectDenied";
+          if (
+            currentLoopStep.state !== "ActionsInProgress" &&
+            !recoveringAppliedAction
+          ) {
+            return false;
+          }
           const payload = {
             source,
             observation,
@@ -1557,7 +1601,7 @@ export const executeAgentLoopActions = (
                     identity: pendingAction.identity,
                     actionIndex: pendingAction.actionIndex,
                     expectedRevision: pendingAction.revision,
-                    expectedState: "Pending",
+                    expectedState: pendingAction.state,
                     next: {
                       ...pendingAction,
                       state:
@@ -1582,6 +1626,9 @@ export const executeAgentLoopActions = (
                   },
                   loopStepFence,
                 );
+                if (actionsStep.state === "NextStepReady") {
+                  return actionsStep;
+                }
                 const advancedStep = yield* loopSteps.transition(
                   {
                     identity: actionsStep.identity,

@@ -2824,6 +2824,12 @@ const proposeChildWorkspaceHandler = (
               basisResponsibilityRevision: sender.value.responsibilityRevision,
               addresses: action.proposal.resourceBoundaryDraft.addresses,
             },
+            ...(action.proposal.resourceOwnershipDelegation === undefined
+              ? {}
+              : {
+                  resourceOwnershipDelegation:
+                    action.proposal.resourceOwnershipDelegation,
+                }),
             ...(action.proposal.initialWork === undefined
               ? {}
               : { initialWork: action.proposal.initialWork }),

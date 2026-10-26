@@ -5,15 +5,20 @@ import type {
   Principal,
   ProjectId,
 } from "@arbor/domain";
+import { regionContains } from "@arbor/domain";
 import type {
   FormationFulfillmentRecord,
   FormationFulfillmentStoreError,
+  OwnershipWriteServiceService,
+  ProjectEnvironmentPortService,
   TransactionOperationalFailure,
 } from "@arbor/ports";
+import { resourceRegionComparator } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { validateCapabilityCeiling } from "./capability-ceiling.js";
 import {
   deriveFormationIds,
+  type FormationDelegationApproval,
   formationAssignPlan,
   formationCreatePlan,
 } from "./formation-plan.js";
@@ -44,6 +49,11 @@ export interface FormationConsumerDependencies {
       never
     >;
   };
+  readonly ownershipWrite?: Pick<
+    OwnershipWriteServiceService,
+    "activateDelegatedOwnership"
+  >;
+  readonly environment?: Pick<ProjectEnvironmentPortService, "resolve">;
 }
 
 interface DecisionRecordedEvent {
@@ -51,6 +61,7 @@ interface DecisionRecordedEvent {
   readonly proposalRevision: number;
   readonly decision: "Approve" | "Reject" | "Modify";
   readonly decidedBy: Actor;
+  readonly delegationApproval?: FormationDelegationApproval;
 }
 
 const asDecisionEvent = (payload: unknown): DecisionRecordedEvent | null => {
@@ -67,13 +78,50 @@ const asDecisionEvent = (payload: unknown): DecisionRecordedEvent | null => {
   ) {
     return null;
   }
+  let delegationApproval: FormationDelegationApproval | undefined;
+  if (candidate.delegationApproval !== undefined) {
+    const raw = candidate.delegationApproval;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+      return null;
+    const approval = raw as Record<string, unknown>;
+    const integerFields = [
+      "formationProposalRevision",
+      "expectedParentWorkspaceRevision",
+      "expectedChildWorkspaceRevision",
+      "expectedParentBoundaryRevision",
+      "expectedParentOwnershipRevision",
+      "expectedChildOwnershipRevision",
+    ];
+    if (
+      typeof approval.delegationSourceId !== "string" ||
+      typeof approval.formationProposalId !== "string" ||
+      !Array.isArray(approval.addresses) ||
+      typeof approval.causedByCommandId !== "string" ||
+      typeof approval.parentWorkspaceId !== "string" ||
+      integerFields.some(
+        (field) =>
+          typeof approval[field] !== "number" ||
+          !Number.isSafeInteger(approval[field]) ||
+          (approval[field] as number) < 0,
+      )
+    ) {
+      return null;
+    }
+    delegationApproval = approval as unknown as FormationDelegationApproval;
+  }
   return {
     proposalId: candidate.proposalId as FormationProposalId,
     proposalRevision: candidate.proposalRevision,
     decision: candidate.decision,
     decidedBy: candidate.decidedBy as Actor,
+    ...(delegationApproval === undefined ? {} : { delegationApproval }),
   };
 };
+
+const sameAddresses = (
+  left: ReadonlyArray<unknown>,
+  right: ReadonlyArray<unknown>,
+): boolean => JSON.stringify(left) === JSON.stringify(right);
 
 /** P6 `01` §4.2 (D1): the approve consumer turns a DecisionRecorded
  * governance fact into the canonical CreateChildWorkspace (+ AssignWork)
@@ -109,12 +157,60 @@ export const runFormationConsumer = (
         continue;
       }
       const snapshot = found.value;
-      if (snapshot.state !== "Approved") {
+      if (
+        snapshot.state !== "Approved" ||
+        snapshot.revision !== decision.proposalRevision
+      ) {
         console.error(
-          "[formation-consumer] decision for a non-Approved proposal:",
+          "[formation-consumer] decision does not bind the current Approved proposal revision:",
           String(decision.proposalId),
           snapshot.state,
+          `event revision ${decision.proposalRevision}`,
+          `current revision ${snapshot.revision}`,
         );
+        continue;
+      }
+      const proposedDelegation = snapshot.proposal.resourceOwnershipDelegation;
+      if (
+        (proposedDelegation === undefined) !==
+          (decision.delegationApproval === undefined) ||
+        (proposedDelegation !== undefined &&
+          decision.delegationApproval !== undefined &&
+          (decision.delegationApproval.formationProposalId !==
+            snapshot.proposalId ||
+            decision.delegationApproval.formationProposalRevision !==
+              decision.proposalRevision ||
+            decision.delegationApproval.parentWorkspaceId !==
+              snapshot.parentWorkspaceId ||
+            decision.delegationApproval.approvedBy !== decision.decidedBy ||
+            decision.delegationApproval.delegationSourceId !==
+              `formation:${snapshot.proposalId}:${decision.proposalRevision}` ||
+            !sameAddresses(
+              decision.delegationApproval.addresses,
+              proposedDelegation.addresses,
+            )))
+      ) {
+        console.error(
+          "[formation-consumer] exact approved delegation evidence does not match the proposal:",
+          String(decision.proposalId),
+        );
+        if (dependencies.fulfillments !== undefined) {
+          const ids = deriveFormationIds(
+            snapshot.proposalId,
+            snapshot.revision,
+          );
+          yield* dependencies.fulfillments.put({
+            proposalId: snapshot.proposalId,
+            proposalRevision: snapshot.revision,
+            expectedChildWorkspaceId: ids.workspaceId,
+            expectedInitialWorkId:
+              snapshot.proposal.initialWork === undefined ? null : ids.workId,
+            state: "Blocked",
+            typedBlock: "FormationDelegationApprovalEvidenceInvalid",
+            lastAttemptAt: event.occurredAt ?? new Date().toISOString(),
+            revision: 2,
+          });
+        }
         continue;
       }
       const parent = yield* dependencies.workspaces.findById(
@@ -129,9 +225,45 @@ export const runFormationConsumer = (
       }
       // The gated path re-checks the ceiling at execution time too: the
       // parent boundary may have moved since admission (P6 `03` §2).
+      let canonicalBoundarySubsetVerified = false;
+      if (dependencies.environment !== undefined) {
+        const [resolvedParent, resolvedDraft] = yield* Effect.all(
+          [
+            dependencies.environment.resolve(
+              projectId,
+              parent.value.resourceBoundary.addresses,
+            ),
+            dependencies.environment.resolve(
+              projectId,
+              snapshot.proposal.resourceBoundaryDraft.addresses,
+            ),
+          ],
+          { concurrency: 1 },
+        );
+        canonicalBoundarySubsetVerified =
+          resolvedParent.observedEnvironmentRevision ===
+            resolvedDraft.observedEnvironmentRevision &&
+          resolvedDraft.regions.every((draftRegion) =>
+            resolvedParent.regions.some((parentRegion) =>
+              regionContains(
+                parentRegion,
+                draftRegion,
+                resourceRegionComparator,
+              ),
+            ),
+          );
+        if (!canonicalBoundarySubsetVerified) {
+          console.error(
+            "[formation-consumer] canonical resource boundary draft escapes parent boundary:",
+            String(snapshot.proposalId),
+          );
+          continue;
+        }
+      }
       const ceilingError = validateCapabilityCeiling({
         parentBoundary: parent.value.resourceBoundary,
         draftBoundary: snapshot.proposal.resourceBoundaryDraft,
+        canonicalBoundarySubsetVerified,
       });
       if (ceilingError !== null) {
         console.error(
@@ -169,6 +301,9 @@ export const runFormationConsumer = (
         projectId,
         actor: decision.decidedBy,
         principal,
+        ...(decision.delegationApproval === undefined
+          ? {}
+          : { ownershipDelegationApproval: decision.delegationApproval }),
       });
       const createReceipt = yield* dependencies.gateway.execute(
         {
@@ -204,6 +339,28 @@ export const runFormationConsumer = (
         yield* dependencies.fulfillments.put(
           fulfillment("WorkspaceCreated", 2),
         );
+      }
+      if (decision.delegationApproval !== undefined) {
+        if (dependencies.ownershipWrite === undefined) {
+          if (dependencies.fulfillments !== undefined) {
+            yield* dependencies.fulfillments.put(
+              fulfillment(
+                "Blocked",
+                3,
+                "DelegatedOwnershipActivationServiceUnavailable",
+              ),
+            );
+          }
+          continue;
+        }
+        yield* dependencies.ownershipWrite.activateDelegatedOwnership({
+          projectId,
+          childWorkspaceId: ids.workspaceId,
+          childResourceBoundaryRevision:
+            create.payload.resourceBoundaryRevision,
+          delegationSourceId: decision.delegationApproval.delegationSourceId,
+        });
+        executed.push("ActivateDelegatedOwnership");
       }
 
       const assign = formationAssignPlan({

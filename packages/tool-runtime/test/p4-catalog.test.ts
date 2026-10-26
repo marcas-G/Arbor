@@ -22,10 +22,89 @@ const emptyRegistry = Layer.succeed(ProjectToolRegistry, {
 
 const app = Layer.mergeAll(
   ToolDefinitionStoreLive,
-  Layer.provide(ToolCatalogPortLive(), emptyRegistry),
+  Layer.provide(
+    ToolCatalogPortLive({
+      processExecutionMode: "NativeOsSupportedOnly",
+      nativeOsSupportedTupleAvailable: true,
+    }),
+    emptyRegistry,
+  ),
 );
 
 describe("P4 tool catalog", () => {
+  it("hides every registered shell definition in Disabled mode", async () => {
+    const registry = Layer.succeed(ProjectToolRegistry, {
+      register: () => Effect.die("register is not used"),
+      lookup: () => Effect.succeed(Option.none()),
+      listRegisteredToolDefinitions: () =>
+        Effect.succeed([SHELL_DEFINITION, LEGACY_SHELL_DEFINITION]),
+    });
+    const disabledCatalog = Layer.provide(
+      ToolCatalogPortLive({ processExecutionMode: "Disabled" }),
+      registry,
+    );
+    const visible = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const catalog = yield* ToolCatalogPort;
+          return yield* catalog.visibleRefs();
+        }),
+        disabledCatalog,
+      ),
+    );
+    expect(visible.map((ref) => ref.name).sort()).toEqual([
+      "list",
+      "patch",
+      "read",
+    ]);
+  });
+
+  it("keeps shell hidden in Native mode until a supported tuple is verified", async () => {
+    const nativeCatalog = Layer.provide(
+      ToolCatalogPortLive({ processExecutionMode: "NativeOsSupportedOnly" }),
+      emptyRegistry,
+    );
+    const visible = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const catalog = yield* ToolCatalogPort;
+          return yield* catalog.visibleRefs();
+        }),
+        nativeCatalog,
+      ),
+    );
+    expect(visible.map((ref) => ref.name).sort()).toEqual([
+      "list",
+      "patch",
+      "read",
+    ]);
+  });
+
+  it("exposes shell in Disabled only for an explicit test harness injection", async () => {
+    const testCatalog = Layer.provide(
+      ToolCatalogPortLive({
+        processExecutionMode: "Disabled",
+        testOnlyAllowTrustedLocalProcessExecution: true,
+      }),
+      emptyRegistry,
+    );
+    const visible = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const catalog = yield* ToolCatalogPort;
+          return yield* catalog.visibleRefs();
+        }),
+        testCatalog,
+      ),
+    );
+    expect(visible.map((ref) => ref.name).sort()).toEqual([
+      "list",
+      "patch",
+      "read",
+      "shell",
+    ]);
+  });
+
   it("exposes the builtin definitions with exact schemas", async () => {
     const result = await Effect.runPromise(
       Effect.provide(

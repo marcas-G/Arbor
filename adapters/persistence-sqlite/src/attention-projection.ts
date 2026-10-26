@@ -18,7 +18,9 @@ import {
   type LegacyAdoptionAttentionProjectionRow,
   type LegacyAdoptionAttentionResolutionFact,
   legacyAdoptionResolutionFactIdV1,
+  type ProcessExecutionUnavailableProjectionRow,
   type ProjectionStoreService,
+  processExecutionUnavailableAttentionFactIdV1,
   type RecoveryAttentionFactStoreService,
   type SandboxPolicyDecisionRequiredProjectionRow,
   type SandboxProviderUnavailableAttentionProjectionRow,
@@ -160,6 +162,43 @@ interface SandboxRecoveryBindingDbRow {
   readonly p3_provider_turn_id: string | null;
   readonly p3_step_state: string | null;
   readonly p3_step_next_action_index?: number | null;
+}
+
+interface ProcessExecutionUnavailableDbRow {
+  readonly project_id: string;
+  readonly execution_id: string;
+  readonly workspace_id: string;
+  readonly invocation_id: string;
+  readonly tool_name: string;
+  readonly tool_version: string;
+  readonly side_effect_semantics: string;
+  readonly arguments_json: string;
+  readonly approval_id: string | null;
+  readonly effect_admission_state: string;
+  readonly settled_at: string | null;
+  readonly settlement_kind: string | null;
+  readonly settlement_json: string | null;
+  readonly settlement_provenance: string | null;
+  readonly result_ref: string | null;
+  readonly observation_format_version: string | null;
+  readonly observation_json: Uint8Array | string | null;
+  readonly observation_sha256: string | null;
+  readonly selected_attempt_no: number | null;
+  readonly selected_fact_id: string | null;
+  readonly recovery_binding_state: string;
+  readonly recovery_binding_sha256: string | null;
+  readonly binding_version: number | null;
+  readonly canonical_binding_json: string | null;
+  readonly binding_sha256: string | null;
+  readonly action_state: string | null;
+  readonly action_input_hash: string | null;
+  readonly action_kind: string | null;
+  readonly p3_logical_step_no: number | null;
+  readonly p3_repair_attempt: number | null;
+  readonly p3_logical_action_id: string | null;
+  readonly p3_action_index: number | null;
+  readonly p3_call_ref: string | null;
+  readonly p3_provider_turn_id: string | null;
 }
 
 const canonicalUtcText = (value: string): boolean => {
@@ -1458,6 +1497,235 @@ export const makeAttentionProjectionStoreLive = (
                   firstDetectedAt: row.first_detected_at,
                 }) satisfies SandboxProviderUnavailableAttentionProjectionRow,
             );
+          }),
+        listProjectedProcessExecutionUnavailable: (projectId) =>
+          Effect.gen(function* () {
+            const rows = yield* run(
+              sql.unsafe<ProcessExecutionUnavailableDbRow>(
+                `SELECT e.project_id, e.execution_id, e.workspace_id,
+                        i.invocation_id, i.tool_name, i.tool_version,
+                        i.side_effect_semantics, i.arguments_json, i.approval_id,
+                        i.effect_admission_state, i.settled_at,
+                        i.settlement_kind, i.settlement_json,
+                        i.settlement_provenance, i.result_ref,
+                        i.observation_format_version, i.observation_json,
+                        i.observation_sha256, i.selected_attempt_no,
+                        i.selected_fact_id, i.recovery_binding_state,
+                        i.recovery_binding_sha256, b.binding_version,
+                        b.canonical_binding_json, b.binding_sha256,
+                        act.state AS action_state,
+                        act.input_hash AS action_input_hash,
+                        act.action_kind AS action_kind,
+                        act.logical_step_no AS p3_logical_step_no,
+                        act.repair_attempt AS p3_repair_attempt,
+                        act.logical_action_id AS p3_logical_action_id,
+                        act.action_index AS p3_action_index,
+                        act.call_ref AS p3_call_ref,
+                        step.provider_turn_id AS p3_provider_turn_id
+                   FROM tool_invocations i
+                   JOIN executions e ON e.execution_id = i.execution_id
+                    AND e.workspace_id = i.workspace_id
+                   LEFT JOIN tool_invocation_recovery_bindings b
+                    ON b.invocation_id = i.invocation_id
+                   LEFT JOIN agent_loop_step_actions act
+                    ON act.execution_id = i.execution_id
+                   AND act.logical_action_id = CASE
+                     WHEN b.canonical_binding_json IS NOT NULL
+                      AND json_valid(b.canonical_binding_json)
+                     THEN json_extract(b.canonical_binding_json, '$.logicalActionId')
+                     ELSE NULL END
+                   AND act.action_index = CASE
+                     WHEN b.canonical_binding_json IS NOT NULL
+                      AND json_valid(b.canonical_binding_json)
+                     THEN json_extract(b.canonical_binding_json, '$.actionIndex')
+                     ELSE NULL END
+                   AND act.call_ref = CASE
+                     WHEN b.canonical_binding_json IS NOT NULL
+                      AND json_valid(b.canonical_binding_json)
+                     THEN json_extract(b.canonical_binding_json, '$.callRef')
+                     ELSE NULL END
+                   LEFT JOIN agent_loop_steps step
+                    ON step.execution_id = act.execution_id
+                   AND step.logical_step_no = act.logical_step_no
+                   AND step.repair_attempt = act.repair_attempt
+                  WHERE e.project_id = ? AND e.settled_at IS NULL
+                    AND e.stop_requested_at IS NULL
+                    AND i.tool_name = 'shell'
+                    AND i.settled_at IS NOT NULL
+                    AND i.settlement_kind = 'Denied'
+                    AND i.effect_admission_state = 'NotAdmitted'
+                    AND i.result_ref IS NULL
+                    AND i.observation_format_version IS NULL
+                    AND i.observation_json IS NULL
+                    AND i.observation_sha256 IS NULL
+                    AND i.settlement_provenance = 'Ordinary'
+                    AND i.selected_attempt_no IS NULL
+                    AND i.selected_fact_id IS NULL
+                    AND json_valid(i.settlement_json)
+                    AND json_extract(i.settlement_json, '$._tag') = 'Denied'
+                    AND json_extract(i.settlement_json, '$.projectionVersion') = 1
+                    AND json_extract(i.settlement_json, '$.reasonCode') IN
+                        ('ProcessExecutionDisabled','NativeOsTupleUnavailable')
+                    AND NOT EXISTS (
+                      SELECT 1 FROM tool_invocation_effect_attempts a
+                       WHERE a.invocation_id = i.invocation_id
+                         AND a.admission_state = 'MayHaveStarted')
+                  ORDER BY e.execution_id, i.settled_at, i.invocation_id`,
+                [projectId],
+              ),
+            );
+            const projections: ProcessExecutionUnavailableProjectionRow[] = [];
+            const seenInvocations = new Set<string>();
+            for (const row of rows) {
+              const operation = "process-execution-unavailable-read";
+              const failIntegrity = (reason: string) =>
+                persistenceCorruption(
+                  "AttentionProjectionStore",
+                  operation,
+                  reason,
+                );
+              if (seenInvocations.has(row.invocation_id)) {
+                return yield* Effect.fail(
+                  failIntegrity(
+                    "P4 invocation has a non-unique P3 action join",
+                  ),
+                );
+              }
+              seenInvocations.add(row.invocation_id);
+              if (
+                row.settled_at === null ||
+                !canonicalUtcText(row.settled_at) ||
+                row.tool_name !== "shell" ||
+                row.effect_admission_state !== "NotAdmitted" ||
+                row.settlement_kind !== "Denied" ||
+                row.settlement_provenance !== "Ordinary" ||
+                row.result_ref !== null ||
+                row.observation_format_version !== null ||
+                row.observation_json !== null ||
+                row.observation_sha256 !== null ||
+                row.selected_attempt_no !== null ||
+                row.selected_fact_id !== null
+              ) {
+                return yield* Effect.fail(
+                  failIntegrity(
+                    "P4 denial post-image is not the exact NotAdmitted shape",
+                  ),
+                );
+              }
+              let settlement: unknown;
+              try {
+                settlement = JSON.parse(
+                  row.settlement_json ?? "null",
+                ) as unknown;
+              } catch {
+                return yield* Effect.fail(
+                  failIntegrity("P4 Denied settlement is malformed"),
+                );
+              }
+              const settlementRecord =
+                typeof settlement === "object" && settlement !== null
+                  ? (settlement as Record<string, unknown>)
+                  : undefined;
+              const reasonCode = settlementRecord?.reasonCode;
+              if (
+                settlementRecord === undefined ||
+                Object.keys(settlementRecord).length !== 3 ||
+                settlementRecord._tag !== "Denied" ||
+                settlementRecord.projectionVersion !== 1 ||
+                (reasonCode !== "ProcessExecutionDisabled" &&
+                  reasonCode !== "NativeOsTupleUnavailable")
+              ) {
+                return yield* Effect.fail(
+                  failIntegrity(
+                    "P4 denial reason or projection version is invalid",
+                  ),
+                );
+              }
+              if (
+                row.recovery_binding_state !== "Bound" ||
+                row.recovery_binding_sha256 === null ||
+                row.recovery_binding_sha256 !== row.binding_sha256 ||
+                row.binding_version !== 1 ||
+                row.canonical_binding_json === null ||
+                row.binding_sha256 === null ||
+                row.action_state !== "TerminalRejected" ||
+                row.action_input_hash !== sha256Hex(row.arguments_json) ||
+                row.action_kind !== row.tool_name ||
+                row.p3_logical_step_no === null ||
+                row.p3_repair_attempt === null ||
+                row.p3_logical_action_id === null ||
+                row.p3_action_index === null ||
+                row.p3_call_ref === null ||
+                row.p3_provider_turn_id === null
+              ) {
+                return yield* Effect.fail(
+                  failIntegrity(
+                    "exact P4/P3 RecoveryBinding join is unavailable",
+                  ),
+                );
+              }
+              const verified = verifyRecoveryBindingV1({
+                invocationId: row.invocation_id as never,
+                canonicalJson: row.canonical_binding_json,
+                bindingSha256: row.binding_sha256,
+              });
+              const binding = verified?.value;
+              let argumentsDigest: string | null = null;
+              try {
+                argumentsDigest = canonicalArgumentsDigestV1(
+                  JSON.parse(row.arguments_json) as unknown,
+                );
+              } catch {
+                argumentsDigest = null;
+              }
+              if (
+                binding === undefined ||
+                binding.executionId !== row.execution_id ||
+                binding.invocationId !== row.invocation_id ||
+                binding.toolName !== row.tool_name ||
+                binding.toolVersion !== row.tool_version ||
+                binding.sideEffectSemantics !== row.side_effect_semantics ||
+                binding.approvalId !== row.approval_id ||
+                binding.canonicalArgumentsDigest !== argumentsDigest ||
+                binding.providerTurnId !== row.p3_provider_turn_id ||
+                binding.logicalStepNo !== row.p3_logical_step_no ||
+                binding.repairAttempt !== row.p3_repair_attempt ||
+                binding.logicalActionId !== row.p3_logical_action_id ||
+                binding.actionIndex !== row.p3_action_index ||
+                binding.callRef !== row.p3_call_ref
+              ) {
+                return yield* Effect.fail(
+                  failIntegrity(
+                    "P4 invocation does not match its exact P3 action",
+                  ),
+                );
+              }
+              const attentionIdentity = {
+                executionId: row.execution_id,
+                workspaceId: row.workspace_id as never,
+                invocationId: row.invocation_id,
+                providerTurnId: binding.providerTurnId,
+                logicalStepNo: binding.logicalStepNo,
+                repairAttempt: binding.repairAttempt,
+                logicalActionId: binding.logicalActionId,
+                actionIndex: binding.actionIndex,
+                callRef: binding.callRef,
+                reasonCode,
+              } satisfies Omit<
+                ProcessExecutionUnavailableProjectionRow,
+                "attentionFactId" | "occurredAt" | "projectId"
+              >;
+              projections.push({
+                projectId: row.project_id as ProjectId,
+                ...attentionIdentity,
+                attentionFactId:
+                  processExecutionUnavailableAttentionFactIdV1(
+                    attentionIdentity,
+                  ),
+                occurredAt: row.settled_at,
+              });
+            }
+            return projections;
           }),
         listSandboxRecoveryBindingFailures: (projectId, now) =>
           Effect.gen(function* () {

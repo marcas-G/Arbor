@@ -14,7 +14,6 @@ const OTHER_EVENT_V1_NAMES = [
   "WorkspaceResourceActivationChanged",
   "ResponsibilityChanged",
   "ResourceBoundaryChanged",
-  "ResourceOwnershipChanged",
   "WorkspacePolicyChanged",
   "WorkspaceRetired",
   "WorkspaceLineageRecorded",
@@ -80,6 +79,10 @@ export const EVENT_VERSION_REGISTRY: Partial<
 > = Object.freeze({
   ...Object.fromEntries(OTHER_EVENT_V1_NAMES.map((name) => [name, v1])),
   VerificationConcluded: Object.freeze({
+    writer: Object.freeze([2]),
+    reader: Object.freeze([1, 2]),
+  }),
+  ResourceOwnershipChanged: Object.freeze({
     writer: Object.freeze([2]),
     reader: Object.freeze([1, 2]),
   }),
@@ -268,6 +271,141 @@ const strictVerificationConcludedV1 = (value: unknown): boolean =>
   stringArray(value.evidenceRefs) &&
   typeof value.summaryRef === "string";
 
+const strictOwnershipClaimV2 = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(value, [
+    "claimId",
+    "workspaceId",
+    "region",
+    "sourceAddressSnapshot",
+    "resourceBoundaryRevision",
+    "resolvedAtEnvironmentRevision",
+    "createdAt",
+    "releasedAt",
+    "claimRevision",
+    "exclusions",
+    "delegatingWorkspaceId",
+    "delegationSourceId",
+  ]) &&
+  typeof value.claimId === "string" &&
+  typeof value.workspaceId === "string" &&
+  isRecord(value.region) &&
+  typeof value.region.resourceSpaceId === "string" &&
+  isRecord(value.region.normalizedRegion) &&
+  isRecord(value.sourceAddressSnapshot) &&
+  Number.isSafeInteger(value.resourceBoundaryRevision) &&
+  typeof value.resolvedAtEnvironmentRevision === "string" &&
+  typeof value.createdAt === "string" &&
+  (value.releasedAt === null || typeof value.releasedAt === "string") &&
+  Number.isSafeInteger(value.claimRevision) &&
+  Array.isArray(value.exclusions) &&
+  value.exclusions.every(
+    (region) =>
+      isRecord(region) &&
+      typeof region.resourceSpaceId === "string" &&
+      isRecord(region.normalizedRegion),
+  ) &&
+  (value.delegatingWorkspaceId === null ||
+    typeof value.delegatingWorkspaceId === "string") &&
+  (value.delegationSourceId === null ||
+    typeof value.delegationSourceId === "string");
+
+const strictResourceOwnershipChangedV2 = (value: unknown): boolean => {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "_tag",
+      "operation",
+      "delegation",
+      "parentClaim",
+      "childClaim",
+    ]) ||
+    value._tag !== "ResourceOwnershipChanged" ||
+    (value.operation !== "Delegated" &&
+      value.operation !== "Transferred" &&
+      value.operation !== "Reclaimed") ||
+    !isRecord(value.delegation) ||
+    !hasExactKeys(value.delegation, [
+      "delegationSourceId",
+      "formationProposalId",
+      "formationProposalRevision",
+      "parentWorkspaceId",
+      "childWorkspaceId",
+      "approvedBy",
+      "causedByCommandId",
+    ])
+  ) {
+    return false;
+  }
+  const delegation = value.delegation;
+  if (
+    !strictOwnershipClaimV2(value.parentClaim) ||
+    !strictOwnershipClaimV2(value.childClaim)
+  ) {
+    return false;
+  }
+  const parentClaim = value.parentClaim as Record<string, unknown>;
+  const childClaim = value.childClaim as Record<string, unknown>;
+  const parentRegion = parentClaim.region as
+    | Record<string, unknown>
+    | undefined;
+  const childRegion = childClaim.region as Record<string, unknown> | undefined;
+  const parentExclusions = parentClaim.exclusions as
+    | ReadonlyArray<unknown>
+    | undefined;
+  return (
+    typeof delegation.delegationSourceId === "string" &&
+    typeof delegation.formationProposalId === "string" &&
+    Number.isSafeInteger(delegation.formationProposalRevision) &&
+    delegation.delegationSourceId ===
+      `formation:${delegation.formationProposalId}:${delegation.formationProposalRevision}` &&
+    typeof delegation.parentWorkspaceId === "string" &&
+    typeof delegation.childWorkspaceId === "string" &&
+    typeof delegation.approvedBy === "string" &&
+    typeof delegation.causedByCommandId === "string" &&
+    parentClaim.workspaceId === delegation.parentWorkspaceId &&
+    childClaim.workspaceId === delegation.childWorkspaceId &&
+    childClaim.delegatingWorkspaceId === delegation.parentWorkspaceId &&
+    childClaim.delegationSourceId === delegation.delegationSourceId &&
+    parentRegion !== undefined &&
+    childRegion !== undefined &&
+    Array.isArray(parentExclusions) &&
+    (value.operation === "Delegated"
+      ? parentExclusions.some((exclusion) => {
+          if (!isRecord(exclusion)) return false;
+          const region = childRegion as Record<string, unknown>;
+          const excluded = exclusion;
+          return (
+            excluded.resourceSpaceId === region.resourceSpaceId &&
+            JSON.stringify(excluded.normalizedRegion) ===
+              JSON.stringify(region.normalizedRegion)
+          );
+        })
+      : value.operation === "Transferred"
+        ? parentClaim.releasedAt !== null &&
+          parentExclusions.length === 0 &&
+          parentRegion.resourceSpaceId === childRegion.resourceSpaceId &&
+          JSON.stringify(parentRegion.normalizedRegion) ===
+            JSON.stringify(childRegion.normalizedRegion)
+        : childClaim.releasedAt !== null &&
+          parentClaim.releasedAt === null &&
+          (isRecord(parentRegion.normalizedRegion) &&
+          parentRegion.normalizedRegion.kind === "ExternalResource"
+            ? parentRegion.resourceSpaceId === childRegion.resourceSpaceId &&
+              JSON.stringify(parentRegion.normalizedRegion) ===
+                JSON.stringify(childRegion.normalizedRegion) &&
+              parentExclusions.length === 0
+            : !parentExclusions.some((exclusion) => {
+                if (!isRecord(exclusion)) return false;
+                return (
+                  exclusion.resourceSpaceId === childRegion.resourceSpaceId &&
+                  JSON.stringify(exclusion.normalizedRegion) ===
+                    JSON.stringify(childRegion.normalizedRegion)
+                );
+              })))
+  );
+};
+
 export type SupportedEventPayloadDecode =
   | { readonly _tag: "Decoded"; readonly payload: unknown }
   | { readonly _tag: "UnsupportedPair" }
@@ -286,6 +424,13 @@ export const decodeSupportedEventPayload = (
     eventType === "VerificationConcluded" &&
     eventVersion === 2 &&
     !strictVerificationConcludedV2(payload)
+  ) {
+    return { _tag: "MalformedPayload" };
+  }
+  if (
+    eventType === "ResourceOwnershipChanged" &&
+    eventVersion === 2 &&
+    !strictResourceOwnershipChangedV2(payload)
   ) {
     return { _tag: "MalformedPayload" };
   }

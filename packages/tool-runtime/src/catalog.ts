@@ -189,6 +189,11 @@ export const ToolDefinitionStoreLive: Layer.Layer<ToolDefinitionStore> =
  * Composition Root; absent means the catalogued set is the builtins only. */
 export interface ToolCatalogConfig {
   readonly projectId?: ProjectId;
+  readonly processExecutionMode?: "Disabled" | "NativeOsSupportedOnly";
+  /** True only when composition verified the exact release-qualified tuple. */
+  readonly nativeOsSupportedTupleAvailable?: boolean;
+  /** Test harness only: opt into the existing explicit TrustedLocal contract. */
+  readonly testOnlyAllowTrustedLocalProcessExecution?: boolean;
 }
 
 const toRef = (tool: ToolDefinition): ToolDefinitionRef => ({
@@ -222,17 +227,21 @@ export const ToolCatalogPortLive = (
     Effect.gen(function* () {
       const registry = yield* ProjectToolRegistry;
       const projectId = config.projectId;
+      const shellAvailable =
+        config.testOnlyAllowTrustedLocalProcessExecution === true ||
+        (config.processExecutionMode === "NativeOsSupportedOnly" &&
+          config.nativeOsSupportedTupleAvailable === true);
+      const releaseTools = (tools: ReadonlyArray<ToolDefinition>) =>
+        shellAvailable ? tools : tools.filter((tool) => tool.name !== "shell");
 
       const catalogued = (): Effect.Effect<ReadonlyArray<ToolDefinition>> => {
         if (projectId === undefined) {
-          return Effect.succeed(BUILTIN_TOOLS);
+          return Effect.succeed(releaseTools(BUILTIN_TOOLS));
         }
         return registry.listRegisteredToolDefinitions(projectId).pipe(
           Effect.map(
-            (registered): ReadonlyArray<ToolDefinition> => [
-              ...BUILTIN_TOOLS,
-              ...registered,
-            ],
+            (registered): ReadonlyArray<ToolDefinition> =>
+              releaseTools([...BUILTIN_TOOLS, ...registered]),
           ),
           Effect.orDie,
         );

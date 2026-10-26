@@ -72,6 +72,46 @@ describe("propose_workspace codec", () => {
     );
   });
 
+  it("decodes a bounded ownership subregion for activation-time containment", async () => {
+    const registry = makeControlToolRegistry([stubHandler]);
+    const delegated = {
+      ...fullProposal,
+      resourceOwnershipDelegation: {
+        addresses: [{ _tag: "FileTree", path: "services/pipeline" }],
+      },
+    };
+    const decoded = await Effect.runPromise(
+      registry.decode(invocation(JSON.stringify(delegated))),
+    );
+    expect(decoded.action._tag).toBe("ProposeChildWorkspace");
+    if (decoded.action._tag !== "ProposeChildWorkspace") return;
+    expect(
+      decoded.action.proposal.resourceOwnershipDelegation?.addresses,
+    ).toEqual(delegated.resourceOwnershipDelegation.addresses);
+  });
+
+  it("rejects duplicate ownership delegation addresses", async () => {
+    const registry = makeControlToolRegistry([stubHandler]);
+    const exit = await Effect.runPromise(
+      Effect.exit(
+        registry.decode(
+          invocation(
+            JSON.stringify({
+              ...fullProposal,
+              resourceOwnershipDelegation: {
+                addresses: [
+                  { _tag: "FileTree", path: "services/pipeline/child" },
+                  { _tag: "FileTree", path: "services/pipeline/child" },
+                ],
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+  });
+
   it("decodes a minimal proposal without initialWork", async () => {
     const registry = makeControlToolRegistry([stubHandler]);
     const { initialWork: _omitted, ...minimal } = fullProposal;

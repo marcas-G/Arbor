@@ -19,9 +19,11 @@ import {
   InputPromotionServiceLive,
   InputPromotionServiceWithQualificationProbe,
   makeCommandGatewayLive,
+  makeRetireWorkspaceApplicationService,
   type ParentUserGovernanceFacts,
   type RemoteWorkerMediationPort,
   RemoteWorkerMediationPortLive,
+  RetireWorkspaceService,
   type VerificationSignalReconciliationQualificationProbe,
   type WorkflowSignalConsumer,
   WorkflowSignalConsumerLive,
@@ -150,6 +152,7 @@ import {
   type CurrentSandboxAuthoritySnapshotPort,
   type DecisionRequestStore,
   type DeliverableRepository,
+  DependencyRepository,
   DomainEventJournal,
   EnvironmentResolverPort,
   type ExecutionDriverPort,
@@ -164,6 +167,7 @@ import {
   type ModelDeployment,
   makeProviderRegistry,
   makeToolReconciliationProfileRegistry,
+  OwnershipWriteService,
   type PermissionGrantRepository,
   type PersistenceHealthProbe,
   type ProjectDirectory,
@@ -190,6 +194,7 @@ import {
   type SessionRepository,
   SkillRegistry,
   type ToolCatalogPort,
+  ToolInvocationStore,
   ToolReconciliationPort,
   type ToolReconciliationPortService,
   type ToolReconciliationProfile,
@@ -197,7 +202,7 @@ import {
   TransactionPort,
   type TrustedHostConfigurationSourceService,
   type WorkReadmissionGateStore,
-  type WorkRepository,
+  WorkRepository,
   type WorkspaceKnowledgePort,
   type WorkspacePlacementPort,
   WorkspaceRepository,
@@ -351,6 +356,8 @@ export const selectProviderLayer = (
 
 export interface SingleWorkspaceConfig {
   readonly databaseFile: string;
+  /** P12 accepted first-release mode. Startup-only and fail-closed by default. */
+  readonly processExecutionMode?: "Disabled" | "NativeOsSupportedOnly";
   /** P5 startup-only source. Production must inject the OS-protected trusted
    * host configuration source; absence or invalid data disables sandbox
    * policy authority. This is never loaded from environment or a request. */
@@ -489,6 +496,7 @@ export type SingleWorkspaceServices =
   | RetryVerificationOriginRepository
   | ProjectRepository
   | ResourceOwnershipRepository
+  | RetireWorkspaceService
   | WorktreeStore
   | SessionRepository
   | WorkRepository
@@ -542,8 +550,9 @@ export const makeProductionWindowsSandboxProcessPort = (
 };
 
 /** The single-workspace composition root: wires P1–P4 into one runtime. */
-export const buildSingleWorkspaceLayer = (
+const buildSingleWorkspaceLayerInternal = (
   config: SingleWorkspaceConfig,
+  allowTrustedLocalForFunctionalTests: boolean,
 ): Layer.Layer<SingleWorkspaceServices> => {
   const governance = resolveCompositionGovernance(config);
   try {
@@ -786,9 +795,17 @@ export const buildSingleWorkspaceLayer = (
   });
   const projectToolRegistry = Layer.provide(ProjectToolRegistryLive, infra);
   const toolCatalog = Layer.provide(
-    ToolCatalogPortLive(
-      config.projectId !== undefined ? { projectId: config.projectId } : {},
-    ),
+    ToolCatalogPortLive({
+      ...(config.projectId !== undefined
+        ? { projectId: config.projectId }
+        : {}),
+      processExecutionMode: config.processExecutionMode ?? "Disabled",
+      // Production trust, signed helper, and exact release qualification
+      // materials are not provisioned in this composition yet.
+      nativeOsSupportedTupleAvailable: false,
+      testOnlyAllowTrustedLocalProcessExecution:
+        allowTrustedLocalForFunctionalTests,
+    }),
     projectToolRegistry,
   );
   const domainEventJournal = Layer.provide(DomainEventJournalLive, infra);
@@ -897,6 +914,34 @@ export const buildSingleWorkspaceLayer = (
         ),
     Layer.mergeAll(repos, infra),
   );
+  const retireWorkspaceService = Layer.provide(
+    Layer.effect(
+      RetireWorkspaceService,
+      Effect.gen(function* () {
+        const workspaces = yield* WorkspaceRepository;
+        const works = yield* WorkRepository;
+        const executions = yield* ExecutionRepository;
+        const dependencies = yield* DependencyRepository;
+        const invocations = yield* ToolInvocationStore;
+        const ownership = yield* ResourceOwnershipRepository;
+        const ownershipWrite = yield* OwnershipWriteService;
+        const tx = yield* TransactionPort;
+        return makeRetireWorkspaceApplicationService({
+          workspaces,
+          works,
+          executions,
+          dependencies,
+          invocations,
+          ownership,
+          ownershipWrite,
+          tx,
+          isAuthorizedHuman: (principal) =>
+            governance.authenticatedHumans.includes(principal),
+        });
+      }),
+    ),
+    Layer.mergeAll(repos, ownershipWrite),
+  );
   const inputPromotion = Layer.provide(
     config.inputPromotionQualificationProbe === undefined
       ? InputPromotionServiceLive
@@ -918,6 +963,11 @@ export const buildSingleWorkspaceLayer = (
     ToolRuntimeLive(
       config.testOnlyToolReconciliation?.executors ?? BUILTIN_EXECUTORS,
       {
+        processExecutionMode: config.processExecutionMode ?? "Disabled",
+        // No signed production helper/trust/evidence tuple is provisioned.
+        nativeOsSupportedTupleAvailable: false,
+        testOnlyAllowTrustedLocalProcessExecution:
+          allowTrustedLocalForFunctionalTests,
         ...(config.toolQualificationProbe === undefined
           ? {}
           : { qualificationProbe: config.toolQualificationProbe }),
@@ -1301,6 +1351,7 @@ export const buildSingleWorkspaceLayer = (
 
   const all = Layer.mergeAll(
     coreAll,
+    retireWorkspaceService,
     inputPromotion,
     authorityResolver,
     mediation,
@@ -1386,6 +1437,23 @@ export const buildSingleWorkspaceLayer = (
     p39StartupGate,
   ) as Layer.Layer<SingleWorkspaceServices>;
 };
+
+/** Production composition has no TrustedLocal escape hatch. */
+export const buildSingleWorkspaceLayer = (
+  config: SingleWorkspaceConfig,
+): Layer.Layer<SingleWorkspaceServices> =>
+  buildSingleWorkspaceLayerInternal(config, false);
+
+/** Internal functional-qualification seam. This is intentionally not re-exported
+ * from the package entry point and is only used by tests/functional fixtures. */
+export const buildFunctionalTestSingleWorkspaceLayer = (
+  config: SingleWorkspaceConfig,
+  allowTrustedLocalForFunctionalTests = false,
+): Layer.Layer<SingleWorkspaceServices> =>
+  buildSingleWorkspaceLayerInternal(
+    config,
+    allowTrustedLocalForFunctionalTests,
+  );
 
 export {
   CURRENT_MIGRATIONS,
