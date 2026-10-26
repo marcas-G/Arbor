@@ -91,6 +91,52 @@ const toSessionItemRecord = (row: TypedSessionItemRow): SessionItemRecord => ({
 
 const WORK_PRECHECKPOINT_ENTRY_LIMIT = 64;
 
+/** RootConversation and Work share WorkspacePrimary storage but not a context
+ * frontier. Filter ConversationResponse-owned entries by their persisted
+ * Execution/ProviderTurn provenance before selecting Work's checkpoint/window. */
+const WORK_HISTORY_EXCLUDES_CONVERSATION = `NOT EXISTS (
+  SELECT 1
+  FROM executions AS conversation_execution
+  WHERE conversation_execution.session_id = session_entries.session_id
+    AND conversation_execution.episode_kind = 'ConversationResponseEpisode'
+    AND (
+      (
+        session_entries.source_kind IN (
+          'ProviderTurn', 'ProviderTurnCall', 'ProviderTurnReasoning', 'CompactionTurn'
+        )
+        AND (
+          substr(
+            session_entries.source_ref,
+            1,
+            length('ptn_' || conversation_execution.execution_id || '_')
+          ) = 'ptn_' || conversation_execution.execution_id || '_'
+          OR EXISTS (
+            SELECT 1
+            FROM provider_turns AS conversation_provider_turn
+            WHERE conversation_provider_turn.execution_id = conversation_execution.execution_id
+              AND conversation_provider_turn.session_id = conversation_execution.session_id
+              AND (
+                session_entries.source_ref = conversation_provider_turn.provider_turn_id
+                OR substr(
+                  session_entries.source_ref,
+                  1,
+                  length(conversation_provider_turn.provider_turn_id) + 1
+                ) = conversation_provider_turn.provider_turn_id || ':'
+              )
+          )
+        )
+      )
+      OR (
+        session_entries.source_kind = 'AgentLoopAction'
+        AND substr(
+          session_entries.source_ref,
+          1,
+          length('observation_' || conversation_execution.execution_id || '_')
+        ) = 'observation_' || conversation_execution.execution_id || '_'
+      )
+    )
+)`;
+
 const toSession = (row: SessionRow): Session => ({
   sessionId: row.session_id as SessionId,
   binding:
@@ -127,6 +173,12 @@ export const SessionRepositoryLive: Layer.Layer<
         sql.unsafe<{ name: string }>("PRAGMA table_info(session_entries)"),
       );
       return columns.some((column) => column.name === "item_type");
+    });
+    const hasExecutionEpisodeColumns = Effect.gen(function* () {
+      const columns = yield* run(
+        sql.unsafe<{ name: string }>("PRAGMA table_info(executions)"),
+      );
+      return columns.some((column) => column.name === "episode_kind");
     });
     const checkFence = (fence: SessionWriteFence) =>
       Effect.gen(function* () {
@@ -434,9 +486,13 @@ export const SessionRepositoryLive: Layer.Layer<
         Effect.gen(function* () {
           yield* TransactionScope;
           if (!(yield* hasTimelineColumns)) return [];
+          const episodeAware = yield* hasExecutionEpisodeColumns;
+          const workOwnershipFilter = episodeAware
+            ? `AND ${WORK_HISTORY_EXCLUDES_CONVERSATION}`
+            : "";
           const checkpointRows = yield* run(
             sql.unsafe<{ sequence: number }>(
-              "SELECT sequence FROM session_entries WHERE session_id = ? AND schema_version = 2 AND item_type = 'CompactionCheckpoint' ORDER BY sequence DESC LIMIT 1",
+              `SELECT sequence FROM session_entries WHERE session_id = ? AND schema_version = 2 AND item_type = 'CompactionCheckpoint' ${workOwnershipFilter} ORDER BY sequence DESC LIMIT 1`,
               [sessionId],
             ),
           );
@@ -444,7 +500,7 @@ export const SessionRepositoryLive: Layer.Layer<
           if (checkpointSequence === undefined) {
             const rows = yield* run(
               sql.unsafe<SessionEntryRow>(
-                "SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 ORDER BY sequence DESC LIMIT ?",
+                `SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 ${workOwnershipFilter} ORDER BY sequence DESC LIMIT ?`,
                 [sessionId, WORK_PRECHECKPOINT_ENTRY_LIMIT],
               ),
             );
@@ -456,7 +512,7 @@ export const SessionRepositoryLive: Layer.Layer<
           // older legacy and checkpoint-covered rows are outside this frontier.
           const rows = yield* run(
             sql.unsafe<SessionEntryRow>(
-              "SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 AND sequence >= ? ORDER BY sequence",
+              `SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 AND sequence >= ? ${workOwnershipFilter} ORDER BY sequence`,
               [sessionId, checkpointSequence],
             ),
           );
