@@ -1576,7 +1576,7 @@ it.skipIf(skipReason !== undefined)(
         await submitHumanMessage(
           client,
           project,
-          `Please create a Work for ${marker}. Its only executable action must be exactly one shell call running Get-Date in the current workspace. Do not use patch, read, another tool, or any file/network effect. Ask for the required approval before that call, then report the timestamp without claiming Work completion.`,
+          `Please create a Work for ${marker}. Its only executable action must be exactly one shell call running Get-Date in the current workspace. Do not use patch, read, another tool, or any file/network effect. In the Work turn call shell immediately with command Get-Date, cwd {mount:"workspace",path:"."}, and timeoutMs 5000; Runtime will intercept that exact ActionCall and create the required approval. Do not wait, send_message, or ask conversationally before the call. After the approved call resumes, report the timestamp without claiming Work completion.`,
         );
         const rootApproval = await waitForApproval(client, project, marker);
         await client.command(project.projectId, "ResolveControlApproval", {
