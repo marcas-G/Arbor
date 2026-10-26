@@ -261,6 +261,9 @@ describe("p8-verifier-spawn", () => {
     expect(result.rows[0]?.parent_execution_id).toBeNull();
     expect(result.rows[0]?.mission).toContain("verification-execution-v1");
     expect(result.rows[0]?.mission).toContain(
+      "Never call a prohibited tool or action even for inspection",
+    );
+    expect(result.rows[0]?.mission).toContain(
       "verify:verify the outcome [criteria=1 required=1]",
     );
     expect(result.rows[0]?.mission).toContain('"criterionId":"c1"');
