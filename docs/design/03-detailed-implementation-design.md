@@ -1,10 +1,95 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.63\
+**Version:** 1.65\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.62\
+**Supersedes:** v1.64\
 **Date:** 2026-10-26\
-**Depends on:** `Arbor System Design Specification v1.24`
+**Depends on:** `Arbor System Design Specification v1.25`
+
+**Governance changes (v1.64 → v1.65): accepted Native durable pre-effect denial supplement V2**
+
+Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2` on
+2026-10-26; fixed supplement SHA-256
+`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
+This narrowly supplements the first-release process-mode contract for an
+already durable exact P4 process invocation at `NotAdmitted`: P4 chooses
+`ProcessExecutionDisabled` in startup mode Disabled, or
+`NativeOsTupleUnavailable` in Native mode without the exact qualified tuple,
+and atomically terminalizes that same invocation as `Denied` before any
+`MayHaveStarted` transition. The denial retains `NotAdmitted` and has NULL
+result/P40 evidence; it starts no P39 attempt, provider, Sandbox, executor,
+process, or fallback. Exact current P3/P4/action/lease bindings are rechecked
+in the committing transaction. MayHaveStarted, LegacyUnknown, stale-fence,
+identity-conflict and ambiguous rows remain on existing fail-closed recovery.
+The denied action is terminal and a later mode/tuple change can affect only a
+new action.
+
+P10 derives the sanitized, read-only `ProcessExecutionUnavailable` Attention
+from the exact Denied row joined to its exact Execution/P3 action. The source
+uses the fixed SHA-256 identity and safe summaries in P10 `02`/`05`; it is not
+a provider-unavailable fact, attempt, queue, marker, event, or P40 Observation.
+The first-release rule that newly received shell actions in Disabled mode are
+rejected before P4 intent is unchanged.
+
+This supplement narrowly supersedes the base first-release proposal's
+no-migration statement: P1/P4 migration 0054 changes only the existing P40
+Denied insert/update reason-code allowlists, preserving all predicates and
+existing values while adding these two closed codes. With accepted S3
+migration 0053 first, it requires schema 53; recheck the actual migration head
+and assign the next sequential version if it has changed. It performs no DML,
+row/event rewrite, table/column change, or Attention backfill. Conditional
+implementation authorization was separately provided under
+`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION`; it
+applies only to this accepted scope after required independent post-landing
+review and does not authorize migration execution, database upgrade,
+deployment, Native support claims, or release.
+
+**Governance changes (v1.63 → v1.64): accepted S3 canonical ownership carve-outs**
+
+Accepted under `ACCEPT_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1` on 2026-10-26;
+fixed supplement SHA-256
+`CEC99E498129189BD166703154A1FFD1E6DDA1CE93BE3C88C8CA9B51C7380B3D`.
+The Parent remainder after delegation is represented as a canonical
+`OwnershipRegion { allow, exclusions[] }`; the effective set is `allow` minus
+the union of its finite canonical exclusions. Exclusions are strict
+descendants in the same resource space/kind, canonical, sorted, unique, and
+prefix-antichain; an active claim must have a nonempty effective set. The
+domain comparator returns typed `Contained | NotContained | Overlap | Disjoint`
+results and rejects malformed, noncanonical, empty, cross-space, or
+non-antichain values. Containment rejects partial exclusion intersections;
+effective claims overlap unless an exclusion completely covers their allow
+intersection. Equality-only kinds permit exact carve-out/reclaim only.
+
+P4 `05` remains validate-only and must prove the whole requested canonical
+effect region lies within the active effective claim and current boundary and
+that all active effective claims are pairwise disjoint. Grants cannot remove
+exclusions or widen `allow`. Delegation atomically adds the exact exclusion to
+the Parent and creates the Child claim, then checks the full post-image. The
+durable `ResourceOwnershipChanged` event must carry the complete Parent/Child
+post-image, exact delegation identity, and provenance. Reuse its current
+version only if that frozen payload can represent the full transfer;
+otherwise introduce a new event version without reinterpreting historical
+events.
+Migration 0053 is the next additive schema change after rechecking the
+schema-52 head: add durable canonical exclusions and exact delegation
+provenance/activation identity, default existing claims to empty exclusions,
+and infer no Child ownership or Parent exclusions. It is restart-safe and
+does not activate ownership. Exact SQL member names and JSON codec remain in
+phase contract. Reclaim and Child retirement match the exact delegated
+canonical region to the Child claim's delegation source identity and claim
+revision, with CAS over Parent/Child Workspace, boundary, and ownership
+revisions. They release only that Child claim and remove only that exact
+Parent exclusion; every unrelated exclusion is preserved in normalized,
+sorted, unique antichain form. The complete Parent/Child post-image and
+version-capable ownership event commit in the same transaction. Missing,
+multiple, stale, or mismatched evidence fails closed without state or event
+mutation.
+
+Implementation is conditionally authorized under
+`AUTHORIZE_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1_IMPLEMENTATION` after required
+independent post-landing review. This landing does not execute implementation
+or migration; migration execution, existing-database mutation, S3 closure, and
+release remain separately gated.
 
 **Governance changes (v1.62 → v1.63): accepted Native OS Sandbox first-release boundary**
 
@@ -2171,17 +2256,22 @@ no unresolved incoming Dependency whose ProducerBinding is
 ```
 
 The sole ownership exception is a Child claim with exact accepted delegation
-provenance. Before retirement, the region must be quiescent with no unresolved
-effect bound to it, or a typed quiescence/recovery path must preserve and
-resolve known in-flight outcomes. One atomic semantic governance change then
-revokes the Child claim, restores the corresponding Parent claim or applies
-another explicitly governed Parent ownership post-image, and marks the Child
-Retired. The transaction evaluates the complete Parent/Child post-image and
-canonical overlap constraints; no intermediate overlap is committed. A
-RetireWorkspace call without that exact provenance, including ordinary and
-legacy no-provenance cases, retains the `no active ResourceOwnershipClaim`
-precondition and fails closed. This does not create an implicit transfer for
-boundary edits or grant revocation.
+provenance. Before reclaim or retirement, the region must be quiescent with no
+unresolved effect bound to it, or a typed quiescence/recovery path must
+preserve and resolve known in-flight outcomes. Match the Child claim and
+Parent exclusion by exact canonical delegated region, delegation source
+identity, and claim/delegation revision; CAS the Parent/Child Workspace,
+boundary, and ownership revisions. One atomic semantic governance change
+releases only that Child claim, removes only that exact region from the
+Parent's exclusions, preserves every unrelated exclusion in normalized,
+sorted, unique antichain form, and writes the full Parent/Child post-image and
+version-capable ownership event. Retirement also marks the Child Retired in
+that same commit. Missing, duplicate, stale, or mismatched evidence fails
+closed without state/event mutation; no intermediate unowned scope or overlap
+is committed. A RetireWorkspace call without exact accepted provenance,
+including ordinary and legacy no-provenance cases, retains the `no active
+ResourceOwnershipClaim` precondition and fails closed. Boundary edits and
+grant revocation do not remove exclusions or transfer ownership.
 
 Retired Workspace 不得 AssignWork、AdmitExecution、CreateChildWorkspace 或修改 Responsibility。`Work.workspaceId` immutable；未完成事项迁移时在 Successor 创建新的 Work，并通过 Provenance 指向被替代 Work，而不是移动原 Work。Session/Memory/Decision/Artifact 的 ownership 也不改写，只通过 bootstrap/reference 派生新的 successor cognition。
 
@@ -2241,7 +2331,7 @@ ResourceOwnershipClaim[]
 
 ```text
 ResourceBoundary      = 这个责任允许作用到哪里
-ResourceOwnershipClaim= 哪些 canonical region 当前由它正式拥有 write ownership
+ResourceOwnershipClaim= 哪个 Workspace 当前拥有何种 effective canonical write set
 Permission            = 这一次具体动作是否被授权
 ```
 
@@ -2270,7 +2360,35 @@ CanonicalResourceRegion {
 }
 ```
 
-`contains(a,b)` 与 `overlaps(a,b)` 定义在同一 `resourceSpaceId` 下的 `CanonicalResourceRegion` 上；跨 resource space 默认不 overlap，除非 Environment resolver 明确把二者归一到同一 backing space。
+Formal write claims use:
+
+```text
+OwnershipRegion = {
+  allow: CanonicalResourceRegion,
+  exclusions: CanonicalResourceRegion[]
+}
+effective(OwnershipRegion) = allow minus union(exclusions)
+```
+
+An exclusion is a strict canonical descendant of `allow` in the same
+`resourceSpaceId` and canonical region kind. The finite list is normalized,
+sorted by the existing canonical ordering, unique, and prefix-antichain. An
+active claim must have a nonempty effective set. Excluded regions are not
+implicitly owned by any Workspace. Existing claims with no exclusions mean
+the full `allow` region.
+
+The domain comparator returns a typed `Contained | NotContained | Overlap |
+Disjoint` result; consumers do not reproduce set algebra. For canonical
+prefix regions, a requested region is contained only when `allow` contains
+the whole request and no exclusion partially intersects it; an exclusion
+covering the whole request also makes it NotContained. Two effective claims
+overlap when their allow regions overlap and neither claim has an exclusion
+that completely covers the intersection. Partial exclusions do not prove
+disjointness. Cross-resource-space regions do not overlap unless the
+Environment resolver canonicalizes them into the same backing space.
+Malformed/noncanonical/empty/cross-space/non-antichain exclusions fail
+closed. Equality-only canonical region kinds support only exact delegation and
+reclaim, never descendant carve-outs.
 
 核心规则：
 
@@ -2278,7 +2396,8 @@ CanonicalResourceRegion {
 - Responsibility change 可以导致 ResourceBoundary 变化；
 - ResourceBoundary 因目录、worktree、数据库 namespace 等环境映射变化时可以独立更新；
 - Read visibility 可以重叠；
-- formal write ownership 默认不重叠；
+- effective formal write ownership 默认不重叠；allow envelopes may intersect
+  only when canonical exclusions prove their effective sets disjoint;
 - ownership enforcement 比较 canonical backing resource，而不是原始 path/string；
 - Permission 不能扩大 ResourceBoundary，也不能覆盖 write ownership invariant；
 - `ResourceOwnershipClaim` 是 durable record，不升级为新的 Aggregate Root。
@@ -2291,9 +2410,9 @@ resolve/canonicalize ResourceAddress outside write transaction
 
 BEGIN IMMEDIATE
 → verify observedEnvironmentRevision is still current
-→ load potentially conflicting ownership claims
-→ deterministic overlaps()
-→ insert/update claims with resolvedAtEnvironmentRevision
+→ load potentially conflicting OwnershipRegion claims
+→ deterministic typed effective-set containment/overlap comparison
+→ insert/update normalized allow/exclusion claims with resolvedAtEnvironmentRevision
 → COMMIT
 ```
 
@@ -7420,6 +7539,14 @@ normalizedRegion
 
 并定义确定性 `contains / overlaps`。
 
+Formal claims use the finite canonical `OwnershipRegion { allow, exclusions[] }`
+from §1.5; overlap and containment are defined over its effective set, not
+the allow envelope alone. Exclusions are strict canonical descendants in the
+same space/kind, normalized/sorted/unique and prefix-antichain. The typed
+comparator returns `Contained | NotContained | Overlap | Disjoint`. Parent
+delegation atomically adds one exact exclusion and creates the Child's exact
+claim; unprovable partial exclusion, alias, or set relation fails closed.
+
 ## 12.10 C9 — Semantic capability ownership audit
 
 以下矩阵是结构审计的最小权威集；具体 payload/signature 仍在对应 Phase 前冻结。
@@ -7430,7 +7557,7 @@ normalizedRegion
 | Project directory | — (local read) | — | ProjectDirectoryPort / SQLite adapter | read boundary (P15) | local single-user, no pagination; transport owns no SQL |
 | Child Workspace | CreateChildWorkspace | WorkspaceCreated | WorkspaceRepository | application | same Project; parent immutable |
 | Responsibility | ChangeResponsibility | ResponsibilityChanged | WorkspaceRepository | application | authority + revision |
-| Resource boundary / ownership | UpdateResourceBoundary | ResourceBoundaryChanged / ResourceOwnershipChanged | Workspace + ResourceOwnershipRepository | application | canonical write regions do not overlap |
+| Resource boundary / ownership | UpdateResourceBoundary / accepted child carve-out governance change | ResourceBoundaryChanged / version-capable ResourceOwnershipChanged | Workspace + ResourceOwnershipRepository | application | effective canonical write sets do not overlap; canonical exclusions prove any shared allow-envelope disjointness |
 | Primary Session | ReplacePrimarySession | PrimarySessionReplaced | Workspace + SessionRepository | application | no Active Main Execution |
 | Work assignment | AssignWork | WorkAssigned | WorkRepository | application | Work belongs to target Workspace |
 | Current Work | SelectCurrentWork | CurrentWorkChanged | Workspace + WorkRepository | application | ≤1 current; target Open |
@@ -7515,7 +7642,7 @@ Workspace 没有 `Running/Waiting/...` lifecycle。合法 canonical structural m
 | UpdateWorkspacePolicy | authority + expected revision | revision++ + workspacePolicyRevision++ |
 | SelectCurrentWork | target Work belongs Workspace + Open; switching cannot conflict with Active Main Execution | change `currentWorkId` only |
 | ReplacePrimarySession | target `WorkspacePrimary`; no Active Main Execution | change `primarySessionId`; existing Execution bindings unchanged |
-| RetireWorkspace | non-Root + no Active Main Execution/Open Work/Active Child/no unresolved incoming Dependency with ProducerBinding = WorkspaceBound(this) or WorkBound(a Work owned by this) (unless resolved/replaced in same governance change); normally no active write ownership. Sole exception: Child claim with exact accepted delegation provenance, region quiescent or typed recovery resolved, and same transaction revokes Child claim + restores or explicitly governs Parent ownership post-image with no committed overlap | lifecycle = Retired atomically with ownership post-image |
+| RetireWorkspace | non-Root + no Active Main Execution/Open Work/Active Child/no unresolved incoming Dependency with ProducerBinding = WorkspaceBound(this) or WorkBound(a Work owned by this) (unless resolved/replaced in same governance change); normally no active write ownership. Sole exception: exact accepted Child delegation claim, quiescence/typed recovery, exact canonical region + provenance/revision match and Parent/Child CAS; same transaction releases only that Child claim, removes only its Parent exclusion, preserves all other normalized exclusions, writes complete ownership post-image/event, and sets lifecycle Retired | lifecycle = Retired atomically with exact ownership post-image |
 
 Forbidden ordinary transitions:
 

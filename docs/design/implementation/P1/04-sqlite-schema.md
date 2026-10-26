@@ -1112,6 +1112,75 @@ version, migration name and lowercase SQL SHA-256, separated by one LF with no
 trailing LF. Any mismatch at `user_version=49` fails closed; no schema
 guessing/adoption is permitted.
 
+## Accepted S3 canonical ownership carve-outs (schema 52 → 53)
+
+Accepted under `ACCEPT_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1`, supplement
+SHA-256
+`CEC99E498129189BD166703154A1FFD1E6DDA1CE93BE3C88C8CA9B51C7380B3D`.
+The proposal's observed head is schema 52; after verifying the actual
+integrated `CURRENT_MIGRATIONS` head, migration 0053 is the next sequential
+additive migration (`requiresUserVersion=52`). If the head changed, reassign
+the next sequential number after inspection; do not modify or renumber an
+earlier migration.
+
+The migration adds durable canonical exclusions to `resource_ownership` and
+the exact delegated-claim provenance needed to bind delegator Workspace,
+formation/delegation identity, claim revision, source-address snapshot/ref,
+and resolved Environment revision. The activation intent retains exact
+Parent/Child identities and expected Workspace, boundary, and ownership
+revisions plus resolved delegation identity. Exact SQL member names and JSON
+codec version remain in the authorized phase contract. Existing rows receive
+only the semantically neutral empty-exclusions value; Root claims preserve
+their existing effective sets. The migration creates no ownership claims,
+Parent exclusions, or Child provenance by inference. Legacy Child ownership
+without exact durable delegation evidence remains absent/unusable. The
+migration is transactional and restart-safe and does not activate filesystem
+access or pending ownership intent.
+
+The canonical ownership mutation uses the durable Child delegation provenance
+to match exactly one Parent exclusion by canonical delegated region and
+delegation source/claim revision. Under `BEGIN IMMEDIATE`, it CAS-checks the
+Parent/Child Workspace, boundary, and ownership revisions; releases only the
+matching Child claim; removes only that exact Parent exclusion; preserves all
+unrelated exclusions and their normalized sorted/unique antichain; validates
+the full Parent/Child/other-owner effective-set post-image; and appends the
+version-capable ownership event atomically. Reclaim and Child retirement use
+this same path, with retirement lifecycle committed in that transaction.
+Missing, duplicate, stale, or mismatched evidence leaves the complete state
+and event set unchanged. Exact committed replay returns the same result and
+does not remove another exclusion or append another event.
+Conditional implementation authorization is provided under
+`AUTHORIZE_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1_IMPLEMENTATION` after
+independent post-landing review. Migration execution, existing-database
+mutation/upgrade, and release remain outside this scope.
+
+## Accepted Native process-mode durable no-effect Denied V2 (schema 53 → 54)
+
+Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2`, supplement
+SHA-256
+`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
+The accepted P4/P40 contract adds only
+`ProcessExecutionDisabled` and `NativeOsTupleUnavailable` to the existing
+closed P40 Denied reason-code allowlists. Following S3 migration 0053, the
+proposed next sequential migration is 0054 (`requiresUserVersion=53`), subject
+to rechecking the integrated migration head and retaining strict sequential
+ordering.
+
+Migration 0054 transactionally replaces/rebuilds only the P40
+`tool_invocations` Denied insert/update guard definitions. It preserves every
+existing predicate and currently accepted reason code (including
+`ApprovalRejected`), then adds the two exact new codes to both allowlists.
+It changes no table, column, index, event, queue, marker, authority source or
+historical row; performs no DML, backfill, or settlement rewrite; and advances
+only `user_version` with those guard changes in the same transaction. Unknown
+reason codes remain rejected. Its restart behavior follows the existing
+serialized migration runner. This narrowly supersedes the base Native
+first-release package's no-migration statement only for these two codes.
+Conditional implementation authorization is provided under
+`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION` after
+independent post-landing review. It does not authorize migration execution,
+existing-database upgrade, deployment, Native support claims, or release.
+
 The accepted P2 WorkBlocker owner/DDL is unchanged. In the current schema-48
 candidate, P43 and P44 are registered migrations in the ordered
 `CURRENT_MIGRATIONS` prefix (0043/requires42 and 0044/requires43). Their

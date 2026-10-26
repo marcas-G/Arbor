@@ -685,3 +685,38 @@ projection for an active Execution with verified durable NotAdmitted/Pending
 invocation and no matching current policy decision. It is not provider
 Unavailable and writes no fact/queue/event. The V21 RecoveryBinding failure
 source remains pure-derived and follows its own exact identity/integrity rules.
+
+## Accepted Native durable process-mode no-effect Attention V2
+
+Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2`, supplement
+SHA-256
+`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
+P10 derives one read-only `ProcessExecutionUnavailable` ActionRequired row
+only from the exact terminal P4 Denied above and an exact one-to-one join to
+its Execution and P3 action identity. Require the closed reason code,
+`settlement_kind=Denied`, `effect_admission_state=NotAdmitted`, canonical
+`settled_at`, and the exact RecoveryBinding/action binding. Missing or
+conflicting joins produce no Attention and use the existing typed projection
+integrity path. The row is scoped to the exact Execution Workspace and active
+Execution; it disappears when that Execution settles or is Stopped.
+
+Its `attentionFactId` is lowercase SHA-256 over canonical UTF-8 JSON with
+exact ordered keys `version,executionId,workspaceId,invocationId,
+providerTurnId,logicalStepNo,repairAttempt,logicalActionId,actionIndex,
+callRef,reasonCode`; `version=1`. The Attention row uses that exact identity
+as its `dedupKey`. `occurredAt` is the immutable P4 `settled_at`, never
+current time. Fixed summaries are:
+
+- `Process execution is disabled for this daemon; the action was not started.`
+- `No qualified Native OS process tuple is available; the action was not started.`
+
+Expose only the safe status, exact closed reason code, and existing public
+Execution/action references. Omit command text, paths, environment, raw
+provider/policy errors, helper locations, evidence digests, and capability
+details. This is a read-only projection: it adds no P9 fact, provider
+unavailable fact, attempt, queue, marker, event, or P40 Observation.
+Implementation is conditionally authorized under
+`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION` after the
+required independent post-landing review; migration execution, database
+upgrade, deployment, Native support claims, and release remain separately
+gated.

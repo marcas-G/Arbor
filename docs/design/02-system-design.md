@@ -1,18 +1,46 @@
 # Arbor System Design Specification
 
-**Version:** 1.24
+**Version:** 1.25
 
-**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, S2-RDG-01, and RAI-DG-02 governance addenda
+**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, S2-RDG-01, RAI-DG-02, and S3 canonical ownership carve-out governance addenda
 
-**Supersedes:** v1.23
+**Supersedes:** v1.24
 
 **Date:** 2026-10-26
 
-**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.9`
+**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.10`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
 
 **Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
+
+**Governance changes (v1.24 → v1.25): accepted canonical ownership carve-outs**
+
+Accepted under `ACCEPT_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1` on 2026-10-26;
+fixed supplement SHA-256
+`CEC99E498129189BD166703154A1FFD1E6DDA1CE93BE3C88C8CA9B51C7380B3D`.
+Canonical write ownership is represented as an `OwnershipRegion` containing
+one resolver-produced `allow` region and a finite set of canonical
+`exclusions`; its effective set is `allow` minus those exclusions. An
+exclusion is a strict canonical descendant in the same resource space and
+region kind. The normalized exclusion list is sorted, unique, and an
+antichain. Active claims must have a nonempty effective set. Delegating a
+child scope adds an exact Parent exclusion and creates the Child claim in the
+same atomic ownership change. Effective owned sets, rather than allow
+envelopes, determine global overlap. Exclusions do not confer ownership; the
+Child receives ownership only through its explicit claim. Equality-only region
+kinds allow only exact carve-out/reclaim. Reclaim/Child retirement matches
+the exact delegated canonical region and provenance/revision, removes only
+that Parent exclusion, and preserves every unrelated exclusion in normalized
+antichain form in the full atomic Parent/Child post-image and event. Unprovable
+set operations fail closed; arbitrary geometric subtraction and dynamic
+exclusions are outside v1.
+
+The same accepted contract extends P4 admission to validate effective-set
+containment and global effective-set disjointness. It remains validate-only.
+The proposal fixes schema migration 0053 after schema-52 recheck; existing
+claims receive empty exclusions without inferred child ownership. Exact
+physical field/codec names remain phase-contract details.
 
 **Governance changes (v1.23 → v1.24): accepted S3 child resource ownership and Native OS Sandbox first-release boundary**
 
@@ -1019,31 +1047,70 @@ widens ownership.
 The Environment resolver maps delegated addresses to canonical backing
 regions. Every Child region must be contained by both the Child's persisted
 ResourceBoundary and the Parent's active ownership. The global no-overlap
-invariant applies after canonicalization. Carving a Child region from Parent
-ownership atomically narrows/splits the Parent claim and installs the Child
-claim; if containment, overlap, or an unambiguous split cannot be proven, the
-whole change fails with typed evidence and no partial state. Activation
+invariant applies to effective canonical owned sets; intersecting allow
+envelopes are valid only when finite exclusions prove those effective sets
+disjoint. Carving a Child region from Parent ownership atomically adds the
+exact canonical exclusion and installs the Child claim; if containment,
+overlap, or an unambiguous set operation cannot be proven, the whole change
+fails with typed evidence and no partial state. Activation
 rechecks exact Parent/Child/boundary/ownership revisions, source identity,
 canonical mapping and conflicts in the ownership transaction. Mapping drift
-does not rebind an existing delegation. Reclaim/revoke is likewise atomic and
-requires Child quiescence or a typed recovery path that preserves in-flight
-outcomes. Retirement, boundary edits, and grant revocation do not implicitly
-transfer ownership. The accepted-delegation retirement case is the bounded
-exception: retiring a Child with exact accepted delegation provenance consumes
-and revokes that claim in the same atomic semantic governance change. It first
-establishes quiescence or completes a typed recovery path for known in-flight
-effects, then removes the Child claim and restores the Parent's corresponding
-canonical ownership post-image (or applies an explicitly governed alternative
-post-image), and marks the Child Retired in that same commit. The transaction
-has no committed intermediate overlap. Ordinary RetireWorkspace, and any
-legacy Child claim without exact accepted delegation provenance, retain the
-no-active-claim fail-closed precondition. Child onward delegation is disabled
-absent a separate governance change. Historical Child claims are not inferred
-during upgrade.
+does not rebind an existing delegation. Reclaim/revoke requires Child
+quiescence or a typed recovery path that preserves in-flight outcomes. It
+matches the Child claim by exact canonical delegated region and provenance
+(delegation source identity and claim revision), and CAS-checks Parent/Child
+Workspace, boundary, and ownership revisions. In the same atomic change it
+releases that Child claim and removes only the exact corresponding region from
+the Parent's exclusions, preserving every unrelated exclusion in normalized,
+sorted, unique antichain form. A missing/multiple/mismatched target or stale
+revision fails closed with no state/event change. The complete Parent/Child
+post-image and ownership event commit together; no intermediate unowned scope
+or overlap is committed.
+
+Retirement of a Child with exact accepted delegation provenance uses this same
+reclaim operation after quiescence/recovery, and marks the Child Retired in
+that same commit. Ordinary retirement and legacy/no-provenance claims retain
+the no-active-claim fail-closed precondition. Boundary edits and grant
+revocation never remove exclusions or transfer ownership. Child onward
+delegation is disabled absent a separate governance change. Historical Child
+claims are not inferred during upgrade.
+
+The Parent remainder uses a finite canonical carve-out rather than path
+enumeration:
+
+```text
+OwnershipRegion = {
+  allow: CanonicalResourceRegion,
+  exclusions: CanonicalResourceRegion[]
+}
+effectiveOwnedSet = allow minus union(exclusions)
+```
+
+Each exclusion is a strict descendant of `allow` in the same resource space
+and canonical region kind. Exclusions are canonical, sorted, unique, and
+prefix-antichain; the effective claim must be nonempty. They are denied to
+that owner and do not implicitly belong to another Workspace. An explicit
+Child claim owns the delegated scope. The effective Parent post-image adds
+the exact delegated region to its exclusions while the Child receives that
+canonical region with empty exclusions.
+
+Containment succeeds only if the resolver-backed comparator proves the whole
+requested scope is in the effective claim: a partial intersection with any
+exclusion is NotContained, and a fully excluded request is also NotContained.
+Two effective claims overlap if their allow regions overlap and neither
+claim's exclusion completely covers the intersection; a partial exclusion is
+not proof of disjointness. Equality-only region kinds support only exact
+delegation/reclaim. Malformed, noncanonical, empty, cross-space, or
+non-antichain exclusions and unprovable set operations fail closed with typed
+ownership-integrity/canonical-conflict evidence.
 
 P4 admission remains validate-only: it reads the exact active claim and
-boundary and rejects missing, stale, overlapping, or out-of-bound ownership;
-it never creates, repairs, or expands a claim.
+boundary and proves the full requested canonical effect region is contained
+in its effective ownership set, is within the current boundary, and has no
+overlap with another active effective claim. It rejects missing, stale,
+malformed, overlapping, or out-of-bound ownership; a grant cannot alter the
+claim's exclusions. Admission never creates, repairs, re-resolves, or expands
+a claim or activates an intent.
 
 ## 4.6 Context 隔离
 
@@ -2090,8 +2157,9 @@ Rollback stops new process admissions, settles or Stops active trees through
 existing interruption semantics, switches the mode to Disabled, and restarts
 the daemon. Monotone trust/authority high-water state and signed evidence are
 preserved; returning to Native requires a fresh current snapshot and every
-qualification gate. This release rule adds no database schema, migration, or
-new authority source.
+qualification gate. The mode itself adds no database mode state or authority
+source. The accepted durable no-effect V2 supplement's only schema change is
+the P40 Denied-code guard migration specified in DID v1.65.
 
 ---
 

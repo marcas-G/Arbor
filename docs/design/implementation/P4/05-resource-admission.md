@@ -42,7 +42,11 @@ Rule:
 ```text
 for each region:
   region ⊆ ResourceBoundary(workspace, current responsibility revision)
-  AND region ⊆ active ResourceOwnershipClaim regions of the workspace
+else -> Denied
+
+for each write region:
+  region ⊆ active ResourceOwnershipClaim effective set of the workspace
+  AND region is disjoint from every other active owner's effective set
 else -> Denied
 ```
 
@@ -61,6 +65,38 @@ else -> Denied
 
 - No ownership claim/release (governance Command).
 - No ResourceBoundary mutation.
+
+## Accepted S3 effective ownership set admission
+
+Accepted under `ACCEPT_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1`, supplement
+SHA-256
+`CEC99E498129189BD166703154A1FFD1E6DDA1CE93BE3C88C8CA9B51C7380B3D`.
+P4 receives the current durable `OwnershipRegion` and canonical effect
+regions from the existing resolver path; it does not parse or compare source
+path strings. For each write effect it proves the complete requested
+canonical region is contained by the claim's effective set (`allow` minus
+finite canonical `exclusions`), contained by the current Workspace
+ResourceBoundary, and disjoint from every other active owner's effective set.
+Any partial intersection with an exclusion is denied. A capability grant
+cannot remove exclusions or widen `allow`.
+P4 always reads the exact current exclusion list: a Parent effect on the
+delegated Child scope is denied, and the Child must prove its own exact active
+claim. Exclusion removal is never part of admission; it occurs only through
+the canonical ownership mutation after exact Child claim, canonical region,
+delegation provenance/revision, and Parent/Child revision CAS checks.
+
+The comparator is the domain-owned typed operation from DID §1.5. It rejects
+malformed/noncanonical/empty/cross-space/non-antichain exclusions and returns
+typed `Contained`, `NotContained`, `Overlap`, or `Disjoint` results. P4 maps
+missing, stale, malformed, overlapping, or unprovable ownership to the
+existing typed denial before effect. Admission remains validate-only: it does
+not repair claims, re-resolve persisted claims, mutate exclusions, or activate
+delegation intents.
+Implementation is conditionally authorized under
+`AUTHORIZE_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1_IMPLEMENTATION` after the
+required independent post-landing review. Migration execution, existing
+database mutation/upgrade, and S3 closure/release claims remain separately
+gated by the accepted qualification matrix.
 
 
 ## Accepted V21 path-free sandbox target and policy basis
