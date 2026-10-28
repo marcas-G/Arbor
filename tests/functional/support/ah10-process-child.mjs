@@ -26,6 +26,7 @@ import {
   createAh19StartupDiagnosticProbe,
   createFunctionalDaemonListenReporter,
 } from "./functional-daemon-lifecycle.mjs";
+import { functionalTestMain } from "./functional-test-composition.mjs";
 
 const role = process.env.ARBOR_AH10_ROLE;
 if (role !== "old" && role !== "new") {
@@ -885,15 +886,20 @@ const config = {
   assignWorkBindingAttentionQualificationProbe: pauseAttentionBoundary,
 };
 
+const mainOverrides = {
+  ...config,
+  ...(trustedHostConfigurationSource === undefined
+    ? {}
+    : { trustedHostConfigurationSource }),
+  ...(trustedHostConfigurationSource === undefined ? {} : { governance }),
+};
+const daemonLayer =
+  process.env.ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION === "1"
+    ? functionalTestMain(mainOverrides, {
+        allowTrustedLocalProcessExecution: true,
+      })
+    : main(mainOverrides);
+
 await Effect.runPromise(
-  Effect.provide(
-    Effect.scoped(runDaemonForever(config)),
-    main({
-      ...config,
-      ...(trustedHostConfigurationSource === undefined
-        ? {}
-        : { trustedHostConfigurationSource }),
-      ...(trustedHostConfigurationSource === undefined ? {} : { governance }),
-    }),
-  ),
+  Effect.provide(Effect.scoped(runDaemonForever(config)), daemonLayer),
 );

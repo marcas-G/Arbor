@@ -11,6 +11,7 @@ import {
 import { Principal, parse } from "../../../packages/domain/dist/index.js";
 import { SHELL_DEFINITION } from "../../../packages/tool-runtime/dist/catalog.js";
 import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
+import { functionalTestMain } from "./functional-test-composition.mjs";
 
 const onWebTransportListening = createFunctionalDaemonListenReporter();
 const sandboxAuthoritySourceFile =
@@ -134,15 +135,20 @@ if (process.env.ARBOR_AH_NON_IDEMPOTENT === "1") {
   SHELL_DEFINITION.sideEffectSemantics = "NonIdempotent";
 }
 
+const mainOverrides = {
+  ...config,
+  ...(trustedHostConfigurationSource === undefined
+    ? {}
+    : { trustedHostConfigurationSource }),
+  ...(trustedHostConfigurationSource === undefined ? {} : { governance }),
+};
+const daemonLayer =
+  process.env.ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION === "1"
+    ? functionalTestMain(mainOverrides, {
+        allowTrustedLocalProcessExecution: true,
+      })
+    : main(mainOverrides);
+
 await Effect.runPromise(
-  Effect.provide(
-    Effect.scoped(runDaemonForever(config)),
-    main({
-      ...config,
-      ...(trustedHostConfigurationSource === undefined
-        ? {}
-        : { trustedHostConfigurationSource }),
-      ...(trustedHostConfigurationSource === undefined ? {} : { governance }),
-    }),
-  ),
+  Effect.provide(Effect.scoped(runDaemonForever(config)), daemonLayer),
 );
