@@ -319,6 +319,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       logical_action_id: string;
       call_ref: string;
       state: string;
+      observation_source_ref: string;
     };
     expect(originalAction.execution_id).toBe(executionId);
     expect((receipt[0] as { command_id: string }).command_id).toBe(
@@ -329,10 +330,10 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     );
     expect(originalAction.state).not.toBe("Applied");
     expect(
-      committedBeforeKill.observations.filter((observation) =>
-        (observation as { source_ref?: string }).source_ref?.startsWith(
-          `observation_${executionId}_`,
-        ),
+      committedBeforeKill.observations.filter(
+        (observation) =>
+          (observation as { source_ref?: string }).source_ref ===
+          originalAction.observation_source_ref,
       ),
     ).toHaveLength(0);
     expect(seed.deliverDecisionCalls).toBe(1);
