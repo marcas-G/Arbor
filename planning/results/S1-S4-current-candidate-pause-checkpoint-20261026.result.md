@@ -485,3 +485,23 @@ The first resumed `pnpm check` reached architecture 194/194 and core batches
 review required a code/test change; it is not final evidence. Full
 same-commit `pnpm check` and `pnpm test:functional` remain required after the
 release commit.
+
+### First same-commit gate attempt and load-bound correction
+
+Commit `3cdc8ad357b7c24eade33803d547a84d32e56892` was the first clean release
+candidate. Its `pnpm check` passed lint, typecheck, architecture 194/194 and
+core batches 1-39, including the complete schema-upgrade batch (87 passed,
+6 skipped). Core batch 40 had one failure out of 72 tests:
+
+```text
+tests/p3-driver.test.ts
+carries a conversation-safe control result into the next turn before answering
+30s default timeout; observed 32.364s
+```
+
+The exact case passed alone in 22.52s and the complete `p3-driver` file passed
+51/51 in 74.57s. The case performs a full current-schema fixture plus a
+two-turn durable control-result loop; its assertions and zero-retry policy are
+unchanged, while its explicit per-case budget is now 60 seconds to remove the
+batch-load false negative. This changes no production behavior or semantic
+oracle. A new release commit and full final gates are required.

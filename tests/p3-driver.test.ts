@@ -1721,7 +1721,7 @@ describe("P3-013 agent driver", () => {
         }),
       ]),
     );
-  });
+  }, 60_000);
 
   it("uses one persisted overflow chain and replacement inference", async () => {
     const operations: string[] = [];
