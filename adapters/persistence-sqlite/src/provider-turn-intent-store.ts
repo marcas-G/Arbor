@@ -6,7 +6,10 @@ import type {
   ProviderTurnStoreService,
   SessionId,
 } from "@arbor/ports";
-import { TransactionScope } from "@arbor/ports";
+import {
+  PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING,
+  TransactionScope,
+} from "@arbor/ports";
 import { Effect } from "effect";
 import {
   decodeJson,
@@ -57,9 +60,20 @@ export const makeProviderTurnIntentStore = (
             safeDiagnostic: "manifest-identity-mismatch",
           });
         }
-        yield* run(
-          sql.unsafe(
-            "INSERT INTO provider_turns (provider_turn_id, execution_id, session_id, context_epoch, model_ref, output_contract_ref, manifest_id, started_at, settled_at, finish_reason, usage_json, created_at, execution_policy_json, turn_deadline_at) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?)",
+        const inserted = yield* run(
+          sql.unsafe<{ provider_turn_id: string }>(
+            `INSERT INTO provider_turns (
+               provider_turn_id, execution_id, session_id, context_epoch,
+               model_ref, output_contract_ref, manifest_id, started_at,
+               settled_at, finish_reason, usage_json, created_at,
+               execution_policy_json, turn_deadline_at
+             )
+             SELECT ?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?
+               FROM executions
+              WHERE execution_id = ?
+                AND stop_requested_at IS NULL
+                AND settled_at IS NULL
+             RETURNING provider_turn_id`,
             [
               record.providerTurnId,
               record.executionId,
@@ -72,9 +86,32 @@ export const makeProviderTurnIntentStore = (
               startedAt,
               JSON.stringify(record.executionPolicy ?? null),
               record.turnDeadlineAt ?? null,
+              record.executionId,
             ],
           ),
         );
+        if (inserted.length === 0) {
+          const executions = yield* run(
+            sql.unsafe<{
+              stop_requested_at: string | null;
+              settled_at: string | null;
+            }>(
+              "SELECT stop_requested_at, settled_at FROM executions WHERE execution_id = ?",
+              [record.executionId],
+            ),
+          );
+          const execution = executions[0];
+          return yield* Effect.fail<ProviderFailure>({
+            _tag: "ProviderFailure",
+            kind: "UnknownProviderFailure",
+            safeDiagnostic:
+              execution !== undefined && execution.stop_requested_at !== null
+                ? PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING
+                : execution !== undefined && execution.settled_at !== null
+                  ? "provider-turn-admission-execution-settled"
+                  : "provider-turn-admission-execution-missing",
+          });
+        }
         yield* run(
           sql.unsafe(
             "INSERT INTO model_context_manifests (manifest_id, provider_turn_id, execution_id, session_id, context_epoch, model_ref, compiled_request_hash, manifest_json, created_at, portable_request_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
