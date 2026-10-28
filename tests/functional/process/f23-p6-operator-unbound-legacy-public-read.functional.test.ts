@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "../../../adapters/persistence-sqlite/src/index.js";
 import { seedP6InboxRebuildFixture } from "../../../apps/single-workspace/test/support/p6-inbox-rebuild-fixture.js";
 import {
   type ProductionFixture,
@@ -268,7 +269,7 @@ describe("F23/P6 operator UnboundLegacy public read qualification", () => {
             user_version: number;
           }
         ).user_version,
-      ).toBe(52);
+      ).toBe(CURRENT_SCHEMA_VERSION);
     } finally {
       durable.close();
     }
