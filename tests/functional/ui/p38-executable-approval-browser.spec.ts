@@ -398,8 +398,16 @@ const startQueueApproval = async (marker: string) => {
     process.platform === "win32"
       ? `if (Test-Path -LiteralPath 'proof.txt') { Add-Content -LiteralPath '${effectLog}' -Value '${marker}'; mv -LiteralPath 'proof.txt' -Destination 'p38-browser-${marker}.txt' }`
       : `if [ -f proof.txt ]; then printf '%s\\n' '${marker}' >> '${effectLog}' && mv proof.txt 'p38-browser-${marker}.txt'; fi`;
+  const trustedLocalP11 = createTrustedLocalP11FixtureEnvironment();
+  trustedLocalP11.daemonEnvironment.ARBOR_TICK_INTERVAL_MS = "25";
+  let shellRequested = false;
   fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
+    daemonEnvironment: trustedLocalP11.daemonEnvironment,
+    setupProbe: trustedLocalP11.setupProbe,
+    firstDaemonEntry: resolve(
+      "tests/functional/support/sandbox-policy-v2-daemon-child.mjs",
+    ),
     reply: (call) => {
       const tools = new Set(
         call.tools
@@ -438,6 +446,13 @@ const startQueueApproval = async (marker: string) => {
             };
       }
       if (tools.has("shell") && context.includes(marker)) {
+        if (shellRequested) {
+          return {
+            _tag: "Text",
+            text: `Executable action resolved for ${marker}`,
+          };
+        }
+        shellRequested = true;
         return {
           _tag: "ToolCall",
           name: "shell",
@@ -1194,18 +1209,9 @@ test("P38 Queue renders an expired approval and recovers without an effect", asy
 }) => {
   const marker = `P38-BROWSER-EXPIRE-${crypto.randomUUID().slice(0, 8)}`;
   const run = await startQueueApproval(marker);
-  const db = new DatabaseSync(fixture?.databaseFile ?? "");
-  try {
-    db.prepare(
-      "UPDATE action_approvals SET expires_at = ? WHERE approval_id = ? AND route_kind = 'Executable' AND state = 'Pending' AND revision = ?",
-    ).run(
-      "2000-01-01T00:00:00.000Z",
-      run.target.approvalId,
-      run.target.revision,
-    );
-  } finally {
-    db.close();
-  }
+  await page.clock.setFixedTime(
+    new Date(Date.parse(run.target.expiresAt) + 1_000),
+  );
 
   await page.goto(`${fixture?.baseUrl}/p/${run.project.projectId}`);
   await page.getByRole("button", { name: "待处理" }).click();
@@ -1217,6 +1223,22 @@ test("P38 Queue renders an expired approval and recovers without an effect", asy
   await expect(page.getByLabel("审批决定")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "批准并继续" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "拒绝动作" })).toHaveCount(0);
+
+  const db = new DatabaseSync(fixture?.databaseFile ?? "");
+  try {
+    const expired = db
+      .prepare(
+        "UPDATE action_approvals SET expires_at = ? WHERE approval_id = ? AND route_kind = 'Executable' AND state = 'Pending' AND revision = ?",
+      )
+      .run(
+        "2000-01-01T00:00:00.000Z",
+        run.target.approvalId,
+        run.target.revision,
+      );
+    expect(expired.changes).toBe(1);
+  } finally {
+    db.close();
+  }
 
   await expect
     .poll(
