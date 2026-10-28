@@ -133,10 +133,7 @@ const startExecutableApproval = async (
       ? `if (Test-Path -LiteralPath 'proof.txt') { Add-Content -LiteralPath '${effectLog}' -Value '${marker}'; mv -LiteralPath 'proof.txt' -Destination '${destination}'; Write-Output '${marker}' }`
       : `if [ -f proof.txt ]; then printf '%s\\n' '${marker}' >> '${effectLog}' && mv proof.txt '${destination}' && printf '%s\\n' '${marker}'; fi`;
 
-  const trustedLocalFixture =
-    qualification.trustedLocalSandboxPolicy === true
-      ? createTrustedLocalP11FixtureEnvironment()
-      : undefined;
+  const trustedLocalFixture = createTrustedLocalP11FixtureEnvironment();
   let releaseShellAction!: () => void;
   let markShellActionRequested!: () => void;
   const shellActionGate = new Promise<void>((resolveGate) => {
@@ -145,20 +142,15 @@ const startExecutableApproval = async (
   const shellActionRequested = new Promise<void>((resolveRequest) => {
     markShellActionRequested = resolveRequest;
   });
-  const daemonEnvironment = trustedLocalFixture?.daemonEnvironment ?? {};
+  const daemonEnvironment = trustedLocalFixture.daemonEnvironment;
+  daemonEnvironment.ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION = "1";
   Object.assign(daemonEnvironment, qualification.daemonEnvironment ?? {});
-  if (trustedLocalFixture !== undefined) {
-    daemonEnvironment.ARBOR_TICK_INTERVAL_MS = "25";
-    daemonEnvironment.ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION = "1";
-  }
+  daemonEnvironment.ARBOR_TICK_INTERVAL_MS = "25";
+  daemonEnvironment.ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION = "1";
   const fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
-    ...(Object.keys(daemonEnvironment).length === 0
-      ? {}
-      : { daemonEnvironment }),
-    ...(trustedLocalFixture === undefined
-      ? {}
-      : { setupProbe: trustedLocalFixture.setupProbe }),
+    daemonEnvironment,
+    setupProbe: trustedLocalFixture.setupProbe,
     ...(qualification.trustedLocalSandboxPolicy === true
       ? {
           beforeResponse: async (call) => {
@@ -172,13 +164,8 @@ const startExecutableApproval = async (
           },
         }
       : {}),
-    ...(qualification.firstDaemonEntry === undefined &&
-    trustedLocalFixture === undefined
-      ? {}
-      : {
-          firstDaemonEntry:
-            qualification.firstDaemonEntry ?? sandboxPolicyV2DaemonChild,
-        }),
+    firstDaemonEntry:
+      qualification.firstDaemonEntry ?? sandboxPolicyV2DaemonChild,
     ...(qualification.onDaemonStdout === undefined
       ? {}
       : { onDaemonStdout: qualification.onDaemonStdout }),
