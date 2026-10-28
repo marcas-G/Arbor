@@ -557,3 +557,14 @@ current source/upgrade target of schema 52. Both current-schema assertions are
 now 54 while the frozen 44→42→32 historical image and its receipt/binding
 oracles are unchanged. The exact `legacy-p32-upgrade` takeover passed 1/1 in
 79.611s after the correction.
+
+The next compatible resume passed the complete direct-child AssignWork,
+SendMessage and general generation-takeover files, then reached P38 public
+Executable approval. Its first authority/stale-revision fixture still started
+the production child, so shell was absent and the HumanConversation input
+remained unconsumed. `startExecutableApproval` now always provisions the
+functional-only sandbox authority source and executable catalog; tests that
+actually execute an effect still separately require and commit their exact P11
+policy. The P4 fencing child honors the same explicit test-only environment
+flag. The exact P38 authority/stale-revision case then passed 1/1 in 12.103s;
+production `main()` remains unchanged.

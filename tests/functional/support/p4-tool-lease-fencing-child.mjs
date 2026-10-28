@@ -22,6 +22,7 @@ import {
 } from "../../../packages/tool-runtime/dist/catalog.js";
 import { BUILTIN_EXECUTORS } from "../../../packages/tool-runtime/dist/index.js";
 import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
+import { functionalTestMain } from "./functional-test-composition.mjs";
 
 const onWebTransportListening = createFunctionalDaemonListenReporter();
 const sandboxAuthoritySourceFile =
@@ -500,6 +501,19 @@ const config = {
     ? { transactionBeginQualificationProbe }
     : {}),
 };
+const mainOverrides = {
+  ...config,
+  ...(trustedHostConfigurationSource === undefined
+    ? {}
+    : { trustedHostConfigurationSource }),
+  ...(trustedHostConfigurationSource === undefined ? {} : { governance }),
+};
+const makeDaemonLayer = () =>
+  process.env.ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION === "1"
+    ? functionalTestMain(mainOverrides, {
+        allowTrustedLocalProcessExecution: true,
+      })
+    : main(mainOverrides);
 
 if (role === "new" && explicitExecutionTarget !== undefined) {
   void (async () => {
@@ -522,15 +536,7 @@ if (role === "new" && explicitExecutionTarget !== undefined) {
             undefined,
             executionLeaseQualificationProbe,
           ),
-          main({
-            ...config,
-            ...(trustedHostConfigurationSource === undefined
-              ? {}
-              : { trustedHostConfigurationSource }),
-            ...(trustedHostConfigurationSource === undefined
-              ? {}
-              : { governance }),
-          }),
+          makeDaemonLayer(),
         ),
       );
       emit({
@@ -559,16 +565,7 @@ if (role === "new" && explicitExecutionTarget !== undefined) {
 emit({ boundary: "P4ChildBeforeDaemonMain" });
 try {
   await Effect.runPromise(
-    Effect.provide(
-      Effect.scoped(runDaemonForever(config)),
-      main({
-        ...config,
-        ...(trustedHostConfigurationSource === undefined
-          ? {}
-          : { trustedHostConfigurationSource }),
-        ...(trustedHostConfigurationSource === undefined ? {} : { governance }),
-      }),
-    ),
+    Effect.provide(Effect.scoped(runDaemonForever(config)), makeDaemonLayer()),
   );
   emit({ boundary: "P4ChildDaemonMainResolved" });
 } catch (error) {
