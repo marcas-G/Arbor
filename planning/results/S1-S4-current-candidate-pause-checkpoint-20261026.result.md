@@ -594,3 +594,12 @@ covers the cross-Execution same-callRef collision, current-Execution repair
 retention and a `Ready` projected timeline. Independent rerun: Biome PASS,
 typecheck PASS, frontier isolation + full p3-driver 53/53 PASS. Production fix
 commit after cherry-pick: `660200149abc2b5e441979c1ce91657920492f12`.
+
+The first full run after that production hardening hit a load-sensitive AH19
+test oracle: the ordinary Native Before boundary timed out while the daemon was
+alive and error-free. The exact case passed independently in 52.242s; after
+raising only the Steer/report wait from 60s to 120s and the paired Before/After
+case budget from 120s to 180s, two consecutive Luna runs plus an independent
+main-worktree run passed Before/After 6/6. All provider identity, checkpoint,
+frontier, no-replay and durable-state assertions are unchanged. Timeout errors
+now include the Work revision and exact reported Provider request summary.
