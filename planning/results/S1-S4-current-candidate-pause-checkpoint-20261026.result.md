@@ -522,3 +522,20 @@ and no longer treats a deliberately filtered repair result as projected
 context. The exact restart case then passed 1/1 in 54.478s, zero retry. This
 was test-only alignment with the production ownership fix; no runtime behavior
 changed.
+
+### TrustedLocal functional-fixture correction
+
+The next full functional attempt passed the entire AH19 provider-native file,
+including both ordinary source-identity crash sides and the corrected
+latest-64 restart. It then failed the first AH7 Reconcilable case before any
+Work provider call (`workProviderCalls=0`, `manualWaitCalls=0`). The fixture
+still expected `shell` to be model-visible, while production composition now
+correctly fixes the first-release process mode to Disabled.
+
+The correction does not restore a production escape hatch. The existing
+functional-only TrustedLocal seam is now selected by `ah-crash-child.mjs` and
+`ah10-process-child.mjs` only when the trusted P11 fixture explicitly exports
+`ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION=1`; all other child runs still
+use production `main()`. The exact AH7 NotAdmitted crash/recovery case then
+passed 1/1 in 54.151s. Formatting, typecheck and the opt-in boundary remain
+green.

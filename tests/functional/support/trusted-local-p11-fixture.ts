@@ -52,6 +52,7 @@ interface WorkspaceDetailForP11 {
 export const createTrustedLocalP11FixtureEnvironment = () => {
   const daemonEnvironment: Record<string, string> = {
     ARBOR_AUTH_TOKENS: "local=user:local,operator=user:operator",
+    ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION: "1",
   };
   const setupProbe = async (event: ProductionFixtureSetupProbeEvent) => {
     if (event.stage !== "after-clone") return;
