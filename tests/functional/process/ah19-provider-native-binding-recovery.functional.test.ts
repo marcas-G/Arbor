@@ -1542,7 +1542,7 @@ const readTypedSessionRows = (databaseFile: string, sessionId: string) => {
     db.exec("BEGIN DEFERRED");
     return db
       .prepare(
-        `SELECT sequence, item_type, source_ref, payload_json
+        `SELECT sequence, item_type, source_kind, source_ref, payload_json
            FROM session_entries
           WHERE session_id = ? AND schema_version = 2
           ORDER BY sequence`,
@@ -1550,6 +1550,7 @@ const readTypedSessionRows = (databaseFile: string, sessionId: string) => {
       .all(sessionId) as Array<{
       sequence: number;
       item_type: string;
+      source_kind: string | null;
       source_ref: string | null;
       payload_json: string;
     }>;
@@ -3742,23 +3743,32 @@ describe("AH19 ProviderNative binding recovery", () => {
         scope: string;
         hash: string;
       }>;
+      contextRefs?: ReadonlyArray<string>;
     };
     const allRowsAfterRequest = typedRowsNow();
-    const allWorkRowsAfterRequest = readAllWorkTimelineRows(
-      fixture.databaseFile,
-      project.rootSessionId,
-    );
-    const consideredRows = allWorkRowsAfterRequest.filter(
+    const rawLatest64 = allRowsAfterRequest
+      .filter(
+        (row) =>
+          manifest.inputFrontier?.lastSequence !== null &&
+          manifest.inputFrontier?.lastSequence !== undefined &&
+          row.sequence <= manifest.inputFrontier.lastSequence,
+      )
+      .slice(-64);
+    expect(rawLatest64).toHaveLength(64);
+    const projectedContextRefs = new Set(manifest.contextRefs ?? []);
+    const projectedRows = rawLatest64.filter(
       (row) =>
-        manifest.inputFrontier?.lastSequence !== null &&
-        manifest.inputFrontier?.lastSequence !== undefined &&
-        row.sequence <= manifest.inputFrontier.lastSequence,
+        row.source_kind !== null &&
+        row.source_ref !== null &&
+        projectedContextRefs.has(
+          `session:${row.source_kind}:${row.source_ref}`,
+        ),
     );
-    const latest64 = consideredRows.slice(-64);
-    expect(latest64).toHaveLength(64);
+    expect(projectedRows.length).toBeGreaterThan(0);
+    expect(projectedRows.length).toBeLessThanOrEqual(64);
     expect(manifest.inputFrontier).toEqual({
-      firstSequence: latest64[0]?.sequence,
-      lastSequence: latest64.at(-1)?.sequence,
+      firstSequence: projectedRows[0]?.sequence,
+      lastSequence: projectedRows.at(-1)?.sequence,
     });
     for (const prior of beforeRestartRows) {
       expect(allRowsAfterRequest).toContainEqual(prior);

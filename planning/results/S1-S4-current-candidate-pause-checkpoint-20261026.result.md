@@ -505,3 +505,20 @@ two-turn durable control-result loop; its assertions and zero-retry policy are
 unchanged, while its explicit per-case budget is now 60 seconds to remove the
 batch-load false negative. This changes no production behavior or semantic
 oracle. A new release commit and full final gates are required.
+
+### Functional frontier-oracle correction
+
+The first complete release-functional run after the load-bound correction
+stopped at the historical AH19 latest-64 restart case. Runtime recovery and
+post-restart inference succeeded, but the test expected frontier
+`12..75`; production correctly emitted `13..75`. Sequence 12 was the
+prior-Execution `SessionFrontierRepair` result that the S3 production fix now
+excludes together with its originating call.
+
+The oracle now follows the frozen ordering rule directly: select the raw
+latest-64 typed rows first, then identify the rows actually projected by the
+manifest's exact Session context refs. It retains the 64-row raw-window check
+and no longer treats a deliberately filtered repair result as projected
+context. The exact restart case then passed 1/1 in 54.478s, zero retry. This
+was test-only alignment with the production ownership fix; no runtime behavior
+changed.
