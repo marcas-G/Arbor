@@ -539,3 +539,13 @@ functional-only TrustedLocal seam is now selected by `ah-crash-child.mjs` and
 use production `main()`. The exact AH7 NotAdmitted crash/recovery case then
 passed 1/1 in 54.151s. Formatting, typecheck and the opt-in boundary remain
 green.
+
+The following full functional attempt passed both the complete AH19 file and
+the complete AH7 Reconcilable file, then timed out in the Sandbox V6 registry
+drift main scenario at 180 seconds. Retained evidence showed the exact cause:
+the Work request had no `shell`, so no P4 intent, EAP, executable probe or P9
+probe existed. The V6 test already used the functional daemon child but had
+not opted into its test-only executable catalog. It now exports the same
+explicit test-only flag for that scenario. The exact V6 main journey then
+passed 1/1 in 63.087s, including the P9 terminal and fresh reapproval after
+registry drift. Production composition remains Disabled by default.
