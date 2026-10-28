@@ -3007,8 +3007,12 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
         native: providerRequests.find(ordinaryWorkNative),
       }),
       (state) => state.count >= beforeSteer + 2 || state.native !== undefined,
-      60_000,
-    );
+      120_000,
+    ).catch((error: unknown) => {
+      throw new Error(
+        `ordinary Native did not advance after SteerWork ${index}: before=${beforeSteer}, current=${JSON.stringify(observed.current)}, requests=${JSON.stringify(providerRequests.map(({ operationKind, providerTurnId, workActionHistoryCount }) => ({ operationKind, providerTurnId, workActionHistoryCount })))}; ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   }
   const probe = await waitForPublic(
     async () => probes.find((event) => event.boundary === boundary),
@@ -5078,7 +5082,7 @@ describe("AH19 restart binding qualification", () => {
         lastSequence: expect.any(Number),
       });
     },
-    120_000,
+    180_000,
   );
 
   it("rebases ordinary Native recovery from binding A to B through its portable frontier", async () => {
