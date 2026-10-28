@@ -4,19 +4,23 @@ import { describe, expect, it } from "vitest";
 import {
   ClockLive,
   CommandStoreLive,
+  CURRENT_MIGRATIONS,
   DomainEventJournalLive,
   IdGeneratorLive,
   layer,
   P1_MIGRATIONS,
-  P35_MIGRATIONS,
+  P36_MIGRATIONS,
+  P39_MAINTENANCE_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
+  splitStatements,
   TransactionPortLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkspaceResourceActivationStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
+
 import {
   CommandGateway,
   CommandGatewayLive,
@@ -50,6 +54,25 @@ import {
   TransactionScope,
 } from "../packages/ports/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
+
+const prepareCurrentTestSchema = Effect.gen(function* () {
+  yield* runMigrations(P36_MIGRATIONS);
+  const sql = yield* SqlClient;
+  yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+  for (const migration of P39_MAINTENANCE_MIGRATIONS) {
+    for (const statement of splitStatements(migration.sql))
+      yield* sql.unsafe(statement);
+    if (migration.onApply !== undefined) yield* migration.onApply(sql);
+    yield* sql.unsafe(`PRAGMA user_version = ${migration.id}`);
+  }
+  yield* sql.unsafe("PRAGMA foreign_keys = ON");
+  yield* runMigrations(
+    CURRENT_MIGRATIONS.filter(({ id }) => id >= 40),
+    {
+      allowOfflineOnly: true,
+    },
+  );
+});
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
 const workspaceId = parse(WorkspaceId)(
@@ -310,7 +333,7 @@ describe("P1-010 CreateProject", () => {
   it("persists the exact selected Profile ref and version on the Project", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P35_MIGRATIONS);
+      yield* prepareCurrentTestSchema;
       yield* ensureLegacyProjectResourceSourceFixture();
       const gw = yield* CommandGateway;
       const payload: CreateProjectPayload = {
@@ -350,7 +373,7 @@ describe("P1-010 CreateProject", () => {
   it("rolls back Project, Workspace, Session, receipt, events, and Pending intent together", async () => {
     const app = makeApp(rollbackAfterFirstBody());
     const program = Effect.gen(function* () {
-      yield* runMigrations(P35_MIGRATIONS);
+      yield* prepareCurrentTestSchema;
       yield* ensureLegacyProjectResourceSourceFixture();
       const gw = yield* CommandGateway;
       const payload: CreateProjectPayload = {

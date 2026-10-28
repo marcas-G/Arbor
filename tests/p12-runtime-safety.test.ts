@@ -595,10 +595,9 @@ const toolTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>> = [
     {
       _tag: "ToolCallProposed",
       callRef: "c1",
-      toolName: "shell",
+      toolName: "read",
       argumentsJson: JSON.stringify({
-        command: "echo hello",
-        cwd: { _tag: "FileTree", path: "." },
+        target: { mount: "workspace", path: "." },
       }),
     },
     { _tag: "TurnCompleted", finishReason: "ToolCall" },

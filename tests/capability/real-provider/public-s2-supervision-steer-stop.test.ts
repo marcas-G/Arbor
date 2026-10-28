@@ -207,6 +207,84 @@ const readExecutionStopSnapshot = (
   }
 };
 
+const readCriticalSteerSnapshot = (
+  databaseFile: string,
+  workId: string,
+  executionId: string,
+) => {
+  const database = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    database.exec("BEGIN");
+    const work = database
+      .prepare("SELECT lifecycle, revision FROM works WHERE work_id = ?")
+      .get(workId) as { lifecycle: string; revision: number } | undefined;
+    const revisions = database
+      .prepare(
+        `SELECT work_revision, contract_json, record_kind, source_command_id
+           FROM work_contract_revisions WHERE work_id = ? ORDER BY work_revision`,
+      )
+      .all(workId) as Array<{
+      work_revision: number;
+      contract_json: string;
+      record_kind: string;
+      source_command_id: string | null;
+    }>;
+    const events = database
+      .prepare(
+        `SELECT event_type, caused_by_command_id, payload_json
+           FROM domain_events ORDER BY sequence`,
+      )
+      .all() as Array<{
+      event_type: string;
+      caused_by_command_id: string | null;
+      payload_json: string;
+    }>;
+    const execution = database
+      .prepare(
+        `SELECT execution_id, stop_requested_at, settlement_kind, settlement_json,
+                settled_at FROM executions WHERE execution_id = ?`,
+      )
+      .get(executionId) as
+      | {
+          execution_id: string;
+          stop_requested_at: string | null;
+          settlement_kind: string | null;
+          settlement_json: string | null;
+          settled_at: string | null;
+        }
+      | undefined;
+    const providerTurns = database
+      .prepare(
+        "SELECT COUNT(*) AS count FROM provider_turns WHERE execution_id = ?",
+      )
+      .get(executionId) as { count: number };
+    const toolInvocations = database
+      .prepare(
+        "SELECT invocation_id, tool_name, settlement_kind FROM tool_invocations WHERE execution_id = ? ORDER BY invocation_id",
+      )
+      .all(executionId) as Array<{
+      invocation_id: string;
+      tool_name: string;
+      settlement_kind: string | null;
+    }>;
+    if (work === undefined || execution === undefined)
+      throw new Error(
+        "Critical Steer oracle could not find exact Work/Execution",
+      );
+    return {
+      work,
+      revisions,
+      events,
+      execution,
+      providerTurnCount: providerTurns.count,
+      toolInvocations,
+    };
+  } finally {
+    database.exec("ROLLBACK");
+    database.close();
+  }
+};
+
 const heldResponseContainsActionCall = (capture: ProviderCapture): boolean => {
   if (capture.responseBodyBase64 === undefined) return false;
   const response = Buffer.from(capture.responseBodyBase64, "base64").toString(
@@ -310,7 +388,7 @@ const runJourney = async (input: {
   readonly config: RealProviderConfig;
   readonly evidenceRoot: string;
   readonly marker: string;
-  readonly mode: "normal-steer" | "immediate-stop";
+  readonly mode: "normal-steer" | "immediate-stop" | "critical-steer";
 }): Promise<void> => {
   const deadlineAt = Date.now() + JOURNEY_BUDGET_MS;
   const run = await startRealProviderFixture({
@@ -670,6 +748,255 @@ const runJourney = async (input: {
         )?.currentWork ?? null,
       ).toBeNull();
       state.globalAfterAcceptance = globalAfterAcceptance;
+    } else if (input.mode === "critical-steer") {
+      const criticalWorkId = work.workId;
+      if (criticalWorkId === undefined) {
+        throw new Error("REAL NOT QUALIFIED: Critical Steer Work id is absent");
+      }
+      if (!heldResponseContainsActionCall(firstHeldResponse)) {
+        throw new Error(
+          "REAL NOT QUALIFIED: held real Provider response did not contain an action call to fence",
+        );
+      }
+      const criticalMarker = `S2-CRITICAL-${input.marker}`;
+      const amendedContent = `S2 critical amended ${input.marker}`;
+      const amendment = {
+        objective: `在当前项目工作区创建文件 ${fileName}，唯一一行内容严格为 ${amendedContent}，并读回核对。${criticalMarker}`,
+        why: `用户以 Critical Steer 完整替换目标合同为 ${amendedContent}，并立即停止旧合同执行。${criticalMarker}`,
+        constraints: [
+          "只使用 patch 创建目标文件，并用 read 读回核对。",
+          "不得使用 shell 或网络。",
+          "不得访问或创建其他 Workspace，也不得分派子 Work。",
+        ],
+        completionExpectation: `当前项目工作区根目录存在 ${fileName}，其内容逐字符严格等于 ${amendedContent}。`,
+        verificationMission: {
+          goal: `独立核验 ${fileName} 存在且内容逐字符等于 ${amendedContent}。`,
+          criteria: [
+            {
+              criterionId: "file-exists",
+              requirement: `当前项目工作区根目录存在 ${fileName}。`,
+              required: true,
+            },
+            {
+              criterionId: "exact-content",
+              requirement: `read 读回内容逐字符严格等于 ${amendedContent}。`,
+              required: true,
+            },
+          ],
+          riskRequirements: [
+            "不得使用 shell。",
+            "不得使用网络。",
+            "不得访问或创建其他 Workspace，也不得分派子 Work。",
+          ],
+        },
+      } as const;
+      const active = await waitForWork(
+        client,
+        project.rootWorkspaceId,
+        input.marker,
+        deadlineAt,
+      );
+      const targetExecutionId = active?.activeExecution?.executionId;
+      if (active?.workId !== criticalWorkId || targetExecutionId === undefined)
+        throw new Error(
+          "REAL NOT QUALIFIED: no exact active Work Execution for Critical Steer",
+        );
+      const exactTargetExecutionId = targetExecutionId as string;
+      const beforeCritical = readCriticalSteerSnapshot(
+        fixture.databaseFile,
+        criticalWorkId,
+        exactTargetExecutionId,
+      );
+      const criticalCommandId = functionalId("cmd");
+      const criticalPayload = {
+        workId: criticalWorkId,
+        workspaceId: project.rootWorkspaceId,
+        expectedWorkRevision: work.revision,
+        steer: {
+          severity: "Critical",
+          operation: { kind: "ContractAmendment", amendment },
+        },
+        provenance: { source: "HumanInput" },
+      } as const;
+      const criticalResult = await client.rawCommand(
+        project.projectId,
+        "SteerWork",
+        criticalPayload,
+        criticalCommandId,
+      );
+      expect(criticalResult.status).toBe(200);
+      expect(
+        (criticalResult.payload.body as { resolution?: string }).resolution,
+      ).toBe("Committed");
+      const committed = await waitForPublic(
+        async () =>
+          readCriticalSteerSnapshot(
+            fixture.databaseFile,
+            criticalWorkId,
+            exactTargetExecutionId,
+          ),
+        (snapshot) =>
+          snapshot.work.revision === work.revision + 1 &&
+          snapshot.execution.stop_requested_at !== null,
+        Math.max(1, deadlineAt - Date.now()),
+      );
+      const amendedRevision = committed.revisions.find(
+        (revision) => revision.work_revision === work.revision + 1,
+      );
+      expect(amendedRevision).toMatchObject({
+        record_kind: "ContractAmendment",
+        source_command_id: criticalCommandId,
+      });
+      expect(JSON.parse(amendedRevision?.contract_json ?? "null")).toEqual(
+        amendment,
+      );
+      const criticalFacts = committed.events.filter(
+        (event) => event.caused_by_command_id === criticalCommandId,
+      );
+      expect(criticalFacts.map((event) => event.event_type)).toContain(
+        "WorkAmended",
+      );
+      const stopFact = criticalFacts.filter(
+        (event) => event.event_type === "ExecutionStopRequested",
+      );
+      expect(stopFact).toHaveLength(1);
+      expect(JSON.parse(stopFact[0]?.payload_json ?? "{}")).toMatchObject({
+        executionId: exactTargetExecutionId,
+      });
+      expect(committed.work).toEqual({
+        lifecycle: "Open",
+        revision: work.revision + 1,
+      });
+      expect(committed.execution.settlement_kind).toBeNull();
+      state.criticalHeldProviderResponse = {
+        requestId: firstHeldResponse.requestId,
+        sequence: firstHeldResponse.sequence,
+        capturedBeforeCriticalCommit: true,
+        containsActionCall: true,
+      };
+      state.criticalCommand = {
+        commandId: criticalCommandId,
+        expectedWorkRevision: work.revision,
+        committedResolution: "Committed",
+      };
+      state.workRevisionAndMissionSnapshot = amendment;
+      releaseTrackedProviderResponse(firstHeldResponse.requestId);
+      const quiesced = await waitForPublic(
+        async () =>
+          readCriticalSteerSnapshot(
+            fixture.databaseFile,
+            criticalWorkId,
+            exactTargetExecutionId,
+          ),
+        (snapshot) => snapshot.execution.settled_at !== null,
+        Math.max(1, deadlineAt - Date.now()),
+      );
+      expect(quiesced.execution.settlement_kind).toBe("Interrupted");
+      expect(
+        JSON.parse(quiesced.execution.settlement_json ?? "{}"),
+      ).toMatchObject({
+        _tag: "Interrupted",
+        result: { _tag: "StopRequested" },
+      });
+      expect(quiesced.execution.stop_requested_at).not.toBeNull();
+      expect(quiesced.providerTurnCount).toBeLessThanOrEqual(
+        beforeCritical.providerTurnCount + 1,
+      );
+      expect(quiesced.toolInvocations).toEqual(beforeCritical.toolInvocations);
+      expect(
+        !existsSync(proofPath) ||
+          !readFileSync(proofPath, "utf8").includes(amendedContent),
+      ).toBe(true);
+      expect(quiesced.work).toEqual({
+        lifecycle: "Open",
+        revision: work.revision + 1,
+      });
+      const currentAfterCritical = await client.view<{
+        workId?: string;
+        revision: number;
+        status: string;
+        activeExecution?: { executionId: string };
+      } | null>("current-work", { workspaceId: project.rootWorkspaceId });
+      expect(currentAfterCritical?.workId).toBe(criticalWorkId);
+      expect(currentAfterCritical?.revision).toBe(work.revision + 1);
+      const detailAfterCritical = await client.view<{
+        lifecycle: string;
+        revision: number;
+        verificationMission?: unknown;
+      }>("work-detail", {
+        projectId: project.projectId,
+        workspaceId: project.rootWorkspaceId,
+        workId: criticalWorkId,
+      });
+      expect(detailAfterCritical.lifecycle).toBe("Open");
+      expect(detailAfterCritical.revision).toBe(work.revision + 1);
+      state.executionAfterCriticalQuiescence = quiesced.execution;
+      state.currentWorkAfterCritical = currentAfterCritical;
+      state.workDetailAfterCritical = detailAfterCritical;
+
+      await fixture.restart({
+        daemonEnvironment: {
+          ARBOR_PUBLIC_S1_CAPTURE_FILE: captureFile,
+          ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR: "",
+        },
+      });
+      const restarted = makeDeadlinePublicClient(fixture, deadlineAt);
+      const afterRestart = readCriticalSteerSnapshot(
+        fixture.databaseFile,
+        criticalWorkId,
+        targetExecutionId,
+      );
+      expect(afterRestart.work).toEqual({
+        lifecycle: "Open",
+        revision: work.revision + 1,
+      });
+      expect(afterRestart.execution).toEqual(quiesced.execution);
+      expect(afterRestart.toolInvocations).toEqual(
+        beforeCritical.toolInvocations,
+      );
+      const replay = await restarted.rawCommand(
+        project.projectId,
+        "SteerWork",
+        criticalPayload,
+        criticalCommandId,
+      );
+      expect(replay.status).toBe(200);
+      expect(replay.payload).toEqual(criticalResult.payload);
+      const afterReplay = readCriticalSteerSnapshot(
+        fixture.databaseFile,
+        criticalWorkId,
+        targetExecutionId,
+      );
+      expect(
+        afterReplay.revisions.filter(
+          (revision) => revision.work_revision === work.revision + 1,
+        ),
+      ).toHaveLength(1);
+      expect(
+        afterReplay.events.filter(
+          (event) =>
+            event.caused_by_command_id === criticalCommandId &&
+            event.event_type === "WorkAmended",
+        ),
+      ).toHaveLength(1);
+      expect(
+        afterReplay.events.filter(
+          (event) =>
+            event.caused_by_command_id === criticalCommandId &&
+            event.event_type === "ExecutionStopRequested",
+        ),
+      ).toHaveLength(1);
+      expect(afterReplay.work).toEqual({
+        lifecycle: "Open",
+        revision: work.revision + 1,
+      });
+      state.afterRestart = afterRestart;
+      state.exactCriticalCommandReplay = {
+        payloadEqual: true,
+        amendmentFacts: 1,
+        exactStopFacts: 1,
+        work: afterReplay.work,
+      };
     } else {
       let lastSequence = firstHeldResponse.sequence;
       releaseTrackedProviderResponse(firstHeldResponse.requestId);
@@ -724,7 +1051,7 @@ const runJourney = async (input: {
           } | null>("current-work", { workspaceId: project.rootWorkspaceId });
           if (
             current?.workId !== work.workId ||
-            current.activeExecution === undefined
+            current?.activeExecution === undefined
           ) {
             throw new Error(
               "REAL NOT QUALIFIED: Work settled or stopped before a second genuine response gate could establish the StopExecution boundary",
@@ -960,7 +1287,7 @@ const runJourney = async (input: {
 };
 
 const runOptedInScenario = async (
-  mode: "normal-steer" | "immediate-stop",
+  mode: "normal-steer" | "immediate-stop" | "critical-steer",
 ): Promise<void> => {
   if (buildMissing.length > 0)
     throw new Error(
@@ -972,7 +1299,7 @@ const runOptedInScenario = async (
     );
   if (!evidenceRootReadiness.ready)
     throw new Error(`REAL NOT QUALIFIED: ${evidenceRootReadiness.reason}`);
-  const marker = `S2-${mode === "normal-steer" ? "NORMAL" : "STOP"}-${randomUUID().replaceAll("-", "").slice(0, 10).toUpperCase()}`;
+  const marker = `S2-${mode === "normal-steer" ? "NORMAL" : mode === "critical-steer" ? "CRITICAL" : "STOP"}-${randomUUID().replaceAll("-", "").slice(0, 10).toUpperCase()}`;
   await runJourney({
     config: configReadiness.config,
     evidenceRoot: evidenceRootReadiness.path,
@@ -986,6 +1313,13 @@ it.skipIf(skipReason !== undefined)(
     ? "REAL public S2 global read and Normal Steer correction"
     : `REAL NOT QUALIFIED: ${skipReason}`,
   () => runOptedInScenario("normal-steer"),
+);
+
+it.skipIf(skipReason !== undefined)(
+  skipReason === undefined
+    ? "REAL public S2 Critical Steer amendment, exact Execution quiescence, and replay after restart"
+    : `REAL NOT QUALIFIED: ${skipReason}`,
+  () => runOptedInScenario("critical-steer"),
 );
 
 it.skipIf(skipReason !== undefined)(

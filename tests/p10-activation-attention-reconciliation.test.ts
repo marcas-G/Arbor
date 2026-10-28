@@ -4,14 +4,18 @@ import { describe, expect, it } from "vitest";
 import {
   AttentionProjectionStoreLive,
   ClockLive,
+  CURRENT_MIGRATIONS,
   IdGeneratorLive,
   layer,
   makeProjectAttentionProjectionStore,
-  P35_MIGRATIONS,
+  P36_MIGRATIONS,
+  P39_MAINTENANCE_MIGRATIONS,
   runMigrations,
+  splitStatements,
   TransactionPortLive,
   WorkspaceResourceActivationStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
+
 import {
   Actor,
   type DomainEvent,
@@ -32,6 +36,25 @@ import {
   projectionReadError,
   reconcileProjectActivationAttention,
 } from "../packages/projection-runtime/src/index.js";
+
+const prepareCurrentTestSchema = Effect.gen(function* () {
+  yield* runMigrations(P36_MIGRATIONS);
+  const sql = yield* SqlClient;
+  yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+  for (const migration of P39_MAINTENANCE_MIGRATIONS) {
+    for (const statement of splitStatements(migration.sql))
+      yield* sql.unsafe(statement);
+    if (migration.onApply !== undefined) yield* migration.onApply(sql);
+    yield* sql.unsafe(`PRAGMA user_version = ${migration.id}`);
+  }
+  yield* sql.unsafe("PRAGMA foreign_keys = ON");
+  yield* runMigrations(
+    CURRENT_MIGRATIONS.filter(({ id }) => id >= 40),
+    {
+      allowOfflineOnly: true,
+    },
+  );
+});
 
 const projectId = parse(ProjectId)("prj_00000000-0000-7000-8000-000000000020");
 const workspaceId = parse(WorkspaceId)(
@@ -307,7 +330,7 @@ describe("F21 Wave2 P10 source-only Activation Attention reconciliation", () => 
   it("removes stale AssignWork projection rows while retaining their P9 event and fact", async () => {
     const result = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P35_MIGRATIONS);
+        yield* prepareCurrentTestSchema;
         yield* seedCanonicalProject;
         yield* seedOtherAttentionSource;
         const tx = yield* TransactionPort;
@@ -344,7 +367,7 @@ describe("F21 Wave2 P10 source-only Activation Attention reconciliation", () => 
   it("repairs an absent row below the pruned floor, is idempotent, and preserves other Attention sources", async () => {
     const result = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P35_MIGRATIONS);
+        yield* prepareCurrentTestSchema;
         yield* seedCanonicalProject;
         yield* seedOtherAttentionSource;
         const tx = yield* TransactionPort;
@@ -416,7 +439,7 @@ describe("F21 Wave2 P10 source-only Activation Attention reconciliation", () => 
   it("re-reads current P1 intent state for stale Pending wakeups and clears Active rows", async () => {
     const result = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P35_MIGRATIONS);
+        yield* prepareCurrentTestSchema;
         yield* seedCanonicalProject;
         yield* seedOtherAttentionSource;
         const tx = yield* TransactionPort;
@@ -461,7 +484,7 @@ describe("F21 Wave2 P10 source-only Activation Attention reconciliation", () => 
   it("linearizes Active transition against reconciliation, then converges on a current-source wakeup", async () => {
     const result = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P35_MIGRATIONS);
+        yield* prepareCurrentTestSchema;
         yield* seedCanonicalProject;
         const tx = yield* TransactionPort;
         const activations = yield* WorkspaceResourceActivationStore;

@@ -154,21 +154,21 @@ const upgradeHistoricalAttentionFixtureToSchema51 = async (
   await upgradeSchema44ToCurrentTestDatabase({
     databaseFilename: databaseFile,
   });
-  const schema51 = new DatabaseSync(databaseFile, { readOnly: true });
+  const currentSchema = new DatabaseSync(databaseFile, { readOnly: true });
   try {
-    expect(CURRENT_SCHEMA_VERSION).toBe(52);
+    expect(CURRENT_SCHEMA_VERSION).toBe(54);
     expect(
       Number(
         (
-          schema51.prepare("PRAGMA user_version").get() as {
+          currentSchema.prepare("PRAGMA user_version").get() as {
             user_version: number;
           }
         ).user_version,
       ),
-    ).toBe(52);
-    expect(schema51.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    ).toBe(54);
+    expect(currentSchema.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
 
-    const projects = schema51
+    const projects = currentSchema
       .prepare(
         `SELECT project.project_id,
                 COALESCE(sequence.last_sequence, 0) AS max_event_sequence
@@ -177,7 +177,7 @@ const upgradeHistoricalAttentionFixtureToSchema51 = async (
           ORDER BY project.project_id`,
       )
       .all() as Array<{ project_id: string; max_event_sequence: number }>;
-    const highwaters = schema51
+    const highwaters = currentSchema
       .prepare(
         `SELECT project_id, max_event_sequence, captured_at, fact_digest
            FROM verification_conclusion_v2_activation_highwaters
@@ -206,7 +206,7 @@ const upgradeHistoricalAttentionFixtureToSchema51 = async (
       });
     }
   } finally {
-    schema51.close();
+    currentSchema.close();
   }
 };
 

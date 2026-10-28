@@ -1549,6 +1549,9 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       ).toContain(action);
     }
     expect(wire).not.toMatch(/"name"\s*:\s*"shell"/u);
+    expect(wire).not.toMatch(
+      /"name"\s*:\s*"(?:spawn_specialist|spawn_agent)"/u,
+    );
     expect(
       capturesAfterRestart.some(
         (capture) => capture.request?.model === config.wireModelName,

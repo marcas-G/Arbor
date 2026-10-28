@@ -52,11 +52,8 @@ import {
   createCurrentSchemaTestDatabaseFactory,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
-import {
-  admitExecution,
-  buildSingleWorkspaceLayer,
-  evaluateAndSelect,
-} from "../src/index.js";
+import { buildFunctionalTestSingleWorkspaceLayer } from "../src/composition.js";
+import { admitExecution, evaluateAndSelect } from "../src/index.js";
 import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
@@ -339,12 +336,15 @@ describe("I0 executable/control vertical slice", () => {
       resourceProfileRef: profile.resourceProfileRef,
       version: profile.version,
     });
-    const app = buildSingleWorkspaceLayer({
-      databaseFile: fixture.databaseFilename,
-      providerTurns: turns,
-      projectResourceProfiles,
-      trustedHostConfigurationSource: sandboxAuthorityFixture.source,
-    });
+    const app = buildFunctionalTestSingleWorkspaceLayer(
+      {
+        databaseFile: fixture.databaseFilename,
+        providerTurns: turns,
+        projectResourceProfiles,
+        trustedHostConfigurationSource: sandboxAuthorityFixture.source,
+      },
+      true,
+    );
 
     const result = await Effect.runPromise(
       Effect.provide(

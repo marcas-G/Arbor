@@ -61,16 +61,19 @@ import {
   ConversationResponseJobStore,
   EnvironmentRevisionStore,
   ExecutionDriverPort,
+  encodeReasoningAttachment,
   HumanMessageStore,
   type ModelCapability,
   ModelCapabilityPort,
   type ModelFacingToolDefinition,
   type PortableModelRequest,
+  PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
   type ProviderExecutionPolicyOverrides,
   type ProviderFailureKind,
   type ProviderRunInput,
   ProviderRuntime,
   portableInputItems,
+  type ReasoningAttachment,
   type RuntimeSafetyGateService,
   SessionRepository,
   SkillRegistry,
@@ -871,23 +874,161 @@ describe("P3-013 agent driver", () => {
       Effect.gen(function* () {
         yield* runMigrations(P19_MIGRATIONS);
         yield* seed;
+        const sql = yield* SqlClient;
         const sessions = yield* SessionRepository;
         const tx = yield* TransactionPort;
         const outputTurnId = providerTurnInferenceId(executionId, 0);
+        const priorExecutionId = parse(ExecutionId)(
+          "exe_018f2b3c-4d5e-7abc-8def-0123456789a9",
+        );
+        const priorTurnId = providerTurnInferenceId(priorExecutionId, 0);
+        const priorPlainTurnId = providerTurnInferenceId(priorExecutionId, 1);
         const sourceRef = `${outputTurnId}:assistant`;
         const outputText = "Accepted prior assistant output.";
+        const bindingFingerprint = `p16fp_${"a".repeat(64)}`;
+        const reasoningBinding = {
+          modelRef: "model-test",
+          protocolFamily: "openai-chat-completions-sse",
+          bindingFingerprint,
+        };
+        const priorReasoning: ReasoningAttachment = {
+          attachmentType: "provider-reasoning-v1",
+          modelRef: "model-test",
+          protocolFamily: "openai-chat-completions-sse",
+          bindingFingerprint,
+          opaquePayload: "OLD EXECUTION REASONING MUST NOT BE SENT",
+          receivedAt: "2026-10-24T00:00:00.000Z",
+        };
+        const currentReasoning: ReasoningAttachment = {
+          ...priorReasoning,
+          opaquePayload: "CURRENT EXECUTION REASONING IS ALLOWED",
+        };
+        yield* sql.unsafe(
+          "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?, ?, 'execution_bound', ?, NULL, NULL, ?, 'prior Work execution fixture', ?, 't', NULL, NULL, NULL, NULL)",
+          [priorExecutionId, projectId, workspaceId, executionId, sessionId],
+        );
+        for (const [turnId, ownerExecutionId, manifestId] of [
+          [priorTurnId, priorExecutionId, "mft-prior-reasoning"],
+          [priorPlainTurnId, priorExecutionId, "mft-prior-plain"],
+          [outputTurnId, executionId, "mft-current-reasoning"],
+        ] as const) {
+          yield* sql.unsafe(
+            "INSERT INTO provider_turns (provider_turn_id, execution_id, session_id, context_epoch, model_ref, output_contract_ref, manifest_id, started_at, created_at) VALUES (?, ?, ?, 0, 'model-test', 'tool-invocation-v1', ?, 't', 't')",
+            [turnId, ownerExecutionId, sessionId, manifestId],
+          );
+        }
+        const append = (
+          item: Record<string, unknown>,
+          kind: string,
+          ref: string,
+          contentHash = sha256Hex(JSON.stringify(item)),
+        ) =>
+          tx.transact(
+            sessions.appendItemIdempotent(
+              sessionId,
+              {
+                item: item as never,
+                contextEpoch: parse(ContextEpochNumber)(0),
+                source: { kind, ref },
+                contentHash,
+              },
+              {
+                executionId,
+                workerId: context.workerId as string,
+                workerIncarnationId: context.workerIncarnationId as string,
+                fencingGeneration: context.fencingGeneration as never,
+              },
+            ),
+          );
+        const priorAssistant = {
+          _tag: "AssistantMessage",
+          providerTurnId: priorTurnId,
+          contentRef: `provider:${priorTurnId}:assistant`,
+          text: "Prior Work execution remains in history.",
+          finishReason: "ToolCall",
+        };
+        yield* append(
+          priorAssistant,
+          "ProviderTurn",
+          `${priorTurnId}:assistant`,
+          sha256Hex(
+            JSON.stringify({
+              text: priorAssistant.text,
+              finishReason: priorAssistant.finishReason,
+            }),
+          ),
+        );
+        const priorReasoningPayload = {
+          _tag: "AttachmentRef",
+          ref: "blob:prior-execution-reasoning",
+          mediaType: PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
+          trust: "DataOnly",
+          providerTurnId: priorTurnId,
+        };
+        yield* append(
+          priorReasoningPayload,
+          "ProviderTurnReasoning",
+          `${priorTurnId}:reasoning`,
+        );
+        const priorCallRef = "call_prior_execution";
+        const priorToolCall = {
+          _tag: "ToolCall",
+          callRef: priorCallRef,
+          toolRef: "read",
+          argumentsRef: "inline:prior",
+          argumentsJson: "{}",
+        };
+        yield* append(
+          priorToolCall,
+          "ProviderTurnCall",
+          `${priorTurnId}:${priorCallRef}`,
+        );
+        const priorToolResult = {
+          _tag: "ToolResult",
+          callRef: priorCallRef,
+          toolName: "read",
+          status: "Succeeded",
+          observationRef: "observation_prior_execution",
+          modelOutputRef: "result_prior_execution",
+          outputText: "Prior execution tool result stays paired.",
+          truncated: false,
+          artifactRefs: [],
+        };
+        yield* append(
+          priorToolResult,
+          "AgentLoopAction",
+          "observation_prior_execution",
+        );
+        const priorPlainAssistant = {
+          _tag: "AssistantMessage",
+          providerTurnId: priorPlainTurnId,
+          contentRef: `provider:${priorPlainTurnId}:assistant`,
+          text: "Prior plain assistant output remains in history.",
+          finishReason: "Stop",
+        };
+        yield* append(
+          priorPlainAssistant,
+          "ProviderTurn",
+          `${priorPlainTurnId}:assistant`,
+          sha256Hex(
+            JSON.stringify({
+              text: priorPlainAssistant.text,
+              finishReason: priorPlainAssistant.finishReason,
+            }),
+          ),
+        );
         const outputWrite = {
           item: {
             _tag: "AssistantMessage" as const,
             providerTurnId: outputTurnId,
             contentRef: `provider:${outputTurnId}:assistant`,
             text: outputText,
-            finishReason: "Stop",
+            finishReason: "ToolCall",
           },
           contextEpoch: parse(ContextEpochNumber)(0),
           source: { kind: "ProviderTurn", ref: sourceRef },
           contentHash: sha256Hex(
-            JSON.stringify({ text: outputText, finishReason: "Stop" }),
+            JSON.stringify({ text: outputText, finishReason: "ToolCall" }),
           ),
         };
         const fence = {
@@ -902,11 +1043,64 @@ describe("P3-013 agent driver", () => {
         const replayAppend = yield* tx.transact(
           sessions.appendItemIdempotent(sessionId, outputWrite, fence),
         );
+        const currentReasoningPayload = {
+          ...priorReasoningPayload,
+          ref: "blob:current-execution-reasoning",
+          providerTurnId: outputTurnId,
+        };
+        yield* append(
+          currentReasoningPayload,
+          "ProviderTurnReasoning",
+          `${outputTurnId}:reasoning`,
+        );
+        const currentCallRef = "call_current_execution";
+        yield* append(
+          {
+            _tag: "ToolCall",
+            callRef: currentCallRef,
+            toolRef: "read",
+            argumentsRef: "inline:current",
+            argumentsJson: "{}",
+          },
+          "ProviderTurnCall",
+          `${outputTurnId}:${currentCallRef}`,
+        );
+        yield* append(
+          {
+            _tag: "ToolResult",
+            callRef: currentCallRef,
+            toolName: "read",
+            status: "Succeeded",
+            observationRef: `observation_${executionId}_current`,
+            modelOutputRef: "result_current_execution",
+            outputText: "Current execution tool result stays paired.",
+            truncated: false,
+            artifactRefs: [],
+          },
+          "AgentLoopAction",
+          `observation_${executionId}_current`,
+        );
 
         const frontier = yield* tx.transact(
-          sessions.listWorkActiveFrontier(sessionId),
+          sessions.listWorkActiveFrontier(sessionId, executionId),
         );
-        const projection = projectSessionTimeline(frontier);
+        const reasoningBlobs = new Map([
+          [
+            "blob:prior-execution-reasoning",
+            encodeReasoningAttachment(priorReasoning),
+          ],
+          [
+            "blob:current-execution-reasoning",
+            encodeReasoningAttachment(currentReasoning),
+          ],
+        ]);
+        const projection = projectSessionTimeline(
+          frontier,
+          bindingFingerprint,
+          false,
+          reasoningBinding,
+          reasoningBlobs,
+        );
         const modelContext = yield* ModelContext;
         const preparation = yield* modelContext.prepareTurn({
           executionId,
@@ -970,29 +1164,83 @@ describe("P3-013 agent driver", () => {
           outputText,
           firstAppend,
           replayAppend,
+          priorCallRef,
+          currentReasoning,
+          priorReasoning,
         };
       }),
       app,
     );
 
-    expect(prepared.frontier).toHaveLength(1);
+    expect(prepared.frontier).toHaveLength(5);
     expect(prepared.firstAppend.inserted).toBe(true);
     expect(prepared.replayAppend).toMatchObject({
       inserted: false,
       sequence: prepared.firstAppend.sequence,
     });
-    expect(prepared.projection.contextRefs).toEqual([
+    expect(prepared.projection.contextRefs).toContain(
       `session:ProviderTurn:${prepared.sourceRef}`,
-    ]);
+    );
+    expect(prepared.projection.contextRefs).not.toContain(
+      "session:ProviderTurnCall:ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a9_0:call_prior_execution",
+    );
+    expect(prepared.projection.contextRefs).not.toContain(
+      "session:ProviderTurnReasoning:ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a9_0:reasoning",
+    );
+    expect(prepared.projection.contextRefs).not.toContain(
+      "session:ProviderTurnCall:ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a9_0:call_prior_execution",
+    );
+    expect(prepared.projection.contextRefs).not.toContain(
+      "session:AgentLoopAction:observation_prior_execution",
+    );
     expect(prepared.preparation._tag).toBe("Ready");
     if (prepared.preparation._tag !== "Ready") return;
-    expect(
-      portableInputItems(prepared.preparation.turn.request),
-    ).toContainEqual({
+    const requestItems = portableInputItems(prepared.preparation.turn.request);
+    expect(requestItems).toContainEqual({
+      _tag: "Message",
+      role: "assistant",
+      text: "Prior plain assistant output remains in history.",
+    });
+    expect(requestItems).not.toContainEqual(
+      expect.objectContaining({
+        _tag: "Message",
+        text: "Prior Work execution remains in history.",
+      }),
+    );
+    expect(requestItems).not.toContainEqual(
+      expect.objectContaining({ callRef: prepared.priorCallRef }),
+    );
+    expect(requestItems).toContainEqual({
       _tag: "Message",
       role: "assistant",
       text: prepared.outputText,
     });
+    expect(requestItems).toContainEqual(
+      expect.objectContaining({
+        _tag: "ReasoningAttachment",
+        opaquePayload: "CURRENT EXECUTION REASONING IS ALLOWED",
+      }),
+    );
+    expect(requestItems).toContainEqual(
+      expect.objectContaining({
+        _tag: "ToolCall",
+        callRef: "call_current_execution",
+        toolName: "read",
+      }),
+    );
+    expect(requestItems).toContainEqual(
+      expect.objectContaining({
+        _tag: "ToolResult",
+        callRef: "call_current_execution",
+        outputText: "Current execution tool result stays paired.",
+      }),
+    );
+    expect(requestItems).not.toContainEqual(
+      expect.objectContaining({
+        _tag: "ReasoningAttachment",
+        opaquePayload: "OLD EXECUTION REASONING MUST NOT BE SENT",
+      }),
+    );
     expect(prepared.preparation.turn.manifest.contextRefs).toContain(
       prepared.projection.contextRefs[0],
     );

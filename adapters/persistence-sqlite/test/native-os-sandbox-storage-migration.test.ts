@@ -56,9 +56,9 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
         offlineOnly: true,
       },
     );
-    expect(CURRENT_SCHEMA_VERSION).toBe(52);
-    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-6)).toEqual([
-      47, 48, 49, 50, 51, 52,
+    expect(CURRENT_SCHEMA_VERSION).toBe(54);
+    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-8)).toEqual([
+      47, 48, 49, 50, 51, 52, 53, 54,
     ]);
     const fingerprint = (requires: number, name: string, sql: string) =>
       createHash("sha256")
@@ -130,8 +130,8 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
       ).toBe(1);
       expect(
         CURRENT_MIGRATIONS.filter(({ id }) => id > 50).map(({ id }) => id),
-      ).toEqual([51, 52]);
-      expect(await run(fixture.databaseFilename)).toBe(2);
+      ).toEqual([51, 52, 53, 54]);
+      expect(await run(fixture.databaseFilename)).toBe(4);
       const db = new DatabaseSync(fixture.databaseFilename, { readOnly: true });
       try {
         expect(
@@ -140,7 +140,7 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
               user_version: number;
             }
           ).user_version,
-        ).toBe(52);
+        ).toBe(54);
         expect(
           db
             .prepare(

@@ -138,7 +138,7 @@ describe("P6-005 formation path + payload shape (unit)", () => {
     expect(isChildWorkspaceProposal(undefined)).toBe(false);
   });
 
-  it("accepts only a bounded unique exact subset for ownership delegation", () => {
+  it("accepts a bounded unique structural ownership delegation payload", () => {
     const address = { _tag: "FileTree" as const, path: "src/child" };
     const proposal = {
       ...minimalProposal(),
@@ -156,7 +156,7 @@ describe("P6-005 formation path + payload shape (unit)", () => {
           addresses: [{ _tag: "FileTree", path: "src/other" }],
         },
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isChildWorkspaceProposal({
         ...proposal,

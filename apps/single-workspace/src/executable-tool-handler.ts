@@ -8,7 +8,12 @@ import {
   AuthorityResolverPort,
   issueExecutableApproval,
 } from "@arbor/application";
-import { executionEpisode, parse, ToolInvocationId } from "@arbor/domain";
+import {
+  executionEpisode,
+  ProviderTurnId,
+  parse,
+  ToolInvocationId,
+} from "@arbor/domain";
 import type { TrustedHostConfigurationSourceService } from "@arbor/ports";
 import {
   type BoundedObservation,
@@ -312,6 +317,23 @@ export const makeExecutableToolHandler = (
   }) =>
     Effect.gen(function* () {
       const requestedAt = yield* clock.now();
+      // A Disabled daemon intentionally hides shell from new Provider calls.
+      // When resuming the same persisted P3 action, retain its source identity
+      // from the durable action/step tuple so the P4 runtime can validate the
+      // exact RecoveryBinding and terminalize its already durable intent.
+      const exactRecoveryBindingIdentity =
+        recoveryBindingIdentity ??
+        (action !== undefined && providerTurnId !== undefined
+          ? {
+              executionId: execution.executionId,
+              providerTurnId: parse(ProviderTurnId)(providerTurnId),
+              logicalStepNo: action.logicalStepNo,
+              repairAttempt: action.repairAttempt,
+              logicalActionId: action.logicalActionId,
+              actionIndex: action.actionIndex,
+              callRef: invocation.callRef,
+            }
+          : undefined);
       const executionFence =
         context._tag === "ExecutionOrigin" &&
         context.workerId !== undefined &&
@@ -401,7 +423,7 @@ export const makeExecutableToolHandler = (
         recoveryInvocationRecord === undefined &&
         matchingRefs.length === 0 &&
         action !== undefined &&
-        recoveryBindingIdentity !== undefined &&
+        exactRecoveryBindingIdentity !== undefined &&
         legacyLookup !== undefined
       ) {
         const existing = yield* legacyLookup(invocationId).pipe(
@@ -418,6 +440,11 @@ export const makeExecutableToolHandler = (
             currentApproval.state === "Consumed" &&
             currentApproval.consumedBy === invocationId &&
             record.approvalId === currentApproval.approvalId;
+          const exactNativeNoEffectReplay =
+            record.settlement?._tag === "Denied" &&
+            (record.settlement.reasonCode === "ProcessExecutionDisabled" ||
+              record.settlement.reasonCode === "NativeOsTupleUnavailable") &&
+            record.settledAt !== null;
           if (
             record.invocationId === invocationId &&
             record.executionId === execution.executionId &&
@@ -425,17 +452,20 @@ export const makeExecutableToolHandler = (
             record.toolName === invocation.toolName &&
             record.argumentsJson === invocation.argumentsJson &&
             record.effectAdmissionState === "NotAdmitted" &&
-            record.settledAt === null &&
-            record.settlement === null &&
+            ((record.settledAt === null && record.settlement === null) ||
+              exactNativeNoEffectReplay) &&
             exactApproval &&
-            recoveryBindingIdentity.executionId === execution.executionId &&
-            recoveryBindingIdentity.providerTurnId === providerTurnId &&
-            recoveryBindingIdentity.logicalStepNo === action.logicalStepNo &&
-            recoveryBindingIdentity.repairAttempt === action.repairAttempt &&
-            recoveryBindingIdentity.logicalActionId ===
+            exactRecoveryBindingIdentity.executionId ===
+              execution.executionId &&
+            exactRecoveryBindingIdentity.providerTurnId === providerTurnId &&
+            exactRecoveryBindingIdentity.logicalStepNo ===
+              action.logicalStepNo &&
+            exactRecoveryBindingIdentity.repairAttempt ===
+              action.repairAttempt &&
+            exactRecoveryBindingIdentity.logicalActionId ===
               action.logicalActionId &&
-            recoveryBindingIdentity.actionIndex === action.actionIndex &&
-            recoveryBindingIdentity.callRef === invocation.callRef
+            exactRecoveryBindingIdentity.actionIndex === action.actionIndex &&
+            exactRecoveryBindingIdentity.callRef === invocation.callRef
           ) {
             recoveryInvocationRecord = record;
           }
@@ -491,9 +521,9 @@ export const makeExecutableToolHandler = (
         actor: context.principal as never,
         authenticatedPrincipal: context.principal,
         controlBasisDigest,
-        ...(recoveryBindingIdentity === undefined
+        ...(exactRecoveryBindingIdentity === undefined
           ? {}
-          : { recoveryBindingIdentity }),
+          : { recoveryBindingIdentity: exactRecoveryBindingIdentity }),
         ...(recoveryBindingPolicyRevisions === undefined
           ? {}
           : { recoveryBindingPolicyRevisions }),
@@ -550,9 +580,9 @@ export const makeExecutableToolHandler = (
           ...(currentApproval === undefined
             ? {}
             : { approvalId: currentApproval.approvalId }),
-          ...(recoveryBindingIdentity === undefined
+          ...(exactRecoveryBindingIdentity === undefined
             ? {}
-            : { recoveryBindingIdentity }),
+            : { recoveryBindingIdentity: exactRecoveryBindingIdentity }),
         };
         const outcome = invoked.ok
           ? {

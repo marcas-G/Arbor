@@ -126,20 +126,22 @@ const daemonProgram = runDaemonForever(config);
 await Effect.runPromise(
   Effect.provide(
     Effect.scoped(daemonProgram),
-    functionalTestMain({
-      projectResourceProfiles,
-      trustedHostConfigurationSource,
-      startupDiagnosticProbe,
-      governance,
-      executableToolQualificationProbe,
-      sandboxPolicyDecisionPreparationQualificationProbe,
-      ...(toolQualificationProbe === undefined
-        ? {}
-        : { toolQualificationProbe }),
-    }),
-    {
-      allowTrustedLocalProcessExecution:
-        process.env.ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION === "1",
-    },
+    functionalTestMain(
+      {
+        projectResourceProfiles,
+        trustedHostConfigurationSource,
+        startupDiagnosticProbe,
+        governance,
+        executableToolQualificationProbe,
+        sandboxPolicyDecisionPreparationQualificationProbe,
+        ...(toolQualificationProbe === undefined
+          ? {}
+          : { toolQualificationProbe }),
+      },
+      {
+        allowTrustedLocalProcessExecution:
+          process.env.ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION === "1",
+      },
+    ),
   ),
 );
