@@ -1516,6 +1516,7 @@ describe("V6-E V3 exact provider tuple drift across daemon restart", () => {
       const daemonEnvironment: Record<string, string> = {};
       daemonEnvironment.ARBOR_AUTH_TOKENS =
         "local=user:local,operator=user:operator";
+      daemonEnvironment.ARBOR_TEST_ONLY_TRUSTED_LOCAL_PROCESS_EXECUTION = "1";
       daemonEnvironment.ARBOR_TICK_INTERVAL_MS = "25";
       daemonEnvironment.ARBOR_AH_BOUNDARY = "AH7AfterToolIntentCommit";
       const marker = `V6-E-${crypto.randomUUID().slice(0, 8)}`;
