@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import {
   createFunctionalProject,
@@ -90,6 +91,101 @@ interface ExactExecutableApproval {
   readonly targetResourceSpaceIds: ReadonlyArray<string>;
   readonly capabilities: ReadonlyArray<string>;
 }
+
+interface VerificationModelActionEvidence {
+  readonly workId: string;
+  readonly verificationId: string;
+  readonly executionIds: ReadonlyArray<string>;
+  readonly providerTurnIds: ReadonlyArray<string>;
+  readonly actions: ReadonlyArray<{
+    readonly executionId: string;
+    readonly actionKind: string;
+    readonly state: string;
+  }>;
+}
+
+const readVerificationModelActionEvidence = (
+  databaseFile: string,
+  workIds: ReadonlyArray<string>,
+): ReadonlyArray<VerificationModelActionEvidence> => {
+  const database = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return workIds.map((workId) => {
+      const verification = database
+        .prepare(
+          `SELECT verification_id, verification_execution_ids
+             FROM verifications
+            WHERE work_id = ? AND state = 'Concluded'
+            ORDER BY updated_at DESC
+            LIMIT 1`,
+        )
+        .get(workId) as
+        | {
+            verification_id: string;
+            verification_execution_ids: string;
+          }
+        | undefined;
+      if (verification === undefined) {
+        throw new Error(
+          `S3 missing concluded Verification execution evidence for ${workId}`,
+        );
+      }
+      const decodedExecutionIds: unknown = JSON.parse(
+        verification.verification_execution_ids,
+      );
+      if (
+        !Array.isArray(decodedExecutionIds) ||
+        decodedExecutionIds.length === 0 ||
+        !decodedExecutionIds.every((value) => typeof value === "string")
+      ) {
+        throw new Error(
+          `S3 invalid Verification execution evidence for ${workId}`,
+        );
+      }
+      const executionIds = decodedExecutionIds as string[];
+      const placeholders = executionIds.map(() => "?").join(", ");
+      const providerTurnIds = database
+        .prepare(
+          `SELECT DISTINCT provider_turn_id
+             FROM agent_loop_steps
+            WHERE execution_id IN (${placeholders})
+            ORDER BY provider_turn_id`,
+        )
+        .all(...executionIds)
+        .map((row) => (row as { provider_turn_id: string }).provider_turn_id);
+      const actions = database
+        .prepare(
+          `SELECT execution_id, action_kind, state
+             FROM agent_loop_step_actions
+            WHERE execution_id IN (${placeholders})
+              AND action_kind IN ('record_verification_evidence', 'conclude_verification')
+            ORDER BY execution_id, logical_step_no, repair_attempt, action_index`,
+        )
+        .all(...executionIds)
+        .map((row) => {
+          const action = row as {
+            execution_id: string;
+            action_kind: string;
+            state: string;
+          };
+          return {
+            executionId: action.execution_id,
+            actionKind: action.action_kind,
+            state: action.state,
+          };
+        });
+      return {
+        workId,
+        verificationId: verification.verification_id,
+        executionIds,
+        providerTurnIds,
+        actions,
+      };
+    });
+  } finally {
+    database.close();
+  }
+};
 
 interface ExactChildPermissionGrant {
   readonly subjectWorkspaceId: string;
@@ -452,6 +548,10 @@ const approveExactWriteRequests = async (input: {
     const approval = executableApprovalKey(entry);
     if (approval === undefined || input.handled.has(entry.entryKey)) continue;
     const captures = readProviderCaptures(input.captureFile);
+    const forbiddenProbePaths = new Set([
+      input.forbiddenFile,
+      basename(input.forbiddenFile),
+    ]);
     const forbiddenProbeCall = captures
       .flatMap(capturedToolCalls)
       .find(
@@ -459,8 +559,11 @@ const approveExactWriteRequests = async (input: {
           call.name === "patch" &&
           typeof call.arguments === "object" &&
           call.arguments !== null &&
-          (call.arguments as { target?: { path?: unknown } }).target?.path ===
-            input.forbiddenFile,
+          forbiddenProbePaths.has(
+            String(
+              (call.arguments as { target?: { path?: unknown } }).target?.path,
+            ),
+          ),
       );
     if (
       forbiddenProbeCall?.id !== undefined &&
@@ -562,6 +665,11 @@ it.skipIf(skipReason !== undefined)(
     const parentFile = `${parentRoot}/parent-result-${marker.toLowerCase()}.txt`;
     const childFile = `${childRoot}/child-evidence-${marker.toLowerCase()}.txt`;
     const forbiddenFile = `${parentRoot}/forbidden-child-probe-${marker.toLowerCase()}.txt`;
+    // Executable target.path values are relative to the active Workspace's
+    // ResourceBoundary mount. The Child boundary is parentRoot.
+    const parentMountFile = basename(parentFile);
+    const childMountFile = `child/${basename(childFile)}`;
+    const forbiddenMountFile = basename(forbiddenFile);
     const childWorkMarker = `S3_CHILD_WORK_${marker}`;
     const childEvidencePrefix = `S3-CHILD-EVIDENCE:${marker};nonce=`;
     const responseGateSelector = {
@@ -606,7 +714,7 @@ it.skipIf(skipReason !== undefined)(
 
       const request =
         `目标 ${marker}。立即只提议一个父工作区“${parentName}”，不要先解释或列计划。resourceBoundaryDraft 使用当前 FileTree 下已有子目录 ${parentRoot} 的绝对 FileTree 地址，resourceOwnershipDelegation.addresses 使用同一地址。责任草案只填简短 purpose，其余可选数组留空。` +
-        `父 initialWork 只需包含标记 ${childWorkMarker}，目标写“等待后续精确子任务指令并整合一个正式子交付到 ${parentFile}”，constraints 只写不得使用 shell/网络，verification criteria 只写父结果文件存在且非空。不要在本次 proposal 中展开 Child 细节。`;
+        `父 initialWork 只需包含标记 ${childWorkMarker}，目标写“等待后续精确子任务指令；Child 的 Delivery 只表示到达，必须等 Child 独立 Verification PASS 并由 Parent 调用 accept_result 后，才能整合到 ResourceBoundary 内的 ${parentMountFile}”；在精确指令到达前下一次 ActionCall 只能调用 wait(disposition Blocked, Manual)，禁止 list/list_workspaces/read/update_plan。constraints 必须包含不得使用 shell/网络，以及“未成功 accept_result 前禁止 read Child、patch 父结果或 claim_completion”；verification criteria 只写父结果文件存在且非空，路径使用 ResourceBoundary mount-relative 的 ${parentMountFile}。不要在本次 proposal 中展开 Child 细节。`;
       const releasedProviderResponses = new Set<string>();
       await client.command(project.projectId, "SubmitHumanMessage", {
         messageId: functionalId("msg"),
@@ -673,7 +781,7 @@ it.skipIf(skipReason !== undefined)(
                 severity: "Normal",
                 operation: {
                   kind: "DirectionGuidance",
-                  guidance: `立即提议唯一直接子工作区“${childName}”：resourceBoundaryDraft 使用已存在目录 ${parentRoot} 的绝对 FileTree 地址；resourceOwnershipDelegation.addresses 只使用其子目录 ${childRoot}。Child initialWork 只写“等待后续精确执行指令”，并保留最终 Verifier criteria：${childFile} 存在且唯一一行匹配 ${childEvidencePrefix}<12位小写字母或数字>；在后续指令到达前不得创建文件或宣称完成。你必须 declare_dependency，producer 绑定该 Child，expected kind s3-child-evidence、requiredArtifactRoles ["evidence"]；真实 Delivery 满足后 accept_result，read 子文件并 patch 完整内容到 ${parentFile}，回读后 claim_completion。不得使用 shell/网络，不得用 send_message 代替交付。`,
+                  guidance: `立即执行，不要调用 update_plan、list、list_workspaces、read、wait、declare_dependency 或 send_message；下一次且本次唯一的 ActionCall 必须是提议直接子工作区“${childName}”。resourceBoundaryDraft 使用已存在目录 ${parentRoot} 的绝对 FileTree 地址；resourceOwnershipDelegation.addresses 只使用其子目录 ${childRoot}。Child initialWork 只写“等待后续精确执行指令”，并要求指令到达前下一次 ActionCall 只能 wait(disposition Blocked, Manual)，禁止 list/read/update_plan；保留最终 Verifier criteria：相对于 Child ResourceBoundary mount 的 ${childMountFile} 存在且唯一一行匹配 ${childEvidencePrefix}<12位小写字母或数字>。之后所有 Child patch/read target.path 都必须相对于该 mount，不能再加 ${parentRoot} 前缀。提议成功后立即结束本次 turn；不要在 Child canonical WorkspaceId 出现前声明任何 Dependency，尤其禁止 AnyProducer。不得使用 shell/网络。`,
                 },
               },
               provenance: { source: "HumanInput" },
@@ -711,35 +819,26 @@ it.skipIf(skipReason !== undefined)(
           "S3 formed a Workspace without its approved initial Work",
         );
       }
-      const dependencyBeforeSteer = await client.view<{
-        rows: Array<PublicDependency>;
-      }>("dependency-view", { projectId: project.projectId });
-      if (
-        !dependencyBeforeSteer.rows.some(
-          (row) => row.consumerWorkId === parentWorkId,
-        )
-      ) {
-        const parentBeforeDependency = await client.view<{
-          workId?: string;
-          revision: number;
-        } | null>("current-work", { workspaceId: parent.workspaceId });
-        if (parentBeforeDependency?.workId !== parentWorkId) {
-          throw new Error("S3 Parent Work disappeared before dependency steer");
-        }
-        await client.command(project.projectId, "SteerWork", {
-          workId: parentWorkId,
-          workspaceId: parent.workspaceId,
-          expectedWorkRevision: parentBeforeDependency.revision,
-          steer: {
-            severity: "Normal",
-            operation: {
-              kind: "DirectionGuidance",
-              guidance: `在等待或读取子结果之前，立即调用 declare_dependency，producerBinding 必须精确使用 {"_tag":"WorkspaceBound","workspaceId":"${child.workspaceId}"}，禁止 AnyProducer，expected deliverable 必须是 kind s3-child-evidence、requiredArtifactRoles ["evidence"]；声明成功后若尚无真实 Delivery 再 wait。${childWorkMarker}`,
-            },
-          },
-          provenance: { source: "HumanInput" },
-        });
+      const parentBeforeDependency = await client.view<{
+        workId?: string;
+        revision: number;
+      } | null>("current-work", { workspaceId: parent.workspaceId });
+      if (parentBeforeDependency?.workId !== parentWorkId) {
+        throw new Error("S3 Parent Work disappeared before dependency steer");
       }
+      await client.command(project.projectId, "SteerWork", {
+        workId: parentWorkId,
+        workspaceId: parent.workspaceId,
+        expectedWorkRevision: parentBeforeDependency.revision,
+        steer: {
+          severity: "Normal",
+          operation: {
+            kind: "DirectionGuidance",
+            guidance: `现在 Child canonical identity 已确定。立即 declare_dependency，producerBinding 必须精确为 {"_tag":"WorkspaceBound","workspaceId":"${child.workspaceId}"}，expected deliverable 为 kind s3-child-evidence、requiredArtifactRoles ["evidence"]，禁止 AnyProducer；随后 wait DependencyChanged。Delivery 到达但 readyResults 尚未出现时，必须 wait VerificationChanged，workId="${childWorkId}"、targetWorkRevision=0；Child Verification PASS 后调用 list_workspaces 取得唯一 readyResults 并 accept_result。只有 accept_result 成功后，才可 read Child mount-relative ${childMountFile}，patch Parent mount-relative ${parentMountFile} 写入完整内容，read 回读并 claim_completion。不要 update_plan、send_message 或创建额外 Work。`,
+          },
+        },
+        provenance: { source: "HumanInput" },
+      });
       let dependencyBeforeDelivery: PublicDependency | undefined;
       let waitingParent: {
         workId?: string;
@@ -884,7 +983,29 @@ it.skipIf(skipReason !== undefined)(
           severity: "Normal",
           operation: {
             kind: "DirectionGuidance",
-            guidance: `现在执行精确 Child 任务：先尝试且仅尝试一次 patch 新文件 ${forbiddenFile}（此路径在 Child ResourceBoundary 内、但属于 Parent 的未委派 remainder），不得申请或等待该 forbidden probe 的审批；记录确切拒绝后继续。随后创建 ${childFile}，唯一一行内容为 ${childEvidencePrefix} 后接12位小写字母或数字；read 回读后立即 produce_deliverable kind s3-child-evidence、artifact role evidence 并 deliver，再 claim_completion 触发独立验证。不得使用 shell/网络，不得用 send_message 代替交付。`,
+            guidance: `现在立即执行精确 Child 任务，不要调用 update_plan、list、list_workspaces、wait 或 send_message。所有 patch/read target.path 都相对于 Child ResourceBoundary mount。下一次 ActionCall 必须先尝试且仅尝试一次 patch 新文件 ${forbiddenMountFile}（该 mount-relative 路径位于 Child ResourceBoundary 内、但属于 Parent 的未委派 remainder），不得申请或等待该 forbidden probe 的审批；记录确切拒绝后继续。随后 patch 创建 ${childMountFile}，唯一一行内容为 ${childEvidencePrefix} 后接12位小写字母或数字；read 回读后立即 produce_deliverable kind s3-child-evidence、artifact role evidence 并 deliver，再 claim_completion 触发独立验证。不得把 ${parentRoot} 前缀附加到 mount-relative target.path，不得使用 shell/网络，不得用 send_message 代替交付。`,
+          },
+        },
+        provenance: { source: "HumanInput" },
+      });
+      const parentAfterDependency = await client.view<{
+        workId?: string;
+        revision: number;
+      } | null>("current-work", { workspaceId: parent.workspaceId });
+      if (parentAfterDependency?.workId !== parentWorkId) {
+        throw new Error(
+          "S3 Parent Work disappeared before exact dependency continuation steer",
+        );
+      }
+      await client.command(project.projectId, "SteerWork", {
+        workId: parentWorkId,
+        workspaceId: parent.workspaceId,
+        expectedWorkRevision: parentAfterDependency.revision,
+        steer: {
+          severity: "Normal",
+          operation: {
+            kind: "DirectionGuidance",
+            guidance: `依赖 ${dependencyBeforeDelivery?.dependencyId} 已经精确声明，禁止再次调用 declare_dependency。只等待该既有 DependencyChanged；Delivery 到达后，若 readyResults 尚未出现，只调用 wait VerificationChanged，workId="${childWorkId}"、targetWorkRevision=${childBeforeExecution.revision + 1}。Child Verification PASS 后调用 list_workspaces 取得唯一 readyResults 并 accept_result；accept_result 成功后结束本次 turn。禁止 update_plan、send_message、创建额外 Work、read Child、patch Parent 或 claim_completion。`,
           },
         },
         provenance: { source: "HumanInput" },
@@ -897,10 +1018,10 @@ it.skipIf(skipReason !== undefined)(
         sequenceCursor: heldSequenceCursor,
         deadlineAt,
       });
-
       const approvedChildWrites = new Set<string>();
       let parentAccepted = false;
       let parentResultSteered = false;
+      let parentIntegrationSteered = false;
       let daemonRestarts = 0;
       while (Date.now() < deadlineAt) {
         try {
@@ -936,6 +1057,7 @@ it.skipIf(skipReason !== undefined)(
           } | null>("current-work", { workspaceId: parent.workspaceId });
           const childCurrent = await client.view<{
             workId?: string;
+            revision: number;
             status?: string;
           } | null>("current-work", { workspaceId: child.workspaceId });
           const verified = await client.view<{
@@ -998,12 +1120,34 @@ it.skipIf(skipReason !== undefined)(
                 severity: "Normal",
                 operation: {
                   kind: "DirectionGuidance",
-                  guidance: `Dependency 已由真实 Delivery ${satisfied.satisfiedBy} 满足。现在调用 list_workspaces 获取唯一 readyResults ref，立即 accept_result；不要继续 send_message。随后 read ${childFile}，用 patch 把完整内容逐字写入 ${parentFile}，read 回读后 claim_completion。`,
+                  guidance: `Dependency 已由真实 Delivery ${satisfied.satisfiedBy} 满足。禁止 update_plan、wait、send_message；调用 list_workspaces 获取唯一 readyResults ref，随后立即 accept_result，并在 accept_result 成功后结束本次 turn。不要在同一 response 中追加 read、patch 或 claim_completion。`,
                 },
               },
               provenance: { source: "HumanInput" },
             });
             parentResultSteered = true;
+          }
+          if (
+            !parentIntegrationSteered &&
+            satisfied !== undefined &&
+            parentCurrent?.workId === parentWorkId &&
+            verified.verdict === "Pass" &&
+            verified.acceptance?.actor === "runtime:system"
+          ) {
+            await client.command(project.projectId, "SteerWork", {
+              workId: parentWorkId,
+              workspaceId: parent.workspaceId,
+              expectedWorkRevision: parentCurrent.revision,
+              steer: {
+                severity: "Normal",
+                operation: {
+                  kind: "DirectionGuidance",
+                  guidance: `Child result 已由 accept_result 接受。现在只执行结果整合：read Child mount-relative ${childMountFile}，用 patch 把完整内容逐字写入 Parent ResourceBoundary mount-relative ${parentMountFile}，read 回读确认后 claim_completion。禁止再次调用 accept_result、deliver、update_plan、wait 或 send_message。`,
+                },
+              },
+              provenance: { source: "HumanInput" },
+            });
+            parentIntegrationSteered = true;
           }
           if (
             satisfied !== undefined &&
@@ -1062,6 +1206,7 @@ it.skipIf(skipReason !== undefined)(
               detail.includes("ECONNRESET") ||
               detail.includes("ECONNREFUSED"))
           ) {
+            const stoppedDaemon = fixture.daemonProcessSnapshot();
             await fixture.restart();
             client = makeDeadlinePublicClient(fixture, deadlineAt);
             daemonRestarts += 1;
@@ -1069,6 +1214,9 @@ it.skipIf(skipReason !== undefined)(
             stageEvidence.push({
               phase: "DaemonRestartDuringParentVerification",
               reason: detail,
+              stoppedDaemon,
+              restartedDaemon: fixture.daemonProcessSnapshot(),
+              daemonErrors: fixture.daemonErrors.slice(-8),
             });
             continue;
           }
@@ -1140,6 +1288,68 @@ it.skipIf(skipReason !== undefined)(
       ).parentVerification;
       expect(parentVerification.verdict).toBe("Pass");
       expect(parentVerification.acceptance).toBeDefined();
+      if (client === undefined) {
+        throw new Error(
+          "S3 public client is unavailable at final verification",
+        );
+      }
+      const finalClient = client;
+      const [canonicalChildVerification, canonicalParentVerification] =
+        await Promise.all(
+          [childWorkId, parentWorkId].map((workId) =>
+            finalClient.view<{
+              verdict?: string;
+              criteriaResults?: Array<{
+                criterionId: string;
+                verdict: string;
+                evidenceRefs?: string[];
+              }>;
+              evidenceRefs?: string[];
+              acceptance?: { actor: string; acceptanceId: string };
+            }>("verification", { workId }),
+          ),
+        );
+      if (
+        canonicalChildVerification === undefined ||
+        canonicalParentVerification === undefined
+      ) {
+        throw new Error("S3 final canonical Verification views are missing");
+      }
+      for (const verification of [
+        canonicalChildVerification,
+        canonicalParentVerification,
+      ]) {
+        expect(verification.verdict).toBe("Pass");
+        expect(verification.criteriaResults?.length).toBeGreaterThan(0);
+        expect(
+          verification.criteriaResults?.every(
+            (criterion) => criterion.verdict === "Pass",
+          ),
+        ).toBe(true);
+        expect(verification.evidenceRefs?.length).toBeGreaterThan(0);
+      }
+      const verificationModelActions = readVerificationModelActionEvidence(
+        run.fixture.databaseFile,
+        [childWorkId, parentWorkId],
+      );
+      for (const evidence of verificationModelActions) {
+        expect(evidence.providerTurnIds.length).toBeGreaterThan(0);
+        expect(
+          evidence.actions
+            .filter((action) => action.state === "Applied")
+            .map((action) => action.actionKind),
+          `Verification ${evidence.verificationId} did not durably apply both model-authored verification controls`,
+        ).toEqual(
+          expect.arrayContaining([
+            "record_verification_evidence",
+            "conclude_verification",
+          ]),
+        );
+      }
+      stageEvidence.push({
+        phase: "IndependentVerifierModelActionsApplied",
+        verificationModelActions,
+      });
 
       const captures = await waitForPublic(
         async () => readProviderCaptures(run?.captureFile as string),
@@ -1190,6 +1400,13 @@ it.skipIf(skipReason !== undefined)(
       expect(forbiddenProbeCalls).toHaveLength(1);
       const forbiddenProbeCall = forbiddenProbeCalls[0];
       expect(forbiddenProbeCall?.id).toBeDefined();
+      expect(
+        (
+          forbiddenProbeCall?.arguments as
+            | { target?: { path?: unknown } }
+            | undefined
+        )?.target?.path,
+      ).toBe(forbiddenMountFile);
       const forbiddenProbeResult =
         forbiddenProbeCall?.id === undefined
           ? undefined
@@ -1219,32 +1436,35 @@ it.skipIf(skipReason !== undefined)(
             (call.arguments as { artifacts: unknown[] }).artifacts.length > 0,
         ),
       ).toBe(true);
+      expect(
+        capturedCalls.some(
+          (call) =>
+            call.name === "patch" &&
+            typeof call.arguments === "object" &&
+            call.arguments !== null &&
+            (call.arguments as { target?: { path?: unknown } }).target?.path ===
+              childMountFile,
+        ),
+        "Child evidence write must use a Child ResourceBoundary mount-relative path",
+      ).toBe(true);
       for (const requiredAction of [
         "propose_workspace",
         "produce_deliverable",
         "deliver",
-        "record_verification_evidence",
-        "conclude_verification",
       ]) {
         expect(
           actionNames,
           `real Provider did not invoke ${requiredAction}`,
         ).toContain(requiredAction);
       }
-      const canonicalChildAcceptance = (
-        publicSnapshot as {
-          childVerification?: {
-            acceptance?: { actor: string; acceptanceId: string };
-          };
-        }
-      ).childVerification?.acceptance;
+      const canonicalChildAcceptance = canonicalChildVerification.acceptance;
       expect(canonicalChildAcceptance).toMatchObject({
         actor: "runtime:system",
       });
       stageEvidence.push({
         phase: "ParentAcceptedCanonicalChildResult",
         acceptance: canonicalChildAcceptance,
-        note: "accept_result is a terminal control action whose call is not guaranteed to reappear in a successor Provider request capture; canonical public acceptance is the oracle",
+        note: "terminal control calls are not guaranteed to reappear in a successor Provider request capture; canonical public Verification plus durable verifier ProviderTurn/action evidence and Acceptance are the oracle",
       });
       expect(actionNames).not.toContain("satisfy_dependency");
       expect(actionNames).toContain("patch");

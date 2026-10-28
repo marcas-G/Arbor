@@ -220,7 +220,6 @@ describe("P12-007 ToolCatalogPort model-facing resolution", () => {
       "list",
       "patch",
       "read",
-      "shell",
     ]);
     expect(refs.some((ref) => ref.name === "ghost")).toBe(false);
   });
@@ -374,7 +373,6 @@ describe("P12-007 catalog union (builtins ∪ committed registered project tools
           "list",
           "patch",
           "read",
-          "shell",
         ]);
 
         yield* tx.transact(
@@ -394,7 +392,6 @@ describe("P12-007 catalog union (builtins ∪ committed registered project tools
           "project-echo",
           "project-ping",
           "read",
-          "shell",
         ]);
 
         const echoRef: ToolDefinitionRef = {
@@ -469,7 +466,6 @@ describe("P12-007 catalog union (builtins ∪ committed registered project tools
           "list",
           "patch",
           "read",
-          "shell",
         ]);
       }),
     );

@@ -20,6 +20,7 @@ const activeWorkExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789a4";
 const conversationTurnId = `ptn_${conversationExecutionId}_0`;
 const conversationCheckpointTurnId = `ptn_${conversationExecutionId}_0_compact_0`;
 const priorWorkTurnId = `ptn_${priorWorkExecutionId}_0`;
+const priorPlainWorkTurnId = `ptn_${priorWorkExecutionId}_1`;
 const activeWorkTurnId = `ptn_${activeWorkExecutionId}_0`;
 
 const makeApp = () => {
@@ -81,7 +82,7 @@ const seed = Effect.gen(function* () {
 });
 
 describe("Work Session frontier ownership", () => {
-  it("excludes other execution history while retaining exact current-turn reasoning", async () => {
+  it("keeps plain prior Work output while excluding prior tool-call causal groups", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
       yield* runMigrations(P21_MIGRATIONS);
@@ -106,6 +107,7 @@ describe("Work Session frontier ownership", () => {
         conversationTurnId,
         conversationCheckpointTurnId,
         priorWorkTurnId,
+        priorPlainWorkTurnId,
         activeWorkTurnId,
       ]) {
         const executionId = providerTurnId.startsWith(
@@ -231,7 +233,21 @@ describe("Work Session frontier ownership", () => {
         "ModelOutput",
         "AssistantMessage",
         "ProviderTurn",
-        priorWorkTurnId,
+        `${priorPlainWorkTurnId}:assistant`,
+        {
+          _tag: "AssistantMessage",
+          providerTurnId: priorPlainWorkTurnId,
+          contentRef: `provider:${priorPlainWorkTurnId}:assistant`,
+          text: "plain assistant output from prior Work execution",
+          finishReason: "stop",
+        },
+      );
+      yield* insert(
+        12,
+        "ModelOutput",
+        "AssistantMessage",
+        "ProviderTurn",
+        `${priorWorkTurnId}:assistant`,
         {
           _tag: "AssistantMessage",
           providerTurnId: priorWorkTurnId,
@@ -241,11 +257,79 @@ describe("Work Session frontier ownership", () => {
         },
       );
       yield* insert(
-        12,
+        13,
+        "ModelOutput",
+        "AttachmentRef",
+        "ProviderTurnReasoning",
+        `${priorWorkTurnId}:reasoning`,
+        {
+          _tag: "AttachmentRef",
+          ref: "blob:prior-work-reasoning",
+          mediaType: "application/vnd.arbor.provider-reasoning+json",
+          trust: "DataOnly",
+          providerTurnId: priorWorkTurnId,
+        },
+      );
+      yield* insert(
+        14,
+        "ModelOutput",
+        "ToolCall",
+        "ProviderTurnCall",
+        `${priorWorkTurnId}:old-call`,
+        {
+          _tag: "ToolCall",
+          providerTurnId: priorWorkTurnId,
+          callRef: "old-call",
+          toolRef: "read",
+          argumentsRef: "inline:old",
+          argumentsJson: "{}",
+        },
+      );
+      yield* insert(
+        15,
+        "Observation",
+        "ToolResult",
+        "AgentLoopAction",
+        `observation_${priorWorkExecutionId}_${"b".repeat(64)}`,
+        {
+          _tag: "ToolResult",
+          callRef: "old-call",
+          toolName: "read",
+          status: "Succeeded",
+          observationRef: `observation_${priorWorkExecutionId}_${"b".repeat(64)}`,
+          outputText: "old result",
+        },
+      );
+      for (const [invocationId, ownerExecutionId] of [
+        ["tin_old_work", priorWorkExecutionId],
+        ["tin_active_work", activeWorkExecutionId],
+      ] as const) {
+        yield* sql.unsafe(
+          "INSERT INTO tool_invocations (invocation_id, execution_id, workspace_id, tool_name, tool_version, side_effect_semantics, arguments_json, resolved_regions_json, intent_at, settled_at, settlement_kind, settlement_json, result_ref) VALUES (?, ?, ?, 'read', '1', 'ReadOnly', '{}', '[]', 't', NULL, NULL, NULL, NULL)",
+          [invocationId, ownerExecutionId, workspaceId],
+        );
+      }
+      yield* insert(
+        16,
+        "Observation",
+        "ToolResult",
+        "ToolInvocation",
+        "tin_old_work",
+        {
+          _tag: "ToolResult",
+          callRef: "old-invocation-call",
+          toolName: "read",
+          status: "Succeeded",
+          observationRef: "observation_old_invocation",
+          outputText: "old invocation result",
+        },
+      );
+      yield* insert(
+        17,
         "ModelOutput",
         "AssistantMessage",
         "ProviderTurn",
-        activeWorkTurnId,
+        `${activeWorkTurnId}:assistant`,
         {
           _tag: "AssistantMessage",
           providerTurnId: activeWorkTurnId,
@@ -255,7 +339,7 @@ describe("Work Session frontier ownership", () => {
         },
       );
       yield* insert(
-        13,
+        18,
         "ModelOutput",
         "AttachmentRef",
         "ProviderTurnReasoning",
@@ -266,6 +350,66 @@ describe("Work Session frontier ownership", () => {
           mediaType: "application/vnd.arbor.provider-reasoning-v1+json",
           trust: "DataOnly",
           providerTurnId: activeWorkTurnId,
+        },
+      );
+      yield* insert(
+        19,
+        "ModelOutput",
+        "ToolCall",
+        "ProviderTurnCall",
+        `${activeWorkTurnId}:current-call`,
+        {
+          _tag: "ToolCall",
+          providerTurnId: activeWorkTurnId,
+          callRef: "current-call",
+          toolRef: "read",
+          argumentsRef: "inline:current",
+          argumentsJson: "{}",
+        },
+      );
+      yield* insert(
+        20,
+        "Observation",
+        "ToolResult",
+        "SessionFrontierRepair",
+        `observation_${"c".repeat(64)}`,
+        {
+          _tag: "ToolResult",
+          callRef: "current-call",
+          toolName: "read",
+          status: "Succeeded",
+          observationRef: `observation_${"c".repeat(64)}`,
+          outputText: "current result",
+        },
+      );
+      yield* insert(
+        21,
+        "Observation",
+        "ToolResult",
+        "ToolInvocation",
+        "tin_active_work",
+        {
+          _tag: "ToolResult",
+          callRef: "current-invocation-call",
+          toolName: "read",
+          status: "Succeeded",
+          observationRef: "observation_current_invocation",
+          outputText: "current invocation result",
+        },
+      );
+      yield* insert(
+        22,
+        "Observation",
+        "ToolResult",
+        "SessionFrontierRepair",
+        `observation_${"d".repeat(64)}`,
+        {
+          _tag: "ToolResult",
+          callRef: "old-call",
+          toolName: "read",
+          status: "Interrupted",
+          observationRef: `observation_${"d".repeat(64)}`,
+          outputText: "prior execution repair result",
         },
       );
 
@@ -280,14 +424,158 @@ describe("Work Session frontier ownership", () => {
     });
 
     const entries = await Effect.runPromise(Effect.provide(program, app));
-    expect(entries.map((entry) => entry.sequence)).toEqual([12, 13]);
+    expect(entries.map((entry) => entry.sequence)).toEqual([
+      11, 17, 18, 19, 20, 21,
+    ]);
     expect(
       entries.some((entry) =>
-        JSON.stringify(entry.payload).includes("prior Work execution"),
+        JSON.stringify(entry.payload).includes(
+          "plain assistant output from prior Work execution",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      entries.some((entry) =>
+        JSON.stringify(entry.payload).includes(
+          "terminal assistant output from prior Work execution",
+        ),
       ),
     ).toBe(false);
     expect(
-      entries.some((entry) => entry.source?.kind === "ProviderTurnReasoning"),
+      entries.some(
+        (entry) =>
+          entry.source?.kind === "ProviderTurnReasoning" &&
+          entry.source.ref === `${activeWorkTurnId}:reasoning`,
+      ),
     ).toBe(true);
+    expect(
+      entries.some(
+        (entry) =>
+          entry.source?.kind === "ProviderTurnReasoning" &&
+          entry.source.ref === `${priorWorkTurnId}:reasoning`,
+      ),
+    ).toBe(false);
+    expect(
+      entries.some(
+        (entry) =>
+          entry.source?.kind === "ProviderTurnCall" &&
+          entry.source.ref === `${priorWorkTurnId}:old-call`,
+      ),
+    ).toBe(false);
+    expect(
+      entries.some(
+        (entry) =>
+          entry.source?.kind === "AgentLoopAction" &&
+          entry.source.ref.startsWith(`observation_${priorWorkExecutionId}_`),
+      ),
+    ).toBe(false);
+    expect(entries.some((entry) => entry.source?.ref === "tin_old_work")).toBe(
+      false,
+    );
+    expect(
+      entries.some(
+        (entry) =>
+          entry.source?.kind === "ToolInvocation" &&
+          entry.source.ref === "tin_active_work",
+      ),
+    ).toBe(true);
+  });
+
+  it("takes the raw latest-64 window before schema and Conversation filtering", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P21_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe("ALTER TABLE executions ADD COLUMN episode_kind TEXT");
+      yield* sql.unsafe(
+        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at, episode_kind) VALUES (?, ?, 'workspace', ?, 'coordination', NULL, NULL, NULL, ?, 't', NULL, NULL, NULL, NULL, 'ConversationResponseEpisode')",
+        [conversationExecutionId, projectId, workspaceId, sessionId],
+      );
+
+      const insertTyped = (
+        sequence: number,
+        entryKind: string,
+        itemType: string,
+        sourceKind: string,
+        sourceRef: string,
+        payload: unknown,
+      ) =>
+        sql.unsafe(
+          "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, ?, ?, ?, 2, 0, ?, 't', ?, ?, ?)",
+          [
+            sessionId,
+            sequence,
+            entryKind,
+            itemType,
+            JSON.stringify(payload),
+            sourceKind,
+            sourceRef,
+            `hash-${sequence}`,
+          ],
+        );
+
+      // These eligible rows are older than the raw 64-row window and must not
+      // be pulled back to replace rows filtered from within that window.
+      for (let sequence = 0; sequence <= 2; sequence += 1) {
+        yield* insertTyped(
+          sequence,
+          "Input",
+          "UserMessage",
+          "test",
+          `old-${sequence}`,
+          { _tag: "UserMessage", text: `old-${sequence}` },
+        );
+      }
+
+      // A legacy row still occupies one of the 64 raw Session positions.
+      yield* sql.unsafe(
+        "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, 3, 'Input', 'LegacyInput', 1, NULL, ?, 't', 'test', 'legacy-window-row', 'hash-3')",
+        [
+          sessionId,
+          JSON.stringify({ _tag: "UserMessage", text: "legacy-window-row" }),
+        ],
+      );
+
+      for (let sequence = 4; sequence <= 65; sequence += 1) {
+        yield* insertTyped(
+          sequence,
+          "Input",
+          "UserMessage",
+          "test",
+          `work-${sequence}`,
+          { _tag: "UserMessage", text: `work-${sequence}` },
+        );
+      }
+      // Conversation-owned rows also occupy the raw window before exclusion.
+      yield* insertTyped(
+        66,
+        "ModelOutput",
+        "AssistantMessage",
+        "ProviderTurn",
+        `ptn_${conversationExecutionId}_0:assistant`,
+        {
+          _tag: "AssistantMessage",
+          providerTurnId: `ptn_${conversationExecutionId}_0`,
+          contentRef: `provider:ptn_${conversationExecutionId}_0:assistant`,
+          text: "conversation-only",
+          finishReason: "Stop",
+        },
+      );
+
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      return yield* tx.transact(
+        sessions.listWorkActiveFrontier(sessionId as never),
+      );
+    });
+
+    const entries = await Effect.runPromise(Effect.provide(program, app));
+    expect(entries.map((entry) => entry.sequence)).toEqual(
+      Array.from({ length: 62 }, (_, index) => index + 4),
+    );
+    expect(entries[0]?.payload).toMatchObject({ text: "work-4" });
+    expect(entries.some((entry) => entry.sequence <= 3)).toBe(false);
+    expect(entries.some((entry) => entry.sequence === 66)).toBe(false);
   });
 });

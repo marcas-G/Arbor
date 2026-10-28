@@ -57,10 +57,10 @@ interface ClaimRow {
   readonly resolved_at_environment_revision: string;
   readonly created_at: string;
   readonly released_at: string | null;
-  readonly exclusions_json: string;
-  readonly delegating_workspace_id: string | null;
-  readonly delegation_source_id: string | null;
-  readonly claim_revision: number;
+  readonly exclusions_json?: string | null;
+  readonly delegating_workspace_id?: string | null;
+  readonly delegation_source_id?: string | null;
+  readonly claim_revision?: number | null;
 }
 
 export interface WorkspaceResourceActivationQualificationEvent {
@@ -89,11 +89,12 @@ const toClaim = (row: ClaimRow): ResourceOwnershipClaimRecord => ({
   createdAt: row.created_at,
   releasedAt: row.released_at,
   exclusions: JSON.parse(
-    row.exclusions_json,
+    row.exclusions_json ?? "[]",
   ) as ReadonlyArray<CanonicalResourceRegion>,
-  delegatingWorkspaceId: row.delegating_workspace_id as WorkspaceId | null,
-  delegationSourceId: row.delegation_source_id,
-  claimRevision: Number(row.claim_revision),
+  delegatingWorkspaceId: (row.delegating_workspace_id ??
+    null) as WorkspaceId | null,
+  delegationSourceId: row.delegation_source_id ?? null,
+  claimRevision: Number(row.claim_revision ?? 0),
 });
 
 const sourceAddressForRegion = (
@@ -144,6 +145,18 @@ export const ResourceOwnershipRepositoryLive: Layer.Layer<
     );
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
+    let carveoutColumnsAvailable: boolean | undefined;
+    const supportsCarveouts = Effect.gen(function* () {
+      if (carveoutColumnsAvailable !== undefined)
+        return carveoutColumnsAvailable;
+      const rows = yield* run(
+        sql.unsafe<{ name: string }>("PRAGMA table_info(resource_ownership)"),
+      );
+      carveoutColumnsAvailable = rows.some(
+        ({ name }) => name === "exclusions_json",
+      );
+      return carveoutColumnsAvailable;
+    });
     return ResourceOwnershipRepository.of({
       loadActiveConflicts: (resourceSpaceId) =>
         Effect.gen(function* () {
@@ -160,25 +173,43 @@ export const ResourceOwnershipRepositoryLive: Layer.Layer<
         Effect.gen(function* () {
           yield* TransactionScope;
           const now = yield* clock.now();
-          yield* run(
-            sql.unsafe(
-              "INSERT INTO resource_ownership (claim_id, workspace_id, resource_space_id, canonical_region, source_address_snapshot, resource_boundary_revision, resolved_at_environment_revision, created_at, released_at, exclusions_json, delegating_workspace_id, delegation_source_id, claim_revision) VALUES (?,?,?,?,?,?,?,?,NULL,?,?,?,?)",
-              [
-                claim.claimId,
-                claim.workspaceId,
-                claim.region.resourceSpaceId,
-                JSON.stringify(claim.region),
-                JSON.stringify(claim.sourceAddressSnapshot),
-                claim.resourceBoundaryRevision,
-                claim.resolvedAtEnvironmentRevision,
-                claim.createdAt === "" ? now : claim.createdAt,
-                JSON.stringify(claim.exclusions ?? []),
-                claim.delegatingWorkspaceId ?? null,
-                claim.delegationSourceId ?? null,
-                claim.claimRevision ?? 0,
-              ],
-            ),
-          );
+          if (yield* supportsCarveouts) {
+            yield* run(
+              sql.unsafe(
+                "INSERT INTO resource_ownership (claim_id, workspace_id, resource_space_id, canonical_region, source_address_snapshot, resource_boundary_revision, resolved_at_environment_revision, created_at, released_at, exclusions_json, delegating_workspace_id, delegation_source_id, claim_revision) VALUES (?,?,?,?,?,?,?,?,NULL,?,?,?,?)",
+                [
+                  claim.claimId,
+                  claim.workspaceId,
+                  claim.region.resourceSpaceId,
+                  JSON.stringify(claim.region),
+                  JSON.stringify(claim.sourceAddressSnapshot),
+                  claim.resourceBoundaryRevision,
+                  claim.resolvedAtEnvironmentRevision,
+                  claim.createdAt === "" ? now : claim.createdAt,
+                  JSON.stringify(claim.exclusions ?? []),
+                  claim.delegatingWorkspaceId ?? null,
+                  claim.delegationSourceId ?? null,
+                  claim.claimRevision ?? 0,
+                ],
+              ),
+            );
+          } else {
+            yield* run(
+              sql.unsafe(
+                "INSERT INTO resource_ownership (claim_id, workspace_id, resource_space_id, canonical_region, source_address_snapshot, resource_boundary_revision, resolved_at_environment_revision, created_at, released_at) VALUES (?,?,?,?,?,?,?,?,NULL)",
+                [
+                  claim.claimId,
+                  claim.workspaceId,
+                  claim.region.resourceSpaceId,
+                  JSON.stringify(claim.region),
+                  JSON.stringify(claim.sourceAddressSnapshot),
+                  claim.resourceBoundaryRevision,
+                  claim.resolvedAtEnvironmentRevision,
+                  claim.createdAt === "" ? now : claim.createdAt,
+                ],
+              ),
+            );
+          }
         }),
       applyDelegation: (input) =>
         Effect.gen(function* () {

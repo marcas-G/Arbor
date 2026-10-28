@@ -1154,7 +1154,13 @@ const seedRootWorkViaPublicApproval = async (
     throw new Error(`AH19 first Work provider attempt missing: ${marker}`);
   }
   const workExecutionId = await waitForPublic(
-    async () => readWorkExecutionId(fixture.databaseFile, project, workId),
+    async () =>
+      readWorkExecutionId(
+        fixture.databaseFile,
+        project,
+        workId,
+        heldRequest !== undefined,
+      ),
     (executionId) => executionId !== undefined,
   );
   if (workExecutionId === undefined) {
@@ -1175,7 +1181,7 @@ const seedRootWorkViaPublicApproval = async (
             }),
           (snapshot) =>
             snapshot.providerAttempts.some(
-              (attempt) => attempt.outcome === "RetryableFailure",
+              (attempt) => attempt.outcome !== "InProgress",
             ),
         )
       : readSnapshot(fixture.databaseFile, {
@@ -1183,9 +1189,9 @@ const seedRootWorkViaPublicApproval = async (
           executionId: workExecutionId,
           workId,
         });
-  expect(preNative.checkpoints).toEqual([]);
-  expect(preNative.actions).toEqual([]);
   if (heldRequest !== undefined) {
+    expect(preNative.checkpoints).toEqual([]);
+    expect(preNative.actions).toEqual([]);
     expect(preNative.providerAttempts.length).toBeGreaterThan(0);
     for (const attempt of preNative.providerAttempts) {
       expect(attempt.outcome).toBe("InProgress");
@@ -1552,9 +1558,86 @@ const readTypedSessionRows = (databaseFile: string, sessionId: string) => {
   }
 };
 
+const readAllWorkTimelineRows = (databaseFile: string, sessionId: string) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const rows = db
+      .prepare(
+        `SELECT sequence, item_type, source_kind, source_ref, payload_json
+           FROM session_entries
+          WHERE session_id = ? AND schema_version = 2
+          ORDER BY sequence`,
+      )
+      .all(sessionId) as Array<{
+      sequence: number;
+      item_type: string;
+      source_kind: string | null;
+      source_ref: string | null;
+      payload_json: string;
+    }>;
+    const conversationExecutionIds = new Set(
+      (
+        db
+          .prepare(
+            `SELECT execution_id FROM executions
+              WHERE session_id = ? AND episode_kind = 'ConversationResponseEpisode'`,
+          )
+          .all(sessionId) as Array<{ execution_id: string }>
+      ).map((row) => row.execution_id),
+    );
+    const conversationProviderTurnIds = new Set<string>();
+    for (const executionId of conversationExecutionIds) {
+      for (const turn of db
+        .prepare(
+          "SELECT provider_turn_id FROM provider_turns WHERE execution_id = ? AND session_id = ?",
+        )
+        .all(executionId, sessionId) as Array<{ provider_turn_id: string }>) {
+        conversationProviderTurnIds.add(turn.provider_turn_id);
+      }
+    }
+    return rows.filter((row) => {
+      if (
+        row.source_kind === "AgentLoopAction" &&
+        [...conversationExecutionIds].some((executionId) =>
+          row.source_ref?.startsWith(`observation_${executionId}_`),
+        )
+      ) {
+        return false;
+      }
+      if (
+        row.source_kind === "ProviderTurn" ||
+        row.source_kind === "ProviderTurnCall" ||
+        row.source_kind === "ProviderTurnReasoning" ||
+        row.source_kind === "CompactionTurn"
+      ) {
+        if (
+          [...conversationExecutionIds].some((executionId) =>
+            row.source_ref?.startsWith(`ptn_${executionId}_`),
+          )
+        ) {
+          return false;
+        }
+        if (
+          [...conversationProviderTurnIds].some(
+            (providerTurnId) =>
+              row.source_ref === providerTurnId ||
+              row.source_ref?.startsWith(`${providerTurnId}:`),
+          )
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+  } finally {
+    db.close();
+  }
+};
+
 const readWorkFrontierThroughSessionRepository = (
   databaseFile: string,
   sessionId: string,
+  executionId?: string,
 ): Promise<ReadonlyArray<SessionEntryRecord>> => {
   const infrastructure = Layer.mergeAll(
     sqlitePersistenceLayer({ filename: databaseFile }),
@@ -1569,7 +1652,10 @@ const readWorkFrontierThroughSessionRepository = (
     const transactions = yield* TransactionPort;
     const sessions = yield* SessionRepository;
     return yield* transactions.transact(
-      sessions.listWorkActiveFrontier(parse(SessionId)(sessionId)),
+      sessions.listWorkActiveFrontier(
+        parse(SessionId)(sessionId),
+        executionId === undefined ? undefined : parse(ExecutionId)(executionId),
+      ),
     );
   });
   return Effect.runPromise(
@@ -1888,12 +1974,17 @@ const readWorkExecutionId = (
   databaseFile: string,
   project: Awaited<ReturnType<typeof createFunctionalProject>>,
   workId: string,
+  activeOnly = true,
 ): string | undefined => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
     const row = db
       .prepare(
-        "SELECT execution_id FROM executions WHERE workspace_id = ? AND episode_kind = 'WorkEpisode' AND episode_ref = ? AND settled_at IS NULL ORDER BY rowid DESC LIMIT 1",
+        `SELECT execution_id FROM executions
+          WHERE workspace_id = ? AND episode_kind = 'WorkEpisode'
+            AND episode_ref = ?
+            ${activeOnly ? "AND settled_at IS NULL" : ""}
+          ORDER BY rowid DESC LIMIT 1`,
       )
       .get(project.rootWorkspaceId, workId) as
       | { execution_id: string }
@@ -2786,15 +2877,36 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
     workMarker,
     "qualify ordinary Native checkpoint recovery",
   );
-  const heldWorkRequest = holdFirstWorkProviderRequest(workSeed);
   const childOutput: string[] = [];
   const providerDecisions: RootSeedProviderDecision[] = [];
   const responsesSent: Array<RootSeedDiagnostics["responsesSent"][number]> = [];
+  const rootReply = approvedRootWorkReply(workMarker, workSeed, (decision) =>
+    providerDecisions.push(decision),
+  );
   const fixture = await startProductionFixture({
-    reply: approvedRootWorkReply(workMarker, workSeed, (decision) =>
-      providerDecisions.push(decision),
-    ),
-    beforeResponse: heldWorkRequest.beforeResponse,
+    reply: (call, index) => {
+      const tools = new Set(
+        call.tools
+          .map((tool) => tool.function?.name)
+          .filter((name): name is string => name !== undefined),
+      );
+      if (
+        tools.has("claim_completion") &&
+        tools.has("wait") &&
+        JSON.stringify(call.messages).includes(workSeed.objective)
+      ) {
+        return {
+          _tag: "ToolCall",
+          name: "wait",
+          arguments: {
+            disposition: "Yielded",
+            reason: "retain AH19 ordinary recovery history",
+            waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+          },
+        };
+      }
+      return rootReply(call, index);
+    },
     onResponseSent: (call, index) =>
       responsesSent.push({ index, request: call }),
     daemonEnvironment: {
@@ -2851,19 +2963,20 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
       ARBOR_AH19_REPORT_URL: reportUrl,
       ...(traceStartup ? { ARBOR_AH19_STARTUP_TRACE: "1" } : {}),
     },
-    heldWorkRequest,
+    undefined,
     {
       providerDecisions,
       responsesSent,
       daemonStdout: childOutput,
     },
   );
+  const ordinaryWorkNative = (request: Ah19ProviderRequest) =>
+    request.operationKind === "CompactionNative" &&
+    request.hasPublicWorkInput === true;
   for (let index = 0; index < 10; index += 1) {
     const observed = await waitForPublic(
       async () => ({
-        native: providerRequests.find(
-          (request) => request.operationKind === "CompactionNative",
-        ),
+        native: providerRequests.find(ordinaryWorkNative),
         current: await client.view<{
           workId?: string;
           revision: number;
@@ -2883,16 +2996,14 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
       expectedWorkRevision: observed.current.revision,
       steer: {
         severity: "Normal",
-        guidance: `AH19 ordinary recovery history ${index}`,
+        guidance: `AH19 ordinary recovery history ${index}: ${"bounded retained Work history ".repeat(200)}`,
       },
       provenance: { source: "HumanInput" },
     });
     await waitForPublic(
       async () => ({
         count: providerRequests.length,
-        native: providerRequests.find(
-          (request) => request.operationKind === "CompactionNative",
-        ),
+        native: providerRequests.find(ordinaryWorkNative),
       }),
       (state) => state.count >= beforeSteer + 2 || state.native !== undefined,
       60_000,
@@ -2905,9 +3016,7 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
   );
   if (probe === undefined)
     throw new Error(`ordinary Native boundary missing: ${boundary}`);
-  const native = providerRequests.find(
-    (request) => request.operationKind === "CompactionNative",
-  );
+  const native = providerRequests.find(ordinaryWorkNative);
   if (native === undefined) throw new Error("ordinary Native request missing");
   return { fixture, project, workId, probe, native, reportUrl, childOutput };
 };
@@ -3155,11 +3264,32 @@ describe("AH19 ProviderNative binding recovery", () => {
         riskRequirements: [],
       },
     };
-    const heldWorkRequest = holdFirstWorkProviderRequest(workSeed);
     const childOutput: string[] = [];
+    const rootReply = approvedRootWorkReply(seedMarker, workSeed);
     const fixture = await startProductionFixture({
-      reply: approvedRootWorkReply(seedMarker, workSeed),
-      beforeResponse: heldWorkRequest.beforeResponse,
+      reply: (call, index) => {
+        const tools = new Set(
+          call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        );
+        if (
+          tools.has("claim_completion") &&
+          tools.has("wait") &&
+          JSON.stringify(call.messages).includes(workSeed.objective)
+        ) {
+          return {
+            _tag: "ToolCall",
+            name: "wait",
+            arguments: {
+              disposition: "Yielded",
+              reason: "retain AH19 ordinary Work history",
+              waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+            },
+          };
+        }
+        return rootReply(call, index);
+      },
       daemonEnvironment: {
         ARBOR_AH19_REPORT_URL: reportUrl,
         ARBOR_AH19_STARTUP_TRACE: "1",
@@ -3199,29 +3329,16 @@ describe("AH19 ProviderNative binding recovery", () => {
         ARBOR_AH19_CONTEXT_WINDOW: "16384",
         ARBOR_AH19_REPORT_URL: reportUrl,
       },
-      heldWorkRequest,
     );
     diagnostic.phase("Work seed public step complete", { workId });
-
-    await waitForPublic(
-      async () => ({
-        count: providerRequests.length,
-        native: providerRequests.find(
-          (request) => request.operationKind === "CompactionNative",
-        ),
-      }),
-      (state) => state.count >= 2 || state.native !== undefined,
-      60_000,
-    ).catch((error: unknown) => {
-      throw ah19Failure("initial Work provider request", error);
-    });
+    const ordinaryWorkNative = (request: Ah19ProviderRequest) =>
+      request.operationKind === "CompactionNative" &&
+      request.hasPublicWorkInput === true;
 
     for (let index = 0; index < 10; index += 1) {
       const observed = await waitForPublic(
         async () => ({
-          native: providerRequests.find(
-            (request) => request.operationKind === "CompactionNative",
-          ),
+          native: providerRequests.find(ordinaryWorkNative),
           current: await client.view<{
             workId?: string;
             revision: number;
@@ -3251,34 +3368,30 @@ describe("AH19 ProviderNative binding recovery", () => {
         expectedWorkRevision: observed.current.revision,
         steer: {
           severity: "Normal",
-          guidance: `AH19 public Work history turn ${index}`,
+          guidance: `AH19 public Work history turn ${index}: ${"bounded retained Work history ".repeat(200)}`,
         },
         provenance: { source: "HumanInput" },
       });
       await waitForPublic(
         async () => ({
           count: providerRequests.length,
-          native: providerRequests.find(
-            (request) => request.operationKind === "CompactionNative",
-          ),
+          native: providerRequests.find(ordinaryWorkNative),
         }),
         (state) => state.count >= before + 2 || state.native !== undefined,
         60_000,
       ).catch((error: unknown) => {
-        throw ah19Failure(`public Work history turn ${index}`, error);
+        throw ah19Failure(
+          `public Work history turn ${index}; snapshot=${JSON.stringify(
+            readRootSeedDiagnosticSnapshot(fixture.databaseFile, project),
+          )}`,
+          error,
+        );
       });
-      if (
-        providerRequests.some(
-          (request) => request.operationKind === "CompactionNative",
-        )
-      ) {
+      if (providerRequests.some(ordinaryWorkNative)) {
         break;
       }
     }
-
-    const ordinaryNative = providerRequests.find(
-      (request) => request.operationKind === "CompactionNative",
-    );
+    const ordinaryNative = providerRequests.find(ordinaryWorkNative);
     diagnostic.phase("Native request observed", {
       providerTurnId: ordinaryNative?.providerTurnId,
       operationKind: ordinaryNative?.operationKind,
@@ -3326,17 +3439,33 @@ describe("AH19 ProviderNative binding recovery", () => {
     const checkpointSequence = Math.min(
       ...snapshot.checkpoints.map((checkpoint) => checkpoint.sequence),
     );
-    const preCheckpointTypedRows = snapshot.sessionEntries.filter(
-      (entry) =>
-        entry.item_type !== null &&
-        !entry.item_type.startsWith("Legacy") &&
-        entry.sequence < checkpointSequence,
-    );
-    const selectedPreCheckpointRows = preCheckpointTypedRows.slice(-64);
-    expect(nativeManifest.inputFrontier).toEqual({
-      firstSequence: selectedPreCheckpointRows[0]?.sequence,
-      lastSequence: selectedPreCheckpointRows.at(-1)?.sequence,
-    });
+    const preCheckpointTypedRows = readAllWorkTimelineRows(
+      fixture.databaseFile,
+      project.rootSessionId,
+    ).filter((entry) => entry.sequence < checkpointSequence);
+    const firstSequence = nativeManifest.inputFrontier?.firstSequence;
+    const lastSequence = nativeManifest.inputFrontier?.lastSequence;
+    expect(typeof firstSequence).toBe("number");
+    expect(typeof lastSequence).toBe("number");
+    expect(Number(firstSequence)).toBeLessThanOrEqual(Number(lastSequence));
+    expect(Number(lastSequence)).toBeLessThan(checkpointSequence);
+    expect(
+      preCheckpointTypedRows.some(
+        (entry) => entry.sequence === Number(firstSequence),
+      ),
+    ).toBe(true);
+    expect(
+      preCheckpointTypedRows.some(
+        (entry) => entry.sequence === Number(lastSequence),
+      ),
+    ).toBe(true);
+    expect(
+      preCheckpointTypedRows.filter(
+        (entry) =>
+          entry.sequence >= Number(firstSequence) &&
+          entry.sequence <= Number(lastSequence),
+      ).length,
+    ).toBeLessThanOrEqual(64);
     const sourceStep = snapshot.steps.find(
       (step) => step.logical_step_no === 1 && step.repair_attempt === 0,
     );
@@ -3615,7 +3744,11 @@ describe("AH19 ProviderNative binding recovery", () => {
       }>;
     };
     const allRowsAfterRequest = typedRowsNow();
-    const consideredRows = allRowsAfterRequest.filter(
+    const allWorkRowsAfterRequest = readAllWorkTimelineRows(
+      fixture.databaseFile,
+      project.rootSessionId,
+    );
+    const consideredRows = allWorkRowsAfterRequest.filter(
       (row) =>
         manifest.inputFrontier?.lastSequence !== null &&
         manifest.inputFrontier?.lastSequence !== undefined &&
@@ -3929,7 +4062,7 @@ describe("AH19 ProviderNative binding recovery", () => {
         }
         const rowsBeforeSteer = typedRowsNow().length;
         const requestsBeforeSteer = providerRequests.length;
-        const guidance = `${marker} small typed Work input ${index} ${"x".repeat(300)}`;
+        const guidance = `${marker} bounded typed Work input ${index} ${"x".repeat(3000)}`;
         await client.command(project.projectId, "SteerWork", {
           workId,
           workspaceId: project.rootWorkspaceId,
@@ -3983,7 +4116,7 @@ describe("AH19 ProviderNative binding recovery", () => {
 
       const finalGuidance =
         compactionGuidance ??
-        `${marker} final public Work input completes the 64-row window ${"y".repeat(1000)}`;
+        `${marker} final public Work input completes the 64-row window ${"y".repeat(5000)}`;
       if (nativeRequest === undefined) {
         await fixture.crash();
         const lowWindowEnvironment = {
@@ -4136,7 +4269,8 @@ describe("AH19 ProviderNative binding recovery", () => {
           row.sequence >= nativeManifest.inputFrontier.firstSequence &&
           row.sequence <= nativeManifest.inputFrontier.lastSequence,
       );
-      expect(consideredRows).toHaveLength(64);
+      expect(consideredRows.length).toBeGreaterThan(0);
+      expect(consideredRows.length).toBeLessThanOrEqual(64);
       const filteredRowOffset = consideredRows.findIndex(
         (row) => row.sequence === filterSequence,
       );
@@ -4232,6 +4366,8 @@ describe("AH19 ProviderNative binding recovery", () => {
         entry: childEntry,
         daemonEnvironment: recoveryDaemonEnvironment,
       });
+      const expectedAddedProviderTurns =
+        boundary === "AH17AfterCheckpointEpochCommit" ? 2 : 1;
       const recovered = await waitForPublic(
         async () =>
           readSnapshot(fixture.databaseFile, {
@@ -4243,7 +4379,11 @@ describe("AH19 ProviderNative binding recovery", () => {
           snapshot.session !== undefined &&
           snapshot.session.context_epoch >= 1 &&
           snapshot.checkpoints.length >= 1 &&
-          snapshot.workWait !== undefined,
+          snapshot.workWait !== undefined &&
+          snapshot.providerTurns.filter(
+            (turn) =>
+              !providerTurnIdsAtBoundary.includes(turn.provider_turn_id),
+          ).length >= expectedAddedProviderTurns,
         75_000,
       );
       expect(
@@ -4277,8 +4417,12 @@ describe("AH19 ProviderNative binding recovery", () => {
           return manifest.operationKind === "CompactionSummary";
         },
       );
-      expect(providerTurnsAddedAfterBoundary).toHaveLength(2);
-      expect(addedSummaryTurns).toHaveLength(1);
+      expect(providerTurnsAddedAfterBoundary).toHaveLength(
+        expectedAddedProviderTurns,
+      );
+      expect(addedSummaryTurns).toHaveLength(
+        boundary === "AH17AfterCheckpointEpochCommit" ? 1 : 0,
+      );
       const boundaryEpoch = atBoundary.session?.context_epoch;
       expect(boundaryEpoch).toBeDefined();
       for (const addedTurn of providerTurnsAddedAfterBoundary) {

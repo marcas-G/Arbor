@@ -1553,13 +1553,18 @@ describe("p12-acceptance story 8 — model-facing tool catalog in the compiled r
     expect(compiled?.schemaJson).toBe(ECHO_DEFINITION.inputSchemaJson);
     expect(compiled?.description).not.toBe(ECHO_DEFINITION.name);
     expect(compiled?.schemaJson).not.toBe("{}");
-    for (const builtin of BUILTIN_TOOLS) {
+    for (const builtin of BUILTIN_TOOLS.filter(
+      ({ name }) => name !== "shell",
+    )) {
       expect(
         turn.turn.request.toolDefinitions.some(
           (tool) => tool.name === builtin.name,
         ),
       ).toBe(true);
     }
+    expect(
+      turn.turn.request.toolDefinitions.some((tool) => tool.name === "shell"),
+    ).toBe(false);
   });
 });
 
@@ -1708,10 +1713,9 @@ const toolTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>> = [
     {
       _tag: "ToolCallProposed",
       callRef: "c1",
-      toolName: "shell",
+      toolName: "read",
       argumentsJson: JSON.stringify({
-        command: "echo hello",
-        cwd: { _tag: "FileTree", path: "." },
+        target: { mount: "workspace", path: "." },
       }),
     },
     { _tag: "TurnCompleted", finishReason: "ToolCall" },

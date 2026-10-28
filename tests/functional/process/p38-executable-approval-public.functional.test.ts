@@ -1176,6 +1176,26 @@ describe("pending P38 public Executable approval qualification", () => {
     } finally {
       evidenceDb.close();
     }
+    // The after-commit fault hook pauses before P3 receives the P4 result.
+    // Crash that owner and replay the committed denial under a clean daemon so
+    // the exact action reaches TerminalRejected before P10 projects Attention.
+    await crashExpireAndRestart("");
+    const projectedDenial = await waitForPublic(
+      async () => run.snapshot(),
+      (snapshot) =>
+        snapshot.invocation?.invocation_id === invocationId &&
+        snapshot.invocation.settlement_kind === "Denied" &&
+        snapshot.invocation.effect_admission_state === "NotAdmitted" &&
+        snapshot.action?.state === "TerminalRejected",
+      60_000,
+    ).catch((error: unknown) => {
+      throw new Error(
+        `${String(error)}; daemon=${run.fixture.daemonErrors.join(" | ")}`,
+        { cause: error },
+      );
+    });
+    expect(projectedDenial.invocation).toEqual(denied.invocation);
+    expect(projectedDenial.action?.state).toBe("TerminalRejected");
     const attention = await run.client.view<{
       readonly rows: ReadonlyArray<{
         readonly source: string;

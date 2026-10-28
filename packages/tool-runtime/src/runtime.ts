@@ -1947,7 +1947,9 @@ export const ToolRuntimeLive = (
                         approvalId:
                           context.executableApproval?.approvalId ??
                           intent.approvalId,
-                        intentAt: now,
+                        intentAt: Option.isSome(current)
+                          ? current.value.intentAt
+                          : now,
                       },
                       reasonCode,
                       settledAt,

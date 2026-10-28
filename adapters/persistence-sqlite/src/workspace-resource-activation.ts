@@ -42,6 +42,14 @@ const columns = `project_id, workspace_id, resource_boundary_revision,
   delegation_source_id, delegation_json, expected_parent_workspace_revision,
   expected_child_workspace_revision, expected_parent_boundary_revision,
   expected_parent_ownership_revision, expected_child_ownership_revision`;
+const legacyColumns = `project_id, workspace_id, resource_boundary_revision,
+  status, created_at, updated_at, activated_at,
+  NULL AS parent_workspace_id, NULL AS delegation_source_id,
+  NULL AS delegation_json, NULL AS expected_parent_workspace_revision,
+  NULL AS expected_child_workspace_revision,
+  NULL AS expected_parent_boundary_revision,
+  NULL AS expected_parent_ownership_revision,
+  NULL AS expected_child_ownership_revision`;
 
 const decode = (
   row: ActivationIntentRow,
@@ -115,6 +123,20 @@ export const WorkspaceResourceActivationStoreLive: Layer.Layer<
           ),
         ),
       );
+    let delegationColumnsAvailable: boolean | undefined;
+    const supportsDelegation = Effect.gen(function* () {
+      if (delegationColumnsAvailable !== undefined)
+        return delegationColumnsAvailable;
+      const rows = yield* run(
+        sql.unsafe<{ name: string }>(
+          "PRAGMA table_info(workspace_resource_activation_intents)",
+        ),
+      );
+      delegationColumnsAvailable = rows.some(
+        ({ name }) => name === "delegation_source_id",
+      );
+      return delegationColumnsAvailable;
+    });
     const read = (
       query: string,
       parameters: ReadonlyArray<unknown>,
@@ -125,8 +147,14 @@ export const WorkspaceResourceActivationStoreLive: Layer.Layer<
     > =>
       Effect.gen(function* () {
         yield* TransactionScope;
+        const selectedColumns = (yield* supportsDelegation)
+          ? columns
+          : legacyColumns;
         const rows = yield* run(
-          sql.unsafe<ActivationIntentRow>(query, parameters),
+          sql.unsafe<ActivationIntentRow>(
+            query.replace("$columns", selectedColumns),
+            parameters,
+          ),
         );
         return rows.map(decode);
       });
@@ -135,9 +163,10 @@ export const WorkspaceResourceActivationStoreLive: Layer.Layer<
         Effect.gen(function* () {
           yield* TransactionScope;
           const delegation = intent.delegation ?? null;
-          yield* run(
-            sql.unsafe(
-              `INSERT INTO workspace_resource_activation_intents (
+          if (yield* supportsDelegation) {
+            yield* run(
+              sql.unsafe(
+                `INSERT INTO workspace_resource_activation_intents (
                 project_id, workspace_id, resource_boundary_revision,
                 status, created_at, updated_at, activated_at, parent_workspace_id,
                 delegation_source_id, delegation_json,
@@ -145,38 +174,65 @@ export const WorkspaceResourceActivationStoreLive: Layer.Layer<
                 expected_child_workspace_revision, expected_parent_boundary_revision,
                 expected_parent_ownership_revision, expected_child_ownership_revision
               ) VALUES (?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?)`,
-              [
-                intent.projectId,
-                intent.workspaceId,
-                intent.resourceBoundaryRevision,
-                intent.status,
-                intent.createdAt,
-                intent.updatedAt,
-                delegation?.parentWorkspaceId ?? null,
-                delegation?.delegationSourceId ?? null,
-                delegation === null
-                  ? null
-                  : JSON.stringify({
-                      formationProposalId: delegation.formationProposalId,
-                      formationProposalRevision:
-                        delegation.formationProposalRevision,
-                      addresses: delegation.addresses,
-                      approvedBy: delegation.approvedBy,
-                      causedByCommandId: delegation.causedByCommandId,
-                    }),
-                delegation?.expectedParentWorkspaceRevision ?? null,
-                delegation?.expectedChildWorkspaceRevision ?? null,
-                delegation?.expectedParentBoundaryRevision ?? null,
-                delegation?.expectedParentOwnershipRevision ?? null,
-                delegation?.expectedChildOwnershipRevision ?? null,
-              ],
-            ),
-          );
+                [
+                  intent.projectId,
+                  intent.workspaceId,
+                  intent.resourceBoundaryRevision,
+                  intent.status,
+                  intent.createdAt,
+                  intent.updatedAt,
+                  delegation?.parentWorkspaceId ?? null,
+                  delegation?.delegationSourceId ?? null,
+                  delegation === null
+                    ? null
+                    : JSON.stringify({
+                        formationProposalId: delegation.formationProposalId,
+                        formationProposalRevision:
+                          delegation.formationProposalRevision,
+                        addresses: delegation.addresses,
+                        approvedBy: delegation.approvedBy,
+                        causedByCommandId: delegation.causedByCommandId,
+                      }),
+                  delegation?.expectedParentWorkspaceRevision ?? null,
+                  delegation?.expectedChildWorkspaceRevision ?? null,
+                  delegation?.expectedParentBoundaryRevision ?? null,
+                  delegation?.expectedParentOwnershipRevision ?? null,
+                  delegation?.expectedChildOwnershipRevision ?? null,
+                ],
+              ),
+            );
+          } else {
+            if (delegation !== null) {
+              return yield* Effect.fail({
+                _tag: "PersistenceConstraintViolation" as const,
+                repository: "WorkspaceResourceActivationStore" as const,
+                operation: "activation-intent",
+                constraintKind: "Constraint" as const,
+                constraint: "delegation-columns-unavailable",
+              });
+            }
+            yield* run(
+              sql.unsafe(
+                `INSERT INTO workspace_resource_activation_intents (
+                  project_id, workspace_id, resource_boundary_revision,
+                  status, created_at, updated_at, activated_at
+                ) VALUES (?,?,?,?,?,?,NULL)`,
+                [
+                  intent.projectId,
+                  intent.workspaceId,
+                  intent.resourceBoundaryRevision,
+                  intent.status,
+                  intent.createdAt,
+                  intent.updatedAt,
+                ],
+              ),
+            );
+          }
         }),
       find: (projectId, workspaceId, resourceBoundaryRevision) =>
         Effect.gen(function* () {
           const rows = yield* read(
-            `SELECT ${columns} FROM workspace_resource_activation_intents
+            `SELECT $columns FROM workspace_resource_activation_intents
              WHERE project_id = ? AND workspace_id = ?
                AND resource_boundary_revision = ?`,
             [projectId, workspaceId, resourceBoundaryRevision],
@@ -195,21 +251,35 @@ export const WorkspaceResourceActivationStoreLive: Layer.Layer<
           yield* TransactionScope;
           const rows = yield* run(
             sql.unsafe<{ workspace_id: string }>(
-              `UPDATE workspace_resource_activation_intents
+              (yield* supportsDelegation)
+                ? `UPDATE workspace_resource_activation_intents
                SET status = 'Active', activated_at = ?, updated_at = ?
                WHERE project_id = ? AND workspace_id = ?
                AND resource_boundary_revision = ? AND status = 'Pending'
                AND (? IS NULL OR delegation_source_id = ?)
+               RETURNING workspace_id`
+                : `UPDATE workspace_resource_activation_intents
+               SET status = 'Active', activated_at = ?, updated_at = ?
+               WHERE project_id = ? AND workspace_id = ?
+               AND resource_boundary_revision = ? AND status = 'Pending'
                RETURNING workspace_id`,
-              [
-                activatedAt,
-                updatedAt,
-                projectId,
-                workspaceId,
-                resourceBoundaryRevision,
-                delegationSourceId ?? null,
-                delegationSourceId ?? null,
-              ],
+              (yield* supportsDelegation)
+                ? [
+                    activatedAt,
+                    updatedAt,
+                    projectId,
+                    workspaceId,
+                    resourceBoundaryRevision,
+                    delegationSourceId ?? null,
+                    delegationSourceId ?? null,
+                  ]
+                : [
+                    activatedAt,
+                    updatedAt,
+                    projectId,
+                    workspaceId,
+                    resourceBoundaryRevision,
+                  ],
             ),
           );
           return rows.length === 1;
@@ -217,21 +287,21 @@ export const WorkspaceResourceActivationStoreLive: Layer.Layer<
       listPending: (projectId) =>
         projectId === undefined
           ? read(
-              `SELECT ${columns} FROM workspace_resource_activation_intents
+              `SELECT $columns FROM workspace_resource_activation_intents
                WHERE status = 'Pending'
                ORDER BY created_at, project_id, workspace_id,
                         resource_boundary_revision`,
               [],
             )
           : read(
-              `SELECT ${columns} FROM workspace_resource_activation_intents
+              `SELECT $columns FROM workspace_resource_activation_intents
                WHERE status = 'Pending' AND project_id = ?
                ORDER BY created_at, workspace_id, resource_boundary_revision`,
               [projectId],
             ),
       listAll: () =>
         read(
-          `SELECT ${columns} FROM workspace_resource_activation_intents
+          `SELECT $columns FROM workspace_resource_activation_intents
            ORDER BY created_at, project_id, workspace_id,
                     resource_boundary_revision`,
           [],

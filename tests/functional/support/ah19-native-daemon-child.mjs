@@ -151,7 +151,8 @@ const nativeAdapter = {
               (item) =>
                 item._tag === "Message" &&
                 item.role === "user" &&
-                item.text.includes("AH19 public Work history turn"),
+                (item.text.includes("AH19 public Work history turn") ||
+                  item.text.includes("AH19 ordinary recovery history")),
             ),
             hasWorkToolSurface: request.toolDefinitions.some((tool) =>
               ["claim_completion", "update_plan"].includes(tool.name),

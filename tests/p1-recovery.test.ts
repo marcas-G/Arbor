@@ -8,20 +8,25 @@ import {
   ClockLive,
   ConsumerDeadLetterStoreLive,
   ConsumerOffsetStoreLive,
+  CURRENT_MIGRATIONS,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
   IdGeneratorLive,
   layer,
   OwnershipWriteServiceLive,
   P1_MIGRATIONS,
+  P36_MIGRATIONS,
+  P39_MAINTENANCE_MIGRATIONS,
   ProjectionStoreLive,
   ResourceOwnershipRepositoryLive,
   runConsumerBatch,
   runMigrations,
+  splitStatements,
   TransactionPortLive,
   WorkspaceRepositoryLive,
   WorkspaceResourceActivationStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
+
 import {
   CommandId,
   type EventTypeName,
@@ -39,6 +44,26 @@ import {
   ProjectionStore,
   TransactionPort,
 } from "../packages/ports/src/index.js";
+
+const prepareCurrentTestSchema = Effect.gen(function* () {
+  yield* runMigrations(P36_MIGRATIONS);
+  const sql = yield* SqlClient;
+  yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+  for (const migration of P39_MAINTENANCE_MIGRATIONS) {
+    for (const statement of splitStatements(migration.sql))
+      yield* sql.unsafe(statement);
+    if (migration.onApply !== undefined) yield* migration.onApply(sql);
+    yield* sql.unsafe(`PRAGMA user_version = ${migration.id}`);
+  }
+  yield* sql.unsafe("PRAGMA foreign_keys = ON");
+  yield* runMigrations(
+    CURRENT_MIGRATIONS.filter(({ id }) => id >= 40),
+    {
+      allowOfflineOnly: true,
+    },
+  );
+});
+
 import {
   countRows,
   faultingTransaction,
@@ -435,7 +460,7 @@ describe("P1-014 recovery matrix — ownership and migration", () => {
   it("ownership write rolls back on a constraint failure", async () => {
     const app = makeOwnershipApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P1_MIGRATIONS);
+      yield* prepareCurrentTestSchema;
       yield* seedOwnershipRows;
       const ownership = yield* OwnershipWriteService;
       const failed = yield* ownership
