@@ -564,13 +564,35 @@ export const SessionRepositoryLive: Layer.Layer<
                     JOIN provider_turns AS repaired_provider_turn
                       ON repaired_provider_turn.session_id = repaired_call.session_id
                      AND repaired_provider_turn.execution_id = ?
-                     AND substr(
-                       repaired_call.source_ref,
-                       1,
-                       length(repaired_provider_turn.provider_turn_id) + 1
-                     ) = repaired_provider_turn.provider_turn_id || ':'
+                     AND repaired_provider_turn.provider_turn_id =
+                         json_extract(repaired_call.payload_json, '$.providerTurnId')
                     WHERE repaired_call.session_id = session_entries.session_id
                       AND repaired_call.source_kind = 'ProviderTurnCall'
+                      AND substr(
+                        session_entries.source_ref,
+                        1,
+                        length(
+                          'session-frontier-repair:v1:' || ? || ':' ||
+                          repaired_provider_turn.provider_turn_id || ':'
+                        )
+                      ) = 'session-frontier-repair:v1:' || ? || ':' ||
+                          repaired_provider_turn.provider_turn_id || ':'
+                      AND length(session_entries.source_ref) = length(
+                        'session-frontier-repair:v1:' || ? || ':' ||
+                        repaired_provider_turn.provider_turn_id || ':'
+                      ) + 64
+                      AND substr(
+                        session_entries.source_ref,
+                        length(
+                          'session-frontier-repair:v1:' || ? || ':' ||
+                          repaired_provider_turn.provider_turn_id || ':'
+                        ) + 1
+                      ) NOT GLOB '*[^0-9a-f]*'
+                      AND repaired_call.source_ref =
+                          repaired_provider_turn.provider_turn_id || ':' ||
+                          json_extract(session_entries.payload_json, '$.callRef')
+                      AND json_extract(repaired_call.payload_json, '$.providerTurnId') =
+                          repaired_provider_turn.provider_turn_id
                       AND json_extract(repaired_call.payload_json, '$.callRef') =
                           json_extract(session_entries.payload_json, '$.callRef')
                   )
@@ -588,6 +610,10 @@ export const SessionRepositoryLive: Layer.Layer<
             currentExecutionId === undefined
               ? []
               : [
+                  currentExecutionId,
+                  currentExecutionId,
+                  currentExecutionId,
+                  currentExecutionId,
                   currentExecutionId,
                   currentExecutionId,
                   currentExecutionId,

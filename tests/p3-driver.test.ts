@@ -49,6 +49,7 @@ import {
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
+  decideSessionProjection,
   ModelContext,
   ModelContextLive,
   projectSessionTimeline,
@@ -2666,6 +2667,8 @@ describe("P3-013 agent driver", () => {
 
   it("repairs a dangling call from an ended execution before the next Provider turn", async () => {
     const app = makeApp([sendMessageTurn("frontier repaired")]);
+    const originatingProviderTurnId =
+      "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a9_0";
     const result = await run(
       Effect.gen(function* () {
         yield* runMigrations(P19_MIGRATIONS);
@@ -2682,7 +2685,7 @@ describe("P3-013 agent driver", () => {
             0,
             JSON.stringify({
               _tag: "ToolCall",
-              providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+              providerTurnId: originatingProviderTurnId,
               callRef: "dangling",
               toolRef: "read",
               argumentsRef: "inline:test",
@@ -2690,7 +2693,7 @@ describe("P3-013 agent driver", () => {
             }),
             "t",
             "ProviderTurnCall",
-            "dangling",
+            `${originatingProviderTurnId}:dangling`,
             "hash-dangling",
           ],
         );
@@ -2706,11 +2709,22 @@ describe("P3-013 agent driver", () => {
           item_type: string;
           payload_json: string;
           source_kind: string | null;
+          source_ref: string | null;
         }>(
-          "SELECT item_type, payload_json, source_kind FROM session_entries WHERE session_id = ? AND item_type = 'ToolResult' ORDER BY sequence",
+          "SELECT item_type, payload_json, source_kind, source_ref FROM session_entries WHERE session_id = ? AND item_type = 'ToolResult' ORDER BY sequence",
           [sessionId],
         );
-        return { settlement, step: steps[0], repaired };
+        const sessions = yield* SessionRepository;
+        const tx = yield* TransactionPort;
+        const frontier = yield* tx.transact(
+          sessions.listRecentEntries(sessionId, 64),
+        );
+        return {
+          settlement,
+          step: steps[0],
+          repaired,
+          projectionDecision: decideSessionProjection(frontier),
+        };
       }),
       app,
     );
@@ -2725,11 +2739,17 @@ describe("P3-013 agent driver", () => {
     });
     expect(result.repaired).toHaveLength(1);
     expect(result.repaired[0]?.source_kind).toBe("SessionFrontierRepair");
+    expect(result.repaired[0]?.source_ref).toMatch(
+      new RegExp(
+        `^session-frontier-repair:v1:${executionId}:${originatingProviderTurnId}:[0-9a-f]{64}$`,
+      ),
+    );
     expect(JSON.parse(result.repaired[0]?.payload_json ?? "{}")).toMatchObject({
       _tag: "ToolResult",
       callRef: "dangling",
       status: "Interrupted",
     });
+    expect(result.projectionDecision._tag).toBe("Ready");
   });
 
   it("stops at the P2 safety gate", async () => {
