@@ -568,3 +568,29 @@ actually execute an effect still separately require and commit their exact P11
 policy. The P4 fencing child honors the same explicit test-only environment
 flag. The exact P38 authority/stale-revision case then passed 1/1 in 12.103s;
 production `main()` remains unchanged.
+
+### Session frontier repair ownership collision hardening
+
+Final static review found that the first `SessionFrontierRepair` ownership
+filter still joined a repair result to the current Execution by `callRef`.
+Provider call refs are scoped to a ProviderTurn and may be reused across
+turns, so an old Execution's Interrupted repair could be mis-associated with a
+new Execution's same-named call.
+
+The implementation now keeps P17's frozen callRef pairing contract unchanged
+and adds no Session payload field or migration. Runtime-created repair
+`source_ref` values carry exact implementation provenance:
+
+```text
+session-frontier-repair:v1:<executionId>:<providerTurnId>:<sha256>
+```
+
+The Work frontier accepts a repair only when that source identity, the
+originating ProviderTurn, its ToolCall source ref and callRef all bind to the
+current Execution. Legacy repair rows without provenance fail closed in an
+execution-scoped frontier. Repair construction also refuses ambiguous reused
+callRef candidates instead of choosing the first match. Regression evidence
+covers the cross-Execution same-callRef collision, current-Execution repair
+retention and a `Ready` projected timeline. Independent rerun: Biome PASS,
+typecheck PASS, frontier isolation + full p3-driver 53/53 PASS. Production fix
+commit after cherry-pick: `660200149abc2b5e441979c1ce91657920492f12`.
