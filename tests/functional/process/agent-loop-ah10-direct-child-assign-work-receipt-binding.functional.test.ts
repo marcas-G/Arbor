@@ -317,7 +317,7 @@ const schemaSnapshot = (db: DatabaseSync) => {
 };
 
 /**
- * Build a disposable frozen-v44 image from the real current-v51 fixture.
+ * Build a disposable frozen-v44 image from the real current-v54 fixture.
  * The destination's schema is produced only by the trusted migration chain;
  * its table/column contract drives this explicit projection. In particular,
  * this does not lower user_version or infer a column intersection. P45 inbox
@@ -327,7 +327,7 @@ const schemaSnapshot = (db: DatabaseSync) => {
  * retained, and the P52 Work revision ledger is explicitly excluded because
  * it has no schema-44 representation.
  */
-const projectSchema52IntoSchema44Image = (
+const projectSchema54IntoSchema44Image = (
   sourceFilename: string,
   targetFilename: string,
   committedCommandId: string,
@@ -343,9 +343,9 @@ const projectSchema52IntoSchema44Image = (
       (target.prepare("PRAGMA user_version").get() as { user_version: number })
         .user_version,
     );
-    if (sourceVersion !== 52 || targetVersion !== 44) {
+    if (sourceVersion !== 54 || targetVersion !== 44) {
       throw new Error(
-        `Legacy projection requires exact schema 52 -> 44; got ${sourceVersion} -> ${targetVersion}`,
+        `Legacy projection requires exact schema 54 -> 44; got ${sourceVersion} -> ${targetVersion}`,
       );
     }
 
@@ -361,7 +361,7 @@ const projectSchema52IntoSchema44Image = (
       .get();
     if (sourceP52Ledger === undefined || targetP52Ledger !== undefined) {
       throw new Error(
-        "P52 history must be present in the schema-52 source and absent from the schema-44 projection",
+        "P52 history must be present in the current schema source and absent from the schema-44 projection",
       );
     }
 
@@ -602,7 +602,7 @@ const makePreBindingP32Copy = async (
         qualifyLegacyP39ShortPaths({ root: shortTempRoot, ...paths }),
     });
     try {
-      projectSchema52IntoSchema44Image(
+      projectSchema54IntoSchema44Image(
         currentSource,
         schema44.databaseFilename,
         priorCommittedCommandId,
@@ -2295,35 +2295,35 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         await upgradeSchema44ToCurrentTestDatabase({
           databaseFilename: recoveryDatabaseFile,
         });
-        const schema52 = new DatabaseSync(recoveryDatabaseFile, {
+        const schema54 = new DatabaseSync(recoveryDatabaseFile, {
           readOnly: true,
         });
         try {
           expect(
             Number(
               (
-                schema52.prepare("PRAGMA user_version").get() as {
+                schema54.prepare("PRAGMA user_version").get() as {
                   user_version: number;
                 }
               ).user_version,
             ),
-          ).toBe(52);
+          ).toBe(54);
           expect(
-            schema52
+            schema54
               .prepare(
                 "SELECT resolution, result_json FROM commands WHERE command_id = ?",
               )
               .get(priorCommittedCommandId ?? ""),
           ).toEqual({ resolution: "Committed", result_json: v44ReceiptJson });
           expect(
-            schema52
+            schema54
               .prepare(
                 "SELECT command_id FROM assign_work_target_bindings WHERE command_id = ?",
               )
               .all(priorCommittedCommandId ?? ""),
           ).toHaveLength(0);
         } finally {
-          schema52.close();
+          schema54.close();
         }
       }
 
@@ -2365,7 +2365,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       }
       if (crashSide === "legacy-p32-upgrade") {
         const upgraded = readRows(recoveryDatabaseFile);
-        expect(upgraded.schemaVersion).toBe(52);
+        expect(upgraded.schemaVersion).toBe(54);
         expect(upgraded.assignWorkTargetBindings).toHaveLength(0);
         expect(
           upgraded.commands.find(
