@@ -72,6 +72,7 @@ import {
   isValidConversationCheckpointBinding,
   LEGACY_ADOPTION_MISSING,
   PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
+  PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING,
   sha256Hex,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -6280,6 +6281,16 @@ export const runModelDecision = (
           return yield* proposeSettlement(
             providerTurnBindingChangedSettlement(),
           );
+        }
+        if (
+          isProviderFailure(providerResult.cause) &&
+          providerResult.cause.safeDiagnostic ===
+            PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING
+        ) {
+          return yield* proposeSettlement({
+            _tag: "Interrupted",
+            result: { _tag: "StopRequested" },
+          });
         }
         if (isProviderExecutionTimeout(providerResult.cause)) {
           return yield* proposeSettlement(

@@ -7,6 +7,7 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING,
   ProviderRuntime,
   ProviderTurnStore,
   TransactionPort,
@@ -195,6 +196,47 @@ const events = [
 ];
 
 describe("P3 ProviderRuntime + fake provider", () => {
+  it("atomically refuses a new ProviderTurn after the Execution stop fence commits", async () => {
+    const app = makeApp({ events });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ?",
+        ["2026-10-28T21:05:50.189Z", executionId],
+      );
+      const outcome = yield* Effect.flip(
+        runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+      );
+      const turns = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM provider_turns WHERE execution_id = ?",
+        [executionId],
+      );
+      const manifests = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM model_context_manifests WHERE execution_id = ?",
+        [executionId],
+      );
+      return {
+        outcome,
+        turns: turns[0]?.count,
+        manifests: manifests[0]?.count,
+      };
+    });
+
+    const result = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
+    expect(result).toMatchObject({
+      outcome: {
+        _tag: "ProviderFailure",
+        safeDiagnostic: PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING,
+      },
+      turns: 0,
+      manifests: 0,
+    });
+  });
+
   it("atomically settles success and replays the validated durable result", async () => {
     const app = makeApp({ events });
     const program = Effect.gen(function* () {

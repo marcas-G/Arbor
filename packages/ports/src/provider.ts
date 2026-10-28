@@ -697,6 +697,11 @@ export interface UnsettledProviderTurn {
   readonly portableRequestJson: string | null;
 }
 
+/** Internal adapter/runtime signal: the durable Execution stop fence won the
+ * commit order before a new ProviderTurn intent could be admitted. */
+export const PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING =
+  "provider-turn-admission-execution-stopping";
+
 export interface ProviderTurnStoreService {
   readonly startTurnWithManifest: (
     record: ProviderTurnRecord,
