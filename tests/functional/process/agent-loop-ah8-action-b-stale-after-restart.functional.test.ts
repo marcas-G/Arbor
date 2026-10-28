@@ -461,9 +461,14 @@ describe("AH8 action A commit followed by stale action B", () => {
       logical_step_no: 1,
       repair_attempt: 0,
     });
-    expect(["Prepared", "SettlementProposed"]).toContain(
-      successorRows[0]?.state,
-    );
+    // The successor is admitted independently after stale B is skipped. The
+    // snapshot may observe it before inference, after the Provider result is
+    // durable, or after its Manual wait proposes settlement.
+    expect([
+      "Prepared",
+      "ProviderResultAvailable",
+      "SettlementProposed",
+    ]).toContain(successorRows[0]?.state);
     expect(
       recovered.actions.filter(
         (action) =>
