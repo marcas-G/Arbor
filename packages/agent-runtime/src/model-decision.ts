@@ -3154,9 +3154,10 @@ export const runModelDecision = (
           .pipe(Effect.mapError(failure)))
       ) {
         const unresolved = projectionDecision.callRefs.map((callRef) => {
-          const entry = recentSessionEntries.find(
+          const matchingEntries = recentSessionEntries.filter(
             (candidate) =>
               candidate.entryKind === "ModelOutput" &&
+              candidate.source?.kind === "ProviderTurnCall" &&
               typeof candidate.payload === "object" &&
               candidate.payload !== null &&
               (candidate.payload as { readonly _tag?: unknown })._tag ===
@@ -3164,22 +3165,38 @@ export const runModelDecision = (
               (candidate.payload as { readonly callRef?: unknown }).callRef ===
                 callRef,
           );
+          // callRef is scoped to a ProviderTurn. If the typed frontier cannot
+          // identify one exact originating call, fail closed rather than
+          // creating a result that can be paired with another turn's call.
+          if (matchingEntries.length !== 1) return undefined;
+          const entry = matchingEntries[0];
           if (entry === undefined) return undefined;
           const payload = entry.payload as {
             readonly providerTurnId?: unknown;
             readonly callRef: string;
             readonly toolRef?: unknown;
           };
-          return typeof payload.providerTurnId === "string" &&
-            payload.providerTurnId !== providerTurnId
-            ? {
-                callRef: payload.callRef,
-                toolName:
-                  typeof payload.toolRef === "string"
-                    ? payload.toolRef
-                    : "unknown",
-              }
-            : undefined;
+          if (
+            typeof payload.providerTurnId !== "string" ||
+            payload.providerTurnId === providerTurnId ||
+            entry.source?.ref !== `${payload.providerTurnId}:${payload.callRef}`
+          ) {
+            return undefined;
+          }
+          let originatingProviderTurnId: ProviderTurnId;
+          try {
+            originatingProviderTurnId = parse(ProviderTurnId)(
+              payload.providerTurnId,
+            );
+          } catch {
+            return undefined;
+          }
+          return {
+            callRef: payload.callRef,
+            originatingProviderTurnId,
+            toolName:
+              typeof payload.toolRef === "string" ? payload.toolRef : "unknown",
+          };
         });
         if (
           unresolved.length > 0 &&
@@ -3197,9 +3214,14 @@ export const runModelDecision = (
             };
           }
           for (const invocation of unresolved) {
-            const observationRef = `observation_${sha256Hex(
-              `session-frontier-repair:${input.execution.sessionId}:${invocation.callRef}`,
-            )}`;
+            // Keep ownership in Runtime's durable source identity rather than
+            // the provider-facing ToolResult payload. The repository admits
+            // only this versioned execution/ProviderTurn-bound form; legacy
+            // repairs without provenance remain fail-closed.
+            const repairIdentity = sha256Hex(
+              `session-frontier-repair:v1:${input.execution.sessionId}:${input.execution.executionId}:${invocation.originatingProviderTurnId}:${invocation.callRef}`,
+            );
+            const observationRef = `observation_${repairIdentity}`;
             const item = {
               _tag: "ToolResult" as const,
               callRef: invocation.callRef,
@@ -3221,7 +3243,7 @@ export const runModelDecision = (
                     contextEpoch: repairSession.value.contextEpoch,
                     source: {
                       kind: "SessionFrontierRepair",
-                      ref: observationRef,
+                      ref: `session-frontier-repair:v1:${input.execution.executionId}:${invocation.originatingProviderTurnId}:${repairIdentity}`,
                     },
                     contentHash: sha256Hex(JSON.stringify(item)),
                   },

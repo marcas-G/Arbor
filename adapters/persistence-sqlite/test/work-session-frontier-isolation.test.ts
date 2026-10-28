@@ -275,11 +275,11 @@ describe("Work Session frontier ownership", () => {
         "ModelOutput",
         "ToolCall",
         "ProviderTurnCall",
-        `${priorWorkTurnId}:old-call`,
+        `${priorWorkTurnId}:reused-call`,
         {
           _tag: "ToolCall",
           providerTurnId: priorWorkTurnId,
-          callRef: "old-call",
+          callRef: "reused-call",
           toolRef: "read",
           argumentsRef: "inline:old",
           argumentsJson: "{}",
@@ -357,11 +357,11 @@ describe("Work Session frontier ownership", () => {
         "ModelOutput",
         "ToolCall",
         "ProviderTurnCall",
-        `${activeWorkTurnId}:current-call`,
+        `${activeWorkTurnId}:reused-call`,
         {
           _tag: "ToolCall",
           providerTurnId: activeWorkTurnId,
-          callRef: "current-call",
+          callRef: "reused-call",
           toolRef: "read",
           argumentsRef: "inline:current",
           argumentsJson: "{}",
@@ -372,10 +372,10 @@ describe("Work Session frontier ownership", () => {
         "Observation",
         "ToolResult",
         "SessionFrontierRepair",
-        `observation_${"c".repeat(64)}`,
+        `session-frontier-repair:v1:${activeWorkExecutionId}:${activeWorkTurnId}:${"c".repeat(64)}`,
         {
           _tag: "ToolResult",
-          callRef: "current-call",
+          callRef: "reused-call",
           toolName: "read",
           status: "Succeeded",
           observationRef: `observation_${"c".repeat(64)}`,
@@ -402,14 +402,31 @@ describe("Work Session frontier ownership", () => {
         "Observation",
         "ToolResult",
         "SessionFrontierRepair",
-        `observation_${"d".repeat(64)}`,
+        `session-frontier-repair:v1:${priorWorkExecutionId}:${priorWorkTurnId}:${"d".repeat(64)}`,
         {
           _tag: "ToolResult",
-          callRef: "old-call",
+          callRef: "reused-call",
           toolName: "read",
           status: "Interrupted",
           observationRef: `observation_${"d".repeat(64)}`,
           outputText: "prior execution repair result",
+        },
+      );
+      // Legacy repair rows do not identify an execution or ProviderTurn and
+      // must remain excluded from execution-scoped context.
+      yield* insert(
+        23,
+        "Observation",
+        "ToolResult",
+        "SessionFrontierRepair",
+        `observation_${"e".repeat(64)}`,
+        {
+          _tag: "ToolResult",
+          callRef: "reused-call",
+          toolName: "read",
+          status: "Interrupted",
+          observationRef: `observation_${"e".repeat(64)}`,
+          outputText: "legacy repair result without ownership",
         },
       );
 
@@ -427,6 +444,15 @@ describe("Work Session frontier ownership", () => {
     expect(entries.map((entry) => entry.sequence)).toEqual([
       11, 17, 18, 19, 20, 21,
     ]);
+    expect(entries.some((entry) => entry.sequence === 20)).toBe(true);
+    expect(entries.some((entry) => entry.sequence === 22)).toBe(false);
+    expect(entries.some((entry) => entry.sequence === 23)).toBe(false);
+    expect(
+      entries.find((entry) => entry.sequence === 20)?.payload,
+    ).toMatchObject({
+      callRef: "reused-call",
+      status: "Succeeded",
+    });
     expect(
       entries.some((entry) =>
         JSON.stringify(entry.payload).includes(
