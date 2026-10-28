@@ -549,3 +549,11 @@ not opted into its test-only executable catalog. It now exports the same
 explicit test-only flag for that scenario. The exact V6 main journey then
 passed 1/1 in 63.087s, including the P9 terminal and fresh reapproval after
 registry drift. Production composition remains Disabled by default.
+
+The official release runner's compatible resume then inherited the complete
+AH19/AH7 passes, reran V6 successfully, and reached AH10 direct-child
+AssignWork receipt binding. Its historical P32 projection still required a
+current source/upgrade target of schema 52. Both current-schema assertions are
+now 54 while the frozen 44→42→32 historical image and its receipt/binding
+oracles are unchanged. The exact `legacy-p32-upgrade` takeover passed 1/1 in
+79.611s after the correction.
