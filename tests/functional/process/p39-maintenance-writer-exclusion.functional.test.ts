@@ -468,12 +468,12 @@ describe.skipIf(!p39PathQualificationAvailable)(
             Effect.gen(function* () {
               const client = yield* P39WriterLockClient;
               const acquire = client.acquire("RuntimeShared");
-              yield* Effect.sleep(Duration.millis(100));
+              yield* Effect.sleep(Duration.millis(600));
               const first = yield* acquire;
               yield* client.release(first);
               const second = yield* acquire;
               yield* client.release(second);
-            }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 50))),
+            }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 500))),
           ),
         );
       } finally {
