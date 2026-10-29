@@ -1,7 +1,113 @@
-# P8 — 01 Verification / Acceptance Commands (DRAFT for contract review)
+# P8 — 01 Verification / Acceptance Commands
 
-**Authority:** DID v1.10 §3.5/§3.6/§4.2/§5.3/§12.10/§12.11 (Work + Verification truth tables), §12.8 C7; SD v1.3 §9.1/§9.6/§9.7; 不变量 22/23/49; P0 domain（verification.ts/work.ts/dependency.ts Acceptance 冻结实现）。
-**Status:** DRAFT (first draft for contract review).
+**Authority:** DID v1.59 §3.3/§3.6/§4.2/§5.3/§12.10/§12.11 (Work + Verification truth tables), §12.8 C7; SD v1.22 §3.4/§9.1/§9.4/§9.6/§9.7; 不变量 22/23/49; P0 domain（verification.ts/work.ts/dependency.ts Acceptance 冻结实现）。
+**Status:** FROZEN — DID v1.27 VDC + Verifier Execution Settlement addenda.
+
+FT-DG-03: registered strict codecs and typed internal semantic validators
+derive their closed field/ID/union rules from the exact command payloads in
+this document and EvidenceRecord/Mission contracts in `04`. This does not
+change P8 verdict, authority, Acceptance, or consumer semantics (DID §4.1B).
+
+## DID v1.27 addendum — conclusion action settlement
+
+The model-facing `arbor_conclude_verification` action executes the following
+ordered boundary:
+
+```text
+summary bytes → BlobStore.put → byte-for-byte get verification
+→ ConcludeVerification through CommandGateway
+→ committed Receipt
+→ idempotent Verification wake delivery
+→ Completed(VerificationConcluded { verificationId, verdict })
+```
+
+A rejection or operational failure at any step before the final boundary must
+not produce the Completed result. Blob-before-command may leave an orphan Blob.
+Command/wake/settlement crash windows replay the same deterministic command and
+idempotent wake. The Completed result is an Execution fact only: it is neither
+Parent Acceptance nor Work completion.
+
+## VDC addendum — evidence identity and conclusion summary
+
+`RecordVerificationEvidence(kind="ToolObservation")` carries Runtime-bound
+source identity `{ toolInvocationId, observationRef, executionId, callRef }`.
+The verifier model may choose and explain an observation but cannot author those
+identity fields. The record is rejected unless the invocation/result pair is
+terminal, sourced and visible to the exact Verifier Execution.
+
+For a normal `ConcludeVerification`, the model-facing semantic input contains
+summary content, not `summaryRef`. Runtime writes the exact UTF-8 bytes to
+BlobStore, verifies the returned content-addressed ref and submits the existing
+command with that `summaryRef`. The Verification conclusion row and
+`VerificationConcluded` event retain `summaryRef` durably. Parent governance
+supplies summary content only for `Unknown(Orphaned)`.
+
+## Accepted VCS addendum — evidence time and versioned conclusion (DID v1.48)
+
+Accepted token `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`,
+proposal raw SHA-256
+`B0C532FF66697CE1FB06B93CDE477B1A833FC310D360D48513E341D54F1FAD56`,
+accepted 2026-10-17. `RecordVerificationEvidence.recordedAt` is Runtime-bound
+from the first durable P9 ActionIntent `updatedAt`; it is not model-authored
+and is not recomputed on handler retry or owner-generation takeover. P9
+preserves that value while the Action remains Pending; an unprovable first
+intent time fails closed. See `04-evidence-binding.md` for the owning value
+contract.
+
+For ordinary `ConcludeVerification`, the canonical mission and
+`criteriaResults` snapshot, verdict, `summaryRef`, snapshot status
+`Available`, and conclusion reason (explicit null when absent) are identical
+in the canonical Verification row, `VerificationConcluded` event v2, and
+ConcludeVerification committed result/receipt v2. Runtime validates the
+complete ordered snapshot and byte-verifies `summaryRef` before the atomic
+commit. Existing v1 event and receipt decoders remain strict and read-only;
+existing v1 bytes are never relabeled or augmented.
+
+The G5 `RetryVerification` composite path is the narrow exception to the
+ordinary result/receipt versioning. In its existing single transaction, the
+orphan canonical row and `VerificationConcluded` event v2 contain identical
+`Unknown`, `Orphaned`, `NotApplicableOrphaned`, and empty `criteriaResults`,
+while retaining the complete mission snapshot. The outer
+`RetryVerificationResult` and receipt remain their unchanged strict v1 shape
+and existing `orphanedVerificationId`, `workId`, and successor IDs. They do
+not copy snapshot fields and no internal ConcludeVerification receipt is
+created. Exact retry validates the bound canonical row/event and returns the
+original receipt; missing, malformed, duplicate, or mismatched row/event state
+fails closed without repair or a replacement conclusion.
+
+Receipt-first recovery validates a Committed prior receipt against the exact
+Evidence row/source binding or exact Verification row/event/result snapshot,
+status, reason, verdict, and `summaryRef` before convergence. For the outer
+RetryVerification v1 receipt, it validates the existing ID binding against
+the canonical row and event. It does not invoke the handler or append duplicate
+facts. Missing, unsupported, malformed, or conflicting receipts/evidence fail
+closed. Migration and implementation remain separately authorized work.
+
+## Accepted F18 Verification v2 consumer binding (DID v1.58)
+
+Accepted under `ACCEPT_F18_VERIFICATION_V2_CONSUMER_AND_READMODEL_CONVERGENCE_OPTION_A`,
+proposal SHA-256
+`C6C41E96C5A59B46810DB9FA7A998DDBC5887B93D75ADF3606E0CA25E351EC73`.
+New ordinary v2 row, event and ConcludeVerification result/receipt encode an
+absent `conclusionReason` as an explicit JSON `null`; omission and empty string
+are invalid before commit. `Orphaned` remains the only non-null reason. The
+strict v2 event and result decoders bind the complete canonical Verification
+snapshot, Work/revision, Evidence IDs, summary, reason and status. A durable
+Committed schema-v2 receipt must bind result state `Concluded`, exact
+`channel1Release` Work/revision, and exactly the verdict-specific `wakeSignals`:
+empty for Pass; one exact `VerificationReturned` for Fail or Unknown. The G5
+RetryVerification exception retains its strict v1 outer receipt and exact
+retry-origin binding; no internal ConcludeVerification receipt is created.
+
+Historical absent-reason v2 bytes are eligible only through the bounded
+`LegacyAbsentReasonV2` reconciliation contract in P9 `07`: exact
+pre-activation high-water, empty event reason, SQL NULL canonical reason,
+omitted result property, Available non-Orphaned snapshot and exact agreement of
+all other fields. Those bytes remain unchanged and the source digest binds the
+original representation. No conclusion, retry, Verifier, Provider or model
+turn is replayed. Any incomplete or post-high-water tuple fails closed to the
+P9/P10 Attention contract. Acceptance authority and aggregation semantics are
+unchanged.
 
 ## 1. `StartVerification`
 
@@ -45,7 +151,120 @@ Handler 内解析：`targetArtifactVersions`（从 targetDeliverables 的 artifa
 - Preconditions: Open；verifier authority；mission/evidence record valid——criterion 级结果齐全且每条绑 evidenceRef（SD §9.6/不变量 26）；整体 verdict 必须等于确定性聚合（v1.11 G1：任一 **required** Fail→Fail；无 required Fail 但有 required 未决→Unknown；全 required Pass→Pass；optional 不阻塞——域纯函数 L1）。
 - **Orphaned 路径（G5）**：`conclusionReason: "Orphaned"` 时豁免 evidence 齐全前置（孤儿定义上无活 Verifier）；提交者为 Parent Workspace 治理链 authority（显式治理动作，非 verifier-only）——用途仅限为 re-Start 清障，事件载荷携带 conclusionReason。
 - 域转移：concludeVerification（P0 冻结）；verdict 此后 immutable。
-- Events: `VerificationConcluded { verificationId, workId, targetWorkRevision, verdict, evidenceRefs }`；同事务产 wake（`03` §3）。
+- Events: `VerificationConcluded { verificationId, workId, targetWorkRevision, verdict, evidenceRefs, summaryRef }`；同事务产 wake（`03` §3）。模型控制动作在 committed Receipt 与 wake 交付后产生 `Completed(VerificationConcluded { verificationId, verdict })`；该 Execution result 不进入 CompletionClaim consumer。
+
+## 3A. `RetryVerification`（authenticated human orphan governance）
+
+`RetryVerification` is the sole explicit governance surface for the frozen P8
+G8 orphan path. It is available only to authenticated local-human governance
+for Root-owned Work or authenticated human governance of the exact direct
+Parent Workspace for child Work. It is never Agent-originated, grantable,
+scheduler-driven, or an Attention write.
+
+Payload:
+
+```ts
+{
+  readonly workId: WorkId;
+  readonly verificationId: VerificationId;
+  readonly expectedWorkRevision: WorkRevision;
+  readonly summaryContent: string;
+  readonly successorVerificationId: VerificationId; // Runtime-preallocated
+  readonly verifierExecutionId: ExecutionId;         // Runtime-preallocated
+}
+```
+
+The external envelope supplies the authenticated actor and stable CommandId;
+the client supplies neither authority nor a BlobRef. Runtime stores and
+byte-verifies `summaryContent` and binds the content-addressed ref to this
+command. The exact `OrphanConclusionAuthority` binds Project, actor, current
+governing owner, Work, open Verification, expected Work revision, and the
+complete set of exact bound Verifier ExecutionIds.
+
+In one canonical command transaction the handler revalidates that the Work is
+Open at `expectedWorkRevision`, the exact Verification is Open for that Work
+and revision, and the non-empty set of its exact bound Verifier Executions is
+fully settled. Old execution ownership is checked against the Verification's
+captured owner snapshot; human authority is resolved against the Work's
+current governing owner. It atomically writes the old immutable
+`Unknown(Orphaned)` conclusion/event, one successor Verification with the
+existing frozen mission and current owner snapshot, durable verifier-spawn
+intent, immutable retry-origin fact, and the Command receipt. A failure commits
+none of these facts. Exact CommandId replay returns the same successor IDs and
+receipt only after the current P12 visibility and human-authorization check
+still succeeds for the same original actor and source Work/Verification. A
+revoked authorization, changed governing owner that no longer authorizes the
+original actor, different actor/project/source, or foreign target is denied by
+the Resolver before Gateway reads any receipt. No evidence or PASS is
+fabricated.
+
+### Permanent exact replay origin (DID v1.46)
+
+`retry_verification_origins` is the permanent canonical non-receipt fact that
+binds the originating CommandId to its project, original actor, source
+Verification/Work, successor Verification/verifier Execution, and creation
+time. The physical fields, uniqueness/FK/immutability rules and retention are
+owned by P1 `04`, which records the ordered implementation as migration `0045`
+(`requiresUserVersion: 44`) in the current schema-48 history; the v1.52
+operator-rebuild acceptance adds no migration. The row lives at least as long
+as its permanent Command receipt and is independent of Domain Event pruning.
+It does not store summary content, expected revision, payload, fingerprint,
+Handler schema version, fingerprint algorithm version, or receipt JSON.
+
+For a historical Concluded source, P12 resolves the candidate CommandId only
+through that origin fact and rechecks the original actor, project, source
+Work/Verification scope, and current human governance authority. The replay-
+only authority is not accepted by the `RetryVerification` handler. Resolver
+does not compare summary, expected revision, or successor IDs: with the same
+CommandId and source scope, a changed value reaches Gateway's full tuple
+comparison and returns the existing non-disclosing
+`TerminalRejected(IdempotencyConflict)` receipt. A different source/project/
+actor is rejected before Gateway. If the origin exists but its receipt is
+absent, Gateway returns the fixed safe
+`PersistenceCorruption<"CommandStore">` disposition without invoking the
+handler or writing an attempt, receipt, Event, Verification, Execution, or
+spawn intent.
+
+Legacy successful P8 receipts acquire an origin only when the retained
+`VerificationConcluded(Unknown, Orphaned)` and `VerificationStarted` event pair
+plus the canonical successor Verification's persisted preallocated verifier
+Execution ID prove the same CommandId, project, actor, source, and successor
+identities. If a physical verifier Execution/binding has been admitted, it
+must agree. Missing/pruned/duplicate/malformed/conflicting evidence is never
+guessed from receipt JSON, Session text, or pruned Events. The migration
+preserves the old receipt, records `UnboundLegacy`, and admits the human-only
+P6 Governance Inbox item described in P6 `02`; an UnboundLegacy external replay
+is a generic Resolver denial.
+
+#### Accepted P6 current-route mechanics (DID v1.47/v1.52)
+
+The accepted P6 item uses the existing `Governance` kind and stable
+`retry-verification-unbound:<commandId>` key, with typed
+`RetryVerificationUnboundLegacy` content derived from the immutable
+disposition. Its recipient is recomputed from current canonical Work/Workspace
+governance facts and current P8 human authorization; the Inbox row is not
+authority. Root Work follows current Root-local human governance, and child
+Work follows its current exact direct Parent Workspace human route. The item is
+human-only, queryable only under that current route, and read-only/no-consume;
+it is not promoted to Agent Session or P10 Attention. Route moves and failure
+to move atomically follow P6 `02` / P1 `03`; these mechanics do not relax this
+P8 section's current-authorization-before-Gateway rule.
+No v1 P1 command changes canonical Work owner or Workspace Parent, so only the
+command-level route-move/command-crash qualification is N/A for v1. The
+same-key route helper, current-route authorization, and same-transaction plus
+Gateway-rejection constraints remain mandatory for a future separately
+governed route-mutating command. P8's old Verification owner snapshot and
+successor-current-owner rules are unchanged.
+This migration disposition is not a P10 Attention source and does not add a
+new command or automatic retry loop.
+
+After commit, the existing P8 VerificationRuntime performs admission and
+binding backfill with the same preallocated successor IDs. Restart/replay
+retries only that spawn. If the successor later orphans, it remains Open with
+derived Attention until a separate authenticated human invocation; no loop or
+automatic retry is permitted. P10 may remain stale until its existing
+freshness barrier catches up; only then may the UI report the old orphan row
+absent, while the old `Unknown(Orphaned)` conclusion remains visible.
 
 ## 4. `AcceptWorkOutcome`
 
@@ -69,6 +288,9 @@ StartVerificationAuthority  { targetWorkspaceId, workId }
 VerifierExecutionAuthority { verificationId, executionId }   // exact-bound, verifier-only 两命令
 AcceptanceAuthority         { targetWorkspaceId, workId, verificationId }  // Parent 治理链 / milestone human
 CompleteWorkAuthority       { targetWorkspaceId, workId }    // consumer System 或显式
+OrphanConclusionAuthority   { projectId, workId, verificationId, expectedWorkRevision,
+                              exactSettledVerifierExecutionIds, currentOwnerId,
+                              authenticatedHumanPrincipal } // Root local human or exact Parent Workspace human
 ```
 
 ## 7. Must Not Decide
@@ -79,3 +301,21 @@ CompleteWorkAuthority       { targetWorkspaceId, workId }    // consumer System 
 - No P7 satisfaction/质量正交破坏（v1.10 G2）。
 - No evidence domain event、No new WakeCondition/WakeReason。
 - No Environment change 生产（P11）；No Attention 呈现（P10）。
+
+## Accepted S2-RDG-01 Work revision / Verification binding (DID v1.59)
+
+Accepted token `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1`, proposal SHA-256
+`C878BBF615F92ED43125C79EFDC0F021F062FEE97BF740795889B65B44394088`.
+Every new Verification is created from the canonical `VerificationMission`
+for the exact current WorkRevision. A caller/model/Inbox value cannot override
+the canonical mission; the exact API may either carry a value that is checked
+against that source or use a separately versioned owner contract. Once
+created, `missionSnapshot` and `targetWorkRevision` are immutable. An old Open
+Verification may continue collecting evidence and conclude on its old
+snapshot/revision; its conclusion/wake is only for that old
+`(WorkId, targetWorkRevision)`. It cannot satisfy Acceptance or CompleteWork
+for a newer Work revision. Revision advance does not auto-cancel or relabel
+the old Verification or its verifier execution. A new revision needs its own
+exact-revision Verification and current-revision Parent Acceptance. No v2
+Verification row/event/result/receipt/wake snapshot is rewritten by this
+addendum. Implementation remains separately unauthorized.

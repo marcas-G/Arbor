@@ -1,0 +1,413 @@
+# P39–P42 Schema Activation Implementation Plan
+
+Status: **Implementation-closure plan for already accepted design; not an
+authorization to register, execute, upgrade, start, or release.** This plan
+records the bounded code/test work needed to close the accepted P39–P42
+implementation seam. It does not amend any frozen design contract. If
+implementation evidence reveals a semantic conflict with an accepted contract,
+stop and record a Design Gap with the failing evidence; do not choose new
+semantics in this plan or in code.
+
+## Authoritative integration base and evidence
+
+- Integration branch: `codex/full-code-convergence`.
+- Authoritative HEAD when this plan was prepared:
+  `899d014b400923402f4f322dd49fd715f46c2667`.
+- Cumulative P38→P42 isolated qualification commit:
+  `650542772452272356eb4d6d9774924bd4b6f15a` (ancestor of the HEAD above).
+- Qualification record: `planning/results/integration-fixture-convergence-2026-10-13.result.md`.
+- The cumulative test starts with a disposable P38 database, pins descriptor
+  SQL hashes, checks rejection of P42 from versions 38/39/40, injects a failed
+  transaction for each migration, then checks restart/apply/no-op and the final
+  version-42 schema/data invariants. It passed 1/1. This qualifies that isolated
+  migration path; it is not evidence of a live upgrade or deployment.
+
+## Registry and version constants
+
+The activation shape should preserve the P39 privileged-maintenance boundary:
+
+- `P39_MAINTENANCE_MIGRATIONS` remains the only path that applies 0039, and
+  remains outside ordinary `CURRENT_MIGRATIONS`.
+- Once activation is separately authorized, `CURRENT_MIGRATIONS` should be the
+  P38 prefix plus P40, P41, and P42, in that order. The intentional missing
+  ordinary ID 39 is the privilege boundary, not a skippable migration.
+- Add an explicit `CURRENT_SCHEMA_VERSION = 42`; set the supported migration
+  high-water to 42. Keep the distinction between the 42 runtime schema target
+  and the P39 maintenance descriptor visible in names/comments/tests.
+- Register none of these descriptors before the complete activation review and
+  the requested authorization. Do not alter earlier migration bodies or
+  manifest hashes.
+
+## Per-step prefix enforcement
+
+Set the standalone descriptors' preconditions to:
+
+| Descriptor | Required current `user_version` | Resulting version |
+|---|---:|---:|
+| P40 / 0040 | 39 | 40 |
+| P41 / 0041 | 40 | 41 |
+| P42 / 0042 | 41 | 42 |
+
+`adapters/persistence-sqlite/src/migrate.ts` currently checks only the first
+pending descriptor with `requiresUserVersion` before entering the apply loop.
+Change the runner to validate each pending descriptor against the actual
+current version immediately before its transaction. Add a regression proving
+that a list containing 0040 and 0042 but omitting 0041 cannot advance 39→40→42.
+Retain the existing 42 no-op behavior and transaction rollback guarantees.
+
+## Startup and readiness gates
+
+- Update the composition schema gate to require schema version 42 before
+  constructing runtime services. Versions 39–41 remain maintenance/upgrade-only;
+  versions below 42 report that an offline upgrade is required; versions above
+  42 remain unsupported.
+- Update persistence readiness to compare `PRAGMA user_version` with the
+  explicit schema target 42.
+- The daemon's existing migration hook may remain for idempotent compatibility,
+  but on an accepted production database at version 42 it must be a no-op. The
+  daemon must not opportunistically run P39 or upgrade an older database before
+  the schema gate.
+- Exercise direct startup and `--once` rejection at 38, 39, 40, and 41, and
+  successful startup at 42. Confirm no scheduler, consumer, recovery, or Web
+  transport starts before version 42 is verified.
+
+## Offline upgrade CLI and sequence
+
+There is no schema-upgrade CLI/package script today. Add a dedicated operator
+entry point (for example `schema:upgrade`) with an explicit mode and distinct
+database/report paths; do not overload normal daemon startup. The public modes
+are `fresh`, `copy`, and `resume-copy`. `fresh` and `copy` always create a new
+target. `resume-copy` is the only mode that may open an existing target, and it
+accepts only an explicitly selected, previously-created disposable copy. No
+mode upgrades or replaces its source. Only a target created by `copy` is
+eligible for `resume-copy`; an interrupted `fresh` target remains untouched,
+and a later fresh attempt uses a different new target.
+
+### Mode and path contract
+
+- `fresh --database <new-target>` has no source argument. The target and its
+  SQLite sidecars/lock artifacts must not exist. Create it with exclusive
+  create semantics, bootstrap only the ordinary migration prefix through P38,
+  then proceed to P39. P39 cannot be invoked at version 0.
+- `copy --source-database <existing-db> --database <new-target>` opens the source
+  read-only, validates its expected version (36–38), and creates the target
+  exclusively using SQLite's online backup API. This captures a consistent
+  SQLite snapshot including WAL-visible committed state. Do not use a raw file
+  copy, rename, checkpoint-and-copy shortcut, or write-capable source handle.
+  Before migration, verify that the target's deterministic logical content
+  digest matches the source snapshot digest and record backup completion. The
+  source stays read-only for the entire command and is verified unchanged
+  afterward; all migrations are applied only to the new target.
+- `resume-copy --source-database <original-source> --database <existing-copy>`
+  is an explicit operator choice to continue a prior interrupted,
+  provenance-valid target created by `copy` mode. It rejects any target isolated by a P39 blocker
+  report. Re-open the original source read-only and require the exact original
+  `--copy-manifest` and `--p39-report-db` paths. Verify source canonical path,
+  file identity, and logical content digest against the manifest; verify target
+  identity, digest, and prefix against the same manifest; and verify the report
+  sidecar as specified below. Missing or mismatched source/target/manifest/
+  report evidence fails closed. The source is never the migration target.
+- Resolve canonical paths before opening files; compare both canonical path
+  and stable file identity (device/volume plus inode/file ID) for every existing
+  database. For new destinations, resolve the real parent and reserve the final
+  name with exclusive creation before opening SQLite. Reject source/target/report
+  aliases, hard links, symbolic links, junctions/reparse points at any path
+  component, non-local/network filesystems, and unsupported ACL/locking
+  profiles. Apply P39's established protected-path and OS-identity checks to
+  the primary, lock, and report database. In `fresh`/`copy`, the report path
+  must be a distinct new sidecar created with exclusive-create semantics. In
+  `resume-copy`, the report path must be the same existing file recorded by the
+  manifest; validate its canonical path, file identity, P39 schema, durability
+  settings, and every report row/hash. A missing report sidecar is a hard
+  refusal; resume never creates or substitutes a report file. No report path
+  may alias the source, target, writer-lock DB, manifest, or any protected
+  application store. Fail closed on identity/path uncertainty.
+- `fresh` and `copy` also require a new, separate `--copy-manifest` path.
+  Reject manifest aliases to source, target, P39 report, writer-lock database,
+  or protected application stores by canonical path and file identity. In
+  `resume-copy`, require the existing manifest plus its recorded source,
+  target, report, and manifest-file identities; never infer provenance merely
+  because the operator supplied an existing database path. Exclusive-create
+  applies only to `fresh`/`copy` initialization; resume never creates or
+  replaces the manifest or report sidecar.
+- Never delete, truncate, overwrite, or silently substitute a conflicting
+  source, target, report, or lock file. Alias/path validation failure leaves
+  all caller-owned inputs untouched. Generated targets/reports are operator
+  artifacts; cleanup is a separate explicit operation after review.
+
+### Ordered execution and lock lifetime
+
+1. Require the source to be offline: the operator has stopped every daemon and
+   no writer is active. In `copy`, open it read-only and take the backup API
+   snapshot. In `resume-copy`, re-open `--source-database` read-only to validate
+   its original identity and digest. Verify the source version and capture its
+   canonical path/file identity before creating a new target.
+2. Open the new target and verify the exact supported prefix. For `fresh`, run
+   the ordinary P1–P38 prefix before the privileged maintenance phase. For
+   `copy`, accepted input is exactly version 36, 37, or 38. `resume-copy` accepts
+   only a fully committed prefix state listed below. Unknown versions, missing
+   predecessors, mixed/partial migration state, schema-signature mismatch, or
+   descriptor-hash mismatch fail closed before the next migration.
+3. Acquire one P39 `MaintenanceExclusive` permit for the target, using the
+   existing cross-process writer-lock protocol. Hold this exact permit
+   continuously from before P39 preflight through 0039, 0040, 0041, 0042,
+   final integrity checks, and final no-op verification. Do not release and
+   reacquire between P39 and the suffix. Refactor the P39 orchestration boundary
+   to accept/use the opaque acquired lease while preserving all existing
+   acquisition, process exclusion, identity, release-on-all-exits, and primary
+   reservation rules. P39's `BEGIN IMMEDIATE` primary reservation remains
+   scoped to its existing P39 chain; the maintenance-exclusive permit remains
+   held after that reservation closes. The 0040–0042 transactions are each
+   separate, and execute under that same still-held permit.
+4. Invoke the trusted `runP39SqliteMaintenance` behavior for the exact
+   0037→0038→0039 chain. Do not call
+   `runMigrations([P39_RECONCILIATION_MIGRATION])` from runtime or CLI, and
+   make generic `runMigrations` reject any descriptor with ID 39 before it
+   reads/applies a pending chain. Preserve P39's WAL requirement, manifest/hash
+   checks, blocker preflight and report read-back, rollback, foreign-key check,
+   and typed refusal behavior. A blocker report is a separate immutable audit
+   artifact, not a backup or a reason to force migration. A P39-isolated target
+   is permanently audit-only under the frozen DID contract; no matching
+   version/prefix state makes it resumable.
+5. After P39 commits at 39, apply exact descriptors 0040, 0041, and 0042 in
+   order, each in its own transaction with a per-step predecessor check and
+   no fabricated migration-history rows or SQL/fingerprint bypass. Keep
+   runtime startup refused throughout versions 38–41.
+6. Verify `user_version=42`, empty `PRAGMA foreign_key_check`, P39/P40/P41
+   guards and stores, P41 NULL-fact rejection and marker behavior, and P42
+   `resource_source_json NOT NULL` plus explicit `LegacyUnknown` attribution for
+   every pre-existing Project. Reopen the target under the same maintenance
+   permit and prove the 42 path is a no-op before releasing the permit. The
+   permit is released exactly once on success or failure; release failure is
+   surfaced as failure and never reported as successful activation.
+
+### Disposable-target provenance manifest
+
+`fresh`/`copy` create a separate, OS-protected, append-only manifest at the
+operator-selected `--copy-manifest` path. It is evidence for this one target,
+not a new schema contract or an authorization token. Threat model: the
+authorized OS operator identity is the trust root. The protected ACL/path
+profile excludes other identities, and the application writes append-only
+records. This manifest is not a signed artifact and does not claim resistance
+to malicious alteration by that same authorized identity, which can rewrite
+the database and manifest. Its purpose is to detect accidental misuse,
+path/file aliases, stale or wrong copies, and targets created outside the
+authorized CLI flow. It has a random 256-bit nonce and a hash-chained sequence
+of canonical records. The initial record
+binds the manifest to mode, target canonical path and stable file identity
+(volume/device plus file ID), source canonical path/file identity and
+read-only source content digest (copy mode; null for fresh), backup completion
+(copy mode), initial `user_version`/prefix, initial target content digest,
+and the distinct P39 report path/file identity, plus the manifest's own
+canonical path and file identity. The record is written only after the
+exclusive-created manifest file identity is known. Source, target, and
+manifest are revalidated at resume as described below.
+
+The deterministic logical SQLite digest uses an unambiguous typed,
+length-prefixed encoding and SHA-256 over: `application_id`, `user_version`;
+schema objects from `sqlite_schema` sorted by `(type,name,tbl_name)` with exact
+stored SQL text and object names; each table's columns in `cid` order with
+name, declared type, nullability, default, and primary-key ordinal; and every
+row's typed values. Rowid tables include the rowid as a value and sort by
+signed rowid; `WITHOUT ROWID` tables sort by their declared primary-key tuple
+in primary-key ordinal order. Virtual tables fail closed until their module
+provides a canonical snapshot encoding. Rows are encoded individually, so identical
+rows remain a counted multiset and are never deduplicated. Values retain
+SQLite storage class: NULL has its own tag; INTEGER is signed 64-bit
+two's-complement big-endian; REAL is its IEEE-754 binary64 bit pattern; TEXT is
+exact UTF-8 bytes; BLOB is exact bytes. Every tag and payload has an explicit
+byte length. REAL encoding preserves the exact IEEE-754 bits, including
+infinities and signed zero; NaN is accepted only if the SQLite binding exposes
+a stable bit representation, otherwise it fails closed. The encoding must
+avoid lossy JavaScript number conversion; unsupported or non-canonical values
+fail closed.
+
+Include `sqlite_sequence` rows as typed `(name,seq)` tuples sorted by name
+because AUTOINCREMENT state affects later row allocation. Exclude
+`sqlite_stat1`/`sqlite_stat4` and other planner-statistics objects, including
+their schema entries and contents, as derived query-planning metadata. Exclude
+`sqlite_schema`'s internal rowid and physical page/freelist/journal/WAL bytes,
+which are not logical application state. Any SQLite internal object outside
+these explicit inclusion/exclusion rules fails closed until its digest
+treatment is defined.
+
+`resume-copy` requires that the manifest origin mode is `copy`, and must
+explicitly re-supply `--source-database`, `--database`,
+`--copy-manifest`, and `--p39-report-db`. It verifies the source canonical
+path, file identity, and logical digest against the initial manifest record,
+then verifies target identity/digest/prefix against the latest committed
+record. The report must be the same existing path/file identity recorded by
+the manifest; validate its P39 schema and all rows/hashes. Missing source,
+manifest, or report evidence is a refusal, never a trigger to create
+replacement evidence.
+
+Before each migration transaction, append and durably flush a `Prepared`
+record binding the from/to versions and exact descriptor SQL hash. After the
+SQLite transaction commits, append and durably flush a `Committed` record with
+the new version, verified prefix signature, and target content digest. For
+P39, the prepared/committed boundary covers the complete atomic
+0037→0038→0039 chain. A crash between database commit and manifest finalization
+may be reconciled only when the manifest has the matching last `Prepared`
+record and the reopened target exactly verifies as that record's complete
+destination prefix; then append the missing `Committed` record before further
+migration. If the target remains at the prepared source prefix, the exact step
+may be retried. Any other version, digest, identity, sequence, nonce, or prefix
+mismatch fails closed. A target with no valid manifest is never resumable.
+
+If P39 returns `P39_LEGACY_DB_ISOLATED`, persist a terminal `Isolated` manifest
+record bound to the exact immutable P39 report key/content hash and target
+identity. The report is independently durable audit evidence if the process
+stops before this manifest append completes. On every `resume-copy`, check both
+the manifest and report sidecar before accepting any prefix. A target with an
+`Isolated` record or a matching P39 blocker report is permanently isolated and
+audit-only under the frozen DID contract: refuse resume even if its version,
+manifest chain, and schema signature otherwise match. Do not retry P39, proceed
+to 0040, repair the target, or tell the operator to resolve the blocker and
+rerun on this target. Only future governance may change that disposition. If
+the manifest/report evidence is missing, inconsistent, or unverifiable, fail
+closed rather than treating absence as proof that no blocker was found.
+
+### Exact restart states
+
+The CLI must distinguish a complete committed prefix from an intra-step or
+tampered state. A `resume-copy` may continue only at these exact boundaries:
+
+| `user_version` | Required fully committed chain | Only permitted next work |
+|---:|---|---|
+| 39 | exact P39 0037→0038→0039 prefix | 0040→0041→0042 |
+| 40 | exact P39 prefix plus exact 0040 | 0041→0042 |
+| 41 | exact P39 prefix plus exact 0040→0041 | 0042 |
+| 42 | exact P39 prefix plus exact 0040→0041→0042 | verify/no-op only |
+
+For each row, verify the version and an approved schema signature derived from
+the exact pinned descriptor SQL plus the migration-owned object/column/index/
+trigger shape and required data sentinels. Verify the already committed
+descriptor hashes against the plan's pinned values before continuation. This
+is validation of existing committed state, not a new migration ledger or a
+new semantic contract. The single-transaction version bump makes each
+descriptor boundary atomic; any observed mixed state, incomplete P39 chain,
+missing/extra object, altered descriptor, inconsistent sentinel, or
+unverifiable file identity is an intra-step/tampered state and must stop with
+no repair, downgrade, cleanup, or automatic source replacement. Do not infer
+completion from `user_version` alone. Pin and compare these SQL SHA-256 values
+from the isolated cumulative qualification:
+
+| Descriptor | SHA-256 |
+|---|---|
+| 0039 `ah7_reconciliation_attempts` | `6e791168987f23f5c282ce7d6bd2c5b5ad8361942dab968adbcca64aab753aec` |
+| 0040 `tool_observation_replay_evidence` | `3b06ee795277152a3e09a97679c4017b5c7ad3d1009f8cd14b04329a2be002aa` |
+| 0041 `p41_submitted_decision_binding_attention` | `d3ad9133ea28150a271c9867ae390c1f6ba0692f9e6b449817b8aeae2aa1dfed` |
+| 0042 `project_resource_source_attribution` | `a0294a5db440e402a6c32b5a2b596502e059642431157eadcb6be7212224e5aa` |
+
+An exact repeated `resume-copy` against the same unchanged copy must be
+idempotent: at 39/40/41 it applies only the remaining exact suffix; at 42 it
+performs verification and no migration writes. Repeating after a failed
+transaction is allowed only if the reopened copy verifies as the preceding
+complete boundary and the `--copy-manifest` has matching source/target
+identity, nonce, hash chain, descriptor state, and content digest. A P39
+blocker report leaves the target at its original 36/37/38 version because the
+P39 chain rolls back, but that target is permanently isolated and audit-only;
+the version is never sufficient to resume it.
+
+Proposed command shape (illustrative only; no such command exists yet):
+
+```text
+pnpm build
+node apps/single-workspace/dist/schema-upgrade.js --mode copy --source-database <offline-source.db> --database <new-copy.db> --p39-report-db <new-separate-report.db> --copy-manifest <new-manifest.json>
+node apps/single-workspace/dist/schema-upgrade.js --mode resume-copy --source-database <same-offline-source.db> --database <same-disposable-copy.db> --p39-report-db <same-separate-report.db> --copy-manifest <same-manifest.json>
+```
+
+The CLI must also expose `--mode fresh --database <new-target.db>
+--p39-report-db <new-separate-report.db> --copy-manifest <new-manifest.json>`
+explicitly. It must reject ambiguous defaults and must never treat an arbitrary
+existing database as an empty database.
+
+## Implementation and qualification file boundary
+
+The later authorized implementation is limited to the following production
+owners and their direct package wiring:
+
+- `adapters/persistence-sqlite/src/migrate.ts`: generic ID-39 refusal and
+  per-descriptor predecessor validation.
+- `adapters/persistence-sqlite/src/p39-maintenance.ts`,
+  `adapters/persistence-sqlite/src/p39-maintenance-adapter.ts`, and
+  `adapters/persistence-sqlite/src/p39-writer-lock.ts`: preserve existing P39
+  invariants while allowing the one opaque maintenance lease to span the
+  complete 0039→0042 command.
+- `apps/single-workspace/src/schema-upgrade-manifest.ts` (new): protected
+  append-only provenance, hash-chain, prepared/committed recovery, and terminal
+  isolation evidence for each disposable target.
+- `adapters/persistence-sqlite/src/migrations.ts` and the P40/P41/P42
+  descriptor modules: separately authorized registration/target constants and
+  unchanged accepted descriptor SQL/fingerprints.
+- `apps/single-workspace/src/schema-upgrade.ts` (new) and
+  `apps/single-workspace/package.json`: explicit operator CLI/modes and package
+  command.
+- `apps/single-workspace/src/composition.ts`, `apps/single-workspace/src/main.ts`,
+  and `apps/single-workspace/src/health.ts`: schema-42 admission/readiness and
+  proof that startup hooks do not run an upgrade first.
+
+The qualification boundary is limited to:
+
+- `adapters/persistence-sqlite/test/migrate.test.ts` for generic ID-39 refusal
+  and omitted/interleaved-prefix cases;
+- `adapters/persistence-sqlite/test/p39-42-cumulative-prefix-qualification.test.ts`
+  for descriptor transactions, lock continuity, exact prefix resumption,
+  rollback, tamper/intra-step refusal, and final no-op;
+- `adapters/persistence-sqlite/test/p39-reality-proof-migration.test.ts` and
+  a new CLI test for source immutability, SQLite-backup consistency, target
+  exclusivity, path/file-identity alias denials (including hard links,
+  symlinks/junctions and network filesystems), report/manifest alias denial,
+  manifest provenance and exact prepared/committed continuation, isolated
+  target denial, explicit mode validation, and digest test vectors covering
+  typed values, duplicate-row multiplicity, rowid/primary-key ordering,
+  `sqlite_sequence`, and excluded planner/physical state;
+- a centralized
+  `adapters/persistence-sqlite/test/fixtures/schema-42.ts` fixture (new) as the
+  sole standard post-activation test setup. Migrate consumers that currently
+  fabricate version 42 or independently apply partial P39–P42 prefixes to
+  this fixture; retain genuinely version-specific migration tests at their
+  owning boundary;
+- `adapters/persistence-sqlite/test/p42-project-resource-source-migration.test.ts`
+  and a new schema-upgrade CLI test for fresh/copy/resume boundaries; and
+- `apps/single-workspace/test/p38-runtime-schema-boundary.test.ts` plus direct
+  and `--once` startup cases proving version 42 migration hook no-op, startup
+  success at 42, and startup refusal at each of 38, 39, 40, and 41 before any
+  scheduler/consumer/recovery/Web transport starts.
+
+The P39 blocked case must additionally prove that its unchanged target remains
+at its preflight version, the immutable blocker report and terminal isolation
+record are bound to that target, and every subsequent `resume-copy` attempt is
+refused without invoking P39 or any later descriptor. This is a denial
+qualification, not a retry path.
+
+Add/modify only these direct production owners, their narrowly required
+fixtures/tests, and the result evidence. Do not edit `docs/design/**`, migration
+SQL semantics, unrelated runtime/product behavior, deployment configuration,
+or preserved/live databases. If a listed test consumer cannot use the central
+42 fixture without changing its intended version-specific assertion, document
+that exact exception in its test; do not weaken the fixture boundary.
+
+## Authorization boundary and verification scope
+
+The combined governance record explicitly excluded registration/activation,
+existing-database upgrade, and release. The cumulative qualification approval
+did not widen that scope. This plan closes the implementation steps for the
+already accepted design; a new user authorization should cover only:
+
+- registering P40–P42 in the approved current registry while retaining P39 as
+  maintenance-only;
+- the per-step runner gates, schema-42 startup/readiness gates, and the offline
+  upgrade CLI described here;
+- fresh-database and explicitly disposable-copy qualification, including
+  restart, rollback, no-op, FK, and runtime-refusal checks.
+
+It must continue to exclude upgrading a preserved/live user database, running
+the daemon against a partially upgraded database, deployment, and release.
+Any live upgrade needs a later separate authorization after the offline
+qualification and operator review.
+
+Suggested authorization token for the user to consider:
+`AUTHORIZE_P39_P42_SCHEMA_ACTIVATION_AND_FRESH_COPY_QUALIFICATION`.
+
+No files under `docs/design/**` or production code are changed by this plan.

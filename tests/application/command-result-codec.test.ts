@@ -1,0 +1,561 @@
+import { createHash } from "node:crypto";
+import { Effect, Exit } from "effect";
+import { describe, expect, it } from "vitest";
+import {
+  CommandInputContractRegistry,
+  decodeRegisteredCommandReceipt,
+  isCommandRejection,
+} from "../../packages/application/src/index.js";
+import {
+  type EffectivePolicySummaryV1,
+  encodeEffectivePolicySummaryV1,
+} from "../../packages/domain/src/index.js";
+import type { StoredCommandResolution } from "../../packages/ports/src/index.js";
+
+const uuid = "018f2b3c-4d5e-7abc-8def-0123456789af";
+const id = (prefix: string) => `${prefix}${uuid}`;
+const policyEpisode = {
+  _tag: "InboxEpisode" as const,
+  entryKey: "inbox:receipt-test",
+  inputKind: "HumanMessage",
+};
+const policySnapshot: EffectivePolicySummaryV1 = {
+  version: 1,
+  kind: "TrustedLocalUnconfinedV1",
+  projectId: id("prj_") as never,
+  workspaceId: id("ws_") as never,
+  executionId: id("exe_") as never,
+  episodeBinding: policyEpisode,
+  workspaceRevision: 1,
+  resourceBoundaryRevision: 1,
+  resourceBoundaryDigest: "a".repeat(64),
+  sandboxEnvironmentBasisDigest: "b".repeat(64),
+  policyRevision: 1,
+  expiresAt: "2099-10-20T00:00:00.000Z",
+  trustedRuntimeIdentity: "TrustedLocal",
+  trustedRuntimeVersion: "builtin-v1",
+  profile: "FullAccess",
+  networkBoundary: "Unconfined",
+  sandboxHandleBindingDigest: "c".repeat(64),
+  mounts: [
+    {
+      mountId: "workspace",
+      targetRef: {
+        version: 1 as const,
+        kind: "RegionDigest" as const,
+        resourceSpace: "filesystem" as const,
+        regionIdentityDigest: "9".repeat(64),
+      },
+      targetIdentityDigest: "d".repeat(64),
+      access: "ReadOnly",
+    },
+  ],
+  environmentAllowlist: ["PATH"],
+  limits: {
+    wallTimeMs: 1000,
+    stdoutBytes: 1000,
+    stderrBytes: 1000,
+    processCount: 1,
+    memoryBytes: 1024,
+    cpuTimeMs: 1000,
+  },
+  auditRefs: ["audit:one"],
+  authorityBundleRevision: 1,
+  authorityBundleDigest: "e".repeat(64),
+  operatorConfigRevision: 1,
+  operatorConfigDigest: "f".repeat(64),
+};
+const policyDigest = createHash("sha256")
+  .update(encodeEffectivePolicySummaryV1(policySnapshot))
+  .digest("hex");
+const resultByCommand = {
+  CreateProject: {
+    projectId: id("prj_"),
+    rootWorkspaceId: id("ws_"),
+    primarySessionId: id("ses_"),
+  },
+  CreateChildWorkspace: {
+    workspaceId: id("ws_"),
+    projectId: id("prj_"),
+    parentWorkspaceId: id("ws_"),
+    primarySessionId: id("ses_"),
+  },
+  AssignWork: {
+    workId: id("wrk_"),
+    workspaceId: id("ws_"),
+    lifecycle: "Open",
+    revision: 0,
+  },
+  RenameProject: { revision: 0, name: "project" },
+  CloseProject: { revision: 1, lifecycle: "Closed" },
+  SelectCurrentWork: {
+    workspaceId: id("ws_"),
+    workId: id("wrk_"),
+    revision: 0,
+  },
+  AdmitExecution: {
+    executionId: id("exe_"),
+    workspaceId: id("ws_"),
+    sessionId: id("ses_"),
+    bindingKind: "WorkspaceMain",
+  },
+  StopExecution: {
+    executionId: id("exe_"),
+    stopRequestedAt: "2026-10-10T00:00:00.000Z",
+  },
+  SettleExecution: {
+    executionId: id("exe_"),
+    settlement: {
+      _tag: "Completed",
+      result: {
+        _tag: "Yielded",
+        reason: "wait",
+        waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+      },
+    },
+  },
+  SendMessage: {
+    messageId: id("msg_"),
+    admitted: true,
+    promotion: { closesCorrelation: null, triggersReevaluation: false },
+  },
+  DeliverMessage: {
+    messageId: id("msg_"),
+    deliverableId: id("del_"),
+    senderWorkspaceId: id("ws_"),
+    recipientWorkspaceId: id("ws_"),
+    admitted: true,
+  },
+  DeclareDependency: {
+    dependencyId: id("dep_"),
+    consumerWorkId: id("wrk_"),
+    state: "Unsatisfied",
+    revision: 0,
+  },
+  ProduceDeliverable: {
+    deliverableId: id("del_"),
+    sourceWorkId: id("wrk_"),
+    sourceWorkRevision: 0,
+    kind: "Artifact",
+    artifactRoles: [],
+  },
+  SatisfyDependency: {
+    dependencyId: id("dep_"),
+    state: "Satisfied",
+    dependencyRevision: 1,
+    deliverableId: id("del_"),
+    satisfiedAtDependencyRevision: 1,
+    wakeSignals: [
+      {
+        workspaceId: id("ws_"),
+        reason: { _tag: "DependencySatisfied" },
+        detail: { dependencyId: id("dep_"), fromRevision: 0, toRevision: 1 },
+      },
+    ],
+  },
+  RecordDecision: {
+    proposalId: id("fpr_"),
+    proposalRevision: 1,
+    decision: "Approve",
+    state: "Approved",
+  },
+  ResolveControlApproval: {
+    approvalId: "approval-1",
+    executionId: "execution-1",
+    state: "Approved",
+    revision: 1,
+  },
+  ResolveExecutableApproval: {
+    approvalId: "eap_test",
+    executionId: id("exe_"),
+    state: "Approved",
+    revision: 1,
+  },
+  SteerWork: {
+    workId: id("wrk_"),
+    workspaceId: id("ws_"),
+    lifecycle: "Open",
+    fromRevision: 0,
+    toRevision: 1,
+    severity: "Normal",
+  },
+  AcceptWorkOutcome: {
+    acceptanceId: id("acc_"),
+    workId: id("wrk_"),
+    targetWorkRevision: 1,
+    verificationId: id("ver_"),
+  },
+  CompleteWork: {
+    workId: id("wrk_"),
+    workspaceId: id("ws_"),
+    lifecycle: "Completed",
+    revision: 1,
+    clearedCurrentWork: true,
+  },
+  StartVerification: {
+    verificationId: id("ver_"),
+    workId: id("wrk_"),
+    targetWorkRevision: 0,
+    ownerWorkspaceId: id("ws_"),
+    state: "Open",
+    verifierExecutionId: id("exe_"),
+  },
+  RetryVerification: {
+    workId: id("wrk_"),
+    orphanedVerificationId: id("ver_"),
+    successorVerificationId: id("ver_"),
+    verifierExecutionId: id("exe_"),
+    state: "OrphanedAndRetried",
+  },
+  RecordVerificationEvidence: {
+    verificationId: id("ver_"),
+    evidenceId: id("evd_"),
+    state: "Recorded",
+  },
+  ConcludeVerification: {
+    verificationId: id("ver_"),
+    state: "Concluded",
+    verdict: "Pass",
+    summaryRef: "blob:summary",
+    wakeSignals: [
+      {
+        workspaceId: id("ws_"),
+        reason: { _tag: "VerificationReturned" },
+        detail: {
+          verificationId: id("ver_"),
+          workId: id("wrk_"),
+          workRevision: 0,
+          verdict: "Pass",
+        },
+      },
+    ],
+    channel1Release: { workId: id("wrk_"), targetWorkRevision: 0 },
+  },
+  GrantPermission: { permissionGrantId: id("pgr_"), state: "Active" },
+  DecideSandboxPolicy: {
+    version: 1,
+    commandId: id("cmd_") as never,
+    projectId: id("prj_") as never,
+    workspaceId: id("ws_") as never,
+    executionId: id("exe_") as never,
+    episodeBinding: policySnapshot.episodeBinding,
+    policyRevision: 1,
+    policyDigest,
+    effectivePolicySnapshot: policySnapshot,
+  },
+  RevokePermission: { permissionGrantId: id("pgr_"), state: "Revoked" },
+  SubmitHumanMessage: { messageId: "human-message-1", state: "Pending" },
+  ResumeConversationResponse: {
+    messageId: id("msg_"),
+    state: "Queued",
+    revision: 1,
+  },
+  CancelConversationResponse: {
+    messageId: id("msg_"),
+    state: "Cancelled",
+    revision: 2,
+  },
+} as const;
+
+const storedReceipt = (
+  resolution: "Committed" | "TerminalRejected",
+  resultJson: string | null,
+  terminalErrorJson: string | null,
+  schemaVersion = "1",
+): StoredCommandResolution => ({
+  commandId: id("cmd_") as StoredCommandResolution["commandId"],
+  projectId: id("prj_") as StoredCommandResolution["projectId"],
+  semanticRequestFingerprint: "f".repeat(
+    64,
+  ) as StoredCommandResolution["semanticRequestFingerprint"],
+  schemaVersion,
+  fingerprintAlgorithmVersion: 1,
+  resolution,
+  resultJson,
+  terminalErrorJson,
+  createdAt: "2026-10-10T00:00:00.000Z",
+  settledAt: "2026-10-10T00:00:00.000Z",
+});
+
+describe("registered command receipt runtime decoders", () => {
+  it("has a positive example for each current registered Handler/result pair", async () => {
+    const registered = [...CommandInputContractRegistry.commandTypes].sort();
+    expect(registered).toEqual(Object.keys(resultByCommand).sort());
+
+    for (const commandType of CommandInputContractRegistry.commandTypes) {
+      const stored = storedReceipt(
+        "Committed",
+        JSON.stringify(resultByCommand[commandType]),
+        null,
+        commandType === "CreateProject" ? "2" : "1",
+      );
+      const exit = await Effect.runPromiseExit(
+        decodeRegisteredCommandReceipt(
+          stored,
+          commandType,
+          commandType === "CreateProject" ? "2" : "1",
+        ),
+      );
+      expect(Exit.isSuccess(exit), commandType).toBe(true);
+      if (Exit.isSuccess(exit)) {
+        const resolution = exit.value.resolution;
+        expect(resolution._tag, commandType).toBe("Committed");
+        if (
+          resolution._tag === "Committed" &&
+          commandType === "ConcludeVerification"
+        ) {
+          expect(resolution.result).toHaveProperty(
+            "conclusionReason",
+            undefined,
+          );
+        }
+      }
+    }
+  });
+
+  it("rejects missing and unknown fields for every registered result DTO", async () => {
+    for (const commandType of CommandInputContractRegistry.commandTypes) {
+      const schemaVersion = commandType === "CreateProject" ? "2" : "1";
+      const validResult = resultByCommand[commandType];
+      const firstRequiredField = Object.keys(validResult)[0];
+      expect(firstRequiredField, commandType).toBeDefined();
+
+      const withUnknownField = {
+        ...validResult,
+        __unownedReceiptField: "must-not-be-ignored",
+      };
+      const withoutRequiredField = { ...validResult } as Record<
+        string,
+        unknown
+      >;
+      if (firstRequiredField !== undefined) {
+        delete withoutRequiredField[firstRequiredField];
+      }
+
+      for (const candidate of [withUnknownField, withoutRequiredField]) {
+        const exit = await Effect.runPromiseExit(
+          decodeRegisteredCommandReceipt(
+            storedReceipt(
+              "Committed",
+              JSON.stringify(candidate),
+              null,
+              schemaVersion,
+            ),
+            commandType,
+            schemaVersion,
+          ),
+        );
+        expect(Exit.isFailure(exit), commandType).toBe(true);
+      }
+    }
+  });
+
+  it("strictly decodes DeliverMessage/1 and rejects extra fields", () => {
+    const contract = CommandInputContractRegistry.lookup("DeliverMessage");
+    expect(contract).toBeDefined();
+    const payload = {
+      messageId: id("msg_"),
+      senderWorkspaceId: id("ws_"),
+      deliverableId: id("del_"),
+      bodyRef: "blob:deliver-summary",
+    };
+    expect(contract?.decodePayload(payload)).toEqual({
+      ok: true,
+      value: payload,
+    });
+    expect(
+      contract?.decodePayload({ ...payload, recipientWorkspaceId: id("ws_") }),
+    ).toMatchObject({
+      ok: false,
+      issues: [{ rule: "unknown-field" }],
+    });
+    expect(
+      contract?.decodePayload({ ...payload, bodyRef: "x".repeat(4097) }),
+    ).toMatchObject({
+      ok: false,
+      issues: [{ path: ["bodyRef"], rule: "range" }],
+    });
+  });
+
+  it("decodes complete rejection fields and rejects missing, extra, or inherited tags", async () => {
+    const rejectionExamples = [
+      { _tag: "IdempotencyConflict", commandId: id("cmd_") },
+      { _tag: "ProjectResourceUnavailable", commandId: id("cmd_") },
+      { _tag: "AuthorityDenied", reason: "no" },
+      { _tag: "RevisionConflict", expected: 1, actual: 2 },
+      { _tag: "InvalidProjectName", reason: "invalid" },
+      { _tag: "WorkNotOpen", workId: id("wrk_") },
+      {
+        _tag: "TerminalLifecycleMutation",
+        entity: "Work",
+        lifecycle: "Completed",
+      },
+      {
+        _tag: "RetirePreconditionFailed",
+        workspaceId: id("ws_"),
+        reason: "active",
+      },
+      { _tag: "ActiveExecutionConflict", workspaceId: id("ws_") },
+      { _tag: "VerificationAcceptanceMismatch", workId: id("wrk_") },
+      { _tag: "DependencyNotSatisfiable", dependencyId: id("dep_") },
+      { _tag: "PermissionRevoked", permissionGrantId: id("pgr_") },
+      { _tag: "WorkPlanInvalid", reason: "invalid" },
+      { _tag: "FencingRejected" },
+      { _tag: "ExecutionStopping" },
+      { _tag: "WorkspaceNotFound", workspaceId: id("ws_") },
+      { _tag: "ExecutionNotFound", executionId: id("exe_") },
+      { _tag: "WorkNotFound", workId: id("wrk_") },
+      { _tag: "FormationProposalNotFound", proposalId: id("fpr_") },
+      { _tag: "ResourceExhausted", reason: "full" },
+      { _tag: "DependencyNotFound", dependencyId: id("dep_") },
+      { _tag: "DeliverableNotFound", deliverableId: id("del_") },
+      { _tag: "VerificationAlreadyOpen", workId: id("wrk_") },
+      { _tag: "InvalidVerificationMission", reason: "invalid" },
+      { _tag: "VerificationNotFound", verificationId: id("ver_") },
+      { _tag: "AcceptanceAlreadyExists", workId: id("wrk_") },
+      { _tag: "WorktreeNotFound", worktreeId: "worktree-1" },
+      { _tag: "WorktreeAlreadyExists", worktreeId: "worktree-1" },
+      {
+        _tag: "WorkspaceNotActive",
+        workspaceId: id("ws_"),
+        lifecycle: "Retired",
+      },
+      { _tag: "WorktreeAlreadyRetired", worktreeId: "worktree-1" },
+      {
+        _tag: "ActiveClaimsExist",
+        worktreeId: "worktree-1",
+        claimIds: ["claim-1"],
+      },
+    ] as const;
+
+    for (const example of rejectionExamples) {
+      expect(isCommandRejection(example), example._tag).toBe(true);
+      const exit = await Effect.runPromiseExit(
+        decodeRegisteredCommandReceipt(
+          storedReceipt("TerminalRejected", null, JSON.stringify(example), "2"),
+          "CreateProject",
+          "2",
+        ),
+      );
+      expect(Exit.isSuccess(exit), example._tag).toBe(true);
+    }
+    expect(
+      isCommandRejection({
+        _tag: "AuthorityDenied",
+        reason: "no",
+        extra: true,
+      }),
+    ).toBe(false);
+    expect(isCommandRejection({ _tag: "ProjectResourceUnavailable" })).toBe(
+      false,
+    );
+    expect(
+      isCommandRejection({
+        _tag: "ProjectResourceUnavailable",
+        commandId: "not-a-command-id",
+      }),
+    ).toBe(false);
+    expect(
+      isCommandRejection({
+        _tag: "ProjectResourceUnavailable",
+        commandId: id("cmd_"),
+        profileRef: "must-not-be-stored",
+      }),
+    ).toBe(false);
+    expect(isCommandRejection({ _tag: "AuthorityDenied" })).toBe(false);
+    expect(isCommandRejection({ _tag: "constructor" })).toBe(false);
+  });
+
+  it("fails closed for malformed JSON, preserve-only v1, and unsupported exact schema versions", async () => {
+    const malformed = storedReceipt("Committed", "{", null, "2");
+    const malformedExit = await Effect.runPromiseExit(
+      decodeRegisteredCommandReceipt(malformed, "CreateProject", "2"),
+    );
+    expect(Exit.isFailure(malformedExit)).toBe(true);
+
+    const preservedV1 = storedReceipt(
+      "Committed",
+      JSON.stringify(resultByCommand.CreateProject),
+      null,
+      "1",
+    );
+    const preservedV1Exit = await Effect.runPromiseExit(
+      decodeRegisteredCommandReceipt(preservedV1, "CreateProject", "2"),
+    );
+    expect(Exit.isFailure(preservedV1Exit)).toBe(true);
+    const noV1DecoderExit = await Effect.runPromiseExit(
+      decodeRegisteredCommandReceipt(preservedV1, "CreateProject", "1"),
+    );
+    expect(Exit.isFailure(noV1DecoderExit)).toBe(true);
+
+    const unsupported = {
+      ...storedReceipt(
+        "Committed",
+        JSON.stringify(resultByCommand.CreateProject),
+        null,
+      ),
+      schemaVersion: "3",
+    };
+    const unsupportedExit = await Effect.runPromiseExit(
+      decodeRegisteredCommandReceipt(unsupported, "CreateProject", "3"),
+    );
+    expect(Exit.isFailure(unsupportedExit)).toBe(true);
+
+    const inheritedNestedTag = storedReceipt(
+      "Committed",
+      JSON.stringify({
+        executionId: id("exe_"),
+        settlement: {
+          _tag: "Completed",
+          result: { _tag: "constructor" },
+        },
+      }),
+      null,
+    );
+    const inheritedTagExit = await Effect.runPromiseExit(
+      decodeRegisteredCommandReceipt(
+        inheritedNestedTag,
+        "SettleExecution",
+        "1",
+      ),
+    );
+    expect(Exit.isFailure(inheritedTagExit)).toBe(true);
+  });
+
+  it("fails closed for prior-consumer receipts from an unsupported schema version", async () => {
+    const priorConsumerCommandTypes = [
+      "AssignWork",
+      "AcceptWorkOutcome",
+      "SendMessage",
+      "SelectCurrentWork",
+      "DeclareDependency",
+      "ProduceDeliverable",
+    ] as const;
+
+    for (const commandType of priorConsumerCommandTypes) {
+      const stored = storedReceipt(
+        "Committed",
+        JSON.stringify(resultByCommand[commandType]),
+        null,
+        "0",
+      );
+      const exit = await Effect.runPromiseExit(
+        decodeRegisteredCommandReceipt(stored, commandType, "1"),
+      );
+      expect(Exit.isFailure(exit), commandType).toBe(true);
+    }
+  });
+
+  it("does not resolve inherited object properties as stored result schema versions", async () => {
+    for (const schemaVersion of ["constructor", "toString"]) {
+      const stored = {
+        ...storedReceipt("Committed", JSON.stringify({}), null),
+        schemaVersion,
+      };
+      const exit = await Effect.runPromiseExit(
+        decodeRegisteredCommandReceipt(stored, "CreateProject", schemaVersion),
+      );
+      expect(Exit.isFailure(exit), schemaVersion).toBe(true);
+    }
+  });
+});

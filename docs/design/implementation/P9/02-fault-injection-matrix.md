@@ -7,7 +7,10 @@
 `planning/results/P8.result.md` (crash windows already closed deterministically);
 P9 `04` (provider/tool detail), P9 `05` (consumer/rebuild detail);
 GQ1/GQ2/GQ4/GQ5 adjudications (`planning/proposals/P9/00-scope-extraction.md` §3).
-**Status:** DRAFT (first draft for contract review).
+**Status:** FROZEN; accepted AH7-DG-03 amendment (2026-10-10). Post-landing
+consistency review pending.
+**Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
+SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
 
 P9 injects faults into **existing frozen semantics** (P2 owns the recovery
 mechanism; P5 owns the representative restart proof). This file freezes the
@@ -144,6 +147,29 @@ permitted post-crash action. T4 additionally asserts no path exists from
 dangling NonIdempotent intent to any settlement without reconciliation.
 Expanded assertions (replay keys, no-duplicate-effect probes): 04 §3.
 
+### AH7-DG-03 approval, fencing and stop boundaries
+
+These supplement AH7's action/tool handoff points (§7 `AH7`) with the accepted
+P4 claim and effect-admission commits. Inject a real process/daemon crash before
+and after each commit, restart on the same DB, and label the evidence
+`crash-injected`. SQLite concurrency alone is not process-crash qualification.
+
+| ID | Boundary / interruption | Required recovery assertion | Guarantee |
+|---|---|---|---|
+| AH7-AP1 | approval claim transaction before COMMIT | Neither exact intent nor approval consumption is durable; no effect admission. A later matching call may attempt the single-consume claim. | crash-injected |
+| AH7-AP2 | approval claim transaction after COMMIT | Exact intent and `consumed_by` commit together; state is `NotAdmitted`; only same ToolInvocation resumes and approval is not consumed again. | crash-injected |
+| AH7-AP3 | `recordNoEffectDenial` before/after COMMIT | Before COMMIT there is no Denied row; after COMMIT one terminal Denied row with `NotAdmitted` and a closed reason code exists. Approval remains unchanged; exact replay is idempotent. | crash-injected |
+| AH7-AP4 | stop before claim / intent COMMIT | `ExecutionStopping`; no P4 intent or approval consumption, no Executor call. AgentLoop persists Interrupted, current action `TerminalRejected`, remainder `SkippedEarlySettlement`, one cursor advance and `Interrupted(StopRequested)`. | crash-injected |
+| AH7-AP5 | stop after claim COMMIT while `NotAdmitted` | P4 `Interrupted` is committed under the current fence; no effect admission; consumed approval remains bound. AgentLoop action/result/cursor converge exactly once. | crash-injected |
+| AH7-AP6 | race StopExecution against effect-admission transaction | Commit order determines the branch: stop first → no `MayHaveStarted` and no effect admission; marker first → invocation is in flight and stop follows P4 §6 quiescence. | crash-injected |
+| AH7-AP7 | after `MayHaveStarted`, then stop/crash | No new Executor call or replay. Cancel/confirm/reconcile by `SideEffectSemantics`; persist known result once, otherwise retain reconciliation or `OutcomeUnknown(ReconciliationRequired)`. | crash-injected |
+| AH7-AP8 | stale generation at intent/claim, no-effect denial/interruption, effect-admission or settlement | Full trusted lease tuple + expiry rejects the write in the same transaction; old generation causes no post-rejection effect. A previously committed `MayHaveStarted` effect is recovered as possibly occurred, never inferred absent. | crash-injected |
+
+For `ResourceResolutionDenied`, the terminal no-effect record uses empty
+resolved regions and cannot satisfy an approval match. Historical rows migrate
+to `LegacyUnknown`, never `NotAdmitted`; they are excluded from AP3's no-effect
+conclusion and remain under the §5 side-effect recovery rules.
+
 ## 6. Provider disconnect (PD) — GQ4 mapping (zero-DID-change)
 
 Disconnect ≜ injected scenario combination of `ProviderUnavailable` (failure
@@ -155,7 +181,7 @@ The §6A.8 six-class model is unchanged (GQ4 option a).
 | PD1 | connection-phase failure | `ProviderUnavailable` → retryable under safe-retry policy (P3 `06` §2); retries are new `ProviderAttempt`s under the **same** ProviderTurn; `turnNo` unchanged (DID §6A.9) | crash-injected |
 | PD2 | mid-stream interruption | `StreamInterrupted` → retryable; cancelled attempt ends; next attempt same Turn, `turnNo` unchanged; attempt history append-only | crash-injected |
 | PD3 | terminal classes (AuthenticationFailed / RequestRejected / ProtocolViolation) | no transport retry (P3 `06` §2); Attention where required; terminal Turn failure does **not** itself settle Execution `Failed` — driver decides bounded retry/repair vs settle after exhaustion | crash-injected |
-| PD4 | daemon crash leaves ProviderTurn unsettled | recovery resumes the **same Turn** with a new Attempt (`turnNo` invariant); transport retry is never recorded as an extra model round (DID §6A.9); retry boundary and exhaustion path per P3 `06` §2 | crash-injected |
+| PD4 | daemon crash leaves ProviderTurn unsettled | first validate complete success evidence: present → local atomic Attempt/Turn settlement, zero request; absent → recovery resumes the **same Turn** with a new Attempt (`turnNo` invariant); retry boundary/exhaustion per P3 `06`; DID v1.20 / P9 `07` | crash-injected |
 
 Note: retry counts / backoff are empirical (P3 `06` §3 discipline); the
 Turn/Attempt identity invariants above are contract. Detailed disposition
@@ -246,7 +272,55 @@ evidence protocol (per daemon restart / suite run):
   SD §10.7): storage-media loss / region loss are outside the envelope and
   are reported truthfully (P2 `06` §7).
 
+## Accepted AH14 legacy adoption evidence Attention fault matrix (DID v1.49)
+
+Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,
+proposal raw SHA-256
+`71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+accepted 2026-10-17. P9 `07` owns the exact trigger and evidence contract.
+
+| Boundary | Injected failure | Required durable state and recovery |
+|---|---|---|
+| Before `LegacyAdoptionEvidenceEscalated` fact/event COMMIT | Kill/restart or transaction failure | Neither fact nor event exists; Step/action/Session/settlement remain unchanged; no Provider/action/output work; retry recomputes the same tuple |
+| After failure fact/event COMMIT | Kill/restart | Exactly one immutable fact/event pair exists; recovery returns blocked without Provider request, action replay, sourced output or duplicate event |
+| Stale/expired Execution lease | Attempt failure-fact read/write | Lease fencing rejects before this path can read/write; no fact/event, adoption, Provider/action work, or Attention claim |
+| Before atomic resolution + normal Step progression COMMIT | Kill/restart or transaction failure | Neither resolution fact/event nor Step adoption/progression commits; original failure fact remains and P10 marker stays active |
+| After atomic resolution + normal Step progression COMMIT | Kill/restart | One exact resolution fact/event and normal adoption/progression exist; replay returns them without duplicates; matching P10 marker is removed only through its consumer transaction |
+| Resolution tuple/evidence conflict | Mismatched or incomplete action, P4, hash, summary or derived code | Typed corruption; no resolution fact/event or Step progression; Attention stays active |
+
+The resolution case requires the complete non-empty decoded action set and the
+same-action P4 terminal evidence described in P9 `07`. A may-have-started
+effect uses the existing P4 reconciliation/OutcomeUnknown gate before
+resolution. P10 marker and offset crash sides are specified in P10 `02`/`04`;
+they are not inferred from these P9 boundaries.
+
+## Accepted AH19 Work and Conversation checkpoint recovery matrix (DID v1.50)
+
+Accepted tokens:
+`ACCEPT_AH19_WORK_PRECHECKPOINT_BOUNDED_FRONTIER_V1` (proposal raw SHA-256
+`4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`) and
+`ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1` (proposal raw SHA-256
+`9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`), both
+accepted 2026-10-17.
+
+| Recovery boundary | Required result |
+|---|---|
+| Restart with >64 durable Work Timeline rows before first checkpoint | Reconstruct the same latest-64 row window; current pinned input occurs exactly once independent of the cap; P3 skipped rows do not cause older-row refill; Timeline remains unchanged and no checkpoint coverage is inferred |
+| Valid P3-filtered `UserMessage(source.kind=HumanConversation)` at lower edge of selected window, then real checkpoint commit and kill/restart | Filtered row has no contextRef/PortableInput item and is absent from compaction content/retainedFrontier, but remains durable; `inputFrontier` still records the considered window; restart reuses committed checkpoint without Provider/action replay |
+| Typed Work checkpoint followed by >64 unsummarized entries | Active frontier retains the exact checkpoint plus every subsequent typed entry; numeric pre-checkpoint cap is not applied |
+| Conversation checkpoint committed before current ResponseJob becomes Answered, then kill/restart | Resume same ResponseJob/Attempt/episode and owner state idempotently; current message is not appended twice and settled Provider/action work is not replayed |
+| Complete model binding changes between Conversation episodes | Old ProviderNative opaque reference is not sent; rebuild portable Summary from exact owned HumanMessage prefix and pin current message once |
+| Earlier non-Answered HumanMessage (Pending/Claimed) or RetryScheduled ResponseJob before a later Answered message | Frontier refuses to cover the later Answered message across the gap and remains stopped after restart; exact Claimed body remains pinned once for its existing episode |
+| Interleaved Work Session and Conversation history under one Root Workspace | Neither owner reads, advances or satisfies the other's checkpoint; HumanMessages and live checkpoint refs remain readable after restart |
+
+These recovery contracts do not define new storage tables or migration
+behavior. The physical Conversation owner choice and its migration require a
+separately authorized implementation package.
+
 ## 13. Must Not Decide
+
+The full DID v1.20 AgentLoopStep handoff matrix AH1–AH14 is owned by `07`; it is
+additive to this historical ten-face matrix and authorized by DID v1.21 ALS-I1.
 
 - No recovery mechanism / settlement-rule changes (P2 `06` owns; P9 injects
   and asserts only).

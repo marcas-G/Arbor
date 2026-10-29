@@ -83,6 +83,14 @@ describe("P3 model-family compiler", () => {
       sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
       contextEpoch: parse(ContextEpochNumber)(0),
       maxOutputTokens: 128,
+      stepContext: {
+        logicalStepNo: 2,
+        repairAttempt: 1,
+        inputFrontier: { firstSequence: 4, lastSequence: 8 },
+        fingerprint: "step-fingerprint",
+        bindingFingerprint: "binding-fingerprint",
+      },
+      estimatedInputTokens: 321,
     };
     const first = compileTurn(input);
     const second = compileTurn(input);
@@ -93,7 +101,24 @@ describe("P3 model-family compiler", () => {
       "runtime-safety",
     ]);
     expect(first.request.instructions[0]?.authorityRole).toBe("A0");
+    expect(first.request.requestVersion).toBe(2);
+    if (first.request.requestVersion !== 2) {
+      throw new Error("compiler emitted a legacy portable request");
+    }
+    expect(first.request.operationKind).toBe("Inference");
+    expect(first.request.inputItems).toEqual([]);
     expect(first.manifest.controlBasis.environmentRevision).toBe("env-1");
+    expect(first.manifest).toMatchObject({
+      logicalStepNo: 2,
+      repairAttempt: 1,
+      inputFrontier: { firstSequence: 4, lastSequence: 8 },
+      agentStepContextFingerprint: "step-fingerprint",
+      resolvedModelBindingFingerprint: "binding-fingerprint",
+      budgetEvidence: {
+        kind: "CharsPerFourFallback",
+        estimatedTokens: 321,
+      },
+    });
   });
 
   it("compiles executable and control definitions with explicit route provenance", () => {
@@ -113,7 +138,8 @@ describe("P3 model-family compiler", () => {
         ],
         controlTools: [
           {
-            name: "arbor_wait",
+            stableId: "core.control.wait",
+            name: "wait",
             description: "Register a durable wait.",
             schemaJson: '{"type":"object"}',
             version: "1",
@@ -136,17 +162,52 @@ describe("P3 model-family compiler", () => {
 
     expect(result.request.toolDefinitions.map((tool) => tool.name)).toEqual([
       "read",
-      "arbor_wait",
+      "wait",
     ]);
     expect(result.toolRoutes).toEqual([
-      { name: "read", route: "Executable" },
-      { name: "arbor_wait", route: "Control" },
+      {
+        name: "read",
+        route: "Executable",
+        version: "1",
+        hash: "exec-hash",
+      },
+      {
+        name: "wait",
+        route: "Control",
+        stableId: "core.control.wait",
+        version: "1",
+        hash: "control-hash",
+      },
     ]);
     expect(result.manifest.toolRoutes).toEqual(result.toolRoutes);
     expect(result.manifest.toolRefs).toEqual([
       "Executable:read@1#exec-hash",
-      "Control:arbor_wait@1#control-hash",
+      "Control:core.control.wait@1#control-hash",
     ]);
+  });
+
+  it("preserves an explicitly empty control surface without legacy directive injection", () => {
+    const result = compileTurn({
+      plan: {
+        ...plan,
+        outputContract: "agent-directive-v1",
+        controlTools: [],
+      },
+      capability,
+      providerTurnId: parse(ProviderTurnId)(
+        "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      ),
+      executionId: parse(ExecutionId)(
+        "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      ),
+      sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+      contextEpoch: parse(ContextEpochNumber)(0),
+      maxOutputTokens: 128,
+    });
+
+    expect(result.request.toolDefinitions).toEqual([]);
+    expect(result.toolRoutes).toEqual([]);
+    expect(result.manifest.toolRefs).toEqual([]);
   });
 
   it("rejects an identity collision across executable and control categories", () => {
@@ -156,7 +217,7 @@ describe("P3 model-family compiler", () => {
           ...plan,
           tools: [
             {
-              name: "arbor_wait",
+              name: "wait",
               description: "Executable collision",
               schemaJson: "{}",
               version: "1",
@@ -167,7 +228,8 @@ describe("P3 model-family compiler", () => {
           ],
           controlTools: [
             {
-              name: "arbor_wait",
+              stableId: "core.control.wait",
+              name: "wait",
               description: "Control collision",
               schemaJson: "{}",
               version: "1",

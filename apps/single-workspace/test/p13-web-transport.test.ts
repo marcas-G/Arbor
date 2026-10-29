@@ -1,9 +1,19 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ViewRequestMap } from "@arbor/api-contracts";
+import {
+  ExecutionId,
+  type FreshnessRequirement,
+  Principal,
+  parse,
+  providerTurnInferenceId,
+  type ViewId,
+} from "@arbor/domain";
 import { Effect } from "effect";
 import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { AuthenticatorService } from "../src/transport/auth.js";
 import {
   type ConversationProgressHub,
   createConversationProgressHub,
@@ -63,7 +73,7 @@ const fakeViews = {
 };
 
 const fakeAuthenticator = {
-  authenticate: () => Effect.succeed("user:alice" as never),
+  authenticate: () => Effect.succeed("user:local" as never),
 };
 
 const fakeSubmission = {
@@ -71,7 +81,7 @@ const fakeSubmission = {
     Effect.succeed({
       ok: true as const,
       status: 200,
-      body: { commandId: "cmd_1", resolution: "Committed" },
+      body: { commandId: "cmd_1", resolution: "Committed" as const },
     }),
 };
 
@@ -87,7 +97,7 @@ const webSocket = makeWebSocketShell(core);
 const fakeSql = {
   unsafe: (query: string) =>
     query.includes("human_messages")
-      ? Effect.succeed([{ human_principal: "user:alice" }])
+      ? Effect.succeed([{ human_principal: "user:local" }])
       : Effect.succeed([{ watermark: 0 }]),
 } as unknown as SqlClient;
 
@@ -108,8 +118,27 @@ beforeAll(async () => {
     http,
     webSocket,
     authenticator: fakeAuthenticator,
+    authenticatorConfigured: true,
     conversationProgress: progress,
     sql: fakeSql,
+    projectDirectory: {
+      list: () =>
+        Effect.succeed([
+          {
+            projectId: "prj_1" as never,
+            name: "Project One",
+            lifecycle: "Open" as const,
+            rootWorkspaceId: "ws_1" as never,
+            revision: 2 as never,
+            updatedAt: "t",
+            resourceSource: {
+              _tag: "Profile",
+              resourceProfileRef: "repo-default",
+              version: "7",
+            },
+          },
+        ]),
+    },
     staticRoot: dist,
     pollIntervalMs: 10_000,
   });
@@ -123,6 +152,45 @@ afterAll(async () => {
 const base = () => `http://127.0.0.1:${handle.port}`;
 
 describe("P13 web transport server (TR-W1/W2 binding)", () => {
+  it("passes the credential-authenticated principal to view composition, never a body actor", async () => {
+    const principals: Array<string | undefined> = [];
+    const authenticatedCore = makeTransportCore({
+      views: {
+        query: <V extends ViewId>(
+          _view: V,
+          _request: ViewRequestMap[V],
+          _barrier?: FreshnessRequirement,
+          principal?: Principal,
+        ) => {
+          principals.push(
+            principal === undefined ? undefined : String(principal),
+          );
+          return Effect.succeed({
+            value: { rows: [] },
+            watermark: 0,
+            lag: 0,
+          });
+        },
+      } as never,
+      authenticator: {
+        authenticate: () => Effect.succeed(parse(Principal)("user:local")),
+      } as never,
+      submission: fakeSubmission as never,
+    });
+    const authenticatedHttp = makeHttpShell(authenticatedCore);
+    const response = await Effect.runPromise(
+      authenticatedHttp.handle({
+        method: "POST",
+        path: "/views/attention",
+        authorization: "Bearer trusted-token",
+        body: { projectId: "prj_1", actor: "user:attacker" },
+      }),
+    );
+
+    expect(response.ok).toBe(true);
+    expect(principals).toEqual(["user:local"]);
+  });
+
   it("serves the SPA index same-origin at /", async () => {
     const response = await fetch(base());
     expect(response.status).toBe(200);
@@ -166,6 +234,41 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     expect(payload.body.resolution).toBe("Committed");
   });
 
+  it("serves the local project directory through its injected read port", async () => {
+    const response = await fetch(`${base()}/projects`, {
+      headers: { Authorization: "Bearer local" },
+    });
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      body: {
+        projects: ReadonlyArray<{
+          projectId: string;
+          name: string;
+          lifecycle: string;
+          rootWorkspaceId: string;
+          revision: number;
+          updatedAt: string;
+          resourceSource: Readonly<Record<string, unknown>>;
+        }>;
+      };
+    };
+    expect(payload.body.projects).toEqual([
+      {
+        projectId: "prj_1",
+        name: "Project One",
+        lifecycle: "Open",
+        rootWorkspaceId: "ws_1",
+        revision: 2,
+        updatedAt: "t",
+        resourceSource: {
+          _tag: "Profile",
+          resourceProfileRef: "repo-default",
+          version: "7",
+        },
+      },
+    ]);
+  });
+
   it("WS request frames answer with the frozen shell response", async () => {
     const ws = await openClient(handle.port);
     const reply = new Promise<unknown>((resolveReply) => {
@@ -176,6 +279,7 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     ws.send(
       JSON.stringify({
         kind: "view",
+        token: "local",
         view: "attention",
         request: { projectId: "prj_1" },
       }),
@@ -186,8 +290,105 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     ws.close();
   });
 
+  it("does not query or retain a socket closed while first-view authentication is pending", async () => {
+    let authenticationCalls = 0;
+    let viewCalls = 0;
+    let signalAuthenticationStarted!: () => void;
+    let resolveAuthentication!: (principal: Principal) => void;
+    const authenticationStarted = new Promise<void>((resolve) => {
+      signalAuthenticationStarted = resolve;
+    });
+    const authenticationResult = new Promise<Principal>((resolve) => {
+      resolveAuthentication = resolve;
+    });
+    const delayedAuthenticator: AuthenticatorService = {
+      authenticate: () => {
+        authenticationCalls += 1;
+        signalAuthenticationStarted();
+        return Effect.promise(() => authenticationResult);
+      },
+    };
+    const delayedCore = makeTransportCore({
+      views: {
+        query: () => {
+          viewCalls += 1;
+          return Effect.succeed({
+            data: { rows: [] },
+            watermark: 9,
+            freshness: "Fresh" as const,
+          });
+        },
+      } as never,
+      authenticator: delayedAuthenticator,
+      submission: fakeSubmission,
+    });
+    const delayedHandle = await startWebTransport({
+      http: makeHttpShell(delayedCore),
+      webSocket: makeWebSocketShell(delayedCore),
+      authenticator: delayedAuthenticator,
+      authenticatorConfigured: true,
+      sql: fakeSql,
+      projectDirectory: { list: () => Effect.succeed([]) },
+      host: "127.0.0.1",
+      port: 0,
+      pollIntervalMs: 60_000,
+    });
+
+    try {
+      const socket = new WebSocket(
+        `ws://127.0.0.1:${String(delayedHandle.port)}/ws`,
+      );
+      await new Promise<void>((resolveOpen, rejectOpen) => {
+        socket.onopen = () => resolveOpen();
+        socket.onerror = () =>
+          rejectOpen(new Error("websocket failed to open"));
+      });
+      const closed = new Promise<void>((resolveClose) => {
+        socket.onclose = () => resolveClose();
+      });
+      const frame = JSON.stringify({
+        kind: "view",
+        token: "slow-local-token",
+        view: "attention",
+        request: { projectId: "prj_1" },
+      });
+      socket.send(frame);
+      socket.send(frame);
+      await authenticationStarted;
+      expect(authenticationCalls).toBe(1);
+      expect(viewCalls).toBe(0);
+      expect(delayedHandle.webSocketSubscriberCount()).toBe(0);
+
+      socket.close();
+      await closed;
+      resolveAuthentication(parse(Principal)("user:local"));
+      await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+
+      delayedHandle.fanout.publishWatermark(10);
+      expect(viewCalls).toBe(0);
+      expect(delayedHandle.webSocketSubscriberCount()).toBe(0);
+      expect(socket.readyState).toBe(WebSocket.CLOSED);
+    } finally {
+      await delayedHandle.close();
+    }
+  });
+
   it("pushes invalidation frames (view + watermark, no payload) on watermark advance", async () => {
     const ws = await openClient(handle.port);
+    const proof = new Promise<unknown>((resolveProof) => {
+      ws.onMessage((data) => {
+        resolveProof(JSON.parse(data));
+      });
+    });
+    ws.send(
+      JSON.stringify({
+        kind: "view",
+        token: "local",
+        view: "attention",
+        request: { projectId: "prj_1" },
+      }),
+    );
+    expect(await proof).toMatchObject({ ok: true, status: 200 });
     const frames: unknown[] = [];
     ws.onMessage((data) => {
       frames.push(JSON.parse(data));
@@ -217,7 +418,10 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     progress.publish("msg_1", {
       type: "delta",
       executionId: "exe_1",
-      providerTurnId: "ptn_1",
+      providerTurnId: providerTurnInferenceId(
+        parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+        0,
+      ),
       attemptNo: 0,
       text: "hello",
     });
@@ -246,7 +450,10 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     progress.publish("msg_live", {
       type: "delta",
       executionId: "exe_live",
-      providerTurnId: "ptn_live",
+      providerTurnId: providerTurnInferenceId(
+        parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+        0,
+      ),
       attemptNo: 0,
       text: "live delta",
     });

@@ -1,6 +1,3 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   CommandGateway,
   semanticRequestFingerprint,
@@ -29,12 +26,13 @@ import {
 } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
-  buildSliceLayer,
-  P12_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+  createCurrentSchemaTestDatabaseFactory,
+  type Schema44TestDatabaseFactory,
+} from "../../../tests/support/schema44-database.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -53,11 +51,33 @@ const context: CommandSubmissionContext = {
   causationRef: "c",
 };
 
+let schema44Factory: Schema44TestDatabaseFactory | undefined;
+const schema44Cleanups: Array<() => void> = [];
+
+beforeAll(async () => {
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".p5-yield-wake-template-",
+  });
+}, 120_000);
+
+afterAll(() => schema44Factory?.cleanup());
+
+const createSchema44Case = () => {
+  if (schema44Factory === undefined) {
+    throw new Error("Schema-42 test database factory was not prepared.");
+  }
+  return schema44Factory.create();
+};
+
+afterEach(() => {
+  for (const cleanup of schema44Cleanups.splice(0)) cleanup();
+});
+
 const waitTurn = [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_wait",
+    toolName: "wait",
     argumentsJson: JSON.stringify({
       reason: "waiting",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -140,7 +160,11 @@ const admit = (commandId: CommandId) =>
       _tag: "WorkspaceMain",
       executionId,
       workspaceId,
-      focus: { _tag: "Work", workId },
+      episode: {
+        _tag: "WorkEpisode",
+        workId,
+        targetWorkRevision: 0 as never,
+      },
     };
     const authority: VerifiedRuntimeCommandAuthority = {
       _tag: "AdmitExecutionAuthority",
@@ -175,56 +199,59 @@ const admit = (commandId: CommandId) =>
 
 describe("I0 Wait control route -> P2 WorkWait -> wake", () => {
   it("routes a typed Wait action into durable WorkWait settlement", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "p5-yw-"));
-    const app = buildSliceLayer({
-      databaseFile: join(dir, "slice.db"),
+    const fixture = createSchema44Case();
+    schema44Cleanups.push(fixture.cleanup);
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: fixture.databaseFilename,
       providerTurns: [waitTurn],
     });
     const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* runMigrations(P12_MIGRATIONS);
-          yield* seed;
-          yield* admit(
-            parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-          );
-          const settlement = yield* runExecution(
-            executionId,
-            { _tag: "WorkSelected" },
-            principal,
-          );
-          const sql = yield* SqlClient;
-          const waits = yield* sql.unsafe<{ work_id: string }>(
-            "SELECT work_id FROM work_waits",
-          );
-          const scheduler = yield* ExecutionScheduler;
-          const blocked = yield* scheduler.reevaluate(workspaceId, {
-            _tag: "Recovery",
-          });
-          const tx = yield* TransactionPort;
-          const waitStore = yield* WorkWaitStore;
-          yield* tx.transact(waitStore.clear(workId));
-          const woken = yield* scheduler.reevaluate(workspaceId, {
-            _tag: "Recovery",
-          });
-          return {
-            settlement,
-            waits: waits.map((w) => w.work_id),
-            blocked: blocked._tag,
-            woken: woken._tag,
-          };
-        }),
-        app,
-      ) as unknown as Effect.Effect<
-        {
-          settlement: { _tag: string; result?: { _tag: string } };
-          waits: ReadonlyArray<string>;
-          blocked: string;
-          woken: string;
-        },
-        unknown,
-        never
-      >,
+      Effect.scoped(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* seed;
+            yield* ensureLegacyProjectResourceSourceFixture();
+            yield* admit(
+              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+            );
+            const settlement = yield* runExecution(
+              executionId,
+              { _tag: "WorkSelected" },
+              principal,
+            );
+            const sql = yield* SqlClient;
+            const waits = yield* sql.unsafe<{ work_id: string }>(
+              "SELECT work_id FROM work_waits",
+            );
+            const scheduler = yield* ExecutionScheduler;
+            const blocked = yield* scheduler.reevaluate(workspaceId, {
+              _tag: "Recovery",
+            });
+            const tx = yield* TransactionPort;
+            const waitStore = yield* WorkWaitStore;
+            yield* tx.transact(waitStore.clear(workId));
+            const woken = yield* scheduler.reevaluate(workspaceId, {
+              _tag: "Recovery",
+            });
+            return {
+              settlement,
+              waits: waits.map((w) => w.work_id),
+              blocked: blocked._tag,
+              woken: woken._tag,
+            };
+          }),
+          app,
+        ) as unknown as Effect.Effect<
+          {
+            settlement: { _tag: string; result?: { _tag: string } };
+            waits: ReadonlyArray<string>;
+            blocked: string;
+            woken: string;
+          },
+          unknown,
+          never
+        >,
+      ),
     );
     expect(result.settlement._tag, JSON.stringify(result.settlement)).toBe(
       "Completed",
@@ -234,6 +261,6 @@ describe("I0 Wait control route -> P2 WorkWait -> wake", () => {
     }
     expect(result.waits).toEqual([workId]);
     expect(result.blocked).toBe("Idle");
-    expect(result.woken).toBe("Admit");
-  });
+    expect(result.woken).toBe("AdmitWork");
+  }, 30_000);
 });

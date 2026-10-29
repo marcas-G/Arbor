@@ -1,32 +1,67 @@
+import type { ConversationResponseStatus } from "@arbor/api-contracts";
 import type {
   DomainEvent,
   ExecutionSettlement,
+  SandboxPolicyAuthoritySnapshotV2,
   Verification,
   Workspace,
 } from "@arbor/domain";
 import {
+  decodeExecutionEpisodeBinding,
+  encodeExecutionEpisodeBinding,
+  executionEpisode,
   type ProjectId,
+  sandboxPolicyCommittedViewOf,
   settlementFingerprint,
+  type WorkId,
+  type WorkRevision,
   type WorkspaceId,
 } from "@arbor/domain";
 import {
   AcceptanceRepository,
+  AgentLoopStepStore,
+  AttentionProjectionStore,
+  Clock,
+  CommandStore,
+  CurrentSandboxAuthoritySnapshotPort,
+  DeliverableRepository,
   DependencyRepository,
   DomainEventJournal,
   EvidenceRepository,
+  ExecutableApprovalStore,
   ExecutionRepository,
+  FormationFulfillmentStore,
+  FormationProposalStore,
   MessageStore,
+  P4SandboxOutcomeReadPort,
   ProjectionQueryPort,
+  ProjectRepository,
+  ProviderTurnStore,
+  type ReadmissionGateIntegrityFailure,
+  RecoveryAttentionFactStore,
+  RetryVerificationOriginRepository,
   RunnableWorkSource,
+  SandboxPolicyCandidateBoundaryReadPort,
+  SandboxPolicyDecisionStore,
+  type SandboxPolicyRequirement,
+  SandboxPolicyRequirementReadPort,
+  SandboxProviderUnavailableStore,
+  sameSandboxPolicyPreIntentRequirement,
+  sha256Hex,
+  type TerminalProviderFailureSource,
+  ToolCatalogPort,
   TransactionPort,
   type TransactionScope,
   VerificationRepository,
+  WorkBlockerStore,
+  WorkReadmissionGateStore,
   WorkRepository,
   WorkspaceRepository,
   WorkWaitStore,
 } from "@arbor/ports";
 import type {
   AttentionReadDeps,
+  AttentionSourceExecutionBinding,
   ConversationHistoryCursor,
   ConversationHistoryPage,
   CurrentWorkDeps,
@@ -36,12 +71,16 @@ import type {
   InboxReconcileDeps,
   InboxRowFact,
   InboxViewDeps,
+  ProjectionIntegrityFailure,
   ProjectionQueryRuntimeDeps,
   SpecialistSettlementFact,
+  TerminalProviderFailureIntegrityAttentionFact,
+  TerminalProviderFailureReadFact,
   TranscriptDeps,
   TreeViewDeps,
   UsageDeps,
   VerificationViewDeps,
+  WorkDetailDeps,
   WorkspaceDetailDeps,
 } from "@arbor/projection-runtime";
 import {
@@ -51,6 +90,102 @@ import {
 } from "@arbor/projection-runtime";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+import { listAnyProducerSettledWaits as listAnyProducerSettledWaitsQuery } from "./any-producer-attention.js";
+import { buildSandboxPolicyCandidateReadV2 } from "./sandbox-policy-candidate-read.js";
+
+interface ConversationJobViewRow {
+  readonly message_id: string;
+  readonly job_state: string | null;
+  readonly job_revision: number | null;
+  readonly active_execution_id: string | null;
+  readonly next_attempt_no: number | null;
+  readonly next_eligible_at: string | null;
+  readonly attention_reason: string | null;
+  readonly response_execution_id: string | null;
+}
+
+const recordValue = (value: unknown): Record<string, unknown> | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const responseStatusOf = (
+  row: ConversationJobViewRow,
+): ConversationResponseStatus | undefined => {
+  const revision = Number(row.job_revision ?? 0);
+  switch (row.job_state) {
+    case "Queued":
+      return { state: "Queued", revision };
+    case "Running":
+      return {
+        state: "Running",
+        revision,
+        executionId: row.active_execution_id ?? "",
+        attemptNo: Math.max(0, Number(row.next_attempt_no ?? 1) - 1),
+      };
+    case "RetryScheduled":
+      return {
+        state: "RetryScheduled",
+        revision,
+        nextEligibleAt: row.next_eligible_at ?? "",
+        safeReason: row.attention_reason ?? "Provider 暂时不可用",
+      };
+    case "NeedsAttention":
+      return {
+        state: "NeedsAttention",
+        revision,
+        reason: row.attention_reason ?? "UnknownFailure",
+        canResume: true,
+      };
+    case "Answered":
+      return {
+        state: "Answered",
+        revision,
+        executionId: row.response_execution_id ?? "",
+      };
+    case "Cancelled":
+      return {
+        state: "Cancelled",
+        revision,
+        reason: row.attention_reason ?? "ControlledStop",
+      };
+    default:
+      return undefined;
+  }
+};
+
+const sameSandboxPolicyRequirement = (
+  left: SandboxPolicyRequirement,
+  right: SandboxPolicyRequirement,
+): boolean => {
+  if (left._tag !== right._tag) return false;
+  if (
+    left._tag === "SandboxPolicyPreIntentRequirementV1" &&
+    right._tag === "SandboxPolicyPreIntentRequirementV1"
+  )
+    return sameSandboxPolicyPreIntentRequirement(left, right);
+  if (
+    left._tag !== "SandboxPolicyRequirementV1" ||
+    right._tag !== "SandboxPolicyRequirementV1"
+  )
+    return false;
+  return (
+    left.projectId === right.projectId &&
+    left.workspaceId === right.workspaceId &&
+    left.executionId === right.executionId &&
+    encodeExecutionEpisodeBinding(left.episodeBinding) ===
+      encodeExecutionEpisodeBinding(right.episodeBinding) &&
+    left.expectedEpisodeRevision === right.expectedEpisodeRevision &&
+    left.invocationId === right.invocationId &&
+    left.providerTurnId === right.providerTurnId &&
+    left.logicalStepNo === right.logicalStepNo &&
+    left.repairAttempt === right.repairAttempt &&
+    left.logicalActionId === right.logicalActionId &&
+    left.actionIndex === right.actionIndex &&
+    left.callRef === right.callRef &&
+    left.recoveryBindingDigest === right.recoveryBindingDigest
+  );
+};
 
 /**
  * B-7 — the production `ProjectionQueryPort` wiring.
@@ -65,42 +200,419 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 
 export type ProjectionQueryWiringServices =
   | SqlClient
+  | Clock
   | TransactionPort
   | WorkspaceRepository
   | WorkRepository
   | ExecutionRepository
   | WorkWaitStore
+  | WorkBlockerStore
+  | WorkReadmissionGateStore
   | DependencyRepository
   | VerificationRepository
   | EvidenceRepository
   | AcceptanceRepository
   | DomainEventJournal
+  | RecoveryAttentionFactStore
+  | SandboxPolicyDecisionStore
+  | SandboxPolicyCandidateBoundaryReadPort
+  | SandboxPolicyRequirementReadPort
+  | CurrentSandboxAuthoritySnapshotPort
+  | SandboxProviderUnavailableStore
+  | AttentionProjectionStore
   | MessageStore
-  | RunnableWorkSource;
+  | RunnableWorkSource
+  | ExecutableApprovalStore
+  | AgentLoopStepStore
+  | ProviderTurnStore
+  | ToolCatalogPort;
 
-export const ProjectionQueryPortLive: Layer.Layer<
-  ProjectionQueryPort,
-  never,
-  ProjectionQueryWiringServices
-> = Layer.effect(
-  ProjectionQueryPort,
+/** @internal Pure reader seam for the P10 manifest-binding projection tests. */
+export const approvedToolHashFromManifest = (input: {
+  readonly manifestJson: string;
+  readonly providerTurnId: string;
+  readonly executionId: string;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly toolName: string;
+  readonly toolVersion: string;
+}): string | null => {
+  try {
+    const manifest = JSON.parse(input.manifestJson) as {
+      readonly providerTurnId?: unknown;
+      readonly executionId?: unknown;
+      readonly logicalStepNo?: unknown;
+      readonly repairAttempt?: unknown;
+      readonly toolRefs?: unknown;
+      readonly toolRoutes?: unknown;
+    };
+    if (
+      manifest.providerTurnId !== input.providerTurnId ||
+      manifest.executionId !== input.executionId ||
+      manifest.logicalStepNo !== input.logicalStepNo ||
+      manifest.repairAttempt !== input.repairAttempt ||
+      !Array.isArray(manifest.toolRoutes) ||
+      !Array.isArray(manifest.toolRefs)
+    ) {
+      return null;
+    }
+    const sameNameRoutes = manifest.toolRoutes.filter(
+      (route): route is Record<string, unknown> =>
+        typeof route === "object" &&
+        route !== null &&
+        "name" in route &&
+        route.name === input.toolName,
+    );
+    if (sameNameRoutes.length !== 1) return null;
+    const route = sameNameRoutes[0];
+    if (
+      route === undefined ||
+      route.route !== "Executable" ||
+      route.version !== input.toolVersion ||
+      typeof route.hash !== "string" ||
+      route.hash.length === 0
+    ) {
+      return null;
+    }
+    const exactRef = `Executable:${input.toolName}@${input.toolVersion}#${route.hash}`;
+    const refs = manifest.toolRefs.filter((ref) => typeof ref === "string");
+    if (refs.filter((ref) => ref === exactRef).length !== 1) return null;
+    return route.hash;
+  } catch {
+    return null;
+  }
+};
+
+const isCanonicalUtcTimestamp = (value: string): boolean => {
+  const millis = Date.parse(value);
+  return Number.isFinite(millis) && new Date(millis).toISOString() === value;
+};
+
+const projectionQueryService = (
+  catalogProjectId?: ProjectId,
+  sandboxAuthoritySnapshot?: SandboxPolicyAuthoritySnapshotV2,
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
+    const clock = yield* Clock;
     const tx = yield* TransactionPort;
     const workspaces = yield* WorkspaceRepository;
     const works = yield* WorkRepository;
     const executions = yield* ExecutionRepository;
     const waits = yield* WorkWaitStore;
+    const blockersOption = yield* Effect.serviceOption(WorkBlockerStore);
+    const blockers = Option.getOrUndefined(blockersOption);
+    const readmissionGate = yield* WorkReadmissionGateStore;
     const dependencies = yield* DependencyRepository;
+    const projectRepository = yield* Effect.serviceOption(ProjectRepository);
+    const formationProposals = yield* Effect.serviceOption(
+      FormationProposalStore,
+    );
+    const formationFulfillments = yield* Effect.serviceOption(
+      FormationFulfillmentStore,
+    );
+    const deliverableRepository = yield* Effect.serviceOption(
+      DeliverableRepository,
+    );
+    const commandStore = yield* Effect.serviceOption(CommandStore);
     const verifications = yield* VerificationRepository;
     const evidence = yield* EvidenceRepository;
     const acceptances = yield* AcceptanceRepository;
+    const retryVerificationOrigins = yield* Effect.serviceOption(
+      RetryVerificationOriginRepository,
+    );
     const journal = yield* DomainEventJournal;
+    const bindingAttention = yield* RecoveryAttentionFactStore;
+    const attentionProjection = yield* AttentionProjectionStore;
+    const sandboxPolicyStore = yield* Effect.serviceOption(
+      SandboxPolicyDecisionStore,
+    );
+    const sandboxPolicyCandidateBoundary = yield* Effect.serviceOption(
+      SandboxPolicyCandidateBoundaryReadPort,
+    );
+    const sandboxPolicyRequirement = yield* Effect.serviceOption(
+      SandboxPolicyRequirementReadPort,
+    );
+    const currentSandboxAuthority = yield* Effect.serviceOption(
+      CurrentSandboxAuthoritySnapshotPort,
+    );
+    const p4SandboxOutcomeReadPort = yield* Effect.serviceOption(
+      P4SandboxOutcomeReadPort,
+    );
+    const sandboxUnavailableStore = yield* Effect.serviceOption(
+      SandboxProviderUnavailableStore,
+    );
     const messages = yield* MessageStore;
     const source = yield* RunnableWorkSource;
+    const executableApprovals = yield* ExecutableApprovalStore;
+    const agentLoopSteps = yield* AgentLoopStepStore;
+    const providerTurns = yield* ProviderTurnStore;
+    const toolCatalog = yield* ToolCatalogPort;
 
     const inTx = <A>(body: Effect.Effect<A, unknown, TransactionScope>) =>
       tx.transact(body).pipe(Effect.mapError(projectionReadError));
+
+    const inTxProjection = <A>(
+      body: Effect.Effect<A, unknown, TransactionScope>,
+    ) =>
+      tx
+        .transact(body)
+        .pipe(
+          Effect.mapError((error) =>
+            typeof error === "object" &&
+            error !== null &&
+            (error as { readonly _tag?: unknown })._tag ===
+              "ProjectionIntegrityFailure"
+              ? (error as ProjectionIntegrityFailure)
+              : projectionReadError(error),
+          ),
+        );
+
+    const isReadmissionGateIntegrityFailure = (
+      error: unknown,
+    ): error is ReadmissionGateIntegrityFailure =>
+      typeof error === "object" &&
+      error !== null &&
+      (error as { readonly _tag?: unknown })._tag ===
+        "ReadmissionGateIntegrityFailure";
+
+    const terminalProviderIntegrityProjectionFailure = (
+      error: ReadmissionGateIntegrityFailure,
+    ): ProjectionIntegrityFailure => ({
+      _tag: "ProjectionIntegrityFailure",
+      code: "projection/unavailable",
+      category: "unavailable",
+      correlationId: null,
+      retryDisposition: "non-retryable",
+      safeDetails: {
+        sourceTag: "TerminalProviderFailureIntegrity",
+        projectId: error.projectId,
+        ...(error.executionId === undefined
+          ? {}
+          : { executionId: error.executionId }),
+        reasonCode: error.reasonCode,
+      },
+    });
+
+    const proveTerminalProviderFailureIntegrity = (
+      input: {
+        readonly projectId: ProjectId;
+        readonly workspaceId: WorkspaceId;
+        readonly workId: WorkId;
+        readonly workRevision: WorkRevision;
+      },
+      error: ReadmissionGateIntegrityFailure,
+    ): Effect.Effect<
+      TerminalProviderFailureIntegrityAttentionFact,
+      ProjectionIntegrityFailure | unknown,
+      TransactionScope
+    > =>
+      Effect.gen(function* () {
+        const failClosed = () =>
+          Effect.fail(terminalProviderIntegrityProjectionFailure(error));
+        if (
+          error.reasonCode === "FailureOccurrenceTimeInvalid" ||
+          error.sourceKind !== "TerminalProviderFailureSettlement" ||
+          error.executionId === undefined ||
+          error.projectId !== input.projectId ||
+          error.workspaceId !== input.workspaceId ||
+          error.workId !== input.workId ||
+          error.requestedWorkRevision !== input.workRevision
+        ) {
+          return yield* failClosed();
+        }
+
+        const executions = yield* sql.unsafe<{
+          readonly execution_id: string;
+          readonly project_id: string;
+          readonly workspace_id: string;
+          readonly session_id: string;
+          readonly settlement_json: string | null;
+          readonly episode_json: string | null;
+        }>(
+          `SELECT e.execution_id, e.project_id, e.workspace_id, e.session_id,
+                  e.settlement_json, state.episode_json
+             FROM executions AS e
+             LEFT JOIN agent_execution_state AS state
+               ON state.execution_id = e.execution_id
+            WHERE e.execution_id = ?`,
+          [error.executionId],
+        );
+        if (
+          executions.length !== 1 ||
+          executions[0]?.project_id !== input.projectId ||
+          executions[0]?.workspace_id !== input.workspaceId ||
+          executions[0]?.settlement_json === null ||
+          executions[0]?.episode_json === null
+        ) {
+          return yield* failClosed();
+        }
+        const execution = executions[0];
+        const episodeJson = execution.episode_json;
+        const settlementJson = execution.settlement_json;
+        if (settlementJson === null) return yield* failClosed();
+        let unknownProviderFailureSettlement = false;
+        try {
+          const settlement = recordValue(JSON.parse(settlementJson) as unknown);
+          const failure = recordValue(settlement?.failure);
+          unknownProviderFailureSettlement =
+            settlement?._tag === "Failed" &&
+            failure?._tag === "ExecutionFailure" &&
+            failure.reason === "ProviderFailure:UnknownProviderFailure";
+        } catch {
+          return yield* failClosed();
+        }
+        if (episodeJson === null) return yield* failClosed();
+        let decodedEpisode: ReturnType<typeof decodeExecutionEpisodeBinding>;
+        try {
+          decodedEpisode = decodeExecutionEpisodeBinding(
+            JSON.parse(episodeJson) as unknown,
+          );
+        } catch {
+          decodedEpisode = undefined;
+        }
+        if (
+          decodedEpisode === undefined ||
+          decodedEpisode._tag !== "WorkEpisode" ||
+          decodedEpisode.workId !== input.workId ||
+          decodedEpisode.targetWorkRevision !== input.workRevision
+        ) {
+          return yield* failClosed();
+        }
+
+        const steps = yield* sql.unsafe<{
+          readonly logical_step_no: number;
+          readonly repair_attempt: number;
+          readonly provider_turn_id: string;
+          readonly settlement_json: string | null;
+        }>(
+          `SELECT logical_step_no, repair_attempt, provider_turn_id,
+                  settlement_json
+             FROM agent_loop_steps
+            WHERE execution_id = ? AND state = 'SettlementProposed'
+            ORDER BY logical_step_no, repair_attempt`,
+          [error.executionId],
+        );
+        const step = steps[0];
+        if (
+          steps.length !== 1 ||
+          step === undefined ||
+          !Number.isSafeInteger(step.logical_step_no) ||
+          step.logical_step_no < 0 ||
+          !Number.isSafeInteger(step.repair_attempt) ||
+          step.repair_attempt < 0 ||
+          step.settlement_json === null ||
+          step.settlement_json !== execution.settlement_json ||
+          step.provider_turn_id.length === 0
+        ) {
+          return yield* failClosed();
+        }
+
+        const turns = yield* sql.unsafe<{
+          readonly provider_turn_id: string;
+          readonly execution_id: string;
+          readonly session_id: string;
+          readonly finish_reason: string | null;
+        }>(
+          `SELECT provider_turn_id, execution_id, session_id, finish_reason
+             FROM provider_turns WHERE provider_turn_id = ?`,
+          [step.provider_turn_id],
+        );
+        const turn = turns[0];
+        if (
+          turns.length !== 1 ||
+          turn === undefined ||
+          turn.provider_turn_id !== step.provider_turn_id ||
+          turn.execution_id !== error.executionId ||
+          turn.session_id !== execution.session_id ||
+          turn.finish_reason !== "Failed"
+        ) {
+          return yield* failClosed();
+        }
+
+        const attempts = yield* sql.unsafe<{
+          readonly attempt_no: number;
+          readonly settled_at: string | null;
+          readonly outcome: string;
+          readonly provider_error_kind: string | null;
+          readonly retry_decision: string | null;
+        }>(
+          `SELECT attempt_no, settled_at, outcome, provider_error_kind,
+                  retry_decision
+             FROM provider_attempts
+            WHERE provider_turn_id = ?
+            ORDER BY attempt_no`,
+          [turn.provider_turn_id],
+        );
+        const attempt = attempts.at(-1);
+        const processLostWithoutFailureKind =
+          error.reasonCode === "SourceProviderAttemptMismatch" &&
+          unknownProviderFailureSettlement &&
+          attempt?.provider_error_kind === null;
+        if (
+          attempt === undefined ||
+          !Number.isSafeInteger(attempt.attempt_no) ||
+          attempt.attempt_no < 0 ||
+          attempt.settled_at === null ||
+          !isCanonicalUtcTimestamp(attempt.settled_at) ||
+          attempt.outcome !== "TerminalFailure" ||
+          attempt.retry_decision !== "Stop" ||
+          (!processLostWithoutFailureKind &&
+            ![
+              "AuthenticationFailed",
+              "RequestRejected",
+              "ProtocolViolation",
+            ].includes(attempt.provider_error_kind ?? ""))
+        ) {
+          return yield* failClosed();
+        }
+        return {
+          projectId: input.projectId,
+          workspaceId: input.workspaceId,
+          workId: input.workId,
+          workRevision: input.workRevision,
+          executionId: error.executionId,
+          logicalStepNo: step.logical_step_no,
+          repairAttempt: step.repair_attempt,
+          occurredAt: attempt.settled_at,
+          failureCode: error.reasonCode,
+        };
+      });
+
+    const readTerminalFailureOccurrence = (
+      source: TerminalProviderFailureSource,
+    ) =>
+      Effect.gen(function* () {
+        const rows = yield* sql.unsafe<{ readonly settled_at: string | null }>(
+          `SELECT settled_at
+             FROM provider_attempts
+            WHERE provider_turn_id = ? AND attempt_no = ?`,
+          [source.providerTurnId, source.attemptNo],
+        );
+        const occurredAt = rows[0]?.settled_at ?? null;
+        const millis =
+          occurredAt === null ? Number.NaN : Date.parse(occurredAt);
+        if (
+          rows.length !== 1 ||
+          occurredAt === null ||
+          !Number.isFinite(millis) ||
+          new Date(millis).toISOString() !== occurredAt
+        ) {
+          return yield* Effect.fail({
+            _tag: "ProjectionIntegrityFailure" as const,
+            code: "projection/unavailable" as const,
+            category: "unavailable" as const,
+            correlationId: null,
+            retryDisposition: "non-retryable" as const,
+            safeDetails: {
+              sourceTag: "TerminalProviderFailureIntegrity",
+              executionId: source.executionId,
+              reasonCode: "FailureOccurrenceTimeInvalid",
+            },
+          });
+        }
+        return occurredAt;
+      });
 
     const listWorkspacesByProject = (projectId: ProjectId) =>
       inTx(
@@ -130,20 +642,133 @@ export const ProjectionQueryPortLive: Layer.Layer<
             workspace_id: string;
             settlement_json: string | null;
             settled_at: string | null;
+            settlement_kind: string | null;
           }>(
-            "SELECT execution_id, workspace_id, settlement_json, settled_at FROM executions WHERE project_id = ? ORDER BY execution_id",
+            "SELECT execution_id, workspace_id, settlement_json, settled_at, settlement_kind FROM executions WHERE project_id = ? ORDER BY execution_id",
             [projectId],
           );
-          const facts: Array<ExecutionSettlementReadFact> = rows.map((row) => ({
-            executionId: row.execution_id,
-            workspaceId: row.workspace_id as WorkspaceId,
-            settlement:
-              row.settlement_json === null
-                ? null
-                : (JSON.parse(row.settlement_json) as ExecutionSettlement),
-            settledAt: row.settled_at,
-          }));
+          const facts: Array<ExecutionSettlementReadFact> = rows.map((row) => {
+            let settlement: ExecutionSettlement | null = null;
+            let settlementMalformed =
+              row.settlement_kind !== null && row.settlement_json === null;
+            if (row.settlement_json !== null) {
+              try {
+                settlement = JSON.parse(
+                  row.settlement_json,
+                ) as ExecutionSettlement;
+              } catch {
+                settlementMalformed = true;
+              }
+            }
+            return {
+              executionId: row.execution_id,
+              workspaceId: row.workspace_id as WorkspaceId,
+              settlement,
+              settledAt: row.settled_at,
+              settlementKind: row.settlement_kind,
+              settlementMalformed,
+            };
+          });
           return facts;
+        }),
+      );
+
+    const listAttentionSourceExecutionBindings = (
+      _projectId: ProjectId,
+      executionIds: ReadonlyArray<string>,
+    ) =>
+      inTx(
+        Effect.gen(function* () {
+          if (executionIds.length === 0) {
+            return [] as ReadonlyArray<AttentionSourceExecutionBinding>;
+          }
+          const executions = yield* sql.unsafe<{
+            readonly execution_id: string;
+            readonly project_id: string;
+            readonly workspace_id: string;
+            readonly episode_json: string | null;
+          }>(
+            `SELECT e.execution_id, e.project_id, e.workspace_id,
+                    state.episode_json
+               FROM executions AS e
+               LEFT JOIN agent_execution_state AS state
+                 ON state.execution_id = e.execution_id
+              WHERE e.execution_id IN (${executionIds.map(() => "?").join(",")})
+              ORDER BY e.execution_id`,
+            [...executionIds],
+          );
+          const workIds = new Set<string>();
+          for (const row of executions) {
+            if (row.episode_json === null) continue;
+            try {
+              const episode: unknown = JSON.parse(row.episode_json);
+              if (
+                typeof episode === "object" &&
+                episode !== null &&
+                (episode as { readonly _tag?: unknown })._tag ===
+                  "WorkEpisode" &&
+                typeof (episode as { readonly workId?: unknown }).workId ===
+                  "string"
+              ) {
+                workIds.add((episode as { readonly workId: string }).workId);
+              }
+            } catch {
+              // P10 validates the original opaque episode and returns its
+              // bounded ProjectionIntegrityFailure; malformed text is never
+              // used as a query selector.
+            }
+          }
+          const workRows =
+            workIds.size === 0
+              ? []
+              : yield* sql.unsafe<{
+                  readonly work_id: string;
+                  readonly project_id: string;
+                  readonly workspace_id: string;
+                  readonly revision: number;
+                }>(
+                  `SELECT work_id, project_id, workspace_id, revision
+                     FROM works
+                    WHERE work_id IN (${[...workIds].map(() => "?").join(",")})`,
+                  [...workIds],
+                );
+          const workById = new Map(workRows.map((row) => [row.work_id, row]));
+          return executions.map((row) => {
+            let episodeWorkId: string | null = null;
+            if (row.episode_json !== null) {
+              try {
+                const episode: unknown = JSON.parse(row.episode_json);
+                if (
+                  typeof episode === "object" &&
+                  episode !== null &&
+                  (episode as { readonly _tag?: unknown })._tag ===
+                    "WorkEpisode" &&
+                  typeof (episode as { readonly workId?: unknown }).workId ===
+                    "string"
+                ) {
+                  episodeWorkId = (episode as { readonly workId: string })
+                    .workId;
+                }
+              } catch {
+                // Preserve the invalid episode as null data for the P10
+                // validator; do not infer another Work binding.
+              }
+            }
+            const work =
+              episodeWorkId === null ? undefined : workById.get(episodeWorkId);
+            return {
+              executionId: row.execution_id,
+              projectId: row.project_id as ProjectId,
+              workspaceId: row.workspace_id as WorkspaceId,
+              episodeJson: row.episode_json,
+              workId: work?.work_id ?? null,
+              workProjectId:
+                (work?.project_id as ProjectId | undefined) ?? null,
+              workWorkspaceId:
+                (work?.workspace_id as WorkspaceId | undefined) ?? null,
+              workRevision: work === undefined ? null : Number(work.revision),
+            };
+          });
         }),
       );
 
@@ -227,17 +852,308 @@ export const ProjectionQueryPortLive: Layer.Layer<
         }),
       );
 
+    const anyProducerEvidenceDependencies =
+      Option.isSome(projectRepository) &&
+      Option.isSome(formationProposals) &&
+      Option.isSome(formationFulfillments) &&
+      Option.isSome(deliverableRepository)
+        ? {
+            projects: projectRepository.value,
+            workspaces,
+            listWorkspaceIdsByProject: (projectId: ProjectId) =>
+              Effect.map(
+                sql.unsafe<{ readonly workspace_id: string }>(
+                  "SELECT workspace_id FROM workspaces WHERE project_id = ? ORDER BY workspace_id",
+                  [projectId],
+                ),
+                (rows) => rows.map((row) => row.workspace_id as WorkspaceId),
+              ),
+            works,
+            proposals: formationProposals.value,
+            fulfillments: formationFulfillments.value,
+            deliverables: deliverableRepository.value,
+            tx,
+          }
+        : undefined;
+    const listAnyProducerSettledWaits = (projectId: ProjectId) => {
+      if (
+        anyProducerEvidenceDependencies === undefined ||
+        Option.isNone(commandStore)
+      ) {
+        return Effect.fail(
+          projectionReadError(
+            new Error("APW-3 canonical evidence stores are unavailable"),
+          ),
+        );
+      }
+      return listAnyProducerSettledWaitsQuery(
+        {
+          evidence: anyProducerEvidenceDependencies,
+          executions,
+          waits,
+          dependencies,
+          commandReceipts: commandStore.value,
+        },
+        projectId,
+      ).pipe(Effect.mapError(projectionReadError));
+    };
+
+    const listTerminalProviderFailures = (projectId: ProjectId) =>
+      inTxProjection(
+        Effect.gen(function* () {
+          const rows = yield* sql.unsafe<{
+            work_id: string;
+            workspace_id: string;
+            revision: number;
+          }>(
+            `SELECT work_id, workspace_id, revision
+               FROM works
+              WHERE project_id = ? AND lifecycle = 'Open'
+              ORDER BY workspace_id, work_id`,
+            [projectId],
+          );
+          const out: Array<TerminalProviderFailureReadFact> = [];
+          for (const row of rows) {
+            const input = {
+              projectId,
+              workspaceId: row.workspace_id as WorkspaceId,
+              workId: row.work_id as WorkId,
+              workRevision: Number(row.revision) as WorkRevision,
+            };
+            const terminalFact = yield* readmissionGate
+              .hasBlockingSource(input)
+              .pipe(
+                Effect.flatMap((found) => {
+                  const terminal = Option.filter(
+                    found,
+                    (
+                      source,
+                    ): source is import("@arbor/ports").TerminalProviderFailureSource =>
+                      source.sourceKind === "TerminalProviderFailureSettlement",
+                  );
+                  if (Option.isNone(terminal)) {
+                    return Effect.succeed(undefined);
+                  }
+                  return Effect.map(
+                    readTerminalFailureOccurrence(terminal.value),
+                    (occurredAt) => ({
+                      projectId,
+                      workspaceId: input.workspaceId,
+                      workId: input.workId,
+                      workRevision: input.workRevision,
+                      source: terminal.value,
+                      occurredAt,
+                    }),
+                  );
+                }),
+                Effect.catch((error) =>
+                  isReadmissionGateIntegrityFailure(error)
+                    ? proveTerminalProviderFailureIntegrity(input, error)
+                    : Effect.fail(error),
+                ),
+              );
+            if (terminalFact !== undefined) out.push(terminalFact);
+          }
+          return out;
+        }),
+      );
+
     const attention: AttentionReadDeps = {
+      listTerminalProviderFailures,
       listWorkspacesByProject,
       listWorksByWorkspace: (workspaceId) =>
         inTx(works.listByWorkspace(workspaceId)),
       listExecutionSettlementFacts,
+      listAttentionSourceExecutionBindings,
       listOpenVerifications: () => inTx(verifications.listOpen()),
       listUnsatisfiedDependencies: (projectId) =>
         inTx(dependencies.listUnsatisfiedByProject(projectId)),
+      ...(anyProducerEvidenceDependencies !== undefined &&
+      Option.isSome(commandStore)
+        ? { listAnyProducerSettledWaits }
+        : {}),
       findDependency: (dependencyId) =>
         inTx(dependencies.findById(dependencyId as never)),
       readEvents,
+      findAssignWorkBindingFailure: (attentionFactId) =>
+        inTx(bindingAttention.findAssignWorkBindingFailure(attentionFactId)),
+      findSubmittedDecisionBindingFailure: (attentionFactId) =>
+        bindingAttention.findSubmittedDecisionBindingFailure === undefined
+          ? Effect.succeed(Option.none())
+          : inTx(
+              bindingAttention.findSubmittedDecisionBindingFailure(
+                attentionFactId,
+              ),
+            ),
+      ...(bindingAttention.findLegacyAdoptionFailure === undefined
+        ? {}
+        : {
+            findLegacyAdoptionFailure: (attentionFactId: string) =>
+              inTx(
+                bindingAttention.findLegacyAdoptionFailure?.(attentionFactId) ??
+                  Effect.succeed(Option.none()),
+              ),
+          }),
+      ...(bindingAttention.findLegacyAdoptionResolution === undefined
+        ? {}
+        : {
+            findLegacyAdoptionResolution: (attentionFactId: string) =>
+              inTx(
+                bindingAttention.findLegacyAdoptionResolution?.(
+                  attentionFactId,
+                ) ?? Effect.succeed(Option.none()),
+              ),
+          }),
+      listProjectedAssignWorkBindingFailures: (projectId) =>
+        inTx(attentionProjection.listAssignWorkBindingFailures(projectId)),
+      listProjectedDeliverReplayFailures: (projectId) =>
+        inTx(attentionProjection.listDeliverReplayFailures(projectId)),
+      ...(attentionProjection.listVerificationSignalReconciliationFailures ===
+      undefined
+        ? {}
+        : {
+            listProjectedVerificationSignalReconciliationFailures: (
+              projectId,
+            ) =>
+              inTx(
+                attentionProjection.listVerificationSignalReconciliationFailures?.(
+                  projectId,
+                ) ?? Effect.succeed([]),
+              ),
+          }),
+      ...(attentionProjection.listSubmittedDecisionBindingFailures === undefined
+        ? {}
+        : {
+            listProjectedSubmittedDecisionBindingFailures: (projectId) =>
+              inTx(
+                Effect.gen(function* () {
+                  const factsReady =
+                    bindingAttention.isSubmittedDecisionBindingAvailable;
+                  const markersReady =
+                    attentionProjection.isSubmittedDecisionBindingAvailable;
+                  if (factsReady === undefined || markersReady === undefined) {
+                    return yield* Effect.fail({
+                      _tag: "PersistenceUnavailable" as const,
+                      repository: "AttentionProjectionStore" as const,
+                      operation: "submitted-decision-binding-readiness",
+                      retryDisposition: "non-retryable" as const,
+                      sourceTag: "P41AvailabilityProbeUnavailable",
+                      cause:
+                        "P41 fact and marker availability probes are required before projection reads",
+                    });
+                  }
+                  const [factsAvailable, markersAvailable] = yield* Effect.all([
+                    factsReady(),
+                    markersReady(),
+                  ]);
+                  if (factsAvailable !== markersAvailable) {
+                    return yield* Effect.fail({
+                      _tag: "PersistenceCorruption" as const,
+                      repository: "AttentionProjectionStore" as const,
+                      operation: "submitted-decision-binding-readiness",
+                      reason:
+                        "P41 RecoveryAttentionFactStore and AttentionProjectionStore availability differs",
+                    });
+                  }
+                  if (!factsAvailable) return [];
+                  const listSubmitted =
+                    attentionProjection.listSubmittedDecisionBindingFailures;
+                  if (listSubmitted === undefined) return [];
+                  return yield* listSubmitted(projectId);
+                }),
+              ),
+          }),
+      ...(attentionProjection.listLegacyAdoptionFailures === undefined
+        ? {}
+        : {
+            listProjectedLegacyAdoptionFailures: (projectId: ProjectId) =>
+              inTx(
+                attentionProjection.listLegacyAdoptionFailures?.(projectId) ??
+                  Effect.succeed([]),
+              ),
+          }),
+      listProjectedWorkspaceResourceActivations: (projectId) =>
+        inTx(
+          attentionProjection.listWorkspaceResourceActivationPending(projectId),
+        ),
+      ...(blockers === undefined
+        ? {}
+        : {
+            listWorkBlockersByWorkRevision: (
+              workId: WorkId,
+              revision: number,
+            ) =>
+              inTx(
+                blockers.listByWorkRevision(workId, revision as WorkRevision),
+              ),
+          }),
+      hasActiveWorkEpisode: (workId, revision) =>
+        inTx(
+          Effect.gen(function* () {
+            const work = yield* works.findById(workId);
+            if (Option.isNone(work) || work.value.revision !== revision)
+              return false;
+            const active = yield* executions.findActiveMainByWorkspace(
+              work.value.workspaceId,
+            );
+            if (Option.isNone(active)) return false;
+            const episode = executionEpisode(active.value);
+            return (
+              episode?._tag === "WorkEpisode" &&
+              episode.workId === workId &&
+              episode.targetWorkRevision === revision
+            );
+          }),
+        ),
+      listProjectedToolObservationReplayFailures: (projectId) =>
+        attentionProjection.listToolObservationReplayFailures === undefined
+          ? Effect.succeed([])
+          : inTx(
+              attentionProjection.listToolObservationReplayFailures(projectId),
+            ),
+      listProjectedSandboxProviderUnavailableFailures: (projectId) =>
+        attentionProjection.listProjectedSandboxProviderUnavailableFailures ===
+        undefined
+          ? Effect.succeed([])
+          : inTx(
+              Effect.gen(function* () {
+                return yield* attentionProjection.listProjectedSandboxProviderUnavailableFailures?.(
+                  projectId,
+                  yield* clock.now(),
+                ) ?? Effect.succeed([]);
+              }),
+            ),
+      listProjectedProcessExecutionUnavailable: (projectId) =>
+        attentionProjection.listProjectedProcessExecutionUnavailable ===
+        undefined
+          ? Effect.succeed([])
+          : inTx(
+              attentionProjection.listProjectedProcessExecutionUnavailable(
+                projectId,
+              ),
+            ),
+      listSandboxRecoveryBindingFailures: (projectId) =>
+        attentionProjection.listSandboxRecoveryBindingFailures === undefined
+          ? Effect.succeed([])
+          : inTx(
+              Effect.gen(function* () {
+                return yield* attentionProjection.listSandboxRecoveryBindingFailures?.(
+                  projectId,
+                  yield* clock.now(),
+                ) ?? Effect.succeed([]);
+              }),
+            ),
+      listSandboxPolicyDecisionRequired: (projectId) =>
+        attentionProjection.listSandboxPolicyDecisionRequired === undefined
+          ? Effect.succeed([])
+          : inTx(
+              Effect.gen(function* () {
+                return yield* attentionProjection.listSandboxPolicyDecisionRequired?.(
+                  projectId,
+                  yield* clock.now(),
+                ) ?? Effect.succeed([]);
+              }),
+            ),
     };
 
     const tree: TreeViewDeps = {
@@ -279,6 +1195,378 @@ export const ProjectionQueryPortLive: Layer.Layer<
         inTx(works.listByWorkspace(workspaceId)),
       findActiveMainExecution: (workspaceId) =>
         inTx(executions.findActiveMainByWorkspace(workspaceId)),
+      sandboxPolicyForExecution: (execution) =>
+        Effect.gen(function* () {
+          const pendingRequirement = Option.isSome(sandboxPolicyRequirement)
+            ? yield* inTx(
+                sandboxPolicyRequirement.value
+                  .findPendingByExecution({
+                    projectId: execution.projectId,
+                    workspaceId: execution.workspaceId,
+                    executionId: execution.executionId,
+                  })
+                  .pipe(Effect.mapError(projectionReadError)),
+              )
+            : Option.none();
+          if (Option.isSome(pendingRequirement)) {
+            const requirementReadPort = Option.isSome(sandboxPolicyRequirement)
+              ? sandboxPolicyRequirement.value
+              : undefined;
+            if (requirementReadPort === undefined)
+              return yield* Effect.fail(
+                projectionReadError({
+                  _tag: "SandboxPolicyCandidateReadPortUnavailable",
+                }),
+              );
+            const authorityResult = Option.isSome(currentSandboxAuthority)
+              ? yield* currentSandboxAuthority.value.loadCurrentVerifiedV2()
+              : {
+                  _tag: "Unavailable" as const,
+                  failure: "SourceMissing" as const,
+                };
+            if (authorityResult._tag !== "Available")
+              return yield* Effect.fail(
+                projectionReadError({
+                  _tag: "SandboxPolicyCandidateAuthorityUnavailable",
+                  failure: authorityResult.failure,
+                }),
+              );
+            return yield* inTx(
+              Effect.gen(function* () {
+                const requirement = yield* requirementReadPort
+                  .findPendingByExecution({
+                    projectId: execution.projectId,
+                    workspaceId: execution.workspaceId,
+                    executionId: execution.executionId,
+                  })
+                  .pipe(Effect.mapError(projectionReadError));
+                if (
+                  Option.isNone(requirement) ||
+                  !sameSandboxPolicyRequirement(
+                    pendingRequirement.value,
+                    requirement.value,
+                  )
+                )
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxPolicyCandidateRequirementChanged",
+                    }),
+                  );
+                const currentExecution = yield* executions.findById(
+                  execution.executionId,
+                );
+                if (
+                  Option.isNone(currentExecution) ||
+                  currentExecution.value.state.status !== "Active"
+                )
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxPolicyCandidateExecutionUnavailable",
+                    }),
+                  );
+                const currentEpisode = executionEpisode(currentExecution.value);
+                const suppliedEpisode = executionEpisode(execution);
+                if (
+                  currentEpisode === undefined ||
+                  suppliedEpisode === undefined ||
+                  encodeExecutionEpisodeBinding(currentEpisode) !==
+                    encodeExecutionEpisodeBinding(suppliedEpisode)
+                )
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxPolicyCandidateExecutionChanged",
+                    }),
+                  );
+                const episodeRevision = yield* executions.findEpisodeRevision(
+                  execution.executionId,
+                );
+                if (
+                  Option.isNone(episodeRevision) ||
+                  episodeRevision.value !==
+                    requirement.value.expectedEpisodeRevision
+                )
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxPolicyCandidateEpisodeRevisionChanged",
+                    }),
+                  );
+                if (
+                  Option.isNone(sandboxPolicyStore) ||
+                  Option.isNone(sandboxPolicyCandidateBoundary)
+                )
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxPolicyCandidateReadPortUnavailable",
+                    }),
+                  );
+                const currentDecision =
+                  yield* sandboxPolicyStore.value.findCurrentForExecution(
+                    currentExecution.value.projectId,
+                    currentExecution.value.workspaceId,
+                    currentExecution.value.executionId,
+                  );
+                const boundary = yield* sandboxPolicyCandidateBoundary.value
+                  .readCurrentForWorkspace({
+                    projectId: currentExecution.value.projectId,
+                    workspaceId: currentExecution.value.workspaceId,
+                  })
+                  .pipe(Effect.mapError(projectionReadError));
+                const built = buildSandboxPolicyCandidateReadV2({
+                  reason: Option.isSome(currentDecision)
+                    ? "RefreshStaleCommittedPolicy"
+                    : "InitialDecision",
+                  execution: currentExecution.value,
+                  requirement: requirement.value,
+                  latestCommittedPolicyRevision: Option.isSome(currentDecision)
+                    ? currentDecision.value.decision.policyRevision
+                    : 0,
+                  expectedEpisodeRevision: episodeRevision.value,
+                  boundary,
+                  authority: authorityResult.snapshot,
+                  currentHost: authorityResult.currentHost,
+                });
+                if (built._tag !== "Ready")
+                  return yield* Effect.fail(projectionReadError(built));
+                return {
+                  ...(Option.isSome(currentDecision)
+                    ? {
+                        sandboxPolicy: {
+                          ...sandboxPolicyCommittedViewOf(
+                            currentDecision.value.result,
+                          ),
+                          status: "NeedsDecision" as const,
+                        },
+                      }
+                    : {}),
+                  sandboxPolicyCandidateRead: built.value,
+                };
+              }),
+            );
+          }
+          return yield* inTx(
+            Effect.gen(function* () {
+              if (
+                Option.isNone(sandboxPolicyStore) ||
+                Option.isNone(sandboxUnavailableStore)
+              ) {
+                return {};
+              }
+              const episode = executionEpisode(execution);
+              if (episode === undefined) return {};
+              const decision =
+                yield* sandboxPolicyStore.value.findCurrentForExecution(
+                  execution.projectId,
+                  execution.workspaceId,
+                  execution.executionId,
+                );
+              if (Option.isNone(decision)) return {};
+              const { decision: committed, result } = decision.value;
+              const snapshot = result.effectivePolicySnapshot;
+              if (
+                committed.projectId !== execution.projectId ||
+                committed.workspaceId !== execution.workspaceId ||
+                committed.executionId !== execution.executionId ||
+                encodeExecutionEpisodeBinding(committed.episodeBinding) !==
+                  encodeExecutionEpisodeBinding(episode) ||
+                snapshot.projectId !== execution.projectId ||
+                snapshot.workspaceId !== execution.workspaceId ||
+                snapshot.executionId !== execution.executionId ||
+                encodeExecutionEpisodeBinding(snapshot.episodeBinding) !==
+                  encodeExecutionEpisodeBinding(episode)
+              ) {
+                return yield* Effect.fail(
+                  projectionReadError({
+                    _tag: "SandboxProviderUnavailableDecisionMismatch",
+                  }),
+                );
+              }
+              const unavailable =
+                yield* sandboxUnavailableStore.value.findByExecutionAndRevision(
+                  execution.executionId,
+                  committed.policyRevision,
+                );
+              const exactUnavailable =
+                unavailable !== undefined &&
+                unavailable.projectId === execution.projectId &&
+                unavailable.workspaceId === execution.workspaceId &&
+                encodeExecutionEpisodeBinding(unavailable.episodeBinding) ===
+                  encodeExecutionEpisodeBinding(committed.episodeBinding) &&
+                unavailable.policyDigest === committed.policyDigest &&
+                snapshot.kind === "OsEnforced" &&
+                unavailable.profileId === snapshot.profile &&
+                unavailable.providerId === snapshot.providerId &&
+                unavailable.providerVersion === snapshot.providerVersion;
+              if (unavailable !== undefined && !exactUnavailable) {
+                return yield* Effect.fail(
+                  projectionReadError({
+                    _tag: "SandboxProviderUnavailableDecisionMismatch",
+                  }),
+                );
+              }
+              const now = yield* clock.now();
+              const committedView = sandboxPolicyCommittedViewOf(result);
+              if (
+                unavailable === undefined &&
+                Option.isSome(p4SandboxOutcomeReadPort)
+              ) {
+                const outcomes = yield* p4SandboxOutcomeReadPort.value
+                  .findUnavailableByExecutionAndRevision(
+                    execution.executionId,
+                    committed.policyRevision,
+                  )
+                  .pipe(Effect.mapError(projectionReadError));
+                const exactOutcome = outcomes.find(
+                  (candidate) =>
+                    snapshot.kind === "OsEnforced" &&
+                    candidate.policyRevision === committed.policyRevision &&
+                    candidate.policyDigest === committed.policyDigest &&
+                    candidate.profile === snapshot.profile &&
+                    candidate.providerId === snapshot.providerId &&
+                    candidate.providerVersion === snapshot.providerVersion &&
+                    String(snapshot.capabilityRevision) ===
+                      candidate.capabilityRevision,
+                );
+                if (
+                  outcomes.length > 1 ||
+                  (outcomes.length > 0 && exactOutcome === undefined)
+                ) {
+                  return yield* Effect.fail(
+                    projectionReadError({
+                      _tag: "SandboxProviderUnavailableDecisionMismatch",
+                    }),
+                  );
+                }
+                if (exactOutcome !== undefined) {
+                  return yield* Effect.fail({
+                    _tag: "SandboxProviderUnavailableProjection" as const,
+                    code: "sandbox/provider-unavailable" as const,
+                    category: "unavailable" as const,
+                    correlationId: null,
+                    retryDisposition: "retryable" as const,
+                    message:
+                      "required sandbox capability was unavailable or could not be verified; execution did not start" as const,
+                    safeDetails: {
+                      executionId: execution.executionId,
+                      workspaceId: execution.workspaceId,
+                      policyRevision: committed.policyRevision,
+                    },
+                  });
+                }
+              }
+              const workspace = yield* workspaces.findById(
+                execution.workspaceId,
+              );
+              if (Option.isNone(workspace)) return {};
+              const episodeRevisionRows = yield* sql.unsafe<{
+                readonly episode_revision: number;
+              }>(
+                "SELECT episode_revision FROM executions WHERE execution_id = ?",
+                [execution.executionId],
+              );
+              const expectedEpisodeRevision =
+                episodeRevisionRows[0]?.episode_revision;
+              if (
+                expectedEpisodeRevision === undefined ||
+                !Number.isSafeInteger(expectedEpisodeRevision) ||
+                expectedEpisodeRevision < 0
+              ) {
+                return yield* Effect.fail(
+                  projectionReadError({
+                    _tag: "SandboxProviderUnavailableDecisionMismatch",
+                  }),
+                );
+              }
+              const authoritySnapshot = sandboxAuthoritySnapshot;
+              const preconditions =
+                authoritySnapshot === undefined
+                  ? undefined
+                  : {
+                      kind:
+                        snapshot.kind === "OsEnforced"
+                          ? ("OsEnforced" as const)
+                          : ("TrustedLocalUnconfinedV1" as const),
+                      expectedEpisodeRevision,
+                      latestCommittedPolicyRevision: committed.policyRevision,
+                      episodeBinding: episode,
+                      workspaceRevision: workspace.value.revision,
+                      resourceBoundaryRevision:
+                        workspace.value.resourceBoundaryRevision,
+                      sandboxHandleBindingDigest:
+                        snapshot.sandboxHandleBindingDigest,
+                      authorityBundleRevision:
+                        authoritySnapshot.authorityBundleRevision,
+                      authorityBundleDigest:
+                        authoritySnapshot.authorityBundleDigest,
+                      operatorConfigRevision:
+                        authoritySnapshot.operatorConfigRevision,
+                      operatorConfigDigest:
+                        authoritySnapshot.operatorConfigDigest,
+                      ...(snapshot.kind === "OsEnforced"
+                        ? {
+                            providerRegistryRevision:
+                              authoritySnapshot.providerRegistryRevision,
+                            providerRegistryDigest:
+                              authoritySnapshot.providerRegistryDigest,
+                          }
+                        : {}),
+                    };
+              const sourceCurrent =
+                snapshot.workspaceRevision === workspace.value.revision &&
+                snapshot.resourceBoundaryRevision ===
+                  workspace.value.resourceBoundaryRevision &&
+                authoritySnapshot !== undefined &&
+                snapshot.authorityBundleRevision ===
+                  authoritySnapshot.authorityBundleRevision &&
+                snapshot.authorityBundleDigest ===
+                  authoritySnapshot.authorityBundleDigest &&
+                snapshot.operatorConfigRevision ===
+                  authoritySnapshot.operatorConfigRevision &&
+                snapshot.operatorConfigDigest ===
+                  authoritySnapshot.operatorConfigDigest &&
+                (snapshot.kind !== "OsEnforced" ||
+                  (snapshot.providerRegistryRevision ===
+                    authoritySnapshot.providerRegistryRevision &&
+                    snapshot.providerRegistryDigest ===
+                      authoritySnapshot.providerRegistryDigest));
+              if (!sourceCurrent || snapshot.expiresAt <= now) {
+                const pendingPolicyRequired =
+                  attentionProjection.listSandboxPolicyDecisionRequired ===
+                  undefined
+                    ? []
+                    : yield* attentionProjection.listSandboxPolicyDecisionRequired(
+                        execution.projectId,
+                        now,
+                      );
+                const hasPendingAction = pendingPolicyRequired.some(
+                  (pending) =>
+                    pending.executionId === execution.executionId &&
+                    pending.workspaceId === execution.workspaceId,
+                );
+                if (!hasPendingAction) return {};
+                return {
+                  sandboxPolicy: {
+                    ...committedView,
+                    status: "NeedsDecision" as const,
+                  },
+                  ...(preconditions === undefined
+                    ? {}
+                    : { sandboxPolicyPreconditions: preconditions }),
+                };
+              }
+              return {
+                sandboxPolicy: {
+                  ...committedView,
+                  status: exactUnavailable
+                    ? ("Unavailable" as const)
+                    : ("Committed" as const),
+                },
+                ...(preconditions === undefined
+                  ? {}
+                  : { sandboxPolicyPreconditions: preconditions }),
+              };
+            }),
+          );
+        }),
       listDependenciesByWorkspace,
       listUnconsumedInbox: (workspaceId) =>
         inTx(
@@ -290,8 +1578,10 @@ export const ProjectionQueryPortLive: Layer.Layer<
               summary: string;
               correlation_id: string | null;
               admitted_at: string;
+              revision: number;
+              updated_at: string;
             }>(
-              "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at FROM inbox_entries WHERE workspace_id = ? AND consumed_at IS NULL ORDER BY admitted_at",
+              "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at, revision, updated_at FROM inbox_entries WHERE workspace_id = ? AND consumed_at IS NULL ORDER BY admitted_at",
               [workspaceId],
             );
             return rows.map((row) => ({
@@ -301,9 +1591,19 @@ export const ProjectionQueryPortLive: Layer.Layer<
               summary: row.summary,
               correlationId: row.correlation_id ?? undefined,
               admittedAt: row.admitted_at,
+              revision: Number(row.revision),
+              updatedAt: row.updated_at,
             }));
           }),
         ),
+      listUnboundLegacyInbox: (workspaceId) =>
+        Option.isSome(retryVerificationOrigins)
+          ? inTx(
+              retryVerificationOrigins.value.listCurrentUnboundLegacyInbox(
+                workspaceId,
+              ),
+            )
+          : Effect.succeed([]),
       listVerificationsByWork: (workId) =>
         inTx(verifications.listByWork(workId)),
       listEvidenceByVerification: (verificationId) =>
@@ -331,6 +1631,91 @@ export const ProjectionQueryPortLive: Layer.Layer<
         inTx(evidence.listByVerification(verificationId as never)),
       findAcceptanceByWorkRevision: (workId, targetWorkRevision) =>
         inTx(acceptances.findByWorkRevision(workId, targetWorkRevision)),
+    };
+
+    const workDetail: WorkDetailDeps = {
+      findWork: (workId) => inTx(works.findById(workId)),
+      findAcceptanceByWorkRevision: (workId, revision) =>
+        inTx(acceptances.findByWorkRevision(workId, revision)),
+      findVerification: (verificationId) =>
+        inTx(verifications.findById(verificationId)),
+      ...(blockers === undefined
+        ? {}
+        : {
+            listWorkBlockersByWorkRevision: (
+              workId: WorkId,
+              revision: number,
+            ) =>
+              inTx(
+                blockers.listByWorkRevision(workId, revision as WorkRevision),
+              ),
+          }),
+      findExecutionSettlement: (executionId) =>
+        inTx(
+          Effect.map(executions.findById(executionId), (found) =>
+            Option.flatMap(found, (execution) =>
+              execution.state.status === "Settled"
+                ? Option.some(execution.state.settlement)
+                : Option.none(),
+            ),
+          ),
+        ),
+      findTerminalProviderFailure: (input) =>
+        inTxProjection(
+          readmissionGate
+            .hasBlockingSource({
+              projectId: input.projectId,
+              workspaceId: input.workspaceId,
+              workId: input.workId,
+              workRevision: input.workRevision as WorkRevision,
+            })
+            .pipe(
+              Effect.flatMap((found) => {
+                const terminal = Option.filter(
+                  found,
+                  (
+                    source,
+                  ): source is import("@arbor/ports").TerminalProviderFailureSource =>
+                    source.sourceKind === "TerminalProviderFailureSettlement",
+                );
+                if (Option.isNone(terminal)) {
+                  return Effect.succeed(Option.none());
+                }
+                return Effect.map(
+                  readTerminalFailureOccurrence(terminal.value),
+                  (occurredAt) =>
+                    Option.some({
+                      kind: "TerminalProviderFailure" as const,
+                      source: terminal.value,
+                      occurredAt,
+                    }),
+                );
+              }),
+              Effect.catch((error) =>
+                isReadmissionGateIntegrityFailure(error)
+                  ? Effect.map(
+                      proveTerminalProviderFailureIntegrity(
+                        {
+                          projectId: input.projectId,
+                          workspaceId: input.workspaceId,
+                          workId: input.workId,
+                          workRevision: input.workRevision as WorkRevision,
+                        },
+                        error,
+                      ),
+                      (fact) =>
+                        Option.some({
+                          kind: "TerminalProviderFailureIntegrity" as const,
+                          workId: fact.workId,
+                          workRevision: fact.workRevision,
+                          occurredAt: fact.occurredAt,
+                          failureCode: fact.failureCode,
+                        }),
+                    )
+                  : Effect.fail(error),
+              ),
+            ),
+        ),
     };
 
     const dependencyView: DependencyViewDeps = {
@@ -362,16 +1747,26 @@ export const ProjectionQueryPortLive: Layer.Layer<
       conversationTurns: (workspaceId) =>
         inTx(
           Effect.gen(function* () {
-            const rows = yield* sql.unsafe<{
-              message_id: string;
-              body_ref: string;
-              created_at: string;
-              state: string;
-              claimed_by_execution_id: string | null;
-              settled_at: string | null;
-              response_body: string | null;
-            }>(
-              "SELECT message_id, body_ref, created_at, state, claimed_by_execution_id, settled_at, response_body FROM human_messages WHERE root_workspace_id = ? ORDER BY created_at ASC, message_id ASC",
+            const rows = yield* sql.unsafe<
+              ConversationJobViewRow & {
+                message_id: string;
+                body_ref: string;
+                created_at: string;
+                response_body: string | null;
+                response_updated_at: string | null;
+              }
+            >(
+              `SELECT hm.message_id, hm.body_ref, hm.created_at,
+                 job.state AS job_state, job.revision AS job_revision,
+                 job.active_execution_id, job.next_attempt_no,
+                 job.next_eligible_at, job.attention_reason,
+                 job.response_execution_id, job.response_body,
+                 job.updated_at AS response_updated_at
+               FROM human_messages hm
+               LEFT JOIN conversation_response_jobs job
+                 ON job.message_id = hm.message_id
+               WHERE hm.root_workspace_id = ?
+               ORDER BY hm.created_at ASC, hm.message_id ASC`,
               [workspaceId],
             );
             const turns: Array<{
@@ -380,24 +1775,27 @@ export const ProjectionQueryPortLive: Layer.Layer<
               executionId?: string;
               body: string;
               occurredAt: string;
+              responseStatus?: ConversationResponseStatus;
             }> = [];
             for (const row of rows) {
+              const responseStatus = responseStatusOf(row);
               turns.push({
                 kind: "HumanConversationTurn",
                 messageId: row.message_id,
                 body: row.body_ref,
                 occurredAt: row.created_at,
+                ...(responseStatus === undefined ? {} : { responseStatus }),
               });
               if (
-                row.state === "Answered" &&
-                row.settled_at !== null &&
+                row.job_state === "Answered" &&
+                row.response_updated_at !== null &&
                 row.response_body !== null
               ) {
                 turns.push({
                   kind: "AssistantConversationTurn",
-                  executionId: row.claimed_by_execution_id ?? "",
+                  executionId: row.response_execution_id ?? "",
                   body: row.response_body,
-                  occurredAt: row.settled_at,
+                  occurredAt: row.response_updated_at,
                   messageId: row.message_id,
                 });
               }
@@ -446,18 +1844,19 @@ export const ProjectionQueryPortLive: Layer.Layer<
                  WHERE root_workspace_id = ?
                  UNION ALL
                  SELECT
-                   message_id,
-                   claimed_by_execution_id AS execution_id,
+                   hm.message_id,
+                   job.response_execution_id AS execution_id,
                    'assistant' AS turn_kind,
                    1 AS turn_order,
-                   response_body AS body,
-                   settled_at AS occurred_at
-                 FROM human_messages
-                 WHERE root_workspace_id = ?
-                   AND state = 'Answered'
-                   AND claimed_by_execution_id IS NOT NULL
-                   AND settled_at IS NOT NULL
-                   AND response_body IS NOT NULL
+                   job.response_body AS body,
+                   job.updated_at AS occurred_at
+                 FROM human_messages hm
+                 JOIN conversation_response_jobs job
+                   ON job.message_id = hm.message_id
+                 WHERE hm.root_workspace_id = ?
+                   AND job.state = 'Answered'
+                   AND job.response_execution_id IS NOT NULL
+                   AND job.response_body IS NOT NULL
                )
                SELECT
                  message_id,
@@ -475,22 +1874,43 @@ export const ProjectionQueryPortLive: Layer.Layer<
             const hasMore = rows.length > limit;
             const pageRows = rows.slice(0, limit);
             const oldest = pageRows[pageRows.length - 1];
-            const turns = pageRows.reverse().map((row) =>
-              row.turn_kind === "human"
-                ? {
-                    kind: "HumanConversationTurn" as const,
-                    messageId: row.message_id,
-                    body: row.body,
-                    occurredAt: row.occurred_at,
-                  }
-                : {
-                    kind: "AssistantConversationTurn" as const,
-                    executionId: row.execution_id ?? "",
-                    body: row.body,
-                    occurredAt: row.occurred_at,
-                    messageId: row.message_id,
-                  },
+            const messageIds = [
+              ...new Set(pageRows.map((row) => row.message_id)),
+            ];
+            const jobRows =
+              messageIds.length === 0
+                ? []
+                : yield* sql.unsafe<ConversationJobViewRow>(
+                    `SELECT message_id, state AS job_state,
+                       revision AS job_revision, active_execution_id,
+                       next_attempt_no, next_eligible_at, attention_reason,
+                       response_execution_id
+                     FROM conversation_response_jobs
+                     WHERE message_id IN (${messageIds.map(() => "?").join(",")})`,
+                    messageIds,
+                  );
+            const statusByMessage = new Map(
+              jobRows.map((row) => [row.message_id, responseStatusOf(row)]),
             );
+            const turns = pageRows.reverse().map((row) => {
+              if (row.turn_kind === "human") {
+                const responseStatus = statusByMessage.get(row.message_id);
+                return {
+                  kind: "HumanConversationTurn" as const,
+                  messageId: row.message_id,
+                  body: row.body,
+                  occurredAt: row.occurred_at,
+                  ...(responseStatus === undefined ? {} : { responseStatus }),
+                };
+              }
+              return {
+                kind: "AssistantConversationTurn" as const,
+                executionId: row.execution_id ?? "",
+                body: row.body,
+                occurredAt: row.occurred_at,
+                messageId: row.message_id,
+              };
+            });
             const oldestCursor: ConversationHistoryCursor | undefined =
               hasMore && oldest !== undefined
                 ? {
@@ -539,8 +1959,102 @@ export const ProjectionQueryPortLive: Layer.Layer<
 
     const inboxView: InboxViewDeps = {
       listUnconsumedInbox: workspaceDetail.listUnconsumedInbox,
+      listUnboundLegacyInbox:
+        workspaceDetail.listUnboundLegacyInbox ?? (() => Effect.succeed([])),
       journalLastSequence,
       projectIdOfWorkspace,
+      findExecutableApproval: (approvalId) =>
+        inTx(executableApprovals.findById(approvalId)),
+      findToolDefinitionHash: (approval) =>
+        inTx(
+          Effect.gen(function* () {
+            const identity = {
+              executionId: approval.executionId,
+              logicalStepNo: approval.logicalStepNo,
+              repairAttempt: approval.repairAttempt,
+            };
+            const stepOption = yield* agentLoopSteps.find(identity);
+            if (Option.isNone(stepOption)) return Option.none();
+            const step = stepOption.value;
+            if (
+              step.state !== "ActionsInProgress" ||
+              step.manifestId === undefined
+            ) {
+              return Option.none();
+            }
+            const actions = yield* agentLoopSteps.listActions(identity);
+            const matchingActions = actions.filter(
+              (action) => action.actionIndex === approval.actionIndex,
+            );
+            if (
+              matchingActions.length !== 1 ||
+              matchingActions[0] === undefined
+            ) {
+              return Option.none();
+            }
+            const action = matchingActions[0];
+            if (
+              action.state !== "Pending" ||
+              action.routeKind !== "Executable" ||
+              action.logicalActionId !== approval.logicalActionId ||
+              action.callRef !== approval.callRef ||
+              action.actionKind !== approval.toolName ||
+              action.inputHash !== sha256Hex(approval.argumentsJson)
+            ) {
+              return Option.none();
+            }
+            const manifestRecord = yield* providerTurns.findManifestByTurn(
+              step.providerTurnId,
+            );
+            if (
+              manifestRecord === null ||
+              manifestRecord.manifestId !== step.manifestId
+            ) {
+              return Option.none();
+            }
+            const hash = approvedToolHashFromManifest({
+              manifestJson: manifestRecord.manifestJson,
+              providerTurnId: step.providerTurnId,
+              executionId: approval.executionId,
+              logicalStepNo: approval.logicalStepNo,
+              repairAttempt: approval.repairAttempt,
+              toolName: approval.toolName,
+              toolVersion: approval.toolVersion,
+            });
+            return hash === null ? Option.none() : Option.some(hash);
+          }),
+        ),
+      resolveToolDefinition: (
+        projectId,
+        toolName,
+        toolVersion,
+        toolDefinitionHash,
+      ) =>
+        Effect.gen(function* () {
+          // ToolCatalogPort is composed for this application's project (or
+          // builtins only when unconfigured). Never disclose project-scoped
+          // tool metadata for a different Workspace project.
+          if (
+            catalogProjectId !== undefined &&
+            projectId !== catalogProjectId
+          ) {
+            return Option.none();
+          }
+          const refs = yield* toolCatalog.visibleRefs();
+          const matches = refs.filter(
+            (ref) =>
+              ref.name === toolName &&
+              ref.version === toolVersion &&
+              ref.hash === toolDefinitionHash,
+          );
+          if (matches.length !== 1 || matches[0] === undefined) {
+            return Option.none();
+          }
+          const definition = yield* toolCatalog
+            .resolveForModel(matches[0])
+            .pipe(Effect.mapError(projectionReadError));
+          return Option.some(definition);
+        }),
     };
 
     const effectiveFacts: EffectiveFactsDeps = {
@@ -565,8 +2079,10 @@ export const ProjectionQueryPortLive: Layer.Layer<
             correlation_id: string | null;
             admitted_at: string;
             consumed_at: string | null;
+            revision: number;
+            updated_at: string;
           }>(
-            "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at FROM inbox_entries WHERE workspace_id = ? ORDER BY admitted_at, entry_key",
+            "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at, revision, updated_at FROM inbox_entries WHERE workspace_id = ? ORDER BY admitted_at, entry_key",
             [workspaceId],
           );
           return rows.map(
@@ -614,6 +2130,7 @@ export const ProjectionQueryPortLive: Layer.Layer<
       tree,
       attention,
       workspaceDetail,
+      workDetail,
       currentWork,
       verification: verificationView,
       dependency: dependencyView,
@@ -625,5 +2142,13 @@ export const ProjectionQueryPortLive: Layer.Layer<
     };
 
     return ProjectionQueryPort.of(makeProjectionQueryService(deps));
-  }),
-);
+  });
+
+export const ProjectionQueryPortLive = (
+  catalogProjectId?: ProjectId,
+  sandboxAuthoritySnapshot?: SandboxPolicyAuthoritySnapshotV2,
+): Layer.Layer<ProjectionQueryPort, never, ProjectionQueryWiringServices> =>
+  Layer.effect(
+    ProjectionQueryPort,
+    projectionQueryService(catalogProjectId, sandboxAuthoritySnapshot),
+  );

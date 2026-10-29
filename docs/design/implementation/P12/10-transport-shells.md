@@ -1,7 +1,13 @@
 # P12 — 10 Transport Shells (v1.13 G6)
 
-**Authority:** DID v1.14 §10.1/§10.4.1/§10.5, v1.13 G6; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger); SD v1.3 §12, §13.9/§13.10.
-**Status:** DRAFT.
+**Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.36 §4.1C, v1.39 EA-DG-01, v1.13 G6; SD v1.14 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox transport addendum accepted under `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`.
+
+**敏感读取边界修订（2026-10-10，P12-SRA-01）：** accepted governance
+candidate SHA-256
+`90BCB4224D501FA10D949D386DE4B2C667F4256FECDC0D61E29C6836B552F89B`。
+具体认证与读取准入合同见 §3 / §3.1；该修订不改变命令授权、Resolver 或
+Gateway receipt 顺序。
 
 ## 1. Boundary (frozen)
 
@@ -24,7 +30,8 @@ The planes share no authority capability and must not be conflated.
 ## 2. Surfaces
 
 ```text
-HTTP/WS : bind api-contracts DTOs (views + Problem); forward Commands
+HTTP/WS : bind api-contracts DTOs (views + Problem); forward Commands;
+          bind the path-free host resource catalog (FT-DG-01 §9)
 CLI     : admin/ops surface (see `04` health, `05` assessment, `06` worker)
 web shell: renders api-contracts DTOs
 Search  : OUT-OF-v1 deferral (P10 `01` §1/§4) — Search view semantics remain
@@ -38,6 +45,13 @@ daemons : recovery pass driver (`P9/00`), verification/completion consumer loops
 
 - `api-contracts` is the transport-neutral surface P12 binds to (P10 `05` §3).
 - Error presentation uses the frozen `Problem` DTO (DID §10.5).
+- EA-DG-01 `ResolveExecutableApproval` is forwarded through the same
+  authenticated strict external command path. The shell supplies no authority
+  facts and cannot construct a P4 approval binding; P12 authenticates first,
+  invokes the pure resolver, then forwards the typed decision to P1/Gateway.
+  Missing/foreign targets use the same safe not-found response. P10's typed
+  Executable Inbox target is rendered as view data and is never accepted back
+  as an authority payload. `eap:`/`cap:` routing remains strict and distinct.
 - **Search (F9) is an explicit out-of-v1 deferral, not an implemented surface.**
   The view semantics are owned upstream of P12 (P10) and are **unfrozen**; P12
   does not implement, wire, or expose a Search surface. If/when P10 freezes a
@@ -48,12 +62,104 @@ daemons : recovery pass driver (`P9/00`), verification/completion consumer loops
 ## 3. Authentication → Authority Resolver
 
 - External human/parent requests are authenticated at the transport boundary.
+
+P8 `RetryVerification` uses only the existing authenticated `/commands`
+external envelope. The shell supplies authenticated actor and stable
+CommandId; strict payload fields include exact Work, Verification, expected
+Work revision and bounded summary content, never a BlobRef or authority.
+For a historical exact retry, Application/Composition may load the immutable
+P8 `retry_verification_origins` fact by candidate CommandId into declared
+Resolver input; this is not a CommandStore/receipt read. Resolver still
+re-evaluates current actor/project/source visibility and exact current human
+governance: Root-local human for Root Work or the authenticated human of the
+exact current direct Parent Workspace for child Work. Revoked authority,
+changed owner, foreign principal, or changed source scope is a generic deny
+before Gateway. The P8 handler still revalidates the original open source on
+first execution; replay-only authority never reaches that handler. Gateway
+remains the sole receipt lookup and compares the complete tuple in its
+transaction. The action is unavailable to Agent/model, RecoveryController,
+scheduler, or Attention-consumer paths.
+
+The P6 `UnboundLegacy` Governance Inbox entry remains on the existing
+authenticated Inbox-view surface; no route or authentication exception is
+added. Its displayed Workspace is a current route projection, not authority.
+Before returning the entry, the existing view authorization must allow the
+current Root-local or exact direct-Parent human for the canonical Work route;
+P6/P12 must not authorize from a stale `inbox_entries.workspace_id` alone.
+Reads do not consume the entry or access/decode a Command receipt.
+- For sensitive read surfaces, transport authentication and the existing
+  supported local-principal check (`user:local`) MUST complete before any
+  projection, directory, progress-stream source, or invalidation broadcast is
+  touched. This includes HTTP `GET /projects`, supported HTTP
+  `POST /views/:view`, and HTTP/SSE `GET /conversation-progress/:messageId`.
+  Missing/invalid credentials and unsupported principals fail closed without
+  returning view, Project/Workspace identifiers, canonical paths, or progress
+  events. The read boundary does not infer permission from command authority.
+- A non-loopback HTTP listener without a configured authenticator MUST fail
+  closed for these sensitive reads. The default no-auth loopback listener
+  retains the local single-user principal behavior. The same distinction
+  applies at `/ws`: reject a non-loopback/no-auth upgrade before accepting
+  the connection; on a configured-auth listener, do not query or admit a
+  socket to invalidation broadcast until an authenticated first `view` frame
+  proves `user:local`. A no-auth loopback WebSocket retains local behavior.
+- Only HTTP `POST /views/:view` is a supported view method. Any other method
+  MUST fail without invoking ProjectionQueryPort; authentication for a
+  supported view completes before body decoding and projection access. Existing
+  `/project-resources` protection remains stricter and path-free. Public
+  static Web assets and the local CLI admin/ops face are outside this remote
+  sensitive-read rule.
+- The v1 read surface remains single-user. Project/Workspace visibility for
+  multiple authenticated principals is **OPEN** and requires separate
+  authorization semantics; this rule does not create tenant isolation. An
+  authorized local Workspace Detail may continue to render its frozen
+  `ResourceBoundary`, including canonical host paths; this does not widen
+  F21's path-free resource catalog/selector contract.
+- Authentication completes before command-body decoding. The HTTP, WebSocket,
+  CLI, and future external shells pass the same bounded raw JSON envelope,
+  authenticated `Principal`, submission context, and correlation information
+  into Application/Composition; they do not cast JSON to
+  `ExternalCommandEnvelope` or perform receipt reads.
+- Application/Composition applies the single registered strict external
+  wire-v1 codec, derives the Handler schema/fingerprint, binds declared Actor
+  exactly to the authenticated Principal, and only then calls the P12 Resolver.
+  The wire contains no caller-supplied version field. These gates precede
+  CommandGateway receipt visibility; the Gateway retains its own in-transaction
+  receipt-first replay and final authority check (DID §4.1B; P1 `01` §3,
+  `03` §3.1).
+- Codec failures use the DID §4.1B non-reflecting `InvalidCommandPayload`
+  Problem, mapped to HTTP 400 for malformed/unsupported input. Rejected values,
+  unknown property names, raw body fragments, and untrusted exception text are
+  not reflected in responses or surfaced diagnostics.
 - The authenticated principal + submission context feed the Authority Resolver (`02`),
   which produces the trusted authority fact; transport never asserts authority.
 - **Composition root — not the transport — loads `canonicalFacts` / `grants` and invokes
   the resolver** (`02` §2). The transport hands over only the authenticated principal and
   the raw submission context; it holds no resolver capability and cannot synthesize facts.
 - External Stop / external `AdmitExecution` follow `02` §4.
+
+### 3.1 Authenticated WebSocket view and invalidation admission
+
+- The existing client→server frame kinds remain `view` and `command`; no
+  authentication URL parameter or new frame kind is introduced. The existing
+  `WebSocketFrame.token?` carries the same opaque credential accepted by the
+  configured `Authenticator` (including a configured Basic credential).
+- On an authenticated listener, the first ordinary `view` frame is the
+  authentication proof and a normal view request. The server validates the
+  credential and requires `user:local` before invoking ProjectionQueryPort
+  and before adding that socket to the server→client invalidation fanout. A
+  missing, invalid, or unsupported-principal proof returns no view DTO or
+  invalidation and closes the connection. Credentials MUST NOT be put in the
+  WebSocket URL or query string.
+- The browser holds its credential in session memory and sends it in that
+  first `view` frame. The returned DTO follows the normal view response path;
+  later invalidation frames retain P13 `05` TR-W1's payload-free shape. The
+  client MUST NOT claim the authenticated real-time channel is fresh before
+  the first authenticated view response succeeds. A `command` frame retains
+  its existing command-auth path and alone does not authorize view
+  subscription.
+- The no-auth loopback exception is the local single-user form: it may admit
+  the socket locally without a credential. It does not apply to wildcard or
+  other non-loopback listeners.
 
 ## 4. Remote-worker transport is not a human shell (RG-16)
 
@@ -78,6 +184,9 @@ human/parent ⇄ shells         : owned here — resolver-gated; no canonical wr
 production daemon                     : the long-running composition process (P8 `00` defers it)
 recovery daemon / composition surface : startup recovery pass driver + periodic/event sweeps
                                         (P9 `00` "Explicitly out of P9")
+F21 resource activation recovery       : post-commit + startup source reconciliation for all
+                                        activation intents, then Pending scan via P11
+                                        same-boundary activation service
 consumer-loop daemon wiring           : verification + completion chain consumers are
                                         offset-driven; single-command-face preserved
                                         (`P8.result.md` Notes for downstream phases)
@@ -118,4 +227,169 @@ no transport path writes canonical state directly
 human shell carries no worker identity; worker transport carries no human authority
 worker transport is owned by `06`; its wire contract is domain/ports-level (no application types)
 recovery/consumer daemons run from composition root; offsets drive consumer loops
+Sensitive reads (`/projects`, supported `/views`, conversation-progress SSE,
+and WS view/invalidation subscription) authenticate before reading or fanout;
+non-loopback/no-auth fails closed; loopback/no-auth preserves local single-user behavior
+Configured-auth reads admit only `user:local`; multi-principal visibility remains open
 ```
+
+## Accepted Native OS Sandbox transport addendum
+
+The existing authenticated `/commands` route transports human-originated
+`DecideSandboxPolicy` unchanged through Application and CommandGateway and
+returns its ordinary receipt/result. The existing `/views` route renders
+P10's `WorkspaceDetail.executionSummary.sandboxPolicy` projection and
+`SandboxProviderUnavailable` Attention row using the existing DTOs. The
+existing Problem DTO maps provider-unavailable to HTTP 503 and stable code
+`sandbox/provider-unavailable` with safe bounded detail. HTTP, WS, CLI and Web
+bind the same P10-owned profile/config/status/unavailable contracts.
+
+This addendum adds no authentication mode, Principal/Actor binding, Resolver
+or authorization endpoint, server-side Grant writer, request-derived
+authority, or direct store/event write. Model inputs cannot select or submit a
+trusted human policy. P12/10 preserves all existing resolver-before-receipt
+and Gateway command semantics; it only forwards and presents.
+
+
+## V21 transport binding
+
+P12 transports the existing POST /views/workspace-detail request/response.
+The exact provider-unavailable transient Problem is the full existing Problem
+DTO: correlationId from request/transport or null, code
+sandbox/provider-unavailable, category unavailable, fixed safe message,
+retryDisposition retryable and safeDetails containing only executionId,
+workspaceId and policyRevision. It applies only to the exact current terminal
+P4 provider-unavailable outcome before matching P9 fact/queue commit; after
+P9 atomic commit status is HTTP 200 with Unavailable/Attention. Ordinary lag,
+policy-required NeedsDecision, authorization rejection and stale command are
+not this 503. P12 adds no route, Problem category or response fields. P13/Web
+must not auto-retry; only WS invalidation or explicit manual refetch.
+
+## 9. Host Project Resource Profile catalog (FT-DG-01 functional scope)
+
+P12 host configuration supplies the Profile catalog consumed by the P1
+ProjectResourceProfilePort. In the first single-root implementation,
+ARBOR_PROJECT_ROOT is the configured directory; host configuration also
+supplies the stable opaque resourceProfileRef, ResourceProfileVersion and a
+path-free displayName for that entry. At process startup, the composition
+adapter validates the directory, resolves its canonical real FileTree
+address, and freezes an immutable snapshot for command handling. The same host
+configuration must produce the same ref/version across restart; changing
+canonical path or scope requires a new configured version. A Profile is not a
+capability and does not replace Authority Resolver decisions.
+
+The local web shell exposes an authenticated GET /project-resources catalog
+endpoint for the bootstrap form. Its response contains only opaque ref,
+version, host-configured friendly display name and availability; the name must
+not be derived from the path. It MUST NOT return canonical paths,
+environment-variable values, filesystem errors or raw exception text.
+The first implementation is limited to the existing local single-user
+principal model. A multi-principal host requires a separate catalog visibility
+contract before sharing resource entries.
+
+The transport body is:
+
+~~~ts
+{
+  profiles: ReadonlyArray<{
+    resourceProfileRef: string;
+    version: string;
+    displayName: string;
+    available: boolean;
+  }>;
+  conversationOnlySupported: true;
+}
+~~~
+
+An empty profile array is valid and still advertises ConversationOnly. This is a
+bootstrap catalog, not a Project-scoped P10 View and not an authorization fact.
+
+This route is not a P10 view and does not create a new command. CreateProject
+continues through the shared POST /commands path. HTTP, WebSocket and CLI
+submissions keep DID v1.34/v1.35 authentication → strict wire-v1 decode →
+Actor binding → Resolver → Gateway receipt order. The transport never reads a
+receipt or resolves a filesystem path. The immutable Profile adapter's pure
+lookup occurs only in the P1 CreateProject handler after the Gateway has
+proved no receipt exists.
+
+After Project/Workspace/Session commit, ownership activation reads the
+canonical boundary back from the persisted root Workspace and invokes the
+existing ownership/environment ports. A path disappearance or canonical
+region change fails closed without selecting a replacement Profile. This is
+post-commit convergence of the exact CreateProject fact, not a new resource
+mutation route.
+
+### FT-DG-01 OPEN-3 startup activation recovery
+
+After the ordered SQLite migrations and the existing P2/P12 startup recovery
+pass, the production composition lists P1 activation intents and calls the P10
+source reconciler once per affected Project **before** attempting Pending
+activations. This includes Active intents, so a crash after P11 commits Active
+but before its P10 cleanup cannot leave a stale Pending row. It then scans
+`WorkspaceResourceActivationIntent(Pending)` rows. For each row it reads the
+current persisted Workspace and delegates to the P11
+`activatePendingWorkspaceResource` operation. P11 verifies the pinned
+boundary revision and resolves that persisted canonical boundary; P12 never
+submits a path, queries the current Profile registry for a replacement, or
+reads a CommandReceipt outside the Gateway. The scan is a startup recovery
+source, not a public view or new command.
+
+An unavailable path or other operational activation failure leaves the intent
+Pending and does not undo the Committed command; the startup pass continues to
+other intents and readiness/recovery orchestration remains able to run. P12
+reconciles that Project's path-free Attention source after every activation
+attempt, successful or failed. The P1 status event may also wake P10's generic
+consumer, but P10 rereads current intent state; P12's direct reconciliation
+does not call generic rebuild or read/reset/advance the shared P1 consumer
+offset. P12 does not write Attention rows itself.
+
+The post-commit CreateProject composition uses the same order: after Gateway
+returns Committed, it attempts P11 activation from the persisted Workspace
+boundary, then invokes the P10 source reconciler before returning the ordinary
+success or post-commit convergence failure. A process crash before that call
+is repaired by the startup reconcile above.
+
+This release has no periodic retry loop. If the same canonical path is
+restored while the daemon remains running, retry requires an exact current-v2
+CreateProject replay after Gateway tuple validation or a daemon restart. Both
+routes use only the persisted Workspace boundary. If the boundary's pinned
+revision no longer matches, recovery fails closed and leaves the old intent
+visible; only a separately authorized ownership/boundary operation may define
+what supersedes it. A permanently unavailable path remains Pending and
+visible. No automatic Profile fallback, rebind, or browser free-path repair is
+provided.
+
+The additive intent migration does not backfill pre-intent records. A
+pre-migration committed v2 CreateProject with no activation intent is not
+treated as a startup work item by guessing from a non-empty boundary or a
+missing claim; its existing exact-v2 post-commit replay behavior remains the
+only retry path, and continuing failure remains outside this automatic
+Attention guarantee. Historical v1 rows remain preserve-only and are never
+replayed or backfilled under this contract.
+
+## Accepted P37 DeliverReplay deployment profile wiring (DID v1.43)
+
+The v5+v6 fixed package hashes, B0 independent review and acceptance are in
+`planning/results/AH10-deliver-event-pruning-v6-governance-acceptance-and-landing.md`.
+The P12 host pins the accepted `DeliverReplayCapacityProfile` identity and
+runtime values—poll interval/lease TTL, outbox/event batch sizes, and deterministic
+base/max/exponent retry backoff—as deployment configuration consumed by the
+P10 dispatcher. The profile ID/revision in measured evidence must match this
+active configuration. Metrics do not feed back into dispatcher or authority
+decisions. The global SQLite lease and due-Project attempt ordering remain
+P1/P10 contracts; this transport/deployment document adds no HTTP, WebSocket,
+CLI, auth, readiness or transport route semantics. A lease TTL does not
+preempt a process holding SQLite's writer lock; deployment qualification uses
+the measured lock-hold/writer-wait limits from P12 `05`/`13`.
+
+## Accepted Option A command transport reference (2026-10-20)
+
+The existing authenticated `/commands` route forwards the P1/01 current
+OsEnforced request including the explicit `providerVersion` and
+`capabilityRevision` fields. The external codec remains its existing v1
+envelope; the internal CommandEnvelope uses the current registered
+DecideSandboxPolicy handler schema, with prior schema-1 handling restricted
+to the P1 exact stored-receipt replay path. P12 adds no request-derived host,
+evidence or authority fields, no route, and no transport-side selection or
+defaulting. The accepted source is proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.

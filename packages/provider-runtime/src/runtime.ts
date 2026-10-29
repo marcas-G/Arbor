@@ -6,6 +6,7 @@ import {
   IdGenerator,
   PROVIDER_FAILURE_KINDS,
   type ProviderAttemptObservation,
+  type ProviderAttemptSummary,
   type ProviderCancellationSignal,
   type ProviderContinuationCheckpoint,
   type ProviderExecutionContext,
@@ -20,7 +21,10 @@ import {
   type ProviderRuntimeService,
   ProviderTurnStore,
   providerRetryCauseFromAttempt,
+  RuntimeClock,
+  type RuntimeClockService,
   SecretStorePort,
+  sha256Hex,
   type TransactionOperationalFailure,
   TransactionPort,
   UNKNOWN_USAGE,
@@ -58,6 +62,40 @@ export interface ProviderRuntimeConfig {
     readonly adapterId: string;
     readonly bindingFingerprint: string;
   };
+  /** Explicit process-local crash qualification seam. Production Composition
+   * leaves it absent; it is never sourced from a request or env var. */
+  readonly qualificationProbe?: (
+    event:
+      | {
+          readonly boundary:
+            | "AH12BeforeSuccessCommit"
+            | "AH12AfterSuccessCommit";
+          readonly providerTurnId: string;
+          readonly attemptNo: number;
+        }
+      | {
+          readonly boundary:
+            | "AH18BeforeSummaryTurnCommit"
+            | "AH18AfterSummaryTurnCommit";
+          readonly providerTurnId: string;
+          readonly executionId: string;
+        }
+      | {
+          readonly boundary: "AH18AfterSummaryRetryableFailureCommit";
+          readonly providerTurnId: string;
+          readonly executionId: string;
+          readonly attemptNo: number;
+          readonly failureKind: ProviderFailure["kind"];
+        }
+      | {
+          readonly boundary:
+            | "RAI-DG02BeforeFinalAttemptSettlementCommit"
+            | "RAI-DG02AfterFinalAttemptSettlementCommit";
+          readonly providerTurnId: string;
+          readonly attemptNo: number;
+          readonly failureKind: ProviderFailure["kind"];
+        },
+  ) => Promise<void>;
 }
 
 type AttemptResult =
@@ -169,6 +207,137 @@ const isCanonicalProviderEvent = (
       );
     default:
       return false;
+  }
+};
+
+interface CompleteNativeSuccessEvidence {
+  readonly attemptNo: number;
+  readonly observation: ProviderAttemptObservation;
+  readonly canonicalEventPrefixJson: string;
+  readonly deliveredPosition: number;
+  readonly events: ReadonlyArray<CanonicalProviderEvent>;
+  readonly finishReason: "Stop";
+  readonly usageJson: string;
+}
+
+const completeNativeSuccessEvidence = (
+  entry: UnsettledProviderTurn,
+  input: ProviderRunInput,
+  continuationBinding: ProviderRuntimeConfig["continuationBinding"],
+): CompleteNativeSuccessEvidence | null => {
+  const attempt: ProviderAttemptSummary | undefined = entry.attempts.at(-1);
+  if (
+    attempt === undefined ||
+    attempt.outcome !== "InProgress" ||
+    attempt.observation === undefined ||
+    attempt.observation === null ||
+    attempt.canonicalEventPrefixJson === undefined ||
+    attempt.deliveredPosition !== 0 ||
+    (attempt.continuationCheckpoint !== null &&
+      attempt.continuationCheckpoint !== undefined) ||
+    attempt.observation.responseStarted !== true ||
+    attempt.observation.canonicalEventEmitted !== true ||
+    attempt.observation.consumerVisibleOutput !== false ||
+    attempt.observation.toolCallProposed !== false ||
+    attempt.observation.continuationAvailable !== true ||
+    attempt.observation.externalEffectPossible !== false ||
+    continuationBinding === undefined ||
+    entry.manifestJson === null ||
+    entry.portableRequestJson === null ||
+    input.request.requestVersion !== 2 ||
+    input.request.operationKind !== "CompactionNative" ||
+    input.outputContractRef !== "provider-native-compaction-v1"
+  ) {
+    return null;
+  }
+  try {
+    const manifest = JSON.parse(entry.manifestJson) as unknown;
+    const request = JSON.parse(entry.portableRequestJson) as unknown;
+    const parsedEvents = JSON.parse(
+      attempt.canonicalEventPrefixJson,
+    ) as unknown;
+    if (
+      !isRecord(manifest) ||
+      !isRecord(request) ||
+      !Array.isArray(parsedEvents) ||
+      !parsedEvents.every(isCanonicalProviderEvent)
+    ) {
+      return null;
+    }
+    const events = parsedEvents as ReadonlyArray<CanonicalProviderEvent>;
+    const starts = events.filter((event) => event._tag === "TurnStarted");
+    const completed = events.filter((event) => event._tag === "TurnCompleted");
+    const continuations = events.filter(
+      (event) => event._tag === "ContinuationState",
+    );
+    const usageEvents = events.filter(
+      (event) => event._tag === "UsageReported",
+    );
+    const usageEvent = usageEvents[0];
+    if (
+      entry.turn.providerTurnId !== input.providerTurnId ||
+      entry.turn.executionId !== input.executionId ||
+      entry.turn.sessionId !== input.sessionId ||
+      entry.turn.contextEpoch !== input.contextEpoch ||
+      entry.turn.modelRef !== input.modelRef ||
+      entry.turn.outputContractRef !== "provider-native-compaction-v1" ||
+      manifest.providerTurnId !== input.providerTurnId ||
+      manifest.executionId !== input.executionId ||
+      manifest.sessionId !== input.sessionId ||
+      manifest.contextEpoch !== input.contextEpoch ||
+      manifest.modelRef !== input.modelRef ||
+      manifest.outputContractRef !== "provider-native-compaction-v1" ||
+      manifest.operationKind !== "CompactionNative" ||
+      manifest.resolvedModelBindingFingerprint !==
+        continuationBinding.bindingFingerprint ||
+      manifest.compiledRequestHash !== sha256Hex(entry.portableRequestJson) ||
+      request.requestVersion !== 2 ||
+      request.operationKind !== "CompactionNative" ||
+      request.modelRef !== input.modelRef ||
+      request.outputContractRef !== "provider-native-compaction-v1" ||
+      !Array.isArray(request.inputItems) ||
+      !Array.isArray(request.instructions) ||
+      !Array.isArray(request.toolDefinitions) ||
+      !Array.isArray(request.cacheHints) ||
+      starts.length !== 1 ||
+      starts[0] !== events[0] ||
+      starts[0]?._tag !== "TurnStarted" ||
+      starts[0].providerTurnId !== input.providerTurnId ||
+      starts[0].attemptNo !== attempt.attemptNo ||
+      starts[0].modelRef !== input.modelRef ||
+      completed.length !== 1 ||
+      completed[0] !== events.at(-1) ||
+      completed[0]?._tag !== "TurnCompleted" ||
+      completed[0].finishReason !== "Stop" ||
+      continuations.length !== 1 ||
+      continuations[0]?._tag !== "ContinuationState" ||
+      continuations[0].stateRef.length === 0 ||
+      usageEvents.length > 1 ||
+      events.some(
+        (event) =>
+          event._tag !== "TurnStarted" &&
+          event._tag !== "ContinuationState" &&
+          event._tag !== "UsageReported" &&
+          event._tag !== "TurnCompleted",
+      )
+    ) {
+      return null;
+    }
+    return {
+      attemptNo: attempt.attemptNo,
+      observation: attempt.observation,
+      canonicalEventPrefixJson: attempt.canonicalEventPrefixJson,
+      deliveredPosition: events.length,
+      events,
+      finishReason: "Stop",
+      usageJson: JSON.stringify(
+        usageEvent === undefined
+          ? UNKNOWN_USAGE
+          : canonicalUsageOfEvent(usageEvent),
+      ),
+    };
+  } catch {
+    return null;
   }
 };
 
@@ -322,6 +491,7 @@ const consumeAttempt = (
     readonly store: import("@arbor/ports").ProviderTurnStoreService;
     readonly tx: import("@arbor/ports").TransactionPortService;
     readonly clock: import("@arbor/ports").ClockService;
+    readonly runtimeClock: RuntimeClockService;
   },
   abortTransport: () => void,
   updateState: (input: {
@@ -358,7 +528,7 @@ const consumeAttempt = (
         checkpoint === null
           ? initialAttemptObservation()
           : observationForContinuation(checkpoint);
-      const attemptStartedAtMs = Date.now();
+      const attemptStartedAtMs = deps.runtimeClock.monotonicMillis();
       let responseStartedAtMs: number | null = null;
       let firstDataAtMs: number | null = null;
       let timeoutTriggeredPhase: ProviderExecutionTimeout["phase"] | null =
@@ -397,8 +567,9 @@ const consumeAttempt = (
         if (callerIsCancelled()) {
           return yield* Effect.interrupt;
         }
-        const now = Date.now();
-        const remainingTurnMs = deadlineAtMs - now;
+        const epochNow = deps.runtimeClock.epochMillis();
+        const monotonicNow = deps.runtimeClock.monotonicMillis();
+        const remainingTurnMs = deadlineAtMs - epochNow;
         if (remainingTurnMs <= 0) {
           return { _tag: "Timeout", phase: "TurnDeadline" };
         }
@@ -414,7 +585,7 @@ const consumeAttempt = (
               ? (responseStartedAtMs as number)
               : (firstDataAtMs as number);
         const remainingPhaseMs =
-          phaseTimeoutMs(policy, phase) - (now - phaseStart);
+          phaseTimeoutMs(policy, phase) - (monotonicNow - phaseStart);
         if (remainingPhaseMs <= 0) {
           return { _tag: "Timeout", phase };
         }
@@ -490,7 +661,7 @@ const consumeAttempt = (
             }
             yield* persist(nextObservation);
             if (event.delta.responseStarted === true) {
-              responseStartedAtMs ??= Date.now();
+              responseStartedAtMs ??= deps.runtimeClock.monotonicMillis();
             }
             continue;
           }
@@ -582,8 +753,15 @@ const consumeAttempt = (
             events.splice(0, events.length, ...priorEvents);
             return yield* Effect.fail(error as ProviderFailure);
           }
+          // A buffered SSE response can supply thousands of immediately
+          // resolved chunks. Durably recording each delta is required, but
+          // the consuming fiber must periodically yield so the execution's
+          // concurrent lease-renewal timer can run during a long turn.
+          if (events.length % 16 === 0) {
+            yield* Effect.yieldNow;
+          }
           if (canonical._tag !== "TurnStarted") {
-            firstDataAtMs ??= Date.now();
+            firstDataAtMs ??= deps.runtimeClock.monotonicMillis();
           }
         }
       }
@@ -621,6 +799,7 @@ export const ProviderRuntimeLive = (
   | Clock
   | SecretStorePort
   | IdGenerator
+  | RuntimeClock
 > =>
   Layer.effect(
     ProviderRuntime,
@@ -630,6 +809,7 @@ export const ProviderRuntimeLive = (
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
       const ids = yield* IdGenerator;
+      const runtimeClock = yield* RuntimeClock;
       const secretStore = yield* SecretStorePort;
       const notifyProgress = (
         input: ProviderRunInput,
@@ -659,7 +839,8 @@ export const ProviderRuntimeLive = (
                   modelDeploymentOverride: input.executionPolicyOverrides,
                 }),
           });
-          let turnDeadlineAtMs = Date.now() + policy.turnTimeoutMs;
+          let turnDeadlineAtMs =
+            runtimeClock.epochMillis() + policy.turnTimeoutMs;
           let turnDeadlineAt = new Date(turnDeadlineAtMs).toISOString();
           let firstAttemptNo = 0;
           let resumeCheckpoint: ProviderContinuationCheckpoint | null =
@@ -681,6 +862,13 @@ export const ProviderRuntimeLive = (
             });
           let turnStarted = false;
           let turnSettled = false;
+          const isSummaryCompaction =
+            input.request.requestVersion === 2 &&
+            input.request.operationKind === "CompactionSummary";
+          const summaryProbeIdentity = {
+            providerTurnId: String(input.providerTurnId),
+            executionId: String(input.executionId),
+          };
           let activeAttemptNo: number | null = null;
           let activeObservation = unknownAttemptObservation();
           let activeEvents: ReadonlyArray<CanonicalProviderEvent> = [];
@@ -750,20 +938,80 @@ export const ProviderRuntimeLive = (
                 store.findUnsettledByTurn(input.providerTurnId),
               );
               if (recoveryTurn !== null) {
+                const resumeBindingChecks = {
+                  manifestMatches:
+                    recoveryTurn.manifestJson === input.manifestJson,
+                  portableRequestMatches:
+                    recoveryTurn.portableRequestJson ===
+                    JSON.stringify(input.request),
+                  executionMatches:
+                    recoveryTurn.turn.executionId === input.executionId,
+                  sessionMatches:
+                    recoveryTurn.turn.sessionId === input.sessionId,
+                  epochMatches:
+                    recoveryTurn.turn.contextEpoch === input.contextEpoch,
+                  modelMatches: recoveryTurn.turn.modelRef === input.modelRef,
+                  outputContractMatches:
+                    recoveryTurn.turn.outputContractRef ===
+                    input.outputContractRef,
+                };
                 if (
-                  recoveryTurn.manifestJson !== input.manifestJson ||
-                  recoveryTurn.portableRequestJson !==
-                    JSON.stringify(input.request) ||
-                  recoveryTurn.turn.executionId !== input.executionId ||
-                  recoveryTurn.turn.sessionId !== input.sessionId ||
-                  recoveryTurn.turn.contextEpoch !== input.contextEpoch ||
-                  recoveryTurn.turn.modelRef !== input.modelRef ||
-                  recoveryTurn.turn.outputContractRef !==
-                    input.outputContractRef
+                  Object.values(resumeBindingChecks).some((matches) => !matches)
                 ) {
+                  // A persisted turn is permanently pinned to its original
+                  // manifest and portable request. A later model/provider
+                  // configuration must never resume it under a new binding;
+                  // close this stale Turn so it cannot remain an invisible
+                  // recovery candidate after its owning execution fails.
+                  yield* tx.transact(
+                    store.failTurn(input.providerTurnId, yield* clock.now()),
+                  );
                   return yield* Effect.fail(
                     unknownFailure("provider-turn-resume-binding-invalid"),
                   );
+                }
+                if (
+                  input.request.requestVersion === 2 &&
+                  input.request.operationKind === "CompactionNative"
+                ) {
+                  const successEvidence = completeNativeSuccessEvidence(
+                    recoveryTurn,
+                    input,
+                    config.continuationBinding,
+                  );
+                  if (successEvidence !== null) {
+                    activeAttemptNo = successEvidence.attemptNo;
+                    activeObservation = successEvidence.observation;
+                    activeEvents = successEvidence.events;
+                    turnStarted = true;
+                    const settledAt = yield* clock.now();
+                    yield* tx.transact(
+                      store.settleSuccessAtomically(
+                        input.providerTurnId,
+                        successEvidence.attemptNo,
+                        {
+                          outcome: "Success",
+                          taxonomyVersion: "phase1-v2",
+                          observation: successEvidence.observation,
+                          canonicalEventPrefixJson:
+                            successEvidence.canonicalEventPrefixJson,
+                          deliveredPosition: successEvidence.deliveredPosition,
+                        },
+                        successEvidence.finishReason,
+                        successEvidence.usageJson,
+                        settledAt,
+                        "provider-success-v1",
+                      ),
+                    );
+                    activeAttemptNo = null;
+                    turnSettled = true;
+                    removeExternalAbort();
+                    return {
+                      events: successEvidence.events,
+                      attemptNo: successEvidence.attemptNo,
+                      retryDecisions: [],
+                    } satisfies ProviderRunResult;
+                  }
                 }
                 const last = recoveryTurn.attempts.at(-1) ?? null;
                 const cause = providerRetryCauseFromAttempt(last);
@@ -792,7 +1040,8 @@ export const ProviderRuntimeLive = (
                         attemptNo: last?.attemptNo ?? -1,
                         maxAttempts: persistedPolicy.maxAttempts,
                         cancelled: last?.outcome === "Cancelled",
-                        deadlineExpired: deadlineAtMs <= Date.now(),
+                        deadlineExpired:
+                          deadlineAtMs <= runtimeClock.epochMillis(),
                       });
                 const decidedAt = yield* clock.now();
                 const recordDecision = () =>
@@ -927,7 +1176,7 @@ export const ProviderRuntimeLive = (
                 attemptNo: last?.attemptNo ?? -1,
                 maxAttempts: policy.maxAttempts,
                 cancelled: false,
-                deadlineExpired: turnDeadlineAtMs <= Date.now(),
+                deadlineExpired: turnDeadlineAtMs <= runtimeClock.epochMillis(),
               });
               if (
                 recheckedDecision.decision !== "Retry" ||
@@ -963,12 +1212,26 @@ export const ProviderRuntimeLive = (
                 turnDeadlineAt,
               };
               const receipt = yield* tx.transact(
-                store.startTurnWithManifest(
-                  turnRecord,
-                  input.manifestJson,
-                  JSON.stringify(input.request),
-                  startedAt,
-                ),
+                Effect.gen(function* () {
+                  const started = yield* store.startTurnWithManifest(
+                    turnRecord,
+                    input.manifestJson,
+                    JSON.stringify(input.request),
+                    startedAt,
+                  );
+                  if (
+                    isSummaryCompaction &&
+                    config.qualificationProbe !== undefined
+                  ) {
+                    yield* Effect.promise(async () => {
+                      await config.qualificationProbe?.({
+                        boundary: "AH18BeforeSummaryTurnCommit",
+                        ...summaryProbeIdentity,
+                      });
+                    });
+                  }
+                  return started;
+                }),
               );
               if (
                 receipt.providerTurnId !== input.providerTurnId ||
@@ -977,6 +1240,17 @@ export const ProviderRuntimeLive = (
                 return yield* Effect.fail(
                   unknownFailure("manifest-receipt-mismatch"),
                 );
+              }
+              if (
+                isSummaryCompaction &&
+                config.qualificationProbe !== undefined
+              ) {
+                yield* Effect.promise(async () => {
+                  await config.qualificationProbe?.({
+                    boundary: "AH18AfterSummaryTurnCommit",
+                    ...summaryProbeIdentity,
+                  });
+                });
               }
               turnStarted = true;
             }
@@ -988,7 +1262,7 @@ export const ProviderRuntimeLive = (
                   ? undefined
                   : yield* secretStore.resolve(input.secretRef);
               }),
-              Math.max(1, turnDeadlineAtMs - Date.now()),
+              Math.max(1, turnDeadlineAtMs - runtimeClock.epochMillis()),
             );
             if (Option.isNone(authResult)) {
               const settledAt = yield* clock.now();
@@ -1013,7 +1287,7 @@ export const ProviderRuntimeLive = (
               attemptNo += 1
             ) {
               if (controller.signal.aborted) return yield* Effect.interrupt;
-              if (Date.now() >= turnDeadlineAtMs) {
+              if (runtimeClock.epochMillis() >= turnDeadlineAtMs) {
                 const settledAt = yield* clock.now();
                 yield* tx.transact(
                   store.settleTurn(
@@ -1055,11 +1329,7 @@ export const ProviderRuntimeLive = (
                   : { secretRef: input.secretRef }),
                 ...(secretMaterial === undefined ? {} : { secretMaterial }),
                 cancellationSignal: controller.signal,
-                connectTimeoutMs: policy.connectTimeoutMs,
-                firstEventTimeoutMs: policy.firstEventTimeoutMs,
-                streamIdleTimeoutMs: policy.streamIdleTimeoutMs,
                 turnDeadlineAt,
-                maxAttempts: policy.maxAttempts,
                 ...(resumeFrom === null
                   ? {}
                   : { continuationCheckpoint: resumeFrom }),
@@ -1073,7 +1343,7 @@ export const ProviderRuntimeLive = (
                   policy,
                   turnDeadlineAtMs,
                   config,
-                  { store, tx, clock },
+                  { store, tx, clock, runtimeClock },
                   () => controller.abort(),
                   (state) => {
                     activeObservation = state.observation;
@@ -1126,8 +1396,18 @@ export const ProviderRuntimeLive = (
                 activeObservation = finalObservation;
                 activeEvents = [...attempt.events];
                 const finishedAt = yield* clock.now();
+                if (config.qualificationProbe !== undefined) {
+                  yield* Effect.promise(
+                    () =>
+                      config.qualificationProbe?.({
+                        boundary: "AH12BeforeSuccessCommit",
+                        providerTurnId: input.providerTurnId,
+                        attemptNo,
+                      }) ?? Promise.resolve(),
+                  );
+                }
                 yield* tx.transact(
-                  store.settleAttempt(
+                  store.settleSuccessAtomically(
                     input.providerTurnId,
                     attemptNo,
                     {
@@ -1140,18 +1420,23 @@ export const ProviderRuntimeLive = (
                       canonicalEventPrefixJson: JSON.stringify(attempt.events),
                       deliveredPosition: attempt.events.length,
                     },
-                    finishedAt,
-                  ),
-                );
-                activeAttemptNo = null;
-                yield* tx.transact(
-                  store.settleTurn(
-                    input.providerTurnId,
                     attempt.finishReason,
                     attempt.usageJson,
                     finishedAt,
+                    "provider-success-v1",
                   ),
                 );
+                if (config.qualificationProbe !== undefined) {
+                  yield* Effect.promise(
+                    () =>
+                      config.qualificationProbe?.({
+                        boundary: "AH12AfterSuccessCommit",
+                        providerTurnId: input.providerTurnId,
+                        attemptNo,
+                      }) ?? Promise.resolve(),
+                  );
+                }
+                activeAttemptNo = null;
                 turnSettled = true;
                 removeExternalAbort();
                 return {
@@ -1217,7 +1502,7 @@ export const ProviderRuntimeLive = (
                 attemptNo,
                 maxAttempts: policy.maxAttempts,
                 cancelled,
-                deadlineExpired: Date.now() >= turnDeadlineAtMs,
+                deadlineExpired: runtimeClock.epochMillis() >= turnDeadlineAtMs,
               });
               retryDecisions.push(decision);
               const outcome = cancelled
@@ -1225,25 +1510,66 @@ export const ProviderRuntimeLive = (
                 : decision.decision === "Retry"
                   ? "RetryableFailure"
                   : "TerminalFailure";
+              const terminalAttemptSettlement = {
+                outcome,
+                providerErrorKind: attempt.failure.kind,
+                taxonomyVersion: "phase1-v2",
+                observation: activeObservation,
+                ...(activeCheckpoint === null
+                  ? {}
+                  : { continuationCheckpoint: activeCheckpoint }),
+                canonicalEventPrefixJson: JSON.stringify(activeEvents),
+                deliveredPosition: 0,
+                retryDecision: decision,
+              } as const;
+              if (
+                outcome === "TerminalFailure" &&
+                config.qualificationProbe !== undefined
+              ) {
+                yield* Effect.promise(async () => {
+                  await config.qualificationProbe?.({
+                    boundary: "RAI-DG02BeforeFinalAttemptSettlementCommit",
+                    providerTurnId: input.providerTurnId,
+                    attemptNo,
+                    failureKind: attempt.failure.kind,
+                  });
+                });
+              }
               yield* tx.transact(
                 store.settleAttempt(
                   input.providerTurnId,
                   attemptNo,
-                  {
-                    outcome,
-                    providerErrorKind: attempt.failure.kind,
-                    taxonomyVersion: "phase1-v2",
-                    observation: activeObservation,
-                    ...(activeCheckpoint === null
-                      ? {}
-                      : { continuationCheckpoint: activeCheckpoint }),
-                    canonicalEventPrefixJson: JSON.stringify(activeEvents),
-                    deliveredPosition: 0,
-                    retryDecision: decision,
-                  },
+                  terminalAttemptSettlement,
                   settledAt,
                 ),
               );
+              if (
+                outcome === "TerminalFailure" &&
+                config.qualificationProbe !== undefined
+              ) {
+                yield* Effect.promise(async () => {
+                  await config.qualificationProbe?.({
+                    boundary: "RAI-DG02AfterFinalAttemptSettlementCommit",
+                    providerTurnId: input.providerTurnId,
+                    attemptNo,
+                    failureKind: attempt.failure.kind,
+                  });
+                });
+              }
+              if (
+                outcome === "RetryableFailure" &&
+                isSummaryCompaction &&
+                config.qualificationProbe !== undefined
+              ) {
+                yield* Effect.promise(async () => {
+                  await config.qualificationProbe?.({
+                    boundary: "AH18AfterSummaryRetryableFailureCommit",
+                    ...summaryProbeIdentity,
+                    attemptNo,
+                    failureKind: attempt.failure.kind,
+                  });
+                });
+              }
               activeAttemptNo = null;
               notifyProgress(input, {
                 _tag: "AttemptFailed",
@@ -1282,12 +1608,12 @@ export const ProviderRuntimeLive = (
               }
               const backoffMs = Math.min(
                 policy.retryBackoffMs,
-                Math.max(0, turnDeadlineAtMs - Date.now()),
+                Math.max(0, turnDeadlineAtMs - runtimeClock.epochMillis()),
               );
               if (backoffMs > 0) {
                 const waitResult = yield* Effect.timeoutOption(
                   Effect.sleep(backoffMs),
-                  Math.max(1, turnDeadlineAtMs - Date.now()),
+                  Math.max(1, turnDeadlineAtMs - runtimeClock.epochMillis()),
                 );
                 if (Option.isNone(waitResult)) {
                   const backoffAt = yield* clock.now();

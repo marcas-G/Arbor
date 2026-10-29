@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,6 +13,7 @@ import type { ModelCatalog } from "@arbor/model-context";
 import {
   HumanMessageStore,
   type PortableModelRequest,
+  portableInputItems,
   secretRef,
 } from "@arbor/ports";
 import {
@@ -22,12 +23,20 @@ import {
 } from "@arbor/provider-openai";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
-  P16_MIGRATIONS,
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import {
+  buildSingleWorkspaceLayer,
   ProductionDaemonService,
-  runMigrations,
 } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ac");
@@ -42,6 +51,43 @@ const assistantAnswer =
   "根目录包含 apps、packages 和 adapters。建议先运行 pnpm check，再针对目标包运行 focused tests。";
 const liveHumanInputSentinelEnabled =
   process.env.ARBOR_WAVE1_LIVE_HUMAN_INPUT === "1";
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
+const scratchDirectories: string[] = [];
+
+beforeAll(async () => {
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".p14-conversation-schema44-",
+  });
+}, 120_000);
+
+beforeEach(() => {
+  if (fixtureFactory === undefined)
+    throw new Error("Schema 42 factory is missing");
+  fixture = fixtureFactory.create();
+});
+
+afterEach(() => {
+  fixture?.cleanup();
+  fixture = undefined;
+  for (const directory of scratchDirectories.splice(0)) {
+    rmSync(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  }
+}, 120_000);
+
+afterAll(() => {
+  fixtureFactory?.cleanup();
+  fixtureFactory = undefined;
+}, 120_000);
 
 describe("P14 production conversation model context", () => {
   it(
@@ -61,8 +107,9 @@ describe("P14 production conversation model context", () => {
           "ARBOR_OPENAI_BASE_URL and ARBOR_LLM_MODEL are required for the live Human Input sentinel",
         );
       }
-      const dir = mkdtempSync(join(tmpdir(), "wave1-human-input-"));
-      const databaseFile = join(dir, "slice.db");
+      if (fixture === undefined)
+        throw new Error("Schema 42 fixture is missing");
+      const databaseFile = fixture.databaseFilename;
       const currentHumanQuestion = liveHumanInput
         ? "Reply with exactly WAVE1_CURRENT_HUMAN_INPUT_RECEIVED as plain text. Do not emit a tool or function call."
         : humanQuestion;
@@ -103,7 +150,7 @@ describe("P14 production conversation model context", () => {
               productionCallPath: [
                 "apps/single-workspace ProductionDaemonService.conversationTick",
                 "execution-runtime.runExecution worker/lease lifecycle",
-                "ExecutionDriverPort -> agent-runtime AgentDriverLive",
+                "ExecutionDriverPort -> agent-runtime AgentLoopDriverLive",
                 "ModelContext.prepareTurn with current claimed Human Input",
                 "ProviderRuntime.runTurn",
                 "OpenAIProviderLive -> OpenAICompatibleFetchClient -> live endpoint",
@@ -209,7 +256,7 @@ describe("P14 production conversation model context", () => {
           }
         },
       };
-      const app = buildSliceLayer({
+      const app = buildSingleWorkspaceLayer({
         databaseFile,
         projectId,
         modelCatalog,
@@ -220,7 +267,6 @@ describe("P14 production conversation model context", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P16_MIGRATIONS);
             const sql = yield* SqlClient;
             yield* sql.withTransaction(
               Effect.gen(function* () {
@@ -274,19 +320,30 @@ describe("P14 production conversation model context", () => {
                 yield* sql.unsafe(
                   "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Pending',NULL,?,NULL,NULL,0)",
                   [
-                    "msg_wave1_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
                     projectId,
                     workspaceId,
                     parse(Principal)("user:integration-test"),
                     currentHumanQuestion,
-                    "cmd_wave1_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    "cmd_018f2b3c-4d5e-7abc-8def-0123456789ad",
                     "wave1-human-fingerprint",
+                    "2026-09-26T00:00:00.000Z",
+                  ],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Queued',NULL,0,NULL,NULL,NULL,NULL,'conversation-retry-v1',NULL,NULL,NULL,0,?,?)",
+                  [
+                    "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
+                    projectId,
+                    workspaceId,
+                    "2026-09-26T00:00:00.000Z",
                     "2026-09-26T00:00:00.000Z",
                   ],
                 );
               }),
             );
 
+            yield* ensureLegacyProjectResourceSourceFixture();
             const daemon = yield* ProductionDaemonService;
             yield* daemon.daemon.conversationTick;
             yield* daemon.daemon.conversationTick;
@@ -301,8 +358,8 @@ describe("P14 production conversation model context", () => {
               state: string;
               response_body: string | null;
             }>(
-              "SELECT state, response_body FROM human_messages WHERE message_id = ?",
-              ["msg_wave1_018f2b3c-4d5e-7abc-8def-0123456789ac"],
+              "SELECT state, response_body FROM conversation_response_jobs WHERE message_id = ?",
+              ["msg_018f2b3c-4d5e-7abc-8def-0123456789ad"],
             );
             return { manifests, message: messages[0] };
           }),
@@ -317,10 +374,14 @@ describe("P14 production conversation model context", () => {
       );
 
       expect(
-        portableRequest?.messages.filter(
-          (message) => message.role !== "system",
-        ),
-      ).toEqual([{ role: "user", text: currentHumanQuestion }]);
+        portableRequest === undefined
+          ? undefined
+          : portableInputItems(portableRequest).filter(
+              (item) => item._tag === "Message" && item.role !== "system",
+            ),
+      ).toEqual([
+        { _tag: "Message", role: "user", text: currentHumanQuestion },
+      ]);
       expect(observedRequest?.messages).toContainEqual({
         role: "user",
         content: currentHumanQuestion,
@@ -350,17 +411,19 @@ describe("P14 production conversation model context", () => {
         modelRef,
       });
       expect(manifest.contextRefs).toContain(
-        "human-input:msg_wave1_018f2b3c-4d5e-7abc-8def-0123456789ac",
+        "human-input:msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
       );
       expect(manifest.compiledRequestHash).toBe(
         result.manifests[0]?.compiled_request_hash,
       );
     },
-    liveHumanInputSentinelEnabled ? 110_000 : 30_000,
+    liveHumanInputSentinelEnabled ? 110_000 : 120_000,
   );
 
-  it("sends recent answered turns with the claimed human message and persists its answer", async () => {
+  it("sends only conversation history, excluding Work tool history, and persists its answer", async () => {
+    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
     const dir = mkdtempSync(join(tmpdir(), "p14-provider-conversation-"));
+    scratchDirectories.push(dir);
     const secretRoot = join(dir, "secrets");
     mkdirSync(secretRoot);
     writeFileSync(join(secretRoot, "test-api-key"), "integration-test-key\n", {
@@ -396,8 +459,8 @@ describe("P14 production conversation model context", () => {
         },
       ],
     };
-    const app = buildSliceLayer({
-      databaseFile: join(dir, "slice.db"),
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: fixture.databaseFilename,
       projectId,
       modelCatalog,
       modelRef: "integration-model",
@@ -427,7 +490,6 @@ describe("P14 production conversation model context", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P16_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -452,6 +514,79 @@ describe("P14 production conversation model context", () => {
                 [sessionId, "WorkspacePrimary", workspaceId, 0, "t"],
               );
               yield* sql.unsafe(
+                "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                  sessionId,
+                  0,
+                  "ModelOutput",
+                  "ToolCall",
+                  2,
+                  0,
+                  JSON.stringify({
+                    _tag: "ToolCall",
+                    providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789ae",
+                    callRef: "call_prior_work",
+                    toolRef: "shell",
+                    argumentsRef: "inline:prior-work",
+                    argumentsJson: JSON.stringify({ command: "pnpm check" }),
+                  }),
+                  "2026-09-23T00:00:00.000Z",
+                  "ProviderTurnCall",
+                  "ptn_018f2b3c-4d5e-7abc-8def-0123456789ae:call_prior_work",
+                  "technical-work-session-call-hash",
+                ],
+              );
+              yield* sql.unsafe(
+                "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                  sessionId,
+                  1,
+                  "Observation",
+                  "ToolResult",
+                  2,
+                  0,
+                  JSON.stringify({
+                    _tag: "ToolResult",
+                    callRef: "call_prior_work",
+                    toolName: "shell",
+                    status: "Succeeded",
+                    observationRef: "observation_prior_work",
+                    modelOutputRef: "result_prior_work",
+                    outputText:
+                      "TECHNICAL_WORK_SESSION_OUTPUT_MUST_NOT_ENTER_CHAT",
+                    truncated: false,
+                    artifactRefs: [],
+                  }),
+                  "2026-09-23T00:00:01.000Z",
+                  "AgentLoopAction",
+                  "observation_prior_work",
+                  "technical-work-session-result-hash",
+                ],
+              );
+              yield* sql.unsafe(
+                "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                  sessionId,
+                  2,
+                  "ModelOutput",
+                  "ToolCall",
+                  2,
+                  0,
+                  JSON.stringify({
+                    _tag: "ToolCall",
+                    providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789af",
+                    callRef: "call_dangling_prior_work",
+                    toolRef: "read",
+                    argumentsRef: "inline:dangling-prior-work",
+                    argumentsJson: JSON.stringify({ target: "README.md" }),
+                  }),
+                  "2026-09-23T00:00:02.000Z",
+                  "ProviderTurnCall",
+                  "ptn_018f2b3c-4d5e-7abc-8def-0123456789af:call_dangling_prior_work",
+                  "dangling-work-session-call-hash",
+                ],
+              );
+              yield* sql.unsafe(
                 "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
                 [
                   workspaceId,
@@ -472,18 +607,16 @@ describe("P14 production conversation model context", () => {
                 ],
               );
               yield* sql.unsafe(
-                "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Answered',NULL,?,?,?,0)",
+                "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Declined','exe_legacy_claim',?,NULL,'stale legacy answer',0)",
                 [
-                  "msg_prior_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                  "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
                   projectId,
                   workspaceId,
                   parse(Principal)("user:integration-test"),
                   priorHumanQuestion,
-                  "cmd_prior_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                  "cmd_018f2b3c-4d5e-7abc-8def-0123456789ad",
                   "integration-prior-fingerprint",
                   "2026-09-24T00:00:00.000Z",
-                  "2026-09-24T00:01:00.000Z",
-                  priorAssistantAnswer,
                 ],
               );
               yield* sql.unsafe(
@@ -499,9 +632,51 @@ describe("P14 production conversation model context", () => {
                   "2026-09-25T00:00:00.000Z",
                 ],
               );
+              yield* sql.unsafe(
+                "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Answered',NULL,1,NULL,NULL,NULL,NULL,'conversation-retry-v1',?,?,NULL,2,?,?), (?,?,?,'Queued',NULL,0,NULL,NULL,NULL,NULL,'conversation-retry-v1',NULL,NULL,NULL,0,?,?)",
+                [
+                  "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
+                  projectId,
+                  workspaceId,
+                  priorAssistantAnswer,
+                  "exe_018f2b3c-4d5e-7abc-8def-0123456789ad",
+                  "2026-09-24T00:00:00.000Z",
+                  "2026-09-24T00:01:00.000Z",
+                  "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                  projectId,
+                  workspaceId,
+                  "2026-09-25T00:00:00.000Z",
+                  "2026-09-25T00:00:00.000Z",
+                ],
+              );
+              const priorMessageId = "msg_018f2b3c-4d5e-7abc-8def-0123456789ad";
+              const priorExecutionId =
+                "exe_018f2b3c-4d5e-7abc-8def-0123456789ad";
+              yield* sql.unsafe(
+                "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, episode_kind, episode_ref, episode_revision, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?, ?, 'workspace', ?, 'ConversationResponseEpisode', ?, 0, NULL, NULL, ?, '2026-09-24T00:00:00.000Z', NULL, 'Completed', ?, '2026-09-24T00:01:00.000Z')",
+                [
+                  priorExecutionId,
+                  projectId,
+                  workspaceId,
+                  priorMessageId,
+                  sessionId,
+                  JSON.stringify({
+                    _tag: "Completed",
+                    result: {
+                      _tag: "ConversationResponseProduced",
+                      messageId: priorMessageId,
+                    },
+                  }),
+                ],
+              );
+              yield* sql.unsafe(
+                "INSERT INTO conversation_attempts (message_id, attempt_no, execution_id, admitted_at, settled_at, settlement_kind, failure_class, failure_fingerprint, retry_decision_json, policy_version) VALUES (?, 0, ?, '2026-09-24T00:00:00.000Z', '2026-09-24T00:01:00.000Z', 'Completed', NULL, NULL, '{\"_tag\":\"Answer\"}', 'conversation-retry-v1')",
+                [priorMessageId, priorExecutionId],
+              );
             }),
           );
 
+          yield* ensureLegacyProjectResourceSourceFixture();
           const daemon = yield* ProductionDaemonService;
           yield* HumanMessageStore;
           yield* daemon.daemon.conversationTick;
@@ -513,18 +688,29 @@ describe("P14 production conversation model context", () => {
             state: string;
             response_body: string | null;
           }>(
-            "SELECT state, response_body FROM human_messages WHERE message_id = ?",
+            "SELECT state, response_body FROM conversation_response_jobs WHERE message_id = ?",
             ["msg_018f2b3c-4d5e-7abc-8def-0123456789ac"],
           );
           const executionRows = yield* sql.unsafe<{
             settlement_json: string | null;
+            episode_kind: string | null;
+            episode_ref: string | null;
+            episode_revision: number | null;
           }>(
-            "SELECT settlement_json FROM executions WHERE workspace_id = ? AND focus_kind = 'coordination' ORDER BY admitted_at DESC LIMIT 1",
+            "SELECT settlement_json, episode_kind, episode_ref, episode_revision FROM executions WHERE workspace_id = ? ORDER BY admitted_at DESC LIMIT 1",
             [workspaceId],
           );
           return {
             message: messageRows[0],
             settlement: executionRows[0]?.settlement_json ?? null,
+            execution:
+              executionRows[0] === undefined
+                ? undefined
+                : {
+                    episode_kind: executionRows[0].episode_kind,
+                    episode_ref: executionRows[0].episode_ref,
+                    episode_revision: executionRows[0].episode_revision,
+                  },
           };
         }),
         app,
@@ -551,28 +737,33 @@ describe("P14 production conversation model context", () => {
       { role: "assistant", content: priorAssistantAnswer },
       { role: "user", content: humanQuestion },
     ]);
-    // The conversation face now exposes the REGISTRY's shallow control
-    // tools (arbor_wait / arbor_send_message / arbor_claim_completion /
-    // arbor_propose_child_workspace / arbor_spawn_specialist /
-    // arbor_declare_dependency) instead of the legacy monolithic
-    // arbor_directive whose routes never matched the registry.
+    // Root Human Conversation is a response episode, not a Work execution.
+    // MAC-P1 exposes only the current-Workspace work-initiation control.
+    // Actual executable tools and completion remain unavailable until the
+    // Scheduler admits the resulting WorkEpisode.
     const toolNames = (
-      observedRequest?.tools as Array<{ function?: { name?: string } }>
+      (observedRequest?.tools ?? []) as Array<{
+        function?: { name?: string };
+      }>
     )
-      ?.map((tool) => tool.function?.name)
+      .map((tool) => tool.function?.name)
       .sort();
     expect(toolNames).toEqual([
-      "arbor_claim_completion",
-      "arbor_declare_dependency",
-      "arbor_propose_child_workspace",
-      "arbor_send_message",
-      "arbor_spawn_specialist",
-      "arbor_wait",
+      "accept_result",
+      "assign_work",
+      "list_workspaces",
+      "propose_workspace",
+      "read_workspace",
     ]);
     expect(result.message).toEqual({
       state: "Answered",
       response_body: assistantAnswer,
     });
-    expect(result.settlement).toContain("QueryCompleted");
-  });
+    expect(result.settlement).toContain("ConversationResponseProduced");
+    expect(result.execution).toEqual({
+      episode_kind: "ConversationResponseEpisode",
+      episode_ref: "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
+      episode_revision: 0,
+    });
+  }, 120_000);
 });

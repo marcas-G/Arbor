@@ -1,6 +1,3 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   CommandGateway,
   semanticRequestFingerprint,
@@ -21,12 +18,13 @@ import type { AdmitExecutionPayload } from "@arbor/execution-runtime";
 import { SessionRepository, TransactionPort } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
-  buildSliceLayer,
-  P12_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+  createCurrentSchemaTestDatabaseFactory,
+  type Schema44TestDatabaseFactory,
+} from "../../../tests/support/schema44-database.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -41,6 +39,27 @@ const execution2 = parse(ExecutionId)(
 ) as ExecutionId;
 const principal = parse(Principal)("runtime:system");
 const actor = parse(Actor)("user:test");
+let schema44Factory: Schema44TestDatabaseFactory | undefined;
+const schema44Cleanups: Array<() => void> = [];
+
+beforeAll(async () => {
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".p5-session-continuity-template-",
+  });
+}, 120_000);
+
+afterAll(() => schema44Factory?.cleanup(), 120_000);
+
+const createSchema44Case = () => {
+  if (schema44Factory === undefined) {
+    throw new Error("Schema-42 test database factory was not prepared.");
+  }
+  return schema44Factory.create();
+};
+
+afterEach(() => {
+  for (const cleanup of schema44Cleanups.splice(0)) cleanup();
+}, 120_000);
 const context: CommandSubmissionContext = {
   _tag: "System",
   principal,
@@ -102,7 +121,11 @@ const admit = (executionId: ExecutionId, commandId: CommandId) =>
       _tag: "WorkspaceMain",
       executionId,
       workspaceId,
-      focus: { _tag: "Coordination" },
+      episode: {
+        _tag: "InboxEpisode",
+        entryKey: `session-continuity:${executionId}`,
+        inputKind: "SessionContinuityTest",
+      },
     };
     const authority: VerifiedRuntimeCommandAuthority = {
       _tag: "AdmitExecutionAuthority",
@@ -137,13 +160,16 @@ const admit = (executionId: ExecutionId, commandId: CommandId) =>
 
 describe("P5 multi-turn session continuity", () => {
   it("reuses the same primary session across Executions and keeps entries", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "p5-sc-"));
-    const app = buildSliceLayer({ databaseFile: join(dir, "slice.db") });
+    const fixture = createSchema44Case();
+    schema44Cleanups.push(fixture.cleanup);
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: fixture.databaseFilename,
+    });
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P12_MIGRATIONS);
           yield* seed;
+          yield* ensureLegacyProjectResourceSourceFixture();
           const first = yield* admit(
             execution1,
             parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
@@ -196,5 +222,5 @@ describe("P5 multi-turn session continuity", () => {
     expect(new Set(result.sessions)).toEqual(new Set([sessionId]));
     expect(result.entries).toBe(1);
     void Option;
-  });
+  }, 120_000);
 });

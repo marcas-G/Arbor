@@ -1,19 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { type Context, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+import { afterAll, beforeAll } from "vitest";
 import type {
   OpenAISdkChunk,
   OpenAISdkClient,
 } from "../../../adapters/provider-openai/src/index.js";
-import {
-  buildSliceLayer,
-  P16_MIGRATIONS,
-  runMigrations,
-} from "../../../apps/single-workspace/src/composition.js";
+import { buildSingleWorkspaceLayer } from "../../../apps/single-workspace/src/composition.js";
 import {
   ProductionDaemonService,
   TransportBoundary,
 } from "../../../apps/single-workspace/src/production.js";
+import {
+  makeProjectResourceProfilePort,
+  projectResourceProfilesFromEnvironment,
+} from "../../../apps/single-workspace/src/project-resource-profiles.js";
 import { makeStaticAuthenticator } from "../../../apps/single-workspace/src/transport/auth.js";
 import { startWebTransport } from "../../../apps/single-workspace/src/transport/server.js";
 import {
@@ -22,10 +23,37 @@ import {
   parse,
 } from "../../../packages/domain/src/index.js";
 import type { ModelCatalog } from "../../../packages/model-context/src/index.js";
-import type { SecretRef } from "../../../packages/ports/dist/provider.js";
+import {
+  portableInputItems,
+  type SecretRef,
+} from "../../../packages/ports/dist/provider.js";
+import {
+  createCurrentSchemaTestDatabaseFactory,
+  type Schema44TestDatabase,
+  type Schema44TestDatabaseFactory,
+} from "../../support/schema44-database.js";
+
+const publicConversationDatabases = new Map<string, Schema44TestDatabase>();
+let publicConversationFactory: Schema44TestDatabaseFactory;
+
+beforeAll(async () => {
+  publicConversationFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: "public-conversation-template-",
+  });
+}, 120_000);
+
+afterAll(() => {
+  for (const database of publicConversationDatabases.values()) {
+    database.cleanup();
+  }
+  publicConversationDatabases.clear();
+  publicConversationFactory.cleanup();
+});
 
 export const capabilityHuman = parse(Principal)("user:capability-test");
 export const capabilityToken = "tok_arbor_capability_harness";
+const profileCatalogToken = "tok_arbor_profile_catalog_harness";
+const profileCatalogPrincipal = parse(Principal)("user:local");
 
 const uuidV7 = (): string => {
   const value = randomUUID().replaceAll("-", "").split("");
@@ -66,11 +94,6 @@ export interface PublicProject {
       readonly interfaces: ReadonlyArray<string>;
     };
     readonly responsibilityRevision: number;
-    readonly resourceBoundary: {
-      readonly basisResponsibilityRevision: number;
-      readonly addresses: ReadonlyArray<unknown>;
-    };
-    readonly resourceBoundaryRevision: number;
     readonly agentBinding: {
       readonly _tag: "ResponsibilityBoundAgentBinding";
       readonly workspaceId: string;
@@ -80,6 +103,76 @@ export interface PublicProject {
     readonly revision: number;
   };
 }
+
+export type PublicProjectResourceSelection =
+  | {
+      readonly _tag: "Profile";
+      readonly resourceProfileRef: string;
+      readonly version: string;
+    }
+  | { readonly _tag: "ConversationOnly" };
+
+export interface ProjectResourceCatalog {
+  readonly profiles: ReadonlyArray<{
+    readonly resourceProfileRef: string;
+    readonly version: string;
+    readonly displayName: string;
+    readonly available: boolean;
+  }>;
+  readonly conversationOnlySupported: true;
+}
+
+const hostProfileDirectories = new WeakMap<PublicProject, string>();
+
+/** Test-host-only metadata; never appears in the serializable command input. */
+export const hostProfileDirectoryForFixture = (
+  project: PublicProject,
+): string | undefined => hostProfileDirectories.get(project);
+
+export const publicProjectPayload = (
+  project: PublicProject,
+  resourceSelection: PublicProjectResourceSelection = {
+    _tag: "ConversationOnly",
+  },
+) => {
+  const { projectId: _envelopeProjectId, ...payload } = project;
+  return {
+    ...payload,
+    rootWorkspace: {
+      ...payload.rootWorkspace,
+      resourceSelection,
+    },
+  };
+};
+
+/** Selects an opaque Profile only from the public host catalog. The host path
+ * is held outside the serializable Project shape and never copied to the
+ * CreateProject payload. */
+export const publicProjectPayloadFromCatalog = async (
+  handle: Pick<PublicAppHandle, "projectResources">,
+  project: PublicProject,
+) => {
+  const hostProfileDirectory = hostProfileDirectories.get(project);
+  if (hostProfileDirectory === undefined) {
+    return publicProjectPayload(project, { _tag: "ConversationOnly" });
+  }
+  const catalog = await handle.projectResources();
+  const available = catalog.profiles.filter((profile) => profile.available);
+  if (available.length !== 1) {
+    throw new Error(
+      `expected one available host Profile for file-backed capability fixture; received ${available.length}`,
+    );
+  }
+  const selected = available[0];
+  if (selected === undefined) {
+    throw new Error("host Profile catalog lost its only available entry");
+  }
+  return publicProjectPayload(project, {
+    _tag: "Profile",
+    resourceProfileRef: selected.resourceProfileRef,
+    version: selected.version,
+  });
+};
 
 export interface CapturedProviderCall {
   readonly request: Record<string, unknown>;
@@ -104,7 +197,16 @@ export interface PublicConversationResult {
   }>;
 }
 
-export const makeModelCatalog = (modelRef: string): ModelCatalog => ({
+export const makeModelCatalog = (
+  modelRef: string,
+  capability: {
+    readonly contextWindow: number;
+    readonly outputCeiling: number;
+  } = {
+    contextWindow: 8_192,
+    outputCeiling: 2_048,
+  },
+): ModelCatalog => ({
   defaultModelRef: modelRef,
   entries: [
     {
@@ -113,8 +215,8 @@ export const makeModelCatalog = (modelRef: string): ModelCatalog => ({
       capability: {
         modelRef,
         family: "openai-compatible",
-        contextWindow: 8_192,
-        outputCeiling: 512,
+        contextWindow: capability.contextWindow,
+        outputCeiling: capability.outputCeiling,
         toolProtocol: "json",
         capabilities: ["text", "tools"],
       },
@@ -135,10 +237,12 @@ export const makeRecordingProvider = (
           role: "system",
           content: instruction.text,
         })),
-        ...request.messages.map((message) => ({
-          role: message.role,
-          content: message.text,
-        })),
+        ...portableInputItems(request)
+          .filter((item) => item._tag === "Message")
+          .map((message) => ({
+            role: message.role,
+            content: message.text,
+          })),
       ],
       tools: request.toolDefinitions,
       max_tokens: request.budget.maxOutputTokens,
@@ -162,11 +266,14 @@ const commandEnvelope = (
   payload,
 });
 
-export const makePublicProject = (key: string): PublicProject => {
+export const makePublicProject = (
+  key: string,
+  hostProfileDirectory?: string,
+): PublicProject => {
   const projectId = prefixedId("prj");
   const rootWorkspaceId = prefixedId("ws");
   const sessionId = prefixedId("ses");
-  return {
+  const project: PublicProject = {
     projectId,
     rootWorkspaceId,
     name: `Capability ${key}`,
@@ -187,18 +294,6 @@ export const makePublicProject = (key: string): PublicProject => {
         interfaces: [],
       },
       responsibilityRevision: 0,
-      resourceBoundary: {
-        basisResponsibilityRevision: 0,
-        // Real boundary fact: the workspace owns the repository working tree.
-        // Without an address, ResourceAdmission denies every tool region
-        // ("region outside ResourceBoundary") and tool-use capabilities
-        // cannot be exercised.
-        addresses: [
-          { _tag: "FileTree", path: process.cwd() },
-          { _tag: "GitWorktree", path: process.cwd() },
-        ],
-      },
-      resourceBoundaryRevision: 0,
       agentBinding: {
         _tag: "ResponsibilityBoundAgentBinding",
         workspaceId: rootWorkspaceId,
@@ -208,6 +303,10 @@ export const makePublicProject = (key: string): PublicProject => {
       revision: 0,
     },
   };
+  if (hostProfileDirectory !== undefined) {
+    hostProfileDirectories.set(project, hostProfileDirectory);
+  }
+  return project;
 };
 
 export interface PublicTranscriptEntry {
@@ -232,6 +331,7 @@ export interface PublicAppHandle {
   readonly postCommand: (
     envelope: Record<string, unknown>,
   ) => Promise<{ status: number; payload: { ok: boolean; body?: unknown } }>;
+  readonly projectResources: () => Promise<ProjectResourceCatalog>;
   readonly tick: () => Promise<void>;
   readonly readTranscript: (params: {
     readonly workspaceId: string;
@@ -251,20 +351,41 @@ export const withPublicConversationApp = async (
     readonly modelRef: string;
     readonly provider: OpenAISdkClient;
     readonly secretRef?: SecretRef;
+    readonly blobRoot?: string;
+    readonly modelCapability?: {
+      readonly contextWindow: number;
+      readonly outputCeiling: number;
+    };
   },
   body: (handle: PublicAppHandle) => Promise<void>,
 ): Promise<void> => {
+  let database = publicConversationDatabases.get(input.databaseFile);
+  if (database === undefined) {
+    database = publicConversationFactory.create();
+    publicConversationDatabases.set(input.databaseFile, database);
+  }
   const projectId = parse(ProjectId)(input.project.projectId);
+  const hostProfileDirectory = hostProfileDirectoryForFixture(input.project);
+  const projectResourceProfiles = makeProjectResourceProfilePort(
+    projectResourceProfilesFromEnvironment(
+      hostProfileDirectory === undefined
+        ? {}
+        : { ARBOR_PROJECT_ROOT: hostProfileDirectory },
+    ),
+  );
   const authenticator = makeStaticAuthenticator({
     [capabilityToken]: capabilityHuman,
+    [profileCatalogToken]: profileCatalogPrincipal,
   });
-  const app = buildSliceLayer({
-    databaseFile: input.databaseFile,
+  const app = buildSingleWorkspaceLayer({
+    databaseFile: database.databaseFilename,
     projectId,
-    modelCatalog: makeModelCatalog(input.modelRef),
+    modelCatalog: makeModelCatalog(input.modelRef, input.modelCapability),
     modelRef: input.modelRef,
     provider: { adapterId: "provider-openai", client: input.provider },
+    ...(input.blobRoot === undefined ? {} : { blobRoot: input.blobRoot }),
     ...(input.secretRef === undefined ? {} : { secretRef: input.secretRef }),
+    projectResourceProfiles,
     authenticator,
     governance: {
       authenticatedHumans: [capabilityHuman],
@@ -294,7 +415,6 @@ export const withPublicConversationApp = async (
               effect as Effect.Effect<A, E, never>,
               context,
             );
-          yield* runMigrations(P16_MIGRATIONS);
           const boundary = yield* TransportBoundary;
           const sql = yield* SqlClient;
           const daemon = yield* ProductionDaemonService;
@@ -303,7 +423,11 @@ export const withPublicConversationApp = async (
             startWebTransport({
               http: boundary.http,
               webSocket: boundary.webSocket,
+              authenticator: boundary.authenticator,
+              authenticatorConfigured: true,
               sql,
+              projectDirectory: { list: () => Effect.succeed([]) },
+              projectResourceProfiles,
               pollIntervalMs: 60_000,
             }),
           );
@@ -332,6 +456,23 @@ export const withPublicConversationApp = async (
                   };
                 }),
               ),
+            projectResources: async () => {
+              const response = await fetch(`${base}/project-resources`, {
+                headers: {
+                  authorization: `Bearer ${profileCatalogToken}`,
+                },
+              });
+              const payload = (await response.json()) as {
+                readonly ok: boolean;
+                readonly body?: ProjectResourceCatalog;
+              };
+              if (!response.ok || !payload.ok || payload.body === undefined) {
+                throw new Error(
+                  `public Profile catalog failed: ${response.status} ${JSON.stringify(payload)}`,
+                );
+              }
+              return payload.body;
+            },
             tick: () =>
               Effect.runPromise(provideApp(daemon.daemon.conversationTick)),
             readTranscript: async (params) => {
@@ -390,7 +531,11 @@ export const runPublicConversation = async (input: {
   }> = [];
   await withPublicConversationApp(input, async (handle) => {
     const createProject = await handle.postCommand(
-      commandEnvelope(input.project.projectId, "CreateProject", input.project),
+      commandEnvelope(
+        input.project.projectId,
+        "CreateProject",
+        await publicProjectPayloadFromCatalog(handle, input.project),
+      ),
     );
     if (
       createProject.status !== 200 ||

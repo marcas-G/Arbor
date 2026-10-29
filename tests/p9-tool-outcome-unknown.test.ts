@@ -10,6 +10,7 @@ import {
   LeaseServiceLive,
   layer,
   P8_MIGRATIONS,
+  P36_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
@@ -28,6 +29,7 @@ import {
 import {
   Actor,
   ExecutionId,
+  LeaseGeneration,
   Principal,
   ProjectId,
   parse,
@@ -42,6 +44,7 @@ import {
 import {
   Clock,
   ExecutionRepository,
+  invocationAuthoritySourceRevisionOf,
   ProjectEnvironmentPort,
   ProjectRepository,
   ReconciliationSource,
@@ -62,6 +65,7 @@ import {
   ToolRuntimeLive,
 } from "../packages/tool-runtime/src/index.js";
 import { labeled } from "./support/p9-harness-api.js";
+import { fileTreeBoundaryJson } from "./support/resource-boundary-fixture.js";
 
 /**
  * P9-009 — tool four-tier injection (T1–T4 / 02 §5 + 04 §3, invariant 35)
@@ -287,19 +291,33 @@ const seed = Effect.gen(function* () {
         [sessionId, executionId],
       );
       yield* sql.unsafe(
-        "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'w','{}',0,'{}',0,'{}',?,NULL,'{}',0,0,'Active','t','t')",
-        [workspaceId, projectId, sessionId],
+        "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'w','{}',0,?,0,'{}',?,NULL,'{}',0,0,'Active','t','t')",
+        [workspaceId, projectId, fileTreeBoundaryJson(), sessionId],
       );
       yield* sql.unsafe(
         "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
         [executionId, projectId, workspaceId, sessionId],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
+        [
+          executionId,
+          String(principal),
+          "incarnation:p9-tool-outcome",
+          0,
+          "2999-01-01T00:00:00.000Z",
+          "t",
+        ],
       );
     }),
   );
 });
 
 const boot = Effect.gen(function* () {
+  // Retain the P8 historical starting schema but bring it forward before the
+  // current P4 ToolInvocation store accesses P36 admission-state columns.
   yield* runMigrations(P8_MIGRATIONS);
+  yield* runMigrations(P36_MIGRATIONS);
   yield* seed;
 });
 
@@ -318,6 +336,11 @@ const tierContext = (tier: Tier): ToolExecutionContext => {
       executionId,
       toolName: definition.name,
       toolVersion: "1",
+      sourceRevision: invocationAuthoritySourceRevisionOf({
+        workspacePolicyRevision: 0,
+        activeGrants: [],
+        verifierId: null,
+      }),
       resourceSpaceIds: [],
       allowedCapabilities: definition.capabilityMetadata,
       controlBasisDigest: "d",
@@ -325,6 +348,12 @@ const tierContext = (tier: Tier): ToolExecutionContext => {
       delegationDepth: 0,
     },
     controlBasisDigest: "d",
+    executionFence: {
+      executionId,
+      workerId: String(principal),
+      workerIncarnationId: "incarnation:p9-tool-outcome",
+      fencingGeneration: parse(LeaseGeneration)(0),
+    },
     requestedAt: "t",
   };
 };
@@ -433,7 +462,14 @@ const settleInvocation = Effect.gen(function* () {
   const clock = yield* Clock;
   const now = yield* clock.now();
   yield* tx.transact(
-    store.settle(invocationId, { _tag: "Success" }, null, now),
+    store.settle(
+      invocationId,
+      { _tag: "Success" },
+      null,
+      now,
+      tierContext("Idempotent").executionFence,
+      now,
+    ),
   );
 });
 

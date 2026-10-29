@@ -55,6 +55,18 @@ const satisfies = (
   );
 };
 
+const isCompleteBindingFingerprint = (
+  value: string | undefined,
+): value is string => value !== undefined && /^p16fp_[0-9a-f]{64}$/.test(value);
+
+const withoutCatalogBindingFingerprint = (
+  capability: ModelCapability,
+): Omit<ModelCapability, "bindingFingerprint"> => {
+  const result = { ...capability };
+  delete result.bindingFingerprint;
+  return result;
+};
+
 /**
  * The real `ModelCapabilityPort` (replaces the test-only static layer at the
  * Composition Root). Selection is deterministic: the default entry wins among
@@ -67,6 +79,12 @@ export const ModelCapabilityPortLive = (
    * When given it takes precedence over the catalog default — the catalog
    * default stays the CI fake unless a real deployment is bound. */
   preferredModelRef?: string,
+  /** Full Composition-Root ResolvedModelBinding fingerprint. Without this
+   * complete identity ProviderNative compatibility is withheld fail-closed. */
+  bindingFingerprint?: string,
+  /** The selected ProtocolAdapter's declaration. A catalog cannot claim
+   * ProviderNative when the bound adapter does not declare continuation. */
+  providerSupportsContinuation = false,
 ): Layer.Layer<ModelCapabilityPort> =>
   Layer.succeed(ModelCapabilityPort, {
     resolve: ({ requiredCapabilities }) => {
@@ -87,9 +105,28 @@ export const ModelCapabilityPortLive = (
           cause: "no catalogued model satisfies requiredCapabilities",
         });
       }
+      const completeBindingFingerprint =
+        isCompleteBindingFingerprint(bindingFingerprint);
+      const nativeBindingAllowed =
+        completeBindingFingerprint && providerSupportsContinuation;
+      const declaredCompatibility =
+        chosen.capability.portableRequestCompatibility;
+      const portableRequestCompatibility =
+        !nativeBindingAllowed && declaredCompatibility !== undefined
+          ? {
+              ...declaredCompatibility,
+              operationKinds: declaredCompatibility.operationKinds.filter(
+                (kind) => kind !== "CompactionNative",
+              ),
+            }
+          : declaredCompatibility;
       return Effect.succeed({
-        ...chosen.capability,
+        ...withoutCatalogBindingFingerprint(chosen.capability),
         providerRef: chosen.adapterId,
+        ...(completeBindingFingerprint ? { bindingFingerprint } : {}),
+        ...(portableRequestCompatibility === undefined
+          ? {}
+          : { portableRequestCompatibility }),
       });
     },
   });

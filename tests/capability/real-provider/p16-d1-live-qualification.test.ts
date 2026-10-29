@@ -8,7 +8,10 @@ import type {
   PortableModelRequest,
   ProviderExecutionContext,
 } from "../../../packages/ports/dist/provider.js";
-import { SecretMaterial } from "../../../packages/ports/dist/provider.js";
+import {
+  portableInputItems,
+  SecretMaterial,
+} from "../../../packages/ports/dist/provider.js";
 
 /**
  * P16 Gate D1 — Existing Deployment Live Qualification (dep-env / DeepSeek).
@@ -33,8 +36,7 @@ mkdirSync(EVIDENCE_DIR, { recursive: true });
 const ENDPOINT =
   process.env.ARBOR_MODEL_BASE_URL ?? "https://api.deepseek.com/v1";
 const WIRE_MODEL = process.env.ARBOR_MODEL_NAME ?? "deepseek-chat";
-const API_KEY =
-  process.env.ARBOR_MODEL_API_KEY ?? "sk-ab0863c0186a48e9bf32904bb15b4e97";
+const API_KEY = process.env.ARBOR_MODEL_API_KEY;
 
 const client = OpenAICompatibleFetchClient({
   baseUrl: ENDPOINT,
@@ -42,17 +44,22 @@ const client = OpenAICompatibleFetchClient({
 });
 
 const RUNS = 3;
-const context = (): ProviderExecutionContext => ({
-  providerTurnId: `ptn_d1_${Date.now().toString(36)}` as never,
-  attemptNo: 0,
-  secretMaterial: SecretMaterial.of(API_KEY),
-  cancellationSignal: new AbortController().signal,
-  connectTimeoutMs: 20_000,
-  firstEventTimeoutMs: 60_000,
-  streamIdleTimeoutMs: 60_000,
-  turnDeadlineAt: new Date(Date.now() + 180_000).toISOString(),
-  maxAttempts: 1,
-});
+let liveTurnSequence = 0;
+const context = (): ProviderExecutionContext => {
+  if (API_KEY === undefined || API_KEY.length === 0) {
+    throw new Error(
+      "ARBOR_MODEL_API_KEY is required for live provider qualification",
+    );
+  }
+  return {
+    providerTurnId:
+      `ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a1_${liveTurnSequence++}` as never,
+    attemptNo: 0,
+    secretMaterial: SecretMaterial.of(API_KEY),
+    cancellationSignal: new AbortController().signal,
+    turnDeadlineAt: new Date(Date.now() + 180_000).toISOString(),
+  };
+};
 
 const request = (
   messages: Array<{ role: "user" | "system"; text: string }>,
@@ -131,7 +138,7 @@ const runOnce = async (
         endpoint: ENDPOINT,
         wireModel: WIRE_MODEL,
         request: {
-          messages: request.messages,
+          inputItems: portableInputItems(request),
           tools: request.toolDefinitions.map((tool) => tool.name),
         },
         wire,

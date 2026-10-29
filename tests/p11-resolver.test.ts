@@ -222,25 +222,28 @@ describe("p11-resolver real environment resolver (observation-only)", () => {
     expect(after.snapshotBlobRef).toBe(`blob:${after.fingerprint.digest}`);
   });
 
-  it("probe failure is typed ProbeFailed (unreadable path under chmod 000 directory), never an empty result", async () => {
-    const locked = join(root, "locked");
-    await mkdir(locked);
-    await writeFile(join(locked, "secret"), "x");
-    await chmod(locked, 0o000);
+  it.skipIf(process.platform === "win32")(
+    "probe failure is typed ProbeFailed (unreadable path under chmod 000 directory), never an empty result",
+    async () => {
+      const locked = join(root, "locked");
+      await mkdir(locked);
+      await writeFile(join(locked, "secret"), "x");
+      await chmod(locked, 0o000);
 
-    await run(
-      Effect.gen(function* () {
-        yield* migrate;
-        const resolver = yield* EnvironmentResolverPort;
-        const failure = yield* Effect.flip(
-          resolver.observe(PROJECT_A, [
-            { _tag: "FileTree", path: join(locked, "secret") },
-          ]),
-        );
-        expect(failure._tag).toBe("ProbeFailed");
-      }),
-    );
-  });
+      await run(
+        Effect.gen(function* () {
+          yield* migrate;
+          const resolver = yield* EnvironmentResolverPort;
+          const failure = yield* Effect.flip(
+            resolver.observe(PROJECT_A, [
+              { _tag: "FileTree", path: join(locked, "secret") },
+            ]),
+          );
+          expect(failure._tag).toBe("ProbeFailed");
+        }),
+      );
+    },
+  );
 
   it("architecture: resolver source imports no write seam and contains no write SQL (mechanical)", () => {
     const source = readFileSync(

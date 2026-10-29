@@ -131,6 +131,10 @@ import {
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import {
+  NoHoldWorkReadmissionGateStoreLive,
+  NoHoldWorkReadmissionGateStoreService,
+} from "../packages/testkit/src/index.js";
+import {
   makeP7CommandHandlers,
   p7Project,
   p7RootWorkspace,
@@ -218,11 +222,12 @@ const DEP_F_BLOCKED = dep("00f011");
 const DEP_F_UNREFERENCED = dep("00f012");
 const WS_F_OTHER = ws("00f005");
 
-// --- mini gateway composition: P1 + P2 + the nine P7-phase commands ---
+// --- mini gateway composition: P1 + P2 + the P7-phase commands ---
 
 const P7_PHASE_COMMAND_TYPES: ReadonlyArray<string> = [
   "RecordDecision",
   "SendMessage",
+  "DeliverMessage",
   "SteerWork",
   "DeclareDependency",
   "ProduceDeliverable",
@@ -312,6 +317,7 @@ const StoryRegistryLive: Layer.Layer<
         sessions,
         executions,
         workWaits,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
       }),
       ...makeP7CommandHandlers({
         proposals,
@@ -319,6 +325,7 @@ const StoryRegistryLive: Layer.Layer<
         messages,
         workspaces,
         works,
+        deliverables,
       }),
       makeDeclareDependencyHandler({
         works,
@@ -369,6 +376,7 @@ const makeStoryApp = () => {
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
@@ -812,12 +820,12 @@ const decideFromTable = (
   runnable: ReadonlyArray<WorkId>,
 ): SchedulerDecision =>
   Option.isSome(current)
-    ? { _tag: "Admit", focus: { _tag: "Work", workId: current.value } }
+    ? { _tag: "AdmitWork", workId: current.value }
     : runnable.length === 0
       ? { _tag: "Idle" }
       : runnable.length === 1
         ? { _tag: "SelectCurrentWork", workId: runnable[0] as WorkId }
-        : { _tag: "Admit", focus: { _tag: "Coordination" } };
+        : { _tag: "RequestWorkSelection", candidateWorkIds: runnable };
 
 const makeCoordinatorDeps = Effect.gen(function* () {
   const gateway = yield* CommandGateway;
@@ -2020,8 +2028,8 @@ describe("p7-acceptance", () => {
         expect(matrix.current).toEqual(Option.none());
         expect([...matrix.runnable]).toEqual([WORK_F_DEP_ONLY, WORK_F_CLEAN]);
         expect(decideFromTable(matrix.current, matrix.runnable)).toEqual({
-          _tag: "Admit",
-          focus: { _tag: "Coordination" },
+          _tag: "RequestWorkSelection",
+          candidateWorkIds: [WORK_F_DEP_ONLY, WORK_F_CLEAN],
         });
 
         yield* setCurrentWork(WORK_F_BLOCKED);
@@ -2033,7 +2041,10 @@ describe("p7-acceptance", () => {
         ]);
         expect(
           decideFromTable(blockedCurrent.current, blockedCurrent.runnable),
-        ).toEqual({ _tag: "Admit", focus: { _tag: "Coordination" } });
+        ).toEqual({
+          _tag: "RequestWorkSelection",
+          candidateWorkIds: [WORK_F_DEP_ONLY, WORK_F_CLEAN],
+        });
 
         yield* setCurrentWork(WORK_F_CLEAN);
         const cleanCurrent = yield* classifyRoot;
@@ -2041,10 +2052,7 @@ describe("p7-acceptance", () => {
         expect([...cleanCurrent.runnable]).toEqual([WORK_F_DEP_ONLY]);
         expect(
           decideFromTable(cleanCurrent.current, cleanCurrent.runnable),
-        ).toEqual({
-          _tag: "Admit",
-          focus: { _tag: "Work", workId: WORK_F_CLEAN },
-        });
+        ).toEqual({ _tag: "AdmitWork", workId: WORK_F_CLEAN });
 
         yield* setCurrentWork(null);
         yield* insertWait(WORK_F_DEP_ONLY, [{ _tag: "Manual" }]);

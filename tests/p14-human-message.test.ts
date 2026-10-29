@@ -16,6 +16,8 @@ import {
   WorkspaceId,
 } from "../packages/domain/src/index.js";
 import {
+  type ConversationResponseJob,
+  type ConversationResponseJobStoreService,
   type HumanMessageRecord,
   type HumanMessageStoreService,
   type InboxProjectionStoreService,
@@ -73,11 +75,13 @@ const externalContext = (principal: Principal): CommandSubmissionContext => ({
 interface Harness {
   readonly handler: ReturnType<typeof makeSubmitHumanMessageHandler>;
   readonly rows: Map<string, HumanMessageRecord>;
+  readonly jobs: Map<string, ConversationResponseJob>;
   readonly inbox: Array<InboxEntry>;
 }
 
 const makeHarness = (): Harness => {
   const rows = new Map<string, HumanMessageRecord>();
+  const jobs = new Map<string, ConversationResponseJob>();
   const inbox: Array<InboxEntry> = [];
   const messages: Pick<HumanMessageStoreService, "insertPending" | "findById"> =
     {
@@ -105,12 +109,19 @@ const makeHarness = (): Harness => {
       return Effect.void;
     },
   };
+  const responseJobs: Pick<ConversationResponseJobStoreService, "insert"> = {
+    insert: (job) => {
+      jobs.set(job.messageId, job);
+      return Effect.void;
+    },
+  };
   const handler = makeSubmitHumanMessageHandler({
     messages,
+    responseJobs,
     inbox: inboxStore,
     rootWorkspaceOf: () => Effect.succeed(ROOT),
   });
-  return { handler, rows, inbox };
+  return { handler, rows, jobs, inbox };
 };
 
 let harness: Harness;
@@ -145,6 +156,7 @@ describe("P14-001 SubmitHumanMessage", () => {
     expect(outcome.value.result.state).toBe("Pending");
     expect(outcome.value.events).toHaveLength(1);
     expect(outcome.value.events[0]?.eventType).toBe("HumanMessageSubmitted");
+    expect(harness.jobs.get("msg_0001")?.state).toEqual({ _tag: "Queued" });
   });
 
   it("S2: rejects a non-root target (child direct-chat closed at handler level)", async () => {

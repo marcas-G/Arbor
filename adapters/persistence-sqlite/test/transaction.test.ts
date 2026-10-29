@@ -1,9 +1,10 @@
 import { TransactionPort, TransactionScope } from "@arbor/ports";
-import { Effect, Exit, Layer } from "effect";
+import { Duration, Effect, Exit, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   layer,
+  makeTransactionPortLive,
   P1_MIGRATIONS,
   runMigrations,
   sqliteAdapterError,
@@ -75,5 +76,70 @@ describe("transaction port", () => {
         "nested transaction rejected",
       );
     }
+  });
+
+  it("serializes independent concurrent transactions on the shared connection", async () => {
+    const concurrent = Effect.gen(function* () {
+      yield* runMigrations(P1_MIGRATIONS);
+      const tx = yield* TransactionPort;
+      const write = (projectId: string, delayMs: number) =>
+        tx.transact(
+          Effect.gen(function* () {
+            if (delayMs > 0) yield* Effect.sleep(Duration.millis(delayMs));
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(
+              "INSERT INTO project_event_sequences (project_id, last_sequence) VALUES (?, 1)",
+              [projectId],
+            );
+          }),
+        );
+      yield* Effect.all([write("concurrent-a", 25), write("concurrent-b", 0)], {
+        concurrency: "unbounded",
+      });
+      const sql = yield* SqlClient;
+      return yield* sql.unsafe<{ project_id: string }>(
+        "SELECT project_id FROM project_event_sequences ORDER BY project_id",
+      );
+    });
+
+    const rows = await Effect.runPromise(Effect.provide(concurrent, app));
+    expect(rows.map((row) => row.project_id)).toEqual([
+      "concurrent-a",
+      "concurrent-b",
+    ]);
+  });
+
+  it("keeps the qualification probe pre-BEGIN and fail-silent", async () => {
+    const events: string[] = [];
+    const qualificationApp = Layer.provideMerge(
+      makeTransactionPortLive(async (event) => {
+        events.push(event.boundary);
+        throw new Error("test-only observer failure");
+      }),
+      layer({ filename: ":memory:" }),
+    );
+    const qualification = Effect.gen(function* () {
+      yield* runMigrations(P1_MIGRATIONS);
+      const tx = yield* TransactionPort;
+      yield* tx.transact(
+        Effect.gen(function* () {
+          events.push("body");
+          const sql = yield* SqlClient;
+          yield* sql.unsafe(
+            "INSERT INTO project_event_sequences (project_id, last_sequence) VALUES ('probe-fail-silent', 1)",
+          );
+        }),
+      );
+      const sql = yield* SqlClient;
+      return yield* sql.unsafe<{ project_id: string }>(
+        "SELECT project_id FROM project_event_sequences WHERE project_id = 'probe-fail-silent'",
+      );
+    });
+
+    const rows = await Effect.runPromise(
+      Effect.provide(qualification, qualificationApp),
+    );
+    expect(events).toEqual(["BeforeBegin", "body"]);
+    expect(rows).toEqual([{ project_id: "probe-fail-silent" }]);
   });
 });

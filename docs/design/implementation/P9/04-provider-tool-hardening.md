@@ -91,16 +91,31 @@ ownership transfer for the provider-turn crash disposition — frozen here:
 crash leaves provider_turns row with settled_at IS NULL
   (Turn intent + Manifest persisted before the request, P3 `04` §3,
    so the dangling Turn is always visible)
-  → deterministic disposition:
-     1. resume-by-retry: same ProviderTurn, new ProviderAttempt
+  → deterministic disposition (DID v1.20 AHT-2 refinement):
+     1. complete success evidence exists:
+        atomically settle Attempt + Turn locally; NO provider request
+     2. no complete success evidence → resume-by-retry: same ProviderTurn,
+        new ProviderAttempt
         (attempt_no = MAX+1, Turn-local); Agent turnNo unchanged;
         no new Manifest (DID §6A.9; P3 `01` §4–§5) — a resumed Turn is a
         transport retry, not a new model decision
-     2. retry bound exhausted (safe-retry policy / safety gate):
+     3. retry bound exhausted (safe-retry policy / safety gate):
         Turn settles under the existing driver Turn-failure semantics
         (P2/P3); Execution-level disposition follows P2 `06` §4 recovery
         rules — recovery never invents a settlement
 ```
+
+Terminal convergence is first-writer-wins. Every Turn-level settlement,
+including cancellation, timeout and recovery failure, must CAS on
+`settled_at IS NULL` and reject a zero-row update. A stale Worker may never
+overwrite a success or another terminal disposition. Recovery failure marking
+must likewise surface a lost CAS rather than report a failure mark that was not
+persisted.
+
+Persisted `turnDeadlineAt` is part of the recovery safety envelope. Recovery
+uses an injected Clock reading; a missing, malformed or non-finite deadline is
+incomplete durable evidence and therefore produces `UnsafeReplay/Stop`, never
+a retry plan.
 
 - The recovery pass itself never calls the provider: it leaves the Execution
   Active; the Scheduler re-dispatches; the driver resumes the dangling Turn
@@ -111,6 +126,9 @@ crash leaves provider_turns row with settled_at IS NULL
 - Provider turns carry no external side effect beyond the provider request
   itself; tool-style `OutcomeUnknown` ambiguity does not arise
   (`OutcomeUnknown` is the tool-invocation settlement vocabulary, P4 `06`).
+- A settled successful Turn whose Agent result handoff is incomplete is not a
+  Provider retry case. P3 `08` + P9 `07` replay the pinned result through the
+  durable AgentLoopStep state machine.
 
 ### 2.3 Injection assertions
 
@@ -128,7 +146,33 @@ I-7  crash mid-Turn + restart       → dangling Turn resumed as new
                                        ProviderAttempt, same providerTurnId +
                                        manifestId; UsageReported aggregates per
                                        Turn over attempts (P3 `01` §5)
+I-8  crash after complete success evidence but before Turn settlement
+                                     → local atomic convergence; zero new
+                                       Provider request (P9 `07` AH1/AH2)
+I-9  stale Worker settles after another Worker completed the Turn
+                                     → terminal CAS rejected; first result and
+                                       success evidence remain unchanged
+I-10 malformed/missing persisted deadline
+                                     → fail closed; zero retry plan
 ```
+
+### 2.4 SQLite implementation boundaries
+
+The public adapter remains `ProviderTurnStoreLive`, composed from modules that
+own distinct durable responsibilities:
+
+- `provider-turn-intent-store.ts`: Turn intent, Manifest and legacy intent;
+- `provider-attempt-store.ts`: Attempt start, observation journal and
+  settlement;
+- `provider-turn-settlement-store.ts`: atomic success, evidence replay,
+  evidence adoption and terminal CAS;
+- `provider-turn-project-store.ts`: project recovery reads, recovery decision
+  journal, failure marking and usage rows;
+- `provider-turn-store-shared.ts`: row codecs and invariant helpers.
+
+Project recovery may return all dangling Turns, but SQLite Attempt lookup must
+split the Turn IDs into fixed-size batches. No generated `IN` statement may
+grow with the full project backlog.
 
 ## 3. Tool four-tier injection assertions (invariant 35)
 
@@ -169,12 +213,26 @@ observable surface injection assertions derive from Execution state
                    record (GQ ruling: no dispatch table)
 ```
 
-## 5. Must Not Decide
+## 5. SCRC v1.22 Provider/Tool recovery additions
+
+- settled ToolInvocation + missing Session ToolResult → local sourced append,
+  never re-execute;
+- dangling ToolCall → reconcile invocation or write explicit
+  Interrupted/OutcomeUnknown result, never an unpaired success text;
+- Provider context overflow → one compact/retry only when no durable assistant
+  output or Tool/Control effect exists; second overflow is terminal;
+- started/incomplete compaction leaves old epoch active; completed checkpoint
+  resumes the same AgentLoopStep without replaying settled actions;
+- incompatible ProviderNative binding → portable Summary/frontier rebuild,
+  never opaque checkpoint replay.
+
+## 6. Must Not Decide
 
 - No new failure tags; no DID §6A.8 change (GQ4: mapping only over existing
   `ProviderFailureKind`).
-- No P3 retry-bound / backoff modification (bounds stay empirical; the
-  mechanism is contract, P3 `06` §3 precedent).
+- No ordinary P3 transport retry-bound / backoff modification (bounds stay
+  empirical; the mechanism is contract, P3 `06` §3 precedent). DID v1.22's
+  one overflow-triggered compact/retry is a distinct context-recovery bound.
 - No durable dispatch table / ack surface.
 - No P8 spawn-window reopening (P8 crash windows formally closed).
 - No Attention presentation / routing / UI (P10; P9 emits facts only).
@@ -188,3 +246,7 @@ The recovery-facing `ProviderTurnStore` extension —
 `findUnsettledByProject(projectId)` and `failTurn(turnId, settledAt)` — is
 recorded here (owning P9 contract; cross-ref P3 `06`, whose transport-failure
 semantics are unchanged — these are recovery read/mark paths only).
+
+DID v1.20 supersedes the assumption that every unsettled Turn is retryable:
+the store first exposes/version-validates complete success evidence and locally
+settles it. `findSettledResult` then feeds AgentLoopStep recovery (`P3 08`, `P9 07`).

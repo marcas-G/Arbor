@@ -4,11 +4,13 @@ import {
   createSession,
   createWorkspace,
   err,
+  normalizeProjectName,
   ok,
   type ProjectId,
   type ProjectPolicy,
-  type ResourceBoundary,
-  type ResourceBoundaryRevision,
+  parse,
+  type ResourceAddress,
+  ResourceBoundaryRevision,
   type ResponsibilityBoundAgentBinding,
   type ResponsibilityDefinition,
   type ResponsibilityRevision,
@@ -20,11 +22,22 @@ import {
 import type {
   PendingDomainEvent,
   ProjectRepositoryService,
+  ProjectResourceProfilePortService,
   SessionRepositoryService,
   WorkspaceRepositoryService,
+  WorkspaceResourceActivationStoreService,
 } from "@arbor/ports";
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
+import { commandErr } from "../command-result.js";
 import type { CommandHandler } from "../gateway.js";
+
+export type CreateProjectResourceSelection =
+  | {
+      readonly _tag: "Profile";
+      readonly resourceProfileRef: string;
+      readonly version: string;
+    }
+  | { readonly _tag: "ConversationOnly" };
 
 export interface CreateProjectPayload {
   readonly name: string;
@@ -42,8 +55,7 @@ export interface CreateProjectPayload {
     readonly name: string;
     readonly responsibilityDefinition: ResponsibilityDefinition;
     readonly responsibilityRevision: ResponsibilityRevision;
-    readonly resourceBoundary: ResourceBoundary;
-    readonly resourceBoundaryRevision: ResourceBoundaryRevision;
+    readonly resourceSelection: CreateProjectResourceSelection;
     readonly agentBinding: ResponsibilityBoundAgentBinding;
     readonly workspacePolicy: WorkspacePolicy;
     readonly workspacePolicyRevision: Revision;
@@ -61,38 +73,69 @@ export interface CreateProjectDependencies {
   readonly projects: ProjectRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
+  readonly projectResourceProfiles?: ProjectResourceProfilePortService;
+  readonly activations?: WorkspaceResourceActivationStoreService;
 }
 
 export const makeCreateProjectHandler = (
   dependencies: CreateProjectDependencies,
 ): CommandHandler<CreateProjectPayload, CreateProjectResult> => ({
   commandType: "CreateProject",
-  schemaVersion: "1",
+  schemaVersion: "2",
   authority: { tag: "CreateProjectAuthority", targetMatches: () => true },
   stopAdmission: { _tag: "Unclassified" },
   execute: (envelope) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
-      if (
-        payload.rootWorkspace.resourceBoundary.basisResponsibilityRevision !==
-        payload.rootWorkspace.responsibilityRevision
-      ) {
-        return err({
-          _tag: "AuthorityDenied",
-          reason: "resource boundary basis revision mismatch",
-        });
+      const projectName = normalizeProjectName(payload.name);
+      if (!projectName.ok) {
+        return err(projectName.error);
       }
+      let trustedAddresses: ReadonlyArray<ResourceAddress> = [];
+      if (payload.rootWorkspace.resourceSelection._tag === "Profile") {
+        const profiles = dependencies.projectResourceProfiles;
+        const selected =
+          profiles === undefined
+            ? Option.none()
+            : yield* profiles.resolve(
+                payload.rootWorkspace.resourceSelection.resourceProfileRef,
+                payload.rootWorkspace.resourceSelection.version,
+              );
+        if (Option.isNone(selected)) {
+          return commandErr({
+            _tag: "ProjectResourceUnavailable",
+            commandId: envelope.commandId,
+          });
+        }
+        trustedAddresses = [selected.value.canonicalAddress];
+      }
+      const resourceBoundary = {
+        basisResponsibilityRevision:
+          payload.rootWorkspace.responsibilityRevision,
+        addresses: trustedAddresses,
+      };
+      const resourceBoundaryRevision = parse(ResourceBoundaryRevision)(0);
+      const resourceSource =
+        payload.rootWorkspace.resourceSelection._tag === "Profile"
+          ? {
+              _tag: "Profile" as const,
+              resourceProfileRef:
+                payload.rootWorkspace.resourceSelection.resourceProfileRef,
+              version: payload.rootWorkspace.resourceSelection.version,
+            }
+          : { _tag: "ConversationOnly" as const };
 
       yield* dependencies.projects.create(
         createProject({
           projectId: envelope.projectId,
-          name: payload.name,
+          name: projectName.value,
           rootWorkspaceId: payload.rootWorkspaceId,
           projectPolicy: payload.projectPolicy,
           projectPolicyRevision: payload.projectPolicyRevision,
           revision: payload.revision,
           defaultConfiguration: payload.defaultConfiguration,
           environmentRef: payload.environmentRef,
+          resourceSource,
         }),
       );
       yield* dependencies.workspaces.create(
@@ -104,9 +147,8 @@ export const makeCreateProjectHandler = (
           responsibilityDefinition:
             payload.rootWorkspace.responsibilityDefinition,
           responsibilityRevision: payload.rootWorkspace.responsibilityRevision,
-          resourceBoundary: payload.rootWorkspace.resourceBoundary,
-          resourceBoundaryRevision:
-            payload.rootWorkspace.resourceBoundaryRevision,
+          resourceBoundary,
+          resourceBoundaryRevision,
           agentBinding: payload.rootWorkspace.agentBinding,
           primarySessionId: payload.primarySession.sessionId,
           workspacePolicy: payload.rootWorkspace.workspacePolicy,
@@ -126,6 +168,43 @@ export const makeCreateProjectHandler = (
         }),
       );
 
+      const activationEvent: PendingDomainEvent | undefined =
+        payload.rootWorkspace.resourceSelection._tag === "Profile"
+          ? {
+              projectId: envelope.projectId,
+              eventType: "WorkspaceResourceActivationChanged",
+              eventVersion: 1,
+              occurredAt: envelope.issuedAt,
+              aggregateRef: payload.rootWorkspaceId,
+              actor: envelope.actor,
+              causedByCommandId: envelope.commandId,
+              payload: {
+                _tag: "WorkspaceResourceActivationChanged",
+                workspaceId: payload.rootWorkspaceId,
+                resourceBoundaryRevision,
+                status: "Pending",
+              },
+            }
+          : undefined;
+      if (activationEvent !== undefined) {
+        if (dependencies.activations === undefined) {
+          return yield* Effect.die(
+            new Error(
+              "CreateProject Profile requires the activation intent store",
+            ),
+          );
+        }
+        yield* dependencies.activations.insertPending({
+          projectId: envelope.projectId,
+          workspaceId: payload.rootWorkspaceId,
+          resourceBoundaryRevision,
+          status: "Pending",
+          createdAt: envelope.issuedAt,
+          updatedAt: envelope.issuedAt,
+          activatedAt: null,
+        });
+      }
+
       const events: PendingDomainEvent[] = [
         {
           projectId: envelope.projectId,
@@ -137,7 +216,7 @@ export const makeCreateProjectHandler = (
           causedByCommandId: envelope.commandId,
           payload: {
             projectId: envelope.projectId,
-            name: payload.name,
+            name: projectName.value,
             rootWorkspaceId: payload.rootWorkspaceId,
           },
         },
@@ -156,6 +235,7 @@ export const makeCreateProjectHandler = (
             name: payload.rootWorkspace.name,
           },
         },
+        ...(activationEvent === undefined ? [] : [activationEvent]),
       ];
 
       return ok({

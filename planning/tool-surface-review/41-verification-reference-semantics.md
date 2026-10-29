@@ -1,9 +1,8 @@
 # Verification Reference Semantics
 
 **Date:** 2026-09-27
-**Status:** Source audit; G-V2-3 remains open after the scoped assessment in
-`planning/tool-surface-review/44-g-v2-3-conclusion-summary-closure.md`;
-G-V2-2 remains open
+**Status:** HISTORICAL SOURCE AUDIT — G-V2-2/3 RESOLVED by accepted DID v1.26
+VDC-2/3; retained as pre-closure evidence
 
 ## Purpose
 

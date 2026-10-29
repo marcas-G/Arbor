@@ -1,7 +1,7 @@
-# P8 — 04 Evidence & Version Binding (DRAFT for contract review)
+# P8 — 04 Evidence & Version Binding
 
 **Authority:** DID v1.11 §3.5:1161-1185, §3.7:1237, §8.4A, §12.8 C7; SD v1.3 §9.2/§9.5/§9.6; 不变量 26/27/44/49; P4 blob/artifact 基建; P7 `01` §3（Deliverable 不可变）; P6 `01` §2（占位 mission）。
-**Status:** DRAFT (first draft for contract review; GQ2 decided: criteria structured per v1.11 G1)。
+**Status:** FROZEN — DID v1.26 VDC addendum.
 
 ## 1. EvidenceRecord（runtime record，DID §3.7——非聚合、无 domain event）
 
@@ -15,10 +15,19 @@ interface EvidenceRecord {
   readonly observedEnvironmentRevision?: string;   // 可执行验证时必填（§3）
   readonly recordedByExecutionId: ExecutionId;     // Verifier Execution 绑定
   readonly recordedAt: string;
+  /** Required only when kind = ToolObservation; Runtime-bound, never model-authored. */
+  readonly toolInvocationId?: ToolInvocationId;
+  readonly observationRef?: string;
+  readonly callRef?: string;
 }
 ```
 
 - append-only、immutable；仅 VerifierExecutionAuthority 可 append（`01` §2）。
+- ToolObservation uses `(toolInvocationId, observationRef, executionId, callRef)`
+  as its exact source identity. `artifactRef` is content evidence, not a
+  substitute for the invocation/result identity.
+- A concluded Verification stores `summaryRef: BlobRef | null`; normal
+  conclusions require non-null summaryRef and the event carries the same ref.
 - trust metadata（DID §8.4A）：evidence 片段进 Model Context 时 `provenanceKind: ToolObservation/…` 默认 `DataOnly`——verdict 推理链不得自我提升 authority。
 
 ## 2. Criterion 级 verdict（GQ2 已裁决：mission schema 结构化——v1.11 G1）
@@ -61,3 +70,61 @@ interface CriterionResult {
 
 - No matcher/verdict/聚合规则修改；No evidence domain event；No Environment 生产语义（P11）。
 - No blob/沙箱实现细节冻结（P4 基建复用，任务级）。
+
+## Accepted VCS addendum — stable evidence time and conclusion snapshot (DID v1.48)
+
+Accepted token `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`,
+proposal raw SHA-256
+`B0C532FF66697CE1FB06B93CDE477B1A833FC310D360D48513E341D54F1FAD56`,
+accepted 2026-10-17. This addendum fixes the source of `recordedAt` and the
+durable conclusion snapshot; it does not change the frozen aggregation,
+criterion requirements, or evidence authority.
+
+For a `RecordVerificationEvidence` logical action, `recordedAt` is the
+Runtime-selected timestamp from the first durable P9 `AgentLoopStepAction`
+ActionIntent: the exact persisted `updatedAt` value. Runtime passes it through
+unchanged, and does not select a new time in the handler or after owner
+generation takeover. While the Action remains Pending, P9 preserves that first
+intent timestamp, including transitions that leave it Pending. The model never
+authors this field. If an existing Pending Action's `updatedAt` cannot be
+proven to remain its first-intent time, recovery fails closed. No separate
+Evidence timestamp column is introduced by this contract.
+
+Every Verification retains the complete immutable `missionSnapshot` selected
+at StartVerification. A normal conclusion retains an exact ordered
+`criteriaResults` snapshot: exactly one result per mission criterion, in
+mission order, copying its `criterionId`, `requirement`, and `required` values;
+each criterion's Evidence IDs are duplicate-free and lexicographically
+ordered, belong to that Verification and criterion, and satisfy the frozen
+evidence requirement. The overall verdict remains the existing deterministic
+aggregation. `summaryRef` is byte-verified before commit.
+
+The only snapshot exception is G5 Orphaned: exactly `Unknown` with reason
+`Orphaned` stores an empty `criteriaResults` list and status
+`NotApplicableOrphaned`. This is not an inferred historical result. The
+complete mission snapshot remains retained.
+
+Snapshot availability has exactly four states:
+
+| Status | Meaning |
+|---|---|
+| `Pending` | Open Verification with a proven immutable `missionSnapshot` and no conclusion results |
+| `Available` | New ordinary conclusion with the complete exact mission and criterion snapshot |
+| `NotApplicableOrphaned` | New G5 `Unknown`/`Orphaned` conclusion with empty criterion results and retained mission snapshot |
+| `UnavailableLegacy` | Pre-migration Concluded row whose criterion snapshot is unavailable and is not inferred |
+
+`UnavailableLegacy` preserves the original verdict, evidence, summary
+reference, events and receipts; it is neither an empty result nor permission
+to infer criterion values. Only the explicit new G5 exception uses an empty
+result list.
+
+For migration semantics, an Open row may become `Pending` only when the
+existing `verifications.mission_snapshot` is strictly decoded and proves its
+Verification identity, exact Work/revision binding, and association with its
+`VerificationStarted` event. The event `missionDigest` is a weak consistency
+check and cannot reconstruct or replace snapshot fields. Missing, malformed,
+or unassociated snapshots abort preflight before schema or row writes. Every
+pre-existing Concluded row becomes `UnavailableLegacy` with no result
+backfill or canonical conclusion rewrite. The migration ID, DDL, initialization
+and implementation package remain TBD and require separate implementation
+authorization; this addendum does not register or authorize a migration.

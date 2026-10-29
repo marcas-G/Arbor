@@ -40,6 +40,11 @@ P2 skeleton defers:
 9. Resume meaningful work only
 ```
 
+DID v1.20 refines steps 4–5 without reordering them: reconcile complete
+Provider evidence and the durable AgentLoopStep handoff before deciding whether an
+Execution has a deterministic settlement. P9 `07` owns the full disposition
+matrix and fault injection.
+
 Core principle (SD §10.6): **recover reality before cognition**;
 **runtime failure != organizational change**.
 
@@ -47,11 +52,14 @@ Core principle (SD §10.6): **recover reality before cognition**;
 
 ```text
 for each execution_leases row with expires_at <= now:
-  delete the lease row (or mark invalid)
+  retain it as expired; acquisition may replace the holder only while deriving
+  generation = prior generation + 1
 ```
 
 - Invalidation never settles an Execution by itself (DID §3.4/§12.11).
-- After invalidation, a previously leased Worker's fence no longer validates:
+- Expired/released lease rows are never deleted; generation remains monotone
+  (P2 `03`/`04`). After invalidation, a previously leased Worker's fence no
+  longer validates:
   any late durable write is rejected authoritatively
   (`FencingRejected` / `LeaseFencingRejected`).
 - Old-worker resurrection is therefore safe by construction; systematic
@@ -80,6 +88,27 @@ Non-deterministic cases are **not** guessed: they remain Active or become
 `OutcomeUnknown(ReconciliationRequired)` only when the reconciliation source
 can enumerate `invocationRefs`; otherwise they are escalated (step 6) with no
 blind replay (DID §3.4/§6A.6).
+
+### 4A. Durable AgentLoopStep proposal (DID v1.20)
+
+```text
+for each Active Execution:
+  if AgentLoopStep is SettlementProposed:
+    apply unresolved-side-effect gate
+    if clear:
+      submit the persisted settlement through SettleExecution
+    else:
+      reconcile / Attention / OutcomeUnknown only
+  else if AgentLoopStep has resumable durable progress:
+    leave Active and re-dispatch under a current lease
+  if Execution is already settled:
+    converge runtime/conversation records only; execute no new action
+```
+
+The P2 runtime never invents a proposal from a settled ProviderTurn. P3 owns
+AgentLoopStep progression; P9 owns legacy adoption and recovery classification.
+An expired lease is therefore an ordinary takeover input, not a reason to lose
+or repeat a Provider result.
 
 ## 5. Reconciliation boundary
 
@@ -134,9 +163,40 @@ Not covered (deployment backup/replication, explicit RPO/RTO):
 - Failures beyond the declared envelope are reported truthfully; no automatic
   recovery is promised.
 
-## 8. Out of scope
+## 8. SCRC v1.22 recovery ordering
+
+Before normal AgentLoopStep redispatch, recovery additionally performs:
+
+```text
+reconcile in-flight ToolInvocation
+→ idempotently append a missing sourced ToolResult when settlement is proven
+→ reconcile incomplete Inbox promotion
+→ keep the last completed ContextEpoch active
+→ classify an incomplete Compaction ProviderTurn from durable evidence
+→ resume the pending AgentLoopStep against the completed epoch/frontier
+```
+
+Compaction started without an atomically committed checkpoint never replaces
+the old epoch. Completed checkpoint recovery never replays already completed
+Tool/Control effects. A ProviderNative checkpoint with an incompatible binding
+is not replayed; recovery requests portable Summary/frontier rebuild.
+
+## 9. Out of scope
 
 - Systematic fault injection and hardening (P9).
 - Provider/Tool `OutcomeUnknown` reconciliation implementation (P3/P4).
 - Projection rebuild (P10).
 - Distributed recovery / multi-host failover (P12).
+
+## Accepted V21 sandbox recovery boundary
+
+P2 recovery recognizes the existing same-Execution HumanIntervention park for
+SandboxPolicyRequiredInterruption. Before reacquiring/dispatching, the normal
+recovery controller checks the durable pending NotAdmitted invocation and its
+strict P4 RecoveryBinding. It does not create a new Execution or Step state.
+If the exact binding is missing/corrupt/mismatched, the owning P9 read-only
+RecoveryBlocked classification prevents lease/P4/Provider/effect calls while
+the invocation remains Pending. A valid binding with missing/stale policy
+stays parked; a committed policy decision wakes the same active Execution.
+Actual persisted P4 provider-unavailable observation is consumed without
+probe/spawn replay. T4 remains read-only.

@@ -12,7 +12,7 @@ import { useViewQuery } from "../../api/useViewQuery.js";
 import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
 import { Empty } from "../../components/Empty.js";
-import { MonoText } from "../../components/MonoText.js";
+import { Icon } from "../../components/Icon.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { presentResponsibilityTree } from "../tree/treePresentation.js";
@@ -60,9 +60,14 @@ function TreePane({
       aria-labelledby="workbench-tree-title"
     >
       <header className={styles.paneHeader}>
-        <div>
-          <p className={styles.eyebrow}>组织视图</p>
-          <h2 id="workbench-tree-title">责任树</h2>
+        <div className={styles.paneTitleGroup}>
+          <span className={styles.paneIcon}>
+            <Icon name="tree" size={18} />
+          </span>
+          <div>
+            <p className={styles.eyebrow}>组织视图</p>
+            <h2 id="workbench-tree-title">责任树</h2>
+          </div>
         </div>
         <Button
           variant="quiet"
@@ -118,10 +123,10 @@ function TreePane({
                     node.subtreeAttention.actionRequired === 0 ? null : (
                       <span className={styles.treeNodeBadges}>
                         {node.subtreeAttention.attention === 0 ? null : (
-                          <Badge tone="attention">{`attention ${String(node.subtreeAttention.attention)}`}</Badge>
+                          <Badge tone="attention">{`需关注 ${String(node.subtreeAttention.attention)}`}</Badge>
                         )}
                         {node.subtreeAttention.actionRequired === 0 ? null : (
-                          <Badge tone="danger">{`actionRequired ${String(node.subtreeAttention.actionRequired)}`}</Badge>
+                          <Badge tone="danger">{`需要处理 ${String(node.subtreeAttention.actionRequired)}`}</Badge>
                         )}
                       </span>
                     )}
@@ -177,9 +182,14 @@ function ConversationPane({
       aria-labelledby="workbench-conversation-title"
     >
       <header className={styles.paneHeader}>
-        <div>
-          <p className={styles.eyebrow}>协作上下文</p>
-          <h2 id="workbench-conversation-title">对话</h2>
+        <div className={styles.paneTitleGroup}>
+          <span className={styles.paneIcon}>
+            <Icon name="conversation" size={18} />
+          </span>
+          <div>
+            <p className={styles.eyebrow}>协作上下文</p>
+            <h2 id="workbench-conversation-title">对话</h2>
+          </div>
         </div>
         <span className={styles.paneState}>根工作区</span>
       </header>
@@ -219,6 +229,28 @@ export function RootWorkbenchPage({
   );
   const layoutRef = useRef<HTMLDivElement>(null);
   const stopResizeRef = useRef<(() => void) | null>(null);
+  const projectTree = useViewQuery("responsibility-tree", {
+    projectId: route.projectId as ProjectId,
+  });
+  const projectTreePresented =
+    projectTree.data === undefined
+      ? undefined
+      : presentResponsibilityTree(projectTree.data.nodes);
+  const projectOverview =
+    projectTree.data === undefined ||
+    projectTreePresented === undefined ||
+    projectTreePresented === null
+      ? undefined
+      : {
+          rootName: projectTreePresented.root.name,
+          workspaceCount: projectTree.data.nodes.length,
+          activeWorkCount: projectTree.data.nodes.filter(
+            (node) => node.currentWork?.activeExecution !== undefined,
+          ).length,
+          attention: projectTreePresented.root.subtreeAttention.attention,
+          actionRequired:
+            projectTreePresented.root.subtreeAttention.actionRequired,
+        };
 
   useEffect(
     () => () => {
@@ -307,17 +339,44 @@ export function RootWorkbenchPage({
   return (
     <div className={styles.page}>
       <header className={styles.pageHeader}>
-        <div>
-          <p className={styles.eyebrow}>Arbor Workbench</p>
-          <h1>工作台</h1>
-          <p className={styles.intro}>
-            以责任树组织工作，并在对话中保持协作上下文。
-          </p>
+        <div className={styles.headingBlock}>
+          <span className={styles.headingIcon}>
+            <Icon name="workbench" size={21} />
+          </span>
+          <div>
+            <p className={styles.eyebrow}>项目工作空间</p>
+            <h1>工作台</h1>
+            <p className={styles.intro}>
+              从一次对话开始，让责任树承接持续推进的工作。
+            </p>
+          </div>
         </div>
-        <div className={styles.projectMeta}>
-          <span>项目</span>
-          <MonoText>{route.projectId}</MonoText>
-        </div>
+        {projectOverview === undefined ? null : (
+          <section className={styles.projectOverview} aria-label="项目概览">
+            <div className={styles.projectRoot}>
+              <span className={styles.liveDot} />
+              <strong>{`根责任：${projectOverview.rootName}`}</strong>
+            </div>
+            <dl className={styles.projectStats}>
+              <div>
+                <dt>工作空间</dt>
+                <dd>{projectOverview.workspaceCount}</dd>
+              </div>
+              <div>
+                <dt>进行中工作</dt>
+                <dd>{projectOverview.activeWorkCount}</dd>
+              </div>
+              <div>
+                <dt>需要关注</dt>
+                <dd>{projectOverview.attention}</dd>
+              </div>
+              <div>
+                <dt>需要处理</dt>
+                <dd>{projectOverview.actionRequired}</dd>
+              </div>
+            </dl>
+          </section>
+        )}
       </header>
 
       <fieldset className={styles.mobileTabs} aria-label="工作台面板">
@@ -346,12 +405,15 @@ export function RootWorkbenchPage({
       </fieldset>
 
       <div className={styles.layoutActions}>
-        <Button variant="quiet" onClick={swapPanes}>
-          交换树与对话位置
-        </Button>
-        <Button variant="quiet" onClick={resetTreeBasis}>
-          重置分栏比例
-        </Button>
+        <span className={styles.layoutHint}>工作空间布局</span>
+        <div className={styles.layoutButtons}>
+          <Button variant="quiet" onClick={swapPanes}>
+            交换树与对话位置
+          </Button>
+          <Button variant="quiet" onClick={resetTreeBasis}>
+            重置分栏比例
+          </Button>
+        </div>
       </div>
 
       <div

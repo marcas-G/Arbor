@@ -21,6 +21,7 @@ import {
   type WorkspaceTab,
 } from "../../api/router.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
+import { DecideSandboxPolicyForm } from "../../commands/forms/DecideSandboxPolicyForm.js";
 import { SteerWorkForm } from "../../commands/forms/SteerWorkForm.js";
 import { StopExecutionForm } from "../../commands/forms/StopExecutionForm.js";
 import type { CommandReceiptView } from "../../commands/submitCommand.js";
@@ -36,7 +37,7 @@ import { useSession } from "../../session/SessionContext.js";
 import { CurrentWorkView } from "../../views/CurrentWorkView.js";
 import { DependencyView } from "../../views/DependencyView.js";
 import { InboxView } from "../../views/InboxView.js";
-import { TimeText } from "../../views/shared.js";
+import { SandboxPolicySummary, TimeText } from "../../views/shared.js";
 import { TranscriptView } from "../../views/TranscriptView.js";
 import { VerificationView } from "../../views/VerificationView.js";
 import { ConversationTab } from "./ConversationTab.js";
@@ -164,6 +165,28 @@ function OverviewTab({
 }) {
   const detail = useViewQuery("workspace-detail", { workspaceId });
   const currentWork = useViewQuery("current-work", { workspaceId });
+  const session = useSession();
+  const queryClient = useQueryClient();
+  const [candidateReadInvalidatedAt, setCandidateReadInvalidatedAt] = useState<
+    number | null
+  >(null);
+  const [candidateReadNotice, setCandidateReadNotice] = useState<string | null>(
+    null,
+  );
+  const refreshCandidateRead = (notice: string) => {
+    setCandidateReadInvalidatedAt(detail.dataUpdatedAt);
+    setCandidateReadNotice(notice);
+    void queryClient.invalidateQueries({
+      queryKey: ["view", "workspace-detail", { workspaceId }],
+    });
+  };
+  const candidateRead = detail.data?.sandboxPolicyCandidateRead;
+  const candidateReadIsFresh =
+    candidateReadInvalidatedAt === null ||
+    detail.dataUpdatedAt > candidateReadInvalidatedAt;
+  const activeExecutionId =
+    detail.data?.currentWork?.activeExecution?.executionId ??
+    detail.data?.executionSummary?.executionId;
   return (
     <div className="arbor-view-stack">
       {currentWork.isPending ? (
@@ -212,7 +235,49 @@ function OverviewTab({
                 <MonoText>{detail.data.executionSummary.executionId}</MonoText>{" "}
                 <TimeText at={detail.data.executionSummary.admittedAt} />
               </span>
+              {detail.data.executionSummary.sandboxPolicy ===
+              undefined ? null : (
+                <SandboxPolicySummary
+                  policy={detail.data.executionSummary.sandboxPolicy}
+                />
+              )}
             </Card>
+          )}
+          {candidateReadNotice === null ? null : (
+            <p className="arbor-command-receipt" role="status">
+              {candidateReadInvalidatedAt !== null && !candidateReadIsFresh
+                ? `${candidateReadNotice} 正在刷新候选。`
+                : candidateReadNotice}
+              {candidateReadInvalidatedAt !== null && !candidateReadIsFresh ? (
+                <Button
+                  variant="quiet"
+                  onClick={() =>
+                    refreshCandidateRead("请从最新读取结果重新选择策略。")
+                  }
+                >
+                  重新读取候选
+                </Button>
+              ) : null}
+            </p>
+          )}
+          {candidateRead === undefined ||
+          !candidateReadIsFresh ? null : activeExecutionId === undefined ? (
+            <p role="alert">无法确定候选所绑定的当前执行；未提交策略。</p>
+          ) : (
+            <DecideSandboxPolicyForm
+              key={detail.dataUpdatedAt}
+              projectId={projectId}
+              workspaceId={workspaceId}
+              executionId={activeExecutionId}
+              actor={session.actor ?? ""}
+              token={session.token ?? undefined}
+              candidateRead={candidateRead}
+              onSubmitted={() => refreshCandidateRead("策略选择已提交。")}
+              onStaleReceipt={() =>
+                refreshCandidateRead("策略输入已变化，旧选择已清除。")
+              }
+              onCandidateSelected={() => setCandidateReadNotice(null)}
+            />
           )}
         </>
       )}

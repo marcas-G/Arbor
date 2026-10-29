@@ -35,6 +35,21 @@ export const DEFAULT_MODEL_CATALOG: ModelCatalog = {
       priceSheetVersion: "openai-2026-01",
     },
     {
+      // Local DeepSeek Flash deployment profile (2026-09-30). A distinct
+      // modelRef preserves the qualified model-openai binding fingerprint.
+      modelRef: "model-deepseek-v4-flash",
+      adapterId: "provider-openai",
+      capability: {
+        modelRef: "model-deepseek-v4-flash",
+        family: "deepseek",
+        contextWindow: 128000,
+        outputCeiling: 8192,
+        toolProtocol: "json",
+        capabilities: ["text", "tools"],
+      },
+      knownDeployments: ["dep-agicto-deepseek-flash"],
+    },
+    {
       // P16 E4a proof-of-construction: a compatible provider under the
       // EXISTING openai-chat-completions-sse family is pure catalog data +
       // a deployment fixture + qualification evidence — zero core/adapter

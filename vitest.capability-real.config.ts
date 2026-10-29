@@ -2,9 +2,20 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    globalSetup: [
+      "./tests/support/p39-windows-global-setup.ts",
+      "./tests/functional/support/schema44-global-setup.ts",
+    ],
+    setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
     include: ["tests/capability/real-provider/**/*.test.ts"],
     exclude: ["**/node_modules/**"],
-    testTimeout: 120_000,
+    // A real-provider case may legitimately span many model turns. The
+    // Provider Runtime already owns connect/first-event/idle/turn deadlines,
+    // retry bounds, and the Agent Runtime owns the 24-turn ceiling. A second
+    // wall-clock deadline here cannot observe progress and, when it fires,
+    // Vitest does not cancel the still-running provider operation. Keep the
+    // qualification harness out of that policy boundary.
+    testTimeout: 0,
     hookTimeout: 60_000,
     fileParallelism: false,
     reporters: ["json"],

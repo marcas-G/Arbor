@@ -40,7 +40,6 @@ import {
   Principal,
   ProjectId,
   parse,
-  ResourceBoundaryRevision,
   ResponsibilityRevision,
   Revision,
   responsibilityBound,
@@ -60,6 +59,9 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
+import { makeP41OptionalTestServices } from "./p41-optional-test-services.js";
 
 export const p6TestActor = parse(Actor)("user:gov");
 export const p6TestPrincipal = parse(Principal)("user:gov");
@@ -133,6 +135,7 @@ const P6CommandHandlerRegistryLive: Layer.Layer<
         sessions,
         executions,
         workWaits,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
       }),
       ...makeP6CommandHandlers({
         proposals,
@@ -169,6 +172,7 @@ export const makeP6App = (
 > => {
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const journal = Layer.provide(DomainEventJournalLive, infra);
   const registry = Layer.provide(
     P6CommandHandlerRegistryLive,
     Layer.mergeAll(
@@ -187,9 +191,10 @@ export const makeP6App = (
   const gatewayDeps = Layer.mergeAll(
     infra,
     registry,
+    journal,
+    makeP41OptionalTestServices(Layer.merge(infra, journal)),
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
@@ -226,6 +231,7 @@ export const runP6 = <A, R>(
   );
 
 export const p6SeedProject = Effect.gen(function* () {
+  yield* ensureLegacyProjectResourceSourceFixture();
   const gateway = yield* CommandGateway;
   const payload: CreateProjectPayload = {
     name: "p6",
@@ -250,11 +256,7 @@ export const p6SeedProject = Effect.gen(function* () {
         interfaces: [],
       },
       responsibilityRevision: parse(ResponsibilityRevision)(0),
-      resourceBoundary: {
-        basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-        addresses: [],
-      },
-      resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+      resourceSelection: { _tag: "ConversationOnly" },
       agentBinding: responsibilityBound(p6RootWorkspace),
       workspacePolicy: makeWorkspacePolicy(),
       workspacePolicyRevision: parse(Revision)(0),
@@ -269,7 +271,7 @@ export const p6SeedProject = Effect.gen(function* () {
       commandType: "CreateProject",
       projectId: p6Project,
       actor: p6TestActor,
-      schemaVersion: "1",
+      schemaVersion: "2",
       payload,
     }),
     projectId: p6Project,

@@ -15,6 +15,7 @@ import { selectProviderLayer } from "../apps/single-workspace/src/composition.js
 import {
   Actor,
   ExecutionId,
+  LeaseGeneration,
   Principal,
   ProjectId,
   ProviderTurnId,
@@ -48,6 +49,7 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
+  WorkspaceRepository,
 } from "../packages/ports/dist/index.js";
 import {
   BUILTIN_EXECUTORS,
@@ -101,11 +103,7 @@ const providerContext: ProviderExecutionContext = {
   ),
   attemptNo: 0,
   cancellationSignal: new AbortController().signal,
-  connectTimeoutMs: 1000,
-  firstEventTimeoutMs: 1000,
-  streamIdleTimeoutMs: 1000,
   turnDeadlineAt: new Date(Date.now() + 5_000).toISOString(),
-  maxAttempts: 3,
 };
 
 const sdkClient = (
@@ -281,6 +279,21 @@ describe("P12-011 provider adapter", () => {
 });
 
 describe("P12-011 model catalog / model capability", () => {
+  it("keeps the DeepSeek Flash deployment on its own 128K / 8K profile", () => {
+    const deepseek = resolveModelCatalogEntry(
+      DEFAULT_MODEL_CATALOG,
+      "model-deepseek-v4-flash",
+    );
+
+    expect(deepseek?.adapterId).toBe("provider-openai");
+    expect(deepseek?.capability).toMatchObject({
+      modelRef: "model-deepseek-v4-flash",
+      family: "deepseek",
+      contextWindow: 128_000,
+      outputCeiling: 8_192,
+    });
+  });
+
   it("deterministically resolves modelRef -> adapter + capability; unknown -> typed error", async () => {
     const openai = resolveModelCatalogEntry(
       DEFAULT_MODEL_CATALOG,
@@ -381,7 +394,8 @@ const authority = {
   workspaceId,
   executionId,
   toolName: "list",
-  toolVersion: "1",
+  toolVersion: "2",
+  sourceRevision: "fixture-authority-revision",
   resourceSpaceIds: ["filesystem"],
   allowedCapabilities: ["fs:read"],
   controlBasisDigest: "d",
@@ -398,15 +412,21 @@ const toolContext = {
   authenticatedPrincipal: principal,
   authority,
   controlBasisDigest: "d",
+  executionFence: {
+    executionId,
+    workerId: String(principal),
+    workerIncarnationId: "incarnation:p12-providers-tools",
+    fencingGeneration: parse(LeaseGeneration)(0),
+  },
   requestedAt: "t",
 } as ToolExecutionContext;
 
 const toolIntent = {
   callRef: "c",
   toolName: "list",
-  toolVersion: "1",
+  toolVersion: "2",
   argumentsJson: JSON.stringify({
-    path: { _tag: "FileTree", path: "." },
+    target: { mount: "workspace", path: "." },
     depth: 2,
   }),
   invocationId,
@@ -434,10 +454,15 @@ const makeToolApp = (root: string) => {
       admit: () => Effect.succeed({ _tag: "Admitted" as const }),
     } as never),
     Layer.succeed(ToolInvocationStore, {
-      recordIntent: () => Effect.void,
-      settle: () => Effect.void,
+      recordIntent: () => Effect.succeed("Recorded" as const),
+      settle: () => Effect.succeed(true),
       consumeApproval: () => Effect.succeed(true),
+      recordNoEffectDenial: () =>
+        Effect.die(new Error("unexpected no-effect denial")),
+      recordNoEffectInterruption: () => Effect.succeed(false),
+      admitEffect: () => Effect.succeed({ _tag: "Admitted" as const }),
       findApproval: () => Effect.succeed(Option.none()),
+      findById: () => Effect.succeed(Option.none()),
       findUnsettled: () => Effect.succeed([]),
     } as never),
     Layer.succeed(ProjectEnvironmentPort, {
@@ -450,6 +475,17 @@ const makeToolApp = (root: string) => {
           observedEnvironmentRevision: "rev",
         }),
     }),
+    Layer.succeed(WorkspaceRepository, {
+      findById: () =>
+        Effect.succeed(
+          Option.some({
+            projectId,
+            resourceBoundary: {
+              addresses: [{ _tag: "GitWorktree", path: root }],
+            },
+          }),
+        ),
+    } as never),
     Layer.succeed(Clock, {
       now: () => Effect.succeed("2026-01-01T00:00:00.000Z"),
     }),
@@ -464,7 +500,7 @@ describe("P12-011 non-minimal tool through the unchanged P4 pipeline", () => {
   it("registers a versioned non-read/patch/shell builtin with real schemas", () => {
     expect(BUILTIN_TOOLS.some((tool) => tool.name === "list")).toBe(true);
     expect(LIST_DEFINITION.name).toBe("list");
-    expect(LIST_DEFINITION.version).toBe("1");
+    expect(LIST_DEFINITION.version).toBe("2");
     expect(LIST_DEFINITION.source).toBe("Builtin");
     expect(LIST_DEFINITION.inputSchemaJson).not.toBe("{}");
     expect(LIST_DEFINITION.resultSchemaJson).not.toBe("{}");

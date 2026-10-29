@@ -8,7 +8,7 @@ import { Card } from "../components/Card.js";
 import { Empty } from "../components/Empty.js";
 import { DependencyTable } from "./DependencyView.js";
 import { InboxRows } from "./InboxView.js";
-import { EnumBadge, Mono, TimeText } from "./shared.js";
+import { EnumBadge, Mono, SandboxPolicySummary, TimeText } from "./shared.js";
 import { VerificationView } from "./VerificationView.js";
 
 type Address = WorkspaceDetailRes["boundary"]["addresses"][number];
@@ -92,6 +92,20 @@ export function WorkspaceDetailView({
           )}
         </div>
       </Card>
+      {res.sandboxPolicyCandidateRead === undefined ? null : (
+        <Card title="沙箱策略候选（需人工选择）">
+          <ul className="arbor-row-list">
+            {res.sandboxPolicyCandidateRead.candidates.map((candidate) => (
+              <li key={candidate.candidateId}>
+                {candidate.kind === "TrustedLocalUnconfinedV1"
+                  ? "TrustedLocal · FullAccess · 不受 OS 隔离（高风险）"
+                  : `${candidate.providerId} ${candidate.providerVersion} · capability ${candidate.capabilityRevision} · ${candidate.profile === "ReadOnly" ? "只读" : "工作区写入"} · ${candidate.networkMode}`}
+              </li>
+            ))}
+          </ul>
+          <p>选择需要在命令提交时单独确认；本列表不会自动选择或提交。</p>
+        </Card>
+      )}
       {res.currentWork == null ? null : (
         <Card title="当前工作">
           <div className="arbor-view-stack">
@@ -109,6 +123,12 @@ export function WorkspaceDetailView({
                   <Mono>{res.currentWork.activeExecution.executionId}</Mono>{" "}
                   <TimeText at={res.currentWork.activeExecution.admittedAt} />
                 </span>
+                {res.currentWork.activeExecution.sandboxPolicy ===
+                undefined ? null : (
+                  <SandboxPolicySummary
+                    policy={res.currentWork.activeExecution.sandboxPolicy}
+                  />
+                )}
               </div>
             )}
           </div>
@@ -120,6 +140,9 @@ export function WorkspaceDetailView({
             <Mono>{res.executionSummary.executionId}</Mono>{" "}
             <TimeText at={res.executionSummary.admittedAt} />
           </span>
+          {res.executionSummary.sandboxPolicy === undefined ? null : (
+            <SandboxPolicySummary policy={res.executionSummary.sandboxPolicy} />
+          )}
         </Card>
       )}
       <Card title="Pending Works">

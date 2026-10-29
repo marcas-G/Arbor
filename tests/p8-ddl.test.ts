@@ -127,8 +127,14 @@ describe("P8-002 DDL + repositories", () => {
             repos.insert(verificationOf(VER_2), p7Project, p7RootWorkspace),
           )
           .pipe(Effect.flip);
-        expect(duplicate._tag).toBe("VerificationRepositoryFailure");
-        yield* tx.transact(repos.concludeIfOpen(VER_1, "Pass", undefined));
+        expect(duplicate).toMatchObject({
+          _tag: "PersistenceConstraintViolation",
+          repository: "VerificationRepository",
+          constraintKind: "Unique",
+        });
+        yield* tx.transact(
+          repos.concludeIfOpen(VER_1, "Pass", "summary:test", undefined),
+        );
         yield* tx.transact(
           repos.insert(verificationOf(VER_2), p7Project, p7RootWorkspace),
         );
@@ -171,18 +177,30 @@ describe("P8-002 DDL + repositories", () => {
         );
         yield* tx.transact(repos.bindExecution(VER_1, EXE_1, "t"));
         yield* tx.transact(repos.bindExecution(VER_1, EXE_1, "t2"));
+        const byExecution = yield* tx.transact(repos.findByExecutionId(EXE_1));
+        expect(Option.isSome(byExecution)).toBe(true);
+        expect(
+          Option.isSome(byExecution) && byExecution.value.verificationId,
+        ).toBe(VER_1);
         const orphaned = concludeVerification(
           verificationOf(VER_1),
           "Unknown",
+          "summary:orphaned",
           "Orphaned",
+          [],
         );
         expect(orphaned.ok).toBe(true);
         const concluded = yield* tx.transact(
-          repos.concludeIfOpen(VER_1, "Unknown", "Orphaned"),
+          repos.concludeIfOpen(
+            VER_1,
+            "Unknown",
+            "summary:orphaned",
+            "Orphaned",
+          ),
         );
         expect(Option.isSome(concluded)).toBe(true);
         const replay = yield* tx.transact(
-          repos.concludeIfOpen(VER_1, "Pass", undefined),
+          repos.concludeIfOpen(VER_1, "Pass", "summary:replay", undefined),
         );
         expect(Option.isNone(replay)).toBe(true);
         const bound = yield* tx.transact(repos.findById(VER_1));
@@ -226,7 +244,10 @@ describe("P8-002 DDL + repositories", () => {
         const duplicate = yield* tx
           .transact(evidence.append({ ...record, recordedAt: "t2" }))
           .pipe(Effect.flip);
-        expect(duplicate._tag).toBe("EvidenceRepositoryFailure");
+        expect(duplicate).toMatchObject({
+          _tag: "PersistenceConstraintViolation",
+          repository: "EvidenceRepository",
+        });
         expect(
           yield* tx.transact(evidence.listByVerification(VER_1)),
         ).toHaveLength(1);
@@ -244,7 +265,11 @@ describe("P8-002 DDL + repositories", () => {
             ),
           )
           .pipe(Effect.flip);
-        expect(sameRevision._tag).toBe("AcceptanceRepositoryFailure");
+        expect(sameRevision).toMatchObject({
+          _tag: "PersistenceConstraintViolation",
+          repository: "AcceptanceRepository",
+          constraintKind: "Unique",
+        });
         const found = yield* tx.transact(
           acceptances.findByWorkRevision(WORK_1, 0),
         );

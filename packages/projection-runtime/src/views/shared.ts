@@ -1,6 +1,7 @@
 import type {
   AcceptanceId,
   Actor,
+  CommandId,
   DeliverableId,
   Dependency,
   DependencyId,
@@ -8,12 +9,14 @@ import type {
   EvidenceId,
   ExecutionId,
   InboxEntry,
+  ProjectId,
   Verification,
   VerificationId,
   VerificationVerdict,
   Work,
   WorkId,
 } from "@arbor/domain";
+import type { RetryVerificationUnboundLegacyInboxProjection } from "@arbor/ports";
 
 // --- P10 `05` §1 shared wire-core restatements --------------------------
 //
@@ -24,6 +27,7 @@ import type {
 export interface ExecutionSummaryView {
   readonly executionId: ExecutionId;
   readonly admittedAt: string;
+  readonly sandboxPolicy?: import("@arbor/domain").SandboxPolicyStatusViewV1;
 }
 
 /** Mirrors CurrentWorkSummary (P10 `05` §1). */
@@ -45,6 +49,58 @@ export interface InboxUnconsumedEntryView {
   readonly kind: InboxEntry["kind"];
   readonly summary: string;
   readonly watermark: number;
+  readonly target?:
+    | ExecutableApprovalInboxTargetView
+    | RetryVerificationUnboundLegacyInboxTargetView
+    | undefined;
+}
+
+export interface RetryVerificationUnboundLegacyInboxTargetView {
+  readonly kind: "RetryVerificationUnboundLegacy";
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly sourceWorkId: WorkId;
+  readonly sourceVerificationId: VerificationId;
+  readonly disposition: "UnboundLegacy";
+  readonly reasonCode: "OriginEvidenceIncomplete";
+  readonly createdAt: string;
+  readonly revision: number;
+  readonly updatedAt: string;
+}
+
+export const retryVerificationUnboundLegacyTargetView = (
+  projection: RetryVerificationUnboundLegacyInboxProjection,
+): RetryVerificationUnboundLegacyInboxTargetView => ({
+  kind: "RetryVerificationUnboundLegacy",
+  commandId: projection.commandId,
+  projectId: projection.projectId,
+  sourceWorkId: projection.sourceWorkId,
+  sourceVerificationId: projection.sourceVerificationId,
+  disposition: projection.disposition,
+  reasonCode: projection.reasonCode,
+  createdAt: projection.createdAt,
+  revision: projection.revision,
+  updatedAt: projection.updatedAt,
+});
+
+/** Mirrors the frozen api-contracts Executable approval Inbox target. */
+export interface ExecutableApprovalInboxTargetView {
+  readonly kind: "ExecutableApproval";
+  readonly approvalId: string;
+  readonly revision: number;
+  readonly executionId: string;
+  readonly toolName: string;
+  readonly toolVersion: string;
+  readonly validatedArgumentsPreview: string;
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
+  readonly capabilities: ReadonlyArray<string>;
+  readonly sideEffectSemantics:
+    | "ReadOnly"
+    | "Idempotent"
+    | "Reconcilable"
+    | "NonIdempotent";
+  readonly expiresAt: string;
+  readonly actionDigest: string;
 }
 
 /** Mirrors DependencyRow (P10 `05` §1). */

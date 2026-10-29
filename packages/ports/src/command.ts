@@ -1,6 +1,5 @@
 import type {
   CommandId,
-  CommandReceipt,
   ProjectId,
   SemanticRequestFingerprint,
 } from "@arbor/domain";
@@ -13,16 +12,35 @@ export type CommandAttemptOutcome =
   | "TerminalRejected"
   | "RetryableOperationalFailure";
 
-export type StoredCommandReceipt = CommandReceipt<unknown, unknown>;
+/** Raw receipt row returned for same-transaction tuple comparison. Result and
+ * rejection JSON stays opaque until the Application has matched the tuple. */
+export interface StoredCommandResolution {
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+  readonly schemaVersion: string;
+  readonly fingerprintAlgorithmVersion: number;
+  readonly resolution: "Committed" | "TerminalRejected";
+  readonly resultJson: string | null;
+  readonly terminalErrorJson: string | null;
+  readonly createdAt: string;
+  readonly settledAt: string;
+}
 
 export interface CommandStoreService {
   readonly findResolution: (
     commandId: CommandId,
   ) => Effect.Effect<
-    Option.Option<StoredCommandReceipt>,
+    Option.Option<StoredCommandResolution>,
     CommandStoreError,
     TransactionScope
   >;
+  /** Whether this exact CommandId has any durable retryable attempt. Recovery
+   * checks for a terminal resolution first, then uses this to preserve
+   * transient retry identity across lease generations. */
+  readonly hasRetryableAttempt?: (
+    commandId: CommandId,
+  ) => Effect.Effect<boolean, CommandStoreError, TransactionScope>;
   readonly insertCommitted: (
     commandId: CommandId,
     projectId: ProjectId,

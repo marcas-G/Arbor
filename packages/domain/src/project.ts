@@ -16,6 +16,86 @@ export const makeProjectPolicy = (
 
 export type ProjectLifecycle = "Open" | "Closed";
 
+/** Historical source selected for a Project's initial root resource boundary.
+ * This records provenance only; Workspace.resourceBoundary remains the
+ * authority for the resource currently in use. */
+export type ProjectResourceSource =
+  | {
+      readonly _tag: "Profile";
+      readonly resourceProfileRef: string;
+      readonly version: string;
+    }
+  | { readonly _tag: "ConversationOnly" }
+  | { readonly _tag: "LegacyUnknown" };
+
+export type NewProjectResourceSource = Exclude<
+  ProjectResourceSource,
+  { readonly _tag: "LegacyUnknown" }
+>;
+
+const hasExactKeys = (
+  value: Readonly<Record<string, unknown>>,
+  keys: ReadonlyArray<string>,
+): boolean => {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
+};
+
+/** Strict decoder for the persisted ProjectResourceSource ADT. */
+export const isProjectResourceSource = (
+  value: unknown,
+): value is ProjectResourceSource => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  switch (record._tag) {
+    case "Profile":
+      return (
+        hasExactKeys(record, ["_tag", "resourceProfileRef", "version"]) &&
+        typeof record.resourceProfileRef === "string" &&
+        record.resourceProfileRef.length > 0 &&
+        typeof record.version === "string" &&
+        record.version.length > 0
+      );
+    case "ConversationOnly":
+    case "LegacyUnknown":
+      return hasExactKeys(record, ["_tag"]);
+    default:
+      return false;
+  }
+};
+
+const PROJECT_NAME_MAX_SCALARS = 120;
+const UNSAFE_PROJECT_NAME = /[\p{Cc}\p{Cf}\p{Cs}]/u;
+
+/** Local-product ProjectName v1: deterministic, useful and intentionally
+ * smaller than the previously proposed UTS#39 directory policy. */
+export const normalizeProjectName = (input: string): DomainResult<string> => {
+  const normalized = input
+    .normalize("NFC")
+    .replace(/\p{White_Space}+/gu, " ")
+    .trim();
+  const length = [...normalized].length;
+  if (length === 0 || length > PROJECT_NAME_MAX_SCALARS) {
+    return err({
+      _tag: "InvalidProjectName",
+      reason: `name must contain 1..${PROJECT_NAME_MAX_SCALARS} Unicode scalars`,
+    });
+  }
+  if (UNSAFE_PROJECT_NAME.test(normalized)) {
+    return err({
+      _tag: "InvalidProjectName",
+      reason: "name contains control, format, or surrogate characters",
+    });
+  }
+  return ok(normalized);
+};
+
 export interface Project {
   readonly projectId: ProjectId;
   readonly name: string;
@@ -24,6 +104,7 @@ export interface Project {
   readonly projectPolicyRevision: Revision;
   readonly defaultConfiguration: Readonly<Record<string, unknown>>;
   readonly environmentRef: string;
+  readonly resourceSource: ProjectResourceSource;
   readonly lifecycle: ProjectLifecycle;
   readonly revision: Revision;
 }
@@ -37,6 +118,7 @@ export interface CreateProjectInput {
   readonly revision: Revision;
   readonly defaultConfiguration?: Readonly<Record<string, unknown>>;
   readonly environmentRef?: string;
+  readonly resourceSource: NewProjectResourceSource;
 }
 
 export const createProject = (input: CreateProjectInput): Project => ({
@@ -47,6 +129,7 @@ export const createProject = (input: CreateProjectInput): Project => ({
   projectPolicyRevision: input.projectPolicyRevision,
   defaultConfiguration: input.defaultConfiguration ?? {},
   environmentRef: input.environmentRef ?? "",
+  resourceSource: input.resourceSource,
   lifecycle: "Open",
   revision: input.revision,
 });
@@ -90,6 +173,46 @@ export const updateProjectPolicy = (
     projectPolicyRevision: incrementOrdinal(Revision)(
       project.projectPolicyRevision,
     ),
+  });
+};
+
+export interface RenameProjectInput {
+  readonly authorized: boolean;
+  readonly expectedRevision: Revision;
+  readonly name: string;
+}
+
+/** P15 `01`: name is a canonical Project field. The application boundary owns
+ * the versioned Unicode policy; this pure aggregate preserves the authority,
+ * lifecycle and optimistic-concurrency invariants. */
+export const renameProject = (
+  project: Project,
+  input: RenameProjectInput,
+): DomainResult<Project> => {
+  if (project.lifecycle !== "Open") {
+    return err(closedProjectError(project));
+  }
+  if (!input.authorized) {
+    return err({
+      _tag: "AuthorityDenied",
+      reason: "RenameProject requires authority",
+    });
+  }
+  if (project.revision !== input.expectedRevision) {
+    return err({
+      _tag: "RevisionConflict",
+      expected: input.expectedRevision,
+      actual: project.revision,
+    });
+  }
+  const name = normalizeProjectName(input.name);
+  if (!name.ok) {
+    return name;
+  }
+  return ok({
+    ...project,
+    name: name.value,
+    revision: incrementOrdinal(Revision)(project.revision),
   });
 };
 

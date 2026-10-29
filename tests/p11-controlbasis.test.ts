@@ -14,16 +14,19 @@ import {
   IdGeneratorLive,
   layer,
   P16_MIGRATIONS,
+  ProjectRepositoryLive,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
   WorkRepositoryLive,
+  WorkspaceRepositoryLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import {
   type AgentActionHandler,
-  AgentDriverLive,
+  AgentLoopDriverLive,
   checkFreshness,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
@@ -52,6 +55,7 @@ import {
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789b1");
 // Same project (anchor is project-scoped), one workspace per execution:
@@ -77,7 +81,11 @@ const executionOf = (index: 0 | 1): Execution => ({
   binding: {
     _tag: "WorkspaceExecution",
     workspaceId: workspaceIds[index],
-    focus: { _tag: "Coordination" },
+    episode: {
+      _tag: "InboxEpisode",
+      entryKey: `control-basis-${index}`,
+      inputKind: "TestInput",
+    },
   },
   sessionId: sessionIds[index],
   admittedAt: "t",
@@ -87,7 +95,11 @@ const executionOf = (index: 0 | 1): Execution => ({
 
 const stateOf = (index: 0 | 1): AgentExecutionState => ({
   executionId: executionIds[index],
-  focus: { _tag: "Coordination" },
+  episode: {
+    _tag: "InboxEpisode",
+    entryKey: `control-basis-${index}`,
+    inputKind: "TestInput",
+  },
   wakeReason: { _tag: "WorkSelected" },
   currentMode: "execute",
   activeSkillRefs: [],
@@ -136,7 +148,7 @@ const sendMessageTurn = (body: string) => [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_send_message",
+    toolName: "send_message",
     argumentsJson: JSON.stringify({
       kind: "Query",
       body,
@@ -165,9 +177,7 @@ const recordingModelContext = (recorded: Array<ControlBasis>) =>
               budget: { maxOutputTokens: input.maxOutputTokens },
               cacheHints: [],
             },
-            toolRoutes: [
-              { name: "arbor_send_message", route: "Control" as const },
-            ],
+            toolRoutes: [{ name: "send_message", route: "Control" as const }],
             manifest: {
               providerTurnId: input.providerTurnId,
               executionId: input.executionId,
@@ -177,10 +187,8 @@ const recordingModelContext = (recorded: Array<ControlBasis>) =>
               instructionFragments: [],
               contextRefs: [],
               skillRefs: [],
-              toolRefs: ["Control:arbor_send_message@1"],
-              toolRoutes: [
-                { name: "arbor_send_message", route: "Control" as const },
-              ],
+              toolRefs: ["Control:send_message@1"],
+              toolRoutes: [{ name: "send_message", route: "Control" as const }],
               outputContractRef: "tool-invocation-v1",
               budgetDecision: { maxOutputTokens: input.maxOutputTokens },
               compiledRequestHash: "hash-p11-controlbasis",
@@ -194,7 +202,12 @@ const recordingModelContext = (recorded: Array<ControlBasis>) =>
 const makeApp = () => {
   const recorded: Array<ControlBasis> = [];
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const provider = FakeProviderLive({
     turns: [sendMessageTurn("first"), sendMessageTurn("second")],
   });
@@ -212,13 +225,16 @@ const makeApp = () => {
   const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
   const driver = Layer.provide(
-    AgentDriverLive([], { controlRegistry }),
+    AgentLoopDriverLive({ controlRegistry }),
     Layer.mergeAll(
+      infra,
       recordingModelContext(recorded),
       providerRuntime,
       capability,
       Layer.provide(SessionRepositoryLive, infra),
       Layer.provide(HumanMessageStoreLive, infra),
+      Layer.provide(ProjectRepositoryLive, infra),
+      Layer.provide(WorkspaceRepositoryLive, infra),
       Layer.provide(WorkRepositoryLive, infra),
       tx,
       revisions,
@@ -264,6 +280,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* ensureLegacyProjectResourceSourceFixture();
       for (const [index, workspaceId] of workspaceIds.entries()) {
         yield* sql.unsafe(
           "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
@@ -395,8 +412,11 @@ describe("P11 GQ4b ControlBasis environmentRevision service-internal read", () =
     expect(stale?.changed).toContain("environmentRevision");
   });
 
-  it("hardcode removal: driver.ts contains no '\"env\"' literal", () => {
-    const source = readFileSync("packages/agent-runtime/src/driver.ts", "utf8");
+  it("hardcode removal: agent-loop-driver.ts contains no '\"env\"' literal", () => {
+    const source = readFileSync(
+      "packages/agent-runtime/src/agent-loop-driver.ts",
+      "utf8",
+    );
     expect(source.includes('"env"')).toBe(false);
   });
 });

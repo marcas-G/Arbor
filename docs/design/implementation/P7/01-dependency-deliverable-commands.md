@@ -16,6 +16,16 @@ Dependency  = unmet result requirement     (this doc — six state commands)
 - Orthogonality (G2, incorporating ex-GQ5): satisfaction is structural matching only. **No Verification PASS, no CompletionClaim, no Acceptance is a precondition of any command here.** Quality gates live in P8's Verification → Acceptance chain (SD §3.7; DID v1.9 G4). A structurally matched but unverified Deliverable satisfies.
 - All six commands are Project-scoped via `CommandEnvelope.projectId` (P1); cross-Project targets are rejected (see per-command rows).
 
+FT-DG-03 current registration scope (DID §4.1B): the strict codec and typed
+internal semantic validators cover only the P7 handlers composed in the
+current production registry: `DeclareDependency`, `ProduceDeliverable`, and
+`SatisfyDependency`, using the exact closed payloads below. The existing
+factories for `ReviseDependencyContract`, `WithdrawDependency`, and
+`MarkDependencyUnfulfillable` remain factory-only: they are not current
+`RegisteredCommandType` members or codec descriptors. Composing any of them
+requires a separately accepted registry/codec scope update; this note does
+not change their P7 command semantics.
+
 ## 2. `DeclareDependency`
 
 Discharges the last `DirectiveUnsupported` row of P5 `03` §2 (DID §11 P7).
@@ -64,6 +74,50 @@ DeclareDependencyAuthority {
 ```
 
 P6 `03` §3 projection family (WorkspaceAgentAuthority). DeclareDependency does not imply Yield (DID §8.16).
+
+### Accepted S3 APW-1 — model-action admission for AnyProducer (2026-10-24)
+
+This is an **AgentAction admission rule**, not an additional canonical
+`DeclareDependency` command precondition. The P7 command above, its payload,
+authority fact, receipt, event and P7 matcher are unchanged. Human/governance
+submission paths continue to follow the existing command contract.
+
+For a new model-authored `DeclareDependency(AnyProducer)` AgentAction, Runtime
+first resolves the exact existing Action/Command receipt. A committed or
+terminal receipt is replayed unchanged without re-evaluating current producer
+evidence. Only a new action with no exact prior outcome reaches the evidence
+check. In one same-Project canonical read snapshot, at least one of these facts
+must exist:
+
+1. An Open Work other than the consumer Work. Its free-text objective or
+   completion expectation is not inspected as capability evidence; any later
+   Deliverable must still pass the unchanged P7 structural matcher.
+2. A FormationProposal at its exact Approved revision whose P2
+   FormationFulfillment is `PendingApplication` or `WorkspaceCreated` and has
+   a non-null `expectedInitialWorkId`. Pending, Blocked, Applied, stale or
+   otherwise unapproved proposals are not evidence.
+3. A persisted same-Project Deliverable that passes the exact P7 matcher for
+   the proposed `ExpectedDeliverable`. Because the DependencyId and its
+   satisfaction CommandId do not yet exist, this pre-Declare check performs no
+   historical satisfaction-receipt lookup. The resulting
+   `DependencyDeclared` event remains the existing deterministic coordinator
+   recheck trigger.
+
+No other fact qualifies: the consumer Work itself, another Project's facts,
+Message/Inbox text, an unapproved proposal, an uncommitted Provider response,
+an Artifact without a Deliverable, or a future promise is insufficient.
+Evidence absence yields the existing `AgentActionRejected` disposition
+`ModelUsable` with stable code `action/precondition`, a bounded safe message,
+and `ChooseAlternative`. Runtime submits no canonical `DeclareDependency`
+command and persists no Command receipt, Dependency, `DependencyDeclared`
+event, or WorkWait for that rejected action. The AgentLoop may retain its
+ordinary ModelUsable observation; that is not a P7 Command receipt.
+
+The accepted governance package is
+`S3_ANY_PRODUCER_SETTLED_WAIT_GOVERNANCE_DRAFT`, package SHA-256
+`5b558d26b4140631f5c7a14bb743b1e42a9d8992d50feee1a3d2c3c98353b7c8`, accepted
+under `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`. This acceptance lands P7
+design only; implementation has a separate authorization gate.
 
 ## 3. `ProduceDeliverable`
 

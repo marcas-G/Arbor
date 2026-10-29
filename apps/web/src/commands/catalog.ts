@@ -1,5 +1,5 @@
 /**
- * P13 `02` §2 Human-actionable set upgraded to eight by P14 TR-B: the SOLE
+ * P13/P14 Human-actionable set extended by P17 Resume/Cancel: the SOLE
  * source of truth for every command form's `commandType` — type-level via
  * `HumanActionableCommand`, runtime via `isHumanActionableCommand` (EC-6).
  * System-internal / agent-originated / recovery-only command types never
@@ -7,13 +7,21 @@
  */
 export const HUMAN_ACTIONABLE_COMMANDS = [
   "CreateProject",
+  "RenameProject",
+  "CloseProject",
   "RecordDecision",
+  "ResolveControlApproval",
+  "ResolveExecutableApproval",
   "SteerWork",
   "AcceptWorkOutcome",
   "StopExecution",
   "GrantPermission",
+  "DecideSandboxPolicy",
   "RevokePermission",
   "SubmitHumanMessage",
+  "ResumeConversationResponse",
+  "CancelConversationResponse",
+  "RetryVerification",
 ] as const;
 
 export type HumanActionableCommand = (typeof HUMAN_ACTIONABLE_COMMANDS)[number];

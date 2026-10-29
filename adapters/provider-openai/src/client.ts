@@ -2,11 +2,18 @@ import type { ReadableStream } from "node:stream/web";
 import { clearTimeout, setTimeout } from "node:timers";
 import { TextDecoder } from "node:util";
 import type {
-  PortableMessage,
+  PortableInputItem,
   PortableModelRequest,
+  PortableRequestCompatibility,
   ProviderCancellationSignal,
 } from "@arbor/ports";
 import {
+  portableInputItems,
+  validatePortableRequestCompatibility,
+  validatePortableToolPairing,
+} from "@arbor/ports";
+import {
+  OpenAIProtocolError,
   type OpenAISdkChunk,
   type OpenAISdkClient,
   OpenAISdkError,
@@ -47,6 +54,20 @@ const endpointOf = (baseUrl: string): string => {
     : `${trimmed}/chat/completions`;
 };
 
+const isLoopbackEndpoint = (endpoint: string): boolean => {
+  try {
+    const hostname = new URL(endpoint).hostname.toLowerCase();
+    return (
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      /^127(?:\.\d{1,3}){3}$/u.test(hostname) ||
+      hostname === "[::1]"
+    );
+  } catch {
+    return false;
+  }
+};
+
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
@@ -57,23 +78,182 @@ const stringField = (value: unknown, key: string): string | undefined => {
   return typeof field === "string" ? field : undefined;
 };
 
+const OPENAI_CHAT_COMPATIBILITY = {
+  operationKinds: ["Inference", "CompactionSummary"],
+  inputItemKinds: [
+    "Message",
+    "ToolCall",
+    "ToolResult",
+    "ControlResult",
+    "ContextUpdate",
+    "ReasoningAttachment",
+  ],
+} as const satisfies PortableRequestCompatibility;
+
+const resultContent = (
+  item: Extract<
+    PortableInputItem,
+    { readonly _tag: "ToolResult" | "ControlResult" }
+  >,
+): string => {
+  const base =
+    item.status === "Succeeded"
+      ? item.outputText
+      : `[${item.status}] ${item.outputText}`;
+  if (item._tag === "ToolResult" && item.artifactRefs.length > 0) {
+    return `${base}\n[Artifacts] ${JSON.stringify(item.artifactRefs)}`;
+  }
+  if (item._tag === "ControlResult" && item.canonicalRefs.length > 0) {
+    return `${base}\n[CanonicalRefs] ${JSON.stringify(item.canonicalRefs)}`;
+  }
+  return base;
+};
+
+const lowerInputItem = (
+  item: PortableInputItem,
+): Readonly<Record<string, unknown>> => {
+  switch (item._tag) {
+    case "Message":
+      return item.role === "tool"
+        ? {
+            role: "user",
+            content: `Legacy tool observation:\n${item.text}`,
+          }
+        : { role: item.role, content: item.text };
+    case "ToolCall":
+      throw new OpenAISdkError(400, "portable_tool_call_grouping_invalid");
+    case "ToolResult":
+    case "ControlResult":
+      return {
+        role: "tool",
+        tool_call_id: item.callRef,
+        content: resultContent(item),
+      };
+    case "ContextUpdate":
+      return {
+        role: "system",
+        content: `[Context ${item.updateKind} ${item.sourceRef}@${item.revision}]\n${item.text}`,
+      };
+    case "CompactionCheckpoint":
+    case "AttachmentRef":
+      throw new OpenAISdkError(400, "portable_request_incompatible");
+    case "ReasoningAttachment":
+      throw new OpenAISdkError(400, "portable_reasoning_attachment_orphan");
+  }
+};
+
+const lowerToolCalls = (
+  calls: ReadonlyArray<Extract<PortableInputItem, { _tag: "ToolCall" }>>,
+): ReadonlyArray<Readonly<Record<string, unknown>>> =>
+  calls.map((call) => ({
+    id: call.callRef,
+    type: "function",
+    function: {
+      name: call.toolName,
+      arguments: call.argumentsJson,
+    },
+  }));
+
+const lowerInputItems = (
+  items: ReadonlyArray<PortableInputItem>,
+): ReadonlyArray<Readonly<Record<string, unknown>>> => {
+  const lowered: Array<Readonly<Record<string, unknown>>> = [];
+  for (let index = 0; index < items.length; ) {
+    const item = items[index] as PortableInputItem;
+    if (item._tag === "Message" && item.role === "assistant") {
+      let cursor = index + 1;
+      const reasoning =
+        items[cursor]?._tag === "ReasoningAttachment"
+          ? (items[cursor] as Extract<
+              PortableInputItem,
+              { _tag: "ReasoningAttachment" }
+            >)
+          : undefined;
+      if (
+        reasoning !== undefined &&
+        (reasoning.protocolFamily !== "openai-chat-completions-sse" ||
+          !/^p16fp_[0-9a-f]{64}$/.test(reasoning.bindingFingerprint))
+      ) {
+        throw new OpenAISdkError(
+          400,
+          "portable_reasoning_attachment_binding_invalid",
+        );
+      }
+      if (reasoning !== undefined) cursor += 1;
+      const calls: Array<Extract<PortableInputItem, { _tag: "ToolCall" }>> = [];
+      while (cursor < items.length && items[cursor]?._tag === "ToolCall") {
+        calls.push(
+          items[cursor] as Extract<PortableInputItem, { _tag: "ToolCall" }>,
+        );
+        cursor += 1;
+      }
+      if (reasoning !== undefined || calls.length > 0) {
+        lowered.push({
+          role: "assistant",
+          content:
+            calls.length > 0 && item.text.length === 0 ? null : item.text,
+          ...(reasoning === undefined
+            ? {}
+            : { reasoning_content: reasoning.opaquePayload }),
+          ...(calls.length === 0 ? {} : { tool_calls: lowerToolCalls(calls) }),
+        });
+        index = cursor;
+        continue;
+      }
+    }
+    if (item._tag !== "ToolCall") {
+      lowered.push(lowerInputItem(item));
+      index += 1;
+      continue;
+    }
+    const calls: Array<Extract<PortableInputItem, { _tag: "ToolCall" }>> = [];
+    while (index < items.length && items[index]?._tag === "ToolCall") {
+      calls.push(
+        items[index] as Extract<PortableInputItem, { _tag: "ToolCall" }>,
+      );
+      index += 1;
+    }
+    lowered.push({
+      role: "assistant",
+      content: null,
+      tool_calls: lowerToolCalls(calls),
+    });
+  }
+  return lowered;
+};
+
 const portableMessages = (
   request: PortableModelRequest,
-): ReadonlyArray<{ readonly role: string; readonly content: string }> => [
-  ...request.instructions.map((instruction) => ({
-    role: "system",
-    content: instruction.text,
-  })),
-  ...request.messages.map((message: PortableMessage) => ({
-    role: message.role === "tool" ? "user" : message.role,
-    content:
-      message.role === "tool"
-        ? `Tool observation:\n${message.text}`
-        : message.text,
-  })),
-];
+): ReadonlyArray<Readonly<Record<string, unknown>>> => {
+  const compatible = validatePortableRequestCompatibility(
+    request,
+    OPENAI_CHAT_COMPATIBILITY,
+  );
+  if (!compatible.ok) {
+    throw new OpenAISdkError(400, "portable_request_incompatible");
+  }
+  const items = portableInputItems(request);
+  const pairing = validatePortableToolPairing(items);
+  if (!pairing.ok) {
+    throw new OpenAISdkError(400, "portable_tool_pairing_invalid");
+  }
+  return [
+    ...request.instructions.map((instruction) => ({
+      role: "system",
+      content: instruction.text,
+    })),
+    ...lowerInputItems(items),
+  ];
+};
 
-const requestBody = (
+/**
+ * The sole OpenAI-compatible rendering boundary for a portable request.
+ *
+ * Qualification clients may capture or dispatch this value, but must not
+ * reimplement message lowering: doing so can turn one typed ToolCall batch
+ * into invalid assistant/tool history.
+ */
+export const openAICompatibleRequestBody = (
   modelRef: string,
   request: PortableModelRequest,
 ): Record<string, unknown> => ({
@@ -100,6 +280,8 @@ const finishReasonOf = (
   reason: unknown,
 ): OpenAISdkChunk & { readonly type: "completed" } => {
   switch (reason) {
+    case "stop":
+      return { type: "completed", finishReason: "stop" };
     case "length":
       return { type: "completed", finishReason: "length" };
     case "tool_calls":
@@ -108,7 +290,7 @@ const finishReasonOf = (
     case "content_filter":
       return { type: "completed", finishReason: "content_filter" };
     default:
-      return { type: "completed", finishReason: "stop" };
+      throw new OpenAIProtocolError("unsupported-finish-reason");
   }
 };
 
@@ -131,9 +313,13 @@ const readSse = async function* (
   let buffer = "";
   let dataLines: string[] = [];
   let finishReason: unknown;
+  let finishReasonSeen = false;
+  let doneSeen = false;
+  let streamCompleted = false;
 
   const consumeEvent = (data: string): ReadonlyArray<OpenAISdkChunk> => {
     if (data === "[DONE]") {
+      doneSeen = true;
       return [];
     }
     let parsed: unknown;
@@ -228,6 +414,7 @@ const readSse = async function* (
     }
     if (firstChoice?.finish_reason !== undefined) {
       finishReason = firstChoice.finish_reason;
+      if (finishReason !== null) finishReasonSeen = true;
     }
     return chunks;
   };
@@ -264,11 +451,19 @@ const readSse = async function* (
           }
           dataLines = [];
         }
+        streamCompleted = true;
         break;
       }
     }
   } finally {
+    if (!streamCompleted) {
+      await reader.cancel().catch(() => undefined);
+    }
     reader.releaseLock();
+  }
+
+  if (!doneSeen || !finishReasonSeen) {
+    throw new OpenAIProtocolError("stream-termination-incomplete");
   }
 
   for (const call of calls.values()) {
@@ -297,9 +492,9 @@ const readSse = async function* (
 export const OpenAICompatibleFetchClient = (
   config: OpenAICompatibleClientConfig,
 ): OpenAISdkClient => ({
-  // A pure model call sends request bytes to the provider endpoint but has no
-  // externally observable side effect beyond that transport.
-  externalEffectPossible: false,
+  // A remote provider request can be billed or accepted even when the local
+  // transport later fails. Loopback qualification endpoints are effect-free.
+  externalEffectPossible: !isLoopbackEndpoint(endpointOf(config.baseUrl)),
   streamChat: async function* ({ modelRef, request, context }) {
     const credential = context.secretMaterial?.reveal();
     if (
@@ -346,7 +541,7 @@ export const OpenAICompatibleFetchClient = (
               ...config.extraHeaders,
             },
             body: JSON.stringify(
-              requestBody(config.model ?? modelRef, request),
+              openAICompatibleRequestBody(config.model ?? modelRef, request),
             ),
             signal: controller.signal,
           },
@@ -357,11 +552,19 @@ export const OpenAICompatibleFetchClient = (
         // distinguish TransportFailed (pre-response) from StreamInterrupted
         // (post-response) — pre-classifying here would erase the distinction
         // (found by P16 conformance A5).
-        if (error instanceof TypeError || controller.signal.aborted) {
+        if (
+          error instanceof OpenAISdkError ||
+          error instanceof TypeError ||
+          (typeof error === "object" &&
+            error !== null &&
+            typeof (error as { readonly code?: unknown }).code === "string") ||
+          controller.signal.aborted
+        ) {
           throw error;
         }
         throw new OpenAISdkError(503, "server_error");
       }
+      yield { type: "response_started" };
       if (!response.ok) {
         throw new OpenAISdkError(
           response.status,

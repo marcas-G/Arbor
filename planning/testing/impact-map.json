@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "unknownPolicy": "all-lanes-full",
+  "lanes": {
+    "quick": {
+      "command": "pnpm test:functional:quick",
+      "scope": "quick module checks and root/Web build"
+    },
+    "core": {
+      "command": "pnpm test",
+      "scope": "complete default core Vitest inventory"
+    },
+    "process": {
+      "command": "pnpm test:functional:process",
+      "scope": "complete scripted public-process inventory"
+    },
+    "ui": {
+      "command": "pnpm test:functional:ui",
+      "scope": "complete Playwright inventory"
+    },
+    "provider": {
+      "command": "node scripts/testing/run-provider-conformance.mjs; select capability L1/L2 suites explicitly; real-provider L3 is a separate qualification",
+      "scope": "offline provider conformance and mapped capability suites"
+    },
+    "package": {
+      "command": "pnpm test:functional:package",
+      "scope": "clean-checkout package boundary qualification"
+    }
+  },
+  "pathRules": [
+    { "pattern": "packages/domain/**", "lanes": ["quick", "core"] },
+    { "pattern": "packages/application/**", "lanes": ["core", "process"] },
+    { "pattern": "packages/agent-runtime/**", "lanes": ["core", "process"] },
+    { "pattern": "packages/model-context/**", "lanes": ["core", "process", "provider"] },
+    { "pattern": "packages/ports/**", "lanes": ["core", "process", "provider"] },
+    { "pattern": "packages/provider-*/**", "lanes": ["core", "provider"] },
+    { "pattern": "adapters/provider-*/**", "lanes": ["core", "provider"] },
+    { "pattern": "adapters/persistence-*/**", "lanes": ["core", "process"] },
+    { "pattern": "apps/single-workspace/**", "lanes": ["quick", "core", "process"] },
+    { "pattern": "apps/web/**", "lanes": ["ui"] },
+    { "pattern": "tests/functional/process/**", "lanes": ["process"] },
+    { "pattern": "tests/functional/pending/**", "lanes": ["process"] },
+    { "pattern": "tests/functional/ui/**", "lanes": ["ui"] },
+    { "pattern": "tests/capability/**", "lanes": ["provider"] },
+    { "pattern": "tests/provider-conformance/**", "lanes": ["provider"] },
+    { "pattern": "tests/provider-qualification/**", "lanes": ["provider"] },
+    { "pattern": "tests/*.test.ts", "lanes": ["core"] },
+    { "pattern": "tests/*.spec.ts", "lanes": ["ui"] },
+    { "pattern": "scripts/testing/**", "lanes": ["quick", "core", "process", "ui", "provider", "package"] },
+    { "pattern": "planning/testing/**", "lanes": ["quick", "core", "process", "ui", "provider", "package"] },
+    { "pattern": "package.json", "lanes": ["core", "package"] },
+    { "pattern": "pnpm-lock.yaml", "lanes": ["core", "package"] },
+    { "pattern": "pnpm-workspace.yaml", "lanes": ["core", "package"] },
+    { "pattern": "tsconfig*.json", "lanes": ["quick", "core", "process", "ui", "provider"] },
+    { "pattern": "vitest*.config.ts", "lanes": ["core", "process", "provider"] },
+    { "pattern": "playwright*.config.ts", "lanes": ["ui"] },
+    { "pattern": "scripts/start-local.mjs", "lanes": ["process", "package"] }
+  ],
+  "highRiskRules": [
+    {
+      "tag": "shared-runtime",
+      "patterns": ["packages/agent-runtime/**", "packages/application/**", "packages/ports/**"],
+      "lanes": ["core", "process"]
+    },
+    {
+      "tag": "persistence",
+      "patterns": ["adapters/persistence-*/**", "**/persistence/**"],
+      "lanes": ["core", "process"]
+    },
+    {
+      "tag": "schema",
+      "patterns": ["**/migrations/**", "**/schema/**", "**/*migration*"],
+      "lanes": ["core", "process", "package"]
+    },
+    {
+      "tag": "permissions",
+      "patterns": ["**/*permission*", "**/*approval*", "**/*authorization*", "**/*capability*"],
+      "lanes": ["core", "process", "ui"]
+    },
+    {
+      "tag": "recovery",
+      "patterns": ["**/*recovery*", "**/*takeover*", "**/*crash*", "**/*reconcile*"],
+      "lanes": ["core", "process"]
+    }
+  ]
+}

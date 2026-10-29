@@ -1,7 +1,7 @@
 /**
  * W-08 — AcceptWorkOutcome form (RHF + Zod). Frozen payload
  * {acceptanceId, workId, targetWorkRevision, verificationId};
- * `acceptanceId` caller-preallocated (`acp_<uuid-v7>`) and held across
+ * `acceptanceId` caller-preallocated (`acc_<uuid-v7>`) and held across
  * transport retries like the commandId.
  */
 import type { FormEvent } from "react";
@@ -57,7 +57,7 @@ export function AcceptWorkOutcomeForm({
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
     void handleSubmit(() => {
-      const acceptanceId = acceptanceIdRef.current ?? `acp_${uuidv7()}`;
+      const acceptanceId = acceptanceIdRef.current ?? `acc_${uuidv7()}`;
       acceptanceIdRef.current = acceptanceId;
       void submit("AcceptWorkOutcome", projectId, {
         acceptanceId,

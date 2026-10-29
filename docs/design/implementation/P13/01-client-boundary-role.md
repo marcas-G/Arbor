@@ -91,8 +91,20 @@ P13 UI 的角色冻结为 **Projection Renderer + Command Initiator**：
 - 不决定新的 view / query / Search 语义（out-of-v1，P12 `10` §2）；
 - 不决定命令的 authority 规则（server 唯一 enforcement）；
 - 不决定 chat-first 对话面（P14+）；
-- 不决定 `SelectCurrentWork` 之外是否新增 human selection 语义（`02` §4）。
+- 不决定其他 human selection 语义；唯一例外是已接受的
+  `DecideSandboxPolicy`，其精确暴露/DTO 见 `02`/`03`。本文件仍不拥有其
+  authority 或 canonical policy 语义。
 
 ## 7. Verification
 
 `06` EC-1/EC-2/EC-3/EC-5/EC-9；render/invalidation 单测见 `03`/`05`。
+
+## Accepted Native OS Sandbox client boundary
+
+The browser may display P10's exact current sandbox profile/provider/network
+status and unavailable Attention. It may render the explicit human profile
+selection, including the separately confirmed `FullAccess` choice, and submit
+`DecideSandboxPolicy` through the existing authenticated P12 `/commands`
+route. UI state, URL parameters, local storage and model output never form or
+expand authority. No new direct store/event path, auth mode or authority
+resolver is added to Web.

@@ -4,6 +4,7 @@ import {
   ContextEpochNumber,
   createSession,
   type ExecutionBinding,
+  type ExecutionEpisodeBinding,
   type ExecutionFocus,
   type ExecutionId,
   parse,
@@ -14,7 +15,12 @@ import type {
   ExecutionRepositoryService,
   PendingDomainEvent,
   ProjectRepositoryService,
+  ReadmissionGateIntegrityFailure,
+  ReadmissionGateStoreError,
+  ReadmissionTargetMismatch,
   SessionRepositoryService,
+  WorkReadmissionGateStoreService,
+  WorkReadmissionHeld,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -24,7 +30,8 @@ export type AdmitExecutionPayload =
       readonly _tag: "WorkspaceMain";
       readonly executionId: ExecutionId;
       readonly workspaceId: WorkspaceId;
-      readonly focus: ExecutionFocus;
+      readonly focus?: ExecutionFocus;
+      readonly episode?: ExecutionEpisodeBinding;
     }
   | {
       readonly _tag: "ExecutionBound";
@@ -50,7 +57,14 @@ export interface AdmitExecutionDependencies {
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
   readonly executions: ExecutionRepositoryService;
+  readonly readmissionGate: WorkReadmissionGateStoreService;
 }
+
+type AdmitExecutionHandlerFailure =
+  | ReadmissionTargetMismatch
+  | ReadmissionGateIntegrityFailure
+  | ReadmissionGateStoreError
+  | WorkReadmissionHeld;
 
 export const makeAdmitExecutionHandler = (
   dependencies: AdmitExecutionDependencies,
@@ -100,16 +114,40 @@ export const makeAdmitExecutionHandler = (
         });
       }
 
+      if (
+        payload._tag === "WorkspaceMain" &&
+        payload.episode?._tag === "WorkEpisode"
+      ) {
+        const hold = yield* dependencies.readmissionGate.hasBlockingSource({
+          projectId: envelope.projectId,
+          workspaceId: payload.workspaceId,
+          workId: payload.episode.workId,
+          workRevision: payload.episode.targetWorkRevision,
+        });
+        if (Option.isSome(hold)) {
+          return yield* Effect.fail<AdmitExecutionHandlerFailure>({
+            _tag: "WorkReadmissionHeld",
+            source: hold.value,
+          });
+        }
+      }
+
       const isMain = payload._tag === "WorkspaceMain";
       const sessionId = isMain
         ? currentWorkspace.primarySessionId
         : payload.sessionId;
       const binding: ExecutionBinding = isMain
-        ? {
-            _tag: "WorkspaceExecution",
-            workspaceId: payload.workspaceId,
-            focus: payload.focus,
-          }
+        ? payload.episode === undefined
+          ? {
+              _tag: "WorkspaceExecution",
+              workspaceId: payload.workspaceId,
+              focus: payload.focus as ExecutionFocus,
+            }
+          : {
+              _tag: "WorkspaceExecution",
+              workspaceId: payload.workspaceId,
+              episode: payload.episode,
+            }
         : {
             _tag: "ExecutionBoundAgentBinding",
             parentExecutionId: payload.parentExecutionId,

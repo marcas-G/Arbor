@@ -16,6 +16,8 @@ import {
   type CurrentWorkRes,
   type DependencyReq,
   type DependencyRes,
+  type ExecutableApprovalInboxTarget,
+  type InboxUnconsumedEntry,
   type InboxViewReq,
   type InboxViewRes,
   type TranscriptReq,
@@ -26,6 +28,8 @@ import {
   type UsageRes,
   type VerificationReq,
   type VerificationRes,
+  type WorkDetailReq,
+  type WorkDetailRes,
   type WorkspaceDetailReq,
   type WorkspaceDetailRes,
 } from "../packages/api-contracts/src/index.js";
@@ -47,6 +51,7 @@ import { VIEW_IDS } from "../packages/domain/src/projection.js";
 import {
   PROJECTION_QUERY_ERROR_CODES,
   type ProjectionInvalidRequest,
+  type ProjectionNotFound,
   type ProjectionStale,
   type ProjectionUnavailable,
 } from "../packages/ports/src/errors.js";
@@ -81,6 +86,7 @@ const REQUEST_CONTRACTS: Record<ViewId, string> = {
   "responsibility-tree": "TreeViewReq",
   attention: "AttentionReq",
   "workspace-detail": "WorkspaceDetailReq",
+  "work-detail": "WorkDetailReq",
   "current-work": "CurrentWorkReq",
   verification: "VerificationReq",
   "dependency-view": "DependencyReq",
@@ -93,6 +99,7 @@ const RESPONSE_CONTRACTS: Record<ViewId, string> = {
   "responsibility-tree": "TreeViewRes",
   attention: "AttentionRes",
   "workspace-detail": "WorkspaceDetailRes",
+  "work-detail": "WorkDetailRes",
   "current-work": "CurrentWorkRes",
   verification: "VerificationRes",
   "dependency-view": "DependencyRes",
@@ -124,7 +131,7 @@ describe("P10-002 api-contracts ViewId pairing", () => {
   });
 
   it("request/response contract tables cover exactly VIEW_IDS", () => {
-    expect(VIEW_IDS).toHaveLength(9);
+    expect(VIEW_IDS).toHaveLength(10);
     expect([...VIEW_IDS].sort()).toEqual(Object.keys(REQUEST_CONTRACTS).sort());
     expect([...VIEW_IDS].sort()).toEqual(
       Object.keys(RESPONSE_CONTRACTS).sort(),
@@ -133,6 +140,50 @@ describe("P10-002 api-contracts ViewId pairing", () => {
       expect(REQUEST_CONTRACTS[view]).toMatch(/Req$/);
       expect(RESPONSE_CONTRACTS[view]).toMatch(/Res$/);
     }
+  });
+});
+
+describe("P10 Executable approval Inbox DTO", () => {
+  it("keeps the approval route target typed and display-only on Inbox entries", () => {
+    const target: ExecutableApprovalInboxTarget = {
+      kind: "ExecutableApproval",
+      approvalId: "eap_opaque_id",
+      revision: 0,
+      executionId: "exe_opaque_id",
+      toolName: "shell",
+      toolVersion: "2",
+      validatedArgumentsPreview: '{"command":"[redacted]"}',
+      targetResourceSpaceIds: ["space_opaque_id"],
+      capabilities: ["shell:exec"],
+      sideEffectSemantics: "Reconcilable",
+      expiresAt: "2026-10-12T03:00:00.000Z",
+      actionDigest: "sha256:opaque",
+    };
+    const entry: InboxUnconsumedEntry = {
+      entryKey: "eap:eap_opaque_id:0",
+      kind: "Governance",
+      summary: "safe summary",
+      watermark: 4,
+      target,
+    };
+
+    expect(entry.target).toBe(target);
+    expect(keys(target)).toEqual(
+      [
+        "actionDigest",
+        "approvalId",
+        "capabilities",
+        "executionId",
+        "expiresAt",
+        "kind",
+        "revision",
+        "sideEffectSemantics",
+        "targetResourceSpaceIds",
+        "toolName",
+        "toolVersion",
+        "validatedArgumentsPreview",
+      ].sort(),
+    );
   });
 });
 
@@ -204,6 +255,7 @@ describe("P10-002 Problem DTO vocabulary (DID 10.5)", () => {
       "projection/stale",
       "projection/unavailable",
       "projection/invalid-request",
+      "projection/work-not-found",
     ]);
   });
 
@@ -232,7 +284,15 @@ describe("P10-002 Problem DTO vocabulary (DID 10.5)", () => {
       retryDisposition: "non-retryable",
       safeDetails: { view: "transcript" },
     };
-    for (const error of [stale, unavailable, invalidRequest]) {
+    const notFound: ProjectionNotFound = {
+      _tag: "ProjectionNotFound",
+      code: "projection/work-not-found",
+      category: "not-found",
+      correlationId: null,
+      retryDisposition: "non-retryable",
+      safeDetails: {},
+    };
+    for (const error of [stale, unavailable, invalidRequest, notFound]) {
       expect(keys(error)).toEqual([
         "_tag",
         "category",
@@ -251,12 +311,23 @@ describe("P10-002 Problem DTO vocabulary (DID 10.5)", () => {
 });
 
 describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
-  it("attention fact sources are the frozen six (02 §1)", () => {
+  it("attention fact sources include the accepted recovery sources (02 §1)", () => {
     expect([...ATTENTION_SOURCES]).toEqual([
       "DependencyUnfulfillable",
       "Deadlock",
       "RuntimeSafetyEnvelope",
       "RecoveryEscalation",
+      "AssignWorkTargetBindingFailure",
+      "DeliverReplayFailure",
+      "ToolObservationReplayEvidenceFailure",
+      "LegacyAdoptionEvidenceInsufficient",
+      "SandboxProviderUnavailable",
+      "SandboxRecoveryBindingFailure",
+      "SandboxPolicyDecisionRequired",
+      "ProcessExecutionUnavailable",
+      "F18VerificationSignalReconciliation",
+      "TerminalProviderFailure",
+      "TerminalProviderFailureIntegrity",
       "VerifierOrphan",
       "VacantProducer",
     ]);
@@ -352,6 +423,32 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
           at: "2026-09-22T00:00:00.000Z",
         },
       ],
+      sandboxPolicyCandidateRead: {
+        reason: "InitialDecision",
+        commonPreconditions: {
+          expectedEpisodeRevision: 0,
+          latestCommittedPolicyRevision: 0,
+          episodeBinding: {
+            _tag: "WorkEpisode",
+            workId,
+            targetWorkRevision: workRevision,
+          },
+          workspaceRevision: 1,
+          resourceBoundaryRevision: 0,
+          authorityBundleRevision: 1,
+          authorityBundleDigest: "a".repeat(64) as never,
+          operatorConfigRevision: 1,
+          operatorConfigDigest: "b".repeat(64) as never,
+        },
+        candidates: [
+          {
+            kind: "TrustedLocalUnconfinedV1",
+            candidateId:
+              "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+            sandboxHandleBindingDigest: "c".repeat(64) as never,
+          },
+        ],
+      },
     };
     expect(keys(res)).toEqual([
       "auditTimeline",
@@ -360,9 +457,53 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
       "inboxUnconsumed",
       "pendingWorks",
       "responsibility",
+      "sandboxPolicyCandidateRead",
+    ]);
+    expect(
+      keys(res.sandboxPolicyCandidateRead?.commonPreconditions ?? {}),
+    ).toEqual([
+      "authorityBundleDigest",
+      "authorityBundleRevision",
+      "episodeBinding",
+      "expectedEpisodeRevision",
+      "latestCommittedPolicyRevision",
+      "operatorConfigDigest",
+      "operatorConfigRevision",
+      "resourceBoundaryRevision",
+      "workspaceRevision",
+    ]);
+    expect(keys(res.sandboxPolicyCandidateRead?.candidates[0] ?? {})).toEqual([
+      "candidateId",
+      "kind",
+      "sandboxHandleBindingDigest",
     ]);
     const roundTrip = JSON.parse(JSON.stringify(res)) as WorkspaceDetailRes;
     expect(roundTrip).toEqual(res);
+  });
+
+  it("WorkDetail exact identity and accepted result preserve canonical revision binding", () => {
+    const req: WorkDetailReq = { projectId, workspaceId, workId };
+    expect(keys(req)).toEqual(["projectId", "workId", "workspaceId"]);
+    const res: WorkDetailRes = {
+      workId,
+      projectId,
+      workspaceId,
+      objective: "complete the accepted goal",
+      why: "release qualification",
+      completionExpectation: "all checks pass",
+      lifecycle: "Open",
+      revision: workRevision,
+      acceptedResult: {
+        acceptanceId: "acc_00000000-0000-7000-8000-000000000001" as never,
+        verificationId,
+        targetWorkRevision: workRevision,
+        verdict: "Pass",
+        actor: "human:test" as never,
+        acceptedAt: "2026-10-08T00:00:00.000Z",
+      },
+    };
+    expect(res.lifecycle).toBe("Open");
+    expect(res.acceptedResult?.targetWorkRevision).toBe(res.revision);
   });
 
   it("CurrentWork request/response cores (null when no current work)", () => {

@@ -97,9 +97,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "FAIL",
+        "expectedStatus": "PASS",
         "testFile": "tests/capability/real-provider/b05-human-steer.test.ts",
-        "blockingReason": "Sentinel executable against the public HTTP face. Known implementation gap it keeps visible: durable SteerWork state is complete, but steer-to-cognition promotion (guidance into the next provider request) is not implemented, so the full B05 oracle is expected to FAIL until that seam exists."
+        "blockingReason": "Executable sentinel against the public HTTP face: durable SteerWork guidance is promoted into the next real provider request."
       }
     },
     {
@@ -144,7 +144,7 @@
     },
     {
       "capabilityId": "B08",
-      "title": "Specialist Delegation",
+      "title": "Optional Subagent Isolation",
       "l1Suites": ["packages/domain/test/execution.test.ts"],
       "l2Suites": [
         "tests/p6-specialist-spawn.test.ts",
@@ -158,7 +158,7 @@
         "requiresRestart": false,
         "expectedStatus": "PASS",
         "testFile": "tests/capability/real-provider/b08-specialist-delegation.test.ts",
-        "blockingReason": "Executable sentinel: a real model spawns an ExecutionBound specialist through arbor_spawn_specialist (Wave 2); lifecycle ends with the execution, no durable responsibility."
+        "blockingReason": "MAC-P4 stop-condition disposition: real-provider disabled mode must preserve single-Agent correctness, advertise no legacy spawn_specialist action, and create no ExecutionBound child or durable responsibility."
       }
     },
     {
@@ -188,17 +188,19 @@
       "l2Suites": [
         "tests/p8-start-verification.test.ts",
         "tests/p8-conclude.test.ts",
-        "tests/p8-acceptance-commands.test.ts"
+        "tests/p8-acceptance-commands.test.ts",
+        "tests/capability/black-box/s1-s4-public-api.test.ts"
       ],
+      "l2ProviderMode": "RECORDING",
       "l3": {
         "caseId": "B10-L3-REAL",
         "evidenceLevel": "L3",
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "BLOCKED_BY_DESIGN_GAP",
-        "testFile": null,
-        "blockingReason": "Existing G-V2-2, G-V2-3, and G-V2-4 verification-reference/lifecycle gaps remain open."
+        "expectedStatus": "PASS",
+        "testFile": "tests/capability/real-provider/b10-verification.test.ts",
+        "blockingReason": "Executable sentinel: a real exact-bound Verifier reads isolated evidence, records canonical ToolObservation identity, persists summary content through BlobStore, concludes Verification, and settles VerificationConcluded without bypassing Parent Acceptance."
       }
     },
     {
@@ -217,7 +219,7 @@
         "requiresRestart": false,
         "expectedStatus": "PASS",
         "testFile": "tests/capability/real-provider/b11-completion-acceptance.test.ts",
-        "blockingReason": "Executable sentinel: a real model claims completion through arbor_claim_completion (Wave 2); the Work stays Open and the verification/acceptance gates own the lifecycle."
+        "blockingReason": "Executable sentinel: a real model inspects an isolated worktree's completion evidence and claims completion through claim_completion; the Work stays Open and the verification/acceptance gates own the lifecycle."
       }
     },
     {

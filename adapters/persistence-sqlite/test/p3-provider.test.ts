@@ -7,6 +7,7 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING,
   ProviderRuntime,
   ProviderTurnStore,
   TransactionPort,
@@ -23,7 +24,9 @@ import {
   layer,
   P14_MIGRATIONS,
   P15_MIGRATIONS,
+  P17_MIGRATIONS,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   TransactionPortLive,
 } from "../src/index.js";
@@ -37,7 +40,12 @@ const executionId = parse(ExecutionId)(
 
 const makeApp = (script: Parameters<typeof FakeProviderLive>[0]) => {
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const deps = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(ProviderTurnStoreLive, infra),
@@ -188,6 +196,146 @@ const events = [
 ];
 
 describe("P3 ProviderRuntime + fake provider", () => {
+  it("atomically refuses a new ProviderTurn after the Execution stop fence commits", async () => {
+    const app = makeApp({ events });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ?",
+        ["2026-10-28T21:05:50.189Z", executionId],
+      );
+      const outcome = yield* Effect.flip(
+        runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+      );
+      const turns = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM provider_turns WHERE execution_id = ?",
+        [executionId],
+      );
+      const manifests = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM model_context_manifests WHERE execution_id = ?",
+        [executionId],
+      );
+      return {
+        outcome,
+        turns: turns[0]?.count,
+        manifests: manifests[0]?.count,
+      };
+    });
+
+    const result = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
+    expect(result).toMatchObject({
+      outcome: {
+        _tag: "ProviderFailure",
+        safeDiagnostic: PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING,
+      },
+      turns: 0,
+      manifests: 0,
+    });
+  });
+
+  it("atomically settles success and replays the validated durable result", async () => {
+    const app = makeApp({ events });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      const result = yield* runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1");
+      const tx = yield* TransactionPort;
+      const store = yield* ProviderTurnStore;
+      const replay = yield* tx.transact(
+        store.findSettledResult(providerTurnId),
+      );
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<{
+        attempt_outcome: string;
+        turn_settled_at: string | null;
+        success_evidence_version: string | null;
+      }>(
+        "SELECT pa.outcome AS attempt_outcome, pt.settled_at AS turn_settled_at, pa.success_evidence_version AS success_evidence_version FROM provider_attempts pa JOIN provider_turns pt ON pt.provider_turn_id = pa.provider_turn_id WHERE pa.provider_turn_id = ?",
+        [providerTurnId],
+      );
+      return { result, replay, row: rows[0] };
+    });
+
+    const output = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
+    const typed = output as {
+      result: { events: ReadonlyArray<unknown> };
+      replay: {
+        _tag: string;
+        canonicalEvents?: ReadonlyArray<unknown>;
+        evidenceVersion?: string;
+      };
+      row: {
+        attempt_outcome: string;
+        turn_settled_at: string | null;
+        success_evidence_version: string | null;
+      };
+    };
+    expect(typed.replay._tag).toBe("SettledSuccess");
+    expect(typed.replay.canonicalEvents).toEqual(typed.result.events);
+    expect(typed.replay.evidenceVersion).toBe("provider-success-v1");
+    expect(typed.row.attempt_outcome).toBe("Success");
+    expect(typed.row.turn_settled_at).not.toBeNull();
+    expect(typed.row.success_evidence_version).toBe("provider-success-v1");
+  });
+
+  it("keeps the first terminal ProviderTurn result when a stale worker settles later", async () => {
+    const app = makeApp({ events });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      yield* runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1");
+      const tx = yield* TransactionPort;
+      const store = yield* ProviderTurnStore;
+      const staleSettlement = yield* Effect.flip(
+        tx.transact(
+          store.settleTurn(
+            providerTurnId,
+            "Cancelled",
+            "{}",
+            "2999-01-01T00:00:00.000Z",
+          ),
+        ),
+      );
+      const staleFailureMark = yield* Effect.flip(
+        tx.transact(store.failTurn(providerTurnId, "2999-01-01T00:00:01.000Z")),
+      );
+      const replay = yield* tx.transact(
+        store.findSettledResult(providerTurnId),
+      );
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<{
+        finish_reason: string | null;
+        usage_json: string | null;
+      }>(
+        "SELECT finish_reason, usage_json FROM provider_turns WHERE provider_turn_id = ?",
+        [providerTurnId],
+      );
+      return { staleSettlement, staleFailureMark, replay, row: rows[0] };
+    });
+
+    const result = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
+    expect(result).toMatchObject({
+      staleSettlement: {
+        _tag: "ProviderFailure",
+        safeDiagnostic: "provider-turn-settlement-cas-rejected",
+      },
+      staleFailureMark: {
+        _tag: "ProviderFailure",
+        safeDiagnostic: "provider-turn-failure-cas-rejected",
+      },
+      replay: { _tag: "SettledSuccess" },
+      row: { finish_reason: "Stop" },
+    });
+  });
+
   it("streams the frozen ADT and records the turn/attempt", async () => {
     const app = makeApp({ events });
     const program = Effect.gen(function* () {

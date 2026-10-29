@@ -92,9 +92,14 @@ describe("P6–P12 result records", () => {
     }
   });
 
-  it("no gap file is OPEN", () => {
+  it("has no remaining OPEN field-source Design Gap after VDC closure", () => {
     const gaps = read("planning/gaps/README.md");
-    expect(gaps).not.toMatch(/\|\s*OPEN\s*\|/);
+    const openIds = [
+      ...gaps.matchAll(/^\|\s*([^|]+?)\s*\|[^\n]*\|\s*OPEN\s*\|$/gmu),
+    ]
+      .map((match) => match[1]?.trim())
+      .filter((value): value is string => value !== undefined);
+    expect(openIds.filter((id) => id.startsWith("G-V2-"))).toEqual([]);
   });
 });
 

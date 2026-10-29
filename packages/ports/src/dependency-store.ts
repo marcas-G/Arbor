@@ -86,6 +86,16 @@ export interface DeliverableRepositoryService {
     DeliverableRepositoryError,
     TransactionScope
   >;
+  readonly listByProject: (projectId: ProjectId) => Effect.Effect<
+    ReadonlyArray<{
+      readonly deliverableId: DeliverableId;
+      readonly sourceWorkId: import("@arbor/domain").WorkId;
+      readonly sourceWorkRevision: number;
+      readonly kind: string;
+    }>,
+    DeliverableRepositoryError,
+    TransactionScope
+  >;
   readonly listArtifactRoles: (
     deliverableId: DeliverableId,
   ) => Effect.Effect<

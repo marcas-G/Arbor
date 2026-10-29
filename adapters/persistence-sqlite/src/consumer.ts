@@ -15,6 +15,7 @@ import {
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 export interface ConsumerRunResult {
   readonly fromSequence: number;
@@ -22,6 +23,22 @@ export interface ConsumerRunResult {
   readonly applied: number;
   readonly quarantined: number;
 }
+
+export interface RebuildProjectionQualificationEvent {
+  readonly boundary: "P10AfterResetAndOffsetRewindCommitBeforeCatchUp";
+  readonly consumerId: string;
+  readonly projectId: ProjectId;
+  readonly floor: number;
+  readonly rewoundTo: number;
+}
+
+/** Process-local deterministic seam for qualification of the rebuild's
+ * reset/snapshot/offset-rewind commit boundary. Ordinary callers omit it. */
+export type RebuildProjectionQualificationProbe = (
+  event: RebuildProjectionQualificationEvent,
+) => Promise<void>;
+
+export const P10_ATTENTION_CONSUMER_ID = "p10-rebuild:attention";
 
 export type ConsumerRunError =
   | DomainEventJournalError
@@ -44,10 +61,7 @@ export const ConsumerOffsetStoreLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): ConsumerOffsetStoreError => ({
-      _tag: "ConsumerOffsetStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure("ConsumerOffsetStore", "offset");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return ConsumerOffsetStore.of({
@@ -86,10 +100,7 @@ export const ConsumerDeadLetterStoreLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): ConsumerDeadLetterStoreError => ({
-      _tag: "ConsumerDeadLetterStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure("ConsumerDeadLetterStore", "dead-letter");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return ConsumerDeadLetterStore.of({
@@ -116,10 +127,7 @@ export const ProjectionStoreLive: Layer.Layer<
   ProjectionStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): ConsumerOffsetStoreError => ({
-      _tag: "ConsumerOffsetStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure("ConsumerOffsetStore", "projection");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     yield* run(
@@ -171,25 +179,56 @@ export const runConsumerBatch = (
     return yield* tx.transact(
       Effect.gen(function* () {
         const fromSequence = yield* offsets.read(consumerId, projectId);
-        const events = yield* journal.readAfter(
+        const candidates = yield* journal.readAfterRaw(
           projectId,
           fromSequence,
           batchSize,
         );
         const applicable: DomainEvent<unknown>[] = [];
         let lastSequence = fromSequence;
-        for (const event of events) {
-          lastSequence = event.sequence;
-          if (event.eventVersion > 1) {
+        for (const candidate of candidates) {
+          if (
+            typeof candidate.sequenceRaw !== "number" ||
+            !Number.isSafeInteger(candidate.sequenceRaw) ||
+            candidate.sequenceRaw <= 0
+          ) {
+            return yield* Effect.fail({
+              _tag: "PersistenceCorruption" as const,
+              repository: "DomainEventJournal" as const,
+              operation: "consumer-event-sequence",
+              reason: "journal sequence cannot be proven for quarantine",
+            });
+          }
+          const sequence = candidate.sequenceRaw;
+          lastSequence = sequence;
+          const decoded = yield* journal.decodeRaw(candidate);
+          if (decoded._tag === "Poison") {
             yield* deadLetters.quarantine(
               consumerId,
               projectId,
-              event.sequence,
-              `unsupported eventVersion ${event.eventVersion}`,
+              sequence,
+              decoded.reason === "UnsupportedEventPair" &&
+                candidate.eventVersionRaw === 2
+                ? "unsupported eventVersion 2"
+                : decoded.reason === "UnsupportedEventPair" ||
+                    decoded.reason === "UnknownEventType"
+                  ? "unsupported event type/version pair"
+                  : decoded.reason === "MalformedPayload"
+                    ? "malformed event payload"
+                    : "malformed event envelope",
             );
             continue;
           }
-          applicable.push(event);
+          if (decoded.event.projectId !== projectId) {
+            yield* deadLetters.quarantine(
+              consumerId,
+              projectId,
+              sequence,
+              "malformed event envelope",
+            );
+            continue;
+          }
+          applicable.push(decoded.event);
         }
         if (applicable.length > 0) {
           yield* projection.apply(applicable);
@@ -201,7 +240,7 @@ export const runConsumerBatch = (
           fromSequence,
           lastSequence,
           applied: applicable.length,
-          quarantined: events.length - applicable.length,
+          quarantined: candidates.length - applicable.length,
         };
       }),
     );
@@ -211,6 +250,7 @@ export const rebuildProjection = (
   consumerId: string,
   projectId: ProjectId,
   batchSize = 100,
+  qualificationProbe?: RebuildProjectionQualificationProbe,
 ): Effect.Effect<
   { readonly replayed: number; readonly floor: number },
   ConsumerRunError | ConsumerRebuildRefused,
@@ -232,22 +272,21 @@ export const rebuildProjection = (
         [projectId],
       )
       .pipe(
-        Effect.mapError(
-          (cause): ConsumerOffsetStoreError => ({
-            _tag: "ConsumerOffsetStoreFailure",
-            cause,
-          }),
-        ),
+        Effect.mapError(repositoryFailure("ConsumerOffsetStore", "rebuild")),
       );
     const floor = Number(floorRows[0]?.floor ?? 0);
     const offset = yield* tx.transact(offsets.read(consumerId, projectId));
-    if (offset < floor) {
+    // Rebuild atomically rewinds to floor - 1 before catch-up; that committed
+    // cursor is also the only valid restart point after a crash in this gap.
+    const minimumSafeOffset = Math.max(floor - 1, 0);
+    if (offset < minimumSafeOffset) {
       return yield* Effect.fail<ConsumerRebuildRefused>({
         _tag: "ConsumerRebuildRefused",
         offset,
         floor,
       });
     }
+    const rewoundTo = Math.max(floor - 1, 0);
     yield* tx.transact(
       Effect.gen(function* () {
         yield* projection.reset();
@@ -256,9 +295,20 @@ export const rebuildProjection = (
         // sequence before the floor (clamped: absent row reads 0), which
         // makes the rebuild deliver the floor event exactly like the
         // PR1 offset-loss batch replay does.
-        yield* offsets.advance(consumerId, projectId, Math.max(floor - 1, 0));
+        yield* offsets.advance(consumerId, projectId, rewoundTo);
       }),
     );
+    if (qualificationProbe !== undefined) {
+      yield* Effect.promise(() =>
+        qualificationProbe({
+          boundary: "P10AfterResetAndOffsetRewindCommitBeforeCatchUp",
+          consumerId,
+          projectId,
+          floor,
+          rewoundTo,
+        }),
+      );
+    }
     let replayed = 0;
     for (;;) {
       const result = yield* runConsumerBatch(consumerId, projectId, batchSize);

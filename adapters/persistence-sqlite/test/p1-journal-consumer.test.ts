@@ -73,6 +73,31 @@ const projectionRows = Effect.gen(function* () {
 });
 
 describe("journal consumer", () => {
+  it("rejects an unsupported writer pair before allocating a sequence", async () => {
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P1_MIGRATIONS);
+      const result = yield* Effect.result(
+        append([draft("WorkspaceCreated", 2)]),
+      );
+      const sql = yield* SqlClient;
+      const sequenceRows = yield* sql.unsafe<{ last_sequence: number }>(
+        "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
+        [projectId],
+      );
+      const eventRows = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM domain_events WHERE project_id = ?",
+        [projectId],
+      );
+      return { result, sequenceRows, eventRows };
+    });
+    const { result, sequenceRows, eventRows } = await Effect.runPromise(
+      Effect.provide(program, makeApp()),
+    );
+    expect(result._tag).toBe("Failure");
+    expect(sequenceRows).toHaveLength(0);
+    expect(eventRows[0]?.count).toBe(0);
+  });
+
   it("reads offset 0 when fresh and applies a batch, advancing the offset", async () => {
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
@@ -97,11 +122,35 @@ describe("journal consumer", () => {
   it("quarantines a poison event and advances past it", async () => {
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
-      yield* append([
-        draft("ProjectCreated", 1),
-        draft("WorkspaceCreated", 2),
-        draft("WorkCompleted", 1),
-      ]);
+      yield* append([draft("ProjectCreated", 1)]);
+      const tx = yield* TransactionPort;
+      yield* tx.transact(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          yield* sql.unsafe(
+            "INSERT INTO domain_events (event_id, project_id, sequence, event_type, event_version, occurred_at, aggregate_ref, actor, caused_by_command_id, caused_by_event_id, correlation_ref, payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+              "evt_unsupported_pair",
+              projectId,
+              2,
+              "WorkspaceCreated",
+              2,
+              "t",
+              projectId,
+              actor,
+              null,
+              null,
+              null,
+              "{}",
+            ],
+          );
+          yield* sql.unsafe(
+            "UPDATE project_event_sequences SET last_sequence = 2 WHERE project_id = ?",
+            [projectId],
+          );
+        }),
+      );
+      yield* append([draft("WorkCompleted", 1)]);
       const result = yield* runConsumerBatch(consumerId, projectId, 10);
       const offset = yield* readOffset(consumerId);
       const rows = yield* projectionRows;
@@ -156,7 +205,12 @@ describe("journal consumer", () => {
         "DELETE FROM domain_events WHERE project_id = ? AND sequence = 1",
         [projectId],
       );
-      yield* tx.transact(offsets.advance(consumerId, projectId, 1));
+      // The offset adapter is monotonic; model this recovery fixture's lost
+      // canonical offset directly so it truly sits below floor-1.
+      yield* sql.unsafe(
+        "UPDATE consumer_offsets SET last_sequence = 0 WHERE consumer_id = ? AND project_id = ?",
+        [consumerId, projectId],
+      );
       const refused = yield* rebuildProjection(consumerId, projectId).pipe(
         Effect.flip,
       );

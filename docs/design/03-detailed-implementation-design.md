@@ -1,13 +1,1256 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.19\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance authorization (`AGENT_CONTROL_IMPLEMENTATION_AUTHORIZED`)\
-**Supersedes:** v1.18\
-**Date:** 2026-09-28\
-**Depends on:** `Arbor System Design Specification v1.3`  
-**Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
-**Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
+**Version:** 1.65\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
+**Supersedes:** v1.64\
+**Date:** 2026-10-26\
+**Depends on:** `Arbor System Design Specification v1.25`
+
+**Governance changes (v1.64 → v1.65): accepted Native durable pre-effect denial supplement V2**
+
+Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2` on
+2026-10-26; fixed supplement SHA-256
+`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
+This narrowly supplements the first-release process-mode contract for an
+already durable exact P4 process invocation at `NotAdmitted`: P4 chooses
+`ProcessExecutionDisabled` in startup mode Disabled, or
+`NativeOsTupleUnavailable` in Native mode without the exact qualified tuple,
+and atomically terminalizes that same invocation as `Denied` before any
+`MayHaveStarted` transition. The denial retains `NotAdmitted` and has NULL
+result/P40 evidence; it starts no P39 attempt, provider, Sandbox, executor,
+process, or fallback. Exact current P3/P4/action/lease bindings are rechecked
+in the committing transaction. MayHaveStarted, LegacyUnknown, stale-fence,
+identity-conflict and ambiguous rows remain on existing fail-closed recovery.
+The denied action is terminal and a later mode/tuple change can affect only a
+new action.
+
+P10 derives the sanitized, read-only `ProcessExecutionUnavailable` Attention
+from the exact Denied row joined to its exact Execution/P3 action. The source
+uses the fixed SHA-256 identity and safe summaries in P10 `02`/`05`; it is not
+a provider-unavailable fact, attempt, queue, marker, event, or P40 Observation.
+The first-release rule that newly received shell actions in Disabled mode are
+rejected before P4 intent is unchanged.
+
+This supplement narrowly supersedes the base first-release proposal's
+no-migration statement: P1/P4 migration 0054 changes only the existing P40
+Denied insert/update reason-code allowlists, preserving all predicates and
+existing values while adding these two closed codes. With accepted S3
+migration 0053 first, it requires schema 53; recheck the actual migration head
+and assign the next sequential version if it has changed. It performs no DML,
+row/event rewrite, table/column change, or Attention backfill. Conditional
+implementation authorization was separately provided under
+`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION`; it
+applies only to this accepted scope after required independent post-landing
+review and does not authorize migration execution, database upgrade,
+deployment, Native support claims, or release.
+
+**Governance changes (v1.63 → v1.64): accepted S3 canonical ownership carve-outs**
+
+Accepted under `ACCEPT_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1` on 2026-10-26;
+fixed supplement SHA-256
+`CEC99E498129189BD166703154A1FFD1E6DDA1CE93BE3C88C8CA9B51C7380B3D`.
+The Parent remainder after delegation is represented as a canonical
+`OwnershipRegion { allow, exclusions[] }`; the effective set is `allow` minus
+the union of its finite canonical exclusions. Exclusions are strict
+descendants in the same resource space/kind, canonical, sorted, unique, and
+prefix-antichain; an active claim must have a nonempty effective set. The
+domain comparator returns typed `Contained | NotContained | Overlap | Disjoint`
+results and rejects malformed, noncanonical, empty, cross-space, or
+non-antichain values. Containment rejects partial exclusion intersections;
+effective claims overlap unless an exclusion completely covers their allow
+intersection. Equality-only kinds permit exact carve-out/reclaim only.
+
+P4 `05` remains validate-only and must prove the whole requested canonical
+effect region lies within the active effective claim and current boundary and
+that all active effective claims are pairwise disjoint. Grants cannot remove
+exclusions or widen `allow`. Delegation atomically adds the exact exclusion to
+the Parent and creates the Child claim, then checks the full post-image. The
+durable `ResourceOwnershipChanged` event must carry the complete Parent/Child
+post-image, exact delegation identity, and provenance. Reuse its current
+version only if that frozen payload can represent the full transfer;
+otherwise introduce a new event version without reinterpreting historical
+events.
+Migration 0053 is the next additive schema change after rechecking the
+schema-52 head: add durable canonical exclusions and exact delegation
+provenance/activation identity, default existing claims to empty exclusions,
+and infer no Child ownership or Parent exclusions. It is restart-safe and
+does not activate ownership. Exact SQL member names and JSON codec remain in
+phase contract. Reclaim and Child retirement match the exact delegated
+canonical region to the Child claim's delegation source identity and claim
+revision, with CAS over Parent/Child Workspace, boundary, and ownership
+revisions. They release only that Child claim and remove only that exact
+Parent exclusion; every unrelated exclusion is preserved in normalized,
+sorted, unique antichain form. The complete Parent/Child post-image and
+version-capable ownership event commit in the same transaction. Missing,
+multiple, stale, or mismatched evidence fails closed without state or event
+mutation.
+
+Implementation is conditionally authorized under
+`AUTHORIZE_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1_IMPLEMENTATION` after required
+independent post-landing review. This landing does not execute implementation
+or migration; migration execution, existing-database mutation, S3 closure, and
+release remain separately gated.
+
+**Governance changes (v1.62 → v1.63): accepted Native OS Sandbox first-release boundary**
+
+Accepted under `ACCEPT_NATIVE_OS_SANDBOX_FIRST_RELEASE_BOUNDARY_V1` on
+2026-10-26; proposal raw SHA-256
+`8A5FC8FED5DCED9B6E944397675738F94B43591B23F85869A2D5FA96D6CB32E8`.
+P12 composition owns the startup snapshot at
+`arbor.config.json.runtime.processExecutionMode`, with closed object
+`{version: 1, processExecutionMode: Disabled | NativeOsSupportedOnly}`.
+Missing/invalid/unknown/contradictory configuration is Disabled; no CLI or
+environment-variable override exists. The existing `ARBOR_CONFIG` only
+selects the standard config file. Mode is immutable per daemon and requires a
+controlled restart to change. Disabled omits shell from the compiled
+model-facing catalog and P4 independently blocks received, stale, or replayed
+process actions before spawn. For already durable actions, P4 uses the
+existing same-Execution unavailable/blocked path. In-process bounded
+Read/List/Patch are unaffected. No new persistence or authority source is
+added.
+
+P12 may expose Native mode only for the exact qualified provider/version/
+capability revision/Windows build/`ReadOnly × Disabled` tuple and matching
+signed helper, trust, registry and qualification evidence; otherwise status
+is safely unavailable and there is no spawn. There is no TrustedLocal,
+FullAccess, alternate-provider, or weaker-control fallback in the release
+shell path. Rollback disables new admission and uses existing Stop/settlement
+semantics while preserving monotone trust/authority evidence. This adds no
+schema or migration. Release qualification is conditional: either the exact
+fully qualified signed Native path passes, or the Disabled path proves shell
+absence and zero process/provider/fallback effects for stale or forged calls.
+Both retain the proposal's negative-case coverage and full functional,
+package, clean-clone, and applicable exact-host gates.
+
+This acceptance records the release design and conditional plan only. It
+does not create additional implementation, migration, database, deployment,
+or release authority. Any pre-existing Native implementation authorization
+remains subject to the separately required post-landing review and exact T3
+gates.
+
+**Governance changes (v1.61 → v1.62): accepted S3 Child Workspace resource ownership**
+
+Accepted under `ACCEPT_S3_CHILD_WORKSPACE_RESOURCE_OWNERSHIP_DELEGATION_V1`
+on 2026-10-26; proposal raw SHA-256
+`397A56BF13042D32EF0D062146F4A34AF703738A288B4881A5FF48C6DDFE52A2`.
+P1 owns the durable formation decision/receipt boundary and atomic ownership
+change command/event; P6 owns the Parent-approved Child formation intent and
+post-commit activation lifecycle from the persisted ResourceBoundary and
+delegation; P4 continues validate-only resource admission. The formation
+package carries a bounded optional
+`ResourceOwnershipDelegation`; without it the Child is formed without write
+ownership. A dedicated semantic ownership change binds exact Parent/Child
+identity, expected Workspace/boundary/ownership revisions, delegation source,
+canonical resolved post-image and actor/authority provenance. The ownership
+transaction includes the complete Parent/Child post-image, CAS checks,
+canonical no-overlap evaluation, durable state and event; duplicate activation
+converges by durable formation/delegation identity. P4 cannot create, repair,
+or widen claims. Existing `ResourceOwnershipChanged` may be used only if its
+current version represents the complete atomic transfer; otherwise use a
+versioned event without reinterpreting history.
+
+Persistence retains delegator, exact source identity, claim revision,
+canonical region, source-address snapshot/ref and resolved Environment
+revision with existing claim data. Typed results distinguish stale
+Parent/Child revisions, containment failure, canonical overlap conflict,
+resolver mapping drift, missing delegation, and ownership integrity failure;
+rejection preserves the full ownership post-image. The additive migration is
+transactional and restart-safe, performs no ownership activation, and infers
+no Child ownership: Root claims stay unchanged and legacy Child claims
+without exact durable delegation evidence remain unowned. Exact Command/ADT member names,
+wire/event version, physical schema and migration number are left to the
+authorized phase contract after checking the then-current migration head;
+they are not invented by this owner landing. S3-1…S3-11 from the accepted
+proposal are the qualification matrix, including public-process, real SQLite
+transaction, restart, concurrency, migration and no-effect cases.
+
+This acceptance authorizes design landing and planning only. S3
+implementation, migration activation, database access and release claims
+require separate explicit authorization and the accepted matrix evidence.
+
+**Governance changes (v1.60 → v1.61): accepted RAI-DG-02 terminal Provider failure hold**
+
+Accepted under `ACCEPT_RAI_DG_02_TERMINAL_PROVIDER_FAILURE_HOLD_V2` on
+2026-10-25; fixed proposal raw SHA-256
+`FA1AFC6675E040698F69E5EE29C67DE92EA10D54228D476A6DA27E2A98B8FA93`.
+The exact Work-revision readmission gate gains the closed
+`TerminalProviderFailureSettlement` source. P2 derives it from existing
+Execution/Step/Turn/Attempt/Manifest rows; P7 consumes it and Work-bound
+admission rechecks it transactionally. P10 derives bounded valid/integrity
+presentation in the same read snapshot and is never admission authority. No
+DDL, migration, persisted gate/Attention marker, automatic retry, WorkWait or
+Work lifecycle variant is introduced by this design landing. Implementation,
+existing-database use and release qualification remain separately gated.
+
+**Governance changes (v1.59 → v1.60): accepted S2-RDG-01 Work contract revision**
+
+Accepted under `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1` on 2026-10-24;
+fixed proposal SHA-256
+`C878BBF615F92ED43125C79EFDC0F021F062FEE97BF740795889B65B44394088`.
+This owner landing freezes typed `DirectionGuidance` versus explicit
+human-authored `ContractAmendment`, full replacement only, exact WorkRevision
+CAS, immutable revision history, receipt/replay identity, and the existing
+Normal/Critical split. Work contract history is a logical append-only
+WorkId/WorkRevision ledger; its physical table, encoding, Effect signatures,
+wire version number, DDL, DTOs, and UI routes remain owned implementation
+details, not decisions made by this landing. P1 preserves exact old receipt
+tuple behavior; P6 shares the same contract mutation for Normal/Critical; P8
+uses the exact canonical mission for new Verification and preserves old
+revision snapshots/wakes. Design acceptance authorizes owner-document landing
+only: no implementation, migration, test, provider, deployment, or database
+write is authorized here.
+
+**Governance changes (v1.58 → v1.59): S3 AnyProducer producer evidence and settled-wait visibility**
+
+- Accepted token `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`, package SHA-256
+  `5b558d26b4140631f5c7a14bb743b1e42a9d8992d50feee1a3d2c3c98353b7c8`;
+  proposal SHA-256 (accepted manifest member)
+  `1fb00a66dda47365028ce9c347a49e2e887a7a9faba101296197bc01e95a8ca4`;
+  reviewed manifest SHA-256
+  `3f6183c868f136c6d69e2a2e9963704759e2e5ccf2cc9df9148c137296877fb0`.
+  Acceptance record:
+  `planning/results/S3-any-producer-wait-package-acceptance-20261024.record.md`.
+- P7 `01` §2 owns the accepted model-authored `DeclareDependency(AnyProducer)`
+  evidence gate and exact replay-first order. The P7 canonical Command, matcher,
+  Dependency lifecycle, coordinator, and wake semantics are unchanged.
+- P10 `02` §1 owns the read-only APW-3 Attention derivation for an eligible
+  settled AnyProducer wait. It reuses the existing `WaitingOnVacantProducer`
+  label/target/dedup family, and does not add DDL, a migration, a new public
+  Attention source literal, event, receipt, wake reason, or persistent marker.
+- This acceptance authorizes only the design landing. Source implementation,
+  migrations, and real-provider qualification require separate explicit
+  implementation authorization. S3 remains unqualified until its public
+  end-to-end journey passes.
+
+**Governance changes (v1.57 → v1.58): ProviderTurnId V2 closed encoding**
+
+`ACCEPT_P10_P1_PROVIDER_TURN_ID_CODEC_V1` accepts the versioned closed
+ProviderTurnId codec in §2.2.1. New writes use only the deterministic
+composite V2 families; UUIDv7 ProviderTurnIds remain read/replay-only legacy
+values. Exact existing IDs are preserved in SQLite, Manifests, source refs,
+receipts, public progress frames, P3 Actions, RecoveryBindings and P20 links.
+Unknown formats fail closed. No DDL, migration, backfill, receipt rewrite, P1
+payload/fingerprint change, or P9 terminal-semantics change is introduced.
+Acceptance source SHA-256:
+`5794DD19BA3BF1BDF58C0878863F1F51EA154CBF541E893CFA1CC63758108D2E`.
+
+**Governance changes (v1.57 → v1.58): F18 Verification v2 consumer and read-model convergence**
+
+- The accepted F18 Option A package replaces P1 `05`'s global event-version
+  ceiling with exact `(eventType,eventVersion)` writer/reader capabilities.
+  Only `VerificationConcluded` may be newly written at v2; its v1 is historical
+  reader-only, while all other 56 catalog types remain exact v1. Unknown type
+  v1 and every unsupported pair take the existing atomic CC-3 poison path.
+- P8 v2 conclusions explicitly encode absent reason as JSON null and bind the
+  strict same-Project Committed v2 receipt, exact release and verdict-specific
+  wake signals. The exact pre-activation high-water compatibility tuple is
+  read-only; G5 retains its strict v1 outer RetryVerification receipt.
+- P9 owns durable reconciliation keyed by the exact workflow dead-letter
+  tuple, generation-fenced phases, effect-before-disposition crash semantics,
+  immutable high-water facts, and Root-targeted ActionRequired Attention.
+  P10 owns retained queue projection/rebuild; P13 projects all four canonical
+  criterion snapshot statuses without inference. Parent Acceptance and
+  Unknown aggregation semantics are unchanged.
+- Accepted token
+  `ACCEPT_F18_VERIFICATION_V2_CONSUMER_AND_READMODEL_CONVERGENCE_OPTION_A`,
+  proposal SHA-256
+  `C6C41E96C5A59B46810DB9FA7A998DDBC5887B93D75ADF3606E0CA25E351EC73`;
+  RED evidence SHA-256
+  `0FA66DDC6D4D97932855C11E459A86E2C0365C7228C85FAF5727BE85E638B49B`.
+  Acceptance and exact landing manifest are recorded in
+  `planning/results/F18-verification-v2-consumer-readmodel-acceptance-and-landing.record.md`.
+  Implementation is separately authorized by
+  `AUTHORIZE_F18_VERIFICATION_V2_CONSUMER_AND_READMODEL_CONVERGENCE_IMPLEMENTATION`,
+  but is gated on independent post-landing B0/B1/B2=0/0/0 review.
+
+**Governance changes (v1.51 → v1.52): F23 P6 operator rebuild and v1 route-command qualification**
+
+- The accepted P6 UnboundLegacy package has no v1 canonical Work-owner or
+  Workspace-Parent mutation command. Only the command-level owner/Parent route
+  move, old/new recipient command journey, and its command/process crash
+  qualification are N/A for v1. This does **not** make the same-key
+  same-transaction route helper, current-route human visibility, or future
+  command rejection constraints N/A. Any separately governed future command
+  that changes recipient must update canonical route and Inbox key in one P1
+  transaction, retain old/new current-route authorization, and use the ordinary
+  P1 `TerminalRejected(AuthorityDenied)`/zero-canonical-mutation path if that
+  atomic move cannot commit. P8's frozen old Verification owner snapshot and
+  successor-current-owner behavior are unchanged.
+- Production P6 Inbox rebuild is required, not N/A. The operator-only offline
+  `p6:inbox-rebuild` CLI targets only the exact current schema-48 database while
+  the daemon is stopped and under the existing P39 `MaintenanceExclusive`
+  permit. It invokes the existing `rebuildUnboundLegacyInboxProjections`
+  helper through one `TransactionPort` transaction on the same P39 primary
+  SqlClient connection; no second connection, online service, Agent/Web/model
+  tool or P10 Attention source is added. Its `--p39-sidecar` is the P39
+  blocker-report SQLite and is distinct from its protected JSONL `--manifest`.
+  The bounded P39 `openSync(..., "wx", 0o600)` sidecar-file creation and SQLite
+  schema initialization precede permit acquisition; the `wx` winner/loser
+  operation is not the P39 maintenance lock. If RuntimeShared blocks the
+  permit, P39 infrastructure artifacts may remain, but the primary, JSONL
+  manifest and P6 rows are untouched. Same-connection transaction, idempotent
+  current-route rebuild, manifest audit, and crash/restart reconciliation are
+  required qualifications.
+- Accepted token
+  `ACCEPT_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_AND_V1_ROUTE_MOVE_NA`,
+  proposal raw SHA-256
+  `B6A542973768D1C0D7C8ACB644988D1C957B7020F73206C335D73FF7FE0C833E`,
+  accepted 2026-10-18. Acceptance/landing record:
+  `planning/results/F23-P6-operator-rebuild-and-route-move-na-acceptance-and-landing.record.md`;
+  independent post-landing review is pending. The distinct implementation
+  authorization token
+  `AUTHORIZE_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_IMPLEMENTATION` has **not**
+  been granted; no production implementation, migration, or preserved/online
+  database operation is authorized by this landing.
+
+**Governance changes (v1.52 → v1.53): accepted Native OS Sandbox V1/V3/V5 and schema-48 fixed landing**
+
+**Governance changes (v1.50 → v1.51): AH19 Conversation owner × P17 Job authority reconciliation**
+
+- **Work pre-checkpoint frontier:** before the first typed
+  `CompactionCheckpoint`, select the latest 64 persisted Session Timeline
+  rows by Session-local sequence. The selected row window is the considered
+  `inputFrontier`, not proof of representation or checkpoint coverage. Apply
+  existing P3 projector branches/filters without refilling skipped rows from
+  older history. Current input and canonical C0/C1 facts are pinned outside the
+  row cap. Once a checkpoint exists, the active frontier is that exact
+  checkpoint sequence plus every unsummarized typed entry after it, without
+  the pre-checkpoint cap. Coverage can claim only content actually represented
+  by the existing projector.
+- **Conversation checkpoint owner:** exact `RootWorkspaceId` owns one v1
+  conversation stream across immutable HumanMessages, ResponseJobs, Attempts,
+  Executions and response episodes. HumanMessage contributes only exact
+  identity/owner/order/body; legacy lifecycle, claim and response columns are
+  not runtime or checkpoint truth. Coverage is the contiguous FIFO prefix
+  where the exact Job is `Answered` and its unique Attempt plus terminal
+  ConversationResponseEpisode Execution prove the same `(messageId, attemptNo,
+  executionId)` successful response with
+  `Completed(ConversationResponseProduced(messageId))`. The current raw input
+  is pinned once from immutable HumanMessage body only for the exact
+  `Running` Job, active Attempt, Episode Execution and lease; it remains
+  uncovered until the Job is Answered.
+  Any earlier non-Answered, malformed or other-episode Running Job blocks
+  later coverage. Work Session history/checkpoints are excluded. ProviderNative
+  reuse requires exact complete binding fingerprint; otherwise portable
+  Summary is rebuilt from retained HumanMessage sources paired with their
+  authoritative Answered Job response bodies. Messages and live checkpoint
+  evidence remain durable; restart resumes the same response episode and does
+  not replay settled work.
+- **Physical boundary:** the Conversation owner state/table/port, message
+  ordering-key implementation, migration ID and initialization are TBD for
+  separately authorized implementation. No old Workspace Session checkpoint
+  is backfilled as Conversation ownership. P2 does not select storage shape in
+  this landing; P4 is unaffected.
+- Work package token `ACCEPT_AH19_WORK_PRECHECKPOINT_BOUNDED_FRONTIER_V1`,
+  proposal raw SHA-256
+  `4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`;
+  Conversation package token `ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1`,
+  proposal raw SHA-256
+  `9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`.
+  Both accepted 2026-10-17. Their P17 authority reconciliation is accepted
+  under `RECONCILE_AH19_CONVERSATION_OWNER_WITH_P17_JOB_AUTHORITY`, proposal
+  raw SHA-256
+  `92EF668AFFBE3A5D1C651107C33006C7CB987E7021FFFC02037B3603FD276B75`, on
+  2026-10-18. Acceptance/landing record:
+  `planning/results/AH19-conversation-owner-p17-authority-reconciliation-acceptance-and-landing.record.md`;
+  independent post-landing review remains pending.
+
+**Governance changes (v1.48 → v1.49): AH14 legacy adoption evidence Attention**
+
+- P9 recognizes only the fixed `LegacyActionDispositionUnproven` case: a
+  uniquely bound legacy successful Provider result and decoded action list
+  have at least one action without provable durable disposition. It fails
+  closed before ProviderResultAvailable adoption, action/output replay, or
+  canonical mutation. P9 stores the canonical evidence fingerprint with one
+  immutable `LegacyAdoptionEvidenceEscalated` fact/event under the current
+  lease; a later resolution requires exact evidence for the complete original
+  decoded action set and binds to the original fingerprint.
+- P10 exposes exactly `LegacyAdoptionEvidenceInsufficient` at
+  `ActionRequired`, targeting the exact Execution Workspace, with a bounded
+  safe summary and `attentionFactId` deduplication. It validates failure and
+  resolution event envelopes field-by-field against permanent P9 facts before
+  atomically applying markers and offset. Rebuild recreates unresolved markers
+  from P9 facts after source-event pruning; evidence-proven resolution removes
+  only the matching marker. No manual dismissal or timeout exists.
+- P1 owns shared transaction/storage contracts. P4 `06` is reference-only for
+  existing exact same-action P4 terminal evidence; no P4 semantics change.
+  Migration ID, exact DDL and initialization are not fixed or reserved here;
+  implementation and migration qualification require separate authorization.
+  Accepted token
+  `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`, proposal raw
+  SHA-256
+  `71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+  accepted 2026-10-17. Decision/landing record:
+  `planning/results/AH14-legacy-action-disposition-attention-acceptance-and-landing.record.md`;
+  independent post-landing review:
+  `planning/results/AH14-legacy-action-disposition-attention-landing.review.md`.
+
+**Governance changes (v1.47 → v1.48): P8 stable evidence time and conclusion snapshot**
+
+- `RecordVerificationEvidence.recordedAt` is the Runtime-selected first
+  durable P9 ActionIntent `updatedAt`. Retries and owner-generation takeover
+  reuse it; P9 preserves it while Pending and fails closed if its first-intent
+  meaning cannot be proven. The model cannot author it.
+- New P8 conclusions durably preserve the immutable mission and complete
+  ordered criterion-result snapshot. Ordinary `ConcludeVerification` writes
+  the same canonical snapshot/status/reason/verdict/summary binding to its
+  row, v2 event and v2 result/receipt; v1 history remains strict and
+  read-only. The G5 `RetryVerification` orphan branch retains its outer v1
+  receipt and ID bindings, while its row/event carry the exact
+  `Unknown`/`Orphaned`/`NotApplicableOrphaned`/empty-results exception.
+- Snapshot status is exactly `Pending`, `Available`,
+  `NotApplicableOrphaned`, or `UnavailableLegacy`. Existing open-row migration
+  proof uses only a strictly decoded and identity-associated
+  `verifications.mission_snapshot`; `missionDigest` cannot reconstruct it.
+  Existing concluded rows become `UnavailableLegacy` without inferred
+  criterion results.
+- Migration ID, exact DDL and initialization remain TBD for separately
+  authorized implementation. No migration is reserved, registered or
+  executable under this design landing. Acceptance token
+  `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`, proposal raw
+  SHA-256
+  `B0C532FF66697CE1FB06B93CDE477B1A833FC310D360D48513E341D54F1FAD56`,
+  accepted 2026-10-17. Decision/landing record:
+  `planning/results/VCS-verification-evidence-time-and-criteria-snapshot-acceptance-and-landing.record.md`;
+  independent post-landing review:
+  `planning/results/VCS-verification-evidence-time-and-criteria-snapshot-landing.review.md`.
+
+**Governance changes (v1.46 → v1.47): F23 P6 UnboundLegacy current-route Inbox mechanics**
+
+- The accepted P6 package reuses the existing `Governance` Inbox kind and
+  stable `retry-verification-unbound:<commandId>` key, with typed
+  `RetryVerificationUnboundLegacy` content reconstructed from the immutable
+  P1 disposition (`commandId`, project, source Work/Verification,
+  `UnboundLegacy`, `OriginEvidenceIncomplete`, `created_at`). It adds no Inbox
+  kind, Message, approval, Agent instruction, wake, command or P10 Attention
+  source. Reads are human-only and do not consume/clear the entry.
+- Recipient is current-route derived from canonical Work/Workspace governance
+  facts on every admission/query/rebuild and passes the unchanged P8 current
+  authenticated-human authorization. Root Work uses current Root-local human
+  governance; child Work uses its exact current direct Parent Workspace.
+- A same-key owner/Parent route move is atomic with the canonical owner change
+  in the existing P1 command transaction. It preserves Inbox `created_at`,
+  increments revision and updates `updated_at` once; no-op reconciliation
+  changes neither. If atomic movement is unavailable, the existing Gateway
+  persists its ordinary `TerminalRejected(AuthorityDenied)` receipt/attempt
+  and commits no canonical Work/Workspace/Event/Inbox/disposition mutation.
+  Same-CommandId replay returns that receipt; a different CommandId rejects
+  independently. No pre-Gateway rejection or asynchronous route-reconcile
+  fact/window is introduced.
+- P1 `04` adds source Work/Verification to the disposition contract and owns
+  the physical Inbox row representation. At this v1.47 design landing, the P1
+  database route columns, initial revision seed, and migration ID/name were an
+  implementation package TBD; no DDL, migration registration/execution,
+  online database upgrade, or production implementation was authorized by
+  that landing. Their later separately authorized P45/schema-48 status is
+  recorded in the v1.52 amendment above.
+- Accepted token `ACCEPT_F23_P6_UNBOUND_LEGACY_GOVERNANCE_INBOX_MECHANICS`,
+  proposal raw SHA-256
+  `798C2CB2782E4D8FF1064CE1065E12B09A318565997EF1160460B478CFA48FDF`,
+  accepted 2026-10-17. Decision/landing record:
+  `planning/results/F23-P6-unbound-legacy-inbox-mechanics-acceptance-and-landing.record.md`;
+  post-landing consistency review:
+  `planning/results/F23-P6-unbound-legacy-inbox-mechanics-landing.review.md`.
+
+**Governance changes (v1.45 → v1.46): F23 / P8 permanent RetryVerification replay origin**
+
+- The accepted scope narrows P8 exact replay to a currently authorized exact
+  retry: every replay re-runs P12 actor/project/source visibility and exact
+  current Root-local or direct-Parent human governance. Revoked/changed-owner
+  authorization or different actor/project/source returns the generic Resolver
+  denial before Gateway and reads no receipt. A same-CommandId/same-source
+  changed summary, expected revision or successor ID reaches Gateway, whose
+  existing full tuple compare alone returns `IdempotencyConflict` before JSON
+  decoding. DID §4.1B, P1 `01`/`03`, and the Gateway `BEGIN IMMEDIATE` receipt
+  linearization point remain unchanged.
+- P8 records one immutable `retry_verification_origins` fact for successful
+  handoff, with only CommandId, ProjectId, original actor, source Work and
+  Verification, successor Verification and verifier Execution, and creation
+  time. It stores no payload, summary, fingerprint, schema/algorithm version
+  or receipt. The fact has the same retention lifetime as its permanent
+  Command receipt and is independent of Domain Event pruning. If its
+  replay-only authority reaches Gateway but the receipt is absent, the existing
+  safe `PersistenceCorruption<"CommandStore">` boundary returns with no handler
+  or writes.
+- Historical origins are backfilled only from a strict successful P8 receipt,
+  the exact retained conclusion/start Event pair, and canonical successor /
+  verifier-binding facts. Unprovable recognized successes preserve their
+  receipts, receive immutable `UnboundLegacy` disposition, and admit one
+  human-only, queryable P6 Governance Inbox item; replay is generic-denied.
+  The item-specific P6 key/recipient/query/consumption/rebuild mechanism is
+  separately gated by P6 owner acceptance. This is not a P10 Attention source,
+  not an Agent instruction, and not an automatic retry.
+- At the v1.46 landing, P1 `04` reserved an ordered origin/disposition
+  migration with ID/name **TBD** and no registered or executable migration.
+  Its atomicity, immutable FK/uniqueness, repeat-upgrade, retention and
+  evidence-gated backfill rules are owned by the accepted P1/P8 sections. The
+  later separately authorized implementation assigned migration `0045`
+  (`requiresUserVersion: 44`), now in the schema-48 history; see the F23 P8/P6
+  implementation result. The v1.52 operator-rebuild acceptance adds no new
+  migration and does not reopen P45 DDL/backfill.
+- Acceptance basis: token
+  `ACCEPT_F23_P8_PERMANENT_REPLAY_ORIGIN_AND_LEGACY_DISPOSITION`, fixed
+  proposal SHA-256
+  `6BEEC14ED975D7322003C95D28F63D161C82F4EFA4B584ECAA99D1120BE712CA`;
+  decision record `planning/results/F23-retry-verification-permanent-replay-governance-acceptance-and-landing.md`;
+  post-landing consistency review
+  `planning/results/F23-retry-verification-permanent-replay-design-landing.review.md`.
+
+**Governance changes (v1.44 → v1.45): P41/0041 fact-key nullability amendment**
+
+- P41's accepted physical amendment declares the immutable P9 fact identifier
+  `attention_fact_id` as `TEXT NOT NULL PRIMARY KEY`. This makes SQLite enforce
+  the already-defined fact identity on ordinary rowid tables; P41 logical
+  behavior, keys, event/recovery semantics, and P10 projection remain
+  unchanged. Migration 0041 remains gated on the qualified 0036→0040 prefix,
+  creates empty tables without backfill, and is not registered or activated.
+  Accepted amendment proposal SHA-256:
+  `BE7E9CC9F3528ADBA90EF67615FE1C24E92B5FE751782151882ACAA4531E2BC9`;
+  acceptance record:
+  `planning/results/P41-0041-nullable-primary-key-amendment-acceptance-and-landing.md`;
+  independent post-landing review:
+  `planning/results/P41-0041-nullable-primary-key-amendment-postreview.md`.
+
+**Governance changes (v1.43 → v1.44): combined accepted owner landing**
+
+- RAI-DG-01 holds the exact EGP Work `(WorkId, WorkRevision)` after a
+  Work-bound `Interrupted(RuntimeSafetyStop)`, a closed P9 recovery-blocking
+  source, or `OutcomeUnknown(ReconciliationRequired(nonempty refs))`. Only
+  authorized revision-advancing Steer makes the old revision stale. P2 owns
+  the canonical gate/query and commit-time admission recheck; P7 excludes the
+  exact revision in its single classifier; P9 owns immutable source identity;
+  P10 filters active Attention by the canonical current revision. No gate
+  table, WorkWait, lifecycle state, or projection-ACK authority is added.
+  Accepted package SHA-256:
+  `0CEB2DAA2E6128F86CBD1CAA185B9847EAAB240360011F94425E0856F39AA106`;
+  record `planning/results/RAI-DG-01-governance-acceptance-and-landing.md`.
+- P15 `RenameProject` and `CloseProject` accept only the exact authenticated
+  local-human External route with exact P15 `ProjectGovernanceAuthority`;
+  model/Agent origin is denied even if a grant exists. Creation, selected
+  project resource provenance, lifecycle and closure semantics are unchanged.
+- A WorkEpisode may settle `Completed(Blocked)` only with exact terminal
+  denied-action evidence and an explicit bounded help request. The Work stays
+  Open; the current `WorkBlocker` ledger drives Action Required, Work Detail
+  and (for child Work) one direct-Parent Inbox entry. Exact successful-action
+  resolution or authorized Work revision/terminal transition closes the
+  blocker; ordinary Manual wait and Plan status do not. No automatic retry or
+  Verification/Acceptance implication is introduced.
+- P39 adds only schema-39 `DeniedUnbound` recovery-binding provenance for a
+  terminal no-effect Denied invocation with no proven invocation binding; it
+  cannot gain a binding/effect/replay path or P40 observation. Existing P40
+  evidence-bearing branches remain unchanged.
+- P8 exposes one authenticated-human `RetryVerification` command. It
+  atomically concludes the exact old Open Verification as `Unknown(Orphaned)`
+  and creates one successor plus durable spawn intent; exact replay reuses
+  preallocated IDs. Root Work requires authenticated local-human governance;
+  child Work requires its exact Parent Workspace human. Attention remains
+  derived and only clears after the existing freshness barrier. No automatic
+  retry loop or verifier authority expansion is introduced.
+- The reconciled P13 catalog has 28 required production command descriptors
+  plus the optional `ResolveControlApproval` descriptor (29 total when
+  available), Human-actionable count 15 and Agent-originated count 12.
+  Proposal-specific postimage hashes are not asserted for the combined tree;
+  the combined owner hashes, source package digests, technical rebase proof,
+  and separate postreview are recorded in
+  `planning/results/2026-10-12-combined-governance-landing-manifest.md`.
+- This is a design landing only. It does not register or activate migrations,
+  upgrade an existing database, publish, or claim implementation evidence.
+
+**Integration reconciliation (2026-10-10):** This version combines two separately
+accepted owner amendments that each landed from DID v1.34 as v1.35 in isolated
+trees: FT-DG-01 functional resource admission and F23 exact-tuple receipt
+integrity. Their clauses below are additive and retain their accepted semantics;
+the reconciliation changes no selector, receipt precedence, schema, persistence,
+or recovery rule. The isolated landing digests describe their original owner
+blobs, not this integrated blob; the combined digest is recorded in
+`planning/results/F21-F23-isolated-integration.result.md`.
+
+**Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线
+
+**Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订
 **Scope:** 将已冻结的系统级设计落实为可实现且可测试的契约。v1.4 是 governance patch：闭合 P0 planning 审阅发现的 DG-01…DG-06，不改变 C1–C10 / X1–X11 的语义结论；v1.5 闭合 P1 pre-implementation 审阅发现的 P1-DG-01…05 与 P1-DG-10，P1+ 的 exact DDL、逐 Command payload/signature、Prompt 正文与经验参数仍按 phase-scoped closure 管理。
+
+**Accepted owner amendment (source DID v1.34 → v1.35): FT-DG-01 functional resource admission**
+
+- CreateProject's external Handler schema is v2 while the server-selected
+  external wire codec remains v1. Root resource input is the closed
+  Profile(ref, version) | ConversationOnly selector; client paths are rejected.
+- The authenticated wire-v1 → exact Actor/Principal → Resolver → Gateway tuple
+  order in §4.1B is unchanged. No receipt pre-read or old-schema v1 replay is
+  added. Historical v1 receipts are preserve-only; matching a v1 CommandId
+  with a v2 candidate fails closed by the existing tuple rule.
+- The Profile registry is an immutable, host-owned startup snapshot. The P1
+  handler consults its pure in-memory lookup only after Gateway finds no
+  receipt. It constructs the canonical FileTree boundary and writes it with
+  Project/Workspace/Session in the existing command transaction. Filesystem
+  resolution/ownership activation remains post-commit and reads the persisted
+  Workspace boundary.
+- ProjectCreated stays EventVersion 1 with its existing payload; OPEN-1
+  Profile-source audit, OPEN-2 legacy same-ID retry expectations, and OPEN-3
+  post-commit durable-attention semantics remain open.
+- Proposal content SHA-256:
+  `274885C110E3B277753B49F6BAD023619ADFCF52D866CC86F01F27F7FDA85DD0`.
+  This is a functional-scope landing, not full FT-DG-01 closure.
+
+**Governance changes (v1.31 → v1.32): FT-DG-02 — Completed Work public view**
+
+- P10 owns an additive, read-only `work-detail` View over the exact
+  `{ projectId, workspaceId, workId }` identity, with typed request/response,
+  canonical-source binding, and a shared typed NotFound/404 for absent and
+  cross-project/workspace targets.
+- P13 renders the added frozen view; the current inventory and rendering
+  count is ten. Historical v1.13/v1.15 nine-view statements remain governance
+  history and are superseded for the current contract by this amendment.
+- Verification/Acceptance/Work lifecycle ownership is unchanged. No command,
+  event, DDL, migration, transport route, authority, or package-DAG change.
+- Accepted proposal SHA-256:
+  `6E9D25F8EFCAB0722456A750F002D88297B21E7B41E4E08AD5D51E6187842BB8`;
+  supplemental decision date 2026-10-08; landing package SHA-256:
+  `266884FC5B8858CA631DC87EFA1EA29B6BFD7265FB93C324F0A5F65FF8C68433`.
+  Decision/landing audit:
+  `planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
+
+**Governance changes (v1.32 → v1.33): AH10 direct-child AssignWork receipt binding**
+
+- DID §6A.16 freezes the typed target/authority evidence and receipt-first
+  recovery contract for direct-child AssignWork. System Design §4.11 remains
+  the single semantic owner.
+- §5.3 adds `AssignWorkTargetBindingEscalated`; §7.2 adds the scoped placement,
+  binding, and recovery-attention ports. §9.3/§9.9 freeze additive migration
+  0033 and the same-transaction binding, exact authority validation, optional
+  ActionApproval consumption, and durable failure-fact/event contracts.
+- P1 `07` owns the narrowly scoped old-Committed receipt exception; P9 `07`
+  owns the immutable failure fact and recovery order; P10 `02`/`07` own the
+  accepted projection and qualification. P4 `03` owns the Command-boundary
+  approval-consumption adapter contract.
+- Accepted proposal SHA-256:
+  `E71285B4908DE221D10A3AA7720DEB74ABDFBD99992640AD6152F534666B0DD9`.
+  Decision and landing file audit:
+  `planning/results/AH10-direct-child-assign-work-target-binding-governance.md`.
+
+**Governance changes (v1.33 → v1.34): FT-DG-03 external command runtime codec**
+
+- DID §4.1B freezes strict external wire v1 decoding, the authenticated
+  Actor/Principal and Resolver visibility gate before Gateway entry, and the
+  separation between codec version, Handler receipt schema, and fingerprint
+  algorithm version.
+- External codec failures use a non-reflecting `InvalidCommandPayload`
+  transport Problem and never enter CommandRejection, a receipt, or an Event.
+  Typed internal submissions use the same registered semantic validator.
+- The P1 Gateway receipt tuple comparison remains inside `BEGIN IMMEDIATE`
+  and receipt-first relative to its final exact authority check. No new SQL,
+  raw-payload storage, or F23 migration is introduced.
+- Accepted proposal `ACCEPT_EXTERNAL_COMMAND_RUNTIME_CODEC`, SHA-256
+  `DD24C9550BFE253D94DE7236255E5E8E710A7E612A57607E474E8A90653529FC`;
+  decision and landing record:
+  `planning/results/FT-DG-03-governance-acceptance-and-landing.md`.
+- Design acceptance and landing do not authorize runtime implementation.
+  AH10 §6A.16, migration 0033, §9.9, and P1 `07`'s sole direct-child
+  AssignWork exception remain unchanged.
+
+**Accepted owner amendment (source DID v1.34 → v1.35): F23 exact-tuple receipt integrity and
+receipt-first prior-consumer decode**
+
+- P1 `01`/`02`/`03` now freeze strict Committed-result and
+  `CommandRejection` runtime decoding only after the existing in-transaction
+  `(fingerprint, Handler.schemaVersion, fingerprint algorithm version)` tuple
+  exactly matches. A mismatch remains `IdempotencyConflict` before reading or
+  disclosing either JSON field. Missing decoder/schema, invalid JSON or
+  wrong-shape data is `PersistenceCorruption<"CommandStore">`: no receipt
+  repair, handler, canonical/Event write, `CommandAttempt` or semantic
+  rejection; rollback remains in the existing `BEGIN IMMEDIATE` transaction.
+  External transport uses its existing safe, non-retryable
+  `persistence/corruption` Problem. No tuple, SQL, DDL or migration change.
+- P1 `07` specifies trusted CommandType/Handler-schema decoder selection for
+  direct prior-receipt consumers without claiming Gateway tuple comparison.
+  The exact direct-child AssignWork exception continues to require the full
+  accepted binding proof and never replays a handler.
+- P9 `07` owns the specific corruption disposition inside that direct-child
+  proof: raw JSON syntax corruption retains an internal corruption
+  classification and records the existing `ReceiptMismatch` durable fact/event
+  before returning `AgentActionRecoveryBlocked`; parseable wrong-shape results
+  and structural binding/effect mismatches retain the existing P9 failure-code
+  paths. Ordinary non-direct-child prior-consumer corruption remains an
+  operational failure and does not create an AssignWork binding fact. P9's
+  existing fact identity, atomic write, deduplication and crash recovery are
+  unchanged.
+- This F23 amendment adds no generic P10 Attention source or observable
+  diagnostic/logging port. The existing AssignWork-binding P9→P10
+  `Action Required` projection is unchanged; the separately accepted P7
+  Deliver route is defined by the DID v1.37 amendment below.
+- Landing basis: fixed candidate proposal SHA-256
+  `70D55E2AD117D28522297B7BF55EC8AD479CA1BFEEF4025AEA7F1901793DD1A7`;
+  independent proposal review Blocking = 0; user standing authorization for
+  high-confidence design landing. Audit and owner file hashes:
+  `planning/results/F23-exact-tuple-receipt-integrity-design-landing.md`.
+- This owner-document landing is not implementation/crash qualification.
+  The real CommandStore writer transaction and P9 pre/post-commit crash matrix,
+  an operator-visible diagnostic sink, and cross-schema-version prior replay
+  remain explicit OPEN qualifications.
+
+**Accepted owner amendment (source DID v1.36 → v1.37): AH10 DeliverMessage
+generation fence and legacy replay**
+
+- The exact accepted route is AgentAction.Deliver → `DeliverMessage` CommandType,
+  Handler `schemaVersion="1"`, through the existing CommandGateway/P1
+  generation-scoped CommandId and receipt-first contract. Ordinary SendMessage
+  v1 remains unchanged; no External-origin route is added.
+- P7 `02` owns the DeliverMessage request/result, canonical Deliverable
+  ownership/direct-parent checks, MessageSent(v1) Deliver payload, Inbox
+  summary, same-transaction Message/Event/Inbox/receipt, and MessageSent-only
+  ChildDelivered wake source. P2 `03` confirms this is an existing
+  NormalExecutionMutation fenced in the Gateway transaction; no fence class
+  changes.
+- P1 `07` owns the trusted action route and the narrow pre-Gateway
+  DeliverMessage receipt-absent exact-proof exception. P9 `07` owns the
+  immutable `DeliverReplayEscalated` fact/event, exact legacy/receipt mismatch
+  priority, and RecoveryBlocked behavior. P10 `02`/`07` own the
+  ActionRequired projection and qualification. The v1.37 migration statement
+  is superseded by the accepted v1.38 storage correction below: Deliver fact
+  and source-specific Attention marker are assigned to proposed migration
+  0037 after P36 integration. MessageSent EventVersion remains 1 and the
+  generic SendMessage receipt schema remains unchanged.
+- Accepted proposal SHA-256:
+  `75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`.
+  The user delegated governance authority; independent proposal review
+  Blocking = 0. Acceptance record:
+  `planning/results/AH10-deliver-generation-fence-governance.decision.md`.
+  Owner landing hashes and self-consistency audit:
+  `planning/results/AH10-deliver-generation-fence-design-landing.md`.
+- Design acceptance/landing does not authorize runtime implementation. The
+  strict Command/receipt unit seam, P9/P10 failure/rebuild behavior, and real
+  two-daemon crash/restart matrix remain implementation qualifications before
+  AH10 can close.
+
+**Accepted owner addendum (DID v1.37 → v1.38): AH10 Deliver P10 source storage and migration order**
+
+- Deliver replay failure remains a P9 immutable fact/event projected by P10 as
+  `DeliverReplayFailure`; its visible fields, summary, target and
+  `attentionFactId` identity are unchanged. P10 now owns a separate
+  `deliver_replay_attention_rows` marker relation FK-bound to the P9 fact;
+  AssignWork's existing source/failure/FK projection table and rows remain
+  unchanged.
+- The accepted/planned migration prefix is 0034 P10 Attention, 0035 F21,
+  0036 AH7/P36, then proposed 0037 Deliver P9 fact + P10 marker. The integrated
+  tree at the time of this v1.38 addendum ended at P35/user_version 35. In the
+  current governance baseline, P36/P37/P38 owner contracts are integrated;
+  real migration implementation/registration remains unintegrated. P37 is
+  ordered after P36 and MUST NOT be implemented, installed or released
+  independently; v35 upgrades must apply P36 before P37.
+- P10's project/event consumer inserts the Deliver marker with its own P1
+  event offset in one transaction. Its full rebuild atomically resets P10
+  source rows, snapshots and seeds current P9 Deliver facts, and rewinds the
+  P1 offset, then replays retained events. No MessageSent/Event v1, ordinary
+  SendMessage, P1/P2/P7 behavior, F21 refusal semantics, or P36 contract
+  changes.
+- Accepted addendum SHA-256:
+  `040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`;
+  separate acceptance record:
+  `planning/results/AH10-deliver-p10-storage-addendum-governance-decision.md`.
+  This is a design landing only; runtime implementation remains separately
+  gated. Owner hashes are recorded in
+  `planning/results/AH10-deliver-p10-storage-addendum-design-landing.md`.
+
+**Accepted owner amendment (DID v1.38 → v1.39): EA-DG-01 Executable approval issuance/decision/resume**
+
+- P4's new-write outcome for an approval-required Executable intent is the
+  nonterminal `ApprovalRequired` handoff. Historical P4
+  `Denied(ApprovalRequired)` rows remain terminal read/replay evidence and are
+  never promoted into Pending approvals.
+- P1/P6/P10/P12/P17 bind issuance, exact human decision, Inbox and same-
+  Execution wake; P3 keeps the same Provider result, AgentLoopStep,
+  LogicalActionId and ToolInvocationId. MAC `02`/index owns the shared
+  ActionApproval lifecycle including `Cancelled`, while Control and
+  Executable routes remain distinct.
+- Migration 0038 is forward-only after unchanged 0032, integrated P36
+  migration 0036 and AH10 Deliver migration 0037. It leaves all earlier
+  migration bodies and checksums unchanged and preserves route-specific
+  uniqueness and legacy binding provenance.
+- Fixed proposal SHA-256:
+  `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+  accepted by `planning/results/EA-DG-01-governance-acceptance.md`.
+  Owner hashes are recorded in
+  `planning/results/EA-DG-01-contract-landing.result.md`.
+- This acceptance and landing authorize design contracts only. Runtime,
+  database migration execution, tests and release qualification remain gated.
+
+**Accepted owner amendment (DID v1.39 → v1.40): AH7-DG-02 Reconcilable reality proof and P39 physical contract**
+
+- Exact unrestricted `shell@3` is `NonIdempotent`; exact historical `shell@2`
+  is preserved and is never reclassified. Only a constrained, version/hash-
+  bound tool with stable effect identity, authoritative proof source, and
+  stale-attempt finality may be `Reconcilable`.
+- P4 owns the P39 immutable RecoveryBinding, effect-attempt ledger, append-only
+  reconciliation facts and selected-fact terminal settlement. P3 owns trusted
+  ProviderTurn/Step/LogicalAction/callRef identity and exact ToolResult,
+  Observation/Action/cursor convergence. P9 owns the existing
+  `ReconciliationEscalated` source; P10 owns its ActionRequired projection and
+  rebuild within the accepted event-retention horizon.
+- P39 is the forward-only `0039_ah7_reconciliation_attempts` schema contract.
+  It follows owner contracts P36→P37→P38; those owner contracts are integrated
+  in this design baseline, but their migration implementation/registration is
+  not. P39 must not be implemented or released alone.
+- A mandatory P39 migration preflight refuses affected active P36
+  `NotAdmitted` databases before pending P37/P38/P39 DDL and writes an immutable
+  operator report to an explicitly selected SQLite sidecar. The primary DB
+  remains unchanged and that DB cohort remains isolated pending future
+  governance. Windows/local-FS durability, actual Node SQLite VFS/OS/hardware
+  qualification, network/unknown-filesystem refusal, and report recovery are
+  release gates; design acceptance is not deployment qualification.
+- Accepted logical proposal SHA-256:
+  `D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+  accepted physical supplement SHA-256:
+  `D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+  Acceptance/review and final owner hashes:
+  `planning/results/AH7-DG-02-P39-design-landing.result.md`.
+- This is an owner-contract landing only; it authorizes no production code,
+  migration implementation, tests, real reconciliation claim, or Windows
+  release.
+
+**Accepted owner amendment (DID v1.40 → v1.41): AH7-DG-01 terminal Observation replay and P39 compatibility**
+
+- P4 persists each new terminal Success/ExpectedFailure/Interrupted/
+  OutcomeUnknown/RuntimeFailure settlement with the exact first-returned
+  bounded `CanonicalToolObservation`, version, inline UTF-8 JSON bytes and
+  SHA-256. The shared v1 envelope has a 16,384-byte cap and preserves first-
+  write `text`/`truncated`, cause, ordered refs and Artifact identity. P4
+  Artifact/raw result refs are not Observation storage.
+- The accepted P39 compatibility addendum makes `ReconciledNoEffect` the sixth
+  v1 evidence-bearing branch. Its P39 row remains `MayHaveStarted`,
+  `settlement_provenance='Reconciliation'`, `recovery_binding_state='Bound'`,
+  and retains the exact immutable same-invocation/same-attempt selected
+  `NotOccurred` fact. P40 atomically adds the same versioned bounded
+  Observation; it also verifies the settlement/reason/fact refs and separates
+  the NULL P39 proof-fact `result_ref` from the non-NULL P4 ArtifactRef and P3
+  payload hash. P39 proof/fact, selected fact and Artifact semantics are not
+  mutated or aliased.
+- DG03 `Denied/NotAdmitted` remains the no-effect exception with its closed
+  `NoEffectDenialCode` and version-1 deterministic projection; all P40
+  evidence fields and `result_ref` are NULL. It is not mapped to
+  ExpectedFailure. CAPA approval consume and all `SideEffectSemantics` rules
+  are unchanged.
+- Before any P4 terminal evidence read, including a same-invocation CAS loser,
+  P4 proves the full current unexpired Worker lease. A valid fence returns
+  only the canonical P4 winner or blocks on missing/conflicting evidence;
+  stale generation is ownership loss with no winner read/projection or
+  replay-evidence Attention. P3 keeps the existing exact source formula and
+  atomic ToolResult/Observation/Action/cursor projection.
+- A P39-only database at `user_version=39` is maintenance-only: no Agent/P4
+  Runtime startup or release until cumulative P40 migration reaches 40. P40
+  follows the complete P36→P37→P38→P39→P40 prefix; the serialized cross-process
+  migration runner, prefix integration, P39 sidecar/Windows durability and
+  runtime/migration implementation remain qualification gates.
+- Accepted hashes: DG01 logical
+  `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`, P40
+  physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`,
+  P39/P40 compatibility addendum
+  `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`, and
+  matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+  Acceptance is recorded in
+  `planning/results/AH7-DG-01-P39-P40-compatibility-addendum-acceptance.record.md`.
+- Owner-contract landing only: no production code, migration execution,
+  qualification, release or AH7 phase closure is authorized.
+
+**Accepted owner amendment (DID v1.41 → v1.42): AH10 Submitted DecisionEpisode binding failure / P41**
+
+- For an exact non-legacy DecisionEpisode whose Submitted DecisionRequest
+  Workspace or settled Provider result Manifest does not match the authoritative
+  Execution/AgentLoopStep binding, P3 fails closed before new Provider/action/
+  Command/Observation or ordinary settlement. P9 records one immutable
+  `SubmittedDecisionBindingEscalated(v1)` fact/event and recovery returns
+  `RecoveryBlocked`; P10 exposes one `ActionRequired` row at
+  `executions.workspace_id`. No `Failed` settlement, source repair, replay,
+  dismissal or new permission/Command is introduced.
+- The existing authorized StopExecution is the sole v1 release path for the
+  blocked active slot. Under the full current unexpired lease and only when the
+  unresolved P4 side-effect gate is clear, Recovery/Application composition
+  coordinates the P9 fact store and P3 StepStore in one TransactionScope.
+  Stop-first atomically writes the fact/event and P3 early settlement using
+  `TerminalRejected(StopRequestedAfterSubmittedBindingFailure)`,
+  `SkippedEarlySettlement`, and
+  `SettlementProposed(Interrupted(StopRequested))`. Fact-first remains blocked
+  until Stop. P2 RecoveryController settles only the persisted proposal;
+  Attention remains. P3 has no P9 implementation dependency.
+- P9 recovery also audits already-settled `Failed` DecisionEpisode rows whose
+  exact Step remains `ActionsInProgress` with a Pending
+  `select_current_work` Action. It records audit-only Attention, using the
+  specific still-provable binding mismatch or
+  `SettledExecutionWithPendingDecisionAction`; it never resurrects or rewrites
+  old Execution/Step/Action/Command/Work/receipt facts. Same-tuple duplicate
+  fact writers serialize to one immutable fact/event.
+- P10's source is included in `02`/`05`/`07`. P10 `04` owns full rebuild:
+  source-marker reset, one consistent P9 fact snapshot/marker seed, and P1
+  offset rewind to `floor - 1` commit in one `BEGIN IMMEDIATE`/
+  `TransactionScope`. The P9 fact's event id and P10 marker have no FK to
+  prunable `domain_events`; the marker is FK-bound to its P9 fact. Pruned-event
+  rebuild, duplicate consumption, both crash boundaries and fact/rebuild
+  concurrency are required qualifications.
+- P41 / migration `0041` is strictly conditional on integration and required
+  qualification of P36/0036 → P37/0037 → P38/0038 → P39/0039 → P40/0040 as one
+  cumulative prefix. It cannot be registered, implemented, run or released
+  independently, and cannot rewrite any 0036–0040 body/checksum/number. The
+  target is DID v1.42 after the unified DID v1.41 P36–P40 landing. Only the
+  accepted binding, Stop/fact, orphan-audit and P10 rebuild semantics change.
+- Accepted fixed-proposal SHA-256 over LF bytes:
+  `10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`.
+  Governance acceptance/landing audit:
+  `planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+  This is design-only; it does not authorize migration implementation,
+  production changes, tests or runtime qualification.
+
+**Accepted owner addendum (DID v1.42 → v1.43): AH10 DeliverReplay durable outbox and attempt-fair Attention poll**
+
+- Accepted fixed package is v5 base SHA-256
+  `5AAA2CD1FC00DFA729730E36FF13BAD7038496985D57500FD841B210E76F8B2F` plus
+  v6 addendum SHA-256
+  `8E6F47EF5933B6241B5E02E43821B6B816F705A9840AAA62FDFD318283004AF4`.
+  Its independent review is Blocking=0 (Nonblocking=2); decision, review and
+  owner hashes are recorded in
+  `planning/results/AH10-deliver-event-pruning-v6-governance-acceptance-and-landing.md`.
+- P9 `DeliverReplayEscalated(v1)` facts keep a unique durable event-ID audit
+  identity without a permanent FK to prunable `domain_events`; P9 writes the
+  fact/event/pending-outbox row atomically. P10 marker creation precedes
+  queue ACK; P1 raw EventId looks up P9 before type/version/payload decode.
+  Deliver source-integrity errors are typed fail-closed, with no ordinary
+  poison DLQ or offset advancement. Ordinary non-Deliver poison behavior is
+  unchanged.
+- One P1/P9/P10 poll `BEGIN IMMEDIATE` owns current offset, raw event batch,
+  P9 witnesses, classification, projection, outbox marker/ACK and offset
+  update; pruning, P9 insertion and P10 rebuild serialize on the same SQLite
+  writer boundary. A valid global dispatcher lease yields non-mutating
+  `NoClaim`; persisted attempt-fair ordering and bounded retry backoff keep
+  healthy due Projects progressing without promising completion for a
+  repeatedly crashing Project.
+- P12 adds a deployment-pinned DeliverReplay capacity artifact/assessor for
+  same-window queue INSERT/ACK rates, backoff/fairness, preflight/full lock
+  duration, SQLite/P9 writer waits and rebuild. Existing four-dimension
+  `assessStorage`, Postgres trigger mapping and HealthPort readiness are
+  unchanged. The two review Nonblockings are preserved in the decision record
+  and are not expanded into new semantics by this landing.
+- This is a design landing only. Migration 0037 implementation/registration,
+  tests, deployment and P37/AH10 qualification remain separately gated after
+  P36; no 0034–0036 migration body or checksum changes.
+
+### FT-DG-02 current P10/P13 view contract
+
+The current P10 view inventory includes the read-only `work-detail` view in
+addition to the previously documented views. The current P13 frozen view
+rendering count is ten. This current count supersedes nine-view counts in the
+historical v1.13/v1.15 governance entries below; those entries remain history.
+P10 `01`/`05`/`07` and P13 `00`/`03`/`06` own the exact inventory, DTO,
+binding, rendering, and acceptance details.
+
+**Governance changes (v1.30 → v1.31): Minimal Architecture Convergence**
+
+- MAC-D1: `WorkPlan` is superseded as core Domain vocabulary by
+  Runtime/Cognition-owned `LocalPlan`, still exact-bound to WorkId +
+  WorkRevision and recoverable across Executions, with zero authority edges.
+- MAC-D2: active new-write `SpecialistSpec/SpecialistSettled` semantics are
+  superseded. Optional future subagent collaboration is a route of the common
+  ActionCall protocol and child Execution; historical rows/aliases remain
+  replay-only until MAC-P4 migration.
+- MAC-D3: Model output exposes one ActionCall contract resolved through exact
+  TurnProfile registration. Existing executable/control handlers remain
+  route-specific implementations under a common authorization/approval
+  facade.
+- MAC-D4: exact executable/control approval records implement one
+  `ActionApproval` semantic ADT. Physical tables may remain behind adapters
+  until MAC-P4; no steady-state dual-write convergence is permitted.
+- MAC-D5: `WorkspaceKnowledgeView` is a rebuildable projection of accepted and
+  canonical sources. Existing `MemoryId`/unprovisioned KnowledgeQueryPort are
+  not implementation evidence.
+- MAC-D6: Root conversation work initiation is MAC-P1; placement/formation is
+  MAC-P2; Dependency/Deliverable is hidden until MAC-P3 full closure; optional
+  subagent collaboration is MAC-P4.
+- MAC-D7: asynchronous consumers expose durable fulfillment separately from
+  governance/decision and final result. Formation is the first required
+  implementation.
+- MAC-D8: Application/consumer/recovery signatures use narrow typed error
+  unions and persist retry/block/attention outcomes; log-and-continue is not a
+  semantic failure strategy.
+- MAC-D9: active runtime compatibility branches move behind
+  migration/archive/recovery adapters; new turns never advertise legacy
+  names/vocabularies.
+- MAC-D10: source-marker architecture tests are insufficient phase evidence;
+  each MAC phase requires executable black-box, fault/restart and real-provider
+  proof.
+
+Accepted proposal SHA-256:
+`44B549EA81E21B3D4BE5D545EA446B544D50CCA0061C83E6FC40CDC2ADCCA932`.
+Implementation contracts under `docs/design/implementation/MAC/**` are FROZEN.
+MAC-P1 implementation is authorized by
+`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`; MAC-P2…P4 remain phase-gated by the
+accepted contract index.
+
+**Governance changes (v1.27 → v1.28):**（Execution Episode / Goal / Plan，
+EGP-1…EGP-10）
+
+- `ExecutionFocus` and the Work/Coordination dichotomy are superseded for new
+  writes by exact `ExecutionEpisodeBinding` variants: Work, ConversationResponse,
+  Inbox and Decision.
+- Work remains the long-lived Goal/lifecycle authority. An optional Plan is
+  mutable progress state maintained through `update_plan`; it cannot perform
+  tools, grant authority, claim completion, verify, accept or complete Work.
+- Agent Runtime has one loop. Binding-specific Context and tool surfaces are
+  resolved before a Turn; the loop does not branch on a Coordination mode.
+- Conversation binds MessageId + ResponseJob revision; Work binds WorkId +
+  WorkRevision; Inbox and Decision bind their own durable identifiers.
+- Scheduler ambiguity becomes an exact WorkSelectionDecisionRequest and
+  DecisionEpisode. Deterministic workflow consumers remain model-free.
+- `CoordinationCompleted` and generic `QueryCompleted` are superseded by exact
+  episode results. Binding/result mismatch is rejected mechanically.
+- migration 0024 adds episode kind/ref/revision while retaining legacy focus
+  columns as read-only migration evidence. Ambiguous active legacy
+  Coordination fails closed; no text inference is permitted.
+- new TurnProfiles are episode-derived. `WorkspaceCoordination` and
+  `workspace-coordination-context-v1` are historical aliases only and cannot
+  be materialized for a new ProviderTurn.
+
+Accepted proposal SHA-256:
+`66D64809ED103194417BCA29FB0165657AC884EA0A3E0FDC5E5468E03E821C69`.
+Migration 0024 and implementation Waves A–E are authorized by
+`ACCEPT_EXECUTION_EPISODE_GOAL_PLAN_CONVERGENCE`.
+
+**Governance changes (v1.28 → v1.29):**（Root Conversation Action
+Capability，CRAC-1…CRAC-5）
+
+- `RootConversation` replaces the response-only profile. It remains bound to
+  one exact ConversationResponseEpisode and uses the common Agent Loop.
+- Its executable-tool surface is empty. Its v1 control-tool surface is the
+  exact stable identity `core.control.propose-workspace` only.
+- The output contract admits ordinary text or provider-neutral typed tool
+  invocation. `decodeTurn` remains generic; ControlToolRegistry alone maps the
+  invocation to `AgentAction.ProposeChildWorkspace`.
+- The handler persists a Pending FormationProposal only. Human
+  RecordDecision and the formation consumer retain approval and creation
+  authority. Proposal persistence and `gov:<proposalId>:<revision>` human
+  Inbox admission are one transaction; Governance entries are excluded from
+  Agent Session input promotion.
+- ProviderTurn/ControlResult history is re-injected only when its durable
+  source identity belongs to the same conversation execution; unrelated Work
+  timeline entries remain excluded.
+- migration 0027 backfills the Governance Inbox for pre-CRAC Pending
+  proposals; migration 0028 consumes stale actionable rows for already-settled
+  proposals. Current proposal/Queue writes and decision consumption are
+  atomic and replay-safe.
+
+Accepted proposal SHA-256:
+`DEBD13AAB34B7556B221F12B647360E945F95F5D89BD0B03287963DB22B917A8`.
+Implementation is authorized by `ACCEPT_ROOT_CONVERSATION_ACTION_CAPABILITY`.
+
+**Governance changes (v1.29 → v1.30):**（Control Action Permission &
+Approval，CAPA-1…CAPA-7）
+
+- PermissionGrant v2 binds subject, stable capability, target, validity window
+  and revision. Migration revokes unbound legacy grants; no compatibility
+  default grants authority.
+- Agent Runtime projects generic AgentAction into one exact action digest and
+  asks the ControlActionAuthorizer before any handler effect.
+- The decision ADT is `Authorized | Denied | ApprovalRequired`. Denied becomes
+  a typed model-visible ControlResult; ApprovalRequired leaves canonical state
+  unchanged and releases only the lease.
+- `control_action_approvals` persists exact Execution/action/target/
+  ControlBasis/expiry and single-consumption state.
+- ResolveControlApproval is human-actionable and consumes the exact Queue item.
+  Approved and Rejected both wake the same active Execution; AgentLoopStep
+  replays the settled ProviderTurn without a second inference for the action.
+- Approval consumption follows the idempotent canonical handler attempt;
+  command replay closes crash windows without duplicate mutation.
+- Workspace policy owns `Deny | Ask | AllowWithinGrant`; default sensitive
+  controls (`assign_work`, `spawn_specialist`) ask. Sandbox and ToolRuntime
+  approval remain independent enforcement boundaries.
+
+Accepted proposal SHA-256:
+`74C0A20BCED0C7800B2EB21933967810AAB73423132D9FE06E86A7E56EA26FB9`.
+Implementation is authorized by
+`ACCEPT_CONTROL_ACTION_PERMISSION_APPROVAL_ARCHITECTURE`.
+
+**Implementation closure record (2026-10-03):** migration 0025 removes
+`executions.focus_kind/focus_work_id`; migration 0026 removes
+`agent_execution_state.focus_json` and stores exact `episode_json`. The current
+composition baseline is 26. Pre-0024 decoding remains compatibility-only;
+current admission, Agent Runtime, Model Context and settlement production are
+episode-derived and fail closed on `LegacyAmbiguousEpisode`.
+
+**Governance changes (v1.21 → v1.22):**（Session / Context Runtime
+Convergence，SCRC-1…SCRC-12）
+
+- SCRC-1/2/12: Session becomes an append-only typed Timeline; active model
+  context is a lossy projection. Canonical control state remains outside the
+  Session and is freshly captured/reinjected.
+- SCRC-3/4: `PortableInputItem` supersedes `PortableMessage` as the universal
+  request carrier. ToolCall/ToolResult and ControlResult preserve stable
+  `callRef`, status, ObservationRef and ArtifactRef.
+- SCRC-5/6: Inbox input is delivered exactly once through source-key,
+  transactionally convergent Session promotion. Steer and Queue use distinct
+  safe-boundary semantics.
+- SCRC-7: each sampling request captures one immutable `AgentStepContext`,
+  persisted by reference/fingerprint in the Manifest; effect admission still
+  fresh-checks authority and ControlBasis.
+- SCRC-8/9: `NeedsCompaction` drives an explicit Compaction ProviderTurn inside
+  the Agent Loop. Summary and binding-bound ProviderNative implementations
+  atomically advance ContextEpoch and resume the same pending logical step.
+- SCRC-10: budget evidence is layered: observed provider usage, model/provider
+  estimator, adapter estimator, then conservative chars/4 fallback. One
+  overflow-triggered compact/retry is allowed only before durable output/effect.
+- SCRC-11: permission is never reconstructed from Session, summary, checkpoint
+  or model text; parent-distributed capability and execution-time authority
+  remain authoritative.
+
+The accepted proposal is fixed by SHA-256
+`200D9EE0F252915F1816C57FC5FEE470E77D7FB924A95A7474E03DF68BFAFD05`.
+This landing freezes contracts only; migration 0019 and production
+implementation require separate authorization.
+
+**Governance changes (v1.22 → v1.23):**（OVS-1…OVS-7）
+
+- A logical AgentLoopStep may own one bounded overflow ProviderTurn chain while
+  retaining its `(executionId, logicalStepNo, repairAttempt)` identity.
+- Chain roles are `Inference | OverflowCompaction | OverflowReplacement`;
+  v1 admits only `overflowOrdinal = 0`.
+- The original ContextLimitExceeded Turn remains immutable and terminal; the
+  replacement uses a new ProviderTurn/Manifest after atomic checkpoint/epoch.
+- Overflow ordinal is distinct from output-contract repairAttempt. Recovery is
+  allowed only before durable assistant/tool/control output or external effect;
+  a second overflow is terminal.
+
+Accepted proposal SHA-256:
+`09EE81EFAD5583585F7E8885E3647451C06F15F46F0CC40203158531A124E538`.
+Migration 0020 and implementation are authorized within SCRC-007/008.
+
+**Governance changes (v1.23 → v1.24):**（CDRC-1…CDRC-10）
+
+- HumanMessage content/idempotency is separated from a new durable
+  ConversationResponseJob state machine and append-only ConversationAttempt
+  ledger. Legacy Pending/Claimed/attempt columns cease to be scheduling truth.
+- Conversation Job states are Queued, Running, RetryScheduled,
+  NeedsAttention, Answered and Cancelled; one Job owns at most one running
+  attempt and one authoritative response.
+- transport retry, model-output repair and conversation retry have distinct
+  versioned budgets. Settlement is classified before the conversation policy
+  chooses answer, durable delay, attention or cancellation.
+- Session projection returns Ready or Blocked and admits only the maximal
+  causally closed frontier. Adapter validation rejects dangling call pairs
+  before sending Provider bytes.
+- recoverable pause/reconciliation/approval/compaction resumes the same
+  Attempt/Execution. A new attempt is permitted only after a terminal,
+  explicitly retryable classification and durable eligibility decision.
+- TurnProfileResolver replaces includeTools/includeControlTools and binds the
+  exact purpose-eligible tool identities/output contract/context policy for one
+  turn. Runtime authority/freshness checks remain mandatory.
+- durable failure fingerprints, deterministic backoff, explicit Resume/Cancel
+  commands and a ResolvedModelBinding-scoped deployment breaker close request
+  storms across both one message and many messages.
+
+Accepted proposal SHA-256:
+`66FF684CFD71A76C20A6FA32B30C1413BED85F34A694DE06301B122366C121B2`.
+P17 implementation contracts under
+`docs/design/implementation/P17-conversation-delivery-runtime/**` are FROZEN;
+implementation and migration 0021 are AUTHORIZED by the accepted governance
+token `ACCEPT_CONVERSATION_DELIVERY_RUNTIME_CONVERGENCE`.
+
+**Governance changes (v1.24 → v1.25):**（Execution Workspace Binding，
+EWB-1…EWB-10）
+
+- A filesystem `ResourceAddress` remains an environment/authority identity and
+  is never interpreted as a sandbox-relative tool path.
+- Every executable turn has a deterministic logical mount namespace. The
+  primary admitted filesystem resource is exposed as mount `workspace`; the
+  binding retains the source address, canonical region, access mode and the
+  captured ResourceBoundary/Environment basis.
+- Model-facing filesystem tools address `{ mount, path }`. `path` is a
+  normalized workspace-relative path; host absolute paths and `..` escape are
+  invalid. The model never supplies a host path as authority evidence.
+- Sandbox adapters own source-resource → execution-path materialization. Tool
+  Runtime resolves a target through the opened mount; executors never strip a
+  host prefix or reconstruct a mount.
+- Existing-target resolution performs lexical and realpath confinement.
+  New-file resolution additionally confines the nearest existing ancestor, so
+  symlink/junction escape remains impossible.
+- The primary writable coding resource is a managed GitWorktree. Local trusted
+  execution may bind it directly; hardened providers mount it into an isolated
+  `/workspace`-like root. Provider choice cannot change tool semantics.
+- `read/list/patch/shell` version 2 consume logical targets. `patch@2` supports
+  idempotent file creation as well as existing-file update. Version 1 remains
+  auditable but is not model-visible for new turns and is never reinterpreted.
+- Ordinary invalid/missing/unmapped filesystem targets are terminal
+  `ExpectedFailure` observations. Genuine executor/process defects and
+  ambiguous effects remain in the P9 crash/reconciliation protocol.
+- Tool identity is resolved from the exact model-visible catalog/profile; the
+  executable handler must not hard-code a version.
+- A mount binding is reconstructed only when its captured boundary/environment
+  basis is still fresh. Drift fails closed; permission and ownership are always
+  rechecked before effect admission.
+
+Manual governance accepted the mount-relative design and implementation on
+2026-10-02 by the instruction `执行`, following the complete design explanation
+in the governing thread. This authorizes the owning-contract landing and the
+EWB implementation. `DOGFOOD-DG-03` closes only after mechanical tests and the
+isolated release-validation Work prove the path.
+
+**Governance changes (v1.25 → v1.26):**（Verification Delivery Convergence，
+VDC-1…VDC-8）
+
+- `Completed(CompletionClaimed)` emits the exact top-level
+  `{ executionId, workId, workRevision, claimRef, settlement }` trigger. Old
+  nested events reconcile from the durable Execution Work binding; consumer
+  offsets are never reset to repair historical delivery.
+- Evidence kind `ToolObservation` is identified by the durable pair
+  `(ToolInvocationId, ToolResult.observationRef)`, plus its exact
+  `(executionId, callRef)` binding. A model selects evidence meaning but never
+  authors source identity.
+- Normal Verifier conclusions carry model-authored summary content. Runtime
+  persists the bytes through BlobStore and produces `summaryRef`; the
+  concluded Verification and `VerificationConcluded` event durably retain that
+  ref. `Unknown(Orphaned)` summary content is authored by the authorized human:
+  Root-local governance for Root Work or the exact Parent Workspace human for
+  child Work, under the accepted P8 `RetryVerification` contract.
+- A child `initialWork`, when present, carries a complete explicit
+  VerificationMission in its Parent-approved proposal. Runtime does not
+  synthesize a placeholder mission from objective text. A proposal without an
+  initialWork remains valid.
+- Model-facing `AssignWork` binds `predecessorWorkId` from the current parent
+  Work execution when one exists (otherwise null); the model supplies the
+  human-readable `reason`. Runtime validates the target Workspace and parent
+  authority before command submission.
+- A producer CompletionClaim registers a `VerificationChanged(workId, revision)`
+  wait. Verification conclusion releases it; a producer Work is not re-run
+  while its claim awaits verification.
+- StartVerification and deterministic verifier spawn are production-wired;
+  crash/replay reuses the preallocated Verification and verifier Execution ids.
+- Verification Pass remains distinct from Parent Acceptance and Work
+  completion. CompleteWork revalidates the exact Work/Verification/Acceptance
+  revision triple.
+
+Manual governance accepted VDC-1…VDC-8 by the user instruction `完成这些` on
+2026-10-02. The current dogfood Work is the live qualification path.
+
+**Governance changes (v1.26 → v1.27):**（Verifier Execution Settlement，
+VES-1…VES-6）
+
+- `CompletedResult` gains
+  `VerificationConcluded { verificationId, verdict }`, used only by an
+  exact-bound Verifier Execution after its canonical conclusion command has
+  committed.
+- This Execution result is not the Verification aggregate/event, not Parent
+  Acceptance and not Work completion.
+- The model-facing conclusion action performs summary Blob persistence and
+  byte verification, commits `ConcludeVerification`, delivers the idempotent
+  Verification wake, and only then proposes the Completed settlement.
+- Blob-before-command may leave an orphan Blob. Command-before-wake and
+  wake-before-settlement crash windows replay the same command receipt and
+  idempotent wake before settling the same durable Execution.
+- `ExecutionSettled(VerificationConcluded)` is not a CompletionClaim trigger;
+  Verification Consumer must ignore it.
+- A verifier that settles without a committed conclusion remains an orphan
+  candidate exactly as before. Concluded Verifications are outside the orphan
+  scan; historical Failed/Interrupted verifier Executions are immutable.
+
+Manual governance accepted the fixed proposal by token
+`ACCEPT_VERIFIER_EXECUTION_SETTLEMENT` on 2026-10-02. Accepted proposal
+SHA-256:
+`1D66E7A53134FE2494EA9077DA36D361CEA2B1C8ED1996321C521108460E88BD`.
+Implementation is authorized within this exact scope.
 
 **Governance changes (v1.3 → v1.4):**
 
@@ -235,6 +1478,79 @@ This is an additive read-model/presentation adoption, **not** a reopened P13/P14
 no command semantics, event semantics, DDL, authority, transport protocol, System Design, or
 G2–G5 product-domain gap is changed.
 
+**Governance changes (v1.20 → v1.21):** (Agent Loop terminology and
+implementation authorization, 2026-09-30)
+
+- **ALS-N1 — terminology-only successor.** The durable per-iteration record
+  called `AgentTurn` in the immutable reviewed proposal and v1.20 decision is
+  renamed **`AgentLoopStep`** in current contracts and implementation. The
+  overall runtime algorithm/component remains `AgentLoop`; `ProviderTurn`
+  remains one logical model decision; `ProviderAttempt` remains one transport
+  attempt. This removes the collision between conversation/model/runtime uses
+  of “turn” without changing AHT-1…AHT-8 semantics, state transitions, DDL or
+  acceptance obligations.
+- **ALS-I1 — implementation authorized.** The user explicitly authorized
+  execution after accepting the `AgentLoopStep` name. Authorized scope:
+  migration `0017_agent_loop_step_handoff`, ports/stores, atomic Provider
+  success, idempotent sourced Session writes, AgentLoop integration, legacy
+  adoption, recovery and AH1–AH14 tests. The preserved dogfood database remains
+  read-only until the equivalent fixture and migration verification pass; this
+  authorization does not permit speculative direct repair.
+- **ALS-I2 — migration executability correction.** Migration 0017 enforces the
+  sourced-Session all-null/all-present invariant by transactionally rebuilding
+  `session_entries` with a table `CHECK`, rather than `CREATE TRIGGER` bodies
+  that the existing semicolon-splitting migration runner cannot parse. The
+  unique source index and observable invariant are unchanged; this is a
+  mechanism correction proven by the first red migration test.
+
+**Governance changes (v1.19 → v1.20):** (Provider Result Handoff / Durable
+AgentLoopStep Adoption; decision record:
+`planning/proposals/provider-result-handoff-governance-decision.md`)
+
+- **AHT-1 — durable handoff replaces process-local progress.** Add a persisted
+  `AgentLoopStepRecord`, keyed by `(executionId, logicalStepNo, repairAttempt)`,
+  between Provider result settlement and Session/action/Execution settlement.
+  Provider Runtime still owns Provider calls; Agent Runtime owns result
+  consumption and action progression; Execution Runtime owns lease/fencing and
+  canonical settlement. Lease loss stops a writer but never erases business
+  progress (`P3 08`).
+- **AHT-2 — complete Provider success converges locally.** A complete successful
+  canonical event sequence is a replayable durable result. New success writes
+  atomically settle ProviderAttempt + ProviderTurn. Legacy complete success
+  evidence is locally completed before P9 retry eligibility; the same
+  ProviderTurn is never requested again (`P3 08` §5, `P9 07` §2).
+- **AHT-3 — Session and action handoff are idempotent.** Session entries gain a
+  stable source key/content hash. ModelOutput append and
+  `ProviderResultAvailable → OutputAccepted` share a fenced transaction.
+  `AgentLoopStepActionRecord` persists only logical identity/disposition/result
+  references; it does **not** persist the v1.18 process-local `AgentAction` ADT
+  (`P2 02`/`04`, `P3 08` §§6–7).
+- **AHT-4 — logical Agent identity is distinct from Application Command
+  identity.** `LogicalActionId`/`LogicalSettlementId` identify Agent semantics.
+  Each lease generation submits a distinct deterministic `CommandId`; that
+  Command remains immutable and terminal under the existing P1 rules. A later
+  owner may create a new generation-scoped Command only after querying the
+  logical ledger and existing receipts (`P1 07`).
+- **AHT-5 — unresolved side effects are a hard gate.** An action in
+  `ReconciliationPending` cannot reach `StepEffectsCommitted`, a next model
+  turn, or ordinary Completed/Interrupted/Failed. It may only reconcile,
+  produce durable Attention, or use the existing
+  `OutcomeUnknown(ReconciliationRequired)` exit (`P3 08` §7).
+- **AHT-6 — successor identity is committed before handoff.** Repair and normal
+  next-turn predecessors persist exactly one complete successor identity.
+  Recovery uses idempotent `ensureSuccessor`; it never recomputes the decision,
+  consumes budget twice, or creates a second ProviderTurn (`P3 08` §8).
+- **AHT-7 — legacy adoption is evidence-gated.** Migration `0017_agent_loop_step_handoff`
+  may synthesize AgentLoopStep only from unique, consistent evidence. The
+  DOGFOOD-DG-01 equivalent no-action fixture is authorized to adopt at
+  `ProviderResultAvailable`; ambiguous repair/action/effect evidence produces
+  durable Attention and no replay (`P9 07` §3).
+- **AHT-8 — authorization boundary.** v1.20 authorizes design-contract landing
+  only. It does not authorize migration execution, recovery implementation,
+  mutation of the preserved failure database, or automatic closure of
+  DOGFOOD-DG-01 before owning-contract landing and consistency audit. Those
+  design steps now resolve the design question; implementation remains gated.
+
 **Governance changes (v1.18 → v1.19):** (Agent Control Implementation
 Authorization — D9 of the `52-migration-and-implementation-dag.md` sequencing)
 
@@ -264,17 +1580,14 @@ Authorization — D9 of the `52-migration-and-implementation-dag.md` sequencing)
   (`tests/capability/real-provider/**` + `scripts/testing/run-capability.mjs`
   three-run stability oracle). Qualification must never use the legacy
   universal `arbor_directive` representation as a pass condition.
-- **ACR-8 — field-source gaps gate only the actions that need them.**
-  The four downstream gaps (AssignWork.Provenance; ToolObservation source
-  identity G-V2-2; ConcludeVerification.summaryRef G-V2-3;
-  initialWork/VerificationMission lifecycle G-V2-4) remain OPEN and keep
-  gating only the action/command paths that consume those fields
-  (`52-migration-and-implementation-dag.md` §Four former field-source gaps).
-  Actions with complete, frozen mappings — e.g. Wait, SendMessage,
-  ProposeChildWorkspace (formation semantics closed in P6), SpawnSpecialist
-  (execution-bound admission closed in P2), ClaimCompletion (P8 chain) —
-  may be implemented and qualified independently under this authorization.
-  B10's `BLOCKED_BY_DESIGN_GAP` status is unchanged until those gaps close.
+- **ACR-8 — historical field-source gating (superseded by v1.26).**
+  At the v1.19 checkpoint the four downstream mappings
+  (AssignWork.Provenance; ToolObservation identity G-V2-2;
+  ConcludeVerification.summaryRef G-V2-3; initialWork VerificationMission
+  G-V2-4) gated only their consuming paths. The manually accepted v1.26
+  VDC-1…VDC-8 contract above subsequently CLOSED all four mappings and
+  supersedes this checkpoint status. B10 is no longer
+  `BLOCKED_BY_DESIGN_GAP`; repeatable L3 qualification is authorized.
 - **Wave 2 scope.** Wave 2 is the module map of
   `51-agent-control-module-map.md` sequenced by the dependency DAG of
   `52-migration-and-implementation-dag.md`; it adds no new package or
@@ -367,7 +1680,7 @@ records and are not a second frozen design source.
 **Governance changes (v1.12 → v1.13):**（P10 design-closure 治理裁决 GQ1–GQ7）
 
 - G1 (GQ1): **视图清单权威归 System Design §12/§13.9 全量 inventory**；本设计 §11 P10
-  九词仅为不完整摘要。Search / Workspace Summary / Project Overview / Inbox 视图
+  旧九词仅为不完整摘要（当前清单见本文件上方 FT-DG-02 amendment）。Search / Workspace Summary / Project Overview / Inbox 视图
   均归 P10；`WorkspaceStatus` 标签映射表按 SD 原有 labels 冻结（P10 契约落地），
   不发明新标签。
 - G2 (GQ2): **`EffectiveFacts` 是唯一的 shared canonical-state-derived
@@ -512,7 +1825,7 @@ records and are not a second frozen design source.
 
 ## 0. 文档定位与冻结规则
 
-Arbor 的系统级语义由 `Arbor System Design Specification v1.3` 拥有。本文不重新讨论问题定义、G1–G8、S1–S4，也不在实现层静默修改顶层领域语义；本文只回答如何把这些系统约束落实为可编码、可持久、可并发验证和可恢复的实现契约：
+Arbor 的系统级语义由 `Arbor System Design Specification v1.4` 拥有。本文不重新讨论问题定义、G1–G8、S1–S4，也不在实现层静默修改顶层领域语义；本文只回答如何把这些系统约束落实为可编码、可持久、可并发验证和可恢复的实现契约：
 
 1. 哪些对象是长期 Identity，哪些只是 Value Object / Runtime Record / Projection；
 2. 哪些状态必须成为 Canonical Truth，哪些只能是认知状态或 UI 投影；
@@ -934,11 +2247,31 @@ no Active Main Execution
 currentWorkId == None
 no Open Work
 no Active Child Workspace
-no active ResourceOwnershipClaim
+no active ResourceOwnershipClaim, except an exact Child claim with accepted
+  ResourceOwnershipDelegation provenance consumed by the atomic retirement
+  path below
 no unresolved incoming Dependency whose ProducerBinding is
   WorkspaceBound(thisWorkspace) or WorkBound(a Work owned by thisWorkspace)
   (unless resolved/replaced in the same governance change)
 ```
+
+The sole ownership exception is a Child claim with exact accepted delegation
+provenance. Before reclaim or retirement, the region must be quiescent with no
+unresolved effect bound to it, or a typed quiescence/recovery path must
+preserve and resolve known in-flight outcomes. Match the Child claim and
+Parent exclusion by exact canonical delegated region, delegation source
+identity, and claim/delegation revision; CAS the Parent/Child Workspace,
+boundary, and ownership revisions. One atomic semantic governance change
+releases only that Child claim, removes only that exact region from the
+Parent's exclusions, preserves every unrelated exclusion in normalized,
+sorted, unique antichain form, and writes the full Parent/Child post-image and
+version-capable ownership event. Retirement also marks the Child Retired in
+that same commit. Missing, duplicate, stale, or mismatched evidence fails
+closed without state/event mutation; no intermediate unowned scope or overlap
+is committed. A RetireWorkspace call without exact accepted provenance,
+including ordinary and legacy no-provenance cases, retains the `no active
+ResourceOwnershipClaim` precondition and fails closed. Boundary edits and
+grant revocation do not remove exclusions or transfer ownership.
 
 Retired Workspace 不得 AssignWork、AdmitExecution、CreateChildWorkspace 或修改 Responsibility。`Work.workspaceId` immutable；未完成事项迁移时在 Successor 创建新的 Work，并通过 Provenance 指向被替代 Work，而不是移动原 Work。Session/Memory/Decision/Artifact 的 ownership 也不改写，只通过 bootstrap/reference 派生新的 successor cognition。
 
@@ -998,7 +2331,7 @@ ResourceOwnershipClaim[]
 
 ```text
 ResourceBoundary      = 这个责任允许作用到哪里
-ResourceOwnershipClaim= 哪些 canonical region 当前由它正式拥有 write ownership
+ResourceOwnershipClaim= 哪个 Workspace 当前拥有何种 effective canonical write set
 Permission            = 这一次具体动作是否被授权
 ```
 
@@ -1027,7 +2360,35 @@ CanonicalResourceRegion {
 }
 ```
 
-`contains(a,b)` 与 `overlaps(a,b)` 定义在同一 `resourceSpaceId` 下的 `CanonicalResourceRegion` 上；跨 resource space 默认不 overlap，除非 Environment resolver 明确把二者归一到同一 backing space。
+Formal write claims use:
+
+```text
+OwnershipRegion = {
+  allow: CanonicalResourceRegion,
+  exclusions: CanonicalResourceRegion[]
+}
+effective(OwnershipRegion) = allow minus union(exclusions)
+```
+
+An exclusion is a strict canonical descendant of `allow` in the same
+`resourceSpaceId` and canonical region kind. The finite list is normalized,
+sorted by the existing canonical ordering, unique, and prefix-antichain. An
+active claim must have a nonempty effective set. Excluded regions are not
+implicitly owned by any Workspace. Existing claims with no exclusions mean
+the full `allow` region.
+
+The domain comparator returns a typed `Contained | NotContained | Overlap |
+Disjoint` result; consumers do not reproduce set algebra. For canonical
+prefix regions, a requested region is contained only when `allow` contains
+the whole request and no exclusion partially intersects it; an exclusion
+covering the whole request also makes it NotContained. Two effective claims
+overlap when their allow regions overlap and neither claim has an exclusion
+that completely covers the intersection. Partial exclusions do not prove
+disjointness. Cross-resource-space regions do not overlap unless the
+Environment resolver canonicalizes them into the same backing space.
+Malformed/noncanonical/empty/cross-space/non-antichain exclusions fail
+closed. Equality-only canonical region kinds support only exact delegation and
+reclaim, never descendant carve-outs.
 
 核心规则：
 
@@ -1035,7 +2396,8 @@ CanonicalResourceRegion {
 - Responsibility change 可以导致 ResourceBoundary 变化；
 - ResourceBoundary 因目录、worktree、数据库 namespace 等环境映射变化时可以独立更新；
 - Read visibility 可以重叠；
-- formal write ownership 默认不重叠；
+- effective formal write ownership 默认不重叠；allow envelopes may intersect
+  only when canonical exclusions prove their effective sets disjoint;
 - ownership enforcement 比较 canonical backing resource，而不是原始 path/string；
 - Permission 不能扩大 ResourceBoundary，也不能覆盖 write ownership invariant；
 - `ResourceOwnershipClaim` 是 durable record，不升级为新的 Aggregate Root。
@@ -1048,9 +2410,9 @@ resolve/canonicalize ResourceAddress outside write transaction
 
 BEGIN IMMEDIATE
 → verify observedEnvironmentRevision is still current
-→ load potentially conflicting ownership claims
-→ deterministic overlaps()
-→ insert/update claims with resolvedAtEnvironmentRevision
+→ load potentially conflicting OwnershipRegion claims
+→ deterministic typed effective-set containment/overlap comparison
+→ insert/update normalized allow/exclusion claims with resolvedAtEnvironmentRevision
 → COMMIT
 ```
 
@@ -1127,6 +2489,29 @@ Session 不保存：
 ```text
 Checkpoint + Recent Frontier
 ```
+
+Session 的 provider-neutral typed Timeline：
+
+```text
+SessionItem =
+  UserMessage(source, contentRef, trust)
+| AssistantMessage(providerTurnId, contentRef, finishReason)
+| ToolCall(providerTurnId, callRef, toolRef, argumentsRef)
+| ToolResult(callRef, invocationId?, status, observationRef,
+             modelOutputRef, artifactRefs[])
+| ControlResult(callRef, actionKind, disposition,
+                canonicalRefs[], observationRef)
+| ContextUpdate(sourceRef, revision, Full | Replace | Revoke, contentRef)
+| CompactionCheckpoint(fromEpoch, toEpoch, Summary | ProviderNative,
+                       summaryRef?, opaqueItemRef?, bindingFingerprint?,
+                       retainedFrontier)
+| AttachmentRef(ref, mediaType, trust, disclosure)
+```
+
+`SessionItem` 是 Runtime contract，不是 Domain Aggregate。`sourceRef + item type`
+幂等；同 source、不同 content hash 是 invariant conflict。Streaming delta 仍为
+transient，只有 completed typed item 进入 Timeline。`ContextUpdate` 记录模型投影的
+supersession，不成为 canonical authority。
 
 ## 1.8 Dependency / Deliverable / Message
 
@@ -1263,6 +2648,8 @@ CommandId
 EventId
 ProviderTurnId
 ToolInvocationId
+LogicalActionId
+LogicalSettlementId
 WorkerId
 WorkerIncarnationId
 PluginId
@@ -1280,12 +2667,22 @@ Root/Primary 是关系角色，不是新实体类型。
 
 `PluginVersion` / `PluginSdkApiVersion` 是 branded version 值，不是 entity ID。
 
+`AgentLoopStepIdentity` 是 `(ExecutionId, logicalStepNo, repairAttempt)` 复合身份，
+不是新增全局 entity ID。`LogicalActionId` / `LogicalSettlementId` 是稳定派生的
+runtime semantic identity；它们不替代 `CommandId`。
+
 ## 2.2 ID 规则
 
-- 底层采用 UUIDv7 类可时间排序随机标识；
+- 底层采用 UUIDv7 类可时间排序随机标识；`ProviderTurnId` 按 §2.2.1 的
+  独立闭合编码规则处理；
+- deterministic runtime semantic identities（`LogicalActionId` /
+  `LogicalSettlementId`）例外：使用版本化 canonical serialization + SHA-256
+  派生，并保留 Appendix A prefix；
 - 增加 `prj_ / ws_ / wrk_ / exe_ / ses_ ...` prefix 便于运行时校验和调试；
 - TypeScript 使用 nominal/branded type，运行时使用 Schema codec；
-- ID 不编码名称、父子路径、业务 location 或 sequence；
+- ID 通常不编码名称、父子路径、业务 location 或 sequence；`ProviderTurnId`
+  按 §2.2.1 的显式例外编码 scoped Execution/Step/repair/compaction ordinal，
+  用于唯一标识可恢复的模型操作，不表示 Work/责任位置或业务顺序；
 - Entity state evolution 不改变 Identity；
 - Human-friendly `W-42` 等仅是 projection/display code。
 
@@ -1294,6 +2691,46 @@ Root/Primary 是关系角色，不是新实体类型。
 ```text
 Identity != Name != Location != Order
 ```
+
+### 2.2.1 ProviderTurnId V2 codec
+
+`ProviderTurnId` has one strict versioned codec. V2 composite forms are the
+only forms written for new ProviderTurns; the UUIDv7 form is a legacy
+read/replay variant only. V2 has no version marker in its string: the codec
+version is the validation rule, not another identity segment.
+
+Every V2 composite starts with `ptn_<ExecutionId>_<stepNo>`. `<ExecutionId>`
+must satisfy the existing exact `exe_<UUIDv7>` codec. `<stepNo>` is a
+canonical non-negative safe decimal integer (`0` or a non-zero digit followed
+by decimal digits, with no leading zeroes and not above
+`Number.MAX_SAFE_INTEGER`). The only accepted suffixes are:
+
+| V2 family | Exact suffix | Value rule |
+|---|---|---|
+| Inference | none | the Step's inference ProviderTurn |
+| Repair inference | `_r<repairAttempt>` | positive canonical safe decimal integer |
+| Summary compaction | `_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
+| Provider Native compaction | `_native_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
+| Conversation Summary checkpoint compaction | `_conversation_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
+| Conversation Native checkpoint compaction | `_conversation_native_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
+| P20 overflow replacement | `_overflow_0` | ordinal is exactly `0` in v1 |
+
+The existing `OverflowCompaction` P20 link uses the exact Summary or Provider
+Native compaction ProviderTurn for that Step/context epoch; its link role and
+predecessor are separately persisted by migration 0020. It does not add a
+second compaction spelling. No other suffix, free-form string, alternate
+Execution binding, leading-zero ordinal, or non-zero overflow ordinal is a
+ProviderTurnId.
+
+The legacy read/replay variant is exactly `ptn_<UUIDv7>` under the existing
+UUIDv7 validator. It may be decoded only to verify or replay already persisted
+evidence. It is not a new-write form. New ProviderTurn constructors use the
+V2 families above. Decoding preserves the original string byte-for-byte; no
+normalization, re-encoding, or reconstruction from Session text is permitted.
+Blocked result/command references, provider and conversation progress frames,
+P3 Actions, RecoveryBindings, Manifests, SQLite keys and P20 links all use the
+same closed decoder and retain the exact source spelling. Unknown or malformed
+IDs fail at the existing typed decode/recovery boundary.
 
 ## 2.3 Event ordering 与 local ordinal
 
@@ -1311,7 +2748,7 @@ WorkRevision
 DependencyRevision
 ```
 
-`WorkRevision` 是 `Work` identity 内部单调递增的 semantic revision：Work 创建时从初始 revision 开始，`RefineWork` / semantic `SteerWork` 使其递增；`Deliverable.sourceWorkRevision`、`Verification.targetWorkRevision`、`Acceptance.targetWorkRevision` 都用它绑定具体 Work version。`DependencyRevision` 同理用于 `Dependency.revision` / `targetDependencyRevision` / `satisfiedAtDependencyRevision`。
+`WorkRevision` 是 `Work` identity 内部单调递增的 semantic revision：Work 创建时从初始 revision 开始；每个被接受的 `DirectionGuidance` 或 `ContractAmendment`、以及其他语义 `RefineWork` 都使其恰增一。`Deliverable.sourceWorkRevision`、`Verification.targetWorkRevision`、`Acceptance.targetWorkRevision` 都用它绑定具体 Work version。`DependencyRevision` 同理用于 `Dependency.revision` / `targetDependencyRevision` / `satisfiedAtDependencyRevision`。
 
 `WorkRevision` / `DependencyRevision` 是 scoped ordinal / branded value，**不是** Entity Identity：不加入 §2.1 Typed IDs，也不加 prefix。
 
@@ -1406,6 +2843,15 @@ Completed / Cancelled 默认 terminal。
 
 Producer 不得自行削弱 Objective / CompletionExpectation / required VerificationMission。
 
+Work contract 是 `Objective`、`Why`、完整 `Constraints`、
+`CompletionExpectation` 与结构化 `VerificationMission` 的完整组合。
+`DirectionGuidance` 只改变方法，完整规范 contract 保持不变；
+`ContractAmendment` 是 human-authored、针对 exact 当前 WorkRevision 的完整
+replacement snapshot，不支持 patch/merge、省略字段继承、从自由文本推断，
+也不能由 Agent `RefineWork` 或 Claim Completion 冒充。两种已接受 Steer
+操作都在同一 Work identity 内产生新 revision；Work 保持 Open。Revision
+前移不改写较早的 Work contract、Verification、Acceptance 或其事件/receipt。
+
 ## 3.4 Execution
 
 Execution Binding：
@@ -1466,8 +2912,8 @@ ExecutionSettlement
 ├── Completed(CompletedResult)
 │   ├── Yielded(reason, waitSpec)
 │   ├── CompletionClaimed
-│   ├── CoordinationCompleted
-│   └── QueryCompleted
+│   ├── VerificationConcluded(verificationId, verdict)
+│   └── Blocked(BlockedWorkEpisode)  // exact Work Episode only
 ├── Interrupted(InterruptedResult)
 │   └── StopRequested / other controlled interruption
 ├── Failed(ExecutionFailure)
@@ -1477,6 +2923,9 @@ ExecutionSettlement
 关键约束：
 
 - `CompletionClaimed` 必须持久携带足够的 claim/reference 与 target Work revision，使 event replay 可以可靠触发后续 Verification；
+- `VerificationConcluded` 只表示该 Verifier Execution 已提交 canonical conclusion；它不得表达 Parent Acceptance 或 Work Completed，也不得进入 CompletionClaim consumer；
+- `Blocked` 只表示精确 Work Episode 已到达稳定的人类/Parent 输入边界，不改变 Work lifecycle；其 exact denial evidence、wait request 和 WorkBlocker 同事务合同由 P2 `01` 拥有，不蕴含 Verification、Acceptance 或 Work completion；
+- 新写 settlement 必须匹配 exact `ExecutionEpisodeBinding`；历史 `CoordinationCompleted` / `QueryCompleted` 仅供 migration/decoder audit；
 - Worker crash、lease expiry 或旧 Worker resurrection **本身不直接 settle Execution**；Recovery 可以继续同一 durable Execution；
 - `OutcomeUnknown` 表示存在未解决的现实副作用歧义，reconciliation 前禁止盲目 replay；
 - `Completed != Work Completed`，`Failed != Work Cancelled`。
@@ -1591,6 +3040,8 @@ Work revision (WorkRevision)
 
 ```text
 AgentExecutionState
+AgentLoopStepRecord
+AgentLoopStepActionRecord
 ProviderTurn
 ToolInvocation
 CommandAttempt
@@ -1622,7 +3073,20 @@ updatedAt
 Workspace            = long-lived responsibility state
 Session              = long-lived cognitive continuity
 AgentExecutionState  = current episode control state
+AgentLoopStepRecord      = durable Provider-result/action/settlement handoff state
+AgentStepContext         = immutable per-sampling snapshot carried by ModelContextManifest
 ```
+
+`AgentLoopStepRecord` 与 action ledger 的完整 ADT、状态机和恢复不变量由 P3 `08`
+冻结。它们是 durable runtime records，不是 Aggregate、Domain Event 或模型输出
+wire contract。特别地，v1.18 的 process-local `AgentAction` 仍不得持久化；恢复通过
+固定 Provider 结果 + pinned decoder 重建 typed invocation，并用 stored hash/ledger
+校验。
+
+`AgentStepContext` 不新增 Aggregate 或独立 table；Manifest 持久化其 control refs/
+revisions、input frontier、effective tool catalog、ResolvedModelBinding 与 budget basis
+的 fingerprint。它只保证一次 sampling request 的一致视图，不能作为后续 Tool/
+Control effect 的授权缓存。
 
 ---
 
@@ -1751,6 +3215,10 @@ CommandResolution
 - terminal rejection 不产生 Domain Event，因为 Domain truth 未变化；
 - transport / transient persistence failure 不产生 authoritative Resolution；调用方使用同一 CommandId 重试，可产生新的 attempt；
 - `FencingRejected` 对该 Execution-originated logical Command 是 terminal；旧 Worker 不得普通 retry；
+- 对 Agent action/settlement，`FencingRejected` 只终止该 `CommandId`。P1 `07`
+  冻结更外层身份：`LogicalActionId` / `LogicalSettlementId` 保持稳定，而新租约
+  generation 在读取 ledger/receipt 并确认仍 eligible 后创建**新的** deterministic
+  `CommandId`。这不是 same-Command retry，也不改变 terminal receipt；
 - 同一 CommandId 一旦进入 Committed 或 TerminalRejected，后续同 payload retry 直接返回已存在 Receipt；
 - Command 不按 CRUD setter 设计，而按领域意图设计。
 
@@ -1776,6 +3244,244 @@ ResourceBoundary.basisResponsibilityRevision == Workspace.responsibilityRevision
 
 禁止依赖“先改 Responsibility、下一条命令再改 Boundary”的危险中间状态。
 
+## 4.1B External Command Decode and Receipt Ordering
+
+External HTTP, WebSocket, CLI, and future external submissions share one
+Application/Composition boundary. The shell authenticates the caller and hands
+the Composition root the raw bounded JSON envelope, authenticated `Principal`,
+submission context, and correlation information. A shell never casts JSON to a
+trusted `CommandEnvelope` and never performs a receipt lookup.
+
+The first external wire contract is fixed at v1 and carries no caller-supplied
+wire version field. Keep these values separate:
+
+| Contract value | Owner and use | Persistence |
+|---|---|---|
+| `externalWireCodecVersion = 1` | Server-selected strict codec for the registered `commandType` | Not in envelope, fingerprint, or SQL |
+| `CommandHandler.schemaVersion` / `commands.schema_version` | Registered Handler's semantic Command/receipt schema and JSON decode key | Existing receipt column and P1 fingerprint input |
+| `fingerprint_algorithm_version = 1` | P1 canonical serialization and SHA-256 algorithm version | Existing receipt column |
+
+Internal schema implementation changes alone do not alter the wire-v1
+semantic receipt identity. A change to semantic payload or result/error
+contract follows the existing Handler schema-version and receipt compatibility
+rules; it is not inferred from the wire codec version.
+
+The external path is ordered as follows:
+
+```text
+authenticate Principal and establish External submission context
+  → bounded strict wire-v1 envelope + registered closed payload codec
+  → validate CommandId / ProjectId / declared Actor syntax and payload IDs
+  → derive registered Handler.schemaVersion and current P1 semantic fingerprint
+  → require external declared Actor == authenticated Principal exactly
+  → Composition loads current canonical facts / active Grants and runs P12 Resolver
+      denied: return the existing authority Problem; disclose no receipt
+  → CommandGateway begins its existing BEGIN IMMEDIATE transaction
+      → read receipt by CommandId
+      → exact (fingerprint, Handler schemaVersion, algorithm version): return it
+      → any tuple mismatch: IdempotencyConflict; preserve the stored receipt
+      → if absent: current fence/stop/authority/precondition/handler/write path
+```
+
+There is no receipt read outside the Gateway transaction. External Resolver
+visibility is required even for a retry; the Gateway's receipt lookup remains
+first inside its transaction and before its final exact authority check, per
+P1 `01` §3 and `03` §3.1. `BEGIN IMMEDIATE` remains the only receipt
+linearization point. A same-tuple concurrent loser returns the committed
+winner; a different tuple cannot overwrite it. Canonical preconditions and
+the Gateway's final exact-authority check remain authoritative for mutation.
+
+The Application owns `ExternalCommandDecoder` and
+`CommandInputContractRegistry`: the decoder accepts bounded raw JSON plus a
+`commandType` and returns a typed semantic envelope or safe codec issues; the
+registry contains exactly one closed input descriptor and origin policy per
+command in the current 28-required-command production registry, plus the
+optional `ResolveControlApproval` descriptor when its store is composed.
+`RetryVerification` is external only through its exact authenticated-human
+governance route; it carries no client authority or BlobRef. Shells retain raw
+`unknown` only until decoding and do not cast to a trusted envelope or use Web
+form schemas as a server guarantee. The new DeliverMessage descriptor is the
+closed P7 payload at wire codec v1, with External origin denied; typed
+ExecutionOrigin submissions use the same semantic validator. Its registered
+Handler/result `schemaVersion="1"` is independent from the wire version.
+Codec validity grants no authority; P13's UI exposure classification remains
+separate. Handler factories for
+`ReviseDependencyContract`, `WithdrawDependency`,
+`MarkDependencyUnfulfillable`, `RegisterProjectTool`, `CreateWorktree`, and
+`RetireWorktree` are factory-only and are not current `RegisteredCommandType`
+members or codec descriptors. A future composition registration requires an
+accepted registry/codec scope update before reachability. A descriptor cannot
+construct or accept AH10 `AssignWorkCommandEvidence` or
+`AssignWorkControlAuthorizationEvidence`.
+
+The accepted AH10 Deliver P10 storage amendment adds only the source-specific
+P10 projection relation described in §9.3. It does not alter the
+CommandGateway receipt tuple/order, external wire codec, DeliverMessage
+Handler schema, `MessageSent(v1)`, or ordinary `SendMessage` receipt semantics.
+
+All codecs reject unknown fields at every object depth and enforce the owning
+payload's primitive, finite/integer/range, enum/tag, array-member, and branded
+ID rules. Shared Domain `ID_SCHEMAS` may be reused after the runtime boundary
+has decoded the value. A registered descriptor also validates typed
+System/ExecutionOrigin/Recovery-origin submissions before Resolver/Gateway;
+an internal validator failure is a typed contract defect/Attention with no
+receipt or domain write.
+
+External decode failure returns the transport-only `Problem` DTO:
+
+```ts
+{
+  code: "InvalidCommandPayload",
+  category: "validation",
+  message: "Command payload is invalid",
+  correlationId: string | null,
+  retryDisposition: "non-retryable",
+  safeDetails: {
+    commandType?: RegisteredCommandType,
+    issues: ReadonlyArray<{
+      path: ReadonlyArray<KnownFieldPathSegment | "<unknown-field>">,
+      rule: "required" | "type" | "format" | "range" | "enum"
+          | "unknown-field" | "unsupported-command"
+    }>
+  }
+}
+```
+
+Only a server-owned registered command name may appear in
+`safeDetails.commandType`. Unknown command values use a static
+`["commandType"]` path and do not appear in the response or diagnostics.
+Unknown property paths end with the fixed `"<unknown-field>"` marker; caller
+property names and values, body fragments, credentials, paths, artifact
+content, and exception text are never reflected. Issue ordering is stable.
+The existing transport Problem adapter maps malformed/unsupported input to
+HTTP 400. This DTO is not a `CommandRejection`, `TerminalRejected`, receipt,
+Event, or retryable attempt.
+
+No raw request body, wire version, new receipt comparator, or FT-DG-03 SQL
+migration is introduced. Historical malformed CommandIds are preserved
+read-only and are non-replayable; reject them before receipt lookup. A
+historical receipt whose payload fails the current codec is likewise not
+looked up or disclosed. With a valid current payload, stored Handler schema or
+fingerprint algorithm mismatch uses the existing exact P1 tuple rule and
+returns `IdempotencyConflict`; no historical comparator or row rewrite is
+added. Only an exact tuple is decoded through the Application-owned strict
+receipt decoder registered for the exact current `(commandType,
+Handler.schemaVersion)`. Every current one of the 28 required registered command
+handlers must have a Committed-result decoder; TerminalRejected uses the
+exhaustive Application `CommandRejection` decoder. Missing version/descriptor,
+invalid JSON, wrong shape or unknown rejection member fails as the existing
+non-retryable `PersistenceCorruption<"CommandStore">`, never as a semantic
+rejection. The result decoder follows the owning result DTO, not a DomainEvent
+schema or TypeScript cast. Raw JSON is not reflected or repaired; the existing
+Gateway transaction rolls back and writes no Command/attempt/Event or canonical
+effect. P1 `01` §3A/`03` §3.1 define the strict shape and rollback contract;
+the existing external transport maps it to the safe non-retryable
+`persistence/corruption` Problem. No new generic P10 Attention source is
+implied.
+
+Recovery's direct prior-receipt consumers are a separate Application route,
+not a second Gateway or a candidate-tuple comparison. They select a decoder
+from the trusted runtime action CommandType and registered Handler schema,
+after prior CommandId/Project identity validation. The direct-child AssignWork
+route still requires the full P1 `07`/SD §4.11 binding proof. For a syntax-
+corrupt direct-child prior Committed receipt, P9 `07` records the existing
+`ReceiptMismatch` failure fact/event and returns
+`AgentActionRecoveryBlocked`, retaining only an internal safe
+`PersistenceCorruption` classification; no handler replay, new Command, row
+repair, Observation or Applied transition is allowed. A2 result-shape failure
+and B binding/effect mismatch retain the existing P9 failure-code path.
+Non-direct-child prior-consumer corruption remains an operational failure and
+does not create a P9 AssignWork fact. `AgentActionRecoveryBlocked` carries no
+decoder cause. This clause asserts no current observable logging/diagnostic
+sink; a new operator-visible sink remains independently open. The existing P9
+fact identity/atomic transaction/crash behavior and P10 AH10 projection remain
+unchanged.
+
+This contract does not alter the accepted AH10 direct-child AssignWork
+exception: its internal Control route remains external-origin denied; trusted
+target/Grant-or-ActionApproval evidence cannot be constructed from JSON. The
+binding, same-transaction approval consumption, Work/Event/receipt atomicity,
+migration 0033, and P1 `07` proof-complete recovery exception remain governed
+by SD §4.11, DID §6A.16/§9.3/§9.9, P4 `03`, and P9/P10 owners. F23 adds no
+bypass, codec-generated authority, receipt pre-read, SQL, or alternate
+AssignWork recovery path.
+
+For the existing CreateProject payload owner and the FT-DG-01 v2 bootstrap
+extension, see §4.1C. This does not change §4.1B's receipt visibility or tuple
+ordering.
+
+## 4.1C CreateProject v2 host resource admission (FT-DG-01 functional scope)
+
+CreateProject's current external wire codec remains server-selected v1. Its
+registered Handler semantic schema changes to v2; these are different version
+axes as defined in §4.1B. P1 `01` owns the closed v2 payload and schema.
+
+```ts
+type ResourceSelection =
+  | { readonly _tag: "Profile";
+      readonly resourceProfileRef: ResourceProfileRef;
+      readonly version: ResourceProfileVersion }
+  | { readonly _tag: "ConversationOnly" };
+```
+
+The v2 root Workspace payload carries ResourceSelection, not
+ResourceBoundary.addresses. It rejects absolute paths, raw ResourceBoundary
+fields, and mixed selector/address inputs through the registered strict codec.
+Invalid shapes use the existing non-reflecting InvalidCommandPayload Problem
+and HTTP 400; they do not reach Resolver, Gateway, receipt lookup, or writes.
+The semantic fingerprint includes the full selector/ref/version and all other
+CreateProject v2 fields, but never re-resolves the current host path into the
+same request identity.
+
+The existing P1 transaction and event sequence remains:
+
+```text
+Project + Root Workspace + WorkspacePrimary Session + ProjectCreated(v1)
+  + WorkspaceCreated(v1) + Committed receipt
+```
+
+After the Gateway's in-transaction receipt tuple check proves the CommandId is
+absent, the CreateProject handler may query P1's ProjectResourceProfilePort.
+This port exposes a deterministic in-memory view of the immutable P12 host
+startup registry; it does no filesystem I/O and has no TransactionScope.
+Profile(ref, version) maps to exactly one host-canonical FileTree address;
+ConversationOnly maps to an empty boundary. An unknown/expired ref produces
+the P1 ProjectResourceUnavailable terminal rejection, without Project,
+Workspace, Session, Domain Event, or ownership claim. The typed result must map
+to the existing non-disclosing TerminalRejected receipt view (rejection tag
+only, no path/ref/filesystem detail); it is not a transport Problem. The
+CommandGateway preserves the existing terminal-receipt/attempt semantics.
+
+The host Profile is not authority and does not change Resolver behavior. The
+resolver remains pure and runs before Gateway as required by §4.1B. In
+particular, Profile lookup is not a Composition pre-read and cannot make an
+existing receipt depend on current host configuration.
+
+After a successful commit, Application ownership activation re-reads the
+persisted root Workspace ResourceBoundary. The existing ProjectEnvironmentPort
+and OwnershipWriteService resolve/record that exact boundary outside
+BEGIN IMMEDIATE. If the path is gone or resolves to a different canonical
+region, activation fails closed without switching to another Profile/path; an
+exact receipt retry or restart retries convergence from the same durable
+Workspace boundary. The command remains Committed and is never reported as
+rolled back. This deterministic activation is a consequence of the committed
+CreateProject governance command, not a separate client resource-admission or
+GitWorktree command.
+
+Existing v1 Projects, Workspace boundaries, receipts, and ProjectCreated
+events remain untouched. A v1 raw-address request that fails the current v2
+codec is rejected before Resolver/Gateway. A valid current v2 candidate whose
+CommandId collides with a stored v1 receipt follows §4.1B's schema/fingerprint
+tuple mismatch and returns non-disclosing IdempotencyConflict; no historical
+decoder or stored-schema comparison is permitted. This is preserve-only, not a
+successful old v1 same-ID replay.
+
+F21 browser qualification remains pending until its positive browser journey
+and public raw-path/ref negative cases pass in the default functional suite.
+Profile-source audit (OPEN-1), old v1 same-ID success (OPEN-2), and durable
+public Attention for post-commit activation failure (OPEN-3) are not closed by
+this functional-scope contract.
+
 ## 4.2 Public / Governance Commands
 
 ### Project
@@ -1783,6 +3489,7 @@ ResourceBoundary.basisResponsibilityRevision == Workspace.responsibilityRevision
 ```text
 CreateProject
 UpdateProjectPolicy
+RenameProject
 CloseProject
 ```
 
@@ -1817,6 +3524,7 @@ WithdrawDependency
 MarkDependencyUnfulfillable
 ReviseDependencyContract
 SendMessage
+DeliverMessage
 ```
 
 ### Verification / Acceptance
@@ -1952,6 +3660,7 @@ WorkRefined
 WorkCompleted
 WorkCancelled
 WorkSteered
+WorkAmended
 
 DependencyDeclared
 DependencySatisfied
@@ -1972,10 +3681,80 @@ ExecutionSettled
 
 PermissionChanged
 DecisionRecorded
+ExecutableApprovalRequested
+ExecutableApprovalResolved
 ReconciliationEscalated
+AssignWorkTargetBindingEscalated
+DeliverReplayEscalated
+ToolObservationReplayEvidenceEscalated
+SubmittedDecisionBindingEscalated
 EnvironmentChanged
 HumanInterventionApplied        # v1.13 G7: {actor, targetWorkspaceId, summaryRef, occurredAt, kind}
 ```
+
+`MessageSent` remains EventVersion 1. Its `Deliver` payload is the P7 v1
+shape `{messageId, kind:"Deliver", sender, recipient, deliverableId,
+correlationId, causationId}`; non-Deliver payloads are unchanged. The AH10
+`DeliverMessage` route adds no MessageSent version or wake event. It adds the
+P9-owned `DeliverReplayEscalated(v1)` fact event for an unprovable legacy or
+receipt-bound handover; P10 consumes it as `DeliverReplayFailure` Attention.
+
+AH7-DG-01 adds `ToolObservationReplayEvidenceEscalated(v1)` for a valid-fence
+terminal Observation evidence failure. Payload is exactly
+`{attentionFactId, executionId, targetWorkspaceId, logicalActionId,
+providerTurnId, callRef, invocationId, failureCode}`; its envelope uses the
+Execution project, target Workspace aggregate, `logicalActionId` correlation,
+`system:recovery` actor and no Command cause. It contains no Observation,
+tool arguments/output, Artifact body, path or raw exception. P9 commits the
+immutable fact+event atomically; P10 owns the marker/read-model projection.
+This event is distinct from `ReconciliationEscalated`: absent replay evidence
+does not claim an unresolved external effect.
+
+P41 adds `SubmittedDecisionBindingEscalated(v1)` for the exact immutable P9
+fact keyed by `(executionId, logicalStepNo, repairAttempt, logicalActionId)`.
+Its payload is exactly `{attentionFactId, executionId, workspaceId,
+logicalStepNo, repairAttempt, providerTurnId, logicalActionId, failureCode}`;
+the authoritative Execution Workspace is the aggregate/Attention target and
+the LogicalActionId is the correlation. `caused_by_command_id` is the unique
+original Committed `SelectCurrentWork` CommandId when present, otherwise null.
+The closed failure codes are `DecisionRequestWorkspaceMismatch`,
+`StepManifestMismatch`, and `SettledExecutionWithPendingDecisionAction`. It
+contains no candidate Work list,
+model text, corrupt opaque value, or parser/database details. The event id is
+stored as an audit identifier on the P9 fact, not as a foreign key to the
+prunable event journal.
+
+EA-DG-01 adds `ExecutableApprovalRequested(v1)` and
+`ExecutableApprovalResolved(v1)` as durable wake facts. Requested carries the
+approval/route/Workspace/Execution/LogicalAction/ToolInvocation identity,
+request revision, expiry and action digest; it does not copy tool arguments or
+make the approval contents instructions. Resolved carries approval/route/
+Workspace/Execution identity, resulting revision and one of
+`Approved | Rejected | Expired | Cancelled`; the event envelope carries the
+authenticated decision actor when present. The approval row, exact P6 Inbox
+admission/consumption and corresponding event are written in the same
+transaction. P17 resumes only the bound Execution from the durable resolved
+fact/list and never starts a new ProviderTurn.
+
+The EventVersion-1 payloads are:
+
+```ts
+ExecutableApprovalRequested = {
+  approvalId, routeKind: "Executable", workspaceId, executionId,
+  logicalActionId, toolInvocationId, revision, expiresAt, actionDigest
+}
+
+ExecutableApprovalResolved = {
+  approvalId, routeKind: "Executable", workspaceId, executionId,
+  logicalActionId, toolInvocationId, revision,
+  resolution: "Approved" | "Rejected" | "Expired" | "Cancelled",
+  reasonCode?
+}
+```
+
+Raw arguments, secret values and model-written summaries are not copied into
+the event. The exact binding remains in the route-specific ActionApproval row;
+`Resolved` is the durable P2/P17 wake fact.
 
 高频 Provider Turn、Tool Invocation、Lease Renew、stream delta 不进入 Project Domain Event Journal，而进入 Execution Trace / Runtime Records。
 
@@ -2236,6 +4015,10 @@ Execution 不再只保存四值 outcome，而保存合法 sum type：
 ```text
 ExecutionSettlement
 ├── Completed(CompletedResult)
+│   ├── Yielded
+│   ├── CompletionClaimed
+│   ├── VerificationConcluded
+│   └── Blocked (exact Work Episode only)
 ├── Interrupted(InterruptedResult)
 ├── Failed(ExecutionFailure)
 └── OutcomeUnknown(ReconciliationRequired)
@@ -2243,7 +4026,7 @@ ExecutionSettlement
 
 精确定义：
 
-- `Completed(...)`：episode 正常到达稳定边界；result 必须说明是 `Yielded`、`CompletionClaimed`、`CoordinationCompleted`、`QueryCompleted` 等哪一种语义；
+- `Completed(...)`：episode 正常到达稳定边界；new-write result 必须符合 exact EGP `ExecutionEpisodeBinding`。Work Episode may report `Blocked` only with the exact denial/request contract in P2 `01`; historical `CoordinationCompleted` / `QueryCompleted` are decoder/audit-only；
 - `Interrupted(...)`：外部控制明确提前结束，并且不存在 unresolved ambiguous side effect；
 - `Failed(...)`：当前 episode 无法继续，正常恢复策略已耗尽或错误不可恢复；
 - `OutcomeUnknown(...)`：存在外部副作用可能已经发生但系统无法确定，必须先 reconciliation。
@@ -2276,10 +4059,36 @@ consumer 不直接绕过 Command Handler 创建 Verification。
 ToolInvocationSettlement
 ├── Success
 ├── ExpectedFailure
+├── Denied(reasonCode: NoEffectDenialCode; P36 only with NotAdmitted)
 ├── Interrupted
 ├── OutcomeUnknown
+├── ReconciledNoEffect(reconciliationFactRef, reasonCode)
 └── RuntimeFailure
 ```
+
+P36 `Denied/NotAdmitted` remains the durable no-effect result with closed
+`NoEffectDenialCode` and its version-1 deterministic projection. P40 preserves
+it with `result_ref` and all three P40 evidence columns NULL; it is not an
+Observation-envelope tag and must not be mapped to ExpectedFailure.
+
+P4 replay evidence corruption is a typed operational failure, not a new
+settlement or side-effect tag:
+
+```ts
+type ToolObservationReplayEvidenceFailureCode =
+  | "Missing" | "UnsupportedVersion" | "Malformed" | "HashMismatch"
+  | "SettlementMismatch" | "IntentMismatch" | "ResultRefMismatch"
+  | "UnexpectedResultRef";
+
+type ToolObservationReplayEvidenceFailure = {
+  readonly _tag: "ToolObservationReplayEvidenceFailure";
+  readonly failureCode: ToolObservationReplayEvidenceFailureCode;
+};
+```
+
+The failure carries no raw JSON, Observation, output, Artifact body, parser/OS
+text or arbitrary cause. A valid current fence maps it to the existing
+RecoveryBlocked/P9/P10 path; stale fencing remains ownership loss only.
 
 `pytest failed`、`git conflict`、shell exit 1 等通常是模型需要认知的 `ExpectedFailure Observation`，不应导致 Agent fiber 失败。
 
@@ -2302,7 +4111,32 @@ Reconcilable  → unknown 时先 reconcile 再决定 replay
 NonIdempotent → ambiguity 时禁止自动 replay
 ```
 
+For recovery of `MayHaveStarted`, a P4-owned versioned profile binds the exact
+tool definition, effect attempt/key, RecoveryBinding and authoritative reality
+source. Its closed outcomes are `NotOccurred`, `Occurred`, and `StillUnknown`;
+absence of a local result or an eventually-consistent negative query is not
+proof. `StillUnknown` never admits a replay. `Occurred` settles only with a
+reconstructable canonical result. Only authoritative, final `NotOccurred` may
+permit at most one exact-invocation replay after fresh authority, approval,
+resource, stop and full lease-fence revalidation. Stop blocks new admission but
+does not block accounting for known in-flight facts under the current fence.
+Terminal reconciliation-produced Success/ExpectedFailure/ReconciledNoEffect
+selects exactly one immutable fact for the same invocation and attempt; late
+contradictory evidence is append-only and does not rewrite terminal P4/P3 state.
+
 Authority/Permission denial 在 ToolRuntime 内是 rejection，但应投影成模型可理解的 `ToolInvocationDenied` Observation，而不是崩溃 Execution。
+
+Approval-required Executable invocation has a separate nonterminal
+`ApprovalRequired` ActionResult/Execution handoff. It is not a
+`CanonicalToolObservation`, a `ToolInvocationSettlement`, or a P4 no-effect
+Denied result. New writes MUST keep the same AgentLoopStep action Pending and
+the cursor fixed until an exact approval decision/expiry/cancellation is
+resolved. The old P4 `Denied(ApprovalRequired)` reason remains accepted only
+by persisted-row decoding and terminal replay; migration MUST NOT reinterpret
+or backfill it as a human approval request. On Approve the same invocation
+re-enters P4; Reject/Expire produce a terminal no-effect Denied result, while
+Stop produces Interrupted. Current authority, resource, ControlBasis, stop,
+and lease checks still apply after any approval.
 
 > **P4（DID v1.8 G1/G4）：** tool authority 是 trusted `InvocationAuthority`
 > fact，不由 ToolRuntime 解析 PermissionGrant / Parent / User；Resource
@@ -2452,6 +4286,166 @@ P0 的 `CommandResolution<R>`（`TerminalRejected(DomainError)`）是 v1.5 前�
 artifact，已被本节的参数化 `CommandResolution<Result, Rejection>` 取代；
 P1 负责演进该 artifact。
 
+## 6A.16 AssignWork target binding and committed-receipt recovery
+
+For a new direct-child AssignWork, Runtime resolves the exact opaque
+`targetWorkspaceRef` from current PlacementContext and carries the typed
+resolution plus exact CAPA authorization evidence unchanged through the
+ControlAction handler into the Command Gateway. In one `TransactionScope`, the
+Gateway re-reads and validates the current Parent Workspace/Work and target,
+project and direct-parent edge, Active target lifecycle, resolved target
+revision, pinned source-action identity, and the exact PermissionGrant or
+ActionApproval row. A stale selector/revision, retired or foreign target,
+revoked/expired/mismatched Grant, stale/mismatched approval, or source-action
+mismatch is rejected before canonical Work mutation.
+
+Successful resolution writes the child Work, `WorkAssigned` event, Committed
+Command receipt, and exactly one immutable `AssignWorkTargetBinding` in that
+same transaction. The binding carries the original opaque selector and
+encoding version, canonical target and observed revisions, project and Parent
+identities, Work and provenance, typed authority snapshot, and exact
+`ExecutionId`, `ProviderTurnId`, `LogicalActionId`, and `callRef`. The target
+must match the receipt, Work row, and event. The binding is trusted resolution
+evidence and is excluded from `semanticRequestFingerprint`; it is never
+constructed from model arguments except for retaining the exact selector.
+
+For a prior Committed receipt belonging to the same pinned AssignWork
+LogicalAction, recovery requires the binding keyed by that exact CommandId and
+validates it against the action, authority, receipt, Work/provenance, event,
+project, and direct-parent relation. It does not re-resolve the selector,
+re-authorize, consume approval again, issue a new Command, or repeat Provider
+inference. A fully matching binding converges the existing Action and its
+single sourced Observation. A missing, duplicate, malformed, conflicting,
+foreign, or mismatched binding/effect (including an old unbound Committed
+receipt) leaves the Action Pending and emits no Observation; P9 records its
+durable immutable failure fact/event and stops recovery. No backfill, inferred
+child, or canonical repair is permitted. The failure projects through the P10
+owner contract. This is the only exception to P1 `07`'s generic prior-
+Committed receipt convergence rule; FencingRejected takeover remains
+unchanged.
+
+The exact typed authority variant is either the commit-checked
+PermissionGrant evidence or the exact Approved ActionApproval evidence.
+ActionApproval validation and single consumption are atomic with canonical
+handler resolution; a pre-handler FencingRejected/ExecutionStopping result
+does not consume it. On replay an ActionApproval must be Consumed by the
+original CommandId at exactly the next revision and retain its exact immutable
+action/target/ControlBasis facts. Grant revocation/expiry after commit does not
+retarget or invalidate the effect. CAPA and ResourceBoundary authority are not
+widened.
+
+The target Workspace must be Active at initial Command commit. A later Retired
+lifecycle preserves proof-complete replay; a target already Retired at commit
+is rejected. The binding is not a stable-reference hash contract; replay must
+not enumerate historical `wref_` revisions.
+
+The process-local trusted evidence is ports-owned and is passed unchanged
+through ControlAction → AssignWork handler → Command Gateway:
+
+```ts
+type AssignWorkControlAuthorizationEvidence =
+  | {
+      readonly _tag: "PermissionGrant";
+      readonly permissionGrantId: PermissionGrantId;
+      readonly permissionGrantRevision: number;
+      readonly projectId: ProjectId;
+      readonly subjectKind: "WorkspaceAgent" | "Execution";
+      readonly subjectRef: string;
+      readonly capability: "core.control.assign-work";
+      readonly targetRef: WorkspaceRef;
+      readonly validFrom: Instant;
+      readonly expiresAt: Instant | null;
+      readonly actionDigest: Sha256;
+      readonly controlBasisDigest: Sha256;
+    }
+  | {
+      readonly _tag: "ActionApproval";
+      readonly approvalId: ActionApprovalId;
+      readonly approvalRevision: number;
+      readonly projectId: ProjectId;
+      readonly workspaceId: WorkspaceId;
+      readonly executionId: ExecutionId;
+      readonly stableActionId: "core.control.assign-work";
+      readonly actionDigest: Sha256;
+      readonly targetRef: WorkspaceRef;
+      readonly controlBasisDigest: Sha256;
+      readonly expiresAt: Instant;
+    };
+
+type AssignWorkTargetBinding = {
+  readonly schemaVersion: 1;
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly executionId: ExecutionId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly logicalActionId: LogicalActionId;
+  readonly callRef: CallRef;
+  readonly parentWorkspaceId: WorkspaceId;
+  readonly parentWorkId: WorkId;
+  readonly parentWorkRevisionAtCommand: number;
+  readonly targetWorkspaceRef: WorkspaceRef;
+  readonly targetRefEncodingVersion: number;
+  readonly parentWorkspaceRevisionAtCommand: number;
+  readonly targetWorkspaceRevisionAtResolution: number;
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly targetLifecycleAtCommit: "Active";
+  readonly workId: WorkId;
+  readonly predecessorWorkId: WorkId;
+  readonly workProvenanceJson: string;
+  readonly authority: AssignWorkControlAuthorizationEvidence;
+  readonly authorityCheckedAt: Instant;
+};
+
+type ResolvedChildPlacementRef = {
+  readonly _tag: "ResolvedChildPlacementRef";
+  readonly projectId: ProjectId;
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly targetWorkspaceRevision: number;
+  readonly refEncodingVersion: 1;
+};
+```
+
+`WorkspacePlacementPort.resolveChildRef(rootWorkspaceId, ref)` returns
+`Option<ResolvedChildPlacementRef>`; the port alone constructs the typed
+result. `rootWorkspaceId` is the current Execution Workspace and direct Parent,
+which may be non-root in the Project tree. The handler retains the exact
+original selector and passes it plus the resolved value, Parent/current-Work
+identities, and typed authorization as trusted `AssignWorkCommandEvidence`.
+The gateway re-reads the parent, its current Work, and target in the Command
+transaction, checks direct-parent/project/lifecycle/revision, and captures
+Parent and Work revisions at that boundary.
+
+`AssignWorkTargetBindingRepository.findByCommandId(commandId)` and
+`insert(binding)` require the existing `TransactionScope`. `RecoveryAttentionFactStore`
+provides `recordAssignWorkBindingFailure(fact)` and
+`findAssignWorkBindingFailure(attentionFactId)` under the same scope; record
+atomically appends the dedicated event and immutable P9 fact, and returns an
+existing row only for the exact same identity tuple. The same P9-owned port
+also provides `recordDeliverReplayFailure(fact)`,
+`findDeliverReplayFailure(attentionFactId)`, and
+`findDeliverReplayFailureByEventId(eventId)`,
+`listDeliverReplayFailures(projectId)`, `listPendingDeliverReplayAttention(projectId,limit)`,
+and `acknowledgePendingDeliverReplayAttention(attentionFactId)` for the
+accepted AH10 Deliver route;
+these methods use the separate `deliver_replay_attention_facts` relation,
+and `deliver_replay_attention_pending` outbox. They retain the same
+transaction-scoped append/dedup/error guarantees, and do not
+alter the existing AssignWork fact identity or schema. They return the existing
+`RecoveryAttentionFactStore` repository/journal errors and typed
+`RecoveryAttentionFactInvariantConflict`; no generic Attention port or new
+store error union is introduced.
+The same P9-owned port provides
+`recordSubmittedDecisionBindingFailure(fact)`,
+`findSubmittedDecisionBindingFailure(attentionFactId)`, and
+`listSubmittedDecisionBindingFailures(projectId)` by exact
+`(executionId, logicalStepNo, repairAttempt, logicalActionId)` identity. Fact
+and event share the caller's `TransactionScope`; same-tuple retry returns the
+immutable winner and a conflicting payload fails closed. P3 returns only a
+typed mismatch classification and pure Stop-close plan through
+provider-neutral ports; it has no P9 implementation dependency. The P9
+Recovery/Application coordinator owns a cross-store transaction when it also
+applies that plan through `AgentLoopStepStore`.
+
 ---
 
 # 7. DID-7 — Ports / Runtime Interfaces
@@ -2474,12 +4468,17 @@ WorkspaceRepository
 WorkRepository
 ExecutionRepository
 SessionRepository
+AgentLoopStepStore
+ProviderTurnStore
 VerificationRepository
 DependencyRepository
 DeliverableRepository
 AcceptanceRepository
 DecisionRepository
 PermissionGrantRepository
+ControlApprovalStore
+AssignWorkTargetBindingRepository
+RecoveryAttentionFactStore
 ResourceOwnershipRepository
 ArtifactMetadataRepository
 MessageStore
@@ -2504,11 +4503,20 @@ ProjectionQueryPort
 ModelCapabilityPort
 AgentContextSourcePort
 ToolCatalogPort
+WorkspacePlacementPort
 SecretStorePort
 HealthPort
 Clock
 IdGenerator
 ```
+
+The accepted AH10 Deliver P10 marker is a source-specific P10 projection
+relation over P9-owned facts, not a new generic port. Existing transaction,
+event-consumer, projection-query and rebuild boundaries remain in force.
+
+`InputPromotionService` 是 Application/Runtime orchestration service，不是
+infrastructure Port。它使用 `TransactionPort + SessionRepository +
+InboxProjectionStore` 在同一事务中完成 sourced Session append 与 Inbox consumed。
 
 > **P12 TR-6 propagation (P12 `04` §2.1; DID v1.14 G4).** `HealthPort` is an
 > explicit P12 catalog addition (declared in `packages/ports`; implemented by the
@@ -2652,6 +4660,34 @@ ProviderRuntime 负责：transport、auth、stream、timeout、safe retry、prot
 
 Model Context 负责 semantic compilation；ProviderRuntime 不重写 Arbor instruction 语义。
 
+`PortableModelRequest` 使用 provider-neutral typed input：
+
+```text
+PortableInputItem =
+  Message
+| ToolCall
+| ToolResult
+| ContextUpdate
+| CompactionCheckpoint
+| AttachmentRef
+
+PortableModelRequest.operationKind =
+  Inference | CompactionSummary | CompactionNative
+```
+
+Adapter 必须无损保存 Tool call/result correlation。不能支持某个 Item 或 operation
+时返回 typed capability incompatibility，不得静默文本化。`CompactionNative` 使用
+现有 `CanonicalProviderEvent.ContinuationState(stateRef)` 承载 opaque result ref，
+不扩展 CanonicalProviderEvent ADT。
+
+Provider wire stream、durable Session facts 与下一轮 provider request 是三个不同
+边界：adapter 只把 stream 组装为完整 `CanonicalProviderEvent`；Session 只保存 typed
+ToolCall/ToolResult/ControlResult 事实；Model Context 是唯一编译
+`PortableModelRequest` 的语义入口；ProtocolAdapter 是唯一把 portable request 渲染为
+provider messages 的入口。发送前必须校验每个 `callRef` 恰有一个 Call 和一个 Result，
+Result 不得先于 Call，同批 Call 在 provider wire 上必须先完整出现再出现对应 Result。
+已知不合法的序列在本地作为 typed ProtocolViolation 拒绝，禁止发给 provider。
+
 ## 7.6 ToolCatalogPort 与 ToolRuntimePort
 
 Tool metadata 与 Tool invocation ownership 分离。
@@ -2683,8 +4719,24 @@ AgentRuntime 只看：
 
 ```text
 invoke(ToolIntent, ToolExecutionContext)
-→ CanonicalToolObservation
+→ CanonicalToolObservation | ApprovalRequired(ResolvedExecutableIntent)
 ```
+
+The `E` side also includes the closed
+`ToolObservationReplayEvidenceFailureCode` above. It is not encoded as a
+`CanonicalToolObservation`, `ExpectedFailure`, `Denied` or `OutcomeUnknown`
+settlement.
+
+For a new approval-required Executable action with no approved exact record,
+P4 returns `ApprovalRequired` with the P4-resolved, trusted tool/version,
+normalized intent, target resource IDs, current ControlBasis and
+ToolInvocationId. It does not persist a ToolInvocation intent/settlement,
+write a terminal `Denied(ApprovalRequired)`, or call Sandbox/Executor. The
+Application combines this handoff with the P3 AgentLoopStep/LogicalAction
+identity, calls the pure P12 resolver and atomically issues the Pending
+Executable ActionApproval plus Inbox entry. An existing matching Pending
+record returns the same pause; an exact Approved record resumes P4 with its
+stored expiry/revision. Control ActionApproval remains a separate route.
 
 ToolRuntime 内部负责：
 
@@ -2729,12 +4781,27 @@ Context，`model-context` 不依赖 `agent-runtime`、`tool-runtime` 或其 hand
 一个 request 中的 model-facing tool identity 必须唯一对应一条语义路由；
 歧义注册不得暴露给模型，未知调用不得降级成另一条路由。
 
+Control Tool 的 Runtime identity 与 model-facing function name 必须分离：
+`stableId + version + implementationHash` 是 registry、authority、manifest、handler
+和 replay identity；`modelName` 只是当前 provider request 的函数名。模型不需要感知
+Arbor 的产品/包名。一个 Turn 中 `modelName` 唯一；冲突使 TurnProfile 不可编译，而不以
+产品前缀消歧。历史 alias 仅由其记录的旧 Manifest 用于 replay，新 Turn 只公开当前
+无品牌 action vocabulary。provider output 必须按该 Turn 的 alias binding 先解析为
+stable identity，不能以函数名推断授权。
+
 Executable Tool 继续使用 P4 `ToolRuntime` 的 authority、resource admission、
 sandbox、invocation persistence/reconciliation 与 observation 语义。Control
 Tool 不经 executable `ToolRuntime`；其可见性不产生 authority，canonical
 mutation 仍只由 Application/Domain 与现有 execution-settlement owner 决定。
 这条路由 supersedes universal `AgentDirective` output bridge，而不改变
 P1/P4/P6/P7/P8 已冻结的 command、authority、lifecycle 与 verification 语义。
+
+所有 decoded executable/control invocation 必须携带 provider-neutral `callRef`。
+ToolRuntime/Control policy 产生完整 settlement/observation；Agent Runtime 负责将其
+作为 sourced `ToolResult`/`ControlResult` 写入 Session。ToolRuntime 不直接写
+Session，也不从 Session 恢复 authority。Tool settlement 已存在而 Session Result
+缺失时，按 invocation/resultRef 幂等补写；dangling ToolCall 必须恢复为真实结果或
+明确的 Interrupted/OutcomeUnknown，禁止无配对文本。
 
 P4 tool-invocation boundaries（DID v1.8 G1–G5）：
 
@@ -2833,21 +4900,27 @@ Model
 ## 8.2 Model Turn Pipeline
 
 ```text
-Execution
+Execution + pending safe-boundary input
 ↓
-Agent Policy Resolution
+durable Input Promotion
+↓
+capture AgentStepContext once
 ├── binding
-├── responsibility
-├── work / mission
-├── cognitive mode
-├── permission state
-├── environment
-├── available skills
-└── tool surface
+├── canonical control refs/revisions
+├── session / epoch / input frontier
+├── cognitive mode / environment
+├── effective tool catalog / available skills
+├── ResolvedModelBinding fingerprint
+└── budget evidence basis
 ↓
 Instruction Resolution
 ↓
-Context Planning / Retrieval / Budget
+Context Projector
+├── retained canonical snapshot/deltas
+├── latest completed checkpoint
+└── recent typed Session frontier
+↓
+Context Planning / Retrieval / Budget Evidence
 ↓
 ModelContextPlan
 ├── Instructions
@@ -2875,6 +4948,11 @@ Ready(PreparedModelTurn)
 ```
 
 `ContextUnsatisfiable` 属于 typed `E`，不属于 success/control ADT。并非每一个 Execution step 都需要 LLM 调用。
+
+`ContextProjector` 不消费 Inbox、不执行副作用、不调用 Provider。Promotion、Tool
+settlement 与 Compaction 各自在 owning Runtime durable 完成后，Projector 只读取
+已经提交的 typed result。相同 `(sessionId, contextEpoch, inputFrontier,
+stepContextFingerprint)` 必须产生可重复验证的 Manifest。
 
 ## 8.3 六类 Model Context Surface
 
@@ -3079,6 +5157,16 @@ Checkpoint + Recent Frontier
 
 而不是完整 Session History。
 
+Before a Work Session's first typed checkpoint, its active history projection
+selects the latest 64 persisted Session Timeline rows by Session-local
+sequence. The current input and canonical C0/C1 facts are pinned independently
+of this count. P3 applies only its existing projector branches/filters to this
+selected window; skipped rows do not cause older rows to be fetched as
+replacements. A selected row skipped by P3 has no item or contextRef. The
+selected `inputFrontier` is the considered row range, not proof of coverage.
+After a typed checkpoint, use its exact sequence and every unsummarized typed
+entry after it, without the pre-checkpoint 64-row cap.
+
 ## 8.9 Retention Class
 
 Context Fragment 使用：
@@ -3108,6 +5196,11 @@ never silently drop hard control facts
 
 若 Pinned + Protected 本身无法装入模型窗口，返回 `ContextUnsatisfiable`，不静默 truncate。
 
+The latest 64-row bound applies only before the first Work checkpoint. It
+does not bound the post-checkpoint frontier. Every request still includes the
+current pinned input and independently reconstructed canonical C0/C1 facts,
+regardless of row filtering or the bound.
+
 ## 8.10 Budget / Cache
 
 Model Context Budget：
@@ -3129,6 +5222,20 @@ Synthetic
 ```
 
 Compiler 尽量保持 Stable Prefix 稳定；Authority 与 physical prompt position 分离。
+
+预算证据优先级：
+
+```text
+Provider reported usage
+> provider/model tokenizer or estimator
+> adapter structured-request estimator
+> chars/4 conservative fallback
+```
+
+BudgetDecision/Manifest 记录 evidence kind、estimated/observed tokens、threshold、
+reserves 与 model context limit。粗估算可以提前触发 Compaction，但不得单独把普通
+可压缩历史压力判为 `ContextUnsatisfiable`。该错误只用于 Mandatory/Pinned/
+Protected fixed content 在全部允许模型策略下仍不可满足。
 
 ## 8.11 Skills
 
@@ -3202,6 +5309,60 @@ Canonical State restores control.
 
 Compaction 可以由 token pressure、semantic boundary 或 model/provider boundary 触发，不是简单的“达到 90% 就 summarize”。
 
+Before the first typed Work checkpoint, `inputFrontier` bounds the rows
+considered; the checkpoint's `retainedFrontier` may claim coverage only for
+content actually represented by the existing P3 projector. Skipped or older
+rows remain durable but uncovered. Once a checkpoint exists, its exact
+sequence plus every unsummarized typed Session entry after it form the active
+frontier; budget pressure triggers explicit compaction rather than truncation
+by the pre-checkpoint cap.
+
+Conversation continuity uses the exact RootWorkspaceId as a separate owner.
+HumanMessage is immutable source identity/order/body; its legacy lifecycle,
+claim and response columns are not answer or scheduler truth. Only a
+contiguous FIFO prefix with exact Answered ResponseJobs and matching
+ConversationAttempts/terminal ConversationResponseEpisode Executions may be
+covered when they settle with `Completed(ConversationResponseProduced(messageId))`.
+The current raw message is pinned once only for its exact Running
+Job, active Attempt/Execution and current lease; non-Answered, malformed or
+other-episode Running gaps stop coverage. Work Session history/checkpoints are
+excluded. ProviderNative reuse requires an exact complete ResolvedModelBinding
+fingerprint; otherwise portable Summary is rebuilt from retained HumanMessage
+sources paired with their authoritative Answered Job response bodies.
+Restart retains the same response episode and does not replay settled
+Provider/action work. Owner storage and migration details remain separately
+gated.
+
+规范控制流：
+
+```text
+prepareTurn → NeedsCompaction(request)
+→ persist Compaction ProviderTurn + Manifest
+→ choose Summary | ProviderNative from capability/binding
+→ execute + validate result
+→ atomically append checkpoint + advance ContextEpoch
+→ fresh canonical control reconstruction
+→ retry the same (logicalStepNo, repairAttempt)
+```
+
+```text
+CompactionResult =
+  SummaryCheckpoint(summaryRef, retainedFrontier, newEpoch)
+| NativeCheckpoint(opaqueItemRef, bindingFingerprint,
+                   retainedFrontier, newEpoch)
+```
+
+- started 未 completed 时旧 epoch/frontier 继续有效；checkpoint + epoch advance 原子；
+- Summary rolling update 保留 objective/requirements/decisions/progress/blockers/
+  next move/relevant refs；recent frontier 有独立 token 上限；
+- ProviderNative opaque item 只在兼容 ResolvedModelBinding 下复用；
+- Provider context overflow 且尚无 durable assistant/tool effect 时允许一次 compact +
+  same-step physical retry；第二次 overflow terminal；
+- Compaction failure 可以使当前 Execution typed fail/Attention，但
+  `NeedsCompaction` 本身不是 settlement；
+- Compaction 不消费权限，不更改 Work/Verification/Acceptance，也不重放 action
+  ledger 中已经解决的动作。
+
 ## 8.14 Context Progressive Disclosure
 
 Artifact、Skill、Memory、历史报告默认按 metadata/summary/excerpt/reference 进入 Context，需要时再由 Tool 加载更多。
@@ -3248,6 +5409,12 @@ Application command 或已有 Execution settlement boundary。
 canonical wire value、Domain Event、Application Command DTO，也不得整体
 持久化。Action variants/payload 与各 control tool codec 的逐项定义属于后续
 phase-scoped contract；本裁决不冻结工具清单或暴露集合。
+
+v1.20 的 `AgentLoopStepActionRecord` 不违反上述边界：它只保存 stable call/logical
+identity、route/action kind、input/output hash、disposition 与 result refs。恢复先从
+持久 Provider result 以 pinned decoder 重建 invocation，再与 ledger 校验；不得把
+`AgentAction` 对象或模型自报的 trusted context 序列化进记录。完整交接状态机见
+P3 `08`。
 
 `decodeTurn` 只负责 `CanonicalProviderEvent` → `ModelOutput` / typed
 `ToolInvocation`，包括 provider-neutral tool-call reconstruction、correlation
@@ -3417,6 +5584,11 @@ Continuation Program 和 Context selection 根据 WakeReason 定制，而不是�
 
 `ChildDelivered` 由成功的 Deliver Inbox delivery 触发（v1.10 G2；P7 接线）。
 
+WSC-1（2026-10-02 人工治理）：`DependencySatisfied` 是独立终态事实。满足转移
+保持 Dependency revision 不变；消费该事实时，相同 `dependencyId` 的
+`DependencyChanged` wait 无条件、幂等清除，不要求 `observedRevision <
+toRevision`。非终态 dependency revision change 仍使用严格 revision 前进规则。
+
 ## 8.18A Deterministic Workspace Re-evaluation
 
 Scheduler 每次 reevaluate Workspace：
@@ -3452,6 +5624,95 @@ Ownership（P2 冻结）：P2 提供 ExecutionScheduler 与 durable wake/timer �
 可在无 Active Main Execution 时被确定性触发；**P7** 拥有完整的 runnable/dependency reevaluation
 与 Wait-for graph。P2 不新增 runnable 语义。
 
+**EGP new-write supersession:** the preceding focus/Coordination table is
+historical. New writes use exact `ExecutionEpisodeBinding`; scheduler
+ambiguity requiring model judgment persists `WorkSelectionDecisionRequest`
+and admits a `DecisionEpisode`. `CoordinationCompleted` / `QueryCompleted` are
+decoder/audit-only and cannot be new settlement results. The accepted RAI gate
+below applies only to Work Episodes; other EGP episode variants are unaffected.
+
+### 8.18A.1 Exact Work-revision readmission hold (RAI-DG-01)
+
+For canonical Work `(projectId, workspaceId, workId, revision)`, hold admission
+when a durable source is bound by exact EGP Work Episode `(workId, workRevision)`
+and is one of:
+
+1. settled `Interrupted(ControlledInterruption(RuntimeSafetyStop))`;
+2. a P9 recovery-blocking source in the closed P9 `07` inventory; or
+3. settled `OutcomeUnknown(ReconciliationRequired(invocationRefs))` with
+   non-empty refs.
+
+The closed P9 sources are `DeliverReplayEscalated` with its matching
+`deliver_replay_attention_facts` row, `AssignWorkTargetBindingEscalated` with
+its matching `assign_work_binding_attention_facts` row, and
+`ReconciliationEscalated`. P9 `07` owns exact failure-code unions, source
+identity, immutability and atomic fact/event commit. Ephemeral
+`RecoveryBlocked` and `ReconciliationSourceError` are not independent sources
+while the Execution remains Active. The settlement source applies even with
+no separate Attention row when its exact `OutcomeUnknown` refs are durable.
+
+P2 `02` owns `WorkReadmissionGateStore`; P7 `03` incorporates its exact-revision
+result into the sole classifier. Work-bound admission rechecks the same gate
+inside the existing `BEGIN IMMEDIATE` transaction. A valid hold returns typed
+`WorkReadmissionHeld`; a missing/scope/revision-mismatched canonical target
+returns `ReadmissionTargetMismatch`; malformed, absent, duplicate,
+unsupported-version or conflicting source evidence returns the closed
+`ReadmissionGateIntegrityFailure` union. Every rejection commits no Execution.
+The query validates canonical Project/Workspace/Work/revision, unique source
+Execution and episode state, exact source/fact/event witnesses, and the exact
+`ExecutionEpisodeBinding`. It never infers identity from Session text,
+`currentWorkId`, Message, Attention target, or Parent Workspace. A valid
+non-Work Episode is outside this rule.
+
+The gate is derived from canonical settlement/P9 source records, adds no gate
+table or migration, changes no Work lifecycle/WorkWait/Dependency/approval,
+and does not read P10 projections. Restart, queue ACK or same-revision
+polling cannot release it. Only authorized `SteerWork` that atomically
+advances canonical Work revision makes the old source stale; immutable source
+facts remain audit evidence. P10 removes old-revision active Attention using a
+same-snapshot canonical Work revision check, independent of consumer lag or
+rebuild state. Accepted proposal SHA-256
+`0CEB2DAA2E6128F86CBD1CAA185B9847EAAB240360011F94425E0856F39AA106`;
+acceptance and prior landing review evidence are in
+`planning/results/RAI-DG-01-governance-acceptance-and-landing.md`.
+
+#### RAI-DG-02 TerminalProviderFailureSettlement addendum
+
+Extend `ReadmissionSourceKind` with
+`TerminalProviderFailureSettlement`. For exact Open Work tuple
+`(projectId, workspaceId, workId, revision)`, enumerate zero or more candidate
+WorkEpisode Executions. Each candidate identity and its settlement-producing
+`(logicalStepNo, repairAttempt)` Step, failed ProviderTurn, final settled
+ProviderAttempt and Manifest must be individually unique and exact. A source
+exists only for `AuthenticationFailed | RequestRejected | ProtocolViolation`
+with final `TerminalFailure`, recognized taxonomy and durable retry decision
+`Stop`; one valid candidate is sufficient. Historical repeated Executions do
+not create ambiguity and P10 deduplicates equivalent fingerprints.
+
+The bounded source carries `executionId`, `logicalStepNo`, `repairAttempt`,
+`providerTurnId`, `attemptNo`, closed `failureKind`, and
+`failureFingerprint = SHA-256(canonical terminal-provider-failure-v1 tuple)`.
+The tuple contains failure kind/taxonomy, resolved model binding fingerprint,
+compiled request hash and output-contract ref; it excludes timestamps, raw
+provider/request/response text, credentials and transport diagnostics.
+
+Missing, duplicate or conflicting facts inside one candidate chain, future
+revision, unsupported taxonomy, or invalid final-Attempt occurrence time
+returns `ReadmissionGateIntegrityFailure` and admits nothing. Partial chain,
+retryable kind (including budget/deadline exhaustion), cross-scope source,
+non-Work Episode and lower stale revision create no current hold. P2 and P10
+read the same canonical proof contract; P10 exposes query-derived
+`TerminalProviderFailure` or bounded `TerminalProviderFailureIntegrity`
+without event/queue/ACK/offset/marker. `occurredAt` is the validated final
+Attempt `settledAt`.
+
+The hold is active only while canonical Work is Open at the exact revision.
+Authorized `SteerWork r→r+1` is the sole v1 resumption path. An authorized
+Completed/Cancelled transition makes retry-oriented presentation inactive but
+does not erase evidence. Attempt, failed-Turn, Step and Execution commit
+prefixes never justify a guessed hold; final settlement/admission/Steer races
+linearize at the existing `BEGIN IMMEDIATE` admission recheck.
+
 ## 8.19 ModelContext Manifest
 
 每个 Provider Turn 都持久记录一份 Manifest：
@@ -3468,6 +5729,14 @@ Tool definition refs/versions
 OutputContract ref
 Budget decision
 CompiledRequestHash
+LogicalStepNo / RepairAttempt
+OperationKind
+InputFrontier { firstSequence, lastSequence, checkpointSequence? }
+TypedInputItemRefs[] / CallRefs[]
+AgentStepContextFingerprint
+ResolvedModelBindingFingerprint
+BudgetEvidence { kind, estimatedTokens, observedTokens?, reserves, threshold }
+Compaction { implementation?, fromEpoch?, retainedFrontier? }
 ControlBasis {
   projectPolicyRevision
   workspacePolicyRevision
@@ -3478,6 +5747,33 @@ ControlBasis {
   environmentRevision
 }
 ```
+
+`providerTurnId` is validated by the closed codec in §2.2.1. A Manifest,
+ProviderTurn intent/result, and every sourced Session item retain the same exact
+string; recovery never rewrites a legacy UUIDv7 or V2 composite spelling.
+
+For a Work ProviderTurn before its first typed checkpoint,
+`InputFrontier(firstSequence,lastSequence)` identifies the latest-64 considered
+Session-local row range; it does not assert that every selected row became a
+typed input. `TypedInputItemRefs[]` and context refs identify actual emitted
+content. A compaction `retainedFrontier` covers only content included under the
+existing P3 projector. For a ConversationResponseEpisode, manifest source
+identity binds the RootWorkspaceId owner, exact inclusive
+`coveredThroughMessageId`, and each ordered paired turn's exact immutable
+HumanMessage identity (`messageId`, `createdAt`, `bodyRef`, body digest) plus
+Answered Job identity (exact Answered Job revision, `responseExecutionId`,
+`attemptNo`, and bounded Job `responseBody` digest). It binds the unique
+ConversationAttempt identity/Completed settlement and the terminal
+ConversationResponseEpisode Execution, including its exact admission-time Job
+revision and `Completed(ConversationResponseProduced(messageId))` result. The
+current raw input binds the exact Running Job revision, messageId, attemptNo,
+executionId, Episode admission revision and current lease fence. HumanMessage
+legacy lifecycle, claim and response columns are not source or scheduler
+authority. A ProviderNative checkpoint also binds the complete
+ResolvedModelBinding fingerprint. Recovery proves these identities from
+canonical owner/response facts rather than Session text or ProviderTurn ID
+spelling. These are semantic bindings, not a choice of physical storage
+encoding.
 
 Prompt/Context change 是行为代码 change，必须可追踪和可回归。
 
@@ -3575,7 +5871,465 @@ provider_turns
 provider_attempts
 model_context_manifests
 tool_invocations
+deliver_replay_attention_facts
+deliver_replay_attention_rows
+tool_observation_replay_attention_facts
+tool_observation_replay_attention_rows
 ```
+
+Migration `0033_assign_work_target_bindings` (`PRAGMA user_version = 33`) is
+additive and forward-only. It creates the following exact evidence tables and
+indexes; it creates no binding for historical rows:
+
+```sql
+CREATE UNIQUE INDEX commands_id_project ON commands(command_id, project_id);
+CREATE UNIQUE INDEX executions_id_project_workspace
+  ON executions(execution_id, project_id, workspace_id);
+CREATE UNIQUE INDEX workspaces_id_project_parent
+  ON workspaces(workspace_id, project_id, parent_workspace_id);
+CREATE UNIQUE INDEX works_id_project ON works(work_id, project_id);
+CREATE UNIQUE INDEX permission_grants_id_project
+  ON permission_grants(permission_grant_id, project_id);
+CREATE UNIQUE INDEX action_approvals_id_project
+  ON action_approvals(approval_id, project_id);
+
+CREATE TABLE assign_work_target_bindings (
+  command_id                    TEXT PRIMARY KEY,
+  schema_version                INTEGER NOT NULL CHECK (schema_version = 1),
+  project_id                    TEXT NOT NULL,
+  execution_id                  TEXT NOT NULL,
+  provider_turn_id              TEXT NOT NULL,
+  logical_action_id             TEXT NOT NULL,
+  call_ref                      TEXT NOT NULL,
+  parent_workspace_id           TEXT NOT NULL,
+  parent_work_id                TEXT NOT NULL,
+  parent_work_revision_at_command INTEGER NOT NULL CHECK (parent_work_revision_at_command >= 0),
+  target_workspace_ref          TEXT NOT NULL,
+  target_ref_encoding_version   INTEGER NOT NULL CHECK (target_ref_encoding_version = 1),
+  parent_workspace_revision_at_command INTEGER NOT NULL CHECK (parent_workspace_revision_at_command >= 0),
+  target_workspace_revision_at_resolution INTEGER NOT NULL CHECK (target_workspace_revision_at_resolution >= 0),
+  target_workspace_id           TEXT NOT NULL,
+  target_lifecycle_at_commit    TEXT NOT NULL CHECK (target_lifecycle_at_commit = 'Active'),
+  work_id                       TEXT NOT NULL,
+  predecessor_work_id           TEXT NOT NULL,
+  work_provenance_json          TEXT NOT NULL,
+  authority_kind                TEXT NOT NULL CHECK (authority_kind IN ('PermissionGrant','ActionApproval')),
+  permission_grant_id           TEXT,
+  action_approval_id            TEXT,
+  authority_evidence_json       TEXT NOT NULL,
+  authority_checked_at          TEXT NOT NULL,
+  created_at                    TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id),
+  UNIQUE (work_id),
+  FOREIGN KEY (command_id, project_id)
+    REFERENCES commands(command_id, project_id),
+  FOREIGN KEY (execution_id, project_id, parent_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id),
+  FOREIGN KEY (parent_workspace_id, project_id)
+    REFERENCES workspaces(workspace_id, project_id),
+  FOREIGN KEY (target_workspace_id, project_id, parent_workspace_id)
+    REFERENCES workspaces(workspace_id, project_id, parent_workspace_id),
+  FOREIGN KEY (parent_work_id, project_id)
+    REFERENCES works(work_id, project_id),
+  FOREIGN KEY (work_id, project_id)
+    REFERENCES works(work_id, project_id),
+  FOREIGN KEY (predecessor_work_id, project_id)
+    REFERENCES works(work_id, project_id),
+  FOREIGN KEY (permission_grant_id, project_id)
+    REFERENCES permission_grants(permission_grant_id, project_id),
+  FOREIGN KEY (action_approval_id, project_id)
+    REFERENCES action_approvals(approval_id, project_id),
+  CHECK (
+    (authority_kind = 'PermissionGrant' AND permission_grant_id IS NOT NULL AND action_approval_id IS NULL)
+    OR
+    (authority_kind = 'ActionApproval' AND permission_grant_id IS NULL AND action_approval_id IS NOT NULL)
+  )
+);
+
+CREATE INDEX assign_work_target_bindings_target
+  ON assign_work_target_bindings(project_id, target_workspace_id, target_workspace_ref);
+CREATE INDEX assign_work_target_bindings_parent_work
+  ON assign_work_target_bindings(project_id, parent_work_id, created_at);
+
+CREATE TABLE assign_work_binding_attention_facts (
+  attention_fact_id       TEXT PRIMARY KEY,
+  event_id                TEXT NOT NULL UNIQUE REFERENCES domain_events(event_id),
+  project_id              TEXT NOT NULL,
+  execution_id            TEXT NOT NULL,
+  target_workspace_id     TEXT NOT NULL,
+  logical_action_id       TEXT NOT NULL,
+  committed_command_id    TEXT NOT NULL,
+  failure_code            TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyUnbound','MissingBinding','DuplicateBinding','MalformedBinding',
+    'RefMismatch','AuthorityMismatch','ForeignTarget','PlacementMismatch',
+    'SourceActionMismatch','ReceiptMismatch','WorkMismatch',
+    'ProvenanceMismatch','EventMismatch','CommitLifecycleMismatch'
+  )),
+  first_detected_at       TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id, committed_command_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id),
+  FOREIGN KEY (committed_command_id, project_id)
+    REFERENCES commands(command_id, project_id)
+);
+
+CREATE INDEX assign_work_binding_attention_target
+  ON assign_work_binding_attention_facts(project_id, target_workspace_id, first_detected_at);
+```
+
+Work Revision History is a required logical persistence capability: every
+WorkRevision has one complete immutable Work contract snapshot keyed by exact
+`(WorkId, WorkRevision)`, with author/provenance, source command, time, and
+canonical digest sufficient for exact read and audit. AssignWork creates the
+initial snapshot; every semantic Work revision writer, including RefineWork,
+DirectionGuidance and ContractAmendment, retains its corresponding full
+snapshot. Migration may backfill only the exact current Work row as
+`LegacyCurrentSnapshot` / history unavailable; earlier revisions that cannot
+be proven remain unavailable and are never reconstructed from Inbox, Session,
+events, summaries, model text, or Verification tasks. This is a semantic
+storage guarantee only: no table name, column set, encoding, DDL, or migration
+number is frozen by S2-RDG-01.
+
+`authority_evidence_json` is the versioned full typed union snapshot. Its
+variant check and composite foreign keys enforce project consistency and the
+same-project direct-child target→Parent edge. Transactional validation checks
+the mutable Grant or ActionApproval values. `work_provenance_json` is the exact
+serialized value written to the Work row; replay checks the parsed typed fields
+and stored serialization, including `predecessorWorkId == parentWorkId` and
+the pinned bounded reason. No hash algorithm or lossy projection is used.
+
+The fact id is `att_` plus lowercase hex of the versioned SHA-256 tuple
+`(executionId, logicalActionId, committedCommandId)`. The fact is immutable;
+the first detected failure code is retained. Event and row are atomic. No
+resolution command, dismissal state, automatic deletion, legacy backfill, or
+schema downgrade is added. Older binaries refuse `user_version > 32`.
+
+The accepted/planned migration prefix is append-only: `0034` is the accepted
+P10 Attention materialization, `0035` is the accepted F21 resource activation
+Attention source, `0036` is the accepted AH7/P36 schema, `0037` is the
+accepted/planned AH10 Deliver P9 fact plus P10 projection marker, `0038` is
+the EA-DG-01 Executable approval handoff schema, and `0039` is the accepted
+AH7-DG-02 P39 reconciliation attempt/fact schema. The accepted P36 owner
+contract is integrated in this governance baseline; migration `0036`
+implementation/registration is not integrated in this tree. Migration `0037` is conditional on
+integrating migration `0036` and MUST NOT be implemented, installed, or
+released independently.
+Migration `0038` depends on integrated `0036` and `0037` and likewise may not
+be released as a standalone v35 upgrade. Migration `0039` depends on P36 and
+P38 source contracts and, by the global `user_version` prefix, must follow
+P37; its preflight runs before any pending P37/P38/P39 DDL on a v36–v38 DB.
+The target path after qualification is v33→…→39, v35→…→39, v36→…→39,
+v37→…→39, or v38→39, but none may skip a pending predecessor. The integrated
+owner contracts do not imply migration implementation/registration. The P39
+amendment above changes no body, checksum, numbering, or contract of migrations
+0032–0038; the later P37 v1.43 amendment below changes only the proposed
+0037 contract. No installed migration body or checksum is changed.
+
+Migration `0037_ah10_deliver_replay_attention_rows` (`PRAGMA user_version = 37`)
+is additive and forward-only. It creates no fact rows for historical
+Deliver/Message events; P9 creates a source fact only when the accepted exact-
+proof boundary detects incomplete/conflicting effect evidence. It adds the
+P10 source-specific marker relation after the P9 fact relation:
+
+```sql
+CREATE TABLE deliver_replay_attention_facts (
+  attention_fact_id       TEXT PRIMARY KEY,
+  event_id                TEXT NOT NULL UNIQUE,
+  project_id              TEXT NOT NULL,
+  execution_id            TEXT NOT NULL,
+  target_workspace_id     TEXT NOT NULL,
+  logical_action_id       TEXT NOT NULL,
+  message_id              TEXT NOT NULL,
+  failure_code            TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyMessageMissingEvent','LegacyEventMissingMessage',
+    'LegacyMessageBindingMismatch','LegacyInboxConflict',
+    'PriorReceiptDecodeMismatch','PriorReceiptResultMismatch',
+    'RejectedReceiptEffectConflict','PriorReceiptEffectConflict'
+  )),
+  first_detected_at       TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id, message_id),
+  UNIQUE (attention_fact_id, project_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id)
+);
+
+CREATE INDEX deliver_replay_attention_target
+  ON deliver_replay_attention_facts(project_id, target_workspace_id, first_detected_at);
+CREATE INDEX deliver_replay_attention_project_fact
+  ON deliver_replay_attention_facts(project_id, attention_fact_id);
+
+CREATE TABLE deliver_replay_attention_pending (
+  queue_sequence     INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id         TEXT NOT NULL,
+  attention_fact_id  TEXT NOT NULL UNIQUE,
+  enqueued_at        TEXT NOT NULL,
+  FOREIGN KEY (attention_fact_id, project_id)
+    REFERENCES deliver_replay_attention_facts(attention_fact_id, project_id)
+);
+CREATE INDEX deliver_replay_attention_pending_project_order
+  ON deliver_replay_attention_pending(project_id, queue_sequence);
+
+CREATE TABLE deliver_replay_attention_rows (
+  attention_fact_id TEXT PRIMARY KEY
+    REFERENCES deliver_replay_attention_facts(attention_fact_id)
+);
+
+CREATE TRIGGER deliver_replay_pending_delete_requires_marker
+BEFORE DELETE ON deliver_replay_attention_pending
+FOR EACH ROW
+WHEN NOT EXISTS (
+  SELECT 1 FROM deliver_replay_attention_rows
+   WHERE attention_fact_id = OLD.attention_fact_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'DeliverReplay pending item requires a P10 marker');
+END;
+
+CREATE TABLE p10_attention_project_poll_state (
+  project_id                    TEXT PRIMARY KEY,
+  last_attempt_sequence          INTEGER NOT NULL DEFAULT 0 CHECK (last_attempt_sequence >= 0),
+  consecutive_failed_attempts   INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failed_attempts >= 0),
+  next_eligible_at               TEXT NOT NULL,
+  last_failure_code              TEXT CHECK (last_failure_code IS NULL OR last_failure_code IN (
+    'PollLeaseExpired','JournalIdentityUnprovable','MissingP9Fact',
+    'FactTupleMismatch','FactProjectMismatch','EventBindingMismatch',
+    'QueueFactMismatch','MarkerBindingMismatch','QueueDeleteWithoutMarker'
+  )),
+  last_failure_at                 TEXT
+);
+CREATE INDEX p10_attention_project_due
+  ON p10_attention_project_poll_state(next_eligible_at,last_attempt_sequence,project_id);
+CREATE TABLE p10_attention_dispatch_state (
+  singleton                INTEGER PRIMARY KEY CHECK (singleton = 1),
+  next_attempt_sequence    INTEGER NOT NULL CHECK (next_attempt_sequence >= 1),
+  active_project_id        TEXT,
+  lease_owner              TEXT,
+  lease_generation         INTEGER NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
+  claim_started_at         TEXT,
+  lease_expires_at         TEXT,
+  CHECK ((active_project_id IS NULL) = (lease_owner IS NULL)),
+  CHECK ((lease_owner IS NULL) = (claim_started_at IS NULL)),
+  CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL))
+);
+INSERT INTO p10_attention_dispatch_state(singleton,next_attempt_sequence)
+VALUES (1,1);
+```
+
+`event_id` is a unique P9 audit identity and intentionally has no permanent
+FK to prunable `domain_events`. The `deliver_replay_attention_pending` row
+has no event FK or expiration/drop path; its exact fact/project FK ensures
+queue provenance. P9 inserts the fact/event/queue in one transaction; P10
+creates/verifies the marker before deleting/ACKing the queue row. P10 full
+rebuild seeds markers from all durable P9 facts and ACKs seeded pending rows
+inside its same reset/snapshot/offset-rewind transaction.
+
+There is deliberately no Message/Event/Command FK from `message_id` or
+`logical_action_id`: the fact must represent proof failures where those
+canonical rows are missing. Its ID is `att_` plus lowercase SHA-256 hex of
+UTF-8 `JSON.stringify({version:1,executionId,logicalActionId,messageId})`.
+No canonical message repair, receipt synthesis, clear/dismiss state, or
+legacy backfill is performed by the migration. The marker primary key is the
+projection dedup identity and its FK requires a P9-owned fact. The marker does
+not duplicate target, failure code, timestamp, or summary; P10 joins the fact
+for display and can seed the marker after journal pruning. Ordinary
+`MessageSent(v1)` and `SendMessage` remain unchanged. Binaries whose schema
+ceiling is v33 refuse `user_version > 33`; P37 must follow the ordered P36
+upgrade and no P37-only v35 release is valid.
+
+### P37 v1.43 raw-event classification, poll and dispatcher contract
+
+P1 `05` supplies the raw journal-candidate read. Within one poll
+`BEGIN IMMEDIATE`, P1 reads the current Attention offset, reads the raw event
+batch, and for each usable raw EventId queries the P9 fact before decoding
+event type, version or payload. A matching fact requires strict
+`DeliverReplayEscalated(v1)` decoding and exact witness comparison. Exact
+Deliver type without a fact, or a fact with malformed/mismatched event, is a
+typed source-integrity failure: roll back poll projections, marker, queue ACK,
+dead letter and offset. It is never ordinary poison. Ordinary non-Deliver
+decode poison and pure event-local projection defects retain P1's existing
+dead-letter-and-advance behavior. P1 prune, P9 fact/outbox writes, P10 poll
+and rebuild/reset serialize on the same SQLite writer transaction boundary.
+
+A valid singleton global Attention lease returns `NoClaim` without mutating
+owner, generation, expiry, Project or schedule state. Claims use
+`BEGIN IMMEDIATE` plus compare-and-swap against the observed generation and
+empty/expired lease predicate. Due eligible Projects are selected by
+`(last_attempt_sequence, project_id)`; claim increments that sequence exactly
+once. Success commits projection, offset and claim release together. Typed
+integrity failure rolls back poll data then persists failure/backoff and
+rotation. An expired claim finalizes the already-sequenced attempt once as
+`PollLeaseExpired`; it does not receive immediate retry priority. Backoff is
+the P12-pinned saturating rule
+`min(baseBackoffMs * 2^(min(n-1, backoffExponentCap)), maxBackoffMs)`.
+Repeated-crash Projects remain pending and are not promised completion; the
+fairness guarantee is bounded selection among continuously due healthy
+Projects, not wall-clock progress during unbounded writer lock or repeated
+crash conditions. P12 `05` owns profile/evidence and measured lock-capacity
+gates.
+
+Migration `0038_executable_approval_handoff` (`PRAGMA user_version = 38`)
+is forward-only after 0037. It rebuilds the 0032 `action_approvals` table
+without editing migration 0032, retaining every existing column and row while
+adding these nullable route-specific fields:
+
+```text
+logical_step_no, repair_attempt, action_index, logical_action_id,
+call_ref, tool_invocation_id, cancelled_at, cancelled_by,
+cancellation_reason
+```
+
+For new `Executable` rows, project/workspace/execution, Step identity,
+LogicalActionId, callRef and ToolInvocationId are required and
+`binding_proven=1`. Historical Executable rows remain `binding_proven=0` and
+in their 0032 terminal state (`Expired` if unconsumed, `Consumed` if already
+consumed), with `source_state` and `consumed_by` preserved. The migration does
+not infer the missing invocation/Step identity, make a legacy row reusable, or
+reinterpret historical `Denied(ApprovalRequired)` ToolInvocation rows.
+Control rows keep their Control-owned shape and status semantics.
+
+The rebuilt `state` checks add `Cancelled`. `Pending` carries no decision,
+consumption or cancellation facts. `Approved`, `Rejected` and `Consumed`
+require both human decision time and actor. `Expired` and `Cancelled` permit
+both decision fields when preserving an earlier Approve, or neither when
+closing a Pending row; half-populated provenance is invalid. `Cancelled`
+requires its cancellation time, actor and reason. Only `Consumed` carries
+both `consumed_by` and `consumed_at`; those two fields are either both present
+or both absent. An Executable row with `binding_proven=0` is allowed only in
+its preserved legacy terminal `Expired`/`Consumed` state; a proven Executable
+row requires the full binding tuple above.
+
+Migration 0038 drops the old digest-only unique index and installs
+route-specific uniqueness:
+
+```sql
+DROP INDEX action_approvals_exact_action;
+CREATE UNIQUE INDEX action_approvals_control_exact_action
+  ON action_approvals(execution_id, action_digest, control_basis_digest)
+  WHERE route_kind = 'Control' AND execution_id IS NOT NULL;
+CREATE UNIQUE INDEX action_approvals_executable_logical_action
+  ON action_approvals(execution_id, logical_step_no, repair_attempt,
+                      action_index, logical_action_id)
+  WHERE route_kind = 'Executable' AND binding_proven = 1;
+CREATE UNIQUE INDEX action_approvals_id_project
+  ON action_approvals(approval_id, project_id);
+```
+
+This keeps the existing Control exact-action uniqueness and permits different
+LogicalActions in one Execution to request identical action/target/ControlBasis
+semantics. The Executable key deduplicates one logical action; after a unique
+conflict, Application compares route and every stable binding field but
+excludes candidate `expiresAt`, mutable revision, state and decision. The
+loser reads the committed winner's ApprovalId, first-commit expiry and current
+revision. A different candidate `now` therefore never causes a binding
+conflict or TTL refresh. Any other binding mismatch fails closed.
+
+`action_approvals_id_project` is the unchanged composite UNIQUE key introduced
+by migration 0033; 0038 must recreate it on the rebuilt table. The
+`assign_work_target_bindings(action_approval_id, project_id)` foreign key
+references this exact pair. Rebuilding `action_approvals` without this key
+would invalidate the existing FK contract; 0038 changes neither that
+AssignWork binding nor its Control approval semantics.
+
+The P38 amendment's migration-order statement remains history for that
+amendment. The current accepted/planned suffix is `0034 → 0035 → 0036 → 0037
+→ 0038 → 0039`. P39 does not permit skipping a pending predecessor; its
+preflight runs before pending P37/P38/P39 DDL. No earlier migration body,
+checksum, Control row or Deliver projection is modified. The existing v37
+binary's refusal at `user_version >= 38` remains unchanged; P39's schema
+ceiling is a separate implementation gate and is not established by this
+design-only amendment.
+
+Migration `0039_ah7_reconciliation_attempts` (`PRAGMA user_version = 39`) is
+the accepted forward-only P39 contract in P4 `06` and P1 `04`. Before any
+pending 0037/0038/0039 transaction, maintenance-mode startup validates
+`--migration-block-report-db <absolute-local-path>` and its dedicated
+sidecar schema/WAL/FULL settings before opening the primary DB. On a v36–v38
+primary, a read-only `BEGIN IMMEDIATE` snapshot detects active P36
+`NotAdmitted` rows whose source binding is unprovable. If found, it commits and
+reads back the stable immutable report under primary→sidecar lock order, rolls
+back the primary snapshot, exits typed `P39_LEGACY_DB_ISOLATED` (78), and does
+not start service runtime. The primary committed rows/schema/approval/P3
+state/user_version remain unchanged. That DB is permanently isolated until
+future governance; no binding is fabricated, approval refunded/transferred,
+row deleted, or invocation retried. A clear snapshot proceeds through
+0037→0038→0039 only while all other primary writers remain stopped.
+
+P39 rebuilds P36 `tool_invocations` with monotone admission and binding state,
+settlement provenance plus `selected_attempt_no/selected_fact_id`, and a
+deferred composite FK to the same invocation/attempt immutable fact. It adds
+`tool_invocation_recovery_bindings`, `tool_invocation_effect_attempts` (only
+attempt 0/1, explicit legacy admission provenance and time precision) and
+append-only `tool_reconciliation_facts`. New terminal reconciliation
+Success/ExpectedFailure/ReconciledNoEffect requires exactly one selected fact;
+ordinary terminal and preserved P36 terminal rows have no selected fact.
+Historical MayHaveStarted gets unknown admission time (never `intent_at`), and
+unprofiled history keeps null profile/effectKey/binding with physical
+`LegacyProfileUnavailable` provenance while its canonical reason remains
+`ProfileUnavailable`. P39 has no down migration; FK check and all DDL/backfill
+share the forward migration transaction.
+
+The operator sidecar uses a unique stable report key and content hash,
+immutable report rows, readback verification and same-key conflict refusal.
+Sidecar and primary DB are distinct SQLite files; lock order is primary then
+sidecar, and uncertain sidecar commit is resolved by key/hash before primary
+rollback or continuation. WAL/SHM are retained together; the named operator
+owns backup/retention. Windows deployment is blocked until the actual Node VFS
+and each supported local filesystem pass process-kill, I/O-fault, VM
+hard-power-off, reopen and integrity qualification. `synchronous=FULL` is
+conditional on VFS, OS and hardware flush behavior; network and unknown
+filesystems fail closed. Exact table/column/check/FK/index/trigger contract is
+owned by P4 `06`; CLI/preflight and migration boundary by P1 `04`/`06` and P14
+`02`/`05`.
+
+Migration `0040_tool_observation_evidence` (`PRAGMA user_version = 40`) is the
+next forward-only suffix after P36→P37→P38→P39. It is cumulative-only and may
+enter only at version 39; it cannot be registered in phase-local
+`P4_MIGRATIONS`, released as a standalone v35 upgrade, or skip a predecessor.
+P1 `04` owns this global prefix/version/startup boundary; P4 `06` owns the
+`tool_invocations` evidence columns/checks/triggers; P9 `07` owns the immutable
+replay-evidence fact/event; P10 `02` owns its source-specific marker relation.
+The accepted P39 sidecar/preflight, RecoveryBinding, selected-fact and attempt
+contracts are unchanged.
+
+P40 adds nullable `observation_format_version TEXT`,
+`observation_json BLOB`, and `observation_sha256 TEXT`; five DG01 evidence tags
+and the accepted P39 `ReconciledNoEffect` branch use the same v1 UTF-8
+canonical envelope with 16,384-byte cap and hash
+`SHA-256(UTF8(version + LF + body))`. RNO's P4 Observation/result Artifact is
+strictly separate from P39's `NotOccurred` proof `evidence_ref` and NULL fact
+`result_ref`; P39 `selected_fact_id` remains bound to the exact invocation and
+attempt. DG03 `Denied/NotAdmitted` is evidence-null and keeps its closed
+reason-code projection. P40 performs no backfill, selected-fact update or P39
+sidecar mutation.
+
+P39 migration may be installed only as part of the cumulative maintenance
+chain; **a database at `user_version=39` must not start Agent/P4 Runtime or be
+released until P40 commits version 40**. The runtime binary must reject schema
+40 unless its v1 Observation decoder includes the RNO branch. The migration
+runner must serialize cross-process startup; this prerequisite, P36–P40 prefix
+integration and P39 sidecar/Windows durability remain unqualified. P40 has no
+down migration; DDL and `user_version=40` commit atomically.
+
+Migration `0041_submitted_decision_binding_attention`
+(`PRAGMA user_version=41`) is the forward-only P41 suffix after the complete
+0036→0037→0038→0039→0040 prefix. It is cumulative-only: integration and
+qualification of every predecessor are prerequisites; 0041 cannot be run from
+v35, registered/skipped/released independently, or used to rewrite any prior
+migration body, number, or checksum. It creates P9's immutable
+`submitted_decision_binding_attention_facts`, unique on
+`(execution_id, logical_step_no, repair_attempt, logical_action_id)`, with an
+audit-only `event_id` that has no FK to `domain_events`; the row references the
+exact Execution/Step/Action and records the first typed failure. It creates
+P10's source-specific `submitted_decision_binding_attention_rows`, keyed by
+`attention_fact_id` and FK-bound to the P9 fact and owning Workspace, with no
+FK to the source event. It backfills no historical canonical/receipt rows and
+does not infer from Session text. The P9 startup audit classifies exact
+settled-Failed/AIP/Pending-select-current-work orphans as the specific mismatch
+when still provable, otherwise
+`SettledExecutionWithPendingDecisionAction`; it adds Attention only and never
+resurrects/repairs the orphan. DID v1.42 describes the target contract; the
+serialized cumulative runner, migration implementation and qualification
+remain separate gates.
 
 ## 9.4 Relational vs JSON Rule
 
@@ -3703,6 +6457,43 @@ ContextUpdate
 
 streaming delta 不直接进入 Session history。
 
+v1.20 起，runtime-produced entry 可携带 `source_kind`、`source_ref` 与
+`content_hash`。`ModelOutput` 使用 `ProviderTurn` source；同一
+`(session_id, entry_kind, source_kind, source_ref)` 至多一条。重复相同 hash 返回
+既有 sequence，不同 hash 是 invariant conflict。Worker-originated append 与
+AgentLoopStep 状态推进在同一事务中验证完整 lease-holder triple（P2 `02`/`04`，P3
+`08` §6）。
+
+v1.22 起，`session_entries` 是 `SessionItem` versioned envelope 的物理 carrier。
+下一 forward-only migration 是 **0019**（0018 已由 Project archive/human-message
+terminal evolution 占用）；本设计落字不授权运行该 migration。最小列语义为：
+
+```text
+session_id + sequence
+item_type + schema_version
+payload_json
+source_kind + source_ref + content_hash
+context_epoch
+created_at
+```
+
+新 sourced item 的 `(session_id, item_type, source_kind, source_ref)` 唯一。同 source/
+different hash 是 invariant conflict。旧 `Input/ModelOutput/Observation/
+CheckpointReference/ContextUpdate` row 保留为 Legacy evidence；不得从 payload text
+猜测 callRef 或自动升级为 strict ToolResult。无法证明来源的 legacy row 只允许审计/
+portable summary，不进入 strict tool-call replay。
+
+`SessionRepository` 至少提供：
+
+```text
+appendItemIdempotent
+listActiveFrontier(sessionId, epoch)
+commitCompaction(expectedEpoch, checkpoint, fence)
+```
+
+`InputPromotionService.promoteInbox` 在同一 Transaction scope 完成 sourced Session
+Input append + Inbox consumed；重复调用返回既有 sequence。
+
 ## 9.9 Commands / Events
 
 `commands` 保存 logical request 的 authoritative resolution，而不是只保存成功 mutation：
@@ -3763,7 +6554,56 @@ PRIMARY KEY(command_id, attempt_no)
 - semantic stale precondition 改 payload 后必须新 CommandId；
 - `FencingRejected` / `ExecutionStopping` 对 Execution-originated Command terminal。
 
+EA-DG-01 `ResolveExecutableApproval` is an External human command through this
+same Gateway/receipt boundary. P12 resolves the authenticated decision
+authority before receipt lookup; missing/foreign approvals return the same
+safe not-found outcome without target-existence disclosure. For an authorized
+target, one `BEGIN IMMEDIATE` transaction compares route/project/workspace/
+Execution/state/revision, CASes Approve/Reject or commits Expired when the
+deadline wins, consumes the exact P6 Inbox key, appends
+`ExecutableApprovalResolved(v1)` and commits the result receipt. A stale
+authorized revision is `RevisionConflict`. Decision/replay never writes a P4
+ToolInvocation effect or consumes a Control ActionApproval. StopExecution
+atomically closes unclaimed Executable Pending/Approved rows as Cancelled in
+its existing P2-authorized command transaction; all Control route semantics
+remain unchanged.
+
 `domain_events` 同时承担 durable outbox；多 Consumer 通过 `consumer_offsets` 分别推进，不额外维护单一 outbox delivery flag。
+
+Direct-child AssignWork extends the single-transaction command path with the
+typed `AssignWorkCommandEvidence` and `AssignWorkControlAuthorizationEvidence`
+from §6A.16. Gateway validates every Grant field against the current durable
+row (Active state, exact revision, subject, capability, target, and validity
+window), or every ActionApproval field (Approved state/revision,
+`binding_proven = 1`, Control route, project/workspace/execution, stable action,
+action digest, target, ControlBasis, and expiry). It validates the existing
+command evidence and source action, then writes the Work, `WorkAssigned`
+event, Command receipt, and binding together. The binding is excluded from
+`semanticRequestFingerprint`.
+
+For ActionApproval, Gateway calls the P4-owned `ControlApprovalStore` inside
+the same `TransactionScope` with `consumedBy: CommandId`. Consumption sets
+`state = 'Consumed'`, increments revision once, and records the original
+CommandId after the handler attempt and before transaction commit. A
+FencingRejected or ExecutionStopping pre-handler result does not consume it.
+Do not call a standalone post-commit approval consumer for AssignWork. Before
+commit, rollback leaves no binding, Work, event, authoritative receipt, or
+approval consumption (only the existing non-authoritative CommandAttempt may
+remain). After commit, all canonical facts are visible together. Uniqueness
+conflicts are handled by reading in a fresh transaction; exact existing
+evidence may converge, conflicting evidence never overwrites or uses
+`INSERT OR REPLACE`.
+
+The P9 failure event payload is exactly
+`{attentionFactId, executionId, targetWorkspaceId, logicalActionId,
+committedCommandId, failureCode}`. Its `aggregate_ref` is the Execution's
+owning Workspace, `correlation_ref` is the LogicalActionId, and
+`caused_by_command_id` is the committed AssignWork Command. The new immutable
+`assign_work_binding_attention_facts` row and event are appended in one
+transaction by `RecoveryAttentionFactStore`. A duplicate identity tuple returns
+the existing fact without another event; a deterministic fact/event conflict
+with different payload is a typed invariant error. P10 consumes the event and
+reads the P9 fact in its same projection transaction.
 
 
 ## 9.10 Provider Turn / Model Context
@@ -3780,6 +6620,21 @@ ModelContextManifest
 
 Compaction 也是 Provider Turn 类型的一种，不作为不可见内部 hack。
 
+`provider_turns` 的语义 `operation_kind` 为：
+
+```text
+Inference | CompactionSummary | CompactionNative
+```
+
+三类均先持久 intent + Manifest，再调用 Provider。Native opaque item 存入 Blob/
+Artifact 或等价耐久 carrier；ProviderTurn/Session 只保存 ref + binding fingerprint，
+raw credential 不得进入 opaque item metadata。
+
+New inference, repair and compaction IDs use only the ProviderTurnId V2
+constructors in §2.2.1. The provider adapter and public progress projections
+echo the exact ID; the adapter does not generate, normalize or re-encode it.
+UUIDv7 IDs remain available only to read/replay already persisted Turns.
+
 ## 9.11 ProviderTurn / ProviderAttempt
 
 `ProviderTurn` 表示一次逻辑模型决策，绑定唯一 `ModelContextManifest`；transport 层的 safe retry 记录为该 Turn 下的 `provider_attempts`：
@@ -3794,11 +6649,78 @@ settled_at
 outcome
 provider_error_kind nullable
 transport_metadata_json
+canonical_event_prefix_json       # current P16 baseline
+success_evidence_version nullable  # v1.20 migration 0017
 
 PRIMARY KEY(provider_turn_id, attempt_no)
 ```
 
 同一 Turn 的 retry 不产生新的 ModelContextManifest，不增加 Agent `turnNo`。只有新的语义模型决策才创建新的 ProviderTurn。
+
+成功路径必须以一个语义 store 操作原子提交 `ProviderAttempt Success` 与
+`ProviderTurn settled`。恢复发现完整成功证据时先本地收敛，禁止再次请求同一
+Turn；仅无完整成功证据的 unsettled Turn 才进入 P9 safe retry。完整性校验按
+`success_evidence_version` 选择版本化规则；legacy null 只能经受治理的 legacy
+validator 采纳，不能自动视为成功。
+
+## 9.11A AgentLoopStep / AgentLoopStepAction
+
+Migration `0017_agent_loop_step_handoff` adds:
+
+```text
+agent_loop_steps
+  PK(execution_id, logical_step_no, repair_attempt)
+  UNIQUE(provider_turn_id)
+  predecessor identity, manifest_id?, state, decoder_version?,
+  provider_failure_json?, repair_disposition_json?, successor_json?,
+  decoded_output_hash?, model_output_session_sequence?, next_action_index,
+  settlement_json?, migration_provenance_json?, revision, updated_at
+
+agent_loop_step_actions
+  FK AgentLoopStep identity + action_index
+  UNIQUE(logical_action_id)
+  call_ref, route_kind, action_kind, input_hash, state,
+  result_ref?, settlement_ref?, disposition_json?, observation_source_ref?,
+  revision, updated_at
+
+session_entries (additive)
+  source_kind?, source_ref?, content_hash?
+  UNIQUE(session_id, entry_kind, source_kind, source_ref)
+    WHERE source_kind IS NOT NULL
+```
+
+Migration `0020_agent_loop_step_provider_turn_chain` adds:
+
+```text
+agent_loop_step_provider_turns
+  FK AgentLoopStep identity
+  overflow_ordinal = 0
+  role = Inference | OverflowCompaction | OverflowReplacement
+  provider_turn_id UNIQUE
+  predecessor_provider_turn_id?
+  context_epoch
+  manifest_id?
+  state = Prepared | SettledSuccess | SettledFailure
+  PRIMARY KEY(step identity, overflow_ordinal, role)
+```
+
+The existing `agent_loop_steps.provider_turn_id` remains the original Inference
+Turn for compatibility. Chain ensure is idempotent; binding mismatch is an
+invariant conflict/Attention. Ordinary transport attempts and output repair do
+not enter this chain.
+
+Every Step and P20 link uses the exact closed ProviderTurnId V2 codec from
+§2.2.1. The Inference, OverflowCompaction, and OverflowReplacement roles keep
+their existing deterministic IDs and predecessor bindings; recovery retains
+the stored strings byte-for-byte. UUIDv7 ProviderTurnIds are accepted only in
+legacy read/replay evidence. This contract adds no schema constraint,
+migration, or backfill.
+
+Exact DDL/check constraints and forward-only legacy adoption are frozen in P2
+`04`, P3 `08`, and P9 `07`. Every AgentLoopStep/action transition is a short
+`BEGIN IMMEDIATE` transaction with authoritative fence validation, or converges
+through an already committed stable idempotent result. No AgentLoopStep row enters
+the Domain Event journal solely because runtime progress advanced.
 
 ## 9.12 Tool side-effect metadata
 
@@ -3867,8 +6789,8 @@ v1.14 (G8): `verification-runtime` **不是**独立物理包——Verification �
 | `ports` | 系统需要哪些外部能力 |
 | `application` | 哪个 Command 如何提交 |
 | `model-context` | 模型在当前 Turn 如何理解世界 |
-| `agent-runtime` | 执行 Model→Action→Observation loop；拥有 ControlToolRegistry、internal AgentAction 与 shared control policy |
-| `execution-runtime` | 谁何时运行、Lease/Fencing/Recovery |
+| `agent-runtime` | 执行 Model→Action→Observation loop；拥有 safe input drain、AgentStepContext orchestration、Compaction Coordinator、ControlToolRegistry、internal AgentAction、durable AgentLoopStep orchestration 与 shared control policy |
+| `execution-runtime` | 谁何时运行、Lease/Fencing/Recovery；消费持久 settlement proposal |
 | Verification (无独立包; v1.14 G8) | 组织独立 Agentic Verification（由 `domain` / `application` + generic `ExecutionBound` runtime 实现） |
 | `provider-runtime` | 可靠调用模型与协议适配 |
 | `tool-runtime` | 实现 Tool invocation authorization/sandbox/settlement；Tool catalog contract 位于 `ports` |
@@ -3935,6 +6857,18 @@ package. The app Composition Root joins the registry's data-only control-tool
 definition projection with executable definitions and supplies both to Model
 Context. Thus `model-context !-> agent-runtime` and
 `model-context !-> tool-runtime` remain hard boundaries.
+
+DID v1.20 also adds no package or dependency edge. `AgentLoopStepStore` and the
+extended Provider/Session stores are `ports` contracts implemented by the
+existing persistence adapter; orchestration remains in `agent-runtime`, while
+`execution-runtime` consumes the persisted proposal through existing allowed
+edges.
+
+DID v1.22 adds no package or dependency edge. `model-context` owns
+ContextProjector/budget evidence/typed request compilation; `agent-runtime`
+owns safe input drain and Compaction orchestration; `application` owns the
+transactional InputPromotionService; `provider-runtime` owns operation lowering
+and provider evidence. Existing forbidden edges remain unchanged.
 
 额外硬规则：
 
@@ -4109,6 +7043,9 @@ P3 通过 P2 的 `ExecutionDriverPort` 提供真实 Agent loop，并只上报 tu
 observations；execution-wide Runtime Safety / control gating 由 P2 执行。
 P3 Output Contract remains available for independent bounded structured-output
 protocols; it no longer defines a universal control-action output union.
+P3 `08` additionally freezes the durable AgentLoopStep handoff: Provider success
+replay, pinned decode, idempotent Session acceptance, action ledger,
+unresolved-side-effect gate, successor and settlement proposal.
 
 ## P4 — Tool Runtime
 
@@ -4244,11 +7181,16 @@ old worker resurrection
 dispatch failure
 consumer crash
 projection rebuild
+settled Provider result / AgentLoopStep handoff crash windows
+legacy AgentLoopStep adoption
 ```
 
 Systematic fault injection and hardening belong to P9; **P2 owns the recovery
 mechanism** and P5 owns only the representative restart-continuity acceptance
 proof against the same durable state (DID v1.9 G5).
+P9 `07` owns the v1.20 state-disposition matrix, AH1–AH14 crash injection and
+evidence-gated legacy adoption. Complete Provider success always converges
+locally before transport retry eligibility.
 
 ## P10 — Projection / UI
 
@@ -4256,6 +7198,7 @@ proof against the same durable state (DID v1.9 G5).
 Responsibility Tree
 Attention
 Workspace Detail
+Work Detail
 Current Work
 Verification
 Dependency View
@@ -4331,7 +7274,7 @@ P12 completion blockers（v1.14 G1–G8；与文件头 P12 completion blockers �
 ```text
 浏览器瘦客户端（apps/web：Vite + React，TypeScript/ESM）
 角色冻结：Projection Renderer + Command Initiator
-  - 渲染 9 个 frozen view DTO（api-contracts），不重解释 view 语义
+  - 渲染 10 个 frozen view DTO（api-contracts），不重解释 view 语义
   - Human-actionable governance commands 表单化，经 /commands 提交
   - WS 仅用于 invalidation → refetch；无第二套 canonical/projection state
   - Problem DTO typed failures 的明确 UI 呈现
@@ -4354,6 +7297,17 @@ UI：`/p/:projectId` Root Workbench（Tree + Root Conversation）+ root deep-lin
 浏览器不得直连 external AdmitExecution（server-side wiring only）
 合同：docs/design/implementation/P14/**
 ```
+
+AH19 v1 adds a separate RootWorkspaceId-owned Conversation checkpoint
+frontier, distinct from the Workspace Work Session. Immutable HumanMessage
+identity/order/body is paired with exact Answered ResponseJob, Attempt and
+terminal ConversationResponseEpisode Execution evidence for a contiguous FIFO
+prefix. The current raw HumanMessage is pinned once only for its exact Running
+Job, active Attempt/Execution and lease; other-episode Running and all earlier
+non-Answered or malformed Job/Attempt evidence block the frontier. The exact
+ordering, binding, restart, retention and Work-isolation semantics are in SD
+v1.19 and P14 `02`. The owner-state physical design and migration remain
+separately authorized.
 
 ---
 
@@ -4396,7 +7350,7 @@ Failed(ExecutionFailure)
 OutcomeUnknown(ReconciliationRequired)
 ```
 
-`CompletedResult` 至少区分 `Yielded / CompletionClaimed / CoordinationCompleted / QueryCompleted`。Crash recovery 不能从一个裸 `Completed` 猜测下一步。
+`CompletedResult` new writes 区分 `Yielded / CompletionClaimed / VerificationConcluded / Blocked`；历史 `CoordinationCompleted` / `QueryCompleted` 仅供 migration/decoder audit。`Blocked` 绑定精确 Work Episode 且不得改 Work 生命周期；完整拒绝证据与原子持久化由 P2 `01` / P3 `03` 拥有。Crash recovery 不能从裸 `Completed` 猜下一步。`VerificationConcluded { verificationId, verdict }` 仅由 exact-bound Verifier 在结论命令提交、wake 幂等交付后产生；它不触发 CompletionClaim consumer，且不蕴含 Acceptance 或 Work Completed。
 
 `CompletionClaimed` 的 durable settlement + `ExecutionSettled` event 足以在 daemon crash 后通过 deterministic `StartVerification` Command replay 恢复后续动作。
 
@@ -4585,20 +7539,29 @@ normalizedRegion
 
 并定义确定性 `contains / overlaps`。
 
+Formal claims use the finite canonical `OwnershipRegion { allow, exclusions[] }`
+from §1.5; overlap and containment are defined over its effective set, not
+the allow envelope alone. Exclusions are strict canonical descendants in the
+same space/kind, normalized/sorted/unique and prefix-antichain. The typed
+comparator returns `Contained | NotContained | Overlap | Disjoint`. Parent
+delegation atomically adds one exact exclusion and creates the Child's exact
+claim; unprovable partial exclusion, alias, or set relation fails closed.
+
 ## 12.10 C9 — Semantic capability ownership audit
 
 以下矩阵是结构审计的最小权威集；具体 payload/signature 仍在对应 Phase 前冻结。
 
 | Capability | Command / mutation path | Durable Event | State / Repository | Owning implementation boundary | Critical invariant |
 |---|---|---|---|---|---|
-| Project lifecycle | CreateProject / CloseProject | ProjectCreated / ProjectClosed | ProjectRepository | application | one root; closed blocks new autonomous admission |
+| Project lifecycle / name | CreateProject / RenameProject / CloseProject | ProjectCreated / ProjectRenamed / ProjectClosed | ProjectRepository | application | one root; CAS; Closed blocks new autonomous admission; P15 |
+| Project directory | — (local read) | — | ProjectDirectoryPort / SQLite adapter | read boundary (P15) | local single-user, no pagination; transport owns no SQL |
 | Child Workspace | CreateChildWorkspace | WorkspaceCreated | WorkspaceRepository | application | same Project; parent immutable |
 | Responsibility | ChangeResponsibility | ResponsibilityChanged | WorkspaceRepository | application | authority + revision |
-| Resource boundary / ownership | UpdateResourceBoundary | ResourceBoundaryChanged / ResourceOwnershipChanged | Workspace + ResourceOwnershipRepository | application | canonical write regions do not overlap |
+| Resource boundary / ownership | UpdateResourceBoundary / accepted child carve-out governance change | ResourceBoundaryChanged / version-capable ResourceOwnershipChanged | Workspace + ResourceOwnershipRepository | application | effective canonical write sets do not overlap; canonical exclusions prove any shared allow-envelope disjointness |
 | Primary Session | ReplacePrimarySession | PrimarySessionReplaced | Workspace + SessionRepository | application | no Active Main Execution |
 | Work assignment | AssignWork | WorkAssigned | WorkRepository | application | Work belongs to target Workspace |
 | Current Work | SelectCurrentWork | CurrentWorkChanged | Workspace + WorkRepository | application | ≤1 current; target Open |
-| Work semantic revision | RefineWork / SteerWork | WorkRefined / WorkSteered | WorkRepository | application | canonical requirement change increments revision |
+| Work semantic revision | RefineWork / SteerWork(DirectionGuidance or ContractAmendment) | WorkRefined / versioned WorkSteered or WorkAmended | WorkRepository + logical Work Revision History | application | exact authority + current WorkRevision CAS; complete immutable snapshot; direction guidance cannot change contract; amendment is explicit human complete replacement |
 | Work completion | CompleteWork | WorkCompleted | Work + Acceptance + Verification repositories | application | PASS + Acceptance bind current Work revision |
 | Work cancellation | CancelWork | WorkCancelled | WorkRepository | application | only Open → Cancelled |
 | Dependency | DeclareDependency / SatisfyDependency | DependencyDeclared / DependencySatisfied | DependencyRepository | application | satisfaction binds current dependency revision |
@@ -4606,7 +7569,9 @@ normalizedRegion
 | Dependency (contract revision) | ReviseDependencyContract | DependencyContractRevised | DependencyRepository | application | v1.10 G1; revision++, never reinterprets prior satisfaction |
 | Deadlock attention | — (derived fact) | DeadlockAttentionRequested | — (projection-consumed) | coordination consumer | v1.10 G4; deterministic detection; no automatic lifecycle mutation |
 | Deliverable | ProduceDeliverable | DeliverableProduced | DeliverableRepository | application | source Work revision fixed |
-| Message | SendMessage | MessageSent | MessageStore | application / communication | durable communication ≠ canonical mutation envelope |
+| Message | SendMessage | MessageSent(v1) | MessageStore | application / communication | Message is durable communication, not a canonical Work/Deliverable mutation; External denied |
+| Deliver handover | DeliverMessage/1 | MessageSent(v1) | MessageStore + InboxProjection | Application/communication | existing Deliverable only; Gateway envelope supplies P1 generation fence/receipt; MessageSent is sole ChildDelivered wake source |
+| Deliver replay Attention | — (projection) | DeliverReplayEscalated(v1) | P9 `deliver_replay_attention_facts` + P10 `deliver_replay_attention_rows` | P10 projection consumer | one marker per P9 fact; P9 fact remains source; no canonical mutation |
 | Verification | Start / RecordEvidence / Conclude | VerificationStarted / VerificationConcluded | VerificationRepository | verification + application | verdict immutable; version-bound |
 | Acceptance | AcceptWorkOutcome | WorkOutcomeAccepted | AcceptanceRepository | application | target revision + Verification fixed |
 | Permission | Grant / Revoke | PermissionChanged | PermissionGrantRepository | application | cannot exceed policy/ownership ceiling |
@@ -4640,7 +7605,8 @@ Package-level ownership由 §10.4.1 的 allowed-edge matrix 强制。
 |---|---|---|---|---|
 | absent | CreateProject | valid root/bootstrap transaction | Open | creates Project + Root Workspace + Primary Session atomically |
 | Open | UpdateProjectPolicy | authority + expected revision | Open | revision++, projectPolicyRevision++ |
-| Open | CloseProject | authority | Closed | `ProjectClosed` |
+| Open | RenameProject | authority + expected revision + ProjectName v1 | Open | revision++; `ProjectRenamed`; policy revision unchanged |
+| Open | CloseProject | authority + expected revision + confirmation | Closed | `ProjectClosed`; P15 lifecycle gate rejects new activity and cooperatively quiesces existing executions |
 | Closed | lifecycle mutation | — | **illegal** | Closed lifecycle terminal |
 
 `Closed` 后不 admission 新 autonomous Execution；read/recovery/audit 仍允许。
@@ -4649,9 +7615,11 @@ Package-level ownership由 §10.4.1 的 allowed-edge matrix 强制。
 
 ```text
 - projectId 由 caller 预分配（prj_ + UUIDv7）；CommandEnvelope.projectId 即该值。
-- payload 提供 Root Workspace 的 ResponsibilityDefinition /
-  ResourceBoundary / ResponsibilityBoundAgentBinding / WorkspacePolicy /
-  ProjectPolicy / default configuration / environmentRef。
+- v2 payload 提供 Root Workspace 的 ResponsibilityDefinition /
+  ResourceSelection（P1 host Profile ref/version 或 ConversationOnly）/
+  ResponsibilityBoundAgentBinding / WorkspacePolicy / ProjectPolicy /
+  default configuration / environmentRef；canonical ResourceBoundary 由
+  trusted Profile Port 在 Gateway absent-receipt 分支构造，不接受客户端路径。
 - rootWorkspaceId 与 primarySessionId 由 caller 预分配。
 - 单一事务原子创建 Project + Root Workspace + WorkspacePrimary Session
   （§9.13 deferred FK 在同一 COMMIT 校验）。
@@ -4674,7 +7642,7 @@ Workspace 没有 `Running/Waiting/...` lifecycle。合法 canonical structural m
 | UpdateWorkspacePolicy | authority + expected revision | revision++ + workspacePolicyRevision++ |
 | SelectCurrentWork | target Work belongs Workspace + Open; switching cannot conflict with Active Main Execution | change `currentWorkId` only |
 | ReplacePrimarySession | target `WorkspacePrimary`; no Active Main Execution | change `primarySessionId`; existing Execution bindings unchanged |
-| RetireWorkspace | non-Root + no Active Main Execution/Open Work/Active Child/write ownership/no unresolved incoming Dependency with ProducerBinding = WorkspaceBound(this) or WorkBound(a Work owned by this) (unless resolved/replaced in same governance change) | lifecycle = Retired |
+| RetireWorkspace | non-Root + no Active Main Execution/Open Work/Active Child/no unresolved incoming Dependency with ProducerBinding = WorkspaceBound(this) or WorkBound(a Work owned by this) (unless resolved/replaced in same governance change); normally no active write ownership. Sole exception: exact accepted Child delegation claim, quiescence/typed recovery, exact canonical region + provenance/revision match and Parent/Child CAS; same transaction releases only that Child claim, removes only its Parent exclusion, preserves all other normalized exclusions, writes complete ownership post-image/event, and sets lifecycle Retired | lifecycle = Retired atomically with exact ownership post-image |
 
 Forbidden ordinary transitions:
 
@@ -4689,13 +7657,30 @@ ReactivateRetiredWorkspace
 | Current | Operation | Preconditions | Next |
 |---|---|---|---|
 | absent | AssignWork | valid Workspace + authority | Open |
-| Open | RefineWork / semantic SteerWork | authority; producer cannot weaken protected upstream requirements | Open, revision++ |
+| Open | RefineWork | producer authority; producer cannot weaken protected upstream requirements | Open, revision++; retain complete immutable contract snapshot |
+| Open | SteerWork(DirectionGuidance) | authenticated HumanInput; exact Work/Workspace authority; current expected WorkRevision | Open, revision++; canonical contract unchanged; retain complete snapshot for the new revision |
+| Open | SteerWork(ContractAmendment) | authenticated HumanInput; exact Work/Workspace authority; current expected WorkRevision; complete replacement valid | Open, revision++; replace complete canonical contract and retain its immutable snapshot |
 | Open | CompleteWork | current-revision PASS Verification + current-revision Acceptance | Completed; if current, clear `workspace.currentWorkId` atomically |
 | Open | CancelWork | governance authority | Cancelled; if current, clear `workspace.currentWorkId` atomically; request quiescence of focused active Execution |
 | Completed | any lifecycle mutation | — | **illegal** |
 | Cancelled | any lifecycle mutation | — | **illegal** |
 
 `Current/Pending/Blocked/Verifying/Running` 都是 relation/projection，不进入 Work lifecycle。
+
+Legacy SteerWork schema-v1 inputs, including `scope="Constraint"`, are
+DirectionGuidance only. ContractAmendment requires a new SteerWork schema
+version and an explicit discriminator; its V1 authoring form is a complete
+replacement, not patch/merge or omitted-field inheritance. P1 owns the exact
+versioned receipt compatibility; no existing receipt, event, or Work snapshot
+is relabeled or rewritten.
+
+StartVerification uses the canonical VerificationMission for the exact
+observed current WorkRevision. Caller/model/Inbox text cannot replace that
+mission. An old Open Verification remains immutable and may conclude on its
+old mission/revision; its wake remains exact to the old `(WorkId,
+targetWorkRevision)`, and its PASS/FAIL/UNKNOWN cannot satisfy current-revision
+Acceptance or CompleteWork. Work revision advance does not cancel or relabel
+the old Verification.
 
 ### Execution
 
@@ -4829,6 +7814,7 @@ v1.3 已关闭 P0 前必须通过推理确定的 C1–C10 与 X1–X11 cross-cut
 | Runtime Safety Envelope 六维补全（§8.16A cross-phase closure） | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
 | P13 Product Web Client（client boundary/role；Command → UI exposure policy matrix；view rendering + Problem 呈现；TR-WPU-A design token system；transport/build binding；acceptance） | **P13 PHASE CONTRACT** | `docs/design/implementation/P13/**` |
 | P14 Chat-First 对话面（SubmitHumanMessage 命令/事件/persistence；conversation trigger + Coordination admission + one-active-main 排队 + exact-once；transcript read model 升级；TR-WPU-D Root Workbench/root-only web placement；acceptance 十 seams） | **P14 PHASE CONTRACT** | `docs/design/implementation/P14/**` |
+| Durable AgentLoopStep handoff（Provider success replay、idempotent Session/action progression、generation-scoped Command identity、settlement recovery、legacy adoption、AH1–AH14） | **IMPLEMENTATION AUTHORIZED (v1.21 ALS-I1)** | `P1 07`, `P2 02/04/06`, `P3 08`, `P9 07`, `P12 08`, `P14 02/05` |
 
 P1 phase-scoped implementation contracts are owned by:
 
@@ -5111,6 +8097,8 @@ Long-lived Agent != long-running process.
 | Event | `evt_` |
 | Provider Turn | `ptn_` |
 | Tool Invocation | `tin_` |
+| Logical Action | `lac_` |
+| Logical Settlement | `lst_` |
 | Worker | `wkr_` |
 | Worker Incarnation | `wic_` |
 | Plugin | `plg_` |
@@ -5123,6 +8111,7 @@ Long-lived Agent != long-running process.
 Application (Effect services)
 ├── CommandGateway(CommandEnvelope, CommandSubmissionContext)
 │     (uses the Persistence ports below)
+└── InputPromotionService(SessionRepository + InboxProjectionStore + TransactionPort)
 
 Persistence ports (§7.2)
 ├── TransactionPort
@@ -5141,11 +8130,18 @@ ModelContext
 ├── KnowledgeQueryPort
 ├── ModelCapabilityPort
 ├── Skill Registry
-└── ToolCatalogPort
+├── ToolCatalogPort
+├── ContextProjector
+├── BudgetEvidenceResolver
+└── PortableInputItem compiler
 
 AgentRuntime
 ├── ModelContext
 ├── ProviderPort
+├── AgentLoopStepStore
+├── SafeBoundaryInputDrain
+├── AgentStepContext capture
+├── CompactionCoordinator
 ├── ControlToolRegistry
 ├── ToolRuntimePort (executable route only)
 ├── SessionRepository
@@ -5170,6 +8166,10 @@ ProjectionRuntime
 ├── Projection Store
 └── ProjectionQueryPort
 
+ProviderRuntime
+├── Inference / CompactionSummary / CompactionNative lowering
+└── usage / overflow / binding evidence
+
 Composition Root
 ├── joins executable and control definition projections for Model Context
 └── Layer graph resolves all live adapters/services
@@ -5182,8 +8182,8 @@ Composition Root
 ```text
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
-System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.19     TOP-LEVEL FROZEN
+System Design Specification v1.4          FROZEN
+Detailed Implementation Design v1.23     TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED
@@ -5192,6 +8192,12 @@ Agent control representation              FROZEN — internal AgentAction bounda
 Agent control implementation authorization AUTHORIZED (v1.19 ACR-6; field-source gaps gate only their consumers per ACR-8)
 S01 qualification authorization            AUTHORIZED (v1.19 ACR-7 — Control/Executable Route Qualification)
 Wave 2 implementation authorization         AUTHORIZED (v1.19 ACR-6; scope = 51 module map, 52 DAG order)
+Durable AgentLoopStep handoff design          FROZEN (v1.20 AHT-1…AHT-8; v1.21 name)
+Durable AgentLoopStep implementation          AUTHORIZED (v1.21 ALS-I1)
+Session / Context Runtime convergence         FROZEN (v1.22 SCRC-1…SCRC-12)
+Session / Context Runtime implementation      NOT AUTHORIZED (migration 0019 reserved)
+DOGFOOD-DG-01 design question             RESOLVED by v1.20 AHT-1…AHT-8
+AgentLoopStep recovery implementation gate    OPEN — requires authorization + AH1–AH14 + equivalent fixture
 P0 Technical Baseline                     FROZEN (versioned baseline)
 P0 coding authorization                   AUTHORIZED
 P1 coding authorization                   AFTER P1 exact contracts / DDL closure
@@ -5214,3 +8220,200 @@ P12 completion                            COMPLETE — FORMALLY CLOSED
 2. 失败证据是什么；
 3. 为什么不能通过现有对象/接口的局部细化解决；
 4. 对 Domain、Persistence、Model Context、Runtime、Package DAG 和 Recovery 的影响。
+
+## Accepted Native OS Sandbox convergence (DID v1.53)
+
+Accepted governance chain:
+
+- `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`, proposal raw SHA-256
+  `ACAE6656234C50856FEC7B4B8AEF829E9A10C2EBDC1142862E35EAE3CF5C9341`;
+- `ACCEPT_NATIVE_OS_SANDBOX_COMMAND_AUTHORITY_AMENDMENT_V3`, raw SHA-256
+  `CCF6874FACF846FB9A9A32C861A29D17CC82F641139C6E8A18ACD69F8D04418D`;
+- `ACCEPT_NATIVE_OS_SANDBOX_PROVIDER_UNAVAILABLE_FACT_STORAGE_V5`, raw SHA-256
+  `B62294818B14347DB0B40278C115B5BD8397C3C05F2FBE1B00D7949481BE07BD`;
+- fixed schema-48 rebase plan accepted as
+  `ACCEPT_NATIVE_OS_SANDBOX_SCHEMA48_REBASE_FIXED_IMPLEMENTATION_PLAN`,
+  raw SHA-256
+  `3EAD84A15267DD00AF754C2FC2B5DCE98FDBDBC7C5CB305A99055646571A8F62`.
+
+The Native OS sandbox is distinct from the logical Workspace mount and Git
+Worktree. Executable Work is bound to a strict, execution-scoped
+`SandboxProcessPolicy`; the provider enforces profile, exact admitted mount
+access, process-tree, network, environment and resource limits. The profiles
+are `ReadOnly`, `WorkspaceWrite` and explicit `FullAccess`; FullAccess is
+never fallback. A weaker TrustedLocal path is available only as an explicit,
+accurately disclosed choice. Missing required enforcement means no process
+starts; the same Execution remains unavailable/blocked and Attention-visible.
+Action approval does not widen policy; policy choice does not grant approval.
+
+Only the authenticated human command `DecideSandboxPolicy`, through existing
+auth→Application→P1 Gateway, may commit the exact Execution/Episode policy.
+P12 resolves exact CAPA-v2 Grant authority, issuer provenance, target and
+finite lifetime before receipt access. P1 persists committed policy decision,
+event and receipt atomically; rejected commands persist none. P5 loads the
+strict operator-config snapshot. P9 consumes only the exact durable
+Execution/Episode decision and records unavailable capability as immutable
+`SandboxProviderUnavailableFactV1`; P10 derives safe ActionRequired Attention
+from that fact and retained queue, never from the wake event alone. Restart
+does not infer policy from model text, current defaults, events or Worktree
+state.
+
+On schema-48 baseline, P1 specifies forward-only migrations
+`0049_sandbox_policy_and_grant_provenance` (`requiresUserVersion=48`) and
+`0050_sandbox_provider_unavailable_fact` (`requiresUserVersion=49`). 0049
+adds immutable exact Grant issuer provenance and committed-only
+`SandboxPolicyDecision` storage; 0050 adds the V5 immutable unavailable fact,
+retained P10 admission queue/marker, and exact FK to the decision identity.
+These are owner contracts only: no migration is registered or activated and
+no database is upgraded. No historic authority, decision or fact is inferred
+or backfilled.
+
+The independent post-landing consistency review is a separate gate. The
+distinct implementation authorization
+`AUTHORIZE_NATIVE_OS_SANDBOX_CONVERGENCE_IMPLEMENTATION` was NOT GRANTED
+at the V1.53 checkpoint. This historical status is corrected by the
+V21 authorization corrigendum below; this V21 design landing itself authorizes
+no code, tests, migration execution, database upgrade, deployment or release.
+
+## Accepted Native OS Sandbox RecoveryBinding Attention closure (DID v1.54)
+
+Accepted token `ACCEPT_NATIVE_OS_SANDBOX_REMAINING_RUNTIME_CONTRACT_CLOSURE_V21`,
+proposal raw SHA-256
+`5CF4E41F1940F7ABB6C61D5B963A9E9D687D967AC4C72EE7A31E18424873486A`.
+This owner amendment is applied to the schema-48 current-main baseline at
+`8cd0a94653f1278a194cf23e63503bf154885373`; the exact user decision and
+authorization context are recorded in the V21 acceptance record.
+
+P4's existing immutable RecoveryBindingV1 remains the only binding authority.
+On missing/corrupt/mismatched proof, P9 performs read-only classification
+from durable `tool_invocations` and
+`tool_invocation_recovery_bindings`; it creates no P9 failure-code enum,
+persisted event enum, DB table/column, marker, or P40 ToolObservationReplay
+fact. The invocation remains NotAdmitted and Pending, its Step remains
+ActionsInProgress, and there is no lease renewal/acquisition, P4 call, Provider
+dispatch, effect, ToolObservation, or settlement. Current resource/authority/
+control drift remains on existing P4 Denied or policy-required paths.
+
+P10 exposes the non-persisted API AttentionSource literal
+`SandboxRecoveryBindingFailure` by strict per-query derivation from those
+existing P4 rows. The exact safe summary is
+“Sandbox recovery binding evidence is missing or invalid; execution is paused.”
+`attentionFactId` is lowercase SHA-256 over canonical UTF-8 JSON with fixed
+keys `version,executionId,invocationId,bindingShaOr`; SQL NULL is JSON null,
+and a syntactically valid lowercase 64-hex stored SHA is used byte-for-byte
+even if it does not match the binding content. Malformed non-NULL hash format
+is a Persistence/ProjectionIntegrityFailure: fail closed, use the existing
+corruption Problem/operational path, and emit no derived Attention. The
+Attention `occurredAt` is the immutable `tool_invocations.intent_at`, decoded
+as canonical UTC; absent/invalid time is also projection-integrity failure
+with no fabricated timestamp. The source never exposes raw binding or
+resource evidence and never materializes a marker, event, queue, or rebuild
+state. It disappears only on exact invocation terminality or Execution Stop;
+v1 has no repair/rebind path. A verified backup or new Execution is outside
+this contract. Event pruning is immaterial to this read-only projection.
+
+The complete accepted V1–V21 contract chain is forward-ported from this
+schema-48 current-main baseline to Scenarios 1.6 / System Design 1.21 / DID
+1.54. Owner contracts are substantive and ownership-aligned: P1/01/03/04/05/06
+specify the exact human wire/CAS/fingerprint/rejections, atomic receipt/result/
+decision/event join, unchanged schema and recovery; P2/04/05/06 use the
+already-existing executions.episode_revision and same-Execution park/wake;
+P3/03/08 define Pending/NotAdmitted Step progression; P4/01/02/04/05/06 own
+process policy, network/provider controls, target/basis digests and recovery;
+P5/01 owns closed authority/issuer/provider-registry configuration; P9/07
+owns typed no-reprobe provider-failure facts and read-only RecoveryBinding
+classification; P10/02/03/04/05/07 own exact freshness, queue/rebuild,
+derived Attention, preconditions and status/Problem DTOs; P11/04/12 own current
+region resolution and logical handoff; P12/02/09/10/13/14 own authority,
+mapping, transport and T2/T3 qualification; P13/02/03/06 render the human-only
+choice, NeedsDecision/Unavailable states and safe receipts. V21 binding
+Attention is an API/source literal only, not a persisted enum. P1/07 command-
+identity owner is not amended; no write-once envelope/sidecar is introduced.
+P11/03/05
+EnvironmentRevision/drift does not become sandbox policy freshness.
+
+No 0051 is added or reserved. Existing migrations 0049/requires48 and
+0050/requires49, schema 50, and inherited 0043/0044 state remain unchanged;
+none is registered/activated or executed here. No existing database is
+upgraded, and this owner landing performs no implementation, test, deployment
+or release action.
+
+### V21 authorization corrigendum
+
+The historical V1.53 “NOT GRANTED” statement is superseded by the user's
+direct authorization in thread `01a0ec9b-9a9f-7242-9d1e-973451238d05` on
+2026-10-18: `AUTHORIZE_NATIVE_OS_SANDBOX_CONVERGENCE_IMPLEMENTATION`, scope
+T0–T4. This corrigendum records that pre-existing grant; V21 does not mint a
+new implementation token. Implementation may resume only after this accepted
+design landing receives independent post-review. No migration is activated,
+no existing database is upgraded, and no release is authorized by this
+landing or corrigendum.
+
+## Accepted Native Sandbox producer mapping closure (DID v1.55)
+
+Accepted token `ACCEPT_NATIVE_OS_SANDBOX_V21_PRODUCER_MAPPING_CLOSURE_V3`,
+proposal raw SHA-256
+`3944B1E8BBA9A7A0EBB47988B4B67965718C94EB4EE05D9605E9711AC1FF8A8A`.
+This owner-level closure adds no new user-visible scenario and does not change
+Problem & Goals, System Design, Scenarios, authority permission, schema, or
+migration activation. It closes the producer mapping across existing owners:
+P11/04 resolves the complete current ResourceBoundary and digest; P4/04/05
+derive the existing object-valued SandboxTargetRef and deterministic logical
+filesystem mounts/access; P5/01 publishes versioned SandboxAuthorityBundleV2
+with fixed `builtin-v1` TrustedLocal identity and preserved monotone
+high-water/audit compatibility; P12/13/14 own exact broker controls and T3
+limit/evidence binding; P1/01/03 preserve existing CAS, receipt replay, and
+decision transaction. P12/09 is a cross-reference only and its region codec
+is unchanged.
+
+The exact Pref64 control literal for Restricted/Enabled is
+`FreshPerResolutionAndConnection`; each new DNS resolution, connection, and
+redirect hop performs fresh discovery. Existing V21 P4 snapshot/basis codec
+and golden vectors remain unchanged. The acceptance/landing record and
+manifest pin all owner postimages. Existing implementation authorization
+continues only after independent post-landing review; this design change
+does not activate 0049/0050, upgrade a database, or authorize release.
+
+## Accepted Sandbox Policy Candidate Read Model V5 (DID v1.56)
+
+Accepted token `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL_V5`, proposal
+raw SHA-256
+`26B4BDAA4F79DCF2A0EA7C601A1037372A9C5308AB761663A921235076CE8D13`.
+This is an owner-contract/read-model closure and adds no DID-wide vocabulary,
+domain state, new scenario class, command, route, schema, or migration. It
+closes the dependency among P4/05/06 requirement/currentness reads, P5/01's
+verified bundle/current-host tuple supply, P1/01's unchanged full-bundle CAS,
+P10/03/05 candidate projection and freshness barrier, and P13/03/06 deliberate
+human choice. All committed variants now compare the full V2 authority-bundle
+pair; registry-only bundle drift also stales TrustedLocal, which remains
+Unconfined and does not gain a provider tuple. P4 reads existing P3 Pending /
+NotAdmitted / RecoveryBinding evidence through a read-only port; P10 does not
+read P3/P4 private stores. P10 candidate IDs are presentation-only and never
+enter the existing P1 command. Scenarios 1.6 and System Design 1.21 remain
+unchanged; no provider qualification, implementation, migration activation,
+database upgrade, or release follows from this design landing.
+
+## Accepted Sandbox Policy Candidate Profile Binding Digest V6 (DID v1.57)
+
+Accepted token `ACCEPT_SANDBOX_POLICY_CANDIDATE_PROFILE_BINDING_DIGEST_V6`,
+proposal raw SHA-256
+`90300163BA7F2EE31314E63A028A3D67F9DD87D79895796F6DB81304D846DCB2`.
+This fixes only the V5 candidate-read placement of the existing
+`sandboxHandleBindingDigest`: P10/05 removes it from common preconditions and
+puts an exact profile-specific digest immediately after `candidateId` in each
+closed candidate variant. One coherent P11 full-boundary and exact active
+Workspace ownership snapshot feeds the unchanged P4/05 canonical producer
+for every offered profile at initial and refreshed reads. Missing or
+unprovable source projection fails the read as a whole. A shared digest is
+allowed when exact projections coincide.
+
+P13/03/06 copy only the selected digest to P1/01's unchanged
+`expectedSandboxHandleBindingDigest`; P1 continues its submitted-profile
+CAS. `candidateId` remains the V5 tuple presentation identity without the
+digest in its preimage. After the existing stale receipt, P13 discards the
+whole read and requires fresh human selection even when an ID is unchanged.
+The singular V21 `sandboxPolicyPreconditions` union, P4/P9 execution gates,
+V2 authority currentness, P5 host tuple proof, TrustedLocal safety
+presentation, P1 command/receipt/snapshot and all persistence contracts
+remain unchanged. Scenarios 1.6 and System Design 1.21 remain unchanged; this
+landing grants no implementation, migration, database or release authority.

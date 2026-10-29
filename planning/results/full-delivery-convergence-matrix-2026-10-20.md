@@ -1,0 +1,155 @@
+# Full delivery convergence matrix
+
+Initial audit date: 2026-10-20
+
+Audited code baseline: `e94a204a7988417eead9bc0fc6a301140d2f7ca9`
+
+Audit scope: read-only review of frozen design, current source/test inventory, and committed qualification records. No tests were run for this audit.
+
+## Current integration snapshot (reviewed 2026-10-24)
+
+This is the current delivery index. The module matrix, S1–S4 disposition, and
+open-gate list below are the historical 2026-10-20 audit of
+`e94a204a7988417eead9bc0fc6a301140d2f7ca9`; read them as history, not as
+current status. The current audited candidate is `772ba5d7`. It includes the
+reviewed P38 UX, Critical Steer option A, bounded P39 writer lock, S2 Wait
+eligibility and revision implementation, real S2/S3/S4 harnesses, S3 non-Work
+safety Attention handling, failure-fixture retention, the corrected and
+reviewed S4-B public oracle, and the synthetic V6 policy-drift qualification.
+The exact candidate passes `pnpm check`, the complete-coverage local release
+functional profile, and the package/clean-checkout gate; see
+[`release-candidate-convergence-772ba5d7.result.md`](release-candidate-convergence-772ba5d7.result.md).
+
+Four governance gaps had fixed packages with independent reviews at Blocking =
+0. S2 has since been accepted, landed, reviewed, implemented and qualified at
+the scoped scripted public-process layer below. S3, S4-CONTEXT-DG-01 and
+P12-DG-01 have also been accepted, landed, authorized and implemented at the
+scoped layers cited below. These implementations do not close their broader
+scenario/release qualification.
+
+| Governance gap | Integrated plan | Manual acceptance token | Conditional implementation authorization |
+|---|---|---|---|
+| S2-RDG-01 — SteerWork revision contract | `d1523c17`; [fixed-package review](S2-steer-work-revision-fixed-package.review.md), Blocking = 0 | `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1` (accepted; implementation authorization was separately granted after owner landing review) | Implemented and landing-reviewed; scripted L2 public-process journey PASS at `410695f9`. Real-provider S2 remains OPEN. |
+| S3 — AnyProducer settled-wait eligibility | `218b3de3` / `1b13acac`; [fixed-package review](S3-any-producer-wait-fixed-package.review.md), Blocking = 0 | `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1` (accepted and landed) | Implemented with focused build/tests and a scripted public denial-slice result; full S3 real-provider journey remains OPEN. See [implementation result](S3-any-producer-wait-implementation-20261024.result.md). |
+| S4-CONTEXT-DG-01 — assistant-message projection | `bba9ba84`; [Option A review](S4-CONTEXT-DG-01-option-a-independent-review-20261024.result.md), Blocking = 0 | `ACCEPT_S4_CONTEXT_DG_01_ASSISTANT_MESSAGE_PROJECTION_OPTION_A` (accepted and landed) | Deterministic implementation and focused verification PASS; real S4-B remains OPEN. See [implementation result](S4-CONTEXT-DG-01-assistant-message-projection-implementation.result.md). |
+| P12-DG-01 — D2/D4 progress convergence | `869a4b2f` / `390a0cf0`; [revision-2 review](P12-DG-01-d2-d4-progress-convergence-independent-review-rev2-20261024.result.md), Blocking = 0 | `ACCEPT_P12_DG_01_D2_D4_PROGRESS_CONVERGENCE` (accepted and landed) | Wave 1 implementation is integrated with focused tests/typecheck; not full P12 or release qualification. See [implementation result](P12-DG-01-implementation-wave-1.result.md). |
+
+The S2 acceptance and conditional implementation authority have been
+exercised; the S2 owner landing/review, implementation, and scoped scripted
+public-process result are recorded at the exact candidate in the S2 addendum
+below. The other accepted packages likewise have scoped implementation and
+review evidence, but do not close broader S3/S4/P12 qualification or change
+release readiness.
+
+These local gates now pass on one exact SHA. They do not include real-provider
+qualification, Native OS sandbox support, existing online/user database
+upgrade, or the broader release-readiness claim. Recovery dispositions for
+this candidate are reconciled in
+[`current-recovery-closure-audit-772ba5d7.result.md`](current-recovery-closure-audit-772ba5d7.result.md);
+do not use historical AH7/AH10/AH14 blanket OPEN labels below as current
+status for supported v1 registered paths.
+
+| Area | Verified evidence | Current limit |
+|---|---|---|
+| Real-provider S1 | One bounded single-Workspace lifecycle slice passed 1/1: public Answered → Work → effect → independent Verification PASS → Parent Acceptance → Completed → restart/read. Fourteen real-provider requests returned HTTP 200. Record: [real-public-s1-lifecycle-qualification-20261023.result.md](real-public-s1-lifecycle-qualification-20261023.result.md). | The test and runtime sources were separate SHAs (`c69e87c7` and `53c36a77`). This is one S1 slice, not S1–S4 closure or qualification of all tasks/providers. |
+| F18 organization recovery | Full organization file passed 12/12 on `44f3cc39` in 543.32s, inside the 665.5s case budget. The run kept all original stage waits and recorded 89 live stage snapshots. Evidence: `.test-results/2026-10-23T11-10-52Z-44f3cc39-f18-org-full/`. | This is a module qualification on that SHA, not a complete release run. |
+| Functional process sweep | The sweep report lists per-file results by exact SHA, including 16a, adcb, d891, 46d, and 0dd segments. | Results from different SHAs are not combined into a release pass. In the historical adcb sweep, P39 writer-exclusion was HUNG/ABORTED rather than an ordinary assertion failure; the later focused qualification below does not retroactively convert that sweep result. See [functional-release-qualification-sweep-2026-10-23.md](functional-release-qualification-sweep-2026-10-23.md). |
+| P39 maintenance writer exclusion | The bounded writer-lock implementation is integrated at `cd1a2845`; after rebuilding the adapter package, the complete focused process file passed 11/11 with retry 0 in 97.50 seconds. Record: [P39-writer-lock-contention-deadline.result.md](P39-writer-lock-contention-deadline.result.md). | The focused pass qualifies the current module but does not reproduce or establish the root cause of the historical 931106 ms sweep hang. That historical common-cause audit remains open. |
+| Desktop browser UI | The historical `0dd274` batch had 9/10, with the P38 approve/resume case later fixed and separately qualified. The current complete-coverage release run on `772ba5d7` reports the UI group **10/10 PASS**. | The prior failure is superseded for the local UI gate on this candidate; this still does not qualify a live Provider or Native OS enforcement. |
+| Port handshake and online F21 replay | On `0dd274`, port-handshake passed 33/33 and the F21 online replay case passed 1/1. On `d89103`, F21 full-rebuild passed 2/2. | These are separate file/case runs, not a complete functional suite. |
+| Critical Steer | Option A is accepted and integrated on `1732dba7`: one external SteerWork receipt owns the same-transaction Work correction and exact StopExecution. If the transaction has no active main, Steer and HumanInput commit without a Stop event; if a main appears or changes after preparation, P12 authority is re-resolved for the transaction-time current Execution. Targeted integration tests passed 17/17, including concurrent advisory-miss convergence, exact stale-target rebinding, no-active replay, and complete rollback when Stop rejects. Root/test TypeScript typecheck passed. | The design/implementation gap is closed at the targeted layer, but no daemon/process or full release qualification has yet run for Critical Steer. |
+| S2 — revision semantics / scripted public process | On exact candidate `410695f9fa1b58905d42c33b5ac0f9d1ad7e17c2`, the scripted public-process S2 L2 test passed 1/1 (test 44.593 s, total 64.79 s): DirectionGuidance preserves the exact contract; Critical amendment records revision 2 and Stops the exact active Execution; a held pre-commit ProviderTurn may settle, but no action/completion follows on that stopped Execution; stale old Verification is rejected; restart/same-CommandId replay yields one receipt; revision-2 Verification/Acceptance succeeds. Record: [S2-steer-work-revision-l2.result.md](S2-steer-work-revision-l2.result.md). | This is one scripted-provider journey, not real-provider/model qualification, full S2 coverage, or a release-suite pass. The real Normal Steer run correctly exposed the former unchanged-mission limitation; the accepted S2 revision contract is implemented, but the real-provider S2 journey remains OPEN. The separately qualified real immediate-Stop slice is recorded at [S2-real-immediate-stop-qualification-2026-10-24.result.md](S2-real-immediate-stop-qualification-2026-10-24.result.md). |
+| Real-provider S3 | APW-1/APW-3 are accepted and implemented with focused/scripted evidence; the real rerun on `34adf883` completed 11/11 Provider responses but settled with only a Parent, an Unsatisfied `AnyProducer` wait, no Child/producer, no active Execution and no Attention. | S3 remains unqualified: the recorded real journey did not reach Child execution, delivery, verification, or acceptance. This failure remains part of the real-provider qualification gap and does not negate the scoped APW implementation/default tests. See [S3 real rerun](real-public-s3-collaboration-rerun-20261024.result.md). |
+| Real-provider S4 | S4-A has a bounded real-provider fail-closed restart PASS. | S4-B remains unqualified: recorded real runs did not reach the approval/restart boundary (one lacked an exact shell call; another completed the file through an already-authorized patch and therefore had no pending Executable approval). Test-source preparation is not a real S4-B qualification. See [S4-B result](real-public-s4-b-approval-hard-restart-20261024.result.md). |
+| Native OS sandbox | Providers remain Experimental/Unavailable; no Supported or usable real OS sandbox provider is established. A Windows 10 LPAC opt-out A/B probe denied the outside-file read that regular AppContainer allowed, but failed Workspace/Temp positive controls. The synthetic V6 pre-intent CandidateRead/P1/P4/P9 registry-drift/restart file now passes 11/11: policy selection precedes EAP consumption, stale selection has no mutation, exact current selection reaches typed `ProviderVersionMismatch/NoEffect`, and restart/bindings converge. | LPAC still lacks required positive filesystem/Temp behavior, signed production helper qualification and Supported provider tuples. V6 is synthetic policy/runtime evidence only and does not establish real OS enforcement. |
+
+The current release run selected 64 files with complete coverage: 6 executed
+in the resumed run and 58 inherited from a compatible resume source; the UI
+group passed 10/10. The current package run passed clean-checkout 1/1. The
+62-entry manifest and older 9/10 UI batch are historical.
+
+| Final gate | Status |
+|---|---|
+| `pnpm check` on one current candidate | **PASS** at `772ba5d713032fbccd7623264f5b664bee22f4a9` |
+| Complete `pnpm test:functional` with `completeCoverage: true` on one SHA | **PASS** at `772ba5d713032fbccd7623264f5b664bee22f4a9` (64 selected; compatible resume; UI 10/10) |
+| `pnpm test:package` on the same candidate | **PASS** at `772ba5d713032fbccd7623264f5b664bee22f4a9` (build + clean checkout 1/1) |
+| Representative real-provider S1–S4 journey and restart qualification on that candidate | OPEN; existing slices are partial/failed and from different source SHAs |
+| Supported Native OS sandbox provider | OPEN; none is currently claimed |
+
+## Decision rules
+
+### Remaining gates after local candidate convergence
+
+- **Real Provider / model journeys:** S1 has one bounded lifecycle PASS whose
+  test/runtime source SHAs differ; S2 immediate Stop is a bounded PASS but
+  Normal Steer had a real terminal Verification FAIL before the revision
+  contract implementation; S3's real run stalled at a settled no-producer
+  AnyProducer wait; S4-A has a bounded fail-closed restart PASS, while S4-B
+  has not reached its Executable-approval/restart oracle. These are separate
+  from the scripted release suite.
+- **Recovery:** supported v1 AH7 DG-01/02/03 paths, registered AH10 paths
+  (including Deliver/P8/P41), and AH14 ambiguous legacy Attention pass the
+  current default matrix. Same-holder copied concurrency is explicitly
+  unsupported; do not count it as a failed product promise. Four exact
+  verification/P8/F23 cases are still awaiting default promotion, and the
+  Submitted DecisionEpisode corruption semantics choice remains open. P6
+  public read qualification is separate from the completed operator-only
+  rebuild. See
+  [`current-recovery-closure-audit-772ba5d7.result.md`](current-recovery-closure-audit-772ba5d7.result.md).
+- **Native OS sandbox:** no provider is Supported; synthetic V6 and the LPAC
+  opt-out probe are not production enforcement. Keep this capability disabled
+  or explicitly outside the release claim until the provider/security
+  boundary qualifies.
+- **Existing database:** disposable schema-upgrade fixtures do not qualify an
+  online/preserved user database. Do not touch existing databases absent
+  explicit user authorization and an approved offline upgrade/recovery path.
+
+The three local gates above pass on one candidate; they do not close these
+independent real-environment, recovery, sandbox, or existing-database gates.
+
+“Complete” applies only to the named module contract and its cited baseline. “Partial” means implementation or scoped evidence exists but an end-to-end or wider matrix remains open. “Open” means a required implementation, decision, artifact, or qualification is missing. A planning checklist is a pointer to evidence, not evidence itself. No local test result is promoted beyond its recorded command, case selection, or commit. A historical pass does not qualify the audited HEAD unless the record says it tested that exact source and the scope still matches.
+
+The source-of-truth chain is `docs/design/00-problem-goals.md` → `docs/design/01-scenarios.md` → `docs/design/02-system-design.md` → `docs/design/03-detailed-implementation-design.md`. At this audited commit, Problem & Goals is v1.3, Scenarios is v1.6, System Design is v1.21, and DID is v1.57. S1–S4 are observable journeys, not a feature checklist; formal closure of a component does not by itself close a scenario.
+
+## Module matrix
+
+| Area | State at this baseline | Implementation and layered evidence | Real-flow evidence and remaining gate |
+|---|---|---|---|
+| Project / Workspace | **Complete for core CreateProject, resource admission, and Workspace lifecycle contracts; release journey partial** | CreateProject, resource-source attribution, activation intent/claim, Workspace tree/detail and restart recovery exist in `apps/single-workspace/src` and the application/projection layers. F21 OPEN-1/2 and OPEN-3 have their own implementation/closure records (`F21-source-attribution-semantic-port.result.md`, `F21-open3-formal-closure.result.md`). The disposable schema-50 startup path is covered by `apps/single-workspace/test/p38-runtime-schema-boundary.test.ts`; F21 process cases cover commit-before-activation crash and retry/recovery. | `F23-s1-s4-public-journey-alignment.result.md` reports 4/4 focused public-process journeys on its recorded candidate, including formation/tree. It uses a deterministic test Provider, not a configured user model. The configured DeepSeek first-release record is only partial: greeting and Work approval succeeded; a later Project creation produced `command/post-commit-convergence-failure` (`first-release-acceptance.result.md`). No post-e94 public or real-config CreateProject/restart acceptance exists. **Gate:** current release functional/UI journey with project creation, resource selection, restart and a clean public result. |
+| Agent Loop / Context | **Complete for named EGP, SCRC, and AH19 checkpoint contracts; overall runtime recovery partial** | `packages/agent-runtime`, `packages/model-context`, P2/P3 persistence implement durable LoopStep, episode binding, context projection, compaction, pinned authority, and Work frontier. EGP/SCRC closure records cover episode and context runtime boundaries. `AH19-work-precheckpoint-bounded-frontier-implementation.result.md` reports latest-64 restart and checkpoint-boundary process cases; `AH19-conversation-checkpoint-owner-implementation.result.md` reports schema-48 conversation owner, 2 process crash sides, Native exact-match/mismatch and offline 44→48/46→48/47→48 cases. | These are scoped cases, not a full suite at e94. `AH-recovery-cross-generation-matrix-audit.md` still marks AH7 and AH10 partial; the delivered checklist says AH10 residual takeover cells remain. The most recent full `pnpm check` pass is `1ef6e8f5`, a strict ancestor of e94 and predates substantial later code. The most recent full functional run documented in `P36-integrated-full-qualification.result.md` tested `6ee3ccd9`, also older. **Gate:** exact-e94 descendant candidate `pnpm check` and `pnpm test:functional`; complete the remaining AH7/AH10 cases before claiming broad S4 recovery. |
+| Tool permissions / executable authority | **Complete for CAPA/P38 exact approval and P39 handoff contracts; Native OS execution remains open** | The frozen P38/P39 approval path gates an exact action and resumes that same action. `P38-formal-closure.result.md` documents public/browser paths, terminal winner and CAS races, same-Step crash/replay, P39 freshness, and disposable migration evidence. Sandbox policy/decision implementation spans P1/P4/P5/P10, with recent provider tuple selection in `P10-P1-os-provider-tuple-selection-option-a-stage-c.result.md` and Web mapping in Stage D. | The P38 result explicitly scopes closure to P38 and does not qualify a production OS provider. Stage E (`P10-P1-option-a-stage-e.result.md`) remains **OPEN**: the no-supported-provider outcome terminalizes the current action in P9, so a later-action drift/restart path cannot yet be qualified; a pre-intent CandidateRead design gap is under review. **Gate:** resolve the accepted CandidateRead contract, finish V6-E/F and P4 effect admission, then qualify the real supported provider before advertising OS enforcement. |
+| Parent / Child Work | **Complete for MAC formation, initial Work, and Parent acceptance path; broader S3 partial** | MAC-P2 implements approved formation, placement evidence, initial Work, existing-child assignment and Parent `accept_result`; MAC-P1–P4 results document scoped closures. The P6 operator-only rebuild code/test record exists (`F23-P6-operator-unbound-legacy-rebuild.result.md`) but labels itself in progress. The accepted landing record and DID explicitly say its separate implementation authorization was not granted; its read-surface evidence is module-level, not HTTP/daemon. | The public black-box S1/S3 formation journey passed 4/4 at its cited historical candidate; real DeepSeek B07 is recorded in MAC-P2. These do not establish the entire human-facing exception/recovery route. AH10 still has action/state takeover gaps. **Gate:** resolve the implementation authorization/status discrepancy before counting P6 operator rebuild as delivered; run current default formation/child result/Parent acceptance public journey and finish AH10 cells; do not infer S3 closure from MAC-P2. |
+| Cross-Work delivery / dependency | **Complete for MAC-P3/P4 and F19 ordering/wake contracts; broad S3 remains partial** | Runtime declaration, deliverable production, delivery admission, deterministic satisfaction and exact wake are implemented. `functional-release-coverage-audit.result.md` records F19 in both orderings. `P37-L6-process-crash-matrix.result.md` records its 11 cases across two runs and F19 2/2; this is split-run evidence. MAC-P3/P4 provide scoped real-provider B09/B08 evidence. | No same-baseline full `pnpm test:functional` exists at e94. Older AH10 evidence has some receipt-first takeover routes, while `AH-recovery-cross-generation-matrix-audit.md` leaves Deliver fencing and broader takeover permutations open. **Gate:** current full process suite (F19 both orders plus AH10 Deliver/takeover cells); maintain split-run qualification scope when citing P37. |
+| Verification / Acceptance | **Core P8 and scoped replay/evidence contracts implemented; whole verification/replay closure partial** | Independent three-valued Verification, evidence binding, Parent Acceptance, and Work completion are implemented. P8 module result, F22 Work Detail, F12/F13 failure-verdict process cases, VCS schema-46 implementation, AH14 schema-47 implementation, and P8 permanent replay-origin P45 are individually documented. `F23-permanent-replay-origin-implementation.result.md` says the P8/origin slice is partial. The P6 operator rebuild implementation file claims scoped code/test work, while the accepted landing/DID say separate implementation authorization was not granted and the rebuild remains required; treat this as a governance/status discrepancy, not closed evidence. | The deterministic public S1 journey covers Verification/Acceptance/restart 4/4 on its historical baseline. Real configured DeepSeek S1 on 2026-10-12 stopped at an open Verification with all criteria Unknown and `VerifierOrphan`; there was no ConcludeVerification, Acceptance, CompleteWork, or completed-detail restart (`isolated-s1-real-provider-partial-20261012.result.md`). **Gate:** resolve the documented orphan through the authorized human flow; repeat configured Work→independent PASS→Parent Acceptance→Completed detail→restart. Resolve P6 operator authorization/status, then qualify the operator rebuild and VCS/AH14 current-schema integration under full gates. |
+| Frontend / Web product UI | **Complete for D0–D10 Web product contracts; current integrated release build unqualified** | `D10-web-product-ui-final-convergence.result.md` records formal Web UI closure, layouts and accessibility/product-state evidence. Current provider tuple Web selection has separate Stage-D evidence (3 files/44 tests plus typecheck/build). | Historical Web full check passed as part of `pnpm check` at `1ef6e8f5` (33 files/250 tests); it is older than e94. Recent schema/sandbox work can affect P13/public startup, and the current full check has not been run. First-release browser evidence only reached greeting/approval and captured a visible CreateProject post-commit failure. **Gate:** rerun Web typecheck/build/tests on the release candidate and run browser create/approve/accept/detail/restart. |
+| Crash recovery / schema migration | **Broad recovery implementation and schema-50 prefix present; qualification partial** | `adapters/persistence-sqlite/src/migrations.ts` sets `CURRENT_SCHEMA_VERSION = 50`. Offline migrations 0045–0050 include F23 replay origin, VCS verification snapshot, AH14 legacy adoption Attention, AH19 Conversation checkpoint owner and Native Sandbox policy/fact storage. `native-os-sandbox-storage-t1.result.md` reports 11 focused upgrade cases (fresh-to-50, 47→50, 48→50, interruption/resume/no-op); AH14 and AH19 each have dedicated process/CLI records. `P37-L6-process-crash-matrix.result.md` supplies 11 scoped process cases. | No preserved or online database was migrated. `delivery-closure-checklist.md` still leaves final exact 0045→0050 fresh-upgrade verification and final integrated gates unchecked; the latest platform-specific `pnpm test:package` attempt in `native-os-sandbox-windows-t3d-d2-v3-implementation.result.md` failed its F20 clean checkout because the source fixture required offline upgrade to schema 50. Treat that as a failure on its recorded independent baseline, not an e94 run. AH7/AH10 recovery matrices remain incomplete. **Gate:** verify cumulative fresh 45→50 / supported source copies with the current CLI, then full exact-HEAD gates; do not use a preserved database for qualification. |
+| Native OS sandbox | **Partial implementation; no provider is Supported or runnable** | Policy/grant Wave C has transaction/crash evidence. Windows D2 V3 trust/provenance codecs, source/high-water fencing and protected-source crash checks are implemented and reviewed (`native-os-sandbox-windows-t3d-d2-v3-implementation.result.md`). POSIX and Windows provider identities are registered. Stage C exact tuple selector and Stage D UI mapping are implemented. | Every T2 provider remains Experimental, publishes empty profile/network tuples, and `SandboxProcessPort.run` returns Unavailable. No shipped production Windows helper, detached operator signature/manifest, positive provider materialization, or supported provider execution was qualified. Wave D checkpoint still calls production `sandboxProcessPolicy` wiring and real two-daemon qualification open; Stage E remains open due CandidateRead pre-intent gap. **Gate:** close CandidateRead and V6-E/F, provision and qualify actual signed helper/artifacts, complete D4–D6 filesystem/network/stop/broker gates and production two-daemon recovery; until then do not claim OS isolation. |
+| Release gates / package | **Open at e94** | `package.json` defines `pnpm check`, `pnpm test:functional` (release manifest, public-process and Playwright/browser journeys), and `pnpm test:package` (clean package/checkout suite). `P36-integrated-full-qualification.result.md` is an older exact-code pass: `pnpm check`, `pnpm test:functional` 40 files/171 tests plus Playwright 7/7, and F20 clean checkout. `pnpm-check-1ef6e8f5.result.md` is the latest full `pnpm check` record found and reports 1194 Biome files, architecture 164, core 381/381, Web 250. | `1ef6e8f5` is an ancestor, not e94; it predates the schema-50/native sandbox and later recovery/code changes. No exact-e94 `pnpm check`, full `pnpm test:functional`, or `pnpm test:package` PASS is recorded. The 2026-10-19 delivery checklist leaves all final gates unchecked. The real configured restart trail is partial (Oct 12) and has no acceptance/restart closure. **Gate:** freeze a clean candidate SHA, run all three release gates on that SHA, retain runner health and artifact evidence, then repeat the configured public S1 acceptance and S4 restart. |
+
+## S1–S4 scenario disposition
+
+| Scenario | State | Strongest cited evidence | Remaining proof |
+|---|---|---|---|
+| S1 — long-running goal to Work, Verification, Parent Acceptance | **Partial** | A bounded real-provider lifecycle slice passed 1/1 (public Work/effect/independent Verification PASS/Acceptance/Completed/restart read). | Its test and runtime source SHAs differ (`c69e87c7` / `53c36a77`), and it is one bounded task, not the complete S1 scenario on this release candidate. |
+| S2 — observe, drill down, steer, govern | **Partial** | The scripted revision-semantics journey passes 1/1 and a separate real immediate-Stop slice passes with restart. | Real Normal Steer previously ended in Verification FAIL before the revision-contract implementation; it has not been requalified with the final contract on this candidate. Full S2/model behavior remains OPEN. |
+| S3 — Parent/Child collaboration, dependency, exception escalation | **Partial** | MAC-P2/P3/P4 scoped contracts; F19 forward/reverse order; F23 S1/S3 public formation journey; APW-1/APW-3 implementation and scripted public denial slice are integrated. | The real S3 rerun stalled on a settled `AnyProducer` wait with no producer. The accepted package is implemented at scoped layers, but full real S3 collaboration remains OPEN. P6 public read qualification and Native candidate gaps remain. |
+| S4 — idle continuity, interruption, recovery and re-entry | **Partial** | S4-A has a real-provider fail-closed hard-restart PASS; assistant-message projection implementation and deterministic focused verification are integrated. | The corrected-oracle S4-B attempt at `ac9625d9` timed out before obtaining a genuine held `shell Get-Date` response. No EAP, P1, restart, or approval boundary was reached. S4-B remains OPEN; there is no approval-hard-restart qualification or full real-provider S4 journey on this candidate. |
+
+## Exact gate and configured-run record
+
+- `pnpm check`: exact candidate `772ba5d713032fbccd7623264f5b664bee22f4a9` PASS; details are in `planning/results/release-candidate-convergence-772ba5d7.result.md`.
+- `pnpm test:functional`: exact candidate PASS with `completeCoverage=true`, 64 selected files, 6 executed plus 58 inherited from a compatible resume, and UI 10/10; see the same result record. The result uses compatible resume evidence, not one uninterrupted execution.
+- `pnpm test:package`: exact candidate PASS; build and clean checkout 1/1. This is local package evidence, not existing-user-database migration qualification.
+- Real configured provider and restart: `first-release-acceptance.result.md` and `isolated-s1-real-provider-partial-20261012.result.md` are the latest explicit records located. The first shows greeting/approval plus a CreateProject post-commit convergence failure; the isolated S1 run shows real Work effect but Unknown/VerifierOrphan, no Acceptance/completion/restart. No real-config completed S1–S4 restart is evidenced at e94.
+- Migration: the runtime target is schema 52. Disposable offline schema-48→52 / 51→52 qualifications exist; no existing/preserved user database has been upgraded or qualified, and this must not be inferred from fresh-schema package tests.
+
+## Open release gates
+
+1. Complete default promotion and exact-SHA qualification for the four named pending verification/P8/F23 cases; see the current recovery audit.
+2. Complete P6 public read qualification and resolve the Submitted DecisionEpisode corruption terminalization choice under its owning contract.
+3. Keep Native OS Sandbox claims disabled until a real provider is Supported and filesystem/network/broker/stop enforcement and cross-process qualification pass; synthetic V6 is not this evidence.
+4. Retain the schema-52 disposable upgrade evidence; any preserved/online database operation requires explicit user authorization and its approved offline upgrade/recovery procedure.
+5. Keep real-provider S1–S4 journeys separately scoped: S1 is one bounded slice with separate source SHAs; S2 Normal remains open after its Verification failure; S3's real run stalled on an AnyProducer wait; S4-A fail-closed passed, while S4-B did not reach approval/restart. Do not combine these slices into S1–S4 closure or a release claim.
+6. The local `pnpm check`, complete-coverage `pnpm test:functional`, and `pnpm test:package` gates pass on exact candidate `772ba5d7`; remaining blockers are not these local gates.
+
+The historical module matrix remains scoped to `e94a204a`; the current integration snapshot above is updated for candidate `772ba5d7`. This update does not change `docs/design/**`, broaden Native/V6 qualification, or claim release readiness.

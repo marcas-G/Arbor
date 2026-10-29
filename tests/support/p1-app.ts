@@ -1,10 +1,13 @@
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   ClockLive,
   CommandStoreLive,
+  ConversationResponseJobStoreLive,
   DomainEventJournalLive,
+  ExecutionRepositoryLive,
   IdGeneratorLive,
+  InboxProjectionStoreLive,
   layer,
   ProjectRepositoryLive,
   SessionRepositoryLive,
@@ -15,8 +18,12 @@ import {
 import {
   CommandGateway,
   CommandGatewayLive,
+  type CommandHandler,
+  CommandHandlerRegistry,
   type CreateProjectPayload,
   FenceStopCheckInertLive,
+  makeP1CommandHandlers,
+  makeP15CommandHandlers,
   P1CommandHandlerRegistryLive,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
@@ -30,7 +37,6 @@ import {
   Principal,
   type ProjectId,
   parse,
-  ResourceBoundaryRevision,
   ResponsibilityRevision,
   Revision,
   responsibilityBound,
@@ -38,11 +44,19 @@ import {
   type WorkspaceId,
 } from "../../packages/domain/dist/index.js";
 import {
+  ConversationResponseJobStore,
+  ExecutionRepository,
+  InboxProjectionStore,
+  ProjectRepository,
+  SessionRepository,
   type TransactionOperationalFailure,
   TransactionPort,
   type TransactionPortService,
   TransactionScope,
+  WorkRepository,
+  WorkspaceRepository,
 } from "../../packages/ports/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
 
 export const testActor = parse(Actor)("user:test");
 export const testPrincipal = parse(Principal)("user:test");
@@ -50,6 +64,7 @@ export const testPrincipal = parse(Principal)("user:test");
 export const makeP1App = (
   filename = ":memory:",
   transaction?: Layer.Layer<TransactionPort, never, SqlClient>,
+  includeP15 = false,
 ): Layer.Layer<CommandGateway | SqlClient> => {
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
@@ -62,16 +77,49 @@ export const makeP1App = (
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),
+    Layer.provide(ExecutionRepositoryLive, infra),
+    Layer.provide(ConversationResponseJobStoreLive, infra),
+    Layer.provide(InboxProjectionStoreLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
   );
-  const all = Layer.mergeAll(
-    infra,
-    deps,
-    FenceStopCheckInertLive,
-    Layer.provide(P1CommandHandlerRegistryLive, deps),
+  const combinedRegistry = Layer.effect(
+    CommandHandlerRegistry,
+    Effect.gen(function* () {
+      const projects = yield* ProjectRepository;
+      const workspaces = yield* WorkspaceRepository;
+      const sessions = yield* SessionRepository;
+      const works = yield* WorkRepository;
+      const executions = yield* ExecutionRepository;
+      const responseJobs = yield* ConversationResponseJobStore;
+      const inbox = yield* InboxProjectionStore;
+      const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
+        ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
+        ...makeP15CommandHandlers({
+          projects,
+          executions,
+          responseJobs,
+          inbox,
+          executableApprovals: {
+            cancelForExecution: () => Effect.succeed([]),
+          },
+        }),
+      ];
+      return CommandHandlerRegistry.of({
+        lookup: (commandType) => {
+          const handler = handlers.find(
+            (candidate) => candidate.commandType === commandType,
+          );
+          return handler === undefined ? Option.none() : Option.some(handler);
+        },
+      });
+    }),
   );
+  const registry = includeP15
+    ? Layer.provide(combinedRegistry, deps)
+    : Layer.provide(P1CommandHandlerRegistryLive, deps);
+  const all = Layer.mergeAll(infra, deps, FenceStopCheckInertLive, registry);
   return Layer.mergeAll(
     all,
     Layer.provide(CommandGatewayLive, all),
@@ -109,6 +157,9 @@ const definition = {
   interfaces: [],
 };
 
+export const ensureProjectResourceSourceTestColumn =
+  ensureLegacyProjectResourceSourceFixture;
+
 export const seedProject = (args: {
   readonly projectId: ProjectId;
   readonly rootWorkspaceId: WorkspaceId;
@@ -116,6 +167,7 @@ export const seedProject = (args: {
   readonly commandId: CommandId;
 }) =>
   Effect.gen(function* () {
+    yield* ensureProjectResourceSourceTestColumn();
     const gateway = yield* CommandGateway;
     const payload: CreateProjectPayload = {
       name: "Arbor",
@@ -133,11 +185,7 @@ export const seedProject = (args: {
         name: "root",
         responsibilityDefinition: definition,
         responsibilityRevision: parse(ResponsibilityRevision)(0),
-        resourceBoundary: {
-          basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-          addresses: [],
-        },
-        resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+        resourceSelection: { _tag: "ConversationOnly" },
         agentBinding: responsibilityBound(args.rootWorkspaceId),
         workspacePolicy: makeWorkspacePolicy(),
         workspacePolicyRevision: parse(Revision)(0),
@@ -152,7 +200,7 @@ export const seedProject = (args: {
         commandType: "CreateProject",
         projectId: args.projectId,
         actor: testActor,
-        schemaVersion: "1",
+        schemaVersion: "2",
         payload,
       }),
       projectId: args.projectId,

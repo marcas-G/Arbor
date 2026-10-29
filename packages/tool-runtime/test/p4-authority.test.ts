@@ -73,6 +73,12 @@ const context: ToolExecutionContext = {
   authenticatedPrincipal: principal,
   authority,
   controlBasisDigest: "digest",
+  executionFence: {
+    executionId,
+    workerId: "worker:p4-authority",
+    workerIncarnationId: "incarnation:p4-authority",
+    fencingGeneration: 0 as never,
+  },
   requestedAt: "t",
 };
 

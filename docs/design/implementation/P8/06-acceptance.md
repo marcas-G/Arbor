@@ -1,7 +1,12 @@
 # P8 — 06 Acceptance Outline (DRAFT for contract review)
 
-**Authority:** DID v1.11 (G2/G4/G5/G6); S1 步骤 9–11, S3 步骤 11–12; DID v1.10 §11 P8; P6/P7 验收风格先例。
+**Authority:** DID v1.11 (G2/G4/G5/G6), v1.47 P6 UnboundLegacy route mechanics and v1.52 v1 route-command qualification; S1 步骤 9–11, S3 步骤 11–12; DID v1.10 §11 P8; P6/P7 验收风格先例。
 **Status:** DRAFT (first draft for contract review)。
+
+**Accepted Story H owner addendum (DID v1.46 / F23 permanent replay origin):**
+Story H below incorporates the current-authorized exact replay and permanent
+non-receipt origin contract. This additive acceptance amendment does not
+promote the remaining outline from DRAFT or close other P8 qualifications.
 
 全部 deterministic（Fake Provider / 直接命令提交）。
 
@@ -13,4 +18,31 @@
 - **Story F — Program 版本纪律**：P9 Verification Program + P14 Query/Inspection Program（v1.11 G6 已裁归 P8）v1 头字段/hash/eval 门/篡改负例（P6 D4 模式复制）；P14 read-only 契约负例（查询结果改 canonical 状态→违禁）。
 - **Story G — owner snapshot（v1.11 G4）**：StartVerification 记录 owner snapshot；目标 Workspace retire 后 Verifier 不被自动 abort（自然结论）；无法继续 → Unknown(Orphaned) 治理结论 → re-Start 新 identity 用当前 owner。
 - **补断言（round-2）**：Story A 中 Conclude(Pass) 也释放通道 1（VerificationChanged wake 断言）；同 revision 第二次 StartVerification → `VerificationAlreadyOpen` typed 拒绝；孤儿流：Unknown(Orphaned) 事件载荷含 conclusionReason、re-Start 新 verificationId。
+- **Story H — explicit human RetryVerification (DID v1.46 current-authorized replay):** Root Work succeeds only for authenticated local-human governance; child Work succeeds only for its exact Parent Workspace human. Agent grants, child actors, unrelated Work/Workspace, unauthenticated calls, stale Work revision, a non-Open Verification for a new CommandId, missing/foreign/active bound verifier Execution, and changed same-CommandId payload fail closed. One transaction commits old `Unknown(Orphaned)`, one new Verification, durable spawn intent, immutable permanent retry-origin fact, and receipt; rollback commits none. Exact CommandId replay reuses successor Verification/Execution IDs and the original receipt only while the current P12 visibility/human-authorization check still succeeds for the same original actor and source. Revoked/changed-owner authorization, different actor/project/source, or foreign target is rejected before Gateway receipt access. A same-source changed tuple reaches Gateway and returns its existing non-disclosing `IdempotencyConflict` receipt without handler or canonical writes. If a replay origin exists but its receipt is missing, the safe typed receipt-corruption path writes nothing. Old owner snapshot is retained after owner move/retirement, while the successor uses the current owner. Legacy committed rows receive the permanent origin only from exact retained event-pair/successor evidence; unprovable rows remain unchanged, are marked `UnboundLegacy`, and create a human-only P6 Governance Inbox entry. P10 Attention remains unchanged; this inbox disposition is not an Attention source. A later orphan requires a fresh human decision and creates no automatic retry loop.
+- **Story H replay-origin qualification:** exact same-command replay returns the identical receipt and IDs while current authorization remains; revoke/owner change denies before receipt access and restoring current authorization permits replay. Same source/CommandId with changed summary, expected revision, or successor IDs reaches Gateway and conflicts without decoding/rewrite. After the handoff is committed, a different source/project/actor or arbitrary new CommandId on that now-Concluded source has no replay authority; malformed CommandId remains HTTP 400. An origin with no receipt returns safe `PersistenceCorruption<"CommandStore">` and writes no attempt, handler result, Event, Verification, Execution, or spawn. Pre-commit crash leaves source conclusion/successor/intent/origin/receipt absent; post-commit crash leaves all present. Migration backfill accepts only the exact receipt/event/successor proof; duplicate, missing, pruned, malformed or conflicting evidence preserves the receipt and yields one `UnboundLegacy` Inbox entry. Pruning the original Events after the retention horizon does not remove the permanent origin or prevent authorized exact replay.
+- **Story H UnboundLegacy P6 route qualification (DID v1.47/v1.52):** the item
+  uses existing `Governance` kind and key
+  `retry-verification-unbound:<commandId>`, is derived from the immutable
+  disposition, and is visible only to the current authorized Root-local or
+  exact direct-Parent human. No v1 P1 command mutates canonical Work owner or
+  Workspace Parent, so only the command-level route-move, old/new recipient
+  command journey and command/process crash qualification are N/A for v1.
+  This N/A is not an N/A for the helper or route semantics: a future separately
+  governed command must move the same key in the same P1 transaction; rollback
+  preserves old canonical route and Inbox route, while commit publishes the new
+  route atomically, preserves Inbox `createdAt` and advances revision/updatedAt
+  once. The old route then loses visibility and the currently authorized new
+  route succeeds. If that future command cannot move the route atomically, the
+  ordinary Gateway `TerminalRejected(AuthorityDenied)` persists the normal
+  receipt/attempt and no canonical Work/Workspace/Event/Inbox/disposition
+  mutation; same tuple replays that receipt and a different CommandId
+  independently rejects. The Inbox is read-only/no-consume and is not
+  promoted, woken or projected to P10 Attention. Removing the disposable Inbox
+  row and pruning/corrupting receipt JSON and Events still permits rebuild from
+  disposition/current canonical facts through the operator-only offline
+  schema-48/P39 rebuild, including manifest and crash/restart qualification.
+  P8's old Verification owner snapshot and successor-current-owner semantics
+  above remain unchanged. Physical P1 revision/updated_at implementation is
+  already represented in current schema 48; this acceptance reserves no new
+  migration.
 - **机械断言**：五命令事件序列与拒绝集=契约；verdict immutable；verifier-only 两命令的 authority 越权拒绝；consumer 不绕过 handler（fingerprint 因果链）；P5/P6/P7 回归护栏全绿。

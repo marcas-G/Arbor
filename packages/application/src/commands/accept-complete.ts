@@ -29,10 +29,8 @@ import {
  * `AcceptWorkOutcome` is the Parent semantic decision (double-uniqueness
  * idempotency); `CompleteWork` is the mechanical closure re-validating the
  * full seven-fold precondition via the P0 `completeWork` transition (DID
- * §3.6 frozen form — no submitter is exempt, G3). The verification and
- * acceptance store channels are defects-only here: their adapter errors
- * are not part of the gateway error union yet (P7 `dependency-transitions`
- * precedent), so reads/writes go through `Effect.orDie`.
+ * §3.6 frozen form — no submitter is exempt, G3). Verification and acceptance
+ * repository failures remain typed through the command gateway.
  */
 
 // --- AcceptWorkOutcome (P8 `01` §4) -----------------------------------------
@@ -92,9 +90,9 @@ export const makeAcceptWorkOutcomeHandler = (
           lifecycle: work.lifecycle,
         });
       }
-      const verificationOption = yield* dependencies.verifications
-        .findById(payload.verificationId)
-        .pipe(Effect.orDie);
+      const verificationOption = yield* dependencies.verifications.findById(
+        payload.verificationId,
+      );
       if (Option.isNone(verificationOption)) {
         return commandErr({
           _tag: "VerificationNotFound",
@@ -123,28 +121,27 @@ export const makeAcceptWorkOutcomeHandler = (
       // gateway are receipt dedup; anything reaching the handler with a
       // (workId, revision) row already present is the typed rejection.
       // The repository unique index backstops concurrent inserts.
-      const prior = yield* dependencies.acceptances
-        .findByWorkRevision(payload.workId, payload.targetWorkRevision)
-        .pipe(Effect.orDie);
+      const prior = yield* dependencies.acceptances.findByWorkRevision(
+        payload.workId,
+        payload.targetWorkRevision,
+      );
       if (Option.isSome(prior)) {
         return commandErr({
           _tag: "AcceptanceAlreadyExists",
           workId: payload.workId,
         });
       }
-      yield* dependencies.acceptances
-        .insert(
-          {
-            acceptanceId: payload.acceptanceId,
-            workId: payload.workId,
-            targetWorkRevision: payload.targetWorkRevision,
-            verificationId: payload.verificationId,
-            actor: envelope.actor,
-            acceptedAt: envelope.issuedAt,
-          },
-          envelope.projectId,
-        )
-        .pipe(Effect.orDie);
+      yield* dependencies.acceptances.insert(
+        {
+          acceptanceId: payload.acceptanceId,
+          workId: payload.workId,
+          targetWorkRevision: payload.targetWorkRevision,
+          verificationId: payload.verificationId,
+          actor: envelope.actor,
+          acceptedAt: envelope.issuedAt,
+        },
+        envelope.projectId,
+      );
 
       const events: PendingDomainEvent[] = [
         {
@@ -257,9 +254,11 @@ export const makeCompleteWorkHandler = (
       // Binding resolution (§5): the payload names no verificationId —
       // the acceptance at (workId, expectedWorkRevision) carries it. Any
       // miss on the way to the triple is the seven-fold Mismatch.
-      const acceptanceOption = yield* dependencies.acceptances
-        .findByWorkRevision(payload.workId, payload.expectedWorkRevision)
-        .pipe(Effect.orDie);
+      const acceptanceOption =
+        yield* dependencies.acceptances.findByWorkRevision(
+          payload.workId,
+          payload.expectedWorkRevision,
+        );
       if (Option.isNone(acceptanceOption)) {
         return commandErr({
           _tag: "VerificationAcceptanceMismatch",
@@ -267,9 +266,9 @@ export const makeCompleteWorkHandler = (
         });
       }
       const acceptance = acceptanceOption.value;
-      const verificationOption = yield* dependencies.verifications
-        .findById(acceptance.verificationId)
-        .pipe(Effect.orDie);
+      const verificationOption = yield* dependencies.verifications.findById(
+        acceptance.verificationId,
+      );
       if (Option.isNone(verificationOption)) {
         return commandErr({
           _tag: "VerificationAcceptanceMismatch",

@@ -114,6 +114,50 @@ const appendEvents = (drafts: ReadonlyArray<PendingDomainEvent>) =>
     yield* tx.transact(journal.append(drafts));
   });
 
+const appendRawUnsupportedEvent = (draft: PendingDomainEvent) =>
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const journal = yield* DomainEventJournal;
+    const writerResult = yield* Effect.result(
+      tx.transact(journal.append([draft])),
+    );
+    expect(writerResult._tag).toBe("Failure");
+    const sql = yield* SqlClient;
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql.unsafe(
+          `INSERT INTO project_event_sequences (project_id,last_sequence)
+             VALUES (?,1)
+             ON CONFLICT(project_id) DO UPDATE SET last_sequence = last_sequence + 1`,
+          [draft.projectId],
+        );
+        const rows = yield* sql.unsafe<{ last_sequence: number }>(
+          "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
+          [draft.projectId],
+        );
+        const sequence = Number(rows[0]?.last_sequence ?? 0);
+        yield* sql.unsafe(
+          `INSERT INTO domain_events (
+            event_id,project_id,sequence,event_type,event_version,occurred_at,
+            aggregate_ref,actor,caused_by_command_id,caused_by_event_id,
+            correlation_ref,payload_json
+          ) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)`,
+          [
+            `evt_018f2b3c-4d5e-7abc-8def-${String(sequence).padStart(12, "0")}`,
+            draft.projectId,
+            sequence,
+            draft.eventType,
+            draft.eventVersion,
+            draft.occurredAt,
+            draft.aggregateRef,
+            draft.actor,
+            JSON.stringify(draft.payload),
+          ],
+        );
+      }),
+    );
+  });
+
 const offsetOf = (consumerId: string) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
@@ -189,17 +233,18 @@ describe("p9-rebuild (RB-1..RB-5 / PR1–PR4 — generic face, GQ2)", () => {
             yield* runConsumerBatch("rb1", projectA, 10);
             expect(yield* offsetOf("rb1")).toBe(3);
             expect((yield* projectionRows).length).toBe(3);
-            // Prune below sequence 2 and regress the offset under it.
+            // Prune below sequence 2 and move the test offset strictly below
+            // the legal floor-1 replay point (sequence 1).
             yield* pruneTo(2);
-            yield* regressOffset("rb1", 1);
+            yield* regressOffset("rb1", 0);
             const refused = yield* rebuildProjection("rb1", projectA).pipe(
               Effect.flip,
             );
             expect(refused._tag).toBe("ConsumerRebuildRefused");
-            expect(refused).toMatchObject({ offset: 1, floor: 2 });
+            expect(refused).toMatchObject({ offset: 0, floor: 2 });
             // No partial reset: rows and offset untouched by the refusal.
             expect((yield* projectionRows).length).toBe(3);
-            expect(yield* offsetOf("rb1")).toBe(1);
+            expect(yield* offsetOf("rb1")).toBe(0);
           }),
           makeConsumerInfra(),
         ),
@@ -291,7 +336,9 @@ describe("p9-rebuild (RB-1..RB-5 / PR1–PR4 — generic face, GQ2)", () => {
         Effect.provide(
           Effect.gen(function* () {
             yield* migrate;
-            yield* appendEvents([draft(1), draft(2, 2), draft(3)]);
+            yield* appendEvents([draft(1)]);
+            yield* appendRawUnsupportedEvent(draft(2, 2));
+            yield* appendEvents([draft(3)]);
             // Establish the consumer position first (a fresh offset 0
             // under floor 1 is the RB-1 refusal, not this row's fixture).
             const consumed = yield* runConsumerBatch("rb3", projectA, 10);
@@ -436,7 +483,11 @@ describe("p9-rebuild (RB-1..RB-5 / PR1–PR4 — generic face, GQ2)", () => {
       {
         apply: () =>
           Effect.fail({
-            _tag: "ConsumerOffsetStoreFailure" as const,
+            _tag: "PersistenceUnavailable" as const,
+            repository: "ConsumerOffsetStore" as const,
+            operation: "projection-test",
+            retryDisposition: "retryable" as const,
+            sourceTag: "InjectedFailure",
             cause: "injected projection failure",
           }),
         reset: () => Effect.void,
@@ -455,9 +506,11 @@ describe("p9-rebuild (RB-1..RB-5 / PR1–PR4 — generic face, GQ2)", () => {
             const failure = yield* runConsumerBatch("pr4", projectA, 10).pipe(
               Effect.flip,
             );
-            expect((failure as { _tag: string })._tag).toBe(
-              "ConsumerOffsetStoreFailure",
-            );
+            expect(failure).toMatchObject({
+              _tag: "PersistenceUnavailable",
+              repository: "ConsumerOffsetStore",
+              retryDisposition: "retryable",
+            });
             // Invariant 37: the journaled domain facts survive.
             const after = yield* sql.unsafe<{ count: number }>(
               "SELECT COUNT(*) AS count FROM domain_events",

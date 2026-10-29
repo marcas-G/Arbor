@@ -6,7 +6,14 @@
  * 说明 Empty + 表单内置空态；CreateProjectForm 仅在项目块渲染。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HUMAN_ACTIONABLE_COMMANDS } from "../src/commands/catalog.js";
@@ -71,13 +78,15 @@ const renderSettingsLive = (): ReturnType<typeof render> =>
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
-  fetchMock = vi.fn();
+  fetchMock = vi.fn().mockResolvedValue({
+    json: async () => ({ ok: true, body: { projects: [] } }),
+  });
   vi.stubGlobal("fetch", fetchMock);
   localStorage.clear();
 });
 
 afterEach(() => {
-  expect(fetchMock).not.toHaveBeenCalled();
+  cleanup();
   vi.unstubAllGlobals();
 });
 
@@ -127,14 +136,13 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
     ).toBeNull();
   });
 
-  it("CreateProject 表单仅在项目块渲染，权限块不出现", () => {
+  it("项目设置只管理当前项目，不重复提供全局创建入口", () => {
     renderSettings();
     const project = screen.getByLabelText("项目");
     expect(
-      within(project).getByRole("heading", { name: "创建项目" }),
-    ).toBeTruthy();
-    expect(within(project).getByLabelText("项目名称")).toBeTruthy();
-    expect(within(project).getByText(/项目切换/)).toBeTruthy();
+      within(project).queryByRole("heading", { name: "创建项目" }),
+    ).toBeNull();
+    expect(within(project).getByText(/全局项目中心/)).toBeTruthy();
     expect(within(project).queryByLabelText("capability")).toBeNull();
     const permissions = screen.getByLabelText("权限管理");
     expect(
@@ -161,6 +169,82 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
       screen.queryByRole("textbox", { name: /provider|model|runtime/i }),
     ).toBeNull();
   });
+
+  it.each([
+    {
+      button: "重命名项目",
+      pending: "正在提交项目更名…",
+      reason: "NoApplicableGrant:RenameProject",
+      rename: true,
+    },
+    {
+      button: "归档项目",
+      pending: "正在提交项目归档…",
+      reason: "NoApplicableGrant:CloseProject",
+      rename: false,
+    },
+  ] as const)(
+    "shows pending state and authority failure feedback for $button",
+    async ({ button, pending, reason, rename: isRename }) => {
+      let finishCommand: ((value: unknown) => void) | undefined;
+      fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+        if (String(input) === "/projects") {
+          return {
+            status: 200,
+            json: async () => ({
+              ok: true,
+              body: {
+                projects: [
+                  {
+                    projectId: "prj_1",
+                    name: "Arbor",
+                    lifecycle: "Open",
+                    revision: 3,
+                  },
+                ],
+              },
+            }),
+          };
+        }
+        return await new Promise((resolve) => {
+          finishCommand = resolve;
+        });
+      });
+      renderSettings();
+      const project = screen.getByLabelText("项目");
+      if (isRename) {
+        fireEvent.change(
+          await within(project).findByRole("textbox", { name: "项目名称" }),
+          {
+            target: { value: "Arbor Next" },
+          },
+        );
+      }
+      const action = await within(project).findByRole("button", {
+        name: button,
+      });
+      fireEvent.click(action);
+      expect(action).toHaveProperty("disabled", true);
+      expect(await within(project).findByText(pending)).toBeTruthy();
+      finishCommand?.({
+        status: 403,
+        json: async () => ({
+          ok: false,
+          problem: {
+            code: "authority/denied",
+            category: "forbidden",
+            message: "authority/denied",
+            correlationId: null,
+            retryDisposition: "non-retryable",
+            safeDetails: { reason },
+          },
+        }),
+      });
+      expect(await within(project).findByRole("alert")).toBeTruthy();
+      await waitFor(() => expect(action).toHaveProperty("disabled", false));
+      expect(within(project).getByText(reason)).toBeTruthy();
+    },
+  );
 
   it("saves only the existing local Workbench layout preference", () => {
     renderSettings();

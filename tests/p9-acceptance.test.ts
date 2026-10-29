@@ -1,9 +1,47 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
+import { pathToFileURL } from "node:url";
 import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import {
+  type Expression,
+  isArrayLiteralExpression,
+  isCallExpression,
+  isComputedPropertyName,
+  isExportAssignment,
+  isIdentifier,
+  isImportDeclaration,
+  isImportSpecifier,
+  isNamedImports,
+  isObjectLiteralExpression,
+  isPropertyAssignment,
+  isSpreadAssignment,
+  isStringLiteral,
+  type ObjectLiteralElementLike,
+  type ObjectLiteralExpression,
+  type SourceFile as TypeScriptSourceFile,
+} from "typescript/unstable/ast";
+import { API as TypeScriptAPI } from "typescript/unstable/sync";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
   ClockLive,
   CommandStoreLive,
@@ -14,8 +52,10 @@ import {
   layer,
   P12_MIGRATIONS,
   P16_MIGRATIONS,
+  P36_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   rebuildProjection,
   runConsumerBatch,
   runMigrations,
@@ -43,6 +83,7 @@ import {
   CommandHandlerRegistry,
   FenceStopCheckInertLive,
   makeSelectCurrentWorkHandler,
+  newUuid7,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
   type VerifiedRuntimeCommandAuthority,
@@ -68,7 +109,7 @@ import {
   type EventTypeName,
   ExecutionId,
   type ExpectedDeliverable,
-  type LeaseGeneration,
+  LeaseGeneration,
   Principal,
   type ProducerBinding,
   ProjectId,
@@ -106,6 +147,7 @@ import {
   decideProviderRetry,
   ExecutionRepository,
   ExecutionScheduler,
+  invocationAuthoritySourceRevisionOf,
   LeaseService,
   ProjectEnvironmentPort,
   ProjectionStore,
@@ -123,6 +165,7 @@ import {
   type SchedulerTimer,
   SessionRepository,
   ToolDefinitionStore,
+  type ToolExecutionContext,
   ToolInvocationStore,
   ToolRuntimePort,
   TransactionPort,
@@ -139,6 +182,7 @@ import {
   type ToolExecutor,
   ToolRuntimeLive,
 } from "../packages/tool-runtime/src/index.js";
+import { yieldedSettlement } from "./support/execution-episode-fixtures.js";
 import {
   makeP7App,
   p7Project,
@@ -161,6 +205,7 @@ import {
   type DurabilityEvidence,
 } from "./support/p9-durability-evidence.js";
 import { labeled } from "./support/p9-harness-api.js";
+import { fileTreeBoundaryJson } from "./support/resource-boundary-fixture.js";
 
 /** P9-013 — the seven deterministic acceptance stories (P9 `06` §A–§G)
  * + the mechanical assertion checklist. Every story reuses the
@@ -170,8 +215,117 @@ import { labeled } from "./support/p9-harness-api.js";
 
 const ROOT_WS = "ws_018f2b3c-4d5e-7abc-8def-0123456789c1";
 
-const durableFile = (label: string): string =>
-  join(mkdtempSync(join(tmpdir(), `arbor-p9-accept-${label}-`)), `${label}.db`);
+const P9_DURABLE_TEMP_PREFIX = "arbor-p9-accept-";
+const runOwnedDurableRoots = new Set<string>();
+const cleanupFailures: unknown[] = [];
+const expectedThrowCleanupRoots = new Set<string>();
+
+const isSafeP9TempRootPath = (realRoot: string, canonicalTempRoot: string) => {
+  const relativeRoot = relative(canonicalTempRoot, realRoot);
+  const rootName = basename(realRoot);
+  return (
+    relativeRoot !== "" &&
+    relativeRoot !== ".." &&
+    !relativeRoot.startsWith(`..${sep}`) &&
+    !isAbsolute(relativeRoot) &&
+    rootName.startsWith(P9_DURABLE_TEMP_PREFIX) &&
+    rootName.length > P9_DURABLE_TEMP_PREFIX.length
+  );
+};
+
+const validateRunOwnedDurableRoot = (path: string) => {
+  if (!runOwnedDurableRoots.has(path)) {
+    throw new Error(`refusing to remove an unregistered P9 temp root: ${path}`);
+  }
+  const realRoot = realpathSync(path);
+  if (realRoot !== path) {
+    throw new Error(`refusing to remove a redirected P9 temp root: ${path}`);
+  }
+  const realTempRoot = realpathSync(tmpdir());
+  if (!isSafeP9TempRootPath(realRoot, realTempRoot)) {
+    const relativeRoot = relative(realTempRoot, realRoot);
+    if (
+      relativeRoot === "" ||
+      relativeRoot === ".." ||
+      relativeRoot.startsWith(`..${sep}`) ||
+      isAbsolute(relativeRoot)
+    ) {
+      throw new Error(
+        `refusing to remove a P9 temp root outside system Temp: ${path}`,
+      );
+    }
+    throw new Error(
+      `refusing to remove a P9 temp root with an unexpected name: ${path}`,
+    );
+  }
+  return realRoot;
+};
+
+const cleanupRunOwnedDurableRoots = () => {
+  const failures: unknown[] = [];
+  for (const registeredRoot of [...runOwnedDurableRoots]) {
+    try {
+      const realRoot = validateRunOwnedDurableRoot(registeredRoot);
+      rmSync(realRoot, { recursive: true, force: false });
+      if (existsSync(realRoot))
+        throw new Error(`P9 temp root still exists after cleanup: ${realRoot}`);
+      runOwnedDurableRoots.delete(registeredRoot);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      "Failed to clean P9-owned SQLite temp roots",
+    );
+  }
+};
+
+afterEach(() => {
+  try {
+    cleanupRunOwnedDurableRoots();
+  } catch (error) {
+    cleanupFailures.push(error);
+    throw error;
+  }
+  for (const root of expectedThrowCleanupRoots) {
+    if (existsSync(root)) {
+      const error = new Error(
+        `P9 temp root leaked after a throwing test: ${root}`,
+      );
+      cleanupFailures.push(error);
+      throw error;
+    }
+  }
+  expectedThrowCleanupRoots.clear();
+});
+
+afterAll(() => {
+  try {
+    cleanupRunOwnedDurableRoots();
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(
+      cleanupFailures,
+      "P9 durable temp-root cleanup failed during the test file",
+    );
+  }
+  if (expectedThrowCleanupRoots.size > 0)
+    throw new Error("P9 throw-cleanup assertions were not completed");
+});
+
+const durableFile = (label: string): string => {
+  const createdRoot = mkdtempSync(
+    join(tmpdir(), `${P9_DURABLE_TEMP_PREFIX}${label}-`),
+  );
+  const realRoot = realpathSync(createdRoot);
+  runOwnedDurableRoots.add(realRoot);
+  validateRunOwnedDurableRoot(realRoot);
+  return join(realRoot, `${label}.db`);
+};
 
 const defectOf = <A, E>(exit: Exit.Exit<A, E>): unknown =>
   Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
@@ -184,7 +338,7 @@ const runOn = <A>(
 ): Promise<A> =>
   Effect.runPromise(
     // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
-    Effect.provide(program, app) as Effect.Effect<A, any, never>,
+    Effect.scoped(Effect.provide(program, app) as Effect.Effect<A, any, never>),
   );
 
 const sqlCount = (text: string, params: ReadonlyArray<unknown> = []) =>
@@ -223,7 +377,7 @@ const attentionFacts = (executionId: string) =>
 const INSERT_EXECUTION = (executionId: string, stopRequested: string | null) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const sesId = `ses_${executionId}`;
+    const sesId = `ses_${executionId.slice(4)}`;
     yield* sql.unsafe(
       "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,NULL,?,0,'t')",
       [sesId, "ExecutionScoped", executionId],
@@ -261,7 +415,10 @@ const invocationRowOf = (invocationId: string) =>
     return rows[0] ?? null;
   });
 
-const settleInvocation = (invocationId: string) =>
+const settleInvocation = (
+  invocationId: string,
+  executionFence: NonNullable<ToolExecutionContext["executionFence"]>,
+) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const tools = yield* ToolInvocationStore;
@@ -274,6 +431,8 @@ const settleInvocation = (invocationId: string) =>
           _tag: "Success",
         },
         null,
+        now,
+        executionFence,
         now,
       ),
     );
@@ -411,6 +570,12 @@ const C_EXECUTION = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789c3",
 ) as ExecutionId;
 const C_EXECUTION_T4 = "exe_018f2b3c-4d5e-7abc-8def-0123456789c4";
+const EXE_SA_DIRTY = "exe_00000000-0000-7000-8000-00000000a101";
+const EXE_SA_CLEAN = "exe_00000000-0000-7000-8000-00000000a102";
+const EXE_SB_CLEAN = "exe_00000000-0000-7000-8000-00000000b201";
+const EXE_SB_FACT = "exe_00000000-0000-7000-8000-00000000b202";
+const EXE_SB_PENDING = "exe_00000000-0000-7000-8000-00000000b203";
+const EXE_SG_DF1 = "exe_00000000-0000-7000-8000-00000000c001";
 const C_TURN = parse(ProviderTurnId)(
   "ptn_018f2b3c-4d5e-7abc-8def-0123456789c3",
 );
@@ -430,7 +595,12 @@ const nextCCommandId = () => {
 
 const makeStoryCApp = (filename: string) => {
   const base = layer({ filename });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const execRepo = Layer.provide(ExecutionRepositoryLive, infra);
   const repositories = Layer.mergeAll(
     Layer.provide(ProjectRepositoryLive, infra),
@@ -569,8 +739,7 @@ const cRenewLease = (workerId: string, generation: LeaseGeneration) =>
   });
 
 const cCompleted: SettleExecutionPayload["settlement"] = {
-  _tag: "Completed",
-  result: { _tag: "CoordinationCompleted" },
+  ...yieldedSettlement,
 };
 
 const cSettleViaGateway = (
@@ -714,24 +883,38 @@ const cOpenProviderTurn = Effect.gen(function* () {
   );
 });
 
-const cRecordToolIntent = Effect.gen(function* () {
-  const tx = yield* TransactionPort;
-  const tools = yield* ToolInvocationStore;
-  yield* tx.transact(
-    tools.recordIntent({
-      invocationId: C_INVOCATION,
-      executionId: C_EXECUTION,
-      workspaceId: C_WORKSPACE,
-      toolName: "shell",
-      toolVersion: "1",
-      sideEffectSemantics: "NonIdempotent",
-      argumentsJson: "{}",
-      resolvedRegions: [],
-      approvalId: null,
-      intentAt: "t",
-    }),
-  );
+const cToolFence = (workerId: string, generation: LeaseGeneration) => ({
+  executionId: C_EXECUTION,
+  workerId,
+  workerIncarnationId: "inc-a",
+  fencingGeneration: generation,
 });
+
+const cRecordToolIntent = (executionFence: ReturnType<typeof cToolFence>) =>
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const tools = yield* ToolInvocationStore;
+    const clock = yield* Clock;
+    const now = yield* clock.now();
+    yield* tx.transact(
+      tools.recordIntent(
+        {
+          invocationId: C_INVOCATION,
+          executionId: C_EXECUTION,
+          workspaceId: C_WORKSPACE,
+          toolName: "shell",
+          toolVersion: "1",
+          sideEffectSemantics: "NonIdempotent",
+          argumentsJson: "{}",
+          resolvedRegions: [],
+          approvalId: null,
+          intentAt: now,
+        },
+        executionFence,
+        now,
+      ),
+    );
+  });
 
 const cSideEffectCounters = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -914,7 +1097,12 @@ const makeStoryDApp = (
   filename: string,
 ) => {
   const base = layer({ filename });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive(),
     Layer.mergeAll(
@@ -1225,6 +1413,12 @@ const E_EXECUTION = parse(ExecutionId)(
 ) as ExecutionId;
 const E_ACTOR = parse(Actor)("user:story-e");
 const E_PRINCIPAL = parse(Principal)("runtime:system");
+const E_TOOL_FENCE = {
+  executionId: E_EXECUTION,
+  workerId: String(E_PRINCIPAL),
+  workerIncarnationId: "incarnation:p9-story-e",
+  fencingGeneration: parse(LeaseGeneration)(0),
+};
 
 type ETier = "ReadOnly" | "Idempotent" | "Reconcilable" | "NonIdempotent";
 type ECrashMode = "before-effect" | "after-effect" | "none";
@@ -1338,7 +1532,12 @@ const makeStoryEApp = (
   filename: string,
 ) => {
   const base = layer({ filename });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const execRepo = Layer.provide(ExecutionRepositoryLive, infra);
   const stores = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
@@ -1438,12 +1637,23 @@ const seedStoryE = Effect.gen(function* () {
         [E_SESSION, E_EXECUTION],
       );
       yield* sql.unsafe(
-        "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'w','{}',0,'{}',0,'{}',?,NULL,'{}',0,0,'Active','t','t')",
-        [E_WORKSPACE, E_PROJECT, E_SESSION],
+        "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'w','{}',0,?,0,'{}',?,NULL,'{}',0,0,'Active','t','t')",
+        [E_WORKSPACE, E_PROJECT, fileTreeBoundaryJson(), E_SESSION],
       );
       yield* sql.unsafe(
         "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
         [E_EXECUTION, E_PROJECT, E_WORKSPACE, E_SESSION],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
+        [
+          E_EXECUTION,
+          String(E_PRINCIPAL),
+          "incarnation:p9-story-e",
+          0,
+          "2999-01-01T00:00:00.000Z",
+          "t",
+        ],
       );
     }),
   );
@@ -1464,6 +1674,11 @@ const eTierContext = (tier: ETier) => {
       executionId: E_EXECUTION,
       toolName: definition.name,
       toolVersion: "1",
+      sourceRevision: invocationAuthoritySourceRevisionOf({
+        workspacePolicyRevision: 0,
+        activeGrants: [],
+        verifierId: null,
+      }),
       resourceSpaceIds: [],
       allowedCapabilities: definition.capabilityMetadata,
       controlBasisDigest: "d",
@@ -1471,6 +1686,12 @@ const eTierContext = (tier: ETier) => {
       delegationDepth: 0,
     },
     controlBasisDigest: "d",
+    executionFence: {
+      executionId: E_EXECUTION,
+      workerId: String(E_PRINCIPAL),
+      workerIncarnationId: "incarnation:p9-story-e",
+      fencingGeneration: parse(LeaseGeneration)(0),
+    },
     requestedAt: "t",
   } as never;
 };
@@ -1591,7 +1812,10 @@ const loopStores: Effect.Effect<
   const projection = yield* ProjectionStore;
   return {
     tx: { transact: tx.transact },
-    journal: { readAfter: journal.readAfter },
+    journal: {
+      readAfterRaw: journal.readAfterRaw,
+      decodeRaw: journal.decodeRaw,
+    },
     offsets,
     deadLetters,
     projection,
@@ -1629,19 +1853,57 @@ const journalEvent = (eventType: string, payload: unknown, eventVersion = 1) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const journal = yield* DomainEventJournal;
-    yield* tx.transact(
-      journal.append([
-        {
-          projectId: p7Project,
-          eventType: eventType as EventTypeName,
-          eventVersion,
-          occurredAt: "t",
-          aggregateRef: p7Project,
-          actor: p7TestActor,
-          payload,
-        },
-      ]),
-    );
+    const event = {
+      projectId: p7Project,
+      eventType: eventType as EventTypeName,
+      eventVersion,
+      occurredAt: "t",
+      aggregateRef: p7Project,
+      actor: p7TestActor,
+      payload,
+    };
+    if (eventVersion !== 1) {
+      const writerResult = yield* Effect.result(
+        tx.transact(journal.append([event])),
+      );
+      expect(writerResult._tag).toBe("Failure");
+      const sql = yield* SqlClient;
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql.unsafe(
+            `INSERT INTO project_event_sequences (project_id,last_sequence)
+               VALUES (?,1)
+               ON CONFLICT(project_id) DO UPDATE SET last_sequence = last_sequence + 1`,
+            [p7Project],
+          );
+          const rows = yield* sql.unsafe<{ last_sequence: number }>(
+            "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
+            [p7Project],
+          );
+          const sequence = Number(rows[0]?.last_sequence ?? 0);
+          yield* sql.unsafe(
+            `INSERT INTO domain_events (
+              event_id,project_id,sequence,event_type,event_version,occurred_at,
+              aggregate_ref,actor,caused_by_command_id,caused_by_event_id,
+              correlation_ref,payload_json
+            ) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)`,
+            [
+              `evt_018f2b3c-4d5e-7abc-8def-${String(sequence).padStart(12, "0")}`,
+              p7Project,
+              sequence,
+              eventType,
+              eventVersion,
+              "t",
+              p7Project,
+              p7TestActor,
+              JSON.stringify(payload),
+            ],
+          );
+        }),
+      );
+    } else {
+      yield* tx.transact(journal.append([event]));
+    }
   });
 
 const countEvents = (eventType: string) =>
@@ -1791,6 +2053,8 @@ const makeVerificationDeps = (gateway: CommandGatewayService) =>
           ),
         findById: (verificationId: VerificationId) =>
           tx.transact(verifications.findById(verificationId)),
+        listByWork: (workId: WorkId) =>
+          tx.transact(verifications.listByWork(workId)),
       },
       works: {
         findById: (workId: WorkId) => tx.transact(works.findById(workId)),
@@ -1869,11 +2133,11 @@ const INSERT_EXECUTION_G = (executionId: string) =>
     const sql = yield* SqlClient;
     yield* sql.unsafe(
       "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,NULL,?,0,'t')",
-      [`ses_${executionId}`, "ExecutionScoped", executionId],
+      [`ses_${executionId.slice(4)}`, "ExecutionScoped", executionId],
     );
     yield* sql.unsafe(
       "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
-      [executionId, p7Project, p7RootWorkspace, `ses_${executionId}`],
+      [executionId, p7Project, p7RootWorkspace, `ses_${executionId.slice(4)}`],
     );
   });
 
@@ -1913,8 +2177,7 @@ const settleCompletedG = (executionId: string) =>
     const payload: SettleExecutionPayload = {
       executionId: executionId as never as ExecutionId,
       settlement: {
-        _tag: "Completed",
-        result: { _tag: "CoordinationCompleted" },
+        ...yieldedSettlement,
       },
       expectedFencingGeneration: lease.generation,
     };
@@ -1967,9 +2230,9 @@ describe("p9-acceptance", () => {
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
         yield* p7SeedProject;
-        yield* INSERT_EXECUTION("exe_sa_dirty", "t");
-        yield* INSERT_INVOCATION("tin_sa_non", "exe_sa_dirty", "NonIdempotent");
-        yield* INSERT_EXECUTION("exe_sa_clean", "t");
+        yield* INSERT_EXECUTION(EXE_SA_DIRTY, "t");
+        yield* INSERT_INVOCATION("tin_sa_non", EXE_SA_DIRTY, "NonIdempotent");
+        yield* INSERT_EXECUTION(EXE_SA_CLEAN, "t");
         // BEFORE (B-1 stub-era defect shape): the retired stub's pending
         // visibility is the empty list, so a stopped execution carrying an
         // unsettled NonIdempotent invocation would take the clean path and
@@ -1979,26 +2242,22 @@ describe("p9-acceptance", () => {
         // AFTER: the wired ReconciliationSource sees the dangling
         // invocation; recovery escalates with a durable Attention fact.
         const recovery = yield* runRecovery(p7TestPrincipal);
-        expect([...recovery.settled].sort()).toEqual(["exe_sa_clean"]);
-        expect(recovery.escalated).toEqual(["exe_sa_dirty"]);
-        const clean = yield* executionRowOf("exe_sa_clean");
+        expect([...recovery.settled].sort()).toEqual([EXE_SA_CLEAN]);
+        expect(recovery.escalated).toEqual([EXE_SA_DIRTY]);
+        const clean = yield* executionRowOf(EXE_SA_CLEAN);
         expect(clean?.settlement_kind).toBe("Interrupted");
         expect(JSON.parse(clean?.settlement_json ?? "null")).toEqual({
           _tag: "Interrupted",
           result: { _tag: "StopRequested" },
         });
-        const dirty = yield* executionRowOf("exe_sa_dirty");
+        const dirty = yield* executionRowOf(EXE_SA_DIRTY);
         expect(dirty?.settlement_kind).not.toBe("Interrupted");
         expect(dirty?.settlement_kind).toBeNull();
         expect(dirty?.settled_at).toBeNull();
         expect(dirty?.settlement_json).toBeNull();
-        expect(yield* attentionFacts("exe_sa_dirty")).toBe(1);
-        expect(yield* countEventsFor("exe_sa_dirty", "ExecutionSettled")).toBe(
-          0,
-        );
-        expect(yield* countEventsFor("exe_sa_clean", "ExecutionSettled")).toBe(
-          1,
-        );
+        expect(yield* attentionFacts(EXE_SA_DIRTY)).toBe(1);
+        expect(yield* countEventsFor(EXE_SA_DIRTY, "ExecutionSettled")).toBe(0);
+        expect(yield* countEventsFor(EXE_SA_CLEAN, "ExecutionSettled")).toBe(1);
       }),
       makeP7App(durableFile("a")),
     );
@@ -2013,26 +2272,26 @@ describe("p9-acceptance", () => {
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
         yield* p7SeedProject;
-        yield* INSERT_EXECUTION("exe_sb_clean", "t");
-        const fact = yield* INSERT_COMPLETION_FACT("exe_sb_fact");
-        yield* INSERT_EXECUTION("exe_sb_fact", null);
-        yield* INSERT_EXPIRED_LEASE("exe_sb_clean");
+        yield* INSERT_EXECUTION(EXE_SB_CLEAN, "t");
+        const fact = yield* INSERT_COMPLETION_FACT(EXE_SB_FACT);
+        yield* INSERT_EXECUTION(EXE_SB_FACT, null);
+        yield* INSERT_EXPIRED_LEASE(EXE_SB_CLEAN);
         yield* INSERT_TIMER("tmr_sb_due", "2000-01-01T00:00:00.000Z");
         yield* INSERT_TIMER("tmr_sb_future", "2999-01-01T00:00:00.000Z");
         const first = yield* startupRecovery(p7TestPrincipal);
         expect([...first.recovery.settled].sort()).toEqual([
-          "exe_sb_clean",
-          "exe_sb_fact",
+          EXE_SB_CLEAN,
+          EXE_SB_FACT,
         ]);
         expect(first.recovery.escalated).toEqual([]);
         expect(first.recovery.invalidated).toBeGreaterThanOrEqual(1);
-        const clean = yield* executionRowOf("exe_sb_clean");
+        const clean = yield* executionRowOf(EXE_SB_CLEAN);
         expect(clean?.settlement_kind).toBe("Interrupted");
         expect(JSON.parse(clean?.settlement_json ?? "null")).toEqual({
           _tag: "Interrupted",
           result: { _tag: "StopRequested" },
         });
-        const completed = yield* executionRowOf("exe_sb_fact");
+        const completed = yield* executionRowOf(EXE_SB_FACT);
         expect(completed?.settlement_kind).toBe("Completed");
         expect(JSON.parse(completed?.settlement_json ?? "null")).toEqual(fact);
         expect(
@@ -2042,16 +2301,25 @@ describe("p9-acceptance", () => {
         expect(calls).toEqual([
           { workspaceId: p7RootWorkspace, wakeReasonTag: "Recovery" },
         ]);
+        const recoveryCompletionCommandId = parse(CommandId)(
+          `cmd_${newUuid7("recovery", `${EXE_SB_FACT}:completion`)}`,
+        );
+        const recoveryStopCommandId = parse(CommandId)(
+          `cmd_${newUuid7("recovery", `${EXE_SB_CLEAN}:stop`)}`,
+        );
         expect(
           yield* sqlCount(
-            "SELECT COUNT(*) AS count FROM commands WHERE command_id = 'cmd_recovery_completion_exe_sb_fact'",
+            "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+            [recoveryCompletionCommandId],
           ),
         ).toBe(1);
         expect(
           yield* sqlCount(
-            "SELECT COUNT(*) AS count FROM commands WHERE command_id = 'cmd_recovery_settle_exe_sb_clean'",
+            "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+            [recoveryStopCommandId],
           ),
         ).toBe(1);
+        expect(yield* countEventsFor(EXE_SB_FACT, "ExecutionSettled")).toBe(2);
         // Crash during/after T1 → restart re-runs T1: idempotent re-entry.
         const commandsAfterFirst = yield* sqlCount(
           "SELECT COUNT(*) AS count FROM commands",
@@ -2062,9 +2330,7 @@ describe("p9-acceptance", () => {
         expect(second.firedTimers).toEqual([]);
         expect(yield* timerIds()).toEqual(["tmr_sb_future"]);
         expect(calls).toHaveLength(1);
-        expect(yield* countEventsFor("exe_sb_clean", "ExecutionSettled")).toBe(
-          1,
-        );
+        expect(yield* countEventsFor(EXE_SB_CLEAN, "ExecutionSettled")).toBe(1);
         expect(yield* sqlCount("SELECT COUNT(*) AS count FROM commands")).toBe(
           commandsAfterFirst,
         );
@@ -2101,22 +2367,14 @@ describe("p9-acceptance", () => {
             p7RootWorkspace,
           ),
         );
-        yield* INSERT_EXECUTION("exe_sb_pending", "t");
-        yield* INSERT_INVOCATION("tin_sb_ro", "exe_sb_pending", "ReadOnly");
-        yield* INSERT_INVOCATION("tin_sb_idem", "exe_sb_pending", "Idempotent");
-        yield* INSERT_INVOCATION(
-          "tin_sb_rec",
-          "exe_sb_pending",
-          "Reconcilable",
-        );
-        yield* INSERT_INVOCATION(
-          "tin_sb_non",
-          "exe_sb_pending",
-          "NonIdempotent",
-        );
+        yield* INSERT_EXECUTION(EXE_SB_PENDING, "t");
+        yield* INSERT_INVOCATION("tin_sb_ro", EXE_SB_PENDING, "ReadOnly");
+        yield* INSERT_INVOCATION("tin_sb_idem", EXE_SB_PENDING, "Idempotent");
+        yield* INSERT_INVOCATION("tin_sb_rec", EXE_SB_PENDING, "Reconcilable");
+        yield* INSERT_INVOCATION("tin_sb_non", EXE_SB_PENDING, "NonIdempotent");
         yield* INSERT_TIMER("tmr_sbp_due", "2000-01-01T00:00:00.000Z");
         yield* INSERT_TIMER("tmr_sbp_future", "2999-01-01T00:00:00.000Z");
-        yield* INSERT_EXPIRED_LEASE("exe_sb_pending");
+        yield* INSERT_EXPIRED_LEASE(EXE_SB_PENDING);
         const sql = yield* SqlClient;
         yield* sql.unsafe(
           "INSERT INTO work_waits (work_id, wait_mode, conditions_json, registered_at, updated_at) VALUES (?, 'Any', '[]', 't', 't')",
@@ -2125,16 +2383,16 @@ describe("p9-acceptance", () => {
         // T1 over the full pending-state fixture.
         const first = yield* startupRecovery(p7TestPrincipal);
         expect(first.recovery.settled).toEqual([]);
-        expect(first.recovery.escalated).toEqual(["exe_sb_pending"]);
+        expect(first.recovery.escalated).toEqual([EXE_SB_PENDING]);
         expect(first.recovery.invalidated).toBeGreaterThanOrEqual(1);
         expect(
           first.firedTimers.map((timer: SchedulerTimer) => timer.timerId),
         ).toEqual(["tmr_sbp_due"]);
-        const pending = yield* executionRowOf("exe_sb_pending");
+        const pending = yield* executionRowOf(EXE_SB_PENDING);
         expect(pending?.settlement_kind).not.toBe("Interrupted");
         expect(pending?.settlement_kind).toBeNull();
         expect(pending?.stop_requested_at).not.toBeNull();
-        expect(yield* attentionFacts("exe_sb_pending")).toBe(1);
+        expect(yield* attentionFacts(EXE_SB_PENDING)).toBe(1);
         // No tier was auto-replayed: every invocation still exactly one
         // row, none settled by the restart itself.
         for (const tin of [
@@ -2170,21 +2428,45 @@ describe("p9-acceptance", () => {
         // Repeated T1: idempotent — deduped fact, no re-fire, no settle.
         const second = yield* startupRecovery(p7TestPrincipal);
         expect(second.recovery.settled).toEqual([]);
-        expect(second.recovery.escalated).toEqual(["exe_sb_pending"]);
+        expect(second.recovery.escalated).toEqual([EXE_SB_PENDING]);
         expect(second.firedTimers).toEqual([]);
-        expect(yield* attentionFacts("exe_sb_pending")).toBe(1);
+        expect(yield* attentionFacts(EXE_SB_PENDING)).toBe(1);
         expect(calls).toHaveLength(1);
         // Four-tier disposition: ReadOnly + Idempotent settle safely (the
         // Idempotent settlement write replays as a no-op — still one row),
         // Reconcilable settles after reconcile; NonIdempotent stays
         // escalated — the execution NEVER takes plain Interrupted.
-        yield* settleInvocation("tin_sb_ro");
-        yield* settleInvocation("tin_sb_idem");
+        const leases = yield* LeaseService;
+        const settlementWorkerId = "worker:p9-story-b-settlement";
+        const settlementIncarnationId = "incarnation:p9-story-b-settlement";
+        const settlementLease = yield* tx.transact(
+          leases.acquire(
+            EXE_SB_PENDING as never as ExecutionId,
+            settlementWorkerId,
+            settlementIncarnationId,
+          ),
+        );
+        const settlementFence = {
+          executionId: EXE_SB_PENDING as never as ExecutionId,
+          workerId: settlementWorkerId,
+          workerIncarnationId: settlementIncarnationId,
+          fencingGeneration: settlementLease.generation,
+        };
+        yield* settleInvocation("tin_sb_ro", settlementFence);
+        yield* settleInvocation("tin_sb_idem", settlementFence);
         const idemRowOnce = yield* invocationRowOf("tin_sb_idem");
-        yield* settleInvocation("tin_sb_idem");
+        yield* settleInvocation("tin_sb_idem", settlementFence);
         const idemRowTwice = yield* invocationRowOf("tin_sb_idem");
         expect(idemRowTwice).toEqual(idemRowOnce);
-        yield* settleInvocation("tin_sb_rec");
+        yield* settleInvocation("tin_sb_rec", settlementFence);
+        yield* tx.transact(
+          leases.release(
+            EXE_SB_PENDING as never as ExecutionId,
+            settlementWorkerId,
+            settlementIncarnationId,
+            settlementLease.generation,
+          ),
+        );
         expect(
           yield* sqlCount(
             "SELECT COUNT(*) AS count FROM tool_invocations WHERE invocation_id = 'tin_sb_idem'",
@@ -2192,11 +2474,11 @@ describe("p9-acceptance", () => {
         ).toBe(1);
         const third = yield* startupRecovery(p7TestPrincipal);
         expect(third.recovery.settled).toEqual([]);
-        expect(third.recovery.escalated).toEqual(["exe_sb_pending"]);
+        expect(third.recovery.escalated).toEqual([EXE_SB_PENDING]);
         // The [non]-only fingerprint is new relative to the seeded
         // [non, rec] fact → exactly one additional durable Attention fact.
-        expect(yield* attentionFacts("exe_sb_pending")).toBe(2);
-        const finalState = yield* executionRowOf("exe_sb_pending");
+        expect(yield* attentionFacts(EXE_SB_PENDING)).toBe(2);
+        const finalState = yield* executionRowOf(EXE_SB_PENDING);
         expect(finalState?.settlement_kind).not.toBe("Interrupted");
         expect(finalState?.settlement_kind).toBeNull();
         const nonRow = yield* invocationRowOf("tin_sb_non");
@@ -2214,7 +2496,10 @@ describe("p9-acceptance", () => {
     expect(LEASE_RENEW_INTERVAL_MS).toBe(LEASE_TTL_MS / 3);
     await runOn(
       Effect.gen(function* () {
+        // Retain the historical P12 fixture schema, then apply current P4
+        // P36 storage before running the current ToolInvocation store.
         yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P36_MIGRATIONS);
         yield* seedStoryC;
         // Takeover fixture: the old worker (g) resurrects across g+1.
         const old = yield* cAcquireLease("worker:a");
@@ -2266,13 +2551,20 @@ describe("p9-acceptance", () => {
           ),
         ).toBe(1);
         // Surface 4: stale ToolInvocation settlement.
-        yield* cRecordToolIntent;
+        yield* cRecordToolIntent(cToolFence("worker:b", current.generation));
         const tools = yield* ToolInvocationStore;
         const r4 = yield* tx
           .transact(
             cWithLeaseFence(
               old.generation,
-              tools.settle(C_INVOCATION, { _tag: "Success" }, null, "t"),
+              tools.settle(
+                C_INVOCATION,
+                { _tag: "Success" },
+                null,
+                "t",
+                cToolFence("worker:a", old.generation),
+                "t",
+              ),
             ),
           )
           .pipe(Effect.flip);
@@ -2590,7 +2882,10 @@ describe("p9-acceptance", () => {
     };
     await runOn(
       Effect.gen(function* () {
+        // Story E executes the current P4 tool pipeline: preserve its P12
+        // fixture start and upgrade it before admission-state reads/writes.
         yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P36_MIGRATIONS);
         yield* seedStoryE;
         // ReadOnly: crash before the effect — nothing happened externally;
         // the crashed invocation settles the actual (no-op) outcome and a
@@ -2603,11 +2898,11 @@ describe("p9-acceptance", () => {
         expect(danglingRo).toHaveLength(1);
         // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         expect(danglingRo[0]!.sideEffectSemantics).toBe("ReadOnly");
-        yield* settleInvocation(E_RO_CRASH);
+        yield* settleInvocation(E_RO_CRASH, E_TOOL_FENCE);
         mode.ReadOnly = "none";
         const roRetry = yield* eInvoke("ReadOnly", E_RO_RETRY);
         expect(roRetry._tag).toBe("Success");
-        yield* settleInvocation(E_RO_RETRY);
+        yield* settleInvocation(E_RO_RETRY, E_TOOL_FENCE);
         expect(probe.effects).toHaveLength(1);
         // Idempotent: crash after the effect; the same-identity settlement
         // write replays as a no-op — exactly one row, one external effect.
@@ -2615,9 +2910,9 @@ describe("p9-acceptance", () => {
         expect((defectOf(idemCrash) as Error).message).toBe(
           "harness-kill:Idempotent:post-effect",
         );
-        yield* settleInvocation(E_IDEM);
+        yield* settleInvocation(E_IDEM, E_TOOL_FENCE);
         const idemRowOnce = yield* invocationRowOf(E_IDEM);
-        yield* settleInvocation(E_IDEM);
+        yield* settleInvocation(E_IDEM, E_TOOL_FENCE);
         const idemRowTwice = yield* invocationRowOf(E_IDEM);
         expect(idemRowTwice).toEqual(idemRowOnce);
         expect(
@@ -2632,33 +2927,33 @@ describe("p9-acceptance", () => {
         expect((defectOf(nonCrash) as Error).message).toBe(
           "harness-kill:NonIdempotent:post-effect",
         );
-        yield* eRequestStop;
-        const pass1 = yield* runRecovery(E_PRINCIPAL);
-        expect(pass1.settled).toEqual([]);
-        expect(pass1.escalated).toEqual([E_EXECUTION]);
-        expect(yield* eEscalationFacts).toBe(1);
-        expect(probe.effects).toHaveLength(3);
-        // Reconcilable: while it dangles the stop path still escalates;
-        // reconcile-then-settle is the only unlock.
+        // Reconcilable runs while the Execution is still admitting effects;
+        // the later Stop is fenced against new invocation admission.
         const recCrash = yield* eInvoke("Reconcilable", E_REC);
         expect((defectOf(recCrash) as Error).message).toBe(
           "harness-kill:Reconcilable:post-effect",
         );
+        yield* eRequestStop;
         const pendingAll = yield* ePending;
         expect([...pendingAll].map(String).sort()).toEqual(
           [String(E_NON), String(E_REC)].sort(),
         );
+        const pass1 = yield* runRecovery(E_PRINCIPAL);
+        expect(pass1.settled).toEqual([]);
+        expect(pass1.escalated).toEqual([E_EXECUTION]);
+        // Both unresolved side effects share one initial escalation fact.
+        expect(yield* eEscalationFacts).toBe(1);
+        expect(probe.effects).toHaveLength(4);
+        // Reconcilable: reconcile-then-settle is the only unlock.
+        yield* settleInvocation(E_REC, E_TOOL_FENCE);
         const pass2 = yield* runRecovery(E_PRINCIPAL);
         expect(pass2.settled).toEqual([]);
         expect(pass2.escalated).toEqual([E_EXECUTION]);
-        // The [non, rec] fingerprint differs from the seeded [non] fact →
-        // exactly one additional durable Attention fact.
+        // The remaining [non] fingerprint adds one fact and then dedupes.
         expect(yield* eEscalationFacts).toBe(2);
-        yield* settleInvocation(E_REC);
         const pass3 = yield* runRecovery(E_PRINCIPAL);
         expect(pass3.settled).toEqual([]);
         expect(pass3.escalated).toEqual([E_EXECUTION]);
-        // The [non] fingerprint already has its fact → no third mint.
         expect(yield* eEscalationFacts).toBe(2);
         // Final tier ledger: no replay ever (one row per identity), the
         // NonIdempotent invocation stays reconciling, the Execution never
@@ -3028,15 +3323,27 @@ describe("p9-acceptance", () => {
         // Close the WF2 verification so consumer A's next replay (same
         // work revision) is not gated by VerificationAlreadyOpen.
         yield* tx.transact(
-          verifications.concludeIfOpen(ids.verificationId, "Pass", undefined),
+          verifications.concludeIfOpen(
+            ids.verificationId,
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
         );
+        // Advance the Work revision: a duplicate claim on revision 0 must not
+        // auto-start re-verification after conclusion; revision 1 is a new
+        // producer outcome and legitimately drives Consumer A again.
+        yield* sql.unsafe("UPDATE works SET revision = 1 WHERE work_id = ?", [
+          G_WORK,
+        ]);
         // WF3a: consumer A interrupted before the StartVerification commit
-        // — replay converges to exactly one more Verification.
+        // for the new revision — replay converges to exactly one more
+        // Verification.
         const head3 = yield* preconsume("sg3a");
         yield* journalEvent("ExecutionSettled", {
           executionId: "exe_00000000-0000-7000-8000-0000000000g3",
           workId: G_WORK,
-          workRevision: 0,
+          workRevision: 1,
           claimRef: "claim-sg3",
         });
         const interruptedA = transientOnceGateway(gateway, "StartVerification");
@@ -3069,13 +3376,18 @@ describe("p9-acceptance", () => {
         // replay converges to exactly one Completion. The verification
         // opened by WF3a (same work + revision, partial unique index) is
         // the one concluded and accepted.
-        const ids3 = verificationSpawnIds(G_WORK, 0, "claim-sg3");
+        const ids3 = verificationSpawnIds(G_WORK, 1, "claim-sg3");
         yield* tx.transact(
-          verifications.concludeIfOpen(ids3.verificationId, "Pass", undefined),
+          verifications.concludeIfOpen(
+            ids3.verificationId,
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
         );
         yield* sql.unsafe(
           "INSERT INTO work_acceptances (acceptance_id, project_id, work_id, target_work_revision, verification_id, actor, accepted_at) VALUES (?,?,?,?,?,?,'t')",
-          [G_ACC, p7Project, G_WORK, 0, ids3.verificationId, p7TestActor],
+          [G_ACC, p7Project, G_WORK, 1, ids3.verificationId, p7TestActor],
         );
         yield* sql.unsafe(
           "UPDATE workspaces SET current_work_id = ? WHERE workspace_id = ?",
@@ -3085,7 +3397,7 @@ describe("p9-acceptance", () => {
         yield* journalEvent("WorkOutcomeAccepted", {
           acceptanceId: G_ACC,
           workId: G_WORK,
-          targetWorkRevision: 0,
+          targetWorkRevision: 1,
           verificationId: ids3.verificationId,
           actor: p7TestActor,
         });
@@ -3126,25 +3438,25 @@ describe("p9-acceptance", () => {
         ).toBe(1);
         expect(yield* countEvents("WorkCompleted")).toBe(1);
         // DF1: dispatch port failure never settles; re-dispatch converges.
-        yield* INSERT_EXECUTION_G("exe_sg_df1");
+        yield* INSERT_EXECUTION_G(EXE_SG_DF1);
         const dispatchExit = yield* Effect.exit(
-          dispatchRound("exe_sg_df1", dyingDispatch()),
+          dispatchRound(EXE_SG_DF1, dyingDispatch()),
         );
         expect(dispatchExit._tag).toBe("Failure");
         expect(
           yield* countRows(
             "executions",
             "execution_id = ? AND settled_at IS NULL",
-            ["exe_sg_df1"],
+            [EXE_SG_DF1],
           ),
         ).toBe(1);
         expect(
           yield* countRows("execution_leases", "execution_id = ?", [
-            "exe_sg_df1",
+            EXE_SG_DF1,
           ]),
         ).toBe(0);
-        expect(yield* preDispatchCheck("exe_sg_df1" as never)).toBe(true);
-        const receipt = yield* settleCompletedG("exe_sg_df1");
+        expect(yield* preDispatchCheck(EXE_SG_DF1 as never)).toBe(true);
+        const receipt = yield* settleCompletedG(EXE_SG_DF1);
         expect(
           (receipt as { resolution: { _tag: string } }).resolution._tag,
         ).toBe("Committed");
@@ -3152,7 +3464,7 @@ describe("p9-acceptance", () => {
           yield* countRows(
             "executions",
             "execution_id = ? AND settlement_kind = 'Completed'",
-            ["exe_sg_df1"],
+            [EXE_SG_DF1],
           ),
         ).toBe(1);
       }),
@@ -3168,6 +3480,238 @@ describe("p9-acceptance", () => {
 const P9_DIR = import.meta.dirname;
 const REPO_ROOT = join(P9_DIR, "..");
 
+const requireFromTest = createRequire(import.meta.url);
+const requireFromVitest = createRequire(
+  requireFromTest.resolve("vitest/package.json"),
+);
+const picomatch = requireFromVitest("picomatch") as (
+  pattern: string,
+) => (path: string) => boolean;
+
+const parseArchitectureConfigArgument = (script: string) => {
+  if (/[\r\n]/u.test(script) || !/^[A-Za-z0-9_./=:\t -]+$/u.test(script))
+    return undefined;
+  const tokens = script.trim().split(/[ \t]+/u);
+  let argumentsStart: number;
+  if (tokens[0] === "vitest" && tokens[1] === "run") {
+    argumentsStart = 2;
+  } else if (
+    tokens[0] === "pnpm" &&
+    tokens[1] === "exec" &&
+    tokens[2] === "vitest" &&
+    tokens[3] === "run"
+  ) {
+    argumentsStart = 4;
+  } else {
+    return undefined;
+  }
+
+  const arguments_ = tokens.slice(argumentsStart);
+  const configOptions = arguments_.filter(
+    (token) => token === "--config" || token.startsWith("--config="),
+  );
+  if (configOptions.length !== 1) return undefined;
+  if (configOptions[0] === "--config") {
+    if (arguments_.length !== 2) return undefined;
+    const configPath = arguments_[1];
+    return configPath !== undefined && !configPath.startsWith("-")
+      ? configPath
+      : undefined;
+  }
+  if (arguments_.length !== 1) return undefined;
+  const configPath = configOptions[0]?.slice("--config=".length);
+  return configPath !== undefined &&
+    configPath.length > 0 &&
+    !configPath.startsWith("-")
+    ? configPath
+    : undefined;
+};
+
+const readUniqueStaticProperties = (object: ObjectLiteralExpression) => {
+  const properties = new Map<string, ObjectLiteralElementLike>();
+  for (const property of object.properties) {
+    if (isSpreadAssignment(property)) return undefined;
+    if (isComputedPropertyName(property.name)) return undefined;
+    const propertyName =
+      isIdentifier(property.name) || isStringLiteral(property.name)
+        ? property.name.text
+        : undefined;
+    if (propertyName === undefined || properties.has(propertyName))
+      return undefined;
+    properties.set(propertyName, property);
+  }
+  return properties;
+};
+
+const readStaticStringArray = (
+  expression: Expression,
+): ReadonlyArray<string> | undefined => {
+  if (!isArrayLiteralExpression(expression)) return undefined;
+  const values: string[] = [];
+  for (const element of expression.elements) {
+    if (!isStringLiteral(element)) return undefined;
+    values.push(element.text);
+  }
+  return values;
+};
+
+const hasTrustedDefineConfigImport = (sourceFile: TypeScriptSourceFile) => {
+  const imports = sourceFile.statements.filter(isImportDeclaration);
+  if (imports.length !== 1) return false;
+  const declaration = imports[0];
+  if (
+    declaration === undefined ||
+    !isStringLiteral(declaration.moduleSpecifier) ||
+    declaration.moduleSpecifier.text !== "vitest/config" ||
+    declaration.attributes !== undefined
+  )
+    return false;
+  const clause = declaration.importClause;
+  if (
+    clause === undefined ||
+    clause.name !== undefined ||
+    clause.phaseModifier !== undefined ||
+    clause.namedBindings === undefined ||
+    !isNamedImports(clause.namedBindings) ||
+    clause.namedBindings.elements.length !== 1
+  )
+    return false;
+  const specifier = clause.namedBindings.elements[0];
+  if (
+    specifier === undefined ||
+    !isImportSpecifier(specifier) ||
+    specifier.isTypeOnly ||
+    specifier.propertyName !== undefined ||
+    specifier.name.text !== "defineConfig"
+  )
+    return false;
+
+  let defineConfigIdentifierCount = 0;
+  const visit = (node: import("typescript/unstable/ast").Node) => {
+    if (isIdentifier(node) && node.text === "defineConfig")
+      defineConfigIdentifierCount += 1;
+    node.forEachChild(visit);
+  };
+  sourceFile.forEachChild(visit);
+  return defineConfigIdentifierCount === 2;
+};
+
+const parseArchitectureConfigSource = (sourceFile: TypeScriptSourceFile) => {
+  if (!hasTrustedDefineConfigImport(sourceFile)) return undefined;
+  const exports = sourceFile.statements.filter(isExportAssignment);
+  if (exports.length !== 1 || exports[0]?.isExportEquals !== false)
+    return undefined;
+  const expression = exports[0].expression;
+  if (
+    !isCallExpression(expression) ||
+    !isIdentifier(expression.expression) ||
+    expression.expression.text !== "defineConfig" ||
+    expression.arguments.length !== 1
+  )
+    return undefined;
+  const rootConfig = expression.arguments[0];
+  if (rootConfig === undefined || !isObjectLiteralExpression(rootConfig))
+    return undefined;
+  const rootProperties = readUniqueStaticProperties(rootConfig);
+  const testProperty = rootProperties?.get("test");
+  if (
+    testProperty === undefined ||
+    !isPropertyAssignment(testProperty) ||
+    !isObjectLiteralExpression(testProperty.initializer)
+  )
+    return undefined;
+  const testProperties = readUniqueStaticProperties(testProperty.initializer);
+  const includeProperty = testProperties?.get("include");
+  if (includeProperty === undefined || !isPropertyAssignment(includeProperty))
+    return undefined;
+  const include = readStaticStringArray(includeProperty.initializer);
+  if (include === undefined) return undefined;
+  const excludeProperty = testProperties?.get("exclude");
+  if (excludeProperty === undefined) return { include, exclude: [] };
+  if (!isPropertyAssignment(excludeProperty)) return undefined;
+  const exclude = readStaticStringArray(excludeProperty.initializer);
+  return exclude === undefined ? undefined : { include, exclude };
+};
+
+const parseArchitectureConfigFiles = (configPaths: ReadonlyArray<string>) => {
+  const api = new TypeScriptAPI({ cwd: REPO_ROOT });
+  try {
+    const documents = configPaths.map((path) => ({
+      uri: pathToFileURL(path).href,
+    }));
+    const snapshot = api.updateSnapshot({ openFiles: documents });
+    return documents.map((document, index) => {
+      const project = snapshot.getDefaultProjectForFile(document);
+      if (project === undefined) return undefined;
+      if (project.program.getSyntacticDiagnostics(document).length > 0)
+        return undefined;
+      const sourceFile = project.program.getSourceFile(document);
+      if (sourceFile === undefined) return undefined;
+      const configPath = configPaths[index];
+      if (
+        configPath === undefined ||
+        sourceFile.text !== readFileSync(configPath, "utf8")
+      )
+        return undefined;
+      return parseArchitectureConfigSource(sourceFile);
+    });
+  } catch {
+    return configPaths.map(() => undefined);
+  } finally {
+    api.close();
+  }
+};
+const enumerateTestFilesRecursively = (
+  directory: string,
+  repositoryRelativeDirectory: string,
+): ReadonlyArray<string> =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolutePath = join(directory, entry.name);
+    const relativePath = `${repositoryRelativeDirectory}/${entry.name}`;
+    if (entry.isDirectory())
+      return enumerateTestFilesRecursively(absolutePath, relativePath);
+    if (entry.isFile() && entry.name.endsWith(".test.ts"))
+      return [relativePath];
+    return [];
+  });
+
+const isCoveredByVitestGlobs = (
+  includeGlobs: ReadonlyArray<string>,
+  excludeGlobs: ReadonlyArray<string>,
+  testFiles: ReadonlyArray<string>,
+) =>
+  testFiles.every(
+    (testFile) =>
+      includeGlobs.some((pattern) => picomatch(pattern)(testFile)) &&
+      !excludeGlobs.some((pattern) => picomatch(pattern)(testFile)),
+  );
+
+const resolvesToRepositoryFile = (repositoryRoot: string, path: string) => {
+  try {
+    const realRepositoryRoot = realpathSync(repositoryRoot);
+    const realCandidate = realpathSync(resolve(repositoryRoot, path));
+    const relativeCandidate = relative(realRepositoryRoot, realCandidate);
+    return (
+      relativeCandidate !== "" &&
+      relativeCandidate !== ".." &&
+      !relativeCandidate.startsWith(`..${sep}`) &&
+      !isAbsolute(relativeCandidate)
+    );
+  } catch {
+    return false;
+  }
+};
+
+const hasArchitectureCheckSteps = (checkScript: string) => {
+  const steps = checkScript.split("&&").map((step) => step.trim());
+  const architectureIndex = steps.indexOf("pnpm architecture");
+  const coreTestIndex = steps.indexOf("pnpm test");
+  return (
+    architectureIndex >= 0 &&
+    coreTestIndex >= 0 &&
+    architectureIndex < coreTestIndex
+  );
+};
 const p9SuiteSources = (): ReadonlyArray<{
   name: string;
   source: string;
@@ -3358,12 +3902,309 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
     // (lint + typecheck + architecture + test, all green together).
     const scripts = (
       JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as {
-        scripts: Record<string, string>;
+        scripts: {
+          check?: string;
+          architecture?: string;
+          test?: string;
+        };
       }
     ).scripts;
-    expect(scripts.check).toContain("test");
-    expect(scripts.check).toContain("architecture");
-    expect(scripts.architecture).toContain("tests/architecture");
-    expect(scripts.test).toContain("vitest run");
+    const checkScript = scripts.check ?? "";
+    expect(hasArchitectureCheckSteps(checkScript)).toBe(true);
+    expect(
+      hasArchitectureCheckSteps(
+        "pnpm lint && pnpm typecheck && pnpm architecture && pnpm --filter @arbor/web test",
+      ),
+    ).toBe(false);
+    expect(
+      hasArchitectureCheckSteps(
+        "pnpm lint && pnpm typecheck && pnpm test && pnpm architecture",
+      ),
+    ).toBe(false);
+
+    const architectureScript = scripts.architecture ?? "";
+    const architectureConfigPath =
+      parseArchitectureConfigArgument(architectureScript);
+    expect(architectureConfigPath).toBeDefined();
+    if (architectureConfigPath === undefined)
+      throw new Error(
+        "architecture script must start with Vitest run and one --config",
+      );
+
+    expect(
+      parseArchitectureConfigArgument(
+        "vitest run --config vitest.architecture.config.ts",
+      ),
+    ).toBe("vitest.architecture.config.ts");
+    expect(
+      parseArchitectureConfigArgument(
+        "pnpm exec vitest run --config vitest.architecture.config.ts",
+      ),
+    ).toBe("vitest.architecture.config.ts");
+    expect(
+      parseArchitectureConfigArgument(
+        "echo vitest run --config vitest.architecture.config.ts",
+      ),
+    ).toBeUndefined();
+    expect(
+      parseArchitectureConfigArgument(
+        "pnpm install && vitest run --config vitest.architecture.config.ts",
+      ),
+    ).toBeUndefined();
+    expect(
+      parseArchitectureConfigArgument(
+        "vitest run --config one.config.ts --config two.config.ts",
+      ),
+    ).toBeUndefined();
+    expect(
+      parseArchitectureConfigArgument("vitest run --config --help"),
+    ).toBeUndefined();
+    expect(
+      parseArchitectureConfigArgument(
+        "vitest run --config vitest.architecture.config.ts; echo bad",
+      ),
+    ).toBeUndefined();
+
+    const resolvedArchitectureConfig = resolve(
+      REPO_ROOT,
+      architectureConfigPath,
+    );
+    expect(existsSync(resolvedArchitectureConfig)).toBe(true);
+    expect(resolvesToRepositoryFile(REPO_ROOT, architectureConfigPath)).toBe(
+      true,
+    );
+    const realArchitectureConfig = realpathSync(resolvedArchitectureConfig);
+    const [globs] = parseArchitectureConfigFiles([realArchitectureConfig]);
+    expect(globs).toBeDefined();
+    if (globs === undefined)
+      throw new Error(
+        "architecture config must expose static include/exclude arrays",
+      );
+
+    const architectureTestFiles = enumerateTestFilesRecursively(
+      join(REPO_ROOT, "tests", "architecture"),
+      "tests/architecture",
+    );
+    expect(architectureTestFiles.length).toBeGreaterThan(0);
+    expect(
+      isCoveredByVitestGlobs(
+        globs.include,
+        globs.exclude,
+        architectureTestFiles,
+      ),
+    ).toBe(true);
+
+    const nestedRoot = mkdtempSync(join(tmpdir(), "arbor-p9-arch-nested-"));
+    try {
+      const nestedDirectory = join(nestedRoot, "nested");
+      mkdirSync(nestedDirectory);
+      writeFileSync(join(nestedDirectory, "nested.test.ts"), "", "utf8");
+      const nestedTestFiles = enumerateTestFilesRecursively(
+        nestedRoot,
+        "tests/architecture",
+      );
+      expect(nestedTestFiles).toEqual([
+        "tests/architecture/nested/nested.test.ts",
+      ]);
+      expect(
+        isCoveredByVitestGlobs(globs.include, globs.exclude, nestedTestFiles),
+      ).toBe(true);
+      expect(
+        isCoveredByVitestGlobs(
+          globs.include,
+          ["tests/architecture/**/*.test.ts"],
+          nestedTestFiles,
+        ),
+      ).toBe(false);
+    } finally {
+      rmSync(nestedRoot, { recursive: true, force: true });
+    }
+
+    const configSource = (testOptions: string) =>
+      `export default defineConfig({ test: { ${testOptions} } });`;
+    const invalidConfigSources: ReadonlyArray<readonly [string, string]> = [
+      [
+        "comment-only",
+        configSource('// include: ["tests/architecture/**/*.test.ts"]\n'),
+      ],
+      ["dynamic-include", configSource("include: getArchitectureIncludes()")],
+      [
+        "spread",
+        configSource('...shared, include: ["tests/architecture/**/*.test.ts"]'),
+      ],
+      [
+        "computed-key",
+        configSource('["include"]: ["tests/architecture/**/*.test.ts"]'),
+      ],
+      [
+        "duplicate-include",
+        configSource(
+          'include: ["tests/architecture/**/*.test.ts"], include: ["tests/**/*.test.ts"]',
+        ),
+      ],
+      [
+        "dynamic-exclude",
+        configSource(
+          'include: ["tests/architecture/**/*.test.ts"], exclude: getExcludes()',
+        ),
+      ],
+      [
+        "wrong-define-config-module",
+        'import { defineConfig } from "./wrapper";\nexport default defineConfig({ test: { include: ["tests/architecture/**/*.test.ts"] } });',
+      ],
+      [
+        "aliased-define-config-import",
+        'import { defineConfig as configure } from "vitest/config";\nexport default configure({ test: { include: ["tests/architecture/**/*.test.ts"] } });',
+      ],
+      [
+        "duplicate-imports",
+        'import { defineConfig } from "vitest/config";\nimport { defineConfig as configure } from "vitest/config";\nexport default defineConfig({ test: { include: ["tests/architecture/**/*.test.ts"] } });',
+      ],
+      [
+        "local-define-config-wrapper",
+        'const defineConfig = (config: unknown) => config;\nexport default defineConfig({ test: { include: ["tests/architecture/**/*.test.ts"] } });',
+      ],
+      [
+        "shadowed-define-config-import",
+        'import { defineConfig } from "vitest/config";\nconst defineConfig = (config: unknown) => config;\nexport default defineConfig({ test: { include: ["tests/architecture/**/*.test.ts"] } });',
+      ],
+    ];
+    const invalidConfigRoot = mkdtempSync(
+      join(tmpdir(), "arbor-p9-invalid-architecture-config-"),
+    );
+    try {
+      const invalidConfigPaths = invalidConfigSources.map(([name, source]) => {
+        const path = join(invalidConfigRoot, `${name}.config.ts`);
+        writeFileSync(path, source, "utf8");
+        return path;
+      });
+      const invalidConfigResults =
+        parseArchitectureConfigFiles(invalidConfigPaths);
+      expect(invalidConfigResults).toHaveLength(invalidConfigSources.length);
+      expect(invalidConfigResults.every((result) => result === undefined)).toBe(
+        true,
+      );
+    } finally {
+      rmSync(invalidConfigRoot, { recursive: true, force: true });
+    }
+    const outsideRoot = mkdtempSync(
+      join(tmpdir(), "arbor-p9-architecture-config-escape-"),
+    );
+    try {
+      const outsideConfigPath = join(outsideRoot, "vitest.config.ts");
+      writeFileSync(outsideConfigPath, "", "utf8");
+      expect(existsSync(outsideConfigPath)).toBe(true);
+      expect(resolvesToRepositoryFile(REPO_ROOT, outsideConfigPath)).toBe(
+        false,
+      );
+      const escapedPath = relative(REPO_ROOT, outsideConfigPath)
+        .split(sep)
+        .join("/");
+      expect(
+        parseArchitectureConfigArgument(`vitest run --config ${escapedPath}`),
+      ).toBe(escapedPath);
+      expect(resolvesToRepositoryFile(REPO_ROOT, escapedPath)).toBe(false);
+    } finally {
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
+
+    const firstOwnedFile = durableFile("cleanup-first");
+    const secondOwnedFile = durableFile("cleanup-second");
+    expect(runOwnedDurableRoots.size).toBe(2);
+    cleanupRunOwnedDurableRoots();
+    expect(existsSync(dirname(firstOwnedFile))).toBe(false);
+    expect(existsSync(dirname(secondOwnedFile))).toBe(false);
+    expect(runOwnedDurableRoots.size).toBe(0);
+    expect(() => cleanupRunOwnedDurableRoots()).not.toThrow();
+
+    const prefixSpoofRoot = mkdtempSync(
+      join(tmpdir(), `${P9_DURABLE_TEMP_PREFIX}not-owned-`),
+    );
+    try {
+      const realSpoofRoot = realpathSync(prefixSpoofRoot);
+      expect(() => validateRunOwnedDurableRoot(realSpoofRoot)).toThrow(
+        "refusing to remove an unregistered P9 temp root",
+      );
+      expect(existsSync(realSpoofRoot)).toBe(true);
+    } finally {
+      rmSync(prefixSpoofRoot, { recursive: true, force: false });
+    }
+
+    const containmentSandbox = mkdtempSync(
+      join(tmpdir(), "arbor-p9-temp-containment-sandbox-"),
+    );
+    const validSandboxRoot = mkdtempSync(
+      join(containmentSandbox, `${P9_DURABLE_TEMP_PREFIX}valid-`),
+    );
+    const wrongPrefixRoot = mkdtempSync(
+      join(containmentSandbox, "arbor-p9-not-accepted-"),
+    );
+    const siblingRoot = mkdtempSync(
+      join(tmpdir(), `${P9_DURABLE_TEMP_PREFIX}outside-sandbox-`),
+    );
+    try {
+      const realSandbox = realpathSync(containmentSandbox);
+      const realValidRoot = realpathSync(validSandboxRoot);
+      const realWrongPrefixRoot = realpathSync(wrongPrefixRoot);
+      const realSiblingRoot = realpathSync(siblingRoot);
+      expect(isSafeP9TempRootPath(realValidRoot, realSandbox)).toBe(true);
+      expect(isSafeP9TempRootPath(realWrongPrefixRoot, realSandbox)).toBe(
+        false,
+      );
+      expect(isSafeP9TempRootPath(realSiblingRoot, realSandbox)).toBe(false);
+
+      runOwnedDurableRoots.add(realWrongPrefixRoot);
+      expect(() => validateRunOwnedDurableRoot(realWrongPrefixRoot)).toThrow(
+        "refusing to remove a P9 temp root with an unexpected name",
+      );
+      expect(() => cleanupRunOwnedDurableRoots()).toThrow(
+        "Failed to clean P9-owned SQLite temp roots",
+      );
+      expect(existsSync(realWrongPrefixRoot)).toBe(true);
+    } finally {
+      runOwnedDurableRoots.delete(realpathSync(wrongPrefixRoot));
+      rmSync(containmentSandbox, { recursive: true, force: false });
+      rmSync(siblingRoot, { recursive: true, force: false });
+    }
+
+    const tempCheckoutParent = mkdtempSync(
+      join(tmpdir(), "arbor-p9-checkout-under-temp-"),
+    );
+    const syntheticRepositoryRoot = join(tempCheckoutParent, "checkout");
+    mkdirSync(syntheticRepositoryRoot);
+    const checkoutOwnedRoot = mkdtempSync(
+      join(syntheticRepositoryRoot, `${P9_DURABLE_TEMP_PREFIX}checkout-`),
+    );
+    const realCheckoutOwnedRoot = realpathSync(checkoutOwnedRoot);
+    runOwnedDurableRoots.add(realCheckoutOwnedRoot);
+    try {
+      expect(validateRunOwnedDurableRoot(realCheckoutOwnedRoot)).toBe(
+        realCheckoutOwnedRoot,
+      );
+      cleanupRunOwnedDurableRoots();
+      expect(existsSync(realCheckoutOwnedRoot)).toBe(false);
+    } finally {
+      runOwnedDurableRoots.delete(realCheckoutOwnedRoot);
+      rmSync(tempCheckoutParent, { recursive: true, force: false });
+    }
+
+    expect(scripts.test).toBe("node scripts/testing/run-core-tests.mjs");
+    const coreRunnerSource = readFileSync(
+      join(REPO_ROOT, "scripts", "testing", "run-core-tests.mjs"),
+      "utf8",
+    );
+    expect(coreRunnerSource).toMatch(/require\.resolve\("vitest"\)/);
+    expect(coreRunnerSource).toMatch(
+      /const listing = run\(process\.execPath,\s*\[cliPath,\s*"list",\s*"--filesOnly"\]/,
+    );
+    expect(coreRunnerSource).toMatch(
+      /\[\s*cliPath,\s*"run",\s*\.\.\.batch,[\s\S]*?"--maxWorkers=1",\s*"--no-file-parallelism",\s*"--retry=0",?\s*\]/,
+    );
+  });
+
+  it.fails("cleans run-owned SQLite roots after the test body throws", () => {
+    const filename = durableFile("expected-throw");
+    expectedThrowCleanupRoots.add(dirname(filename));
+    throw new Error("synthetic expected P9 test failure");
   });
 });

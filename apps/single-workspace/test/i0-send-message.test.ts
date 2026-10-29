@@ -16,6 +16,7 @@ import {
 import type {
   BlobStorePortService,
   ClockService,
+  CommandStoreService,
   FormationProposalStoreService,
   MessageStoreService,
   TransactionPortService,
@@ -24,7 +25,7 @@ import type {
 } from "@arbor/ports";
 import { Effect, Option, Stream } from "effect";
 import { describe, expect, it } from "vitest";
-import { makeSliceControlActionHandlers } from "../src/control-actions.js";
+import { makeSingleWorkspaceControlActionHandlers } from "../src/control-actions.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const senderWorkspaceId = parse(WorkspaceId)(
@@ -97,6 +98,9 @@ describe("I0 SendMessage control action", () => {
     };
     const dependencies = {
       gateway,
+      commandReceipts: {
+        findResolution: () => Effect.succeed(Option.none()),
+      } as Pick<CommandStoreService, "findResolution">,
       blobs,
       clock,
       messages: {} as MessageStoreService,
@@ -104,8 +108,9 @@ describe("I0 SendMessage control action", () => {
       workspaces: {} as WorkspaceRepositoryService,
       works: {} as WorkRepositoryService,
       proposals: {} as FormationProposalStoreService,
+      inbox: { admitUpsert: () => Effect.void },
     };
-    const [handler] = makeSliceControlActionHandlers(dependencies);
+    const [handler] = makeSingleWorkspaceControlActionHandlers(dependencies);
     expect(handler).toBeDefined();
     const input: AgentActionHandlerInput = {
       action: {
@@ -118,7 +123,7 @@ describe("I0 SendMessage control action", () => {
         providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
         outputPosition: 0,
         callRef: "call-1",
-        toolName: "arbor_send_message",
+        toolName: "send_message",
         argumentsJson: "{}",
       },
       execution,
@@ -161,13 +166,16 @@ describe("I0 SendMessage control action", () => {
         focus: { _tag: "Coordination" },
       },
     };
-    const handler = makeSliceControlActionHandlers({
+    const handler = makeSingleWorkspaceControlActionHandlers({
       gateway: {
         execute: () => {
           gatewayCalls += 1;
           return Effect.die("Gateway must not receive an invalid root Report");
         },
       } as unknown as CommandGatewayService,
+      commandReceipts: {
+        findResolution: () => Effect.succeed(Option.none()),
+      } as Pick<CommandStoreService, "findResolution">,
       blobs: {
         put: () => {
           blobWrites += 1;
@@ -188,6 +196,7 @@ describe("I0 SendMessage control action", () => {
       } as unknown as WorkspaceRepositoryService,
       works: {} as WorkRepositoryService,
       proposals: {} as FormationProposalStoreService,
+      inbox: { admitUpsert: () => Effect.void },
     })[0];
     if (handler === undefined) {
       throw new Error("SendMessage handler was not registered");
@@ -204,7 +213,7 @@ describe("I0 SendMessage control action", () => {
             providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
             outputPosition: 0,
             callRef: "report-call",
-            toolName: "arbor_send_message",
+            toolName: "send_message",
             argumentsJson: "{}",
           },
           execution: rootExecution,

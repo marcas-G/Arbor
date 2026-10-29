@@ -50,6 +50,9 @@
       "path": "./adapters/provider-openai"
     },
     {
+      "path": "./adapters/provider-testecho"
+    },
+    {
       "path": "./packages/tool-runtime"
     },
     {
@@ -59,6 +62,9 @@
       "path": "./adapters/sandbox-local"
     },
     {
+      "path": "./adapters/sandbox-windows"
+    },
+    {
       "path": "./adapters/secret-env"
     },
     {
@@ -66,6 +72,9 @@
     },
     {
       "path": "./adapters/sandbox-worktree"
+    },
+    {
+      "path": "./adapters/sandbox-native-posix"
     },
     {
       "path": "./adapters/blob-local"

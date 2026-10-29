@@ -1,4 +1,11 @@
-import type { WorkId, WorkspaceId, WorkspaceLifecycle } from "@arbor/domain";
+import type {
+  Sha256,
+  WorkBlocker,
+  WorkId,
+  WorkspaceId,
+  WorkspaceLifecycle,
+} from "@arbor/domain";
+import type { ReadmissionGateIntegrityFailure } from "@arbor/ports";
 
 // --- P10 `02` §1 frozen vocabulary ---
 
@@ -6,13 +13,28 @@ import type { WorkId, WorkspaceId, WorkspaceLifecycle } from "@arbor/domain";
  * not a row) — rows only ever carry Attention or ActionRequired. */
 export type AttentionSeverity = "Attention" | "ActionRequired";
 
-/** Six fact sources exactly per P10 `02` §1 (GAP-01 vacant producer
- * realized as the `WaitingOnVacantProducer` derived view label). */
+/** P10's frozen base Attention labels (including GAP-01's derived
+ * `WaitingOnVacantProducer`) plus the accepted additive materialized sources
+ * for FT-DG-02 and F21 OPEN-3. */
 export type AttentionSource =
   | "DependencyUnfulfillable"
   | "Deadlock"
   | "RuntimeSafetyEnvelope"
   | "ReconciliationEscalated"
+  | "AssignWorkTargetBindingFailure"
+  | "DeliverReplayFailure"
+  | "ToolObservationReplayEvidenceFailure"
+  | "SubmittedDecisionBindingFailure"
+  | "LegacyAdoptionEvidenceInsufficient"
+  | "WorkspaceResourceActivationPending"
+  | "SandboxProviderUnavailable"
+  | "SandboxRecoveryBindingFailure"
+  | "SandboxPolicyDecisionRequired"
+  | "ProcessExecutionUnavailable"
+  | "F18VerificationSignalReconciliation"
+  | "TerminalProviderFailure"
+  | "TerminalProviderFailureIntegrity"
+  | "WorkEpisodeBlocked"
   | "VerifierOrphan"
   | "WaitingOnVacantProducer";
 
@@ -26,6 +48,31 @@ export interface AttentionRow {
   /** Event-carried sources carry occurredAt; state-derived joins
    * (vacant producer) have no event timestamp and render null. */
   readonly occurredAt: string | null;
+  readonly failureCode?: string;
+  /** Present only for VerifierOrphan; preserves the exact Work/Verification
+   * target for a possible human retry command. */
+  readonly workId?: WorkId;
+  readonly verificationId?: string;
+  readonly targetWorkRevision?: number;
+  readonly terminalProviderFailure?:
+    | {
+        readonly kind: "TerminalProviderFailure";
+        readonly workId: WorkId;
+        readonly workRevision: number;
+        readonly occurredAt: string;
+        readonly failureCode:
+          | "AuthenticationFailed"
+          | "RequestRejected"
+          | "ProtocolViolation";
+        readonly failureFingerprint: Sha256;
+      }
+    | {
+        readonly kind: "TerminalProviderFailureIntegrity";
+        readonly workId?: WorkId;
+        readonly workRevision?: number;
+        readonly occurredAt: string;
+        readonly failureCode: ReadmissionGateIntegrityFailure["reasonCode"];
+      };
 }
 
 // --- fact inputs (extracted journal rows / canonical-state joins) ---
@@ -63,10 +110,37 @@ export interface EscalationEventFact {
   readonly occurredAt: string;
 }
 
+export interface AssignWorkBindingFailureEventFact {
+  readonly attentionFactId: string;
+  readonly executionId: string;
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly logicalActionId: string;
+  readonly committedCommandId: string;
+  readonly failureCode: string;
+  readonly occurredAt: string;
+}
+
+export interface SubmittedDecisionBindingFailureEventFact {
+  readonly attentionFactId: string;
+  readonly executionId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly firstDetectedAt: string;
+}
+
+export interface LegacyAdoptionEvidenceFailureEventFact {
+  readonly attentionFactId: string;
+  readonly executionId: string;
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly failureCode: "LegacyActionDispositionUnproven";
+  readonly firstDetectedAt: string;
+}
+
 /** Open verification fact (owner workspace = owning workspace of the
  * target Work, P8 `02` §3). */
 export interface OpenVerificationFact {
   readonly verificationId: string;
+  readonly workId: WorkId;
+  readonly targetWorkRevision: number;
   readonly ownerWorkspaceId: WorkspaceId;
   readonly executionIds: ReadonlyArray<string>;
 }
@@ -83,6 +157,12 @@ export interface VacantProducerCandidateFact {
   readonly dependencyId: string;
   readonly producerWorkspaceId: WorkspaceId;
   readonly consumerWorkId: WorkId;
+}
+
+/** APW-3 candidate already reduced from a single canonical snapshot. */
+export interface AnyProducerSettledWaitFact {
+  readonly dependencyId: string;
+  readonly consumerWorkspaceId: WorkspaceId;
 }
 
 /** GAP-01 join input: producer workspace vacancy facts
@@ -104,11 +184,17 @@ export interface AttentionFacts {
   readonly deadlockEvents: ReadonlyArray<DeadlockEventFact>;
   readonly safetyStopSettlements: ReadonlyArray<SafetyStopFact>;
   readonly reconciliationEscalatedEvents: ReadonlyArray<EscalationEventFact>;
+  readonly assignWorkBindingFailureEvents?: ReadonlyArray<AssignWorkBindingFailureEventFact>;
+  readonly submittedDecisionBindingFailureEvents?: ReadonlyArray<SubmittedDecisionBindingFailureEventFact>;
+  readonly legacyAdoptionEvidenceFailureEvents?: ReadonlyArray<LegacyAdoptionEvidenceFailureEventFact>;
   readonly openVerifications: ReadonlyArray<OpenVerificationFact>;
   readonly executionSettlements: ReadonlyArray<ExecutionSettlementFact>;
   readonly vacantProducerCandidates: ReadonlyArray<VacantProducerCandidateFact>;
+  readonly anyProducerSettledWaits?: ReadonlyArray<AnyProducerSettledWaitFact>;
   readonly workspaceVacancies: ReadonlyArray<WorkspaceVacancyFact>;
   readonly workOwners: ReadonlyArray<WorkOwnerFact>;
+  readonly workBlockers?: ReadonlyArray<WorkBlocker>;
+  readonly activeWorkEpisodeIds?: ReadonlyArray<WorkId>;
 }
 
 // --- frozen dedup identities (P10 `02` §2) ---
@@ -208,6 +294,21 @@ export const deriveAttentionRows = (
     });
   }
 
+  const activeWorkIds = new Set(facts.activeWorkEpisodeIds ?? []);
+  for (const blocker of facts.workBlockers ?? []) {
+    if (blocker.state !== "Open") continue;
+    rows.push({
+      source: "WorkEpisodeBlocked",
+      severity: activeWorkIds.has(blocker.workId)
+        ? "Attention"
+        : "ActionRequired",
+      targetWorkspaceId: blocker.workspaceId,
+      dedupKey: blocker.blockerId,
+      summary: "Work is blocked by a terminal no-effect action denial.",
+      occurredAt: null,
+    });
+  }
+
   for (const fact of facts.deadlockEvents) {
     for (const workId of fact.cycleWorkIds) {
       const target = workOwnerOf.get(workId);
@@ -250,6 +351,42 @@ export const deriveAttentionRows = (
     });
   }
 
+  for (const fact of facts.assignWorkBindingFailureEvents ?? []) {
+    rows.push({
+      source: "AssignWorkTargetBindingFailure",
+      severity: "ActionRequired",
+      targetWorkspaceId: fact.targetWorkspaceId,
+      dedupKey: fact.attentionFactId,
+      summary: `A committed AssignWork could not be proven to match its exact target; recovery is paused. (${fact.failureCode})`,
+      occurredAt: fact.occurredAt,
+    });
+  }
+
+  for (const fact of facts.submittedDecisionBindingFailureEvents ?? []) {
+    rows.push({
+      source: "SubmittedDecisionBindingFailure",
+      severity: "ActionRequired",
+      targetWorkspaceId: fact.workspaceId,
+      dedupKey: fact.attentionFactId,
+      summary:
+        "A Scheduler decision action could not be safely recovered; review is required.",
+      occurredAt: fact.firstDetectedAt,
+    });
+  }
+
+  for (const fact of facts.legacyAdoptionEvidenceFailureEvents ?? []) {
+    rows.push({
+      source: "LegacyAdoptionEvidenceInsufficient",
+      severity: "ActionRequired",
+      targetWorkspaceId: fact.targetWorkspaceId,
+      dedupKey: fact.attentionFactId,
+      summary:
+        "Legacy action outcome cannot be proven; operator review is required.",
+      occurredAt: fact.firstDetectedAt,
+      failureCode: fact.failureCode,
+    });
+  }
+
   for (const verification of facts.openVerifications) {
     if (!isVerifierOrphan(verification, settlements)) {
       continue;
@@ -271,6 +408,9 @@ export const deriveAttentionRows = (
       dedupKey: verifierOrphanDedupKey(verification.verificationId),
       summary: `open verification ${verification.verificationId} has no active verifier execution (settle-without-conclude)`,
       occurredAt: becameOrphanAt,
+      workId: verification.workId,
+      verificationId: verification.verificationId,
+      targetWorkRevision: verification.targetWorkRevision,
     });
   }
 
@@ -288,6 +428,18 @@ export const deriveAttentionRows = (
       targetWorkspaceId: target,
       dedupKey: vacantProducerDedupKey(candidate.dependencyId),
       summary: `dependency ${candidate.dependencyId} waits on vacant producer workspace ${candidate.producerWorkspaceId} (no Open Work, not retired)`,
+      occurredAt: null,
+    });
+  }
+
+  for (const candidate of facts.anyProducerSettledWaits ?? []) {
+    rows.push({
+      source: "WaitingOnVacantProducer",
+      severity: "Attention",
+      targetWorkspaceId: candidate.consumerWorkspaceId,
+      dedupKey: vacantProducerDedupKey(candidate.dependencyId),
+      summary:
+        "An AnyProducer dependency is waiting with no eligible producer route.",
       occurredAt: null,
     });
   }

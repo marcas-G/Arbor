@@ -8,6 +8,7 @@ import {
   TransactionPort,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
+import type { SubmittedDecisionRecoveryQualificationProbe } from "./recovery.js";
 import { runRecovery } from "./recovery.js";
 
 /** P9 `03` §3 (B-9) / P2 `05` §6: fire due timers — clear the timer row in
@@ -50,9 +51,12 @@ export const fireDueTimers: Effect.Effect<
   return due;
 });
 
-const fullRecoveryPass = (principal: Principal) =>
+const fullRecoveryPass = (
+  principal: Principal,
+  qualificationProbe?: SubmittedDecisionRecoveryQualificationProbe,
+) =>
   Effect.gen(function* () {
-    const recovery = yield* runRecovery(principal);
+    const recovery = yield* runRecovery(principal, qualificationProbe);
     const firedTimers = yield* fireDueTimers;
     return { recovery, firedTimers };
   });

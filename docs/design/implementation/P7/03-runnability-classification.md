@@ -35,11 +35,22 @@ interface RunnableWorkSourceService {
 waiting(w) :⇔ w 存在 active WorkWait（P2 `02` §8 store 语义）
            ∨ w 存在 unresolved blocking Dependency（§3）
 
-current    = workspace.currentWorkId 指向的 Work w，当 w ∈ Open ∧ ¬waiting(w)
-          = None（unset / 非 Open / waiting(w)）
+held(w, r) :⇔ P2 `02` §7.1 的 durable WorkReadmissionGateStore 对精确
+             (projectId, workspaceId, workId, workRevision=r) 返回 Some
 
-runnable   = { w ∈ Open(workspace) | ¬waiting(w) } − { current }
+current    = workspace.currentWorkId 指向的 Work w，当 w ∈ Open ∧ ¬waiting(w)
+             ∧ ¬held(w, w.revision)
+          = None（unset / 非 Open / waiting(w) / held(w, w.revision)）
+
+runnable   = { w ∈ Open(workspace) | ¬waiting(w) ∧ ¬held(w, w.revision) } − { current }
 ```
+
+RAI-DG-02 将 `TerminalProviderFailureSettlement` 加入 P2 gate 的封闭源集合。
+P7 只消费该 exact-revision 结果：精确 Open revision 被 hold 时不得出现在
+`current` 或 `runnable`；授权 `SteerWork` 推进 revision 后按新 revision 重新
+分类。P7 不解析 Provider 证据、不读 P10 Attention、不创建 WorkWait/
+Dependency，不通过 timer、backoff 或 config reload 释放 hold。终态 Work 不再
+进入 runnable 判定，但失败源仍保留供审计。
 
 - current 基础语义沿 P5 `02` §2（currentWorkId pointer + Open 检查）；G3 吸收
   条款叠加其上：waiting 的 current 不得作为 continuable 呈现（classify 返回
@@ -53,7 +64,17 @@ runnable   = { w ∈ Open(workspace) | ¬waiting(w) } − { current }
   不产生 wake、不变更任何 canonical 状态。
 - 读取集（同一快照事务，沿 runnable-source.ts 既有 TransactionScope 模式）：
   `WorkspaceRepository.currentWorkId`、`WorkRepository` Open 集、`WorkWaitStore`
-  active 集、`DependencyRepository` Unsatisfied 集。
+  active 集、`DependencyRepository` Unsatisfied 集，以及 P2
+  `WorkReadmissionGateStore` 对候选 Work 当前 revision 的读取。Gate 使用
+  规范 Project/Workspace/Work 身份、来源 Execution、P9 fact/event 与 EGP
+  `episode_json` binding；不读 Attention projection。Gate 输入与 classifier
+  结果处于同一 SQLite read snapshot。
+
+`ReadmissionTargetMismatch` / `ReadmissionGateIntegrityFailure` 必须沿现有
+`RunnableWorkSourceError` 返回；绝不将缺失、重复、无法解码或身份冲突的
+来源当作 `held=false`、普通 waiting 或 runnable。有效非-Work Episode 不参与。
+被 gate 排除的 Work 保持 Open，不创建 WorkWait、wake 或 Domain Event。精确门
+语义及 closed source/error union 由 DID §8.18A.1、P2 `02` §7.1 与 P9 `07` 拥有。
 
 ### 2.1 与 §8.18A 决策表的关系（呈现输入）
 
@@ -62,10 +83,11 @@ runnable   = { w ∈ Open(workspace) | ¬waiting(w) } − { current }
 
 - `current = Some(w)` ⇔ 冻结表行 "Current Work Open 且无 active WorkWait"；
   `current = None` 覆盖其余表行。
-- 决策等价性：表行 2–4（current 有 active WorkWait）与表行 5–7（currentWorkId
-  =None）在相同 runnable 计数下产生相同决策（Idle / SelectCurrentWork /
-  Admit Coordination）——classify 吸收 wait/blocking 后 decide() 无需独立
-  WorkWait 输入即可复现整表。
+- 决策按当前 DID v1.28 EGP 合同：无 eligible input → `Idle`；一个 exact
+  runnable Work → admit its Work Episode；多个候选且需要语义判断 →
+  `RequestWorkSelection` 并持久化 exact `WorkSelectionDecisionRequest`，再 admit
+  DecisionEpisode。`classify` 已排除 active WorkWait 与 exact readmission hold；
+  Scheduler 不引入 Coordination mode 或第二套 WorkWait 判定。
 - runnable 集合本身已排除一切 waiting Work（G3 禁令的直接落点）。
 
 ## 3. blocking Dependency 判定式（冻结）

@@ -1,5 +1,11 @@
 # P12 — 00 Contract Index
 
+> **MAC successor (DID v1.31):** Authority, Permission, ToolRuntime and safety
+> ceilings remain. Executable/control exact approvals share the MAC
+> `ActionApproval` semantic contract; physical ledger convergence is MAC-P4.
+> Owning Effect errors must be typed and active legacy branches isolated. See
+> `docs/design/implementation/MAC/**`.
+
 **Authority:** DID v1.14 §11 P12, §2.1, §6.3, §7.2/§7.5/§7.6/§7.9, §8.4/§8.5/§8.16A, §9.1/§9.7, §10.1/§10.2/§10.4.1/§10.5, §12.3/§12.10, §13; v1.13 G4/G6; v1.14 G1–G8; SD v1.3 §6.1/§6.2/§7.7/§8/§8A/§10.2/§10.7/§12/§13/§14; P0–P11 contracts.
 **Status:** **FROZEN** — four independent review rounds complete; **Blocking = 0**.
 
@@ -70,7 +76,7 @@ P12 implementation COMPLETE; P12 FORMALLY CLOSED
 | `05-storage-scale-durability.md` | `StorageScaleAssessment`; SQLite default; DurabilityEnvelope/backup/RPO-RTO/drill |
 | `06-remote-worker.md` | Remote Worker transport, identity, single-writer mediation |
 | `07-toolcatalog-model-facing.md` | `ToolCatalogPort` model-facing resolution (inherited correction) |
-| `08-runtime-safety-completion.md` | §8.16A six dimensions with the eight evidence facets |
+| `08-runtime-safety-completion.md` | §8.16A six dimensions with the eight evidence facets + DID v1.20 AgentLoopStep fenced-transition/schedulability successor |
 | `09-region-encoding-convergence.md` | Region encoding correctness (P11 C2) |
 | `10-transport-shells.md` | HTTP/WS/CLI/web shell/auth/deployment transport |
 | `12-providers-tools.md` | more providers/tools: additional `ProviderPort` / `CanonicalProviderEvent` adapters + tool additions |
@@ -119,6 +125,39 @@ Revisions P12 explicitly owns against frozen P0–P11 contracts or the frozen DI
 | TR-9 | lease-triple port evolution: `LeaseRecord` + `ExecutionRepository.{tryAcquireLease,renewLease,releaseLease}` + `LeaseService` + `SessionRepository.appendEntry` fence + `FenceStopCheck` gain `worker_incarnation_id` | P2 `02` §3/§6, `03` §2, `04` §3.2 | `06` |
 | TR-10 | optional `RuntimeSafetyObservation` channel widening the frozen P2 `RuntimeSafetyGate.admitActivity` (additive third argument) | P2 `02` §5 | `08` |
 | TR-11 | `ToolCatalogPortService.definitions()` → `visibleRefs()` + `resolveForModel()` (model-facing resolution; P12 completion blocker #2) | P3 `01` §1/§2; P4 `01` §1 | `07` |
+| TR-12 | Host-registered Project Resource Profile catalog and path-free authenticated bootstrap listing; P1 owns the immutable lookup Port; resolver/authority remains unchanged | SD v1.13 §4.5.1; DID v1.36 §4.1C; P1 `02` | `10` |
+
+TR-12 is an additive FT-DG-01 bootstrap contract. It does not reopen the other
+P12 phase closures and does not claim F21 qualification or FT-DG-01 completion.
+
+### DID v1.20 successor (not a historical P12 reopen)
+
+`08` additionally records the AgentLoopStep write/scheduling obligations adopted by
+DID v1.20: every durable handoff transition validates the full lease-holder
+triple; long immediately-ready loops yield so TTL/3 renewal can commit; durable
+AgentLoopStep monotone progression remains durable P9 recovery evidence but
+does not by itself set the P12-DG-01 shared D2/D4 `durableProgress` signal. This
+is a cross-phase successor contract, not implementation authorization and not
+a reopening of P12's historical completion.
+
+### Accepted P12-DG-01 — D2/D4 shared progress signal (2026-10-24)
+
+Under `ACCEPT_P12_DG_01_D2_D4_PROGRESS_CONVERGENCE` (accepted fixed-package
+SHA-256 `8E737E2F0E4C423D7A4AAD05B3F44CAA3E9C618DA1E451F3AB7F5C8F60AA5E71`),
+P2's existing `durableProgress` observation is the shared D2/D4 reset signal.
+P3 reports true only for a newly committed successful terminal sourced
+AgentAction outcome or an attributable authoritative application/canonical
+mutation. Typed unsuccessful outcomes remain model-visible but do not reset
+either safety history. Provider result/ModelOutput-only commits, Session text,
+AgentLoopStep state/cursor progression, and P9 replay/handoff bookkeeping do
+not count by themselves. P2 retains its existing counter algorithms, P3
+producer ownership and the existing observation-port shape. The exact owner
+semantics and acceptance evidence are recorded in
+`planning/results/P12-DG-01-d2-d4-progress-convergence-acceptance-and-landing.record.md`.
+
+Implementation authorization is separate and conditional on a post-landing
+review reporting Blocking = 0. No implementation or P12 closure is implied by
+this design landing.
 
 **Propagation status (B-2 reconciliation).** TR-1/2/5/6/8/9/10/11 are propagated
 back to their owning frozen contracts as documentation reconciliation (no
@@ -183,3 +222,37 @@ CI-7  region encoding at every producer matches the frozen object encoding; narr
 **FROZEN.** Four independent four-way review rounds complete; **Blocking = 0**.
 P12 planning is COMPLETE (`planning/phases/P12.md` + 13 task contracts; planning
 review Blocking = 0). P12 implementation COMPLETE; P12 FORMALLY CLOSED.
+
+DID v1.20 AgentLoopStep successor design is FROZEN / implementation AUTHORIZED
+by DID v1.21 ALS-I1.
+
+DID v1.22 SCRC adds compaction-loop safety and provider qualification surfaces
+in `08`/`12`. These are additive successor contracts; migration 0019 and SCRC
+implementation remain unauthorized and do not reopen historical P12 closure.
+
+## Accepted Native OS Sandbox addenda
+
+P12 `02` owns the exact CAPA sandbox command/provenance resolution; `10` only
+transports the human command and P10-owned status/unavailable contracts;
+`13` owns provider capability/security/performance requirements and `14`
+owns the conformance matrix. These addenda change no unrelated P12 auth,
+authority submission order, or worker identity contract. Runtime/provider
+implementation remains separately authorized.
+
+## Accepted full-chain Native Sandbox P12 scope (V21)
+
+P12/02 resolves exact CAPA grant/provenance against P5's closed protected
+bundle; P12/09 maps existing CanonicalResourceRegion only; P12/10 transports
+P10's existing POST/Problem DTO, including non-persisted AttentionSource and
+exact transient 503; P12/13 owns exact T2/T3 network/provider primitives and
+evidence; P12/14 owns the per-tuple conformance matrix. No new endpoint,
+Problem category, authority permission, persistence or migration is added.
+
+## Accepted Native Sandbox producer mapping closure (V3)
+
+P12/09 is a cross-reference only and does not change canonical region
+encoding. P12/13 owns the exact
+`FreshPerResolutionAndConnection` broker-control literal and T3 evidence
+binding for configured limits; P12/14 owns the producer-mapping known-answer
+and qualification acceptance cases. See P12/09/13/14 and the V3 acceptance
+record/manifest.

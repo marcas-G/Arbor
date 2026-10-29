@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -12,20 +12,21 @@ import {
   InboxProjectionStoreLive,
   layer,
   MessageStoreLive,
-  P6_MIGRATIONS,
+  P35_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
+  WorkspaceResourceActivationStoreLive,
   WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
   makeProposeChildWorkspaceHandler,
   makeSpawnSpecialistHandler,
-} from "../apps/single-workspace/src/directives.js";
-import { makeRequestGovernanceHandler } from "../apps/single-workspace/src/governance-directive.js";
+} from "../apps/single-workspace/src/legacy-directive-handlers.js";
+import { makeRequestGovernanceHandler } from "../apps/single-workspace/src/legacy-governance-directive-handler.js";
 import {
   assertProgramGate,
   evalAllPrograms,
@@ -111,12 +112,21 @@ import {
   InboxProjectionStore,
   MessageStore,
   ProjectRepository,
+  ProjectResourceProfilePort,
+  type ProjectResourceProfilePortService,
   SessionRepository,
   TransactionPort,
   WorkRepository,
   WorkspaceRepository,
+  WorkspaceResourceActivationStore,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../packages/testkit/src/index.js";
+import {
+  seedCurrentOpenWork,
+  workEpisode,
+} from "./support/execution-episode-fixtures.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 const ACTOR = parse(Actor)("user:gov");
 const PRINCIPAL = parse(Principal)("user:gov");
@@ -125,6 +135,36 @@ const ROOT = parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const ROOT_SESSION = parse(SessionId)(
   "ses_018f2b3c-4d5e-7abc-8def-0123456789c1",
 );
+const P6_PROFILE_REF = "p6-acceptance-root";
+const P6_PROFILE_VERSION = "fixture-v1";
+const P6_PROFILE_ADDRESS = realpathSync("tests");
+const P6_FILE_TREE_ADDRESS = {
+  _tag: "FileTree" as const,
+  path: P6_PROFILE_ADDRESS,
+};
+const p6ProjectResourceProfiles: ProjectResourceProfilePortService = {
+  list: () =>
+    Effect.succeed([
+      {
+        resourceProfileRef: P6_PROFILE_REF,
+        version: P6_PROFILE_VERSION,
+        displayName: "P6 test FileTree profile",
+        available: true,
+      },
+    ]),
+  resolve: (resourceProfileRef, version) =>
+    Effect.succeed(
+      resourceProfileRef === P6_PROFILE_REF && version === P6_PROFILE_VERSION
+        ? Option.some({
+            resourceProfileRef: P6_PROFILE_REF,
+            version: P6_PROFILE_VERSION,
+            displayName: "P6 test FileTree profile",
+            available: true as const,
+            canonicalAddress: P6_FILE_TREE_ADDRESS,
+          })
+        : Option.none(),
+    ),
+};
 const SEED_COMMAND = parse(CommandId)(
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789c1",
 );
@@ -143,6 +183,7 @@ const wrk = (suffix: string) =>
   parse(WorkId)(`wrk_018f2b3c-4d5e-7abc-8def-0123456789${suffix}`);
 
 const EXE_ROOT = exe("a1");
+const MAIN_WORK = wrk("e1");
 const MODIFY_COMMAND = cmd("a2");
 const STALE_COMMAND = cmd("a3");
 const APPROVE_COMMAND = cmd("a4");
@@ -150,6 +191,7 @@ const APPROVE_COMMAND = cmd("a4");
 const CHILD_B1 = ws("b2");
 const CHILD_B1_SESSION = ses("b2");
 const EXE_CHILD = exe("b3");
+const CHILD_B_STORY_WORK = wrk("b9");
 const FORCED_CHILD = ws("b4");
 const FORCED_SESSION = ses("b4");
 const SIBLING_CREATE_COMMAND = cmd("b5");
@@ -200,6 +242,8 @@ const AcceptanceRegistryLive: Layer.Layer<
   | FormationProposalStore
   | InboxProjectionStore
   | MessageStore
+  | WorkspaceResourceActivationStore
+  | ProjectResourceProfilePort
 > = Layer.effect(
   CommandHandlerRegistry,
   Effect.gen(function* () {
@@ -212,14 +256,24 @@ const AcceptanceRegistryLive: Layer.Layer<
     const proposals = yield* FormationProposalStore;
     const inbox = yield* InboxProjectionStore;
     const messages = yield* MessageStore;
+    const activations = yield* WorkspaceResourceActivationStore;
+    const projectResourceProfiles = yield* ProjectResourceProfilePort;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
-      ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
+      ...makeP1CommandHandlers({
+        projects,
+        workspaces,
+        sessions,
+        activations,
+        works,
+        projectResourceProfiles,
+      }),
       ...makeP2CommandHandlers({
         projects,
         workspaces,
         sessions,
         executions,
         workWaits,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
       }),
       makeRecordDecisionHandler({
         proposals,
@@ -257,6 +311,7 @@ const makeAcceptanceApp = (
   | DomainEventJournal
   | FormationProposalStore
   | MessageStore
+  | WorkspaceResourceActivationStore
   | InboxProjectionStore
   | WorkspaceRepository
   | WorkRepository
@@ -275,6 +330,8 @@ const makeAcceptanceApp = (
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
+    Layer.provide(WorkspaceResourceActivationStoreLive, infra),
+    Layer.succeed(ProjectResourceProfilePort, p6ProjectResourceProfiles),
   );
   const registry = Layer.provide(AcceptanceRegistryLive, storeDeps);
   const gatewayDeps = Layer.mergeAll(
@@ -296,6 +353,7 @@ const makeAcceptanceApp = (
     | DomainEventJournal
     | FormationProposalStore
     | MessageStore
+    | WorkspaceResourceActivationStore
     | InboxProjectionStore
     | WorkspaceRepository
     | WorkRepository
@@ -317,6 +375,7 @@ const runAcceptance = <A, R>(
   );
 
 const seedProject = Effect.gen(function* () {
+  yield* ensureLegacyProjectResourceSourceFixture();
   const gateway = yield* CommandGateway;
   const payload = {
     name: "p6-acceptance",
@@ -341,11 +400,11 @@ const seedProject = Effect.gen(function* () {
         interfaces: [],
       },
       responsibilityRevision: parse(ResponsibilityRevision)(0),
-      resourceBoundary: {
-        basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-        addresses: [],
+      resourceSelection: {
+        _tag: "Profile" as const,
+        resourceProfileRef: P6_PROFILE_REF,
+        version: P6_PROFILE_VERSION,
       },
-      resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
       agentBinding: responsibilityBound(ROOT),
       workspacePolicy: makeWorkspacePolicy(),
       workspacePolicyRevision: parse(Revision)(0),
@@ -370,7 +429,7 @@ const seedProject = Effect.gen(function* () {
         commandType: "CreateProject",
         projectId: PROJECT,
         actor: ACTOR,
-        schemaVersion: "1",
+        schemaVersion: "2",
         payload,
       }),
       projectId: PROJECT,
@@ -396,7 +455,10 @@ const workspaceRow = (
     interfaces: [],
   }),
   1,
-  JSON.stringify({ basisResponsibilityRevision: 1, addresses: [] }),
+  JSON.stringify({
+    basisResponsibilityRevision: 1,
+    addresses: [P6_FILE_TREE_ADDRESS],
+  }),
   1,
   JSON.stringify({ _tag: "ResponsibilityBound", workspaceId }),
   sessionId,
@@ -488,6 +550,7 @@ const executionOf = (
   executionId: ExecutionId,
   workspaceId: WorkspaceId,
   stopRequestedAt: string | null = null,
+  episode = workEpisode(MAIN_WORK),
 ): Execution => ({
   executionId,
   projectId: PROJECT,
@@ -495,7 +558,7 @@ const executionOf = (
   binding: {
     _tag: "WorkspaceExecution" as const,
     workspaceId,
-    focus: { _tag: "Coordination" as const },
+    episode,
   },
   sessionId: ROOT_SESSION,
   admittedAt: "t",
@@ -536,6 +599,17 @@ const proposalDraft = (
     why: "downstream integration",
     constraints: [],
     completionExpectation: "all suites green",
+    verificationMission: {
+      goal: "verify the integration slice",
+      criteria: [
+        {
+          criterionId: "suites-green",
+          requirement: "all suites are green",
+          required: true,
+        },
+      ],
+      riskRequirements: [],
+    },
   },
   formationDepthHint: "Single",
 });
@@ -547,11 +621,16 @@ const admitMain = (args: {
 }) =>
   Effect.gen(function* () {
     const gw = yield* CommandGateway;
+    yield* seedCurrentOpenWork(PROJECT, args.workspaceId, MAIN_WORK);
     const payload = {
       _tag: "WorkspaceMain" as const,
       executionId: args.executionId,
       workspaceId: args.workspaceId,
-      focus: { _tag: "Coordination" as const },
+      episode: {
+        _tag: "WorkEpisode" as const,
+        workId: MAIN_WORK,
+        targetWorkRevision: parse(WorkRevision)(0),
+      },
     };
     return yield* gw.execute(
       {
@@ -683,7 +762,7 @@ const submitSteer = (
       commandType: "SteerWork",
       projectId: PROJECT,
       actor: ACTOR,
-      schemaVersion: "1",
+      schemaVersion: "2",
       payload: args.payload,
     }),
     projectId: PROJECT,
@@ -751,7 +830,7 @@ const criticalSteerSubmission = (
         commandType: "SteerWork",
         projectId: PROJECT,
         actor: ACTOR,
-        schemaVersion: "1",
+        schemaVersion: "2",
         payload: args.payload,
       }),
       projectId: PROJECT,
@@ -818,7 +897,7 @@ const idFromText = (text: string, prefix: string): string | undefined =>
 describe("p6-acceptance", () => {
   it("Story A: first-layer formation under the human gate (D1)", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P6_MIGRATIONS);
+      yield* runMigrations(P35_MIGRATIONS);
       yield* seedProject;
 
       const proposeHandler = makeProposeChildWorkspaceHandler({
@@ -1041,7 +1120,7 @@ describe("p6-acceptance", () => {
     const CHILD_B_STORY = ws("b1");
     const CHILD_B_STORY_SESSION = ses("b1");
     const program = Effect.gen(function* () {
-      yield* runMigrations(P6_MIGRATIONS);
+      yield* runMigrations(P35_MIGRATIONS);
       yield* seedProject;
       yield* seedLineage([
         {
@@ -1055,6 +1134,8 @@ describe("p6-acceptance", () => {
           sessionId: CHILD_B1_SESSION,
         },
       ]);
+      yield* seedCurrentOpenWork(PROJECT, CHILD_B_STORY, CHILD_B_STORY_WORK);
+      const worksBeforeFormation = yield* countRows("works");
 
       const handler = makeProposeChildWorkspaceHandler({
         gateway: yield* CommandGateway,
@@ -1068,7 +1149,12 @@ describe("p6-acceptance", () => {
           _tag: "ProposeChildWorkspace",
           spec: proposalDraft("grandchild-deep"),
         },
-        execution: executionOf(EXE_CHILD, CHILD_B_STORY),
+        execution: executionOf(
+          EXE_CHILD,
+          CHILD_B_STORY,
+          null,
+          workEpisode(CHILD_B_STORY_WORK),
+        ),
         context: executionContext(EXE_CHILD),
       });
       const grandchildId = parse(WorkspaceId)(
@@ -1086,9 +1172,20 @@ describe("p6-acceptance", () => {
       );
       const directCounts = {
         workspaces: yield* countRows("workspaces"),
-        works: yield* countRows("works"),
+        worksAdded: (yield* countRows("works")) - worksBeforeFormation,
         proposals: yield* countRows("formation_proposals"),
       };
+      const parentWorkOwner = yield* scalar<string | null>(
+        "SELECT workspace_id AS value FROM works WHERE work_id = ?",
+        [CHILD_B_STORY_WORK],
+      );
+      const sql = yield* SqlClient;
+      const grandchildWorkRows = yield* sql.unsafe<{
+        work_id: string;
+        workspace_id: string;
+      }>("SELECT work_id, workspace_id FROM works WHERE workspace_id = ?", [
+        grandchildId,
+      ]);
       const childInbox = yield* inboxOf(CHILD_B_STORY);
 
       const ceilingOutcome = yield* handler.handle({
@@ -1098,7 +1195,12 @@ describe("p6-acceptance", () => {
             { _tag: "FileTree", path: "outside/parent/boundary" },
           ]),
         },
-        execution: executionOf(EXE_CHILD, CHILD_B_STORY),
+        execution: executionOf(
+          EXE_CHILD,
+          CHILD_B_STORY,
+          null,
+          workEpisode(CHILD_B_STORY_WORK),
+        ),
         context: executionContext(EXE_CHILD),
       });
       const afterCeilingWorkspaces = yield* countRows("workspaces");
@@ -1161,10 +1263,13 @@ describe("p6-acceptance", () => {
 
       return {
         outcome,
+        grandchildId,
         grandchildParent,
         childParent,
         childId: CHILD_B_STORY,
         directCounts,
+        parentWorkOwner,
+        grandchildWorkRows,
         childInbox,
         ceilingOutcome,
         afterCeilingWorkspaces,
@@ -1180,9 +1285,15 @@ describe("p6-acceptance", () => {
     expect(result.grandchildParent).toBe(result.childId);
     expect(result.directCounts).toEqual({
       workspaces: 4,
-      works: 1,
+      worksAdded: 1,
       proposals: 0,
     });
+    expect(result.parentWorkOwner).toBe(result.childId);
+    expect(result.grandchildWorkRows).toHaveLength(1);
+    expect(result.grandchildWorkRows[0]?.workspace_id).toBe(
+      result.grandchildId,
+    );
+    expect(result.grandchildWorkRows[0]?.work_id).not.toBe(CHILD_B_STORY_WORK);
     expect(result.childInbox).toHaveLength(0);
 
     expect(result.ceilingOutcome._tag).toBe("Observation");
@@ -1213,7 +1324,7 @@ describe("p6-acceptance", () => {
 
   it("Story C: specialist spawn, settlement dedup, parent session zero-write (D3)", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P6_MIGRATIONS);
+      yield* runMigrations(P35_MIGRATIONS);
       yield* seedProject;
       const admitted = yield* admitMain({
         commandId: MAIN_ADMIT_C,
@@ -1359,7 +1470,7 @@ describe("p6-acceptance", () => {
 
   it("Story D: Report does not preempt, Reply closes correlation, illegal Query denied (D2)", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P6_MIGRATIONS);
+      yield* runMigrations(P35_MIGRATIONS);
       yield* seedProject;
       yield* seedLineage([
         {
@@ -1515,7 +1626,7 @@ describe("p6-acceptance", () => {
 
   it("Story E: Normal steer never interrupts; Critical steer stops atomically", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P6_MIGRATIONS);
+      yield* runMigrations(P35_MIGRATIONS);
       yield* seedProject;
       yield* seedLineage([
         {

@@ -30,6 +30,15 @@
 | `10-ownership-wiring.md` | Minimal claim/release wiring + scope fence |
 | `11-startup-recovery.md` | Startup drift probe; worktree damage recovery; sandbox-root ephemerality |
 | `12-sandbox-handoff.md` | SandboxPort continuity; advanced adapter; P4 guarantees inherited |
+
+## Accepted V21 Native Sandbox region/mount owner boundary
+
+P11/04 owns path-free SandboxTargetRefV1 derivation from existing
+CanonicalResourceRegion bytes; P11/12 owns logical mount/handle-basis handoff.
+They do not alter canonical region meaning, ResourceBoundary authority or
+environment revisions. Sandbox policy binds resource/mount revisions, not
+P11 EnvironmentRevision, file content, dirty state or mtimes. V21 Recovery-
+Binding Attention reads existing P4 rows and adds no P11 mutation/migration.
 | `13-verdict-consumer.md` | P8 binding unchanged; stale overlay integration |
 
 ## Boundaries (explicitly out of P11)
@@ -73,3 +82,13 @@ Review round 1 (independent): 4 Blocking (2 HIGH / 2 MEDIUM) + 3 LOW — all fix
 DESIGN/CONTRACT CLOSED (reviewed Blocking=0; CI-1..CI-5 all PASS).
 Implementation planning may now be generated.
 ```
+
+## Accepted Native Sandbox producer mapping closure (V3)
+
+P11/04 resolves the full current ResourceBoundary and emits the exact
+ResourceBoundaryDigestV1 (nonnegative responsibility revision, full sorted
+canonicalRegionString set) plus existing object-valued SandboxTargetRefV1
+refs. P11/12 hands those logical refs/ownership claims to P4; P4 alone
+materializes process mounts. No change is made to P11 EnvironmentRevision,
+generic resolver semantics, CanonicalResourceRegion, or P12/09 encoding.
+See P11/04/12 and the V3 acceptance record/manifest.

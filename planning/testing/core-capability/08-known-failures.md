@@ -77,12 +77,12 @@ currently be labeled `FAIL`. Keep these distinctions:
 Thus the right current statement is “not proven / not run / blocked,” not a
 prediction that every unimplemented or untested capability will fail.
 
-## Existing design-gap blockers
+## Historical design-gap blockers — resolved
 
-B10 remains `BLOCKED_BY_DESIGN_GAP` under the existing source audits:
-G-V2-2 ToolObservation identity, G-V2-3 durable conclusion summary reference,
-and G-V2-4 initial Work VerificationMission lifecycle. These are not new gaps
-found by this audit and must not be bypassed with fabricated fixtures.
+The B10 G-V2-2/3/4 blockers recorded by this historical audit were closed by
+the manually accepted DID v1.26 VDC contract. A repeatable B10-only real
+Provider sentinel now proves exact ToolObservation identity, durable summaryRef
+and Verifier conclusion settlement. Current status is PASS 3/3.
 
 No new Design Gap was established by the test run. The failed assertion is a
 finding requiring review, not authority to alter frozen semantics.

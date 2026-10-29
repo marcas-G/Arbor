@@ -26,12 +26,95 @@ const sendHandler: AgentActionHandler = {
 };
 
 describe("I0 ControlToolRegistry", () => {
+  it("keeps WorkBlocker resolution hidden until its durable handler is registered", () => {
+    const unavailable = makeControlToolRegistry();
+    expect(
+      unavailable
+        .definitions()
+        .some((tool) => tool.name === "resolve_work_blocker"),
+    ).toBe(false);
+    const registered = makeControlToolRegistry([
+      {
+        action: "ResolveWorkBlocker",
+        handle: () =>
+          Effect.succeed({
+            _tag: "Observation",
+            source: "Runtime",
+            observation: { text: "resolved", truncated: false },
+          }),
+      },
+    ]);
+    expect(
+      registered
+        .definitions()
+        .some((tool) => tool.name === "resolve_work_blocker"),
+    ).toBe(true);
+  });
+
+  it("fails closed on Blocked wait unless the WorkBlocker recovery handler is active", async () => {
+    const action = {
+      _tag: "Wait" as const,
+      disposition: "Blocked" as const,
+      request: "need the resource boundary updated",
+    };
+    const execution = {
+      executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      binding: {
+        _tag: "WorkspaceExecution",
+        workspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
+        episode: {
+          _tag: "WorkEpisode",
+          workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          targetWorkRevision: 0,
+        },
+      },
+    } as never;
+    const invocationValue = invocation("wait", {});
+    const unavailable = makeControlToolRegistry();
+    await expect(
+      Effect.runPromise(
+        unavailable.handle({
+          action,
+          invocation: invocationValue,
+          execution,
+          context: {} as never,
+        }),
+      ),
+    ).rejects.toMatchObject({ _tag: "AgentActionRejected" });
+
+    const available = makeControlToolRegistry([
+      {
+        action: "ResolveWorkBlocker",
+        handle: () =>
+          Effect.succeed({
+            _tag: "Observation",
+            source: "Runtime",
+            observation: { text: "resolved", truncated: false },
+          }),
+      },
+    ]);
+    await expect(
+      Effect.runPromise(
+        available.handle({
+          action,
+          invocation: invocationValue,
+          execution,
+          context: {} as never,
+        }),
+      ),
+    ).resolves.toMatchObject({
+      _tag: "BlockedWorkEpisodeRequest",
+      request: action.request,
+    });
+  });
+
   it("exposes only registered control identities and classifies by registry identity", () => {
     const registry = makeControlToolRegistry([sendHandler]);
     expect(registry.definitions().map((tool) => tool.name)).toEqual([
-      "arbor_wait",
-      "arbor_send_message",
+      "wait",
+      "send_message",
     ]);
+    expect(registry.classify("wait")).toBe("Control");
     expect(registry.classify("arbor_wait")).toBe("Control");
     expect(registry.classify("read")).toBe("NotControl");
     expect(registry.classify("arbor_unregistered")).toBe("NotControl");
@@ -39,7 +122,7 @@ describe("I0 ControlToolRegistry", () => {
       classifyToolRoute(
         [
           { name: "read", route: "Executable" },
-          { name: "arbor_wait", route: "Control" },
+          { name: "wait", route: "Control", stableId: "core.control.wait" },
         ],
         registry,
         "read",
@@ -47,11 +130,44 @@ describe("I0 ControlToolRegistry", () => {
     ).toEqual({ _tag: "Executable" });
     expect(
       classifyToolRoute(
-        [{ name: "arbor_wait", route: "Control" }],
+        [{ name: "wait", route: "Control", stableId: "core.control.wait" }],
+        registry,
+        "wait",
+      ),
+    ).toEqual({ _tag: "Control", stableId: "core.control.wait" });
+    expect(
+      classifyToolRoute(
+        [
+          {
+            name: "arbor_wait",
+            route: "Control",
+            version: "1",
+            hash: "3c84373e",
+          },
+        ],
         registry,
         "arbor_wait",
       ),
-    ).toEqual({ _tag: "Control" });
+    ).toEqual({ _tag: "Control", stableId: "core.control.wait" });
+    expect(
+      classifyToolRoute(
+        [
+          {
+            name: "wait",
+            route: "Control",
+            stableId: "core.control.wait",
+            version: "1",
+            hash: "stale-hash",
+          },
+        ],
+        registry,
+        "wait",
+      ),
+    ).toEqual({
+      _tag: "Stale",
+      route: "Control",
+      stableId: "core.control.wait",
+    });
     expect(
       classifyToolRoute(
         [{ name: "arbor_missing", route: "Control" }],
@@ -69,7 +185,8 @@ describe("I0 ControlToolRegistry", () => {
     const registry = makeControlToolRegistry();
     const valid = Effect.runSync(
       registry.decode(
-        invocation("arbor_wait", {
+        invocation("wait", {
+          disposition: "Yielded",
           reason: "await response",
           waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
         }),
@@ -77,6 +194,7 @@ describe("I0 ControlToolRegistry", () => {
     );
     expect(valid.action).toEqual({
       _tag: "Wait",
+      disposition: "Yielded",
       reason: "await response",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
     });
@@ -84,7 +202,7 @@ describe("I0 ControlToolRegistry", () => {
     expect(() =>
       Effect.runSync(
         registry.decode(
-          invocation("arbor_wait", {
+          invocation("wait", {
             reason: "wait",
             waitSpec: { mode: "Any", conditions: [] },
           }),
@@ -94,7 +212,7 @@ describe("I0 ControlToolRegistry", () => {
     expect(() =>
       Effect.runSync(
         registry.decode(
-          invocation("arbor_wait", {
+          invocation("wait", {
             reason: "wait",
             waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
             authority: "invented",
@@ -108,7 +226,7 @@ describe("I0 ControlToolRegistry", () => {
     const registry = makeControlToolRegistry([sendHandler]);
     const query = Effect.runSync(
       registry.decode(
-        invocation("arbor_send_message", {
+        invocation("send_message", {
           kind: "Query",
           body: "What is the current status?",
           recipientWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
@@ -126,7 +244,7 @@ describe("I0 ControlToolRegistry", () => {
 
     const reply = Effect.runSync(
       registry.decode(
-        invocation("arbor_send_message", {
+        invocation("send_message", {
           kind: "Reply",
           body: "The status is ready.",
         }),
@@ -143,7 +261,7 @@ describe("I0 ControlToolRegistry", () => {
     expect(() =>
       Effect.runSync(
         registry.decode({
-          ...invocation("arbor_wait", {}),
+          ...invocation("wait", {}),
           argumentsJson: "{",
         }),
       ),
@@ -151,7 +269,7 @@ describe("I0 ControlToolRegistry", () => {
     expect(() =>
       Effect.runSync(
         registry.decode(
-          invocation("arbor_send_message", {
+          invocation("send_message", {
             kind: "Deliver",
             body: "not in SendMessage",
           }),

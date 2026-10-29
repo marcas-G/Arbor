@@ -1,4 +1,5 @@
 import type {
+  CommandId,
   DeliverableId,
   DependencyId,
   DomainError,
@@ -11,6 +12,11 @@ import type {
 
 export type CommandRejection =
   | DomainError
+  | {
+      /** P1 FT-DG-01: a host Profile selector is unknown, stale, or unavailable. */
+      readonly _tag: "ProjectResourceUnavailable";
+      readonly commandId: CommandId;
+    }
   | { readonly _tag: "FencingRejected" }
   | { readonly _tag: "ExecutionStopping" }
   | {
@@ -101,4 +107,24 @@ export type CommandRejection =
       readonly _tag: "ActiveClaimsExist";
       readonly worktreeId: string;
       readonly claimIds: ReadonlyArray<string>;
-    };
+    }
+  | {
+      readonly _tag: "StaleSandboxPolicyInputs";
+      readonly safeDetails: {
+        readonly field:
+          | "ActionRevision"
+          | "ExecutableApprovalRevision"
+          | "EpisodeRevision"
+          | "PolicyRevision"
+          | "WorkspaceRevision"
+          | "ResourceBoundaryRevision"
+          | "SandboxHandleBindingDigest"
+          | "AuthorityBundleRevision"
+          | "OperatorConfigRevision"
+          | "ProviderRegistryRevision";
+      };
+    }
+  | { readonly _tag: "SandboxPolicySummaryTooLarge" }
+  | { readonly _tag: "SandboxAuthorityUnavailable" }
+  | { readonly _tag: "ExecutionTerminal" }
+  | { readonly _tag: "DecisionExpiryInvalid" };

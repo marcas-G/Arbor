@@ -169,8 +169,28 @@ const seed = Effect.gen(function* () {
       );
       const work = (id: WorkId) =>
         sql.unsafe(
-          "INSERT INTO works (work_id, project_id, workspace_id, objective, why, constraints, completion_expectation, verification_mission, provenance, revision, lifecycle, created_at, updated_at) VALUES (?,?,?,'o','w','[]','c','{}','{}',0,'Open','t','t')",
-          [id, PROJECT, WS],
+          "INSERT INTO works (work_id, project_id, workspace_id, objective, why, constraints, completion_expectation, verification_mission, provenance, revision, lifecycle, created_at, updated_at) VALUES (?,?,?,'o','w','[]','c',?,'{}',0,'Open','t','t')",
+          [
+            id,
+            PROJECT,
+            WS,
+            JSON.stringify({
+              goal: "verify the outcome",
+              criteria: [
+                {
+                  criterionId: "c1",
+                  requirement: "tests pass",
+                  required: true,
+                },
+                {
+                  criterionId: "c2",
+                  requirement: "lint clean",
+                  required: false,
+                },
+              ],
+              riskRequirements: [],
+            }),
+          ],
         );
       yield* work(WORK_1);
       yield* work(WORK_2);
@@ -220,7 +240,11 @@ const makeHandlers = Effect.gen(function* () {
               Effect.mapError(
                 (cause) =>
                   ({
-                    _tag: "DeliverableRepositoryFailure",
+                    _tag: "PersistenceUnavailable",
+                    repository: "DeliverableRepository",
+                    operation: "list-artifacts",
+                    retryDisposition: "non-retryable",
+                    sourceTag: "SqlError",
                     cause,
                   }) as DeliverableRepositoryError,
               ),
@@ -328,6 +352,9 @@ const evidencePayload = (
     evidenceId,
     criterionId,
     kind: "ToolObservation",
+    toolInvocationId: "tin_00000000-0000-7000-8000-000000000001" as never,
+    observationRef: `observation:${criterionId}`,
+    callRef: `call:${criterionId}`,
     observedEnvironmentRevision: observedRevision,
     recordedAt: "t1",
   },
@@ -425,7 +452,7 @@ const concludePassAtCurrentRevision = (
           concludeCommandId,
           concludePassPayload(verificationId, evidenceIds),
         ),
-        externalContext,
+        executionContext,
       ),
     );
     expect(concluded.ok).toBe(true);
@@ -652,6 +679,9 @@ describe("p11-verdict-consumer (P11-013: P8 binding under the real moving revisi
             observedEnvironmentRevision: "1",
             recordedByExecutionId: EXE_1,
             recordedAt: "t1",
+            toolInvocationId: null,
+            observationRef: null,
+            callRef: null,
           },
           {
             evidenceId: EVD("0012"),
@@ -662,6 +692,9 @@ describe("p11-verdict-consumer (P11-013: P8 binding under the real moving revisi
             observedEnvironmentRevision: "1",
             recordedByExecutionId: EXE_1,
             recordedAt: "t1",
+            toolInvocationId: null,
+            observationRef: null,
+            callRef: null,
           },
         ]);
 

@@ -2,7 +2,6 @@ import type {
   AgentExecutionState,
   CommandSubmissionContext,
   Execution,
-  ExecutionFocus,
   ExecutionId,
   ExecutionSettlement,
   LeaseGeneration,
@@ -52,6 +51,16 @@ export interface ExecutionRepositoryService {
     executionId: ExecutionId,
   ) => Effect.Effect<
     Option.Option<Execution>,
+    ExecutionRepositoryError,
+    TransactionScope
+  >;
+  /** V21 sandbox-policy CAS reads the exact persisted
+   * `executions.episode_revision`; it is not reconstructed from a lossy
+   * Execution projection or caller payload. */
+  readonly findEpisodeRevision: (
+    executionId: ExecutionId,
+  ) => Effect.Effect<
+    Option.Option<number>,
     ExecutionRepositoryError,
     TransactionScope
   >;
@@ -113,6 +122,11 @@ export interface ExecutionRepositoryService {
     TransactionScope
   >;
   readonly findUnsettledExecutions: () => Effect.Effect<
+    ReadonlyArray<Execution>,
+    ExecutionRepositoryError,
+    TransactionScope
+  >;
+  readonly findSettledExecutions?: () => Effect.Effect<
     ReadonlyArray<Execution>,
     ExecutionRepositoryError,
     TransactionScope
@@ -203,8 +217,32 @@ export interface ExecutionDriverPortService {
     readonly wakeReason: WakeReason;
     readonly context: CommandSubmissionContext;
     readonly safetyGate: RuntimeSafetyGateService;
-  }) => Effect.Effect<ExecutionSettlement, ExecutionDriverError>;
+  }) => Effect.Effect<ExecutionDriveOutcome, ExecutionDriverError>;
 }
+
+export type ExecutionDriveOutcome =
+  | ExecutionSettlement
+  | { readonly _tag: "RecoveryBlocked" }
+  | {
+      readonly _tag: "SandboxProviderUnavailable";
+      readonly outcome: import("./sandbox-process.js").SandboxProviderUnavailableOutcome;
+    }
+  | { readonly _tag: "SandboxPolicyRequiredInterruption" }
+  | {
+      readonly _tag: "SubmittedDecisionBindingMismatch";
+      readonly failureCode:
+        | "DecisionRequestWorkspaceMismatch"
+        | "StepManifestMismatch";
+      readonly logicalStepNo: number;
+      readonly repairAttempt: number;
+      readonly providerTurnId: import("@arbor/domain").ProviderTurnId;
+      readonly logicalActionId: string;
+    }
+  | {
+      readonly _tag: "ApprovalRequired";
+      readonly approvalId: string;
+      readonly revision: number;
+    };
 
 export class ExecutionDriverPort extends Context.Service<
   ExecutionDriverPort,
@@ -255,8 +293,12 @@ export class RuntimeSafetyGate extends Context.Service<
 
 export type SchedulerDecision =
   | { readonly _tag: "Noop"; readonly reason: "ActiveMainExecution" }
-  | { readonly _tag: "Admit"; readonly focus: ExecutionFocus }
+  | { readonly _tag: "AdmitWork"; readonly workId: WorkId }
   | { readonly _tag: "SelectCurrentWork"; readonly workId: WorkId }
+  | {
+      readonly _tag: "RequestWorkSelection";
+      readonly candidateWorkIds: ReadonlyArray<WorkId>;
+    }
   | { readonly _tag: "Idle" };
 
 export interface WorkWait {

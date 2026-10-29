@@ -1,5 +1,11 @@
+import { ExecutionId, parse, providerTurnInferenceId } from "@arbor/domain";
 import { describe, expect, it } from "vitest";
 import { createConversationProgressHub } from "../src/transport/conversation-progress.js";
+
+const providerTurnId = providerTurnInferenceId(
+  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+  0,
+);
 
 describe("conversation progress hub", () => {
   it("replays missed deltas and then publishes live frames in sequence", () => {
@@ -7,13 +13,13 @@ describe("conversation progress hub", () => {
     hub.publish("msg_1", {
       type: "started",
       executionId: "exe_1",
-      providerTurnId: "ptn_1",
+      providerTurnId,
       attemptNo: 0,
     });
     hub.publish("msg_1", {
       type: "delta",
       executionId: "exe_1",
-      providerTurnId: "ptn_1",
+      providerTurnId,
       attemptNo: 0,
       text: "Hello",
     });
@@ -27,7 +33,7 @@ describe("conversation progress hub", () => {
     const live = hub.publish("msg_1", {
       type: "delta",
       executionId: "exe_1",
-      providerTurnId: "ptn_1",
+      providerTurnId,
       attemptNo: 0,
       text: "!",
     });
@@ -44,7 +50,7 @@ describe("conversation progress hub", () => {
       hub.publish("msg_1", {
         type: "delta",
         executionId: "exe_1",
-        providerTurnId: "ptn_1",
+        providerTurnId,
         attemptNo: 0,
         text: String(index),
       });

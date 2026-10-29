@@ -1,12 +1,33 @@
 # P3 — Contract Index
 
-**Authority:** DID v1.18, with P3 phase contracts frozen under the prior DID
-versions except where this index records the v1.18 source-of-truth supersession.
+> **MAC successor (DID v1.31):** the common Agent Loop, typed timeline and
+> Provider recovery remain. `LocalPlan`, one model ActionCall facade, typed
+> consumer errors and active legacy isolation are governed by
+> `docs/design/implementation/MAC/**`; conflicting new-write clauses here are
+> superseded.
+
+**Authority:** DID v1.28, with P3 phase contracts frozen under prior DID
+versions except where this index records later supersessions.
 These documents are **not** a fifth design layer; they are P3-owned
 implementation contracts authorized by DID §13.
 
+## Accepted owner amendment — AH7-DG-03 (2026-10-10)
+
+Decision: `ACCEPT_TOOL_APPROVAL_SETTLEMENT_ATOMICITY`. Accepted proposal SHA-256:
+`E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`;
+source and delegated decision record are
+`planning/proposals/AH7-approval-settlement-fixed-decision-draft.md` and
+`planning/results/AH7-DG-03-governance-acceptance-and-landing.review.md`.
+
+P3 `08` now specifies how P4 no-effect Denied and stop/quiescence Interrupted
+results converge to the action ledger, sourced ToolResult, remaining-action
+disposition, cursor and Execution settlement proposal. Denied resolves only
+the current action; `ExecutionStopping` closes the action batch as
+`Interrupted(StopRequested)`. This amendment does not change the AgentLoopStep
+identity or provider-result authority.
+
 ```text
-Detailed Implementation Design v1.18 (frozen)
+Detailed Implementation Design v1.22 (frozen)
         ↓ delegates phase-scoped closure
 docs/design/implementation/P3/**   (these contracts)
 ```
@@ -22,6 +43,20 @@ loop, P2 safety gate, Application boundary, settlement, freshness rules, and
 bounded-repair semantics remain authoritative where they do not depend on that
 superseded representation.
 
+**DID v1.22 SCRC supersession:** `PortableMessage` is no longer the universal
+request carrier; `01` uses `PortableInputItem`. `02` §1's plain `role:tool`
+Observation and every-turn unconsumed Inbox injection are superseded by typed
+callRef-paired results and source-key atomic Session promotion. `03` §2's plain
+Observation continuation is superseded by the typed Session frontier.
+DataOnly trust, explicit Compaction ProviderTurn, AgentLoopStep durability,
+authority and settlement contracts remain in force.
+
+**DID v1.28 EGP supersession:** Agent Runtime has one loop and no Coordination
+mode. TurnProfile/Context/settlement are derived from exact EpisodeBinding.
+`WorkspaceCoordination`, `workspace-coordination-context-v1`, and any branch
+that infers conversation or tools from missing WorkId are historical. Plan is
+optional tool-maintained progress state and never an output/authority contract.
+
 ## Documents
 
 | Doc | Owns |
@@ -33,6 +68,8 @@ superseded representation.
 | `05-prompt-context-contracts.md` | versioned Prompt Program artifacts, provenance, model-family compiler |
 | `06-provider-failure-repair.md` | failure translation, bounded repair, `ContextUnsatisfiable`, `DecisionStale`, `GovernanceBlocked` |
 | `07-behavioral-eval-harness.md` | shared Prompt/Context behavioral-eval harness; per-phase ownership of programs/eval cases/acceptance |
+| `08-agent-loop-step-handoff.md` | DID v1.20 durable AgentLoopStep identity/state machine、Provider success replay、idempotent Session/action progression、successor/settlement handoff |
+| `09-runtime-decomposition.md` | explicit epoch/monotonic RuntimeClock and behavior-preserving Agent Driver decomposition |
 | `00-contract-index.md` | this index |
 
 ## P3 scope (DID §11 P3)
@@ -50,6 +87,9 @@ Output Contract, Prompt provenance, real model multi-turn continuity.
 | C3 | **P3** establishes the shared Prompt/Context behavioral-eval harness; each phase owns its own Prompt Program text, eval cases and acceptance criteria. |
 | C4 | `CanonicalProviderEvent` remains provider-neutral transport/runtime vocabulary. It does not directly express an authorized `AgentAction`; `decodeTurn` extracts `ModelOutput` and generic typed `ToolInvocation` values, while ControlToolRegistry owns control semantics (DID v1.18 ACR-4). |
 | C5 | Prompt Program **actual text** is **not** implementation choice. The Programs P3 uses (Base Agent Protocol, Responsibility-bound Protocol, Work Execution Program, Compaction, …) are versioned phase-scoped **contract artifacts** with regression eval. Only wording iteration that does not change the contract, and numeric defaults, are empirical. |
+| C6 | DID v1.20 `AgentLoopStep` is the durable handoff state. It persists no process-local `AgentAction`; pinned Provider events + decoder reconstruct invocations and the action ledger verifies identity/hash (`08`). |
+| C7 | DID v1.22 freezes typed Session Timeline, safe-boundary promotion, AgentStepContext/ContextProjector, Summary/ProviderNative compaction and provider-aware budget evidence. Migration 0019 and implementation remain unauthorized. |
+| C8 | DID v1.58 freezes the closed ProviderTurnId V2 codec: P3 `01` owns the typed codec/Provider boundary propagation; `02` binds the exact ID in Manifest; `08` owns deterministic Step/P20 identity and exact replay. UUIDv7 is read/replay-only; P2 owns unchanged TEXT storage (`04`). |
 
 ## Inherited from P2
 
@@ -58,12 +98,14 @@ Output Contract, Prompt provenance, real model multi-turn continuity.
 - `WorkWait` / `WaitSpec` / `WakeCondition` / `WakeReason` (P2 `05`).
 - Admission binding, lease/fencing, `Settlement`, `RecoveryController`.
 - `ReconciliationSource` stub → P3/P4 provide Provider/Tool reconciliation content.
+- DID v1.20 idempotent Session source write + fenced `AgentLoopStepStore` are P2
+  persistence seams; P3 owns their orchestration (`08`).
 
 ## Contract review (round 1)
 
 | # | Finding | Classification | Resolution |
 |---|---|---|---|
-| F1 | `SecretRef` / `CancellationRef` / `CacheHint` ownership ambiguous | P3 phase-scoped | `SecretRef` is a P3 `ports` type; `ProviderTurnId` is a domain ID; `CancellationRef`/`CacheHint` are P3 port types (`01` §2) |
+| F1 | `SecretRef` / `CancellationRef` / `CacheHint` ownership ambiguous | P3 phase-scoped | `SecretRef` is a P3 `ports` type; `ProviderTurnId` is a domain ID using the closed DID §2.2.1 codec; `CancellationRef`/`CacheHint` are P3 port types (`01` §2) |
 | F2 | `SkillRegistry.available` used an undefined `ResponsibilityId` | P3 phase-scoped | keyed by `AgentBinding + WorkspaceId` (`02` §7) |
 | F3 | `PromptProgramFamily` referenced but undefined | P3 phase-scoped | defined as the DID §8.4 P1–P14 family union (`05` §1) |
 | F4 | `SkillRegistry` service tag vs type naming | implementation choice | Context.Service tag `SkillRegistry`; `R` lists tags (`02` §1) |
@@ -76,3 +118,26 @@ implementation choices, all resolved in-contract.
 FROZEN (contracts) — independent review round 1 complete, **Blocking = 0**.
 No P3 planning is generated until the phase plan + tasks are derived from these
 contracts.
+
+The v1.20 `08` successor is design-frozen; DID v1.21 ALS-I1 authorizes its
+implementation without reopening the historical P3 completion record.
+
+The v1.22 SCRC successor is design-frozen but implementation is **not
+authorized**. It supersedes only the representations and delivery/compaction
+mechanisms named above; historical P3 completion remains an audit fact, not
+SCRC implementation evidence.
+
+## V21 RecoveryBinding Attention compatibility note
+
+P3/03 and P3/08 keep SandboxPolicyRequired on the same pending NotAdmitted
+invocation and ActionsInProgress step without ToolResult/Observation/cursor
+advance; recovery uses the existing HumanIntervention wake and strict P4
+RecoveryBinding. No new P3 codec/state exists. P10 binding Attention derives
+from existing P4 rows.
+
+Accepted pre-intent CandidateRead bootstrap adds a read-only source when the
+exact P3 Executable Action is Pending and the exact P4 Executable approval is
+Pending/unconsumed after P4's nonterminal ApprovalRequired path. It does not
+change that P3 Action or Step. P4/06 and P10/05 own the requirement/read
+projection; P1 owns source CAS and receipt. See P3/03/08 and the bootstrap
+governance decision/manifest.

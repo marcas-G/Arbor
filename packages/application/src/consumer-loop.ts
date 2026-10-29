@@ -9,6 +9,7 @@ import type {
   ProjectionStoreService,
   TransactionOperationalFailure,
   TransactionPortService,
+  TransactionScope,
 } from "@arbor/ports";
 import { Cause, Effect, Exit } from "effect";
 import type { CompletionConsumerDependencies } from "./completion-consumer.js";
@@ -21,6 +22,7 @@ import {
   runVerificationConsumer,
   type VerificationConsumerDependencies,
 } from "./verification-consumer.js";
+import type { WorkflowSignalConsumerService } from "./workflow-signal-consumer.js";
 
 /** P9 `05` §1 (P9-010): consumer offset wiring for the P7 coordinator and
  * the P8 consumers A/B. `pollOnce` is the P1 batch-consumption form: the
@@ -41,10 +43,29 @@ export type ConsumerLoopError =
 
 export interface ConsumerLoopStores {
   readonly tx: Pick<TransactionPortService, "transact">;
-  readonly journal: Pick<DomainEventJournalService, "readAfter">;
+  readonly journal: Pick<
+    DomainEventJournalService,
+    "readAfterRaw" | "decodeRaw"
+  >;
   readonly offsets: ConsumerOffsetStoreService;
   readonly deadLetters: ConsumerDeadLetterStoreService;
   readonly projection: ProjectionStoreService;
+}
+
+export interface AtomicConsumerApplyResult {
+  readonly record?: string;
+  readonly quarantineReason?: string;
+  readonly afterCommit?: Effect.Effect<void, unknown>;
+}
+
+/** Narrow exception for consumers whose canonical apply must share the
+ * consumer-offset transaction. Ordinary event handlers keep their current
+ * receipt-first boundary. */
+export interface AtomicConsumerHandler {
+  readonly matches: (event: DomainEvent<unknown>) => boolean;
+  readonly apply: (
+    event: DomainEvent<unknown>,
+  ) => Effect.Effect<AtomicConsumerApplyResult, unknown, TransactionScope>;
 }
 
 export interface ConsumerLoopResult {
@@ -54,9 +75,6 @@ export interface ConsumerLoopResult {
   readonly quarantined: number;
   readonly records: ReadonlyArray<string>;
 }
-
-/** P1 `05` §3 reader ceiling: events above it are poison path 1 (CC-3). */
-const READER_EVENT_VERSION_CEILING = 1;
 
 interface QuarantineEntry {
   readonly sequence: number;
@@ -83,9 +101,34 @@ const isTransientOperational = (defect: unknown): boolean => {
     ) {
       return true;
     }
+    if (
+      typeof current === "object" &&
+      current !== null &&
+      (current as { readonly _tag?: unknown })._tag === "PersistenceUnavailable"
+    ) {
+      return (
+        (current as { readonly retryDisposition?: unknown })
+          .retryDisposition === "retryable"
+      );
+    }
     current = (current as { readonly cause?: unknown }).cause;
   }
   return false;
+};
+
+const safeFailureReason = (failure: unknown): string => {
+  if (typeof failure !== "object" || failure === null) return String(failure);
+  const record = failure as Readonly<Record<string, unknown>>;
+  switch (record._tag) {
+    case "PersistenceUnavailable":
+      return `persistence unavailable: ${String(record.repository)}/${String(record.operation)} (${String(record.sourceTag)})`;
+    case "PersistenceConstraintViolation":
+      return `persistence constraint: ${String(record.repository)}/${String(record.constraintKind)}/${String(record.constraint)}`;
+    case "PersistenceCorruption":
+      return `persistence corruption: ${String(record.repository)}/${String(record.operation)} (${String(record.reason)})`;
+    default:
+      return String(failure);
+  }
 };
 
 /** One poll over the project journal for one consumer identity: read the
@@ -100,18 +143,19 @@ export const pollOnce = <R>(
     readonly handlers: (
       events: ReadonlyArray<DomainEvent<unknown>>,
     ) => Effect.Effect<ReadonlyArray<string>, unknown, R>;
+    readonly atomicHandler?: AtomicConsumerHandler;
   },
 ): Effect.Effect<ConsumerLoopResult, ConsumerLoopError, R> =>
   Effect.gen(function* () {
-    const { fromSequence, events } = yield* deps.tx.transact(
+    const { fromSequence, candidates } = yield* deps.tx.transact(
       Effect.gen(function* () {
         const fromSequence = yield* deps.offsets.read(consumerId, projectId);
-        const events = yield* deps.journal.readAfter(
+        const candidates = yield* deps.journal.readAfterRaw(
           projectId,
           fromSequence,
           batchSize,
         );
-        return { fromSequence, events };
+        return { fromSequence, candidates };
       }),
     );
 
@@ -119,18 +163,107 @@ export const pollOnce = <R>(
     const applied: DomainEvent<unknown>[] = [];
     const records: string[] = [];
     let lastSequence = fromSequence;
-    for (const event of events) {
-      lastSequence = event.sequence;
-      if (event.eventVersion > READER_EVENT_VERSION_CEILING) {
+    let committedSequence = fromSequence;
+    let appliedCount = 0;
+    let quarantinedCount = 0;
+    const afterCommit: Array<Effect.Effect<void, unknown>> = [];
+    for (const candidate of candidates) {
+      if (
+        typeof candidate.sequenceRaw !== "number" ||
+        !Number.isSafeInteger(candidate.sequenceRaw) ||
+        candidate.sequenceRaw <= 0
+      ) {
+        return yield* Effect.fail({
+          _tag: "PersistenceCorruption" as const,
+          repository: "DomainEventJournal" as const,
+          operation: "consumer-event-sequence",
+          reason: "journal sequence cannot be proven for quarantine",
+        });
+      }
+      lastSequence = candidate.sequenceRaw;
+      const decoded = yield* deps.journal.decodeRaw(candidate);
+      if (decoded._tag === "Poison") {
         quarantined.push({
-          sequence: event.sequence,
-          reason: `unsupported eventVersion ${event.eventVersion}`,
+          sequence: candidate.sequenceRaw,
+          reason:
+            decoded.reason === "UnsupportedEventPair" &&
+            candidate.eventVersionRaw === 2
+              ? "unsupported eventVersion 2"
+              : decoded.reason === "UnsupportedEventPair" ||
+                  decoded.reason === "UnknownEventType"
+                ? "unsupported event type/version pair"
+                : decoded.reason === "MalformedPayload"
+                  ? "malformed event payload"
+                  : "malformed event envelope",
         });
         continue;
       }
-      const exit = yield* Effect.exit(deps.handlers([event]));
+      if (decoded.event.projectId !== projectId) {
+        quarantined.push({
+          sequence: candidate.sequenceRaw,
+          reason: "malformed event envelope",
+        });
+        continue;
+      }
+      const decodedEvent = decoded.event;
+      const atomicHandler = deps.atomicHandler;
+      if (atomicHandler?.matches(decodedEvent) === true) {
+        yield* deps.tx
+          .transact(
+            Effect.gen(function* () {
+              for (const entry of quarantined.splice(0)) {
+                yield* deps.deadLetters.quarantine(
+                  consumerId,
+                  projectId,
+                  entry.sequence,
+                  entry.reason,
+                );
+                quarantinedCount += 1;
+              }
+              const priorApplied = applied.splice(0);
+              if (priorApplied.length > 0) {
+                yield* deps.projection.apply(priorApplied);
+                appliedCount += priorApplied.length;
+              }
+              const result = yield* atomicHandler.apply(decodedEvent);
+              if (result.quarantineReason !== undefined) {
+                yield* deps.deadLetters.quarantine(
+                  consumerId,
+                  projectId,
+                  decodedEvent.sequence,
+                  result.quarantineReason,
+                );
+                quarantinedCount += 1;
+              } else {
+                yield* deps.projection.apply([decodedEvent]);
+                appliedCount += 1;
+                if (result.record !== undefined) records.push(result.record);
+                if (result.afterCommit !== undefined) {
+                  afterCommit.push(result.afterCommit);
+                }
+              }
+              yield* deps.offsets.advance(
+                consumerId,
+                projectId,
+                decodedEvent.sequence,
+              );
+              return result;
+            }),
+          )
+          .pipe(
+            Effect.mapError(
+              (cause): TransactionOperationalFailure => ({
+                _tag: "TransactionOperationalFailure",
+                cause,
+              }),
+            ),
+          );
+        committedSequence = decodedEvent.sequence;
+        continue;
+      }
+      const exit = yield* Effect.exit(deps.handlers([decodedEvent]));
       if (Exit.isSuccess(exit)) {
-        applied.push(event);
+        applied.push(decodedEvent);
         records.push(...exit.value);
         continue;
       }
@@ -143,34 +276,48 @@ export const pollOnce = <R>(
         });
       }
       quarantined.push({
-        sequence: event.sequence,
-        reason: `handler defect: ${String(defect)}`,
+        sequence: decodedEvent.sequence,
+        reason: `handler defect: ${safeFailureReason(defect)}`,
       });
     }
 
-    yield* deps.tx.transact(
-      Effect.gen(function* () {
-        for (const entry of quarantined) {
-          yield* deps.deadLetters.quarantine(
-            consumerId,
-            projectId,
-            entry.sequence,
-            entry.reason,
-          );
-        }
-        if (applied.length > 0) {
-          yield* deps.projection.apply(applied);
-        }
-        if (lastSequence !== fromSequence) {
-          yield* deps.offsets.advance(consumerId, projectId, lastSequence);
-        }
-      }),
-    );
+    if (
+      quarantined.length > 0 ||
+      applied.length > 0 ||
+      lastSequence !== committedSequence
+    ) {
+      yield* deps.tx.transact(
+        Effect.gen(function* () {
+          for (const entry of quarantined) {
+            yield* deps.deadLetters.quarantine(
+              consumerId,
+              projectId,
+              entry.sequence,
+              entry.reason,
+            );
+          }
+          quarantinedCount += quarantined.length;
+          if (applied.length > 0) {
+            yield* deps.projection.apply(applied);
+            appliedCount += applied.length;
+          }
+          if (lastSequence !== committedSequence) {
+            yield* deps.offsets.advance(consumerId, projectId, lastSequence);
+            committedSequence = lastSequence;
+          }
+        }),
+      );
+    }
+    for (const effect of afterCommit) {
+      // Canonical apply + offset are already committed; a scheduler wake is
+      // best-effort and durable Inbox/WorkWait facts remain authoritative.
+      yield* Effect.exit(effect);
+    }
     return {
       fromSequence,
       lastSequence,
-      applied: applied.length,
-      quarantined: quarantined.length,
+      applied: appliedCount,
+      quarantined: quarantinedCount,
       records,
     };
   });
@@ -233,3 +380,58 @@ export const completionConsumerLoop =
       projectId,
       principal,
     );
+
+/** Durable cross-workflow signal delivery. Returned strings are diagnostics;
+ * DomainEvent + canonical repositories remain the workflow truth. */
+export const workflowSignalConsumerLoop =
+  (
+    consumer: Pick<WorkflowSignalConsumerService, "consume">,
+  ): ((
+    events: ReadonlyArray<DomainEvent<unknown>>,
+  ) => Effect.Effect<ReadonlyArray<string>, unknown>) =>
+  (events) =>
+    Effect.map(
+      consumer.consume(
+        events.map((event) => ({
+          eventType: event.eventType,
+          eventVersion: event.eventVersion,
+          payload: event.payload,
+          eventId: String(event.eventId),
+          occurredAt: event.occurredAt,
+        })),
+      ),
+      (outcomes) =>
+        outcomes.map((outcome) =>
+          outcome._tag === "Delivered"
+            ? `Delivered:${outcome.kind}:${outcome.workspaceId}`
+            : `Ignored:${outcome.eventId}`,
+        ),
+    );
+
+export const workflowSignalAtomicConsumerHandler = (
+  consumer: Pick<
+    WorkflowSignalConsumerService,
+    "applyBlockedWorkEpisodeAtomically"
+  >,
+): AtomicConsumerHandler => ({
+  matches: (event) => {
+    if (event.eventType !== "ExecutionSettled") return false;
+    const envelope = event.payload as Record<string, unknown> | null;
+    const settlement = envelope?.settlement as
+      | {
+          readonly _tag?: unknown;
+          readonly result?: { readonly _tag?: unknown };
+        }
+      | undefined;
+    return (
+      settlement?._tag === "Completed" && settlement.result?._tag === "Blocked"
+    );
+  },
+  apply: (event) =>
+    consumer.applyBlockedWorkEpisodeAtomically({
+      eventId: String(event.eventId),
+      eventType: String(event.eventType),
+      occurredAt: event.occurredAt,
+      payload: event.payload,
+    }),
+});

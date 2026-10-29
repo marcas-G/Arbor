@@ -7,6 +7,7 @@ import {
   layer,
   P16_MIGRATIONS,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
@@ -37,6 +38,7 @@ import {
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 import { labeled } from "./support/p9-harness-api.js";
 
 /**
@@ -199,7 +201,12 @@ const makeApp = (
   probe: ProviderProbe,
 ) => {
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive(),
     Layer.mergeAll(
@@ -238,6 +245,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* ensureLegacyProjectResourceSourceFixture();
       yield* sql.unsafe(
         "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?, 'ExecutionScoped', NULL, ?, 0, 't')",
         [sessionId, executionId],
@@ -782,6 +790,31 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     expect(r.turnsAfter[0]!.finish_reason).toBe("Failed");
     // Recovery never invents an Execution settlement (P2 `06` §4).
     expect(r.executionAfter).toBeNull();
+  });
+
+  it("fails a dangling ProviderTurn when the current request no longer matches its durable binding", async () => {
+    const probe: ProviderProbe = { calls: [] };
+    const r = await run(
+      Effect.gen(function* () {
+        yield* boot;
+        yield* openDanglingTurn(providerTurnId);
+        const runtime = yield* ProviderRuntime;
+        const failure = yield* Effect.flip(
+          runtime.runTurn(runTurnInput(providerTurnId)),
+        );
+        return { failure, turns: yield* turnRows };
+      }),
+      makeApp([{ events: successTurn }], probe),
+    );
+    expect(r.failure).toMatchObject({
+      _tag: "ProviderFailure",
+      kind: "UnknownProviderFailure",
+      safeDiagnostic: "provider-turn-resume-binding-invalid",
+    });
+    expect(probe.calls).toEqual([]);
+    expect(r.turns).toHaveLength(1);
+    expect(r.turns[0]?.settled_at).not.toBeNull();
+    expect(r.turns[0]?.finish_reason).toBe("Failed");
   });
 
   it("PD4/I-7 [crash-injected]: daemon crash leaves the Turn unsettled → recovery plans resume-by-retry on the SAME Turn (attempt_no = MAX+1 / 0 for a no-attempt leftover); never calls the provider", async () => {

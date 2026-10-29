@@ -1,7 +1,10 @@
 # P4 — 01 Tool Contracts
 
-**Authority:** DID v1.8 §7.6, §6A.7, §9.12; SD v1.3 §6.5/§6.6; G1/G5/G6.
-**Status:** DRAFT (first draft for contract review).
+**Authority:** DID v1.40 §6A.7/§9.12; DID v1.8 §7.6; SD v1.15 §6.5/§6.6; G1/G5/G6.
+**Status:** FROZEN; accepted AH7-DG-03 amendment (2026-10-10). Post-landing
+consistency review pending.
+**Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
+SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
 
 ## 1. ToolDefinition (catalog contract)
 
@@ -64,7 +67,8 @@ interface ToolIntent {
   readonly toolVersion: string;
   readonly argumentsJson: string;
   readonly invocationId: ToolInvocationId;   // caller-preallocated
-  readonly approvalId: string | null;        // Exact-Intent Approval, if required
+  readonly approvalId: string | null;        // Runtime-selected Executable approval
+  readonly approvalRevision: number | null;  // exact Approved CAS revision; Runtime-only
 }
 
 interface ToolExecutionContext {
@@ -76,9 +80,25 @@ interface ToolExecutionContext {
   readonly authenticatedPrincipal: Principal;
   readonly authority: InvocationAuthority;   // 03 §2
   readonly controlBasisDigest: string;       // digest of the P3 manifest ControlBasis
+  /** Runtime-owned active ExecutionOrigin lease; production requires all fields. */
+  readonly executionFence: {
+    readonly executionId: ExecutionId;
+    readonly workerId: string;
+    readonly workerIncarnationId: string;
+    readonly fencingGeneration: LeaseGeneration;
+  };
   readonly requestedAt: string;
 }
 ```
+
+The lease tuple comes only from the current `ExecutionOrigin` supplied by
+`runExecution` and copied by the Executable Tool Handler. It is never decoded
+from model arguments, ToolIntent or approval payload. Production fails closed
+if any tuple member is absent. P4 passes the same tuple to each fenced durable
+mutation; it does not extend authority beyond the active Execution.
+The model/provider output cannot supply `approvalId` or `approvalRevision`;
+the handler populates both only from the Runtime-owned Executable approval
+ledger when resuming the same pinned LogicalAction.
 
 ## 4. CanonicalToolObservation
 
@@ -87,21 +107,94 @@ type CanonicalToolObservation =
   | { readonly _tag: "Success"; readonly observation: BoundedObservation;
       readonly resultRef: string | null }
   | { readonly _tag: "ExpectedFailure"; readonly observation: BoundedObservation }
-  | { readonly _tag: "Denied"; readonly reason: string }
+  | {
+      readonly _tag: "Denied";
+      readonly reasonCode: PersistedNoEffectDenialCode;
+      readonly reason: string;
+    }
   | { readonly _tag: "Interrupted" }
   | { readonly _tag: "OutcomeUnknown"; readonly reconciliationRefs: ReadonlyArray<InvocationRef> }
+  | {
+      readonly _tag: "ReconciledNoEffect";
+      readonly reasonCode: ReconciledNoEffectCode;
+      readonly reconciliationFactRef: ReconciliationFactId;
+      readonly observation: BoundedObservation;
+      readonly resultRef: ArtifactRef;
+    }
   | { readonly _tag: "RuntimeFailure"; readonly cause: string };
 
 interface BoundedObservation {
   readonly text: string;             // model-visible, size-bounded
   readonly truncated: boolean;
 }
+
+/** Trusted P4 handoff data; P3/Application adds the logical-step/action identity. */
+interface ResolvedExecutableIntentForApproval {
+  readonly intent: ToolIntent;
+  readonly actionDigest: string;
+  readonly resolvedRegions: ReadonlyArray<CanonicalResourceRegion>;
+  readonly sideEffectSemantics: SideEffectSemantics;
+}
+
+type ToolRuntimeOutcome =
+  | CanonicalToolObservation
+  | { readonly _tag: "ApprovalRequired";
+      readonly resolvedIntent: ResolvedExecutableIntentForApproval };
 ```
+
+`NoEffectDenialCode` is closed:
+
+```ts
+type NoEffectDenialCode =
+  | "InvocationAuthorityDenied"
+  | "ApprovalRejected"
+  | "ApprovalNotFound"
+  | "ApprovalMismatch"
+  | "ApprovalExpired"
+  | "ApprovalConsumedByOtherInvocation"
+  | "ResourceResolutionDenied"
+  | "ResourceAdmissionDenied"
+  | "ApprovalNoLongerAuthorized"
+  | "ProcessExecutionDisabled"
+  | "NativeOsTupleUnavailable";
+
+/** Historical persisted-row compatibility only; never written by new P4 paths. */
+type LegacyNoEffectDenialCode = "ApprovalRequired";
+type PersistedNoEffectDenialCode =
+  | NoEffectDenialCode
+  | LegacyNoEffectDenialCode;
+```
+
+The version-1 Denied projection maps each code to a fixed bounded Runtime
+observation. The stored reason code, rather than mutable current policy or
+error text, determines replay.
 
 - `Denied` is the model-visible `ToolInvocationDenied` projection (DID §6A.7),
   not an Execution failure.
+- Historical `Denied(ApprovalRequired)` values decode and replay their exact
+  terminal result only. New approval-required calls use the nonterminal
+  `ApprovalRequired` handoff in `02`; they are not new-write denials.
 - Large raw results live behind `resultRef` (Artifact), never in the observation
   (SD §6.6).
+
+**Accepted Native durable pre-effect Denied supplement V2** (`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`):
+the two additional closed codes apply only to an exact already-durable
+process-capable ToolInvocation that remains `NotAdmitted`. Disabled startup
+mode selects `ProcessExecutionDisabled`; `NativeOsSupportedOnly` without the
+exact qualified tuple selects `NativeOsTupleUnavailable`. They are durable
+P4 `Denied` no-effect results, not `ExpectedFailure` or
+`SandboxProviderUnavailable`. A new shell action received while Disabled
+continues to be rejected before P4 intent. Persisted settlement/replay uses
+the exact code; later mode or tuple changes never re-admit that invocation.
+`MayHaveStarted`, `LegacyUnknown`, stale fence, or unprovable identity remains
+on existing recovery/fail-closed behavior and cannot be classified as no-effect.
+Only immutable startup mode and exact tuple-verification result select these
+codes; provider text, local error strings, profile guesses, and fallback
+providers cannot choose or alter them.
+Implementation is conditionally authorized under
+`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION` after the
+required independent post-landing review; migration execution, existing
+database upgrade, deployment, and release remain outside this authorization.
 
 ## 5. ToolInvocationSettlement
 
@@ -109,13 +202,130 @@ interface BoundedObservation {
 type ToolInvocationSettlement =
   | { readonly _tag: "Success" }
   | { readonly _tag: "ExpectedFailure" }
+  | {
+      readonly _tag: "Denied";
+      readonly reasonCode: NoEffectDenialCode;
+    }
+  | {
+      readonly _tag: "ReconciledNoEffect";
+      readonly reasonCode: ReconciledNoEffectCode;
+      readonly reconciliationFactRef: ReconciliationFactId;
+    }
   | { readonly _tag: "Interrupted" }
   | { readonly _tag: "OutcomeUnknown"; readonly reconciliationRefs: ReadonlyArray<InvocationRef> }
   | { readonly _tag: "RuntimeFailure"; readonly cause: string };
+
+/** Row-decoder union: the legacy code is read/replay-only, never newly written. */
+type PersistedToolInvocationSettlement =
+  | Exclude<ToolInvocationSettlement, { readonly _tag: "Denied" }>
+  | { readonly _tag: "Denied";
+      readonly reasonCode: PersistedNoEffectDenialCode };
+
+type ReconciledNoEffectCode =
+  | "AuthoritySnapshotChanged"
+  | "ResourceSnapshotChanged"
+  | "ApprovalNoLongerAuthorized"
+  | "StopRequested"
+  | "ReplayLimitReached";
+
+type ReconciliationUnknownCode =
+  | "ProfileUnavailable"
+  | "EffectIdentityUnavailable"
+  | "ExternalSourceUnavailable"
+  | "ExternalSourceNotAuthoritative"
+  | "EvidenceStale"
+  | "EvidenceBindingMismatch"
+  | "AttemptNotFinal"
+  | "ResultEvidenceUnavailable"
+  | "ProfileVersionUnavailable";
+
+type ToolReconciliationResult =
+  | { readonly _tag: "NotOccurred"; readonly proof: ReconciliationProofRef }
+  | { readonly _tag: "Occurred";
+      readonly proof: ReconciliationProofRef;
+      readonly settlement: "Success" | "ExpectedFailure";
+      readonly resultRef: ArtifactRef }
+  | { readonly _tag: "StillUnknown";
+      readonly reasonCode: ReconciliationUnknownCode;
+      readonly evidenceRef: ArtifactRef | null };
 ```
 
 `No result != No effect` (SD §6.5): an `OutcomeUnknown` invocation may still have
 produced an external effect and must not be retried blindly.
+
+`Denied` is a durable no-effect terminal result and is valid only while
+`effect_admission_state = NotAdmitted`. It is distinct from
+`ExpectedFailure` (the tool ran and reported a normal failure) and
+`OutcomeUnknown` (the effect may have happened). `Interrupted` is the existing
+stop/quiescence terminal result; it is not a Denied code.
+
+For the accepted Blocked WorkEpisode evidence contract, a P4-created
+`ToolResult.status=Denied` must retain its exact closed `NoEffectDenialCode`
+and canonical ToolInvocation identity. This is the `P4NoEffectDenied` branch
+of `TerminalActionDenial`. A handler rejection that occurs before P4 intent or
+effect admission is not a P4 Denied result; P3/P9 may preserve only the closed
+`HandlerRejected` category. Any possibly-started external effect remains on
+the existing OutcomeUnknown/ReconciliationRequired path and cannot form
+Blocked no-effect evidence.
+
+In the schema-39 RecoveryBindingV1 storage projection, a P4 `Denied`
+committed before any claim/binding is represented by
+`recovery_binding_state='DeniedUnbound'`. This is storage provenance, not a
+new `ToolInvocationSettlement` variant: it preserves the closed Denied
+reason and exact replay behavior above, asserts that no P38 consumption
+receipt/RecoveryBinding claim exists, remains `NotAdmitted`, and is never a
+P39 recovery/reconciliation candidate. On exact replay, P3's persisted
+Execution/Step/ProviderTurn/LogicalAction/callRef identity and the original
+P4 invocation request tuple are checked before mutable resource/authority
+resolution; the stored Denied is returned without re-admission. A Denied
+after a committed P39 claim retains `recovery_binding_state='Bound'` and
+its exact binding.
+
+`ReconciledNoEffect` is a distinct terminal observation/settlement for a
+`MayHaveStarted` invocation only when its same-attempt immutable fact proves
+`NotOccurred`; it is never P4 `Denied` and never resets admission state.
+Reconciliation-produced terminal `Success`, `ExpectedFailure`, or
+`ReconciledNoEffect` carries the selected same-invocation/same-attempt fact
+reference. Ordinary terminal settlements and migrated P36 terminal history do
+not acquire a selected fact. Late contradictory evidence is appended as
+`PostTerminalEvidence` and cannot replace the selected fact or rewrite the
+settlement.
+
+## Accepted AH7-DG-01 / P39-P40 canonical Observation envelope (DID v1.41)
+
+The accepted v1 envelope covers six evidence-bearing tags: Success,
+ExpectedFailure, Interrupted, OutcomeUnknown, RuntimeFailure, and P39
+`ReconciledNoEffect`. The codec version is
+`p4-canonical-tool-observation-v1`; canonical schema-key/array order is fixed,
+the body is UTF-8 JSON ≤16,384 bytes, and the digest is
+`SHA-256(UTF8(version + LF + body))`. The exact first P4 return is the value
+committed beside settlement; re-entry preserves its stored `text` and
+`truncated`, never rerunning `bounded()`.
+
+Existing caps remain: bounded text ≤2,000 UTF-16 code units; valid non-null
+ArtifactId ≤40 ASCII bytes; RuntimeFailure cause ≤1,024 UTF-8 bytes; unknown
+reconciliation refs 1–8 items, each ≤128 UTF-8 bytes. Existing P4 first-write
+closure applies before the terminal commit: Success bad ref uses the fixed
+omission text/`truncated=true` without auto-Artifact; RuntimeFailure oversized
+cause uses the fixed closed omitted-detail code while preserving its tag;
+over-limit OutcomeUnknown refs keep the invocation unsettled and go through
+the unresolved-effect gate. No known outcome is discarded or relabeled to fit
+the envelope.
+
+P39 `ReconciledNoEffect` adds exactly the accepted P39 fields to this same v1
+union: closed `reasonCode`, selected `reconciliationFactRef`, bounded
+`observation`, and P4 Artifact `resultRef`. It is valid only for
+`MayHaveStarted` with P39 `Reconciliation` provenance, a bound RecoveryBinding,
+and the selected same-invocation/same-attempt `RecoveryInput/NotOccurred` fact.
+The fact's `result_ref` remains NULL; P4 row `result_ref` and Observation
+`resultRef` are the exact non-NULL P4 ArtifactRef. P39 reason, selected fact,
+Artifact and P3 payload hash are distinct values; late/mismatched facts never
+rewrite selection or terminal Observation.
+
+DG03 `Denied/NotAdmitted` remains outside the v1 observation envelope. Its
+closed `NoEffectDenialCode` + `projectionVersion:1` choose the same
+deterministic fixed denial projection; its P40 observation fields and
+`result_ref` are NULL. It is neither RNO nor ExpectedFailure.
 
 ## 6. Effect channels
 
@@ -135,4 +345,17 @@ Adapter/SDK errors are translated at the adapter boundary (DID §0A.6).
 - No ownership mutation (G4; `05`).
 - No Model Context / prompt semantics (P3).
 - No verification verdict (P8).
-- No environment/git-specific behavior (P11).
+- No environment/git-specific behavior (P11), except the accepted sandbox
+  process-policy boundary below; Worktree lifecycle remains P11-owned.
+
+## Accepted Native OS Sandbox execution boundary
+
+All shell, script, build, test, package-manager and other model/Workspace-
+influenced executable work enters through `SandboxProcessPort`; all child and
+descendant processes inherit one Execution-scoped policy and are tracked for
+stop/cleanup. Executors cannot call native process APIs directly. In-process
+Read/List/Patch continue to use `SandboxPort` mount/target resolution and do
+not claim OS process isolation. Exact-intent approval is evaluated separately
+and never changes the sandbox profile, mounts, network or resource limits.
+P39 fixed trusted host probes remain the only narrowly registered host-side
+spawn exception and are not an executor capability.

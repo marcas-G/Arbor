@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -33,18 +33,25 @@ import {
   ProjectId,
   parse,
   SessionId,
+  WorkId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
   type AdmitExecutionPayload,
   P2CommandHandlerRegistryLive,
 } from "../packages/execution-runtime/src/index.js";
+import { WorkReadmissionGateStore } from "../packages/ports/src/index.js";
+import {
+  seedCurrentOpenWork,
+  workEpisode,
+} from "./support/execution-episode-fixtures.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
 const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
+const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const actor = parse(Actor)("user:test");
 const principal = parse(Principal)("runtime:system");
 const systemContext: CommandSubmissionContext = {
@@ -53,10 +60,10 @@ const systemContext: CommandSubmissionContext = {
   causationRef: "scheduler",
 };
 
-const makeApp = () => {
+const makeApp = (held = false, includeReadmissionGate = true) => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
-  const repos = Layer.mergeAll(
+  const repositoryLayers = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
@@ -66,6 +73,22 @@ const makeApp = () => {
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
   );
+  const gate = Layer.succeed(WorkReadmissionGateStore, {
+    hasBlockingSource: () =>
+      Effect.succeed(
+        held
+          ? Option.some({
+              sourceKind: "RuntimeSafetyStopSettlement" as const,
+              executionId: parse(ExecutionId)(
+                "exe_018f2b3c-4d5e-7abc-8def-0123456789ad",
+              ) as ExecutionId,
+            })
+          : Option.none(),
+      ),
+  });
+  const repos = includeReadmissionGate
+    ? Layer.mergeAll(repositoryLayers, gate)
+    : repositoryLayers;
   const all = Layer.mergeAll(
     infra,
     repos,
@@ -119,6 +142,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* seedCurrentOpenWork(projectId, workspaceId, workId);
     }),
   );
 });
@@ -127,7 +151,7 @@ const payloadMain = (executionId: ExecutionId): AdmitExecutionPayload => ({
   _tag: "WorkspaceMain",
   executionId,
   workspaceId,
-  focus: { _tag: "Coordination" },
+  episode: workEpisode(workId),
 });
 
 const payloadBound = (
@@ -184,6 +208,90 @@ const run = (program: Effect.Effect<unknown, unknown, never>) =>
   Effect.runPromise(program as Effect.Effect<unknown, never, never>);
 
 describe("P2-009 AdmitExecution", () => {
+  it("rechecks the Work hold in the admission transaction and commits no Execution or receipt", async () => {
+    const app = makeApp(true);
+    const commandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789ae",
+    );
+    const executionId = parse(ExecutionId)(
+      "exe_018f2b3c-4d5e-7abc-8def-0123456789ae",
+    ) as ExecutionId;
+    const payload = payloadMain(executionId);
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P2_MIGRATIONS);
+      yield* seed;
+      const gw = yield* CommandGateway;
+      const result = yield* Effect.exit(
+        gw.execute(
+          envelope(commandId, payload),
+          systemContext,
+          authority(commandId, payload),
+        ),
+      );
+      const sql = yield* SqlClient;
+      const executions = yield* sql.unsafe<{ readonly count: number }>(
+        "SELECT COUNT(*) AS count FROM executions WHERE execution_id = ?",
+        [executionId],
+      );
+      const receipts = yield* sql.unsafe<{ readonly count: number }>(
+        "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+        [commandId],
+      );
+      return {
+        result,
+        executions: Number(executions[0]?.count),
+        receipts: Number(receipts[0]?.count),
+      };
+    });
+    const result = await run(Effect.provide(program, app));
+    expect(result).toMatchObject({ executions: 0, receipts: 0 });
+    expect(JSON.stringify((result as { result: unknown }).result)).toContain(
+      '"_tag":"WorkReadmissionHeld"',
+    );
+  });
+
+  it("fails closed when WorkspaceMain admission lacks the readmission gate service", async () => {
+    const app = makeApp(false, false);
+    const commandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789af",
+    );
+    const executionId = parse(ExecutionId)(
+      "exe_018f2b3c-4d5e-7abc-8def-0123456789af",
+    ) as ExecutionId;
+    const payload = payloadMain(executionId);
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P2_MIGRATIONS);
+      yield* seed;
+      const gw = yield* CommandGateway;
+      const result = yield* Effect.exit(
+        gw.execute(
+          envelope(commandId, payload),
+          systemContext,
+          authority(commandId, payload),
+        ),
+      );
+      const sql = yield* SqlClient;
+      const executions = yield* sql.unsafe<{ readonly count: number }>(
+        "SELECT COUNT(*) AS count FROM executions WHERE execution_id = ?",
+        [executionId],
+      );
+      const receipts = yield* sql.unsafe<{ readonly count: number }>(
+        "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+        [commandId],
+      );
+      return {
+        result,
+        executions: Number(executions[0]?.count),
+        receipts: Number(receipts[0]?.count),
+      };
+    });
+    const result = await run(Effect.provide(program, app));
+    expect(result).toMatchObject({ executions: 0, receipts: 0 });
+    expect(JSON.stringify((result as { result: unknown }).result)).toContain(
+      '"_tag":"PersistenceUnavailable"',
+    );
+  });
+
   it("admits a WorkspaceMain execution and emits ExecutionAdmitted", async () => {
     const app = makeApp();
     const commandId = parse(CommandId)(

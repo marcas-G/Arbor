@@ -43,18 +43,21 @@ body,
   border: 1px solid var(--arbor-line);
   border-radius: var(--arbor-radius);
   box-shadow: var(--arbor-shadow);
+  overflow: hidden;
 }
 
 .arbor-card-header {
   padding: var(--arbor-space-3) var(--arbor-space-4);
   border-bottom: 1px solid var(--arbor-line);
+  background: color-mix(in srgb, var(--arbor-paper) 44%, transparent);
 }
 
 .arbor-card-title {
   margin: 0;
   color: var(--arbor-ink);
   font-size: var(--arbor-text-title);
-  font-weight: 600;
+  font-weight: 680;
+  letter-spacing: -0.01em;
 }
 
 .arbor-card-body {
@@ -67,11 +70,11 @@ body,
   align-items: center;
   padding: 0 var(--arbor-space-2);
   border: 1px solid transparent;
-  border-radius: var(--arbor-radius-small);
+  border-radius: 999px;
   font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-caption);
-  font-weight: 600;
-  line-height: 1.5;
+  font-weight: 650;
+  line-height: 1.7;
   white-space: nowrap;
 }
 
@@ -83,12 +86,14 @@ body,
 
 .arbor-badge-attention {
   color: var(--arbor-attention);
-  border-color: var(--arbor-attention);
+  border-color: color-mix(in srgb, var(--arbor-attention) 30%, transparent);
+  background: color-mix(in srgb, var(--arbor-attention) 9%, transparent);
 }
 
 .arbor-badge-danger {
   color: var(--arbor-danger);
-  border-color: var(--arbor-danger);
+  border-color: color-mix(in srgb, var(--arbor-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--arbor-danger) 8%, transparent);
 }
 
 .arbor-badge-muted {
@@ -122,8 +127,18 @@ body,
   color: var(--arbor-ink);
   font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-small);
-  font-weight: 600;
+  font-weight: 650;
   cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.arbor-button:hover:not(:disabled) {
+  transform: translateY(-1px);
 }
 
 .arbor-button:disabled {
@@ -135,6 +150,7 @@ body,
   border-color: var(--arbor-leaf);
   background: var(--arbor-leaf);
   color: var(--arbor-paper-2);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--arbor-leaf) 20%, transparent);
 }
 
 .arbor-button-primary:hover:not(:disabled) {
@@ -143,13 +159,14 @@ body,
 }
 
 .arbor-button-quiet {
-  border-color: var(--arbor-line);
+  border-color: transparent;
   background: transparent;
   color: var(--arbor-leaf);
 }
 
 .arbor-button-quiet:hover:not(:disabled) {
-  border-color: var(--arbor-leaf-bright);
+  border-color: var(--arbor-line);
+  background: var(--arbor-leaf-pale);
   color: var(--arbor-leaf-bright);
 }
 
@@ -168,12 +185,13 @@ body,
 
 .arbor-field-label {
   color: var(--arbor-ink-soft);
-  font-size: var(--arbor-text-small);
+  font-size: var(--arbor-text-caption);
+  font-weight: 650;
 }
 
 .arbor-field-control {
   min-height: var(--arbor-row-height);
-  padding: var(--arbor-space-1) var(--arbor-space-2);
+  padding: var(--arbor-space-2) var(--arbor-space-3);
   border: 1px solid var(--arbor-line);
   border-radius: var(--arbor-radius-small);
   background: var(--arbor-surface);
@@ -184,7 +202,7 @@ body,
 
 .arbor-field-control:focus {
   border-color: var(--arbor-leaf-bright);
-  outline: 1px solid var(--arbor-leaf-bright);
+  outline: 3px solid color-mix(in srgb, var(--arbor-focus) 13%, transparent);
 }
 
 textarea.arbor-field-control {
@@ -198,9 +216,9 @@ textarea.arbor-field-control {
   align-items: center;
   gap: var(--arbor-space-3);
   padding: var(--arbor-space-5);
-  border: 1px dashed var(--arbor-line);
+  border: 1px dashed var(--arbor-line-strong);
   border-radius: var(--arbor-radius);
-  background: var(--arbor-surface);
+  background: color-mix(in srgb, var(--arbor-paper) 55%, transparent);
 }
 
 .arbor-empty-text {

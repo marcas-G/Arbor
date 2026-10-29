@@ -1,10 +1,17 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { SecretStorePort, secretRef, ToolCatalogPort } from "@arbor/ports";
+import { Effect, type Layer } from "effect";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { buildSingleWorkspaceLayer } from "../src/composition.js";
+import { main } from "../src/main.js";
 import {
   type ArborProviderConfigFile,
+  bindProcessExecutionModeSnapshot,
   findArborConfigFile,
+  processExecutionModeOfConfig,
   providerDeploymentOfConfig,
 } from "../src/provider-config.js";
 
@@ -14,6 +21,9 @@ import {
  */
 
 const tempDirs: string[] = [];
+let schema44Factory: Awaited<
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
+>;
 const withConfig = (content: string): { dir: string; path: string } => {
   const dir = mkdtempSync(join(tmpdir(), "arbor-config-"));
   tempDirs.push(dir);
@@ -22,13 +32,125 @@ const withConfig = (content: string): { dir: string; path: string } => {
   return { dir, path };
 };
 
+type ProductionConfigHasNoTrustedLocalSwitch =
+  "testOnlyAllowTrustedLocalProcessExecution" extends keyof import("../src/composition.js").SingleWorkspaceConfig
+    ? never
+    : true;
+const productionConfigHasNoTrustedLocalSwitch: ProductionConfigHasNoTrustedLocalSwitch = true;
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+beforeAll(async () => {
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory();
+}, 120_000);
+
+afterAll(() => schema44Factory?.cleanup(), 120_000);
+
 describe("arbor.config.json — standard provider configuration", () => {
+  it("keeps the config-file process mode authoritative over programmatic overrides", () => {
+    const startup = bindProcessExecutionModeSnapshot(
+      {
+        runtime: {
+          processExecutionMode: {
+            version: 1,
+            processExecutionMode: "Disabled",
+          },
+        },
+      },
+      {
+        processExecutionMode: "NativeOsSupportedOnly",
+      },
+    );
+    expect(startup.processExecutionMode).toBe("Disabled");
+  });
+
+  it("does not let an untyped production override expose TrustedLocal shell", async () => {
+    expect(productionConfigHasNoTrustedLocalSwitch).toBe(true);
+    const database = schema44Factory.create();
+    const forgedConfig = {
+      databaseFile: database.databaseFilename,
+      processExecutionMode: "Disabled",
+      testOnlyAllowTrustedLocalProcessExecution: true,
+    } as unknown as import("../src/composition.js").SingleWorkspaceConfig;
+    try {
+      const visible = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            const catalog = yield* ToolCatalogPort;
+            return yield* catalog.visibleRefs();
+          }),
+          main(forgedConfig),
+        ),
+      );
+      expect(visible.some((ref) => ref.name === "shell")).toBe(false);
+    } finally {
+      database.cleanup();
+    }
+  }, 120_000);
+
+  it("defaults the closed process mode to Disabled and accepts only its v1 shape", () => {
+    expect(processExecutionModeOfConfig(undefined)).toBe("Disabled");
+    expect(
+      processExecutionModeOfConfig({
+        runtime: {
+          processExecutionMode: {
+            version: 1,
+            processExecutionMode: "NativeOsSupportedOnly",
+          },
+        },
+      }),
+    ).toBe("NativeOsSupportedOnly");
+    expect(
+      processExecutionModeOfConfig({
+        runtime: {
+          processExecutionMode: {
+            version: 1,
+            processExecutionMode: "Disabled",
+          },
+        },
+      }),
+    ).toBe("Disabled");
+  });
+
+  it.each([
+    {
+      runtime: {
+        processExecutionMode: {
+          version: 2,
+          processExecutionMode: "NativeOsSupportedOnly",
+        },
+      },
+    },
+    {
+      runtime: {
+        processExecutionMode: {
+          version: 1,
+          processExecutionMode: "TrustedLocal",
+        },
+      },
+    },
+    {
+      runtime: {
+        processExecutionMode: {
+          version: 1,
+          processExecutionMode: "Disabled",
+          enabled: true,
+        },
+      },
+    },
+    { runtime: { processExecutionMode: "NativeOsSupportedOnly" } },
+    { runtime: null },
+  ])(
+    "fails closed for malformed or contradictory process mode %#",
+    (config) => {
+      expect(processExecutionModeOfConfig(config)).toBe("Disabled");
+    },
+  );
+
   it("a full env-secret config builds the ModelDeployment with SecretRef only", () => {
     const { path } = withConfig(
       JSON.stringify({
@@ -106,6 +228,38 @@ describe("arbor.config.json — standard provider configuration", () => {
     });
   });
 
+  it("the inline secret store rejects every ref except its sentinel", async () => {
+    const database = schema44Factory.create();
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: database.databaseFilename,
+      secretRef: secretRef("arbor:inline-secret"),
+      secretStore: {
+        _tag: "Inline",
+        material: "sk-test-inline-123",
+      },
+    }) as unknown as Layer.Layer<SecretStorePort>;
+    try {
+      const failure = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            const secrets = yield* SecretStorePort;
+            return yield* Effect.flip(
+              secrets.resolve(secretRef("another-provider-secret")),
+            );
+          }),
+          app,
+        ),
+      );
+
+      expect(failure).toEqual({
+        _tag: "SecretNotFound",
+        secretRef: "another-provider-secret",
+      });
+    } finally {
+      database.cleanup();
+    }
+  }, 120_000);
+
   it("missing required fields produce a typed validation error", () => {
     const { path } = withConfig(
       JSON.stringify({ provider: { modelRef: "model-openai" } }),
@@ -118,6 +272,30 @@ describe("arbor.config.json — standard provider configuration", () => {
       if (found?.ok !== false) return;
       expect(found.error._tag).toBe("ProviderConfigInvalid");
       expect(found.error.reason).toContain("deploymentId");
+    } finally {
+      if (priorConfig === undefined) {
+        delete process.env.ARBOR_CONFIG;
+      } else {
+        process.env.ARBOR_CONFIG = priorConfig;
+      }
+    }
+  });
+
+  it("invalid JSON never echoes nearby secret material in diagnostics", () => {
+    const { path } = withConfig(
+      '{"provider":{"secret":{"kind":"inline","value":"sk-sensitive-value"}',
+    );
+    const priorConfig = process.env.ARBOR_CONFIG;
+    process.env.ARBOR_CONFIG = path;
+    try {
+      const found = findArborConfigFile();
+      expect(found?.ok).toBe(false);
+      if (found?.ok !== false) return;
+      expect(found.error).toMatchObject({
+        _tag: "ProviderConfigInvalid",
+        reason: "JSON parse failed",
+      });
+      expect(JSON.stringify(found.error)).not.toContain("sk-sensitive-value");
     } finally {
       if (priorConfig === undefined) {
         delete process.env.ARBOR_CONFIG;

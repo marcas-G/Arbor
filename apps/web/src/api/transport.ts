@@ -35,7 +35,11 @@ const isProblem = (value: unknown): value is Problem => {
   return (
     typeof record.code === "string" &&
     typeof record.category === "string" &&
-    typeof record.message === "string"
+    typeof record.message === "string" &&
+    (record.retryDisposition === "retryable" ||
+      record.retryDisposition === "non-retryable") &&
+    typeof record.safeDetails === "object" &&
+    record.safeDetails !== null
   );
 };
 
@@ -44,6 +48,164 @@ export interface ViewFetchOptions {
   readonly signal?: AbortSignal | undefined;
   readonly onUnauthenticated?: ((problem: Problem) => void) | undefined;
 }
+
+export interface ProjectDirectoryEntry {
+  readonly projectId: string;
+  readonly name: string;
+  readonly lifecycle: "Open" | "Closed";
+  readonly rootWorkspaceId: string;
+  readonly revision: number;
+  readonly updatedAt: string;
+  readonly resourceSource:
+    | {
+        readonly _tag: "Profile";
+        readonly resourceProfileRef: string;
+        readonly version: string;
+      }
+    | { readonly _tag: "ConversationOnly" }
+    | { readonly _tag: "LegacyUnknown" };
+}
+
+export interface ProjectResourceProfileEntry {
+  readonly resourceProfileRef: string;
+  readonly version: string;
+  readonly displayName: string;
+  readonly available: boolean;
+}
+
+export interface ProjectResourceCatalog {
+  readonly profiles: ReadonlyArray<ProjectResourceProfileEntry>;
+  readonly conversationOnlySupported: true;
+}
+
+/** Authenticated host bootstrap catalog (P12 `10` §9). Keep only the frozen
+ * public fields; a server or intermediary extra field such as a filesystem
+ * path is never copied into Web state. No token is valid for the local
+ * single-user loopback daemon; configured authenticators enforce auth. */
+export const fetchProjectResources = async (
+  options: ViewFetchOptions,
+): Promise<ViewOutcome<ProjectResourceCatalog>> => {
+  let response: Response;
+  try {
+    response = await fetch("/project-resources", {
+      ...(options.token === null
+        ? {}
+        : { headers: { Authorization: `Bearer ${options.token}` } }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError")
+      throw error;
+    return {
+      ok: false,
+      problem: localProblem("project-resources/fetch-failed"),
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch {
+    return {
+      ok: false,
+      problem: localProblem("project-resources/non-json-body"),
+    };
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return {
+      ok: false,
+      problem: localProblem("project-resources/invalid-response"),
+    };
+  }
+  const envelope = parsed as Record<string, unknown>;
+  const body = envelope.body;
+  if (envelope.ok !== true || typeof body !== "object" || body === null) {
+    return {
+      ok: false,
+      problem: localProblem(
+        response.status === 401
+          ? "project-resources/unauthenticated"
+          : "project-resources/unavailable",
+      ),
+    };
+  }
+  const dto = body as Record<string, unknown>;
+  if (dto.conversationOnlySupported !== true || !Array.isArray(dto.profiles)) {
+    return {
+      ok: false,
+      problem: localProblem("project-resources/invalid-response"),
+    };
+  }
+  const profiles: ProjectResourceProfileEntry[] = [];
+  for (const candidate of dto.profiles) {
+    if (typeof candidate !== "object" || candidate === null) {
+      return {
+        ok: false,
+        problem: localProblem("project-resources/invalid-response"),
+      };
+    }
+    const profile = candidate as Record<string, unknown>;
+    if (
+      typeof profile.resourceProfileRef !== "string" ||
+      typeof profile.version !== "string" ||
+      typeof profile.displayName !== "string" ||
+      typeof profile.available !== "boolean"
+    ) {
+      return {
+        ok: false,
+        problem: localProblem("project-resources/invalid-response"),
+      };
+    }
+    profiles.push({
+      resourceProfileRef: profile.resourceProfileRef,
+      version: profile.version,
+      displayName: profile.displayName,
+      available: profile.available,
+    });
+  }
+  return {
+    ok: true,
+    dto: { profiles, conversationOnlySupported: true },
+  };
+};
+
+export const fetchProjectDirectory = async (
+  options: ViewFetchOptions,
+): Promise<
+  ViewOutcome<{ readonly projects: ReadonlyArray<ProjectDirectoryEntry> }>
+> => {
+  if (options.token === null)
+    return {
+      ok: false,
+      problem: localProblem("project-directory/no-session-token"),
+    };
+  try {
+    const response = await fetch("/projects", {
+      headers: { Authorization: `Bearer ${options.token}` },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    const parsed: unknown = await response.json();
+    if (typeof parsed === "object" && parsed !== null) {
+      const record = parsed as Record<string, unknown>;
+      if (
+        record.ok === true &&
+        typeof record.body === "object" &&
+        record.body !== null
+      )
+        return {
+          ok: true,
+          dto: record.body as {
+            readonly projects: ReadonlyArray<ProjectDirectoryEntry>;
+          },
+        };
+      if (record.ok === false && isProblem(record.problem))
+        return { ok: false, problem: record.problem };
+    }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError")
+      throw error;
+  }
+  return { ok: false, problem: localProblem("project-directory/fetch-failed") };
+};
 
 export const fetchView = async <View extends keyof ViewRequestMap & string>(
   view: View,

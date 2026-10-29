@@ -1,7 +1,14 @@
 # P10 — 05 Query Surface, User Actions, Transport Boundary (GQ4/GQ6)
 
-**Authority:** DID v1.13 G4/G6, §7.2 (ProjectionQueryPort), §10.4.1 (projection-runtime deps domain+ports; api-contracts deps domain), §10.5 (Problem DTO); SD v1.3 §12.5, §13.10; P8 `05` (P14 consume-only); P6 `04` (Steer), P2 `01` (Stop).
+**Authority:** DID v1.13 G4/G6, v1.39 EA-DG-01, §7.2 (ProjectionQueryPort), §10.4.1 (projection-runtime deps domain+ports; api-contracts deps domain), §10.5 (Problem DTO); SD v1.14 §12.5, §13.10; P8 `05` (P14 consume-only); P6 `04` (Steer), P2 `01` (Stop).
 **Status:** FROZEN — DID v1.17 D-1 additive read-model successor (TR-WPU-B/C/D).
+
+**FT-DG-02 additive contract amendment (2026-10-08):** `work-detail` is added
+as a read-only view. It does not reopen P10 or alter P12 transport ownership.
+Audit references: accepted proposal SHA-256
+`6E9D25F8EFCAB0722456A750F002D88297B21E7B41E4E08AD5D51E6187842BB8`; landing
+package SHA-256
+`266884FC5B8858CA631DC87EFA1EA29B6BFD7265FB93C324F0A5F65FF8C68433`.
 
 ## 1. ProjectionQueryPort (signature freeze)
 
@@ -20,15 +27,162 @@ interface ProjectionQueryPort {
 
 ```ts
 TreeViewReq        = { projectId, depth? }                     → nodes[{workspaceId, parentWorkspaceId|null, name, status, currentWork?, subtreeAttention{attention, actionRequired}, usageSummary? }]
-AttentionReq       = { projectId }                             → rows[{source, severity, targetWorkspaceId, dedupKey, summaryRef, occurredAt }]
+AttentionReq       = { projectId }                             → rows[{source, severity, targetWorkspaceId, dedupKey, summaryRef, occurredAt, terminalProviderFailure? }]
 WorkspaceDetailReq = { workspaceId }                           → { responsibility, boundary, currentWork?, pendingWorks[], executionSummary?, dependencies[], inboxUnconsumed[], verification?, auditTimeline[] }
 CurrentWorkReq     = { workspaceId }                           → { workId?, objective, status, revision, activeExecution? } | null
 VerificationReq    = { workId }                                → { verificationId?, targetWorkRevision?, verdict?, criteriaResults[], evidenceRefs[], acceptance? }
 DependencyReq      = { projectId | workspaceId }               → rows[{dependencyId, consumerWorkId, binding, state, satisfiedBy?}]
 TranscriptReq      = { workspaceId, sessionId?, cursor?, limit } → { entries[{kind, summaryRef, at}], nextCursor? }   // first production read path over session_entries
 UsageReq           = { projectId, groupBy: "workspace"|"subtree"|"project" } → rows[{workspaceId, tokens, cost, turns }]
-InboxViewReq       = { workspaceId }                           → { unconsumed[{entryKey, kind, summary, watermark}] }
+InboxViewReq       = { workspaceId }                           → { unconsumed[InboxEntryView] }
+WorkDetailReq      = { projectId, workspaceId, workId }        → { workId, projectId, workspaceId, objective, why, completionExpectation, lifecycle, revision, acceptedResult?, blockedEpisode?, terminalProviderFailure? }
 ```
+
+```ts
+type TerminalProviderFailureView =
+  | { readonly kind: "TerminalProviderFailure";
+      readonly workId: WorkId;
+      readonly workRevision: WorkRevision;
+      readonly occurredAt: string; // exact validated final ProviderAttempt.settledAt
+      readonly failureCode:
+        | "AuthenticationFailed" | "RequestRejected" | "ProtocolViolation" }
+  | { readonly kind: "TerminalProviderFailureIntegrity";
+      readonly workId?: WorkId;
+      readonly workRevision?: WorkRevision;
+      readonly occurredAt: string; // present only when exact source time is provable
+      readonly failureCode: ReadmissionGateIntegrityFailure["reasonCode"] };
+```
+
+For an Attention row, `terminalProviderFailure` is present if and only if
+`source` is one of the two RAI-DG-02 literals. `occurredAt` is the validated
+final ProviderAttempt `settledAt`; if no canonical occurrence instant can be
+proved, the query returns bounded `ProjectionIntegrityFailure` rather than a
+row with guessed/query time. Work Detail uses the same object and exact proof.
+
+`blockedEpisode` is an optional read-only current Work-revision summary with
+the source Episode ID and one item per current blocker: blockerId, disposition,
+denied action kind/status, typed safe denial category, latest bounded request,
+inspectable bounded observation refs and recovery guidance. It is derived
+from the canonical WorkBlocker ledger and exact settlement evidence; it never
+reconstructs from Plan, Session prose, an old Manual wait or a bare receipt.
+
+For an Executable approval entry, `InboxEntryView` includes a typed
+`ExecutableApprovalInboxTarget` projection:
+
+```ts
+type InboxEntryView = {
+  readonly entryKey: string;
+  readonly kind: string;
+  readonly summary: string;
+  readonly watermark: number;
+  readonly target?: ExecutableApprovalInboxTarget;
+};
+
+type ExecutableApprovalInboxTarget = {
+  readonly kind: "ExecutableApproval";
+  readonly approvalId: string;
+  readonly revision: number;
+  readonly executionId: string;
+  readonly toolName: string;
+  readonly toolVersion: string;
+  readonly validatedArgumentsPreview: string; // bounded, schema-redacted
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
+  readonly capabilities: ReadonlyArray<string>;
+  readonly sideEffectSemantics: "ReadOnly" | "Idempotent" | "Reconcilable" | "NonIdempotent";
+  readonly expiresAt: string;
+  readonly actionDigest: string;
+};
+```
+
+P10 reads the exact `eap:<approvalId>:<revision>` Inbox key and its proven
+`route_kind='Executable'` ActionApproval binding from read-only ports. It
+returns no approval target for `cap:` Control entries. `validatedArgumentsPreview`
+is derived from validated stored arguments and the versioned tool schema; it
+is bounded and redacts schema-designated secrets. The projection must show
+enough validated action/target detail to support a human decision; if exact
+review cannot be produced, it fails closed and does not present Approve.
+This DTO is display data only: it is not authority and cannot be posted back
+as an approval binding. P10 writes nothing and does not decide or consume the
+Inbox entry.
+
+The additive `AttentionSource` literal `WorkspaceResourceActivationPending`
+is owned by P10 `02` and is the only new wire-vocabulary member in this
+landing. It adds no request/response fields, ViewId, or transport endpoint.
+Its row is `ActionRequired`, targets the root Workspace, and uses the
+deterministic key
+`resource-activation:${projectId}:${workspaceId}:${resourceBoundaryRevision}`.
+`summaryRef` is the fixed path-free text “Project resource activation is
+pending; file actions are unavailable.” `occurredAt` is the source intent's
+`createdAt`, stable across event redelivery and rebuild.
+
+The accepted AH7-DG-02 contract also surfaces the existing
+`ReconciliationEscalated` Attention source through this same `rows[{source,
+severity,targetWorkspaceId,dedupKey,summaryRef,occurredAt}]` DTO; it adds no
+request/response field, ViewId or endpoint. Its exact mapping is owned by
+`02`: `ActionRequired`, `executions.workspace_id`, dedup key
+`reconciliation-escalated:<executionId>:<invocationRefsFingerprint>`, and the
+fixed path-free summary “An external tool effect could not be verified;
+recovery is paused.” Its source remains P9's existing event, not a P10-owned
+reconciliation fact.
+
+Accepted AH7-DG-01/P39-P40 compatibility adds exactly one member to the
+transport-neutral closed `AttentionSource` union and `ATTENTION_SOURCES`:
+`ToolObservationReplayEvidenceFailure`. `AttentionReq`/`rows` gains no field,
+ViewId, endpoint or action. Its `summaryRef` is the fixed P10 `02` safe summary;
+the P9 `failureCode` remains internal projection detail and is not returned in
+the public API/read-model enum or DTO. P10/P12 continue to use the same frozen
+transport boundary.
+
+Accepted P41 adds exactly one literal,
+`SubmittedDecisionBindingFailure`, to the same closed `AttentionSource` union
+and `ATTENTION_SOURCES`. It adds no Attention request/response field, endpoint,
+ViewId or action. The source maps to the safe fixed summary in `02`; the P9
+failure code and DecisionEpisode/provider binding identifiers remain internal.
+The exact accepted proposal SHA-256 is
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`.
+
+Accepted RAI-DG-02 adds the non-persisted literals
+`TerminalProviderFailure` and `TerminalProviderFailureIntegrity` to the same
+closed `AttentionSource` union and `ATTENTION_SOURCES`. They use the existing
+Attention row transport shape and add no endpoint, command or retry action.
+The valid row carries `terminalProviderFailure.kind`, the closed terminal
+failure code, exact `workId` and Work revision; the integrity row carries the
+closed bounded integrity code and only those optional Work fields that are
+uniquely proven. Both use the fixed summaries and exact target/occurredAt rules
+in `02`; raw Provider,
+request, response, manifest, SQL and parser material remain internal. The
+existing Steer command surface is the only recovery action.
+
+P10's source-specific activation Attention projection store atomically
+reconciles this key set from the current P1 intent table, lists/replaces the
+project's Pending rows during rebuild, and resets this source for the project.
+P1 status events are wakeups only; the handler uses current table state rather
+than event payload status. Reconciliation writes share one P1
+`TransactionScope` with the intent snapshot and P10 source rows; the P12
+maintenance call does not read, reset, or advance the shared P1 event-consumer
+offset. P12 post-commit and startup hooks call this same source-specific
+reconciler, which remains usable when the generic P1 rebuild reports
+`ConsumerRebuildRefused`. P10 reads only P1 intent identity/status/timestamps,
+never boundary addresses, Profile ref/version, or activation failure details.
+
+`acceptedResult` is exactly `{ acceptanceId, verificationId, targetWorkRevision,
+verdict: Pass, actor, acceptedAt }`. It is present only when a canonical
+Acceptance is bound to that Work revision and its exact concluded PASS
+Verification. For `Completed`, absent or inconsistent binding is a typed
+projection-integrity failure. `Open` with a bound accepted result remains
+Open; `Cancelled` remains canonical Cancelled and preserves Acceptance only as
+history. The Work Detail view does not change `current-work` or
+`workspace-detail.pendingWorks`.
+
+For `VerificationReq`, when an Acceptance exists for the current Work revision,
+select only its bound Verification; otherwise retain the existing selection
+rule. `WorkDetailReq` for an absent Work or a Work outside the requested
+project/workspace returns a `ProjectionQueryError` branch with code
+`projection/work-not-found`, category `not-found`, and non-retryable
+disposition. Both cases use identical safe details, containing no target
+identity or existence signal; the public response is HTTP 404 for either case.
+Malformed request shapes remain `projection/invalid-request`. These are
+read-model semantics under P10; P12 continues to own and forward the transport.
 
 Every response carries `{ watermark, lag }` (§1 signature). Shapes are the contract; row limits/cursors beyond Transcript's are transport concerns (P12).
 
@@ -49,6 +203,16 @@ Every response carries `{ watermark, lag }` (§1 signature). Shapes are the cont
 - projection-runtime package deps stay `domain, ports` (DID §10.4.1); it never participates in authority (§10.4 hard rule).
 
 ## 2. User-action surfaces (SD §12.5 four verbs; UI only issues Commands)
+
+For the derived `VerifierOrphan` Attention, P8 `RetryVerification` is the only
+new action. The UI exposes it only after exact authenticated-human authority
+resolution for Root-local human governance or the Work's direct Parent
+Workspace human. It submits the exact Work, Verification and expected Work
+revision through the existing `/commands` envelope; it never posts a
+client-authored authority or BlobRef. The action is not a projection write or
+Attention dismissal. The UI reports the old row cleared only after the
+existing freshness barrier confirms catch-up; the `Unknown(Orphaned)` verdict
+remains visible.
 
 | Verb | Surface | Backing command (existing, unchanged) |
 |---|---|---|
@@ -72,6 +236,409 @@ P12 owns : HTTP/WebSocket/CLI/web shell/auth/deployment transports —
 
 - apps/web (DID §10.1) remains unbuilt in P10; P10 delivers the `api-contracts` package as the transport-neutral contract surface P12 binds to.
 
+## Accepted Native OS Sandbox public projection
+
+The earlier V5 single-shape example is superseded by the final V1–V21 closed
+OsEnforced/TrustedLocalUnconfined union in the V21 section below. Retain the
+existing POST Workspace Detail route/request, no new ViewId/Problem category,
+and P12-only transport boundary. The final status set is Committed,
+Unavailable and NeedsDecision; it never infers defaults and never exposes
+mount/target refs, digests, paths, environment values, provider diagnostics or
+configuration secrets. Actual provider failure after P4 outcome but before
+P9 fact commit uses the exact safe V21 transient 503; after P9 commit the view
+is HTTP 200 with Unavailable/Attention. Ordinary projection lag is not this
+provider-specific 503.
+
 ## 4. Must Not Decide
 
 - No transport protocol/auth choices; no P2 runtime-semantics change; no resolver implementation; no P14 program redefinition (P8 owns; consume only — v1.11 G6).
+
+## Accepted V21 AttentionSource API literal
+
+The transport-neutral closed `AttentionSource` union includes the
+non-persisted literal `SandboxRecoveryBindingFailure`. It is a pure P10 query
+projection from existing P4 invocation/binding rows; it adds no endpoint,
+request field, Problem category, persisted enum, event, marker, or migration.
+The public row uses the exact V21 fixed safe summary, canonical Execution
+Workspace target, `attentionFactId` dedup, and `occurredAt=intent_at`. Corrupt
+hash-format or timestamp values fail closed through the existing corruption
+Problem path without a derived row. P12 only transports the existing DTO.
+
+
+## Accepted full-chain SandboxPolicy DTO/freshness/read-barrier contract (V21)
+
+Keep the existing POST /views/workspace-detail and WorkspaceDetailReq={workspaceId};
+no GET route, endpoint, ViewId or Problem category is added. Only an authorized
+human with an exact visible active Execution/Episode receives the optional
+sandboxPolicyPreconditions. It is one coherent P10 read-barrier snapshot and
+contains exactly expectedEpisodeRevision (nonnegative integer sourced from
+executions.episode_revision), latestCommittedPolicyRevision (0 only if never
+committed; expired/superseded latest still returned), full canonical
+episodeBinding, workspaceRevision/resourceBoundaryRevision (nonnegative
+integers), sandboxHandleBindingDigest (lowercase 64-hex),
+authorityBundleRevision/digest and operatorConfigRevision/digest (positive
+revisions, lowercase 64-hex digests). Its OsEnforced variant adds
+providerRegistryRevision and providerRegistryDigest; TrustedLocal omits both.
+No environment revision/fingerprint or raw evidence ref is included. The
+object is only returned to an authorized human with exact active visible
+Execution/Episode; otherwise it is omitted or existing query fails closed.
+
+sandboxPolicy is a closed union with status Committed, Unavailable or
+NeedsDecision. The public OsEnforced summary fields, in exact order, are kind,
+profile ReadOnly|WorkspaceWrite, providerId, providerVersion, networkMode,
+policyRevision, expiresAt, status. The public TrustedLocalUnconfined summary
+fields, in exact order, are kind, profile=FullAccess, networkBoundary=Unconfined,
+policyRevision, expiresAt, status; it has no providerId/version, OS, T3 or
+networkMode fields and makes no isolation claim. The public committed receipt
+view uses the same two safe variant projections. Neither view contains mounts,
+target refs, digests, audit refs, paths, env values or policy destinations.
+NeedsDecision is only for a policy-required pending invocation whose exact
+current decision/basis is absent or stale;
+Unavailable is only for a matching current provider-unavailable P9 fact or
+its exact transient P4 terminal outcome. Policy stale is not a provider fact.
+
+P10's SandboxPolicyStatusViewPort reads current P1 decision/command result,
+P9 fact/queue and, only for the short pre-materialization window, P4's explicit
+read-only P4SandboxOutcomeReadPort in one read transaction/effective-facts
+barrier. P10 never opens P4 private stores. Exact current terminal provider
+unavailable outcome + matching current decision/active Execution + no
+committed P9 fact/queue yet yields HTTP 503 on that existing POST, with the
+full Problem DTO fields correlationId (request/transport correlation or null),
+code sandbox/provider-unavailable, category unavailable, fixed safe message,
+retryDisposition retryable, and safeDetails exactly executionId,workspaceId,
+policyRevision. Full Problem member order is correlationId,code,category,
+message,retryDisposition,safeDetails; safeDetails order is executionId,
+workspaceId,policyRevision. Correlation is the request/transport value or
+null. Canonical response fields and exact safe message are:
+{"correlationId":null,"code":"sandbox/provider-unavailable","category":"unavailable","message":"required sandbox capability was unavailable or could not be verified; execution did not start","retryDisposition":"retryable","safeDetails":{"executionId":"<ExecutionId>","workspaceId":"<WorkspaceId>","policyRevision":1}}.
+No provider/path/env/target diagnostics are allowed. This 503
+applies to every exact current terminal SandboxProviderUnavailable outcome
+before matching P9 fact/queue commit, not only probe-interrupted. After P9
+fact/queue commit the same endpoint returns HTTP 200, Unavailable and the
+existing ActionRequired Attention. Ordinary projection lag, missing decision,
+authority/config rejection, stale policy and NeedsDecision are never this 503;
+ordinary lag uses the existing generic lag behavior. Web waits for existing
+WebSocket invalidation or explicit manual refetch and performs no timer,
+polling or automatic retry.
+
+## Accepted candidate-read-model V5 Workspace Detail contract (V6 digest correction)
+
+Keep the existing POST `/views/workspace-detail` and request body
+`WorkspaceDetailReq={workspaceId}`. V5 adds no route, ViewId, command, wire
+precondition, event, table, or migration. The existing closed
+`sandboxPolicyPreconditions` V21 union remains unchanged and is present only
+when no candidate read is present.
+
+When an authorized human reads an exact visible active Execution/Episode
+whose P4-proven pending policy requirement needs an initial or refreshed
+choice, return `sandboxPolicyCandidateRead` and omit the singular
+`sandboxPolicyPreconditions`. Both are optional on the existing response;
+candidate and precondition fields are not returned without view authority.
+Candidate reads are read-only and ephemeral. Use this exact closed DTO:
+
+```ts
+type SandboxPolicyCandidateReadV1 = {
+  readonly reason: "InitialDecision" | "RefreshStaleCommittedPolicy";
+  readonly commonPreconditions: {
+    readonly expectedEpisodeRevision: number;
+    readonly latestCommittedPolicyRevision: number;
+    readonly episodeBinding: ExecutionEpisodeBinding;
+    readonly workspaceRevision: number;
+    readonly resourceBoundaryRevision: number;
+    readonly authorityBundleRevision: number;
+    readonly authorityBundleDigest: Sha256;
+    readonly operatorConfigRevision: number;
+    readonly operatorConfigDigest: Sha256;
+  };
+  readonly candidates: ReadonlyArray<SandboxPolicyCandidateV1>;
+};
+
+type SandboxPolicyCandidateV1 =
+  | {
+      readonly kind: "OsEnforced";
+      readonly candidateId: string; // spc2_<64 lowercase SHA-256 hex>
+      readonly sandboxHandleBindingDigest: Sha256;
+      readonly providerId: string;
+      readonly providerVersion: string;
+      readonly profile: "ReadOnly" | "WorkspaceWrite";
+      readonly networkMode: "Disabled" | "Restricted" | "Enabled";
+      readonly providerRegistryRevision: number;
+      readonly providerRegistryDigest: Sha256;
+    }
+  | {
+      readonly kind: "TrustedLocalUnconfinedV1";
+      readonly candidateId: string;
+      readonly sandboxHandleBindingDigest: Sha256; // FullAccess projection
+    };
+
+type WorkspaceDetailRes = Omit<
+  ExistingWorkspaceDetailRes,
+  "sandboxPolicyPreconditions"
+> & {
+  readonly sandboxPolicyPreconditions?: SandboxPolicyPreconditionsV1;
+  readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateReadV1;
+};
+```
+
+The common revisions use existing V21 ranges: episode, latest committed
+policy, Workspace and ResourceBoundary revisions are nonnegative safe
+integers (latest policy is zero only when no decision exists); authority-bundle
+and operator-config revisions are positive safe integers; all digests are
+lowercase 64-hex SHA-256. Each candidate carries its own profile-specific
+`sandboxHandleBindingDigest` immediately after `candidateId` in serialized
+key order. An OsEnforced candidate has the exact positive
+registry revision/digest pair; TrustedLocal has no registry branch fields.
+The full authority-bundle pair is common and current for both variants.
+
+P5 supplies one verified immutable SandboxAuthorityBundleV2 and the exact
+current-host Supported tuple set. P10 filters those tuples for the exact
+current Workspace/Episode/boundary basis; it does not requalify a
+provider or infer a Cartesian product. Each exact applicable tuple yields one
+OsEnforced candidate and the list contains exactly one TrustedLocal
+candidate. Sort OsEnforced candidates by unsigned UTF-8 bytewise tuple
+`providerId,providerVersion,profile,networkMode,providerRegistryRevision,
+providerRegistryDigest` with no Unicode normalization, then place TrustedLocal
+last. Exact duplicates collapse only when every tuple and registry field is
+identical; conflicting mappings fail closed. The OS candidate carries no
+destinations or qualification evidence ref; the human still supplies the
+existing NetworkPolicyV1 in the P1 command. Candidate identity is presentation
+only and is not a P1 CAS value or authority. The candidate digest is an opaque
+CAS value in this human-only view; it discloses no mounts, target refs, paths,
+claims, or ownership regions. Existing summary, receipt and Attention
+redaction is unchanged.
+
+P10 obtains a same-transaction proof result from P4's read-only
+`SandboxPolicyRequirementReadPort` in P4/06. The port validates either the
+existing exact Pending P3 action plus NotAdmitted invocation and immutable
+RecoveryBinding, or the accepted pre-intent exact Pending P3 action plus
+Pending/unconsumed Executable approval; P10 MUST NOT read P3/P4 private stores
+directly. P10 combines that result with the exact current P1 decision/result, P5 full bundle,
+Workspace/boundary refs and existing freshness barrier. Under that same P10
+read transaction, the P11 read seam supplies the complete current
+ResourceBoundary and exact active Workspace ResourceOwnership facts. For every
+offered candidate P10 projects those same facts with its profile through the
+existing P4 `05` canonical full-boundary producer and computes the exact
+`SandboxHandleBindingDigestV1` of the derived mounts and access. ReadOnly is
+all ReadOnly; WorkspaceWrite grants ReadWrite only on exact active owned
+regions; TrustedLocal FullAccess has logical ReadWrite mounts without an OS
+isolation claim. P10 never uses the pending tool target, caller subset, stale
+committed policy, or synthetic neutral handle as the digest source, and never
+opens P11/P4 private stores or a second inconsistent snapshot. Candidate
+digests may coincide when the derived mounts and access coincide. If the P4
+port, authority source, exact-host tuple snapshot, barrier, or full-boundary/
+ownership projection is missing, corrupt, ambiguous or unprovable, return the
+typed error/lag outcome and no partial candidate list. The P4 read-only
+requirement proof and P5 authority/host tuple proof remain separate checks in
+this same coherent response.
+
+Candidate IDs are generated exactly as fixed by the accepted V5 proposal:
+`spc2_` plus lowercase SHA-256 of
+`UTF8("arbor:sandbox-policy-candidate:v2\0") || variantByte || ordered
+length-prefixed tuple`. `variantByte` is `0x01` for OsEnforced and `0x02` for
+TrustedLocalUnconfinedV1. Each string uses `u32be(UTF8 byte length) || UTF8
+bytes`; the positive registry revision is its canonical base-10 ASCII string
+under the same length prefix. OS tuple order is
+`providerId,providerVersion,profile,networkMode,providerRegistryRevision,
+providerRegistryDigest`; TrustedLocal has only the variant byte. The
+canonical TrustedLocal golden is
+`spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d`.
+IDs are display identity only: P1 rejects unknown fields and receives no
+`candidateId`. The digest is excluded from the unchanged tuple-ID preimage;
+boundary or ownership drift may change a candidate's digest while its ID
+stays the same. Existing tuple sorting, exact duplicate collapse and
+conflicting-mapping failure do not deduplicate different IDs or reorder the
+list; TrustedLocal remains exactly once and last. P13 maps the selected
+candidate's digest, existing variant fields and common preconditions to the
+existing P1 command payload.
+
+For a stale committed policy, `NeedsDecision` still requires the exact pending
+P4 requirement. Each refreshed candidate digest derives from the current
+complete boundary and ownership snapshot, never the stale policy's stored
+handle digest. The full V2 bundle currentness and existing P4/P9 execution
+gates remain unchanged. If a CAS basis changes after this read, P1 returns
+its existing `StaleSandboxPolicyInputs` durable receipt without committing a
+policy. A selected profile's changed mount/access projection uses the existing
+`SandboxHandleBindingDigest` stale field; existing revision fields remain
+authoritative where changed. An ownership change that leaves the selected
+digest and every other CAS input equal does not alone stale the command.
+P13 discards the whole old read and requires a fresh human choice after
+invalidation or explicit refetch, even when `candidateId` is unchanged.
+
+V5 qualification matrix: an initial no-decision plus exact pending P4/P3
+requirement returns one coherent candidate read with the common preconditions
+and no invocation/binding identity; this requirement may be either the
+existing post-intent NotAdmitted proof or the accepted pre-intent Pending
+Action/approval proof. A committed TrustedLocal decision plus
+provider-registry-only V2 bundle drift becomes NeedsDecision and returns the
+new common bundle pair; a command using the old candidate read is rejected by
+the existing P1 stale receipt, while a fresh explicit TrustedLocal selection
+omits the registry branch precondition. Issuer, operator, and provider
+registry child changes each advance the full bundle and stale both variants.
+Restart before/after reapproval preserves stale state and reconstructs the
+single new decision without automatic selection or dispatch. Empty valid
+Supported tuple sets return exactly TrustedLocal; invalid bundle or
+unprovable tuple source returns a typed failure and no candidates. Missing,
+corrupt, duplicate, or mismatched P4 requirement proof is a typed failure,
+while valid closed/terminal/stopped/non-pending state returns None. Verify
+same-TransactionScope read, exact common/per-candidate/OS-only fields,
+candidate ID golden
+and sort order, no sensitive detail, no P3/P4 private-store access, and no
+new persisted candidate/Attention state.
+
+## Accepted Option A provider-tuple selector (2026-10-20)
+
+Accepted under `ACCEPT_P10_P1_OS_PROVIDER_TUPLE_SELECTION_OPTION_A`, fixed
+proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
+This section supersedes the V5 candidate DTO and candidate-sort/identity
+preimage clauses only where they omit `capabilityRevision`; it retains the
+same route, property, common preconditions, same-snapshot barrier, candidate
+visibility, full-boundary digest, and no-auto-selection rules.
+
+The existing `sandboxPolicyCandidateRead` response property now carries the
+closed `SandboxPolicyCandidateReadV2` DTO; its `commonPreconditions` are
+unchanged. The closed `SandboxPolicyCandidateV2` OsEnforced variant has exact
+key order `kind,candidateId,sandboxHandleBindingDigest,providerId,
+providerVersion,capabilityRevision,profile,networkMode,
+providerRegistryRevision,providerRegistryDigest`. `capabilityRevision` is a
+positive safe integer copied from exactly one current-host Supported P5 V2
+row. The TrustedLocalUnconfinedV1 candidate is unchanged and has no provider
+tuple fields. No path, evidence ref, destination or host fact is exposed.
+
+The exact V2 DTO closure is:
+
+```ts
+type SandboxPolicyCandidateReadV2 = {
+  readonly reason: "InitialDecision" | "RefreshStaleCommittedPolicy";
+  readonly commonPreconditions: {
+    readonly expectedEpisodeRevision: number;
+    readonly latestCommittedPolicyRevision: number;
+    readonly episodeBinding: ExecutionEpisodeBinding;
+    readonly workspaceRevision: number;
+    readonly resourceBoundaryRevision: number;
+    readonly authorityBundleRevision: number;
+    readonly authorityBundleDigest: Sha256;
+    readonly operatorConfigRevision: number;
+    readonly operatorConfigDigest: Sha256;
+  };
+  readonly candidates: ReadonlyArray<SandboxPolicyCandidateV2>;
+};
+
+type SandboxPolicyCandidateV2 =
+  | {
+      readonly kind: "OsEnforced";
+      readonly candidateId: string; // spc2_<64 lowercase SHA-256 hex>
+      readonly sandboxHandleBindingDigest: Sha256;
+      readonly providerId: string;
+      readonly providerVersion: string;
+      readonly capabilityRevision: number;
+      readonly profile: "ReadOnly" | "WorkspaceWrite";
+      readonly networkMode: "Disabled" | "Restricted" | "Enabled";
+      readonly providerRegistryRevision: number;
+      readonly providerRegistryDigest: Sha256;
+    }
+  | {
+      readonly kind: "TrustedLocalUnconfinedV1";
+      readonly candidateId: string;
+      readonly sandboxHandleBindingDigest: Sha256;
+    };
+```
+
+The common-precondition ranges, exact Workspace Detail route/property, and
+response redaction remain the V1/V5/V6 contract; only the candidate DTO
+revision and its OsEnforced tuple field are changed here.
+
+P10 sorts OsEnforced candidates by unsigned UTF-8 bytewise tuple
+`providerId,providerVersion,capabilityRevision,profile,networkMode,
+providerRegistryRevision,providerRegistryDigest`, then places the sole
+TrustedLocal candidate last. Exact duplicate collapse requires every tuple
+field, including `capabilityRevision`, and registry pair to match; conflicting
+mappings fail closed. Candidate identity remains presentation-only. For an
+OsEnforced candidate, the existing `spc2_` SHA-256 candidate-ID preimage
+domain is extended by the canonical decimal `capabilityRevision` string
+immediately after `providerVersion` in the ordered length-prefixed tuple;
+the TrustedLocal preimage is unchanged. Recompute and freeze the resulting
+candidate-ID known-answer vectors. P1 never accepts the ID.
+
+The Option A OsEnforced KAT is fixed as follows: variant byte `0x01`, tuple
+strings in exact order `sandbox.provider.test,1.0.0,7,ReadOnly,Disabled,3,
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, each
+encoded as `u32be(UTF8 byte length) || UTF8 bytes`, prefixed by
+`UTF8("arbor:sandbox-policy-candidate:v2\0")`. Its exact ID is
+`spc2_fe70c74f7f7674ad4b09b636e21dabc47ae99af2080a6a7a68d15960a8603094`.
+This vector adds the capability revision `7` after providerVersion `1.0.0`;
+the existing TrustedLocal golden remains unchanged.
+
+P5/P10 exact tuple matching includes providerId, providerVersion,
+capabilityRevision, trusted currentHost osFamily/osBuild, profile,
+networkMode, codec version 1 and canonical enforcementRuleSetDigest. P10
+still does not probe or qualify a provider and emits candidates only from the
+verified Supported set. P13 maps the human-selected providerVersion and
+capabilityRevision into the P1 OsEnforced payload alongside the existing
+providerId and other selection/precondition fields. This is a DTO/preimage
+revision only: no new route, ViewId, command, candidate persistence or
+candidate authority is introduced.
+
+## Accepted pre-intent P3 Action CandidateRead bootstrap (2026-10-21)
+
+Accepted under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, fixed
+proposal SHA-256
+`009A965AE81F64E051625E8AC33DD499D0A6EEB35B3D3055941F96A207F00A6C`.
+The existing Workspace Detail `sandboxPolicyCandidateRead` route, V2 DTO,
+`InitialDecision` reason, candidate IDs/sort order, common preconditions,
+P5/P11 barrier and no-auto-selection rule are unchanged. P10 may receive the
+same closed candidate DTO from either P4's existing post-intent NotAdmitted
+requirement or its accepted pre-intent requirement sourced from the exact
+Pending P3 Executable Action and exact Pending/unconsumed P4 approval after
+the nonterminal ApprovalRequired handoff.
+
+For the pre-intent source, P4 validates the exact active Execution/Episode,
+current ActionsInProgress cursor, Pending Action identity/revision/inputHash/
+tool identity, Pending approval identity/revision/unconsumed state and
+its immutable `expiresAt`, all under the caller's existing read transaction.
+P1, not P10, determines expiry eligibility using trusted GatewayNow inside
+the final transaction. P10
+combines this proof with the same current P1 decision/result, full P5 bundle,
+P11 complete ResourceBoundary/ownership and profile-specific handle-digest
+barrier. It emits no partial DTO on missing, ambiguous, stale, corrupt or
+unsupported source.
+
+The DTO exposes none of the Action, approval, invocation, RecoveryBinding,
+tool argument, target-ref/path, or source digest fields. The new pre-intent
+source does not create candidate/requirement persistence or change
+`InitialDecision` into a P1 authority. P1 itself prepares and re-reads the
+exact source in its existing receipt-first/current-preconditions transaction.
+If that source changes, P1 returns the accepted `ActionRevision` or
+`ExecutableApprovalRevision` safe stale field, with Action-first precedence,
+no decision/event and no approval consumption. Time-only approval expiry is
+checked against trusted transaction time even if the row revision is
+unchanged. P9 terminal/no-later-action, P4 approval claim, decision policy,
+Web wire fields and public redaction are unchanged.
+
+Qualification requires a real schema-50/public Workspace Detail read after
+ApprovalRequired has admitted a Pending approval but before any ToolInvocation
+or RecoveryBinding exists; prove zero P3/P4 mutation, Provider, effect,
+Observation and approval consumption from the read. Also prove action/approval
+CAS drift, P1 rejection of approval expiry with unchanged row revision,
+Action-first classification for dual mismatch, no partial candidate on
+ambiguity, and unchanged post-intent NotAdmitted behavior. This does not claim the later
+ProviderTurn/drift qualification closed; a P9 provider-unavailable terminal
+Action/Step still admits no later action.
+
+## Accepted Native durable process-mode AttentionSource V2
+
+Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2`, supplement
+SHA-256
+`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
+Add the non-persisted `ProcessExecutionUnavailable` literal to the existing
+closed transport-neutral `AttentionSource` union and `ATTENTION_SOURCES`.
+`AttentionReq` and its row shape, endpoint, ViewId, and Problem vocabulary are
+unchanged. The source exposes only the safe status, exact closed reason code,
+and existing public Execution/action references. P10 `02` owns its exact
+dedup, `occurredAt`, fixed-summary, join, and redaction contract. No provider
+identity/version, raw error, helper path, evidence digest, command/arguments,
+new Attention table, marker, queue, event, or P9 fact is transported.
+Implementation is conditionally authorized under
+`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION` after
+independent post-landing review; migration execution, database upgrade,
+deployment, Native support claims, and release remain separately gated.

@@ -1,6 +1,7 @@
 import type {
   CommandId,
   CommandSubmissionContext,
+  ExecutionEpisodeBinding,
   ExecutionId,
   FormationProposalId,
   PermissionGrant,
@@ -10,13 +11,24 @@ import type {
   Principal,
   ProjectId,
   ProjectPolicy,
+  SandboxPolicyAuthoritySnapshotV2,
+  SandboxPolicyGrantIssuerProvenanceV1,
   SemanticRequestFingerprint,
   VerificationId,
   WorkId,
   WorkspaceId,
   WorkspacePolicy,
 } from "@arbor/domain";
-import type { InvocationApproval, InvocationAuthority } from "@arbor/ports";
+import {
+  decodeExecutionEpisodeBinding,
+  encodeExecutionEpisodeBinding,
+  isIsoTimestamp,
+} from "@arbor/domain";
+import type {
+  InvocationApproval,
+  InvocationAuthority,
+  RetryVerificationOriginRecord,
+} from "@arbor/ports";
 import { Context, Effect, Layer } from "effect";
 import type { CommandAuthorityFact } from "./authority.js";
 import type { GatewayEnvelope } from "./gateway.js";
@@ -53,6 +65,9 @@ export interface CanonicalExecutionSnapshot {
   readonly executionId: ExecutionId;
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
+  readonly status?: "Active" | "Settled";
+  readonly episodeRevision?: number;
+  readonly episodeBinding?: ExecutionEpisodeBinding;
 }
 
 export interface CanonicalWorkSnapshot {
@@ -60,6 +75,23 @@ export interface CanonicalWorkSnapshot {
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
   readonly lifecycle: "Open" | "Completed" | "Cancelled";
+  readonly revision?: number;
+}
+
+export interface CanonicalRetryVerificationSnapshot {
+  readonly verificationId: VerificationId;
+  readonly workId: WorkId;
+  readonly targetWorkRevision: number;
+  readonly state: "Open" | "Concluded";
+  readonly ownerWorkspaceId: WorkspaceId;
+  readonly verifierExecutions: ReadonlyArray<{
+    readonly executionId: ExecutionId;
+    readonly projectId: ProjectId;
+    readonly workspaceId: WorkspaceId;
+    readonly status: "Active" | "Settled" | "Missing";
+    readonly executionBound: boolean;
+    readonly boundToVerification: boolean;
+  }>;
 }
 
 export interface CanonicalAuthorityFacts {
@@ -68,6 +100,16 @@ export interface CanonicalAuthorityFacts {
   readonly workspace?: CanonicalWorkspaceSnapshot;
   readonly execution?: CanonicalExecutionSnapshot;
   readonly work?: CanonicalWorkSnapshot;
+  readonly retryVerification?: CanonicalRetryVerificationSnapshot;
+  readonly retryVerificationOrigin?: RetryVerificationOriginRecord;
+  readonly executableApproval?: {
+    readonly approvalId: string;
+    readonly projectId: ProjectId;
+    readonly workspaceId: WorkspaceId;
+    readonly executionId: ExecutionId;
+    readonly state: string;
+    readonly revision: number;
+  };
 }
 
 /** P12 `02` §2: parent/child/user override facts (SD §8.1 authority model).
@@ -92,6 +134,15 @@ export interface AuthorityDecisionInput {
   readonly grants: ReadonlyArray<PermissionGrant>;
   readonly governance: ParentUserGovernanceFacts;
   readonly policy: ProjectPolicy | WorkspacePolicy;
+  /** P5 startup-only snapshot from the OS-protected trusted host source.
+   * Missing means sandbox issuer authority is unavailable. */
+  readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyAuthoritySnapshotV2;
+  /** Composition/Resolver trusted instant. Sandbox-specific CAPA checks never
+   * use caller-controlled CommandEnvelope.issuedAt. */
+  readonly sandboxPolicyAuthorityNow?: string;
+  /** Exact immutable provenance loaded by the composition root for the one
+   * resolver-selected CAPA grant; never caller-provided. */
+  readonly sandboxPolicyGrantIssuerProvenance?: SandboxPolicyGrantIssuerProvenanceV1;
 }
 
 /** P4 `03` §2/§4 invocation-scoped facts. `AuthorityDecisionInput` cannot
@@ -101,6 +152,7 @@ export interface AuthorityDecisionInput {
  * carries. */
 export interface InvocationDecisionInput {
   readonly principal: AuthenticatedPrincipal;
+  readonly projectId?: ProjectId;
   readonly workspaceId: WorkspaceId;
   readonly executionId: ExecutionId;
   readonly intent: {
@@ -108,6 +160,7 @@ export interface InvocationDecisionInput {
     readonly toolVersion: string;
     readonly argumentsJson: string;
     readonly actionDigest: string;
+    readonly sideEffectSemantics?: import("@arbor/ports").SideEffectSemantics;
     readonly requestedCapabilities: ReadonlyArray<string>;
     readonly resolvedRegions: ReadonlyArray<string>;
   };
@@ -116,6 +169,16 @@ export interface InvocationDecisionInput {
   readonly governance: ParentUserGovernanceFacts;
   readonly policy: ProjectPolicy | WorkspacePolicy;
   readonly delegationDepth: number;
+  readonly approvalIdentity?: {
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly actionIndex: number;
+    readonly logicalActionId: string;
+    readonly callRef: string;
+    readonly toolInvocationId: import("@arbor/domain").ToolInvocationId;
+  };
+  /** Canonical runtime role projected from durable execution binding. */
+  readonly executionRole?: "Verifier";
   readonly now: string;
 }
 
@@ -216,23 +279,6 @@ export class AuthorityResolverPort extends Context.Service<
 // (invocation); an optional `@targetId` narrows the grant to one target. `*`
 // is a capability wildcard.
 
-interface ParsedGrantScope {
-  readonly capability: string;
-  readonly target: string | null;
-}
-
-const parseGrantScope = (scope: string): ParsedGrantScope => {
-  const at = scope.indexOf("@");
-  if (at < 0) {
-    return { capability: scope, target: null };
-  }
-  const target = scope.slice(at + 1);
-  return {
-    capability: scope.slice(0, at),
-    target: target.length > 0 ? target : null,
-  };
-};
-
 const payloadRecord = (payload: unknown): Record<string, unknown> =>
   typeof payload === "object" && payload !== null
     ? (payload as Record<string, unknown>)
@@ -241,6 +287,13 @@ const payloadRecord = (payload: unknown): Record<string, unknown> =>
 const payloadString = (payload: unknown, key: string): string | null => {
   const value = payloadRecord(payload)[key];
   return typeof value === "string" ? value : null;
+};
+
+const payloadNumber = (payload: unknown, key: string): number | null => {
+  const value = payloadRecord(payload)[key];
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? value
+    : null;
 };
 
 const isAuthenticatedHuman = (input: {
@@ -266,17 +319,42 @@ const matchGrant = (
   grants: ReadonlyArray<PermissionGrant>,
   capability: string,
   target: string | null,
+  subject: {
+    readonly principal: Principal;
+    readonly workspaceId: WorkspaceId | null;
+    readonly executionId: ExecutionId | null;
+    readonly now: string;
+  },
 ): GrantMatch => {
   let wrongTarget = false;
   for (const grant of grants) {
     if (grant.state !== "Active") {
       continue;
     }
-    const parsed = parseGrantScope(grant.scope);
-    if (parsed.capability !== capability && parsed.capability !== "*") {
+    if (
+      grant.subject === undefined ||
+      grant.capability === undefined ||
+      grant.validFrom === undefined ||
+      Date.parse(subject.now) < Date.parse(grant.validFrom) ||
+      (grant.expiresAt != null &&
+        Date.parse(subject.now) >= Date.parse(grant.expiresAt))
+    ) {
       continue;
     }
-    if (parsed.target !== null && parsed.target !== target) {
+    const subjectMatches =
+      (grant.subject._tag === "HumanPrincipal" &&
+        grant.subject.principal === subject.principal) ||
+      (grant.subject._tag === "WorkspaceAgent" &&
+        grant.subject.workspaceId === subject.workspaceId) ||
+      (grant.subject._tag === "Execution" &&
+        grant.subject.executionId === subject.executionId);
+    if (!subjectMatches) {
+      continue;
+    }
+    if (grant.capability !== capability && grant.capability !== "*") {
+      continue;
+    }
+    if (grant.target != null && grant.target !== target) {
       wrongTarget = true;
       continue;
     }
@@ -298,7 +376,15 @@ const authorizeCommand = (
   if (governanceAuthorizes(input.governance, input.principal, target)) {
     return "Granted";
   }
-  const match = matchGrant(input.grants, capability, target);
+  const match = matchGrant(input.grants, capability, target, {
+    principal: input.principal,
+    workspaceId:
+      input.canonicalFacts.execution?.workspaceId ??
+      input.canonicalFacts.workspace?.workspaceId ??
+      null,
+    executionId: input.canonicalFacts.execution?.executionId ?? null,
+    now: input.envelope.issuedAt,
+  });
   if (match === "Match") {
     return "Granted";
   }
@@ -426,6 +512,21 @@ const governanceCommandFact = (
         projectId,
       });
     }
+    case "RenameProject":
+    case "CloseProject": {
+      const error = guarded(commandType, projectId);
+      if (error !== null) {
+        return Effect.fail(error);
+      }
+      return Effect.succeed({
+        _tag: "ProjectGovernanceAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        commandType,
+      });
+    }
     case "CreateChildWorkspace": {
       const parentWorkspaceId =
         input.canonicalFacts.workspace?.parentWorkspaceId ??
@@ -498,6 +599,136 @@ const governanceCommandFact = (
         messageId,
       });
     }
+    case "RetryVerification": {
+      // P8 / P12 human-only governance: deliberately bypass authorizeCommand
+      // so PermissionGrants (including wildcard grants) cannot confer this
+      // recovery authority.
+      if (input.submissionContext._tag !== "External") {
+        return Effect.fail({
+          _tag: "UnsupportedOrigin",
+          submissionOrigin: input.submissionContext._tag,
+          commandType,
+        });
+      }
+      const payloadWorkId = payloadString(payload, "workId") as WorkId | null;
+      const verificationId = payloadString(
+        payload,
+        "verificationId",
+      ) as VerificationId | null;
+      const expectedRevision = payloadNumber(payload, "expectedWorkRevision");
+      const facts = input.canonicalFacts;
+      const work = facts.work;
+      const retry = facts.retryVerification;
+      const ownerWorkspaceId = work?.workspaceId ?? null;
+      const origin = facts.retryVerificationOrigin;
+      if (origin !== undefined) {
+        const source = retry;
+        const exactOriginScope =
+          origin.commandId === commandId &&
+          origin.projectId === projectId &&
+          origin.actor === principal &&
+          origin.sourceWorkId === payloadWorkId &&
+          origin.sourceVerificationId === verificationId &&
+          work !== undefined &&
+          work.projectId === projectId &&
+          work.workId === origin.sourceWorkId &&
+          source !== undefined &&
+          source.verificationId === origin.sourceVerificationId &&
+          source.workId === origin.sourceWorkId &&
+          source.ownerWorkspaceId === ownerWorkspaceId;
+        if (!exactOriginScope || ownerWorkspaceId === null) {
+          return Effect.fail(denyCommand(input, "RetryVerification", "Denied"));
+        }
+        const isRoot = facts.project?.rootWorkspaceId === ownerWorkspaceId;
+        const humanAuthorized = isRoot
+          ? isAuthenticatedHuman(input)
+          : isAuthenticatedHuman(input) &&
+            governanceAuthorizes(input.governance, principal, ownerWorkspaceId);
+        if (!humanAuthorized) {
+          return Effect.fail(denyCommand(input, "RetryVerification", "Denied"));
+        }
+        return Effect.succeed({
+          _tag: "RetryVerificationReplayOnlyAuthority",
+          principal,
+          commandId,
+          semanticRequestFingerprint,
+          projectId,
+          targetWorkspaceId: ownerWorkspaceId,
+          currentOwnerId: ownerWorkspaceId,
+          workId: origin.sourceWorkId,
+          verificationId: origin.sourceVerificationId,
+        });
+      }
+      const exact =
+        payloadWorkId !== null &&
+        verificationId !== null &&
+        expectedRevision !== null &&
+        work !== undefined &&
+        work.projectId === projectId &&
+        work.workId === payloadWorkId &&
+        work.lifecycle === "Open" &&
+        work.revision === expectedRevision &&
+        retry !== undefined &&
+        retry.verificationId === verificationId &&
+        retry.workId === payloadWorkId &&
+        retry.targetWorkRevision === expectedRevision &&
+        retry.state === "Open" &&
+        retry.verifierExecutions.length > 0 &&
+        retry.verifierExecutions.every(
+          (execution) =>
+            execution.projectId === projectId &&
+            execution.workspaceId === retry.ownerWorkspaceId &&
+            execution.status === "Settled" &&
+            execution.executionBound &&
+            execution.boundToVerification,
+        );
+      if (!exact || ownerWorkspaceId === null || retry === undefined) {
+        return Effect.fail(denyCommand(input, "RetryVerification", "Denied"));
+      }
+      const isRoot = facts.project?.rootWorkspaceId === ownerWorkspaceId;
+      const humanAuthorized = isRoot
+        ? isAuthenticatedHuman(input)
+        : isAuthenticatedHuman(input) &&
+          governanceAuthorizes(input.governance, principal, ownerWorkspaceId);
+      if (!humanAuthorized) {
+        return Effect.fail(denyCommand(input, "RetryVerification", "Denied"));
+      }
+      return Effect.succeed({
+        _tag: "RetryVerificationAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        targetWorkspaceId: ownerWorkspaceId,
+        currentOwnerId: ownerWorkspaceId,
+        workId: payloadWorkId as WorkId,
+        expectedWorkRevision: expectedRevision as number,
+        verificationId,
+        settledVerifierExecutionIds: retry.verifierExecutions
+          .map((execution) => execution.executionId)
+          .toSorted(),
+      });
+    }
+    case "ResumeConversationResponse":
+    case "CancelConversationResponse": {
+      const messageId = payloadString(payload, "messageId");
+      const rootWorkspaceId =
+        input.canonicalFacts.project?.rootWorkspaceId ?? null;
+      const error = guarded(commandType, rootWorkspaceId);
+      if (error !== null) return Effect.fail(error);
+      if (messageId === null || rootWorkspaceId === null) {
+        return Effect.fail(denyCommand(input, commandType, "Denied"));
+      }
+      return Effect.succeed({
+        _tag: "ConversationResponseAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        commandKind: commandType,
+        messageId,
+      });
+    }
     case "SelectCurrentWork": {
       const error = guarded("SelectCurrentWork", workspaceId);
       if (error !== null || workspaceId === null) {
@@ -536,6 +767,62 @@ const governanceCommandFact = (
         proposalId,
       });
     }
+    case "ResolveControlApproval": {
+      const approvalId = payloadString(payload, "approvalId");
+      const error = guarded("ResolveControlApproval", approvalId);
+      if (error !== null || approvalId === null) {
+        return Effect.fail(
+          error ?? denyCommand(input, "ResolveControlApproval", "Denied"),
+        );
+      }
+      return Effect.succeed({
+        _tag: "ControlApprovalDecisionAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        approvalId,
+      });
+    }
+    case "ResolveExecutableApproval": {
+      const approvalId = payloadString(payload, "approvalId");
+      const expectedRevision = payloadNumber(payload, "expectedRevision");
+      const approval = input.canonicalFacts.executableApproval;
+      const execution = input.canonicalFacts.execution;
+      if (
+        (!input.governance.authenticatedHumans.includes(principal) &&
+          !governanceAuthorizes(
+            input.governance,
+            principal,
+            approval?.workspaceId ?? null,
+          )) ||
+        approvalId === null ||
+        expectedRevision === null ||
+        approval === undefined ||
+        approval.approvalId !== approvalId ||
+        approval.projectId !== projectId ||
+        execution === undefined ||
+        execution.executionId !== approval.executionId ||
+        execution.projectId !== projectId ||
+        execution.workspaceId !== approval.workspaceId ||
+        execution.status !== "Active"
+      ) {
+        return Effect.fail(
+          denyCommand(input, "ResolveExecutableApproval", "Denied"),
+        );
+      }
+      return Effect.succeed({
+        _tag: "ExecutableApprovalDecisionAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        approvalId,
+        workspaceId: approval.workspaceId,
+        executionId: approval.executionId,
+        expectedRevision,
+      });
+    }
     case "SteerWork": {
       // P6 `04`: human steer — the fact binds the exact workspace + work.
       const steerWorkspaceId = payloadString(
@@ -566,6 +853,7 @@ const governanceCommandFact = (
       ) as VerificationId | null;
       const acceptParent =
         input.canonicalFacts.workspace?.workspaceId ??
+        input.canonicalFacts.work?.workspaceId ??
         (payloadString(payload, "workspaceId") as WorkspaceId | null);
       const error = guarded("AcceptWorkOutcome", acceptParent);
       if (
@@ -619,6 +907,75 @@ const governanceCommandFact = (
         payload,
         "permissionGrantId",
       ) as PermissionGrantId | null;
+      if (payloadString(payload, "capability") === "DecideSandboxPolicy") {
+        const targetExecutionId = payloadString(payload, "target");
+        const issuer = payloadString(payload, "issuer");
+        const subjectValue = payloadRecord(payload).subject;
+        const subject =
+          typeof subjectValue === "object" &&
+          subjectValue !== null &&
+          !Array.isArray(subjectValue) &&
+          (subjectValue as Record<string, unknown>)._tag === "HumanPrincipal" &&
+          typeof (subjectValue as Record<string, unknown>).principal ===
+            "string"
+            ? ((subjectValue as Record<string, unknown>).principal as string)
+            : null;
+        const expiresAt = payloadString(payload, "expiresAt");
+        const now = input.sandboxPolicyAuthorityNow;
+        const snapshot = input.sandboxPolicyGrantIssuerConfigSnapshot;
+        const execution = input.canonicalFacts.execution;
+        if (
+          input.submissionContext._tag !== "External" ||
+          permissionGrantId === null ||
+          targetExecutionId === null ||
+          issuer !== principal ||
+          subject === null ||
+          subject === issuer ||
+          !isAuthenticatedHuman(input) ||
+          now === undefined ||
+          !isIsoTimestamp(now) ||
+          expiresAt === null ||
+          !isIsoTimestamp(expiresAt) ||
+          Date.parse(expiresAt) <= Date.parse(now) ||
+          snapshot === undefined ||
+          !Number.isSafeInteger(snapshot.config.revision) ||
+          snapshot.config.revision < 1 ||
+          !/^[0-9a-f]{64}$/u.test(snapshot.configDigest) ||
+          !Number.isSafeInteger(snapshot.authorityBundleRevision) ||
+          snapshot.authorityBundleRevision < 1 ||
+          !/^[0-9a-f]{64}$/u.test(snapshot.authorityBundleDigest) ||
+          !Number.isSafeInteger(snapshot.providerRegistryRevision) ||
+          snapshot.providerRegistryRevision < 1 ||
+          !/^[0-9a-f]{64}$/u.test(snapshot.providerRegistryDigest) ||
+          !Number.isSafeInteger(snapshot.operatorConfigRevision) ||
+          snapshot.operatorConfigRevision < 1 ||
+          !/^[0-9a-f]{64}$/u.test(snapshot.operatorConfigDigest) ||
+          !snapshot.config.issuers.includes(principal) ||
+          execution === undefined ||
+          execution.executionId !== targetExecutionId ||
+          execution.projectId !== projectId ||
+          execution.status !== "Active"
+        ) {
+          return Effect.fail(denyCommand(input, "GrantPermission", "Denied"));
+        }
+        return Effect.succeed({
+          _tag: "GrantPermissionAuthority",
+          principal,
+          commandId,
+          semanticRequestFingerprint,
+          projectId,
+          permissionGrantId,
+          sandboxPolicyIssuerBinding: {
+            executionId: execution.executionId,
+            operatorConfigRevision: snapshot.operatorConfigRevision,
+            operatorConfigDigest: snapshot.operatorConfigDigest,
+            authorityBundleRevision: snapshot.authorityBundleRevision,
+            authorityBundleDigest: snapshot.authorityBundleDigest,
+            providerRegistryRevision: snapshot.providerRegistryRevision,
+            providerRegistryDigest: snapshot.providerRegistryDigest,
+          },
+        });
+      }
       const error = guarded("GrantPermission", permissionGrantId);
       if (error !== null || permissionGrantId === null) {
         return Effect.fail(
@@ -632,6 +989,87 @@ const governanceCommandFact = (
         semanticRequestFingerprint,
         projectId,
         permissionGrantId,
+      });
+    }
+    case "DecideSandboxPolicy": {
+      const targetExecutionId = payloadString(payload, "executionId");
+      const targetWorkspaceId = payloadString(payload, "workspaceId");
+      const payloadEpisode = decodeExecutionEpisodeBinding(
+        payloadRecord(payload).episodeBinding,
+      );
+      const episode = input.canonicalFacts.execution;
+      const snapshot = input.sandboxPolicyGrantIssuerConfigSnapshot;
+      const now = input.sandboxPolicyAuthorityNow;
+      const provenance = input.sandboxPolicyGrantIssuerProvenance;
+      const selected = input.grants.filter(
+        (grant) =>
+          grant.state === "Active" &&
+          grant.subject?._tag === "HumanPrincipal" &&
+          grant.subject.principal === principal &&
+          grant.capability === "DecideSandboxPolicy" &&
+          grant.target === targetExecutionId &&
+          grant.validFrom !== undefined &&
+          now !== undefined &&
+          Date.parse(grant.validFrom) <= Date.parse(now) &&
+          grant.expiresAt != null &&
+          Date.parse(now) < Date.parse(grant.expiresAt),
+      );
+      if (
+        input.submissionContext._tag !== "External" ||
+        !isAuthenticatedHuman(input) ||
+        targetExecutionId === null ||
+        targetWorkspaceId === null ||
+        payloadString(payload, "projectId") !== projectId ||
+        now === undefined ||
+        !isIsoTimestamp(now) ||
+        snapshot === undefined ||
+        episode === undefined ||
+        episode.executionId !== targetExecutionId ||
+        episode.projectId !== projectId ||
+        episode.workspaceId !== targetWorkspaceId ||
+        episode.status !== "Active" ||
+        !Number.isSafeInteger(episode.episodeRevision) ||
+        episode.episodeRevision === undefined ||
+        episode.episodeRevision < 0 ||
+        episode.episodeBinding === undefined ||
+        payloadEpisode === undefined ||
+        encodeExecutionEpisodeBinding(payloadEpisode) !==
+          encodeExecutionEpisodeBinding(episode.episodeBinding) ||
+        selected.length !== 1 ||
+        provenance === undefined
+      ) {
+        return Effect.fail(denyCommand(input, "DecideSandboxPolicy", "Denied"));
+      }
+      const grant = selected[0];
+      if (
+        grant === undefined ||
+        grant.issuer !== provenance.issuerPrincipal ||
+        provenance.permissionGrantId !== grant.permissionGrantId ||
+        !snapshot.config.issuers.includes(provenance.issuerPrincipal) ||
+        provenance.operatorConfigRevision !== snapshot.operatorConfigRevision ||
+        provenance.operatorConfigDigest !== snapshot.operatorConfigDigest ||
+        grant.issuer === principal
+      ) {
+        return Effect.fail(denyCommand(input, "DecideSandboxPolicy", "Denied"));
+      }
+      return Effect.succeed({
+        _tag: "SandboxPolicyDecisionAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        workspaceId: episode.workspaceId,
+        executionId: episode.executionId,
+        episodeBinding: episode.episodeBinding,
+        episodeRevision: episode.episodeRevision,
+        permissionGrant: grant,
+        issuerProvenance: provenance,
+        authorityBundleRevision: snapshot.authorityBundleRevision,
+        authorityBundleDigest: snapshot.authorityBundleDigest,
+        providerRegistryRevision: snapshot.providerRegistryRevision,
+        providerRegistryDigest: snapshot.providerRegistryDigest,
+        operatorConfigRevision: snapshot.operatorConfigRevision,
+        operatorConfigDigest: snapshot.operatorConfigDigest,
       });
     }
     case "RevokePermission": {
@@ -685,18 +1123,34 @@ const authorizeInvocation = (
 ): Effect.Effect<ReadonlyArray<string>, InvocationResolutionError, never> => {
   const requested = input.intent.requestedCapabilities;
   const ceiling = readPolicyNumber(input.policy, "delegationCeiling", 0);
-  if (input.delegationDepth > ceiling) {
+  if (input.executionRole !== "Verifier" && input.delegationDepth > ceiling) {
     return Effect.fail({
       _tag: "DelegationCeilingExceeded",
       delegationDepth: input.delegationDepth,
       ceiling,
     });
   }
+  if (input.executionRole === "Verifier") {
+    const verifierCapabilities = new Set(["fs:read", "shell:exec"]);
+    const allowed = requested.filter((capability) =>
+      verifierCapabilities.has(capability),
+    );
+    if (allowed.length !== requested.length) {
+      return Effect.fail({
+        _tag: "CapabilityCeilingExceeded",
+        requested,
+        allowed,
+      });
+    }
+    return Effect.succeed(allowed);
+  }
   if (isAuthenticatedHuman(input)) {
     return Effect.succeed([...requested]);
   }
-  const active = input.grants.filter((grant) => grant.state === "Active");
-  if (active.length === 0) {
+  if (requested.every((capability) => capability === "fs:read")) {
+    return Effect.succeed([...requested]);
+  }
+  if (input.grants.length === 0) {
     return Effect.fail({
       _tag: "NoApplicableGrant",
       principal: input.principal,
@@ -704,14 +1158,16 @@ const authorizeInvocation = (
     });
   }
   const covered = new Set<string>();
-  for (const grant of active) {
-    const capability = parseGrantScope(grant.scope).capability;
-    if (capability === "*") {
-      for (const requestedCapability of requested) {
-        covered.add(requestedCapability);
-      }
-    } else if (requested.includes(capability)) {
-      covered.add(capability);
+  for (const requestedCapability of requested) {
+    if (
+      matchGrant(input.grants, requestedCapability, input.workspaceId, {
+        principal: input.principal,
+        workspaceId: input.workspaceId,
+        executionId: input.executionId,
+        now: input.now,
+      }) === "Match"
+    ) {
+      covered.add(requestedCapability);
     }
   }
   const allowed = requested.filter((capability) => covered.has(capability));
@@ -746,17 +1202,29 @@ const resolveInvocation = (
   });
 
 const deterministicApprovalId = (input: InvocationDecisionInput): string =>
-  [
-    "apr",
-    input.principal,
-    input.workspaceId,
-    input.executionId,
-    input.intent.toolName,
-    input.intent.toolVersion,
-    input.intent.actionDigest,
-    input.controlBasisDigest,
-    input.intent.resolvedRegions.join(","),
-  ].join(":");
+  input.approvalIdentity === undefined
+    ? [
+        "apr",
+        input.principal,
+        input.workspaceId,
+        input.executionId,
+        input.intent.toolName,
+        input.intent.toolVersion,
+        input.intent.actionDigest,
+        input.controlBasisDigest,
+        input.intent.resolvedRegions.join(","),
+      ].join(":")
+    : [
+        "eap",
+        input.projectId ?? "unknown-project",
+        input.executionId,
+        input.approvalIdentity.logicalStepNo,
+        input.approvalIdentity.repairAttempt,
+        input.approvalIdentity.actionIndex,
+        input.approvalIdentity.logicalActionId,
+        input.approvalIdentity.callRef,
+        input.approvalIdentity.toolInvocationId,
+      ].join(":");
 
 const resolveApproval = (
   input: InvocationDecisionInput,

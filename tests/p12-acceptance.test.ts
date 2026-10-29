@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -11,14 +12,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, Option, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EnvironmentResolverLocalLive } from "../adapters/environment-resolver-local/src/index.js";
 import {
   AcceptanceRepositoryLive,
   ClockLive,
   CommandStoreLive,
+  ConversationResponseJobStoreLive,
+  DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
+  EnvironmentRevisionStoreLive,
+  EvidenceRepositoryLive,
   ExecutionRepositoryLive,
   FormationProposalStoreLive,
   HumanMessageStoreLive,
@@ -29,14 +34,16 @@ import {
   MessageStoreLive,
   P11_MIGRATIONS,
   P12_MIGRATIONS,
-  P16_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
+  ResourceOwnershipRepositoryLive,
   runMigrations,
+  SandboxPolicyDecisionStoreLive,
   SessionRepositoryLive,
   TransactionPortLive,
   VerificationRepositoryLive,
+  WorkContractRevisionRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
@@ -54,10 +61,14 @@ import { SecretEnvLive } from "../adapters/secret-env/dist/index.js";
 import { selectProviderLayer } from "../apps/single-workspace/src/composition.js";
 import {
   admitExecution,
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   evaluateAndSelect,
 } from "../apps/single-workspace/src/index.js";
-import { SliceCommandHandlerRegistryLive } from "../apps/single-workspace/src/registry.js";
+import {
+  makeProjectResourceProfilePort,
+  projectResourceProfilesFromEnvironment,
+} from "../apps/single-workspace/src/project-resource-profiles.js";
+import { SingleWorkspaceCommandHandlerRegistryLive } from "../apps/single-workspace/src/registry.js";
 import { runRestoreDrill } from "../apps/single-workspace/src/restore-drill.js";
 import {
   isViewId,
@@ -130,8 +141,10 @@ import {
   ContextEpochNumber,
   canonicalRegionString,
   checkPluginSdkCompatibility,
+  DecisionId,
   type Execution,
   ExecutionId,
+  LeaseGeneration,
   makeProjectPolicy,
   makeWorkspacePolicy,
   PermissionGrantId,
@@ -196,6 +209,7 @@ import type { ProjectionStale } from "../packages/ports/src/errors.js";
 import {
   Clock,
   type CommandStore,
+  type ConversationResponseJobStore,
   type DomainEventJournal,
   EnvironmentResolverPort,
   type ExecutionOriginMutation,
@@ -228,8 +242,10 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
+  type VerificationRepository,
+  type WorkContractRevisionRepository,
   type WorkRepository,
-  type WorkspaceRepository,
+  WorkspaceRepository,
   type WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import {
@@ -249,6 +265,8 @@ import {
   ToolDefinitionStoreLive,
   ToolRuntimeLive,
 } from "../packages/tool-runtime/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
+import { createCurrentSchemaTestDatabaseFactory } from "./support/schema44-database.js";
 
 // P12-013 acceptance: the `14` §1 end-to-end story across contracts `01`–`10`,
 // `12`, `13`. Mechanical evidence only; the per-contract suites carry the
@@ -260,9 +278,29 @@ const readRepoFile = (relative: string): string =>
   readFileSync(join(repoRoot, relative), "utf8");
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "p12-acceptance-"));
+const schema44Cleanups: Array<() => void> = [];
+let schema44Factory: Awaited<
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
+>;
+beforeAll(async () => {
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: "p12-acceptance-template-",
+  });
+}, 120_000);
 afterAll(() => {
+  for (const cleanup of schema44Cleanups.splice(0)) cleanup();
+  schema44Factory.cleanup();
   rmSync(suiteTmp, { recursive: true, force: true });
 });
+
+const createSchema44CaseDatabase = () => {
+  const fixture = schema44Factory.create();
+  schema44Cleanups.push(fixture.cleanup);
+  return fixture;
+};
+
+const itWithCurrentAppTimeout = (name: string, body: () => Promise<unknown>) =>
+  it(name, body, 120_000);
 
 const PROJECT = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const PLUGIN = parse(PluginId)("plg_018f2b3c-4d5e-7abc-8def-0123456789a1");
@@ -337,6 +375,7 @@ describe("p12-acceptance story 1-2 — plugin SDK + explicit project-tool regist
     await runPlugin(
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const tx = yield* TransactionPort;
         const registry = yield* ProjectToolRegistry;
         const catalog = yield* ToolCatalogPort;
@@ -476,6 +515,7 @@ describe("p12-acceptance story 3 — Authority Resolver production plane", () =>
     const outcome = await runAuthority(
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const sql = yield* SqlClient;
         const tx = yield* TransactionPort;
         const grants = yield* PermissionGrantRepository;
@@ -603,11 +643,7 @@ const secretProjectPayload = (): CreateProjectPayload => ({
     name: "root",
     responsibilityDefinition: secretDefinition,
     responsibilityRevision: parse(ResponsibilityRevision)(0),
-    resourceBoundary: {
-      basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-      addresses: [{ _tag: "FileTree", path: "." }],
-    },
-    resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+    resourceSelection: { _tag: "ConversationOnly" },
     agentBinding: responsibilityBound(secretWorkspaceId),
     workspacePolicy: makeWorkspacePolicy(),
     workspacePolicyRevision: parse(Revision)(0),
@@ -622,7 +658,17 @@ const secretWorkPayload = (): AssignWorkPayload => ({
   why: "P12-013",
   constraints: [],
   completionExpectation: "done",
-  verificationMission: { goal: "g", criteria: [], riskRequirements: [] },
+  verificationMission: {
+    goal: "g",
+    criteria: [
+      {
+        criterionId: "runtime-safety-proof",
+        requirement: "the runtime safety result is observable",
+        required: true,
+      },
+    ],
+    riskRequirements: [],
+  },
   provenance: { predecessorWorkId: null, reason: "initial" },
   revision: parse(WorkRevision)(0),
 });
@@ -656,7 +702,7 @@ const secretAuthority = (
         tag === "CreateProjectAuthority" ? "CreateProject" : "AssignWork",
       projectId: secretProjectId,
       actor: parse(Actor)("user:test"),
-      schemaVersion: "1",
+      schemaVersion: tag === "CreateProjectAuthority" ? "2" : "1",
       payload,
     }),
     projectId: secretProjectId,
@@ -666,181 +712,190 @@ const secretAuthority = (
   }) as VerifiedCommandAuthority;
 
 describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
-  it("story 4: a resolved SecretRef is redacted and never reaches any durable/observable surface", async () => {
-    const store = SecretEnvLive({
-      ambient: { PROVIDER_KEY: "env-secret", OLD_KEY: "stale" },
-      expiries: { OLD_KEY: "2000-01-01T00:00:00.000Z" },
-    });
-    const adapter = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const port = yield* SecretStorePort;
-          const ok = yield* port.resolve(secretRef("PROVIDER_KEY"));
-          const missing = yield* Effect.flip(port.resolve(secretRef("ABSENT")));
-          const expired = yield* Effect.flip(
-            port.resolve(secretRef("OLD_KEY")),
-          );
-          return { ok, missing, expired };
-        }),
-        store,
-      ) as Effect.Effect<
-        {
-          ok: SecretMaterial;
-          missing: SecretStoreError;
-          expired: SecretStoreError;
-        },
-        unknown,
-        never
-      >,
-    );
-    expect(adapter.ok.reveal()).toBe("env-secret");
-    expect(JSON.stringify({ material: adapter.ok })).toBe(
-      '{"material":"[REDACTED]"}',
-    );
-    expect(String(adapter.ok)).toBe("[REDACTED]");
-    expect(adapter.missing._tag).toBe("SecretNotFound");
-    expect(adapter.expired._tag).toBe("SecretExpired");
-
-    const sentinelKey = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
-    const projected = sandboxEnvironment({
-      PATH: "/usr/bin:/bin",
-      HOME: "/home/op",
-      [sentinelKey]: "must-not-leak",
-    });
-    expect(sentinelKey in projected).toBe(false);
-    expect(
-      Object.keys(projected).every((key) =>
-        SANDBOX_ENV_ALLOWLIST.includes(key),
-      ),
-    ).toBe(true);
-
-    // end-to-end: a sentinel secret resolved during a real slice run never
-    // appears in any SQLite table or stdout/stderr
-    const sentinelEnv = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
-    const sentinelValue = `sentinel-value-${randomUUID()}`;
-    process.env[sentinelEnv] = sentinelValue;
-    const dir = mkdtempSync(join(tmpdir(), "p12-acceptance-secret-"));
-    const app = buildSliceLayer({
-      databaseFile: join(dir, "slice.db"),
-      providerTurns: [
-        [
-          {
-            _tag: "ToolCallProposed",
-            callRef: "c1",
-            toolName: "arbor_wait",
-            argumentsJson: JSON.stringify({
-              reason: "secret-store sentinel completion",
-              waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
-            }),
-          },
-          { _tag: "TurnCompleted", finishReason: "ToolCall" },
-        ],
-      ],
-      secretRef: secretRef(sentinelEnv),
-    });
-
-    const captured: string[] = [];
-    const origOut = process.stdout.write.bind(process.stdout);
-    const origErr = process.stderr.write.bind(process.stderr);
-    const capture =
-      (orig: typeof origOut) =>
-      (chunk: unknown, ...args: ReadonlyArray<unknown>) => {
-        captured.push(typeof chunk === "string" ? chunk : String(chunk));
-        return (orig as (...a: ReadonlyArray<unknown>) => boolean)(
-          chunk,
-          ...args,
-        );
-      };
-    process.stdout.write = capture(origOut) as typeof process.stdout.write;
-    process.stderr.write = capture(origErr) as typeof process.stderr.write;
-
-    let allRows = "";
-    let settlement = "";
-    try {
-      const result = await Effect.runPromise(
+  itWithCurrentAppTimeout(
+    "story 4: a resolved SecretRef is redacted and never reaches any durable/observable surface",
+    async () => {
+      const store = SecretEnvLive({
+        ambient: { PROVIDER_KEY: "env-secret", OLD_KEY: "stale" },
+        expiries: { OLD_KEY: "2000-01-01T00:00:00.000Z" },
+      });
+      const adapter = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P16_MIGRATIONS);
-            const gateway = yield* CommandGateway;
-            yield* gateway.execute(
-              secretEnvelope("CreateProject", secretProjectPayload(), "1"),
-              secretContext,
-              secretAuthority(
-                "CreateProjectAuthority",
-                secretProjectPayload(),
-                "1",
-              ),
+            const port = yield* SecretStorePort;
+            const ok = yield* port.resolve(secretRef("PROVIDER_KEY"));
+            const missing = yield* Effect.flip(
+              port.resolve(secretRef("ABSENT")),
             );
-            yield* gateway.execute(
-              secretEnvelope("AssignWork", secretWorkPayload(), "2"),
-              secretContext,
-              secretAuthority("AssignWorkAuthority", secretWorkPayload(), "2"),
+            const expired = yield* Effect.flip(
+              port.resolve(secretRef("OLD_KEY")),
             );
-            const ownership = yield* ResourceOwnershipRepository;
-            const tx0 = yield* TransactionPort;
-            yield* tx0.transact(
-              ownership.insertClaim({
-                claimId: "roc_018f2b3c-4d5e-7abc-8def-0123456789a1",
-                workspaceId: secretWorkspaceId,
-                region: {
-                  resourceSpaceId: "filesystem",
-                  normalizedRegion: { kind: "FileTree", path: "." },
-                },
-                sourceAddressSnapshot: { _tag: "FileTree", path: "." },
-                resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
-                resolvedAtEnvironmentRevision: "local",
-                createdAt: "t",
-                releasedAt: null,
-              }),
-            );
-            yield* evaluateAndSelect(secretWorkspaceId, secretPrincipal, {
-              _tag: "WorkSelected",
-            });
-            yield* admitExecution(
-              secretWorkspaceId,
-              parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-              { _tag: "Work", workId: secretWorkId },
-              secretPrincipal,
-            );
-            const settled = yield* runExecution(
-              parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-              { _tag: "WorkSelected" },
-              secretPrincipal,
-            );
-            const sql = yield* SqlClient;
-            const tables = yield* sql.unsafe<{ name: string }>(
-              "SELECT name FROM sqlite_master WHERE type = 'table'",
-            );
-            let dump = "";
-            for (const table of tables) {
-              if (table.name.startsWith("sqlite_")) {
-                continue;
-              }
-              const rows = yield* sql.unsafe(`SELECT * FROM "${table.name}"`);
-              dump += JSON.stringify(rows);
-            }
-            return { dump, settlement: settled._tag };
+            return { ok, missing, expired };
           }),
-          app,
-        ) as unknown as Effect.Effect<
-          { dump: string; settlement: string },
+          store,
+        ) as Effect.Effect<
+          {
+            ok: SecretMaterial;
+            missing: SecretStoreError;
+            expired: SecretStoreError;
+          },
           unknown,
           never
         >,
       );
-      allRows = result.dump;
-      settlement = result.settlement;
-    } finally {
-      process.stdout.write = origOut as typeof process.stdout.write;
-      process.stderr.write = origErr as typeof process.stderr.write;
-      delete process.env[sentinelEnv];
-    }
+      expect(adapter.ok.reveal()).toBe("env-secret");
+      expect(JSON.stringify({ material: adapter.ok })).toBe(
+        '{"material":"[REDACTED]"}',
+      );
+      expect(String(adapter.ok)).toBe("[REDACTED]");
+      expect(adapter.missing._tag).toBe("SecretNotFound");
+      expect(adapter.expired._tag).toBe("SecretExpired");
 
-    expect(settlement).toBe("Completed");
-    expect(allRows).not.toContain(sentinelValue);
-    expect(captured.join("")).not.toContain(sentinelValue);
-    expect(captured.join("")).not.toContain(sentinelEnv);
-  });
+      const sentinelKey = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
+      const projected = sandboxEnvironment({
+        PATH: "/usr/bin:/bin",
+        HOME: "/home/op",
+        [sentinelKey]: "must-not-leak",
+      });
+      expect(sentinelKey in projected).toBe(false);
+      expect(
+        Object.keys(projected).every((key) =>
+          SANDBOX_ENV_ALLOWLIST.includes(key),
+        ),
+      ).toBe(true);
+
+      // end-to-end: a sentinel secret resolved during a real slice run never
+      // appears in any SQLite table or stdout/stderr
+      const sentinelEnv = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
+      const sentinelValue = `sentinel-value-${randomUUID()}`;
+      process.env[sentinelEnv] = sentinelValue;
+      const database = createSchema44CaseDatabase();
+      const app = buildSingleWorkspaceLayer({
+        databaseFile: database.databaseFilename,
+        providerTurns: [
+          [
+            {
+              _tag: "ToolCallProposed",
+              callRef: "c1",
+              toolName: "wait",
+              argumentsJson: JSON.stringify({
+                reason: "secret-store sentinel completion",
+                waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+              }),
+            },
+            { _tag: "TurnCompleted", finishReason: "ToolCall" },
+          ],
+        ],
+        secretRef: secretRef(sentinelEnv),
+      });
+
+      const captured: string[] = [];
+      const origOut = process.stdout.write.bind(process.stdout);
+      const origErr = process.stderr.write.bind(process.stderr);
+      const capture =
+        (orig: typeof origOut) =>
+        (chunk: unknown, ...args: ReadonlyArray<unknown>) => {
+          captured.push(typeof chunk === "string" ? chunk : String(chunk));
+          return (orig as (...a: ReadonlyArray<unknown>) => boolean)(
+            chunk,
+            ...args,
+          );
+        };
+      process.stdout.write = capture(origOut) as typeof process.stdout.write;
+      process.stderr.write = capture(origErr) as typeof process.stderr.write;
+
+      let allRows = "";
+      let settlement = "";
+      try {
+        const result = await Effect.runPromise(
+          Effect.provide(
+            Effect.gen(function* () {
+              const gateway = yield* CommandGateway;
+              yield* gateway.execute(
+                secretEnvelope("CreateProject", secretProjectPayload(), "1"),
+                secretContext,
+                secretAuthority(
+                  "CreateProjectAuthority",
+                  secretProjectPayload(),
+                  "1",
+                ),
+              );
+              yield* gateway.execute(
+                secretEnvelope("AssignWork", secretWorkPayload(), "2"),
+                secretContext,
+                secretAuthority(
+                  "AssignWorkAuthority",
+                  secretWorkPayload(),
+                  "2",
+                ),
+              );
+              const ownership = yield* ResourceOwnershipRepository;
+              const tx0 = yield* TransactionPort;
+              yield* tx0.transact(
+                ownership.insertClaim({
+                  claimId: "roc_018f2b3c-4d5e-7abc-8def-0123456789a1",
+                  workspaceId: secretWorkspaceId,
+                  region: {
+                    resourceSpaceId: "filesystem",
+                    normalizedRegion: { kind: "FileTree", path: "." },
+                  },
+                  sourceAddressSnapshot: { _tag: "FileTree", path: "." },
+                  resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+                  resolvedAtEnvironmentRevision: "local",
+                  createdAt: "t",
+                  releasedAt: null,
+                }),
+              );
+              yield* evaluateAndSelect(secretWorkspaceId, secretPrincipal, {
+                _tag: "WorkSelected",
+              });
+              yield* admitExecution(
+                secretWorkspaceId,
+                parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+                { _tag: "Work", workId: secretWorkId },
+                secretPrincipal,
+              );
+              const settled = yield* runExecution(
+                parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+                { _tag: "WorkSelected" },
+                secretPrincipal,
+              );
+              const sql = yield* SqlClient;
+              const tables = yield* sql.unsafe<{ name: string }>(
+                "SELECT name FROM sqlite_master WHERE type = 'table'",
+              );
+              let dump = "";
+              for (const table of tables) {
+                if (table.name.startsWith("sqlite_")) {
+                  continue;
+                }
+                const rows = yield* sql.unsafe(`SELECT * FROM "${table.name}"`);
+                dump += JSON.stringify(rows);
+              }
+              return { dump, settlement: settled._tag };
+            }),
+            app,
+          ) as unknown as Effect.Effect<
+            { dump: string; settlement: string },
+            unknown,
+            never
+          >,
+        );
+        allRows = result.dump;
+        settlement = result.settlement;
+      } finally {
+        process.stdout.write = origOut as typeof process.stdout.write;
+        process.stderr.write = origErr as typeof process.stderr.write;
+        delete process.env[sentinelEnv];
+        database.cleanup();
+      }
+
+      expect(settlement).toBe("Completed");
+      expect(allRows).not.toContain(sentinelValue);
+      expect(captured.join("")).not.toContain(sentinelValue);
+      expect(captured.join("")).not.toContain(sentinelEnv);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -935,6 +990,7 @@ describe("p12-acceptance story 5 — observability / health / usage plane", () =
             const before: ReadinessState = yield* health.readiness();
             expect(isReady(before)).toBe(false);
             yield* runMigrations(P12_MIGRATIONS);
+            yield* ensureLegacyProjectResourceSourceFixture();
             const after: ReadinessState = yield* health.readiness();
             expect(isReady(after)).toBe(true);
           }),
@@ -1005,11 +1061,22 @@ describe("p12-acceptance story 6 — storage scale + durability envelope", () =>
   });
 
   it("story 6: the restore drill actually executes end-to-end and emits its artifact", async () => {
-    const artifact = await runRestoreDrill();
-    expect(artifact.migrationUserVersion).toBe(13);
-    expect(
-      withinDurabilityEnvelope(artifact, DEFAULT_DURABILITY_ENVELOPE),
-    ).toBe(true);
+    const artifactDir = mkdtempSync(
+      join(tmpdir(), "arbor-p12-restore-artifact-"),
+    );
+    const artifactPath = join(artifactDir, "restore-drill.json");
+    try {
+      const artifact = await runRestoreDrill({
+        artifactOutputPath: artifactPath,
+      });
+      expect(artifact.migrationUserVersion).toBe(13);
+      expect(
+        withinDurabilityEnvelope(artifact, DEFAULT_DURABILITY_ENVELOPE),
+      ).toBe(true);
+      expect(JSON.parse(readFileSync(artifactPath, "utf8"))).toEqual(artifact);
+    } finally {
+      rmSync(artifactDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1029,6 +1096,9 @@ const rwSessionId = parse(SessionId)(
 const rwExecutionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
+const rwDecisionId = parse(DecisionId)(
+  "dec_018f2b3c-4d5e-7abc-8def-0123456789a1",
+);
 const rwWorkerA = parse(WorkerId)("wkr_018f2b3c-4d5e-7abc-8def-0123456789b1");
 const rwInc1 = parse(WorkerIncarnationId)(
   "wic_018f2b3c-4d5e-7abc-8def-0123456789c1",
@@ -1045,7 +1115,12 @@ const rwExecution: Execution = {
   binding: {
     _tag: "WorkspaceExecution",
     workspaceId: rwWorkspaceId,
-    focus: { _tag: "Coordination" },
+    episode: {
+      _tag: "DecisionEpisode",
+      decisionId: rwDecisionId,
+      decisionKind: "SelectCurrentWork",
+      requestRevision: 0,
+    },
   },
   sessionId: rwSessionId,
   admittedAt: "t",
@@ -1160,6 +1235,7 @@ const rwSeed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* ensureLegacyProjectResourceSourceFixture();
       yield* sql.unsafe(
         "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,?,NULL,?,?)",
         [rwSessionId, "WorkspacePrimary", rwWorkspaceId, 0, "t"],
@@ -1207,7 +1283,10 @@ const rwMutation = (
       executionId: rwExecutionId,
       settlement: {
         _tag: "Completed" as const,
-        result: { _tag: "CoordinationCompleted" as const },
+        result: {
+          _tag: "DecisionSubmitted" as const,
+          decisionId: rwDecisionId,
+        },
       },
       expectedFencingGeneration: 0,
     },
@@ -1225,6 +1304,7 @@ const rwRun = <A>(
     Effect.provide(
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         yield* rwSeed;
         const tx = yield* TransactionPort;
         const repo = yield* ExecutionRepository;
@@ -1324,7 +1404,11 @@ describe("p12-acceptance story 7 — remote worker fenced mediation", () => {
 // story 8 (`07`): model-facing ToolCatalogPort; compiled request carries real metadata
 // ---------------------------------------------------------------------------
 
-const story8Input = () => ({
+const story8Input = (
+  executableTools: ReadonlyArray<
+    import("../packages/ports/src/index.js").ModelFacingToolDefinition
+  >,
+) => ({
   executionId: parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
   sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
   contextEpoch: parse(ContextEpochNumber)(0),
@@ -1378,6 +1462,15 @@ const story8Input = () => ({
   },
   maxOutputTokens: 128,
   bodySkillIds: [],
+  turnProfile: {
+    purpose: "WorkspaceWork" as const,
+    profileVersion: "turn-profile-v1" as const,
+    outputContractRef: "tool-invocation-v1",
+    executableTools,
+    controlTools: [],
+    contextPolicyRef: "workspace-work-context-v1",
+    fingerprint: "tpf_p12_acceptance",
+  },
 });
 
 describe("p12-acceptance story 8 — model-facing tool catalog in the compiled request", () => {
@@ -1413,6 +1506,7 @@ describe("p12-acceptance story 8 — model-facing tool catalog in the compiled r
       Effect.provide(
         Effect.gen(function* () {
           yield* runMigrations(P12_MIGRATIONS);
+          yield* ensureLegacyProjectResourceSourceFixture();
           const txPort = yield* TransactionPort;
           const reg = yield* ProjectToolRegistry;
           yield* txPort.transact(
@@ -1424,8 +1518,15 @@ describe("p12-acceptance story 8 — model-facing tool catalog in the compiled r
               definitions: [ECHO_DEFINITION],
             }),
           );
+          const toolCatalog = yield* ToolCatalogPort;
+          const executableTools: ModelFacingToolDefinition[] = [];
+          for (const ref of yield* toolCatalog.visibleRefs()) {
+            executableTools.push(yield* toolCatalog.resolveForModel(ref));
+          }
           const modelContextPort = yield* ModelContext;
-          return yield* modelContextPort.prepareTurn(story8Input() as never);
+          return yield* modelContextPort.prepareTurn(
+            story8Input(executableTools) as never,
+          );
         }),
         app,
       ) as never,
@@ -1452,13 +1553,18 @@ describe("p12-acceptance story 8 — model-facing tool catalog in the compiled r
     expect(compiled?.schemaJson).toBe(ECHO_DEFINITION.inputSchemaJson);
     expect(compiled?.description).not.toBe(ECHO_DEFINITION.name);
     expect(compiled?.schemaJson).not.toBe("{}");
-    for (const builtin of BUILTIN_TOOLS) {
+    for (const builtin of BUILTIN_TOOLS.filter(
+      ({ name }) => name !== "shell",
+    )) {
       expect(
         turn.turn.request.toolDefinitions.some(
           (tool) => tool.name === builtin.name,
         ),
       ).toBe(true);
     }
+    expect(
+      turn.turn.request.toolDefinitions.some((tool) => tool.name === "shell"),
+    ).toBe(false);
   });
 });
 
@@ -1496,7 +1602,9 @@ const safetyDefinition = {
   interfaces: [],
 };
 
-const safetyProjectPayload: CreateProjectPayload = {
+const safetyProjectPayload = (
+  resourceSelection: CreateProjectPayload["rootWorkspace"]["resourceSelection"],
+): CreateProjectPayload => ({
   name: "Arbor",
   revision: parse(Revision)(0),
   projectPolicy: makeProjectPolicy(),
@@ -1512,17 +1620,13 @@ const safetyProjectPayload: CreateProjectPayload = {
     name: "root",
     responsibilityDefinition: safetyDefinition,
     responsibilityRevision: parse(ResponsibilityRevision)(0),
-    resourceBoundary: {
-      basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-      addresses: [{ _tag: "FileTree", path: "." }],
-    },
-    resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+    resourceSelection,
     agentBinding: responsibilityBound(safetyWorkspaceId),
     workspacePolicy: makeWorkspacePolicy(),
     workspacePolicyRevision: parse(Revision)(0),
     revision: parse(Revision)(0),
   },
-};
+});
 
 const safetyWorkPayload: AssignWorkPayload = {
   workId: safetyWorkId,
@@ -1554,7 +1658,7 @@ const safetyAuthority = (
         tag === "CreateProjectAuthority" ? "CreateProject" : "AssignWork",
       projectId: safetyProjectId,
       actor: safetyActor,
-      schemaVersion: "1",
+      schemaVersion: tag === "CreateProjectAuthority" ? "2" : "1",
       payload,
     }),
     projectId: safetyProjectId,
@@ -1594,7 +1698,7 @@ const claimTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>> = [
     {
       _tag: "ToolCallProposed",
       callRef: "c1",
-      toolName: "arbor_wait",
+      toolName: "wait",
       argumentsJson: JSON.stringify({
         reason: "secret-store sentinel completion",
         waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -1609,10 +1713,9 @@ const toolTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>> = [
     {
       _tag: "ToolCallProposed",
       callRef: "c1",
-      toolName: "shell",
+      toolName: "read",
       argumentsJson: JSON.stringify({
-        command: "echo hello",
-        cwd: { _tag: "FileTree", path: "." },
+        target: { mount: "workspace", path: "." },
       }),
     },
     { _tag: "TurnCompleted", finishReason: "ToolCall" },
@@ -1630,84 +1733,121 @@ const runSafetyScenario = async (
   providerTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>,
 ): Promise<SafetyScenario> => {
   const dir = mkdtempSync(join(tmpdir(), "p12-acceptance-safety-"));
-  const app = buildSliceLayer({
-    databaseFile: join(dir, "slice.db"),
+  const projectResourceProfiles = makeProjectResourceProfilePort(
+    projectResourceProfilesFromEnvironment({ ARBOR_PROJECT_ROOT: dir }),
+  );
+  const profile = Effect.runSync(projectResourceProfiles.list())[0];
+  if (profile === undefined || !profile.available) {
+    throw new Error("P12 acceptance Project Profile must be available");
+  }
+  const resolvedProfile = Effect.runSync(
+    projectResourceProfiles.resolve(
+      profile.resourceProfileRef,
+      profile.version,
+    ),
+  );
+  if (Option.isNone(resolvedProfile)) {
+    throw new Error("P12 acceptance Project Profile did not resolve");
+  }
+  const canonicalRoot = resolvedProfile.value.canonicalAddress.path;
+  expect(canonicalRoot).toBe(realpathSync(dir));
+  const selectedSafetyProjectPayload = safetyProjectPayload({
+    _tag: "Profile",
+    resourceProfileRef: profile.resourceProfileRef,
+    version: profile.version,
+  });
+  const database = createSchema44CaseDatabase();
+  const app = buildSingleWorkspaceLayer({
+    databaseFile: database.databaseFilename,
     providerTurns,
     runtimeSafetyPolicy: safetyPolicyConfig,
+    projectResourceProfiles,
   });
-  return Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        yield* runMigrations(P16_MIGRATIONS);
-        const gateway = yield* CommandGateway;
-        const created = yield* gateway.execute(
-          safetyEnvelope("CreateProject", safetyProjectPayload, "1"),
-          safetyContext,
-          safetyAuthority("CreateProjectAuthority", safetyProjectPayload, "1"),
-        );
-        if (created.resolution._tag !== "Committed") {
-          throw new Error(
-            `CreateProject: ${JSON.stringify(created.resolution)}`,
+  try {
+    return await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const gateway = yield* CommandGateway;
+          const created = yield* gateway.execute(
+            safetyEnvelope("CreateProject", selectedSafetyProjectPayload, "1"),
+            safetyContext,
+            safetyAuthority(
+              "CreateProjectAuthority",
+              selectedSafetyProjectPayload,
+              "1",
+            ),
           );
-        }
-        const assigned = yield* gateway.execute(
-          safetyEnvelope("AssignWork", safetyWorkPayload, "2"),
-          safetyContext,
-          safetyAuthority("AssignWorkAuthority", safetyWorkPayload, "2"),
-        );
-        if (assigned.resolution._tag !== "Committed") {
-          throw new Error(`AssignWork: ${JSON.stringify(assigned.resolution)}`);
-        }
-        const ownership = yield* ResourceOwnershipRepository;
-        const tx0 = yield* TransactionPort;
-        yield* tx0.transact(
-          ownership.insertClaim({
-            claimId: "roc_018f2b3c-4d5e-7abc-8def-0123456789a1",
-            workspaceId: safetyWorkspaceId,
-            region: {
-              resourceSpaceId: "filesystem",
-              normalizedRegion: { kind: "FileTree", path: "." },
-            },
-            sourceAddressSnapshot: { _tag: "FileTree", path: "." },
-            resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
-            resolvedAtEnvironmentRevision: "local",
-            createdAt: "t",
-            releasedAt: null,
-          }),
-        );
-        yield* evaluateAndSelect(safetyWorkspaceId, safetyPrincipal, {
-          _tag: "WorkSelected",
-        });
-        yield* admitExecution(
-          safetyWorkspaceId,
-          safetyExecutionId,
-          { _tag: "Work", workId: safetyWorkId },
-          safetyPrincipal,
-        );
-        const settled = yield* runExecution(
-          safetyExecutionId,
-          { _tag: "WorkSelected" },
-          safetyPrincipal,
-        );
-        const sql = yield* SqlClient;
-        const works = yield* sql.unsafe<{ lifecycle: string }>(
-          "SELECT lifecycle FROM works WHERE work_id = ?",
-          [safetyWorkId],
-        );
-        const reason =
-          settled._tag === "Interrupted" &&
-          settled.result._tag === "ControlledInterruption"
-            ? settled.result.reason
-            : null;
-        return {
-          settlementTag: settled._tag,
-          settlementReason: reason,
-          workLifecycle: works[0]?.lifecycle ?? null,
-        };
-      }),
-      app,
-    ) as unknown as Effect.Effect<SafetyScenario, unknown, never>,
-  );
+          if (created.resolution._tag !== "Committed") {
+            throw new Error(
+              `CreateProject: ${JSON.stringify(created.resolution)}`,
+            );
+          }
+          const assigned = yield* gateway.execute(
+            safetyEnvelope("AssignWork", safetyWorkPayload, "2"),
+            safetyContext,
+            safetyAuthority("AssignWorkAuthority", safetyWorkPayload, "2"),
+          );
+          if (assigned.resolution._tag !== "Committed") {
+            throw new Error(
+              `AssignWork: ${JSON.stringify(assigned.resolution)}`,
+            );
+          }
+          const ownership = yield* ResourceOwnershipRepository;
+          const tx0 = yield* TransactionPort;
+          yield* tx0.transact(
+            ownership.insertClaim({
+              claimId: "roc_018f2b3c-4d5e-7abc-8def-0123456789a1",
+              workspaceId: safetyWorkspaceId,
+              region: {
+                resourceSpaceId: "filesystem",
+                normalizedRegion: { kind: "FileTree", path: canonicalRoot },
+              },
+              sourceAddressSnapshot: {
+                _tag: "FileTree",
+                path: canonicalRoot,
+              },
+              resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+              resolvedAtEnvironmentRevision: "local",
+              createdAt: "t",
+              releasedAt: null,
+            }),
+          );
+          yield* evaluateAndSelect(safetyWorkspaceId, safetyPrincipal, {
+            _tag: "WorkSelected",
+          });
+          yield* admitExecution(
+            safetyWorkspaceId,
+            safetyExecutionId,
+            { _tag: "Work", workId: safetyWorkId },
+            safetyPrincipal,
+          );
+          const settled = yield* runExecution(
+            safetyExecutionId,
+            { _tag: "WorkSelected" },
+            safetyPrincipal,
+          );
+          const sql = yield* SqlClient;
+          const works = yield* sql.unsafe<{ lifecycle: string }>(
+            "SELECT lifecycle FROM works WHERE work_id = ?",
+            [safetyWorkId],
+          );
+          const reason =
+            settled._tag === "Interrupted" &&
+            settled.result._tag === "ControlledInterruption"
+              ? settled.result.reason
+              : null;
+          return {
+            settlementTag: settled._tag,
+            settlementReason: reason,
+            workLifecycle: works[0]?.lifecycle ?? null,
+          };
+        }),
+        app,
+      ) as unknown as Effect.Effect<SafetyScenario, unknown, never>,
+    );
+  } finally {
+    database.cleanup();
+  }
 };
 
 describe("p12-acceptance story 9 — §8.16A six dimensions", () => {
@@ -1749,15 +1889,18 @@ describe("p12-acceptance story 9 — §8.16A six dimensions", () => {
   ];
 
   for (const testCase of cases) {
-    it(`story 9 ${testCase.dim}: a violation interrupts with RuntimeSafetyStop and Work remains Open`, async () => {
-      const result = await runSafetyScenario(
-        testCase.safetyPolicy,
-        testCase.turns,
-      );
-      expect(result.settlementTag).toBe("Interrupted");
-      expect(result.settlementReason).toBe("RuntimeSafetyStop");
-      expect(result.workLifecycle).toBe("Open");
-    });
+    itWithCurrentAppTimeout(
+      `story 9 ${testCase.dim}: a violation interrupts with RuntimeSafetyStop and Work remains Open`,
+      async () => {
+        const result = await runSafetyScenario(
+          testCase.safetyPolicy,
+          testCase.turns,
+        );
+        expect(result.settlementTag).toBe("Interrupted");
+        expect(result.settlementReason).toBe("RuntimeSafetyStop");
+        expect(result.workLifecycle).toBe("Open");
+      },
+    );
   }
 
   it("story 9: the RuntimeSafetyStop settlement is derived as an Attention fact", async () => {
@@ -1779,6 +1922,23 @@ describe("p12-acceptance story 9 — §8.16A six dimensions", () => {
             settledAt: "t",
           },
         ]),
+      listAttentionSourceExecutionBindings: (targetProjectId, executionIds) =>
+        Effect.succeed(
+          executionIds.map((executionId) => ({
+            executionId,
+            projectId: targetProjectId,
+            workspaceId: safetyWorkspaceId,
+            episodeJson: JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: safetyWorkId,
+              targetWorkRevision: 0,
+            }),
+            workId: safetyWorkId,
+            workProjectId: targetProjectId,
+            workWorkspaceId: safetyWorkspaceId,
+            workRevision: 0,
+          })),
+        ),
       listOpenVerifications: () => Effect.succeed([]),
       listUnsatisfiedDependencies: () => Effect.succeed([]),
       findDependency: () => Effect.succeed(Option.none()),
@@ -1987,11 +2147,7 @@ const transportCreateProjectPayload = (): CreateProjectPayload => ({
       interfaces: [],
     },
     responsibilityRevision: parse(ResponsibilityRevision)(0),
-    resourceBoundary: {
-      basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-      addresses: [],
-    },
-    resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+    resourceSelection: { _tag: "ConversationOnly" },
     agentBinding: responsibilityBound(transportWorkspace),
     workspacePolicy: makeWorkspacePolicy(),
     workspacePolicyRevision: parse(Revision)(0),
@@ -2003,7 +2159,7 @@ const transportCreateEnvelope = () => ({
   commandType: "CreateProject",
   commandId: transportCommand,
   projectId: transportProject,
-  actor: parse(Actor)("user:human"),
+  actor: parse(Actor)(String(HUMAN)),
   issuedAt: ISSUED_AT,
   payload: transportCreateProjectPayload() as unknown,
 });
@@ -2015,35 +2171,45 @@ type TransportDbServices =
   | CommandHandlerRegistry
   | TransactionPort
   | ProjectRepository
+  | ResourceOwnershipRepository
   | WorkspaceRepository
   | ExecutionRepository
   | WorkRepository
+  | WorkContractRevisionRepository
   | MessageStore
   | PermissionGrantRepository
   | CommandStore
   | DomainEventJournal
   | SessionRepository
   | WorkWaitStore
+  | VerificationRepository
   | Clock
+  | ConversationResponseJobStore
   | IdGenerator;
 
-const transportApp = (): Layer.Layer<TransportDbServices> => {
-  const base = layer({ filename: ":memory:" });
+const transportApp = (
+  databaseFile = ":memory:",
+): Layer.Layer<TransportDbServices> => {
+  const base = layer({ filename: databaseFile });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const deps = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),
+    Layer.provide(ResourceOwnershipRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(WorkContractRevisionRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
+    Layer.provide(SandboxPolicyDecisionStoreLive, infra),
     // P14: the registry also wires SubmitHumanMessage (human chat-turn).
     Layer.provide(HumanMessageStoreLive, infra),
+    Layer.provide(ConversationResponseJobStoreLive, infra),
     // P13: the external registry also wires the Human-actionable governance
     // handlers (RecordDecision/SteerWork/AcceptWorkOutcome/Grant/Revoke).
     Layer.provide(FormationProposalStoreLive, infra),
@@ -2051,12 +2217,18 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
     Layer.provide(DependencyRepositoryLive, infra),
+    Layer.provide(DeliverableRepositoryLive, infra),
+    Layer.provide(EnvironmentRevisionStoreLive, infra),
+    Layer.provide(EvidenceRepositoryLive, infra),
   );
   const all = Layer.mergeAll(
     infra,
     deps,
     FenceStopCheckInertLive,
-    Layer.provide(SliceCommandHandlerRegistryLive, deps),
+    Layer.provide(
+      SingleWorkspaceCommandHandlerRegistryLive,
+      Layer.mergeAll(deps, infra),
+    ),
     AuthorityResolverPortLive,
   );
   return Layer.mergeAll(
@@ -2067,157 +2239,179 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
 
 const transportRun = <A>(
   program: Effect.Effect<A, unknown, TransportDbServices>,
-): Promise<A> => Effect.runPromise(Effect.provide(program, transportApp()));
+  databaseFile?: string,
+): Promise<A> =>
+  Effect.runPromise(Effect.provide(program, transportApp(databaseFile)));
 
 describe("p12-acceptance story 11 — transport shells + daemons", () => {
-  it("story 11: shells render the frozen DTOs, forward Commands, hold no canonical write, and Search stays deferred", async () => {
-    const core = makeTransportCore({
-      views: transportViews(),
-      authenticator: makeStaticAuthenticator({ "human-token": HUMAN }),
-      submission: {
-        submit: () =>
-          Effect.succeed({
-            ok: true as const,
-            status: 200,
-            body: {
-              commandId: transportCommand,
-              resolution: "Committed" as const,
-            },
-          }),
-      },
-    });
-    const http = makeHttpShell(core);
-    const ws = makeWebSocketShell(core);
-    const cli = makeCliShell(core);
-    const web = makeWebShell(core);
-
-    const viaHttp = await Effect.runPromise(
-      http.handle({
-        method: "POST",
-        path: "/views/responsibility-tree",
-        body: { projectId: transportProject },
-      }),
-    );
-    const viaWs = await Effect.runPromise(
-      ws.handleFrame({
-        kind: "view",
-        view: "responsibility-tree",
-        request: { projectId: transportProject },
-      }),
-    );
-    const viaCli = await Effect.runPromise(
-      cli.run([
-        "view",
-        "responsibility-tree",
-        JSON.stringify({ projectId: transportProject }),
-      ]),
-    );
-    for (const response of [viaHttp, viaWs, viaCli]) {
-      expect(response.ok).toBe(true);
-      if (response.ok) {
-        expect(response.body).toEqual(transportTreeResult);
-      }
-    }
-    const rendered = await Effect.runPromise(
-      web.renderView("responsibility-tree", { projectId: transportProject }),
-    );
-    expect(rendered.html).toContain(JSON.stringify(transportTreeResult));
-
-    const failure = await Effect.runPromise(
-      http.handle({
-        method: "POST",
-        path: "/views/attention",
-        body: { projectId: transportProject },
-      }),
-    );
-    expect(failure.ok).toBe(false);
-    if (!failure.ok) {
-      expect(Object.keys(failure.problem).sort()).toEqual([
-        "category",
-        "code",
-        "correlationId",
-        "message",
-        "retryDisposition",
-        "safeDetails",
-      ]);
-    }
-
-    const outcome = await transportRun(
-      Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
-        const submission = yield* makeExternalSubmissionFromServices({
-          authenticatedHumans: [],
-          directParentOf: [],
-        });
-        const dbCore = makeTransportCore({
-          views: transportViews(),
-          authenticator: makeStaticAuthenticator({ "human-token": HUMAN }),
-          submission,
-        });
-        const response = yield* dbCore.submitCommand(
-          { token: "human-token" },
-          transportCreateEnvelope(),
-        );
-        const sql = yield* SqlClient;
-        const rows = yield* sql.unsafe<{ count: number }>(
-          "SELECT COUNT(*) AS count FROM projects",
-        );
-        return { response, projects: Number(rows[0]?.count ?? 0) };
-      }),
-    );
-    expect(outcome.response.ok).toBe(true);
-    expect(outcome.projects).toBe(1);
-
-    expect(SEARCH_TRANSPORT_BINDING.implemented).toBe(false);
-    expect(SEARCH_TRANSPORT_BINDING.owner).toBe("P10");
-    expect(isViewId("search")).toBe(false);
-    expect((VIEW_IDS as ReadonlyArray<string>).includes("search")).toBe(false);
-
-    const order: string[] = [];
-    const emptyConsumer: ConsumerLoopResult = {
-      fromSequence: 0,
-      lastSequence: 0,
-      applied: 0,
-      quarantined: 0,
-      records: [],
-    };
-    const recovery = makeRecoveryDaemon({
-      startupRecovery: Effect.sync(() => {
-        order.push("startup");
-      }),
-      sweepRecovery: Effect.sync(() => {
-        order.push("sweep");
-      }),
-    });
-    const consumers = [
-      makeConsumerLoopDaemon({
-        consumerId: "verification",
-        projectId: transportProject,
-        batchSize: 10,
-        poll: Effect.sync(() => {
-          order.push("poll");
-          return emptyConsumer;
+  itWithCurrentAppTimeout(
+    "story 11: shells render the frozen DTOs, forward Commands, hold no canonical write, and Search stays deferred",
+    async () => {
+      const core = makeTransportCore({
+        views: transportViews(),
+        authenticator: makeStaticAuthenticator({
+          "human-token": HUMAN,
+          "local-read-token": parse(Principal)("user:local"),
         }),
-      }),
-    ];
-    const daemon = makeProductionDaemon({
-      migrate: Effect.sync(() => {
-        order.push("migrate");
-      }),
-      recovery,
-      consumers,
-    });
-    await Effect.runPromise(daemon.start);
-    expect(order).toEqual(["migrate", "startup"]);
-    const watcher = makeDriftWatcherTrigger({
-      probe: () =>
-        Effect.succeed({ _tag: "NoDrift", atRevision: "3" } as DriftReport),
-    });
-    expect(
-      (await Effect.runPromise(watcher.trigger(transportProject, [])))._tag,
-    ).toBe("NoDrift");
-    expect(recoveryDaemonFromPrincipal(HUMAN).startup).toBeDefined();
-  });
+        submission: {
+          submit: () =>
+            Effect.succeed({
+              ok: true as const,
+              status: 200,
+              body: {
+                commandId: transportCommand,
+                resolution: "Committed" as const,
+              },
+            }),
+        },
+      });
+      const http = makeHttpShell(core);
+      const ws = makeWebSocketShell(core);
+      const cli = makeCliShell(core);
+      const web = makeWebShell(core);
+
+      const viaHttp = await Effect.runPromise(
+        http.handle({
+          method: "POST",
+          path: "/views/responsibility-tree",
+          authorization: "Bearer local-read-token",
+          body: { projectId: transportProject },
+        }),
+      );
+      const viaWs = await Effect.runPromise(
+        ws.handleFrame({
+          kind: "view",
+          token: "local-read-token",
+          view: "responsibility-tree",
+          request: { projectId: transportProject },
+        }),
+      );
+      const viaCli = await Effect.runPromise(
+        cli.run([
+          "view",
+          "responsibility-tree",
+          JSON.stringify({ projectId: transportProject }),
+        ]),
+      );
+      for (const response of [viaHttp, viaWs, viaCli]) {
+        expect(response.ok).toBe(true);
+        if (response.ok) {
+          expect(response.body).toEqual(transportTreeResult);
+        }
+      }
+      const rendered = await Effect.runPromise(
+        web.renderView("responsibility-tree", { projectId: transportProject }),
+      );
+      expect(rendered.html).toContain(JSON.stringify(transportTreeResult));
+
+      const failure = await Effect.runPromise(
+        http.handle({
+          method: "POST",
+          path: "/views/attention",
+          authorization: "Bearer local-read-token",
+          body: { projectId: transportProject },
+        }),
+      );
+      expect(failure.ok).toBe(false);
+      if (!failure.ok) {
+        expect(Object.keys(failure.problem).sort()).toEqual([
+          "category",
+          "code",
+          "correlationId",
+          "message",
+          "retryDisposition",
+          "safeDetails",
+        ]);
+      }
+
+      const database = createSchema44CaseDatabase();
+      const outcome = await (async () => {
+        try {
+          return await transportRun(
+            Effect.gen(function* () {
+              const submission = yield* makeExternalSubmissionFromServices({
+                authenticatedHumans: [],
+                directParentOf: [],
+              });
+              const dbCore = makeTransportCore({
+                views: transportViews(),
+                authenticator: makeStaticAuthenticator({
+                  "human-token": HUMAN,
+                }),
+                submission,
+              });
+              const response = yield* dbCore.submitCommand(
+                { token: "human-token" },
+                transportCreateEnvelope(),
+              );
+              const sql = yield* SqlClient;
+              const rows = yield* sql.unsafe<{ count: number }>(
+                "SELECT COUNT(*) AS count FROM projects",
+              );
+              return { response, projects: Number(rows[0]?.count ?? 0) };
+            }),
+            database.databaseFilename,
+          );
+        } finally {
+          database.cleanup();
+        }
+      })();
+      expect(outcome.response.ok).toBe(true);
+      expect(outcome.projects).toBe(1);
+
+      expect(SEARCH_TRANSPORT_BINDING.implemented).toBe(false);
+      expect(SEARCH_TRANSPORT_BINDING.owner).toBe("P10");
+      expect(isViewId("search")).toBe(false);
+      expect((VIEW_IDS as ReadonlyArray<string>).includes("search")).toBe(
+        false,
+      );
+
+      const order: string[] = [];
+      const emptyConsumer: ConsumerLoopResult = {
+        fromSequence: 0,
+        lastSequence: 0,
+        applied: 0,
+        quarantined: 0,
+        records: [],
+      };
+      const recovery = makeRecoveryDaemon({
+        startupRecovery: Effect.sync(() => {
+          order.push("startup");
+        }),
+        sweepRecovery: Effect.sync(() => {
+          order.push("sweep");
+        }),
+      });
+      const consumers = [
+        makeConsumerLoopDaemon({
+          consumerId: "verification",
+          projectId: transportProject,
+          batchSize: 10,
+          poll: Effect.sync(() => {
+            order.push("poll");
+            return emptyConsumer;
+          }),
+        }),
+      ];
+      const daemon = makeProductionDaemon({
+        migrate: Effect.sync(() => {
+          order.push("migrate");
+        }),
+        recovery,
+        consumers,
+      });
+      await Effect.runPromise(daemon.start);
+      expect(order).toEqual(["migrate", "startup"]);
+      const watcher = makeDriftWatcherTrigger({
+        probe: () =>
+          Effect.succeed({ _tag: "NoDrift", atRevision: "3" } as DriftReport),
+      });
+      expect(
+        (await Effect.runPromise(watcher.trigger(transportProject, [])))._tag,
+      ).toBe("NoDrift");
+      expect(recoveryDaemonFromPrincipal(HUMAN).startup).toBeDefined();
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -2239,11 +2433,7 @@ const providerContext: ProviderExecutionContext = {
   ),
   attemptNo: 0,
   cancellationSignal: new AbortController().signal,
-  connectTimeoutMs: 1000,
-  firstEventTimeoutMs: 1000,
-  streamIdleTimeoutMs: 1000,
   turnDeadlineAt: new Date(Date.now() + 5_000).toISOString(),
-  maxAttempts: 3,
 };
 const sdkClient = (
   chunks: ReadonlyArray<OpenAISdkChunk>,
@@ -2268,12 +2458,19 @@ const story12ToolContext = {
   projectId: parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1"),
   actor: parse(Actor)("worker:a"),
   authenticatedPrincipal: parse(Principal)("worker:a"),
+  executionFence: {
+    executionId: parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+    workerId: "worker:a",
+    workerIncarnationId: "incarnation:p12-acceptance-story12",
+    fencingGeneration: parse(LeaseGeneration)(0),
+  },
   authority: {
     principal: parse(Principal)("worker:a"),
     workspaceId: parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789a1"),
     executionId: parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
     toolName: "list",
-    toolVersion: "1",
+    toolVersion: "2",
+    sourceRevision: "fixture-authority-revision",
     resourceSpaceIds: ["filesystem"],
     allowedCapabilities: ["fs:read"],
     controlBasisDigest: "d",
@@ -2390,10 +2587,15 @@ describe("p12-acceptance story 12 — real provider adapter + non-minimal tool",
         admit: () => Effect.succeed({ _tag: "Admitted" as const }),
       } as never),
       Layer.succeed(ToolInvocationStore, {
-        recordIntent: () => Effect.void,
-        settle: () => Effect.void,
+        recordIntent: () => Effect.succeed("Recorded" as const),
+        settle: () => Effect.succeed(true),
         consumeApproval: () => Effect.succeed(true),
+        recordNoEffectDenial: () =>
+          Effect.die(new Error("unexpected no-effect denial")),
+        recordNoEffectInterruption: () => Effect.succeed(false),
+        admitEffect: () => Effect.succeed({ _tag: "Admitted" as const }),
         findApproval: () => Effect.succeed(Option.none()),
+        findById: () => Effect.succeed(Option.none()),
         findUnsettled: () => Effect.succeed([]),
       } as never),
       Layer.succeed(ProjectEnvironmentPort, {
@@ -2406,6 +2608,19 @@ describe("p12-acceptance story 12 — real provider adapter + non-minimal tool",
             observedEnvironmentRevision: "rev",
           }),
       }),
+      Layer.succeed(WorkspaceRepository, {
+        findById: () =>
+          Effect.succeed(
+            Option.some({
+              projectId: parse(ProjectId)(
+                "prj_018f2b3c-4d5e-7abc-8def-0123456789a1",
+              ),
+              resourceBoundary: {
+                addresses: [{ _tag: "GitWorktree", path: root }],
+              },
+            }),
+          ),
+      } as never),
       Layer.succeed(Clock, {
         now: () => Effect.succeed("2026-01-01T00:00:00.000Z"),
       }),
@@ -2422,9 +2637,9 @@ describe("p12-acceptance story 12 — real provider adapter + non-minimal tool",
             {
               callRef: "c",
               toolName: "list",
-              toolVersion: "1",
+              toolVersion: "2",
               argumentsJson: JSON.stringify({
-                path: { _tag: "FileTree", path: "." },
+                target: { mount: "workspace", path: "." },
                 depth: 2,
               }),
               invocationId: parse(ToolInvocationId)(

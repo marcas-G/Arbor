@@ -17,7 +17,10 @@ import {
   subtreeAttentionAggregate,
   ZERO_SUBTREE_ATTENTION,
 } from "./attention.js";
-import type { ProjectionReadError } from "./errors.js";
+import type {
+  ProjectionReadError,
+  ProjectionReadResultError,
+} from "./errors.js";
 import { deriveWorkspaceStatus } from "./status.js";
 import {
   aggregateUsageByWorkspace,
@@ -106,7 +109,7 @@ export interface TreeViewDeps {
   >;
   readonly readAttentionRows: (
     projectId: ProjectId,
-  ) => Effect.Effect<ReadonlyArray<AttentionRow>, ProjectionReadError>;
+  ) => Effect.Effect<ReadonlyArray<AttentionRow>, ProjectionReadResultError>;
   /** P10-007: provider_turns usage facts — the Tree usageSummary is the
    * same aggregation the Usage view serves (observe-only, invariant 45). */
   readonly listUsageTurns: (
@@ -199,7 +202,7 @@ const validateResponsibilityHierarchy = (
 export const buildTreeView = (
   request: TreeViewRequest,
   deps: TreeViewDeps,
-): Effect.Effect<TreeViewNode, ProjectionReadError> =>
+): Effect.Effect<TreeViewNode, ProjectionReadResultError> =>
   Effect.gen(function* () {
     const workspaces = yield* deps.listWorkspacesByProject(request.projectId);
     const { root, byId, childrenOf } =
@@ -221,7 +224,7 @@ export const buildTreeView = (
     const buildNode = (
       workspace: Workspace,
       level: number,
-    ): Effect.Effect<TreeViewNode, ProjectionReadError> =>
+    ): Effect.Effect<TreeViewNode, ProjectionReadResultError> =>
       Effect.gen(function* () {
         const works = yield* deps.listWorksByWorkspace(workspace.workspaceId);
         const openWorks = works.filter((work) => work.lifecycle === "Open");

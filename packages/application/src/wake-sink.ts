@@ -11,11 +11,11 @@ import type {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 
-/** P7 `06` §3 consumer-side minimal pipeline. Producers (SatisfyDependency
- * `01` §4, Deliver `02` §6) carry wake signals in their handler Results;
- * this sink delivers each signal after the producing transaction commits:
- * clear the DependencyChanged WorkWaits the signal's revision advance
- * obsoletes (observedRevision < toRevision), then trigger `reevaluate` on
+/** P7 `06` §3 consumer-side minimal pipeline. This sink delivers each signal
+ * after the producing transaction commits: DependencySatisfied is an
+ * independent terminal fact and clears matching DependencyChanged waits even
+ * though satisfaction intentionally keeps the Dependency revision stable;
+ * then trigger `reevaluate` on
  * the target Workspace — at-least-once, idempotent. Wake payloads
  * (dependencyId/fromRevision/toRevision) live here in the delivery record,
  * never in the P2-frozen WakeReason union. */
@@ -43,19 +43,28 @@ export interface WakeSinkDependencies {
   readonly scheduler: Pick<ExecutionSchedulerService, "reevaluate">;
 }
 
-/** 06 §2 matching: only a DependencyChanged condition on the signalled
- * dependency whose observedRevision the signal advances (r < r') makes the
- * wait obsolete. Stale replays (r >= r') are already-seen facts — no clear. */
+/** WSC-1 governance: DependencySatisfied is terminal and makes every wait on
+ * that exact dependency obsolete, independent of revision movement. */
 const matchesSignalledDependency = (
   conditions: ReadonlyArray<WakeCondition>,
   dependencyId: string,
-  toRevision: number,
 ): boolean =>
   conditions.some(
     (condition) =>
       condition._tag === "DependencyChanged" &&
-      condition.dependencyId === dependencyId &&
-      condition.observedRevision < toRevision,
+      condition.dependencyId === dependencyId,
+  );
+
+const matchesAdvancedInbox = (
+  conditions: ReadonlyArray<WakeCondition>,
+  workspaceId: WorkspaceId,
+  sequence: number,
+): boolean =>
+  conditions.some(
+    (condition) =>
+      condition._tag === "InboxAdvanced" &&
+      condition.workspaceId === workspaceId &&
+      sequence > condition.observedSequence,
   );
 
 /** Deliver one wake signal (06 §3): clear → reevaluate. The clears commit
@@ -72,17 +81,25 @@ export const deliverWakeSignal = (
     const wakeReason: WakeReason = { _tag: signal.reason };
     const clearedWaits = yield* deps.tx.transact(
       Effect.gen(function* () {
-        // Clear semantics apply only to a dependency revision advance
-        // (06 §2); InputArrived/ChildDelivered reevaluate without clearing.
-        if (signal.reason !== "DependencySatisfied") {
+        // Waits clear only when the signal proves the exact observed fact
+        // advanced. Generic InputArrived does not release unrelated waits.
+        if (
+          signal.reason !== "DependencySatisfied" &&
+          signal.reason !== "InputArrived"
+        ) {
           return 0;
         }
         const detail = signal.detail ?? {};
-        const { dependencyId, toRevision } = detail;
-        if (
-          typeof dependencyId !== "string" ||
-          typeof toRevision !== "number"
-        ) {
+        const { dependencyId, inboxSequence } = detail;
+        const dependencySignal =
+          signal.reason === "DependencySatisfied" &&
+          typeof dependencyId === "string";
+        const inboxSignal =
+          signal.reason === "InputArrived" &&
+          typeof inboxSequence === "number" &&
+          Number.isSafeInteger(inboxSequence) &&
+          inboxSequence >= 0;
+        if (!dependencySignal && !inboxSignal) {
           // Malformed delivery record: no wait can match; the reevaluate
           // below still satisfies the at-least-once contract.
           return 0;
@@ -93,11 +110,17 @@ export const deliverWakeSignal = (
           const wait = yield* deps.waits.findByWork(work.workId);
           if (
             Option.isSome(wait) &&
-            matchesSignalledDependency(
-              wait.value.waitSpec.conditions,
-              dependencyId,
-              toRevision,
-            )
+            ((dependencySignal &&
+              matchesSignalledDependency(
+                wait.value.waitSpec.conditions,
+                dependencyId as string,
+              )) ||
+              (inboxSignal &&
+                matchesAdvancedInbox(
+                  wait.value.waitSpec.conditions,
+                  signal.workspaceId,
+                  inboxSequence as number,
+                )))
           ) {
             yield* deps.waits.clear(work.workId);
             cleared += 1;

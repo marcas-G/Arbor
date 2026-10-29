@@ -1,6 +1,13 @@
 # P6 — 00 Contract Index
 
-**Authority:** DID v1.9 §11 P6, G3 (v1.9), G5 (v1.7); SD v1.3 §7.2–§7.5, §8.1–§8.3, §13.5, §14; Scenarios v1.2 S1.4, S2; P1 `01`/`02`, P2 `01`/`05`, P3 `03`, P4 `02`, P5 `03`.
+> **MAC successor (DID v1.31):** child Workspace formation/authority remains
+> durable responsibility semantics and resumes in MAC-P2. `Specialist` is no
+> longer active product/domain vocabulary; optional parallel Agent execution is
+> deferred to MAC-P4 Runtime ActionCall. Formation approval and asynchronous
+> fulfillment must be represented separately. See
+> `docs/design/implementation/MAC/**`.
+
+**Authority:** DID v1.9 §11 P6, G3 (v1.9), G5 (v1.7), v1.47 P8 UnboundLegacy route amendment, and v1.52 F23 P6 operator rebuild / v1 route-command qualification; SD v1.3 §7.2–§7.5, §8.1–§8.3, §13.5, §14; Scenarios v1.2 S1.4, S2; P1 `01`/`02`/`03`/`04`, P2 `01`/`05`, P3 `03`, P4 `02`, P5 `03`.
 **Status:** FROZEN — manual governance adoption (D1–D4 confirmed with binding constraints); four-way review Blocking=0.
 
 ## Documents
@@ -27,6 +34,47 @@ Human Steer
 - P6 实现 `ProposeChildWorkspace` 与 specialist spawn（P5 中为 `DirectiveUnsupported`，DID v1.9 G3）。采纳后 P5 `03` §2 表中仅 `DeclareDependency` 保持 `DirectiveUnsupported`（P7）。
 - P6 建立在 P1 `CreateChildWorkspace` 与 P2 generic `ExecutionBound` admission 之上（DID v1.7 G5）。
 
+## P8 `UnboundLegacy` Governance Inbox owner amendment (DID v1.47)
+
+P6 `02` owns the human-only `RetryVerificationUnboundLegacy` Governance
+Inbox subtype, stable CommandId key, dynamic current human recipient, query
+authorization, read-only/no-consume behavior, rebuild and same-key route-move
+semantics. P6 reuses the existing `Governance` kind; this amendment adds no
+Inbox kind, Agent consumer, P10 Attention source or automatic wake. The P1
+physical transaction and row representation are in P1 `01`/`03`/`04`; the
+P8 current-human authorization rule remains owned by P8 `01` and P12 `02`/`10`.
+P7/P14 require no enum extension.
+
+## Accepted v1 operator rebuild and route-command qualification (DID v1.52)
+
+No v1 P1 command mutates canonical Work owner or Workspace Parent. Therefore
+only the command-level owner/Parent route-move and its public/crash
+qualification are N/A in v1. The same-key transaction helper, current-route
+human visibility, old/new recipient rule, and ordinary P1 terminal-rejection
+constraint remain required for any future separately governed command that
+changes a recipient; they are not N/A.
+
+Production rebuild is required. The operator-only offline command
+`p6:inbox-rebuild` requires a stopped daemon, the exact current schema-48
+database and the P39 `MaintenanceExclusive` permit. It rebuilds every durable
+UnboundLegacy projection from immutable dispositions and current canonical
+Work/Verification/Project/Workspace facts through the existing
+`rebuildUnboundLegacyInboxProjections` helper in one `TransactionPort`
+transaction. It is not a P10 Attention source, application/user command,
+AgentAction, Web/API surface, or Agent consumer. The operator audit manifest is
+separate from the P39 blocker-report SQLite sidecar. The accepted contract also
+owns the P39 sidecar's bounded pre-permit creation/initialization and
+crash/retry boundary; it does not authorize online or preserved-database work.
+
+Accepted token:
+`ACCEPT_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_AND_V1_ROUTE_MOVE_NA`,
+proposal raw SHA-256
+`B6A542973768D1C0D7C8ACB644988D1C957B7020F73206C335D73FF7FE0C833E`.
+See `planning/results/F23-P6-operator-rebuild-and-route-move-na-acceptance-and-landing.record.md`.
+The separate implementation token
+`AUTHORIZE_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_IMPLEMENTATION` is not yet
+granted.
+
 ## DID / SD governance inputs mapping
 
 | Input | 落点 |
@@ -35,7 +83,7 @@ Human Steer
 | DID v1.7 G5（generic ExecutionBound admission；P6 owns spawn semantics） | `01` §3 |
 | DID §8.15 AgentDirective + P3 `03` §3 载荷名 | `01` §2, `02` §2 |
 | DID §4.2 命令清单（SteerWork/SendMessage/RecordDecision） | `02` §3, `04` §2 |
-| DID §12.10 表（SendMessage→MessageSent；SteerWork→WorkSteered） | `02` §3, `04` §2 |
+| DID §12.10 表（SendMessage→MessageSent；SteerWork→WorkSteered / WorkAmended） | `02` §3, `04` §2 |
 | SD §7.2 work-plane primitives（P6 子集：Query/Reply/Report/DecisionRequest） | `02` §1 |
 | SD §7.4–§7.5 Inbox / Admission→Promotion→Consumption | `02` §4 |
 | SD §8.1–§8.3 authority model / capability ceiling | `03` |

@@ -29,7 +29,11 @@ import {
   SessionId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
-import { makeP1App, runP1 } from "./support/p1-app.js";
+import {
+  ensureProjectResourceSourceTestColumn,
+  makeP1App,
+  runP1,
+} from "./support/p1-app.js";
 
 const actor = parse(Actor)("user:test");
 const principal = parse(Principal)("user:test");
@@ -74,11 +78,7 @@ const projectPayload = (): CreateProjectPayload => ({
     name: "root",
     responsibilityDefinition: definition,
     responsibilityRevision: parse(ResponsibilityRevision)(0),
-    resourceBoundary: {
-      basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-      addresses: [],
-    },
-    resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+    resourceSelection: { _tag: "ConversationOnly" },
     agentBinding: responsibilityBound(rootWorkspace),
     workspacePolicy: makeWorkspacePolicy(),
     workspacePolicyRevision: parse(Revision)(0),
@@ -138,7 +138,7 @@ const authority = <P>(
       commandType,
       projectId,
       actor,
-      schemaVersion: "1",
+      schemaVersion: commandType === "CreateProject" ? "2" : "1",
       payload,
     }),
     projectId,
@@ -169,6 +169,7 @@ describe("P1-011 CreateChildWorkspace", () => {
     const app = makeP1App();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
+      yield* ensureProjectResourceSourceTestColumn();
       yield* seedProject;
       const gw = yield* CommandGateway;
       const payload = childPayload();
@@ -215,6 +216,7 @@ describe("P1-011 CreateChildWorkspace", () => {
     const app = makeP1App();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
+      yield* ensureProjectResourceSourceTestColumn();
       yield* seedProject;
       const gw = yield* CommandGateway;
       const missingParent = parse(WorkspaceId)(
@@ -248,6 +250,7 @@ describe("P1-011 CreateChildWorkspace", () => {
     const app = makeP1App();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
+      yield* ensureProjectResourceSourceTestColumn();
       yield* seedProject;
       const gw = yield* CommandGateway;
       const payload = childPayload();
@@ -278,6 +281,7 @@ describe("P1-011 CreateChildWorkspace", () => {
     const app = makeP1App();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
+      yield* ensureProjectResourceSourceTestColumn();
       yield* seedProject;
       const sql = yield* SqlClient;
       yield* sql.unsafe(

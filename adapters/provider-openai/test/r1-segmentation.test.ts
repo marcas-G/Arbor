@@ -34,7 +34,9 @@ const rawArgumentsOf = (): ReadonlyArray<{ index: number; args: string }> => {
   const perCall = new Map<number, string>();
   for (const line of RAW.split("\n")) {
     if (!line.startsWith("data:")) continue;
-    const payload = line.slice(5).trimStart();
+    // Captures can be checked out with CRLF; the SSE payload itself is
+    // line-ending agnostic, so remove the record terminator before parsing.
+    const payload = line.slice(5).trim();
     if (payload === "[DONE]") continue;
     const frame = JSON.parse(payload) as {
       choices?: Array<{
@@ -111,14 +113,10 @@ const canonicalToolCalls = async (
       cacheHints: [],
     },
     context: {
-      providerTurnId: "ptn_seg" as never,
+      providerTurnId: "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789b0_0" as never,
       attemptNo: 0,
       cancellationSignal: new AbortController().signal,
-      connectTimeoutMs: 5_000,
-      firstEventTimeoutMs: 5_000,
-      streamIdleTimeoutMs: 5_000,
       turnDeadlineAt: new Date(Date.now() + 20_000).toISOString(),
-      maxAttempts: 1,
     },
   })) {
     chunks.push(chunk);
@@ -298,8 +296,8 @@ describe("R1 — SSE chunk-segmentation independence (frozen DeepSeek capture)",
             delta: {
               tool_calls: [{ index: 1, function: { arguments: "1}" } }],
             },
+            finish_reason: "tool_calls",
           },
-          { finish_reason: "tool_calls" },
         ],
       }) +
       "data: [DONE]\n\n";

@@ -7,10 +7,13 @@
  * TerminalRejected renders CommandInlineError while allowing resubmission
  * under a NEW commandId.
  */
+
+import type { WorkspaceDetailRes } from "@arbor/api-contracts";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AcceptWorkOutcomeForm } from "../src/commands/forms/AcceptWorkOutcomeForm.js";
 import { CreateProjectForm } from "../src/commands/forms/CreateProjectForm.js";
+import { DecideSandboxPolicyForm } from "../src/commands/forms/DecideSandboxPolicyForm.js";
 import { GrantPermissionForm } from "../src/commands/forms/GrantPermissionForm.js";
 import { RecordDecisionForm } from "../src/commands/forms/RecordDecisionForm.js";
 import { RevokePermissionForm } from "../src/commands/forms/RevokePermissionForm.js";
@@ -42,7 +45,10 @@ const committed = (commandId = "cmd_server_1") =>
     { status: 200, headers: { "content-type": "application/json" } },
   );
 
-const terminalRejected = (rejection: string) =>
+const terminalRejected = (
+  rejection: string,
+  safeDetails?: Readonly<Record<string, unknown>>,
+) =>
   new Response(
     JSON.stringify({
       ok: true,
@@ -51,10 +57,38 @@ const terminalRejected = (rejection: string) =>
         commandId: "cmd_server_rej",
         resolution: "TerminalRejected",
         rejection,
+        ...(safeDetails === undefined ? {} : { safeDetails }),
       },
     }),
     { status: 200, headers: { "content-type": "application/json" } },
   );
+
+const projectResourceCatalog = (
+  profiles: ReadonlyArray<{
+    readonly resourceProfileRef: string;
+    readonly version: string;
+    readonly displayName: string;
+    readonly available: boolean;
+  }>,
+) =>
+  new Response(
+    JSON.stringify({
+      ok: true,
+      status: 200,
+      body: { profiles, conversationOnlySupported: true },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+
+const singleAvailableProjectProfile = () =>
+  projectResourceCatalog([
+    {
+      resourceProfileRef: "project-root-ref",
+      version: "project-root-version",
+      displayName: "Project files",
+      available: true,
+    },
+  ]);
 
 function stubFetch(impl: FetchImpl): FetchFn {
   const fetchMock = vi.fn(impl);
@@ -82,6 +116,12 @@ function readCall(
   };
 }
 
+function readCommandCall(fetchMock: FetchMock) {
+  const index = fetchMock.mock.calls.findIndex(([url]) => url === "/commands");
+  if (index < 0) throw new Error("/commands fetch was not made");
+  return readCall(fetchMock, index);
+}
+
 const payloadOf = (envelope: Envelope): Record<string, unknown> =>
   envelope.payload as Record<string, unknown>;
 
@@ -92,7 +132,13 @@ afterEach(() => {
 describe("CreateProjectForm", () => {
   it("submits a bootstrap envelope with caller-preallocated prj_ id", async () => {
     const onSubmitted = vi.fn();
-    const fetchMock = stubFetch(() => Promise.resolve(committed()));
+    const fetchMock = stubFetch((url) =>
+      Promise.resolve(
+        url === "/project-resources"
+          ? singleAvailableProjectProfile()
+          : committed(),
+      ),
+    );
     render(
       <CreateProjectForm
         actor="human:root"
@@ -100,13 +146,18 @@ describe("CreateProjectForm", () => {
         onSubmitted={onSubmitted}
       />,
     );
+    await screen.findByRole("radio", { name: /Project files.*可用/u });
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "论文写作平台" },
     });
     expect(screen.queryByLabelText("根责任目标")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
-    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
-    const { url, init, envelope } = readCall(fetchMock);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([url]) => url === "/commands"),
+      ).toHaveLength(1),
+    );
+    const { url, init, envelope } = readCommandCall(fetchMock);
     expect(url).toBe("/commands");
     expect(init.method).toBe("POST");
     expect((init.headers as Record<string, string>)["content-type"]).toBe(
@@ -121,7 +172,7 @@ describe("CreateProjectForm", () => {
     expect(String(envelope.projectId)).toMatch(/^prj_/);
     const payload = payloadOf(envelope) as Record<string, unknown>;
     expect(payload.name).toBe("论文写作平台");
-    expect(payload.projectId).toBe(envelope.projectId);
+    expect(payload).not.toHaveProperty("projectId");
     const root = payload.rootWorkspace as Record<string, unknown>;
     expect(root.name).toBe("论文写作平台");
     expect(
@@ -138,28 +189,246 @@ describe("CreateProjectForm", () => {
     await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
   });
 
-  it("reuses the same commandId (and prj_ id) across transport-failure retries", async () => {
+  it("preselects one host Profile, displays only its friendly name, and posts the closed v2 selector", async () => {
     const onSubmitted = vi.fn();
-    const fetchMock = stubFetch(() => Promise.resolve(committed()));
-    fetchMock.mockImplementationOnce(() =>
-      Promise.reject(new Error("network down")),
+    const hostPath = "C:\\private\\host\\workspace";
+    const fetchMock = stubFetch((url) =>
+      Promise.resolve(
+        url === "/project-resources"
+          ? projectResourceCatalog([
+              {
+                resourceProfileRef: "opaque-profile-secret",
+                version: "opaque-version-secret",
+                displayName: "Friendly writing workspace",
+                available: true,
+              },
+            ])
+          : committed(),
+      ),
+    );
+    render(
+      <CreateProjectForm
+        actor="human:root"
+        token="tok_profile"
+        onSubmitted={onSubmitted}
+      />,
+    );
+    const profileChoice = await screen.findByRole("radio", {
+      name: /Friendly writing workspace.*可用/u,
+    });
+    expect((profileChoice as HTMLInputElement).checked).toBe(true);
+    expect(
+      screen.queryByText(/opaque-profile-secret|opaque-version-secret/u),
+    ).toBeNull();
+    expect(screen.queryByText(hostPath)).toBeNull();
+    fireEvent.change(screen.getByLabelText("项目名称"), {
+      target: { value: "Profile project" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
+    const { envelope } = readCommandCall(fetchMock);
+    const root = payloadOf(envelope).rootWorkspace as Record<string, unknown>;
+    expect(root.resourceSelection).toEqual({
+      _tag: "Profile",
+      resourceProfileRef: "opaque-profile-secret",
+      version: "opaque-version-secret",
+    });
+    expect(root).not.toHaveProperty("resourceBoundary");
+    expect(JSON.stringify(envelope)).not.toContain(hostPath);
+    const catalogCall = fetchMock.mock.calls.find(
+      ([url]) => url === "/project-resources",
+    );
+    expect(catalogCall?.[1].headers).toMatchObject({
+      Authorization: "Bearer tok_profile",
+    });
+  });
+
+  it("requires an explicit choice when multiple Profiles are available", async () => {
+    const onSubmitted = vi.fn();
+    const fetchMock = stubFetch((url) =>
+      Promise.resolve(
+        url === "/project-resources"
+          ? projectResourceCatalog([
+              {
+                resourceProfileRef: "opaque-first",
+                version: "v1",
+                displayName: "First workspace",
+                available: true,
+              },
+              {
+                resourceProfileRef: "opaque-second",
+                version: "v2",
+                displayName: "Second workspace",
+                available: true,
+              },
+            ])
+          : committed(),
+      ),
     );
     render(<CreateProjectForm actor="human:root" onSubmitted={onSubmitted} />);
+    const first = await screen.findByRole("radio", {
+      name: /First workspace.*可用/u,
+    });
+    const second = screen.getByRole("radio", {
+      name: /Second workspace.*可用/u,
+    });
+    expect((first as HTMLInputElement).checked).toBe(false);
+    expect((second as HTMLInputElement).checked).toBe(false);
+    const create = screen.getByRole("button", { name: "创建项目" });
+    expect((create as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(second);
+    expect((second as HTMLInputElement).checked).toBe(true);
+    expect((create as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText("项目名称"), {
+      target: { value: "Second profile project" },
+    });
+    fireEvent.click(create);
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
+    const root = payloadOf(readCommandCall(fetchMock).envelope)
+      .rootWorkspace as Record<string, unknown>;
+    expect(root.resourceSelection).toEqual({
+      _tag: "Profile",
+      resourceProfileRef: "opaque-second",
+      version: "v2",
+    });
+  });
+
+  it("requires an explicit ConversationOnly choice when no Profile is available", async () => {
+    const onSubmitted = vi.fn();
+    const fetchMock = stubFetch((url) =>
+      Promise.resolve(
+        url === "/project-resources" ? projectResourceCatalog([]) : committed(),
+      ),
+    );
+    render(<CreateProjectForm actor="human:root" onSubmitted={onSubmitted} />);
+    const onlyConversation = await screen.findByRole("radio", {
+      name: "仅对话",
+    });
+    expect((onlyConversation as HTMLInputElement).checked).toBe(false);
+    expect(
+      screen.getByText(/不能使用文件工具，也不能完成需要文件证据的 Work/u),
+    ).toBeTruthy();
+    const create = screen.getByRole("button", { name: "创建项目" });
+    expect((create as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(onlyConversation);
+    expect((create as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText("项目名称"), {
+      target: { value: "Conversation only project" },
+    });
+    fireEvent.click(create);
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
+    const root = payloadOf(readCommandCall(fetchMock).envelope)
+      .rootWorkspace as Record<string, unknown>;
+    expect(root.resourceSelection).toEqual({ _tag: "ConversationOnly" });
+    expect(root).not.toHaveProperty("resourceBoundary");
+  });
+
+  it("keeps an unavailable Profile unselectable and does not convert it to ConversationOnly", async () => {
+    const fetchMock = stubFetch((url) =>
+      Promise.resolve(
+        url === "/project-resources"
+          ? projectResourceCatalog([
+              {
+                resourceProfileRef: "opaque-unavailable",
+                version: "old-version",
+                displayName: "Offline repository",
+                available: false,
+              },
+            ])
+          : committed(),
+      ),
+    );
+    render(<CreateProjectForm actor="human:root" onSubmitted={vi.fn()} />);
+    const unavailable = await screen.findByRole("radio", {
+      name: /Offline repository.*不可用/u,
+    });
+    expect((unavailable as HTMLInputElement).disabled).toBe(true);
+    expect((unavailable as HTMLInputElement).checked).toBe(false);
+    const onlyConversation = screen.getByRole("radio", { name: "仅对话" });
+    expect((onlyConversation as HTMLInputElement).checked).toBe(false);
+    expect(
+      (screen.getByRole("button", { name: "创建项目" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => url === "/commands")).toBe(
+      false,
+    );
+  });
+
+  it("shows a stable readable rejection when a selected Profile becomes stale", async () => {
+    const onSubmitted = vi.fn();
+    stubFetch((url) =>
+      Promise.resolve(
+        url === "/project-resources"
+          ? projectResourceCatalog([
+              {
+                resourceProfileRef: "opaque-stale-profile",
+                version: "catalog-version",
+                displayName: "Selected repository",
+                available: true,
+              },
+            ])
+          : terminalRejected("ProjectResourceUnavailable"),
+      ),
+    );
+    render(<CreateProjectForm actor="human:root" onSubmitted={onSubmitted} />);
+    const selected = await screen.findByRole("radio", {
+      name: /Selected repository.*可用/u,
+    });
+    expect((selected as HTMLInputElement).checked).toBe(true);
+    fireEvent.change(screen.getByLabelText("项目名称"), {
+      target: { value: "Stale profile project" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(
+        /文件目录.*不可用|配置.*变化/u,
+      ),
+    );
+    expect(screen.getByRole("alert").textContent).not.toContain(
+      "opaque-unavailable",
+    );
+    expect(screen.getByRole("alert").textContent).not.toContain("old-version");
+    expect(onSubmitted).not.toHaveBeenCalled();
+  });
+
+  it("reuses the same commandId (and prj_ id) across transport-failure retries", async () => {
+    const onSubmitted = vi.fn();
+    let commandRequests = 0;
+    const fetchMock = stubFetch((url) => {
+      if (url === "/project-resources") {
+        return Promise.resolve(singleAvailableProjectProfile());
+      }
+      commandRequests += 1;
+      return commandRequests === 1
+        ? Promise.reject(new Error("network down"))
+        : Promise.resolve(committed());
+    });
+    render(<CreateProjectForm actor="human:root" onSubmitted={onSubmitted} />);
+    await screen.findByRole("radio", { name: /Project files.*可用/u });
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "p1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
     await waitFor(() => expect(screen.getByText("服务不可用")).toBeTruthy());
-    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(
+      fetchMock.mock.calls.filter(([url]) => url === "/commands"),
+    ).toHaveLength(1);
     expect(screen.getByText(/transport\/unavailable/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
-    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(2));
-    const first = readCall(fetchMock, 0).envelope;
-    const second = readCall(fetchMock, 1).envelope;
-    expect(second.commandId).toBe(first.commandId);
-    expect((payloadOf(second) as Record<string, unknown>).projectId).toBe(
-      (payloadOf(first) as Record<string, unknown>).projectId,
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([url]) => url === "/commands"),
+      ).toHaveLength(2),
     );
+    const first = readCommandCall(fetchMock).envelope;
+    const secondCommandIndex = fetchMock.mock.calls.findIndex(
+      ([url], index) => url === "/commands" && index > 0,
+    );
+    const second = readCall(fetchMock, secondCommandIndex).envelope;
+    expect(second.commandId).toBe(first.commandId);
+    expect(second.projectId).toBe(first.projectId);
+    expect(payloadOf(second)).not.toHaveProperty("projectId");
     await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
   });
 });
@@ -334,7 +603,7 @@ describe("SteerWorkForm", () => {
 });
 
 describe("AcceptWorkOutcomeForm", () => {
-  it("submits the frozen acceptance payload with a preallocated acp_ id", async () => {
+  it("submits the frozen acceptance payload with a preallocated acc_ id", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <AcceptWorkOutcomeForm
@@ -354,7 +623,7 @@ describe("AcceptWorkOutcomeForm", () => {
     expect(payload.workId).toBe("wrk_5");
     expect(payload.targetWorkRevision).toBe(3);
     expect(payload.verificationId).toBe("ver_5");
-    expect(String(payload.acceptanceId)).toMatch(/^acp_[0-9a-f-]{36}$/);
+    expect(String(payload.acceptanceId)).toMatch(/^acc_[0-9a-f-]{36}$/);
   });
 
   it("keeps a server-supplied target Work revision zero unchanged in the acceptance payload", async () => {
@@ -450,7 +719,7 @@ describe("StopExecutionForm", () => {
 });
 
 describe("GrantPermissionForm", () => {
-  it("grants a catalog capability with the frozen scope format and issuer", async () => {
+  it("grants a capability to an explicit subject and target", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <GrantPermissionForm
@@ -462,8 +731,11 @@ describe("GrantPermissionForm", () => {
     fireEvent.change(screen.getByLabelText("capability"), {
       target: { value: "RecordDecision" },
     });
-    fireEvent.change(screen.getByLabelText(/target（可选）/), {
+    fireEvent.change(screen.getByLabelText(/target（必填/), {
       target: { value: "ws_9" },
+    });
+    fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
+      target: { value: "2099-10-12T08:30:00+08:00" },
     });
     fireEvent.click(screen.getByRole("button", { name: "授予" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
@@ -471,13 +743,18 @@ describe("GrantPermissionForm", () => {
     expect(envelope.commandType).toBe("GrantPermission");
     expect(envelope.actor).toBe("human:admin");
     const payload = payloadOf(envelope) as Record<string, unknown>;
-    expect(payload.scope).toBe("RecordDecision@ws_9");
+    expect(payload.capability).toBe("RecordDecision");
+    expect(payload.target).toBe("ws_9");
+    expect(payload.subject).toEqual({
+      _tag: "HumanPrincipal",
+      principal: "human:admin",
+    });
     expect(payload.issuer).toBe("human:admin");
-    expect(payload.lifetime).toBe("PT1H");
+    expect(payload.expiresAt).toBe("2099-10-12T08:30:00+08:00");
     expect(String(payload.permissionGrantId)).toMatch(/^pgr_[0-9a-f-]{36}$/);
   });
 
-  it("supports free-text capability and optional target omission", async () => {
+  it("requires a target and future expiry for a free-text capability", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <GrantPermissionForm
@@ -493,13 +770,57 @@ describe("GrantPermissionForm", () => {
       target: { value: "RegisterProjectTool" },
     });
     fireEvent.click(screen.getByRole("button", { name: "授予" }));
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(0));
+    expect(screen.getByText("授权目标必填；请填写精确的资源 ID")).toBeTruthy();
+    expect(
+      screen.getByText("过期时间必填；GrantPermission 必须有有效期"),
+    ).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText(/target（必填/), {
+      target: { value: "ws_9" },
+    });
+    fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
+      target: { value: "2099-10-12T08:30:00.000Z" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "授予" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const payload = payloadOf(readCall(fetchMock).envelope) as Record<
       string,
       unknown
     >;
-    expect(payload.scope).toBe("RegisterProjectTool");
+    expect(payload.capability).toBe("RegisterProjectTool");
+    expect(payload.target).toBe("ws_9");
+    expect(payload.expiresAt).toBe("2099-10-12T08:30:00.000Z");
   });
+
+  it.each([
+    ["timezone-free expiry", "ws_9", "2099-10-12T08:30:00", /时区/],
+    ["calendar-invalid expiry", "ws_9", "2099-02-30T08:30:00Z", /时区/],
+    ["padded expiry", "ws_9", " 2099-10-12T08:30:00Z", /时区/],
+    ["padded target", " ws_9 ", "2099-10-12T08:30:00Z", /首尾空格/],
+  ] as const)(
+    "does not submit a %s",
+    async (_caseName, target, expiresAt, expectedError) => {
+      const fetchMock = stubFetch(() => Promise.resolve(committed()));
+      render(
+        <GrantPermissionForm
+          actor="human:admin"
+          projectId="prj_1"
+          onSubmitted={vi.fn()}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText(/target（必填/), {
+        target: { value: target },
+      });
+      fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
+        target: { value: expiresAt },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "授予" }));
+
+      await waitFor(() => expect(fetchMock.mock.calls.length).toBe(0));
+      expect(screen.getByText(expectedError)).toBeTruthy();
+    },
+  );
 });
 
 describe("RevokePermissionForm", () => {
@@ -550,4 +871,181 @@ describe("RevokePermissionForm", () => {
     expect(screen.queryByRole("button", { name: "撤销" })).toBeNull();
     expect(fetchMock.mock.calls.length).toBe(0);
   });
+});
+
+describe("DecideSandboxPolicyForm", () => {
+  type CandidateRead = NonNullable<
+    WorkspaceDetailRes["sandboxPolicyCandidateRead"]
+  >;
+  const candidateRead = {
+    reason: "InitialDecision",
+    commonPreconditions: {
+      expectedEpisodeRevision: 4,
+      latestCommittedPolicyRevision: 0,
+      episodeBinding: {
+        _tag: "WorkEpisode",
+        workId: "wrk_v6_ui",
+        targetWorkRevision: 3,
+      },
+      workspaceRevision: 9,
+      resourceBoundaryRevision: 2,
+      authorityBundleRevision: 6,
+      authorityBundleDigest: "a".repeat(64),
+      operatorConfigRevision: 3,
+      operatorConfigDigest: "b".repeat(64),
+    },
+    candidates: [
+      {
+        kind: "OsEnforced",
+        candidateId: `spc2_${"1".repeat(64)}`,
+        sandboxHandleBindingDigest: "c".repeat(64),
+        providerId: "linux-bwrap",
+        providerVersion: "bwrap-v2",
+        capabilityRevision: 7,
+        profile: "WorkspaceWrite",
+        networkMode: "Restricted",
+        providerRegistryRevision: 6,
+        providerRegistryDigest: "d".repeat(64),
+      },
+      {
+        kind: "TrustedLocalUnconfinedV1",
+        candidateId:
+          "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+        sandboxHandleBindingDigest: "e".repeat(64),
+      },
+    ],
+  } as unknown as CandidateRead;
+  const props = {
+    actor: "user:test",
+    projectId: "prj_1",
+    workspaceId: "ws_1",
+    executionId: "exe_1",
+    candidateRead,
+    onSubmitted: vi.fn(),
+    onStaleReceipt: vi.fn(),
+    onCandidateSelected: vi.fn(),
+  };
+
+  it("requires an explicit OS candidate selection and submits only its digest and registry tuple", async () => {
+    const fetchMock = stubFetch(() => Promise.resolve(committed()));
+    render(<DecideSandboxPolicyForm {...props} />);
+    const submit = screen.getByRole("button", { name: "明确提交此策略" });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("c".repeat(64))).toBeNull();
+    fireEvent.change(
+      screen.getByLabelText("策略过期时间（ISO 8601，需包含时区）"),
+      {
+        target: { value: "2099-10-12T08:30:00Z" },
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("radio", {
+        name: /工作区写入隔离.*linux-bwrap.*capability 7/u,
+      }),
+    );
+    fireEvent.change(
+      screen.getByLabelText("Restricted 网络目的地（每行一个 HTTPS origin）"),
+      { target: { value: "https://b.example\nhttps://a.example" } },
+    );
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(submit);
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
+    const { envelope } = readCommandCall(fetchMock);
+    expect(envelope.commandType).toBe("DecideSandboxPolicy");
+    const payload = payloadOf(envelope);
+    expect(payload).toMatchObject({
+      projectId: "prj_1",
+      workspaceId: "ws_1",
+      executionId: "exe_1",
+      expectedEpisodeRevision: 4,
+      expectedPolicyRevision: 0,
+      expectedWorkspaceRevision: 9,
+      expectedResourceBoundaryRevision: 2,
+      expectedSandboxHandleBindingDigest: "c".repeat(64),
+      expectedProviderRegistryRevision: 6,
+      expectedProviderRegistryDigest: "d".repeat(64),
+      profile: "WorkspaceWrite",
+      providerId: "linux-bwrap",
+      providerVersion: "bwrap-v2",
+      capabilityRevision: 7,
+      networkPolicy: {
+        kind: "OsEnforced",
+        policy: {
+          version: 1,
+          mode: "Restricted",
+          destinations: ["https://a.example", "https://b.example"],
+        },
+      },
+    });
+    expect(payload).not.toHaveProperty("candidateId");
+    expect(props.onSubmitted).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires separate high-risk TrustedLocal confirmation and sends no registry fields", async () => {
+    const fetchMock = stubFetch(() => Promise.resolve(committed()));
+    render(<DecideSandboxPolicyForm {...props} />);
+    fireEvent.change(
+      screen.getByLabelText("策略过期时间（ISO 8601，需包含时区）"),
+      {
+        target: { value: "2099-10-12T08:30:00Z" },
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("radio", { name: /TrustedLocal：FullAccess/u }),
+    );
+    const submit = screen.getByRole("button", { name: "明确提交此策略" });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /我了解 TrustedLocal 不提供 OS 隔离/u,
+      }),
+    );
+    fireEvent.click(submit);
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
+    const payload = payloadOf(readCommandCall(fetchMock).envelope);
+    expect(payload).toMatchObject({
+      expectedSandboxHandleBindingDigest: "e".repeat(64),
+      profile: "FullAccess",
+      providerId: "TrustedLocal",
+      networkPolicy: { kind: "TrustedLocalUnconfinedV1", version: 1 },
+    });
+    expect(payload).not.toHaveProperty("expectedProviderRegistryRevision");
+    expect(payload).not.toHaveProperty("expectedProviderRegistryDigest");
+    expect(payload).not.toHaveProperty("candidateId");
+  });
+
+  it.each(["ActionRevision", "ExecutableApprovalRevision"] as const)(
+    "maps %s stale receipts to the generic refetch state without auto-retry",
+    async (field) => {
+      const onStaleReceipt = vi.fn();
+      const fetchMock = stubFetch(() =>
+        Promise.resolve(
+          terminalRejected("StaleSandboxPolicyInputs", { field }),
+        ),
+      );
+      render(
+        <DecideSandboxPolicyForm {...props} onStaleReceipt={onStaleReceipt} />,
+      );
+      fireEvent.change(
+        screen.getByLabelText("策略过期时间（ISO 8601，需包含时区）"),
+        {
+          target: { value: "2099-10-12T08:30:00Z" },
+        },
+      );
+      fireEvent.click(
+        screen.getByRole("radio", { name: /工作区写入隔离.*linux-bwrap/u }),
+      );
+      fireEvent.change(
+        screen.getByLabelText("Restricted 网络目的地（每行一个 HTTPS origin）"),
+        { target: { value: "https://a.example" } },
+      );
+      fireEvent.click(screen.getByRole("button", { name: "明确提交此策略" }));
+      await waitFor(() => expect(onStaleReceipt).toHaveBeenCalledTimes(1));
+      expect(
+        fetchMock.mock.calls.filter(([url]) => url === "/commands"),
+      ).toHaveLength(1);
+      expect(screen.getByRole("status").textContent).toContain("正在重新读取");
+      expect(screen.getByRole("status").textContent).not.toContain(field);
+    },
+  );
 });

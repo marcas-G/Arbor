@@ -12,9 +12,10 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P16_MIGRATIONS,
+  P26_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -25,7 +26,7 @@ import {
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import { WorkerDispatchPortLive } from "../adapters/worker-local/src/index.js";
 import {
-  AgentDriverLive,
+  AgentLoopDriverLive,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
 import {
@@ -60,7 +61,14 @@ import {
   ToolCatalogPort,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
-import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
+import {
+  FixedSecretStoreLive,
+  NoHoldWorkReadmissionGateStoreLive,
+  NoPendingControlApprovalStoreLive,
+  NoPendingExecutableApprovalStoreLive,
+} from "../packages/testkit/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
+import { makeP41OptionalTestServices } from "./support/p41-optional-test-services.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -78,7 +86,7 @@ const waitTurn = [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_wait",
+    toolName: "wait",
     argumentsJson: JSON.stringify({
       reason: "wait for a manual wake",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -108,7 +116,13 @@ const tools = Layer.succeed(ToolCatalogPort, {
 
 const makeApp = () => {
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
+  const journal = Layer.provide(DomainEventJournalLive, infra);
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
   const provider = FakeProviderLive({ turns: [waitTurn] });
@@ -132,8 +146,10 @@ const makeApp = () => {
   );
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    journal,
+    makeP41OptionalTestServices(Layer.merge(infra, journal)),
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
@@ -148,7 +164,7 @@ const makeApp = () => {
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
   );
   const driver = Layer.provide(
-    AgentDriverLive([], { controlRegistry }),
+    AgentLoopDriverLive({ controlRegistry }),
     Layer.mergeAll(
       modelContext,
       providerRuntime,
@@ -162,6 +178,8 @@ const makeApp = () => {
     infra,
     repos,
     fence,
+    NoPendingControlApprovalStoreLive,
+    NoPendingExecutableApprovalStoreLive,
     provider,
     providerRuntime,
     modelContext,
@@ -196,6 +214,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* ensureLegacyProjectResourceSourceFixture();
       yield* sql.unsafe(
         "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,?,NULL,?,?)",
         [sessionId, "WorkspacePrimary", workspaceId, 0, "t"],
@@ -247,7 +266,11 @@ const admitPayload: AdmitExecutionPayload = {
   _tag: "WorkspaceMain",
   executionId,
   workspaceId,
-  focus: { _tag: "Work", workId },
+  episode: {
+    _tag: "WorkEpisode",
+    workId,
+    targetWorkRevision: 0 as never,
+  },
 };
 
 const run = <A>(
@@ -265,7 +288,7 @@ describe("I0 integration — Wait control route + P2 settle pipeline", () => {
   it("admits, leases, routes Wait, and durably registers WorkWait", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P16_MIGRATIONS);
+      yield* runMigrations(P26_MIGRATIONS);
       yield* seed;
       const gateway = yield* CommandGateway;
       const admitId = parse(CommandId)(

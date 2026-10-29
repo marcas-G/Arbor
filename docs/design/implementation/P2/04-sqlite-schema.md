@@ -25,6 +25,13 @@ Additive migration in a single transaction; startup refuses when
 
 ## 3. DDL
 
+> The focus-era `WorkspaceMain` / `ExecutionBound` DDL below records the
+> original v1.7 schema, not the current write schema. Accepted EGP migration
+> 0024 adds exact episode binding and migrations 0025/0026 remove the legacy
+> focus columns; those old values remain migration/decoder evidence only.
+> New writes use `ExecutionEpisodeBinding` as specified by DID v1.28 and P2
+> `01`/`02`/`05`.
+
 ### 3.1 executions
 
 ```sql
@@ -126,6 +133,55 @@ CREATE TABLE session_entries (
 `sequence` is Session-local (`MAX(sequence)+1`, serialized by
 `BEGIN IMMEDIATE`). Streaming deltas are not stored here (DID §9.8).
 
+Migration `0017_agent_loop_step_handoff` rebuilds `session_entries` inside the
+migration transaction so the source-shape invariant is a table `CHECK` (the
+runner intentionally splits ordinary statements and does not parse trigger
+bodies). Legacy rows are copied with an all-null source:
+
+```sql
+ALTER TABLE provider_attempts ADD COLUMN success_evidence_version TEXT;
+
+ALTER TABLE session_entries RENAME TO session_entries_legacy_v1;
+
+CREATE TABLE session_entries (
+  session_id   TEXT NOT NULL REFERENCES sessions(session_id),
+  sequence     INTEGER NOT NULL,
+  entry_kind   TEXT NOT NULL CHECK (entry_kind IN
+                 ('Input','ModelOutput','Observation','CheckpointReference','ContextUpdate')),
+  payload_json TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  source_kind  TEXT,
+  source_ref   TEXT,
+  content_hash TEXT,
+  PRIMARY KEY (session_id, sequence),
+  CHECK (
+    (source_kind IS NULL AND source_ref IS NULL AND content_hash IS NULL)
+    OR
+    (source_kind IS NOT NULL AND source_ref IS NOT NULL AND content_hash IS NOT NULL)
+  )
+);
+
+INSERT INTO session_entries (..., source_kind, source_ref, content_hash)
+SELECT ..., NULL, NULL, NULL FROM session_entries_legacy_v1;
+
+DROP TABLE session_entries_legacy_v1;
+
+CREATE UNIQUE INDEX idx_session_entries_source
+  ON session_entries(session_id, entry_kind, source_kind, source_ref)
+  WHERE source_kind IS NOT NULL;
+
+```
+
+For runtime-produced ModelOutput, `source_kind='ProviderTurn'` and
+`source_ref=provider_turn_id`. New sourced entries require all three source/hash
+columns; legacy nulls are admitted only as migration evidence and are never
+silently matched by payload text.
+
+`provider_attempts.success_evidence_version` pins the complete-canonical-event
+validator used by P3 `08` §5. New atomic success writes set it. Legacy nulls are
+accepted only by the governed legacy validator and are filled when locally
+converged; null never means “complete”.
+
 ### 3.5 work_waits
 
 ```sql
@@ -140,6 +196,40 @@ CREATE TABLE work_waits (
 
 `conditions_json` is a non-empty `WakeCondition[]` (`05` §2); empty is rejected
 before write.
+
+### 3.5A accepted WorkBlocker current-state ledger
+
+The accepted Blocked WorkEpisode contract adds a forward-only schema
+extension; it does not backfill historical Plan, Session, Manual-wait or
+bare-receipt data. Migration identity/registration is a later implementation
+decision and this design landing does not register or run it.
+
+```sql
+CREATE TABLE work_blockers (
+  blocker_id          TEXT PRIMARY KEY,
+  project_id          TEXT NOT NULL REFERENCES projects(project_id),
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  work_id             TEXT NOT NULL REFERENCES works(work_id),
+  target_work_revision INTEGER NOT NULL,
+  failure_fingerprint  TEXT NOT NULL,
+  state                TEXT NOT NULL CHECK (state IN ('Open','Resolved','Superseded')),
+  open_cycle_id        TEXT NOT NULL REFERENCES executions(execution_id),
+  latest_request_ref   TEXT NOT NULL,
+  failed_action_refs_json TEXT NOT NULL,
+  revision             INTEGER NOT NULL CHECK (revision >= 0)
+);
+
+CREATE INDEX idx_work_blockers_work_revision
+  ON work_blockers(work_id, target_work_revision, state);
+```
+
+`blocker_id` is the deterministic SHA-256 identity of project, Work, target
+revision and failure fingerprint. P2 settlement opens/updates the row in the
+same transaction as `Completed(Blocked)`, `ExecutionSettled`, and the
+`InboxAdvanced` WorkWait. Resolution, Work revision advance, and terminal Work
+transition update the row with their owning canonical command/event in one
+transaction. P10 consumes the current row; the ledger prevents a journal
+rebuild from resurrecting a resolved blocker.
 
 ### 3.6 scheduler_timers
 
@@ -158,6 +248,112 @@ CREATE INDEX idx_scheduler_timers_due ON scheduler_timers(fire_at);
 
 `TimeReached` waits are durable here, never in a Worker's in-memory timer
 (DID §8.16).
+
+### 3.7 agent_loop_steps / agent_loop_step_actions (migration 0017)
+
+```sql
+CREATE TABLE agent_loop_steps (
+  execution_id                  TEXT NOT NULL REFERENCES executions(execution_id),
+  logical_step_no               INTEGER NOT NULL CHECK (logical_step_no >= 0),
+  repair_attempt                INTEGER NOT NULL CHECK (repair_attempt >= 0),
+  provider_turn_id              TEXT NOT NULL UNIQUE,
+  predecessor_logical_step_no   INTEGER,
+  predecessor_repair_attempt    INTEGER,
+  manifest_id                   TEXT,
+  state                         TEXT NOT NULL CHECK (state IN
+    ('Prepared','ProviderResultAvailable','OutputRejected','OutputAccepted',
+     'ActionsInProgress','StepEffectsCommitted','NextStepReady',
+     'SettlementProposed')),
+  decoder_version               TEXT,
+  provider_failure_json         TEXT,
+  repair_disposition_json       TEXT,
+  successor_json                TEXT,
+  next_step_reason              TEXT,
+  decoded_output_hash           TEXT,
+  model_output_session_sequence INTEGER,
+  next_action_index             INTEGER NOT NULL DEFAULT 0 CHECK (next_action_index >= 0),
+  settlement_json               TEXT,
+  migration_provenance_json     TEXT,
+  revision                      INTEGER NOT NULL CHECK (revision >= 0),
+  updated_at                    TEXT NOT NULL,
+  PRIMARY KEY (execution_id, logical_step_no, repair_attempt),
+  CHECK ((predecessor_logical_step_no IS NULL) =
+         (predecessor_repair_attempt IS NULL)),
+  CHECK ((state = 'SettlementProposed') = (settlement_json IS NOT NULL))
+);
+
+CREATE INDEX idx_agent_loop_steps_execution_state
+  ON agent_loop_steps(execution_id, state);
+
+CREATE TABLE agent_loop_step_actions (
+  execution_id           TEXT NOT NULL,
+  logical_step_no        INTEGER NOT NULL,
+  repair_attempt         INTEGER NOT NULL,
+  action_index           INTEGER NOT NULL CHECK (action_index >= 0),
+  logical_action_id      TEXT NOT NULL UNIQUE,
+  call_ref               TEXT NOT NULL,
+  route_kind             TEXT NOT NULL CHECK (route_kind IN ('Executable','Control')),
+  action_kind            TEXT NOT NULL,
+  input_hash             TEXT NOT NULL,
+  state                  TEXT NOT NULL CHECK (state IN
+    ('Pending','Applied','SkippedStale','SkippedEarlySettlement',
+     'TerminalRejected','ReconciliationPending')),
+  result_ref             TEXT,
+  settlement_ref         TEXT,
+  disposition_json       TEXT,
+  observation_source_ref TEXT,
+  revision               INTEGER NOT NULL CHECK (revision >= 0),
+  updated_at              TEXT NOT NULL,
+  PRIMARY KEY (execution_id, logical_step_no, repair_attempt, action_index),
+  FOREIGN KEY (execution_id, logical_step_no, repair_attempt)
+    REFERENCES agent_loop_steps(execution_id, logical_step_no, repair_attempt)
+);
+```
+
+The accepted Blocked WorkEpisode contract uses the existing
+`agent_loop_step_actions.disposition_json` for the closed P3/P9
+`TerminalActionDenial` evidence paired with its exact result/Observation
+refs; no free-form runtime cause is persisted. `agent_loop_steps.settlement_json`
+stores the exact `Completed(Blocked)` payload under the existing
+`SettlementProposed` state relation. Historical settled rows are never
+backfilled into Blocked.
+
+`provider_turn_id` is preallocated before the ProviderTurn row exists, so it is
+unique but deliberately not an immediate FK. Binding is validated by the P3
+store when Manifest/ProviderTurn is created. Action rows persist hashes and
+references only; the process-local `AgentAction` is not serialized.
+
+`agent_loop_steps.provider_turn_id` uses the exact DID §2.2.1 ProviderTurnId
+V2 value and is validated by the shared closed codec. Its `TEXT` UNIQUE key
+preserves the exact string used by the Step, Manifest, sourced SessionEntry,
+Action and P20 link. Existing UUIDv7 Step IDs are read/replay-only; no DDL
+constraint, migration, identity rewrite, or backfill is introduced.
+
+### 3.8 Session Timeline successor contract (DID v1.22; migration 0019 reserved)
+
+Migration 0018 is already owned by Project archive/human-message terminal
+evolution. SCRC therefore reserves **0019** for the forward-only Session
+Timeline evolution; this contract landing does not authorize running it.
+
+`session_entries` remains the append-only physical carrier and gains the
+versioned envelope fields `item_type`, `schema_version`, and `context_epoch`.
+New sourced items enforce uniqueness on
+`(session_id, item_type, source_kind, source_ref)`. Checkpoint append and
+Session epoch advance are one epoch-CAS transaction.
+
+Legacy `Input/ModelOutput/Observation/CheckpointReference/ContextUpdate` rows
+remain evidence. Migration never infers `callRef` from payload text and never
+silently upgrades a legacy Observation into a strict ToolResult. Proven legacy
+sources may be bound explicitly; all others remain legacy-only for audit or
+portable summary.
+
+AH19 keeps this `session_entries` carrier append-only and does not delete old
+rows because they fall outside Work's 64-row pre-checkpoint provider window.
+The separate RootWorkspaceId Conversation checkpoint owner cannot be inferred
+from or assigned to existing Workspace Session checkpoint rows. This landing
+chooses no Conversation owner table/Session binding, columns, indexes or
+migration; those physical details require a separate implementation package
+and authorization.
 
 ## 4. Fence / stop / CAS queries
 
@@ -221,6 +417,8 @@ executions            NEVER hard-deleted (canonical + recovery anchor).
 execution_leases      transient runtime ownership; deletion allowed once expired/released.
 agent_execution_state runtime control state; retention/archival allowed.
 session_entries       append-only history; retention per Session policy (P3+).
+agent_loop_steps/actions    recovery anchors; retain with the owning Execution and
+                       referenced Provider/Tool evidence.
 work_waits            deleted/cleared on wake; not history.
 scheduler_timers      deleted on fire/cancel.
 ```
@@ -230,3 +428,19 @@ scheduler_timers      deleted on fire/cancel.
 - ProviderTurn / ToolInvocation / Evidence / Usage tables (P3/P4/P8).
 - Environment change DDL (P11).
 - Projection tables (P10).
+
+## Accepted EGP execution episode revision used by Sandbox CAS (V21)
+
+The current `executions` schema includes the existing
+`episode_kind`, `episode_ref`, and nonnegative `episode_revision` columns
+introduced by the already accepted EGP schema chain. The historical focus-era
+DDL above remains archival; the current exact mapping and migration prefix
+remain the EGP/P43/P50 baseline. Native Sandbox adds no execution column and
+no migration. `DecideSandboxPolicy.expectedEpisodeRevision` is a direct
+nonnegative-integer CAS against `executions.episode_revision` for the exact
+canonical `ExecutionEpisodeBinding`; it is not an independently supplied
+episode counter or a decoded shorthand. The command simultaneously validates
+the existing execution revision and exact episode kind/ref relation. Any
+episode transition between Workspace Detail and command commit yields the
+existing durable `StaleSandboxPolicyInputs` rejection, not an event or policy
+decision.

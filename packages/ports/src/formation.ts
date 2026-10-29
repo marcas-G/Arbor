@@ -29,6 +29,13 @@ export interface FormationProposalStoreService {
     FormationProposalStoreError,
     TransactionScope
   >;
+  readonly listByParent: (
+    parentWorkspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<FormationProposalRecord>,
+    FormationProposalStoreError,
+    TransactionScope
+  >;
   /** Atomic compare-and-set on (proposalId, expectedRevision, state=Pending).
    * `None` means the row moved on (stale decision or terminal state). */
   readonly decideIfPendingRevision: (
@@ -96,10 +103,41 @@ export interface InboxProjectionStoreService {
   readonly admitUpsert: (
     entry: InboxEntry,
   ) => Effect.Effect<void, InboxProjectionStoreError, TransactionScope>;
+  /** Opt-in admission that advances the P43 monotonic Workspace sequence. */
+  readonly admitUpsertSequenced: (
+    entry: InboxEntry,
+  ) => Effect.Effect<void, InboxProjectionStoreError, TransactionScope>;
+  /** P6/P1 accepted UnboundLegacy projection: admit once or move the same
+   * stable key in the caller's canonical command transaction. */
+  readonly reconcileRetryVerificationUnboundLegacy: (
+    entry: InboxEntry,
+    updatedAt: string,
+  ) => Effect.Effect<void, InboxProjectionStoreError, TransactionScope>;
   readonly listUnconsumed: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<
     ReadonlyArray<InboxEntry>,
+    InboxProjectionStoreError,
+    TransactionScope
+  >;
+  readonly findByKey: (
+    workspaceId: WorkspaceId,
+    entryKey: string,
+  ) => Effect.Effect<
+    Option.Option<InboxEntry>,
+    InboxProjectionStoreError,
+    TransactionScope
+  >;
+  /** P10 F18 exact-row read that includes consumed state without exposing it
+   * through the ordinary Inbox projection. */
+  readonly findStoredByKey?: (
+    workspaceId: WorkspaceId,
+    entryKey: string,
+  ) => Effect.Effect<
+    Option.Option<{
+      readonly entry: InboxEntry;
+      readonly consumedAt: string | null;
+    }>,
     InboxProjectionStoreError,
     TransactionScope
   >;
@@ -111,6 +149,10 @@ export interface InboxProjectionStoreService {
   readonly countByKey: (
     workspaceId: WorkspaceId,
     entryKey: string,
+  ) => Effect.Effect<number, InboxProjectionStoreError, TransactionScope>;
+  /** Stable Inbox high-water mark; consumed rows remain part of the sequence. */
+  readonly currentSequence: (
+    workspaceId: WorkspaceId,
   ) => Effect.Effect<number, InboxProjectionStoreError, TransactionScope>;
 }
 

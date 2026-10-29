@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "configuredSuites": {
+    "functionalVitest": {
+      "config": "vitest.functional.config.ts",
+      "include": [
+        "tests/capability/black-box/s1-s4-public-api.test.ts",
+        "tests/functional/process/**/*.functional.test.ts",
+        "tests/functional/package/**/*.functional.test.ts"
+      ]
+    },
+    "functionalUi": {
+      "config": "playwright.functional.config.ts",
+      "testDir": "tests/functional/ui",
+      "extension": ".spec.ts"
+    }
+  },
+  "groups": {
+    "quick": [
+      "tests/p1-idempotency.test.ts",
+      "tests/p2-scheduler.test.ts",
+      "tests/p10-views-detail.test.ts"
+    ],
+    "smoke": [
+      "tests/capability/black-box/s1-s4-public-api.test.ts",
+      "tests/functional/process/human-steer.functional.test.ts",
+      "tests/functional/process/command-input-validation.functional.test.ts",
+      "tests/functional/process/recovery-verdicts.functional.test.ts",
+      "tests/functional/process/production-fixture-port-handshake.functional.test.ts"
+    ],
+    "crashSentinels": [
+      "tests/functional/process/agent-action-ah7-p4-store-process-crash.functional.test.ts",
+      "tests/functional/process/agent-action-ah7-pending-intent.functional.test.ts",
+      "tests/functional/process/agent-loop-ah7-b-effect-before-settlement.functional.test.ts",
+      "tests/functional/process/agent-loop-ah7-b-intent-before-effect.functional.test.ts",
+      "tests/functional/process/agent-loop-ah8-action-b-stale-after-restart.functional.test.ts",
+      "tests/functional/process/agent-loop-ah9-terminal-action-recovery.functional.test.ts",
+      "tests/functional/process/agent-loop-ah10-submitted-decision-binding-takeover.functional.test.ts",
+      "tests/functional/process/agent-loop-ah11-step-effects-crash.functional.test.ts",
+      "tests/functional/process/agent-loop-ah12-settlement-command-crash.functional.test.ts",
+      "tests/functional/process/agent-loop-ah13-conversation-convergence-crash.functional.test.ts",
+      "tests/functional/process/agent-loop-ah14-legacy-adoption-crash.functional.test.ts",
+      "tests/functional/process/agent-loop-ah14-legacy-attention-crash.functional.test.ts",
+      "tests/functional/process/ah15-inbox-input-promotion-crash.functional.test.ts",
+      "tests/functional/process/ah17-checkpoint-epoch-crash.functional.test.ts",
+      "tests/functional/process/ah19-conversation-checkpoint-owner-crash.functional.test.ts",
+      "tests/functional/process/p37-delivermessage-process-crash.functional.test.ts",
+      "tests/functional/process/p39-maintenance-writer-exclusion.functional.test.ts",
+      "tests/functional/process/p4-ah7-live-lease-acquisition.functional.test.ts",
+      "tests/functional/process/p9-dense-sse-lease-renewal.functional.test.ts",
+      "tests/functional/process/agent-loop-p9-direct-control-effects.functional.test.ts",
+      "tests/functional/process/provider-success-ah1-ah3.functional.test.ts",
+      "tests/functional/process/provider-failure-ah4.functional.test.ts"
+    ],
+    "package": [
+      "tests/functional/package/clean-checkout.functional.test.ts"
+    ],
+    "functionalVitest": [
+      "tests/capability/black-box/s1-s4-public-api.test.ts",
+      "tests/functional/process/agent-action-ah7-p4-store-process-crash.functional.test.ts",
+      "tests/functional/process/agent-action-ah7-pending-intent.functional.test.ts",
+      "tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts",
+      "tests/functional/process/agent-loop-ah10-assign-work-takeover.functional.test.ts",
+      "tests/functional/process/agent-loop-ah10-direct-child-assign-work-receipt-binding.functional.test.ts",
+      "tests/functional/process/agent-loop-ah10-direct-child-assign-work-takeover.functional.test.ts",
+      "tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts",
+      "tests/functional/process/agent-loop-ah10-select-current-work-takeover.functional.test.ts",
+      "tests/functional/process/agent-loop-ah10-send-message-takeover.functional.test.ts",
+      "tests/functional/process/agent-loop-ah10-submitted-decision-binding-takeover.functional.test.ts",
+      "tests/functional/process/agent-loop-ah10-verification-control-takeover.functional.test.ts",
+      "tests/functional/process/agent-loop-ah11-step-effects-crash.functional.test.ts",
+      "tests/functional/process/agent-loop-ah12-settlement-command-crash.functional.test.ts",
+      "tests/functional/process/agent-loop-ah13-conversation-convergence-crash.functional.test.ts",
+      "tests/functional/process/agent-loop-ah14-legacy-adoption-crash.functional.test.ts",
+      "tests/functional/process/agent-loop-ah14-legacy-attention-crash.functional.test.ts",
+      "tests/functional/process/agent-loop-ah7-b-effect-before-settlement.functional.test.ts",
+      "tests/functional/process/agent-loop-ah7-b-intent-before-effect.functional.test.ts",
+      "tests/functional/process/agent-loop-ah7-two-action-interleaving.functional.test.ts",
+      "tests/functional/process/agent-loop-ah8-action-b-stale-after-restart.functional.test.ts",
+      "tests/functional/process/agent-loop-ah9-terminal-action-recovery.functional.test.ts",
+      "tests/functional/process/ah10-p10-attention-materialization.functional.test.ts",
+      "tests/functional/process/ah10-verification-recorded-at-fingerprint.functional.test.ts",
+      "tests/functional/process/ah15-inbox-input-promotion-crash.functional.test.ts",
+      "tests/functional/process/ah17-checkpoint-epoch-crash.functional.test.ts",
+      "tests/functional/process/ah18-overflow-linked-compaction-resume.functional.test.ts",
+      "tests/functional/process/ah19-conversation-checkpoint-owner-crash.functional.test.ts",
+      "tests/functional/process/ah19-conversation-native-owner-match.functional.test.ts",
+      "tests/functional/process/ah19-conversation-native-owner-mismatch.functional.test.ts",
+      "tests/functional/process/ah19-provider-native-binding-recovery.functional.test.ts",
+      "tests/functional/process/command-input-validation.functional.test.ts",
+      "tests/functional/process/cross-work-delivery.functional.test.ts",
+      "tests/functional/process/cross-work-wake.functional.test.ts",
+      "tests/functional/process/f21-open3-activation-recovery.functional.test.ts",
+      "tests/functional/process/f21-open3-p10-full-rebuild.functional.test.ts",
+      "tests/functional/process/f23-exact-tuple-receipt-integrity.functional.test.ts",
+      "tests/functional/process/f23-p6-operator-unbound-legacy-public-read.functional.test.ts",
+      "tests/functional/process/f23-receipt-tuple-ordering.functional.test.ts",
+      "tests/functional/process/f23-retry-verification-permanent-replay.functional.test.ts",
+      "tests/functional/process/human-steer.functional.test.ts",
+      "tests/functional/process/model-output-ah5-ah6.functional.test.ts",
+      "tests/functional/process/native-sandbox-first-release-disabled.functional.test.ts",
+      "tests/functional/process/organization.functional.test.ts",
+      "tests/functional/process/p37-delivermessage-process-crash.functional.test.ts",
+      "tests/functional/process/p38-control-approval-current-assign-work.functional.test.ts",
+      "tests/functional/process/p38-executable-approval-public.functional.test.ts",
+      "tests/functional/process/p39-maintenance-writer-exclusion.functional.test.ts",
+      "tests/functional/process/p4-ah7-effect-admission-takeover.functional.test.ts",
+      "tests/functional/process/p4-ah7-live-lease-acquisition.functional.test.ts",
+      "tests/functional/process/p4-ah7-tool-settlement-lease-fencing.functional.test.ts",
+      "tests/functional/process/p8-conclusion-criteria-snapshot.functional.test.ts",
+      "tests/functional/process/agent-loop-p9-direct-control-effects.functional.test.ts",
+      "tests/functional/process/p9-dense-sse-lease-renewal.functional.test.ts",
+      "tests/functional/process/production-fixture-startup-cleanup.functional.test.ts",
+      "tests/functional/process/production-fixture-port-handshake.functional.test.ts",
+      "tests/functional/process/provider-failure-ah4.functional.test.ts",
+      "tests/functional/process/provider-success-ah1-ah3.functional.test.ts",
+      "tests/functional/process/rai-readmission-hold.functional.test.ts",
+      "tests/functional/process/rai-terminal-provider-crash-matrix.functional.test.ts",
+      "tests/functional/process/rai-terminal-provider-hold.functional.test.ts",
+      "tests/functional/process/rai-terminal-provider-race.functional.test.ts",
+      "tests/functional/process/rai-terminal-provider-retryable-negatives.functional.test.ts",
+      "tests/functional/process/recovery-verdicts.functional.test.ts",
+      "tests/functional/process/s2-steer-work-revision.functional.test.ts",
+      "tests/functional/process/s3-any-producer-wait-recovery.functional.test.ts",
+      "tests/functional/process/sandbox-policy-v3-source-adoption.functional.test.ts",
+      "tests/functional/process/sandbox-policy-v6-registry-drift-restart.functional.test.ts",
+      "tests/functional/package/clean-checkout.functional.test.ts"
+    ],
+    "functionalUi": [
+      "tests/functional/ui/approval-completion.spec.ts",
+      "tests/functional/ui/completed-work-visibility.spec.ts",
+      "tests/functional/ui/f21-project-resource.spec.ts",
+      "tests/functional/ui/p38-executable-approval-browser.spec.ts",
+      "tests/functional/ui/project-conversation.spec.ts",
+      "tests/functional/ui/project-route-session.spec.ts"
+    ]
+  },
+  "profiles": {
+    "quick": {
+      "description": "L1 focused module tests and type checks; not functional release qualification.",
+      "groups": ["quick"],
+      "build": true,
+      "webTypecheck": true,
+      "completeCoverage": false
+    },
+    "smoke": {
+      "description": "S1-S4, selected public journeys, and safe daemon-startup handshake; not the complete public journey suite.",
+      "groups": ["smoke"],
+      "build": true,
+      "completeCoverage": false
+    },
+    "crash-sentinels": {
+      "description": "Curated crash, lease, and provider handoff sentinel files only; this profile does not qualify all AH10 handlers or AH1-AH19 coverage.",
+      "groups": ["crashSentinels"],
+      "build": true,
+      "completeCoverage": false
+    },
+    "package": {
+      "description": "Clean checkout/package boundary qualification.",
+      "groups": ["package"],
+      "build": true,
+      "completeCoverage": false
+    },
+    "ui": {
+      "description": "All configured functional browser files.",
+      "groups": ["functionalUi"],
+      "build": true,
+      "completeCoverage": false
+    },
+    "process": {
+      "description": "All configured functional Vitest files, without the browser suite.",
+      "groups": ["functionalVitest"],
+      "build": true,
+      "completeCoverage": false
+    },
+    "release": {
+      "description": "Complete configured functional Vitest and Playwright inventory; cache disabled and retries zero.",
+      "groups": ["functionalVitest", "functionalUi"],
+      "build": true,
+      "completeCoverage": true,
+      "cache": "never",
+      "retries": 0
+    },
+    "all": {
+      "description": "Alias profile for the complete functional inventory.",
+      "groups": ["functionalVitest", "functionalUi"],
+      "build": true,
+      "completeCoverage": true,
+      "cache": "never",
+      "retries": 0
+    }
+  }
+}

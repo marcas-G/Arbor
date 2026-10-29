@@ -1,202 +1,81 @@
 import type {
-  Actor,
   CommandId,
   CommandReceipt,
-  CommandResolution,
   CommandSubmissionContext,
+  ExecutionId,
+  LeaseGeneration,
   ProjectId,
-  SemanticRequestFingerprint,
 } from "@arbor/domain";
+import type { StoredCommandResolution } from "@arbor/ports";
 import {
   Clock,
   CommandStore,
-  type CommandStoreError,
   DomainEventJournal,
-  type DomainEventJournalError,
-  type EnvironmentError,
-  type ExecutionRepositoryError,
-  type FormationProposalStoreError,
-  type HumanMessageStoreError,
   IdGenerator,
-  type InboxProjectionStoreError,
-  type MessageStoreError,
-  type PendingDomainEvent,
-  type PermissionGrantRepositoryError,
-  type ProjectRepositoryError,
-  type ProjectToolRegistryError,
-  type ResourceOwnershipRepositoryError,
-  type SchedulerTimerStoreError,
-  type SessionRepositoryError,
-  type TransactionOperationalFailure,
+  ProjectRepository,
   TransactionPort,
-  type TransactionScope,
-  type WorkRepositoryError,
-  type WorkspaceRepositoryError,
-  type WorktreeStoreError,
-  type WorkWaitStoreError,
 } from "@arbor/ports";
-import { Context, Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option } from "effect";
 import {
   type CommandAuthorityFact,
-  type CommandAuthorityRule,
-  type StopAdmission,
   validateCommandAuthority,
 } from "./authority.js";
-import type { CommandResult } from "./command-result.js";
+import { CommandHandlerRegistry } from "./command-handler-registry.js";
+import { makeCommandReceipt } from "./command-receipt.js";
+import { decodeRegisteredCommandReceipt } from "./command-result-codec.js";
+import { CommandInputContractRegistry } from "./external-command-codec.js";
+import { FenceStopCheck } from "./fence-stop.js";
 import {
   FINGERPRINT_ALGORITHM_VERSION,
   semanticRequestFingerprint,
 } from "./fingerprint.js";
+import {
+  CommandGateway,
+  type CommandGatewayError,
+  type GatewayEnvelope,
+} from "./gateway-contracts.js";
+import { projectAdmissionOf } from "./project-admission.js";
 import type { CommandRejection } from "./rejection.js";
 
-export interface GatewayEnvelope<C> {
-  readonly commandType: string;
-  readonly commandId: CommandId;
-  readonly projectId: ProjectId;
-  readonly actor: Actor;
-  readonly issuedAt: string;
-  readonly causationRef?: string;
-  readonly correlationRef?: string;
-  readonly payload: C;
-}
+export * from "./command-handler-registry.js";
+export * from "./command-receipt.js";
+export * from "./fence-stop.js";
+export * from "./gateway-contracts.js";
+export * from "./project-admission.js";
 
-export interface CommandOutcome<R> {
-  readonly result: R;
-  readonly events: ReadonlyArray<PendingDomainEvent>;
-}
+/** Process-local crash qualification seam. Product composition leaves it
+ * absent; only an explicitly injected test child can pause this transaction. */
+export type CommandGatewayQualificationProbe = (
+  event:
+    | {
+        readonly boundary:
+          | "AH10BeforeFencedReceiptCommit"
+          | "AH10BeforeAssignWorkBindingCommit"
+          | "AH12BeforeSettleExecutionCommit";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+        readonly executionId: ExecutionId;
+        readonly fencingGeneration: LeaseGeneration;
+      }
+    | {
+        readonly boundary: "SandboxPolicyDecisionBeforeCommit";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+        readonly executionId: ExecutionId;
+      }
+    | {
+        readonly boundary:
+          | "P38StopExecutionBeforeTransaction"
+          | "P38StopExecutionBeforeCommit";
+        readonly commandId: CommandId;
+        readonly projectId: ProjectId;
+        readonly executionId: ExecutionId;
+      },
+) => Promise<void>;
 
-export type CommandHandlerError =
-  | ProjectRepositoryError
-  | WorkspaceRepositoryError
-  | WorkRepositoryError
-  | SessionRepositoryError
-  | ExecutionRepositoryError
-  | WorkWaitStoreError
-  | SchedulerTimerStoreError
-  | CommandStoreError
-  | DomainEventJournalError
-  | FormationProposalStoreError
-  | MessageStoreError
-  | InboxProjectionStoreError
-  | EnvironmentError
-  | WorktreeStoreError
-  | ResourceOwnershipRepositoryError
-  | ProjectToolRegistryError
-  | PermissionGrantRepositoryError
-  | HumanMessageStoreError;
-
-export interface CommandHandler<C, R> {
-  readonly commandType: string;
-  readonly schemaVersion: string;
-  readonly authority: CommandAuthorityRule<C>;
-  readonly stopAdmission: StopAdmission;
-  readonly execute: (
-    envelope: GatewayEnvelope<C>,
-    context: CommandSubmissionContext,
-  ) => Effect.Effect<
-    CommandResult<CommandOutcome<R>>,
-    CommandHandlerError,
-    TransactionScope
-  >;
-}
-
-export interface CommandHandlerRegistryService {
-  readonly lookup: (
-    commandType: string,
-  ) => Option.Option<CommandHandler<unknown, unknown>>;
-}
-
-export class CommandHandlerRegistry extends Context.Service<
-  CommandHandlerRegistry,
-  CommandHandlerRegistryService
->()("arbor/CommandHandlerRegistry") {}
-
-export const CommandHandlerRegistryLive = (
-  handlers: ReadonlyArray<CommandHandler<unknown, unknown>>,
-): Layer.Layer<CommandHandlerRegistry> =>
-  Layer.succeed(CommandHandlerRegistry, {
-    lookup: (commandType) => {
-      const handler = handlers.find(
-        (candidate) => candidate.commandType === commandType,
-      );
-      return handler === undefined ? Option.none() : Option.some(handler);
-    },
-  });
-
-export type FenceStopOutcome = "Pass" | "FencingRejected" | "ExecutionStopping";
-
-export interface FenceStopCheckService {
-  readonly check: (
-    context: CommandSubmissionContext,
-    stopAdmission: StopAdmission,
-  ) => Effect.Effect<
-    FenceStopOutcome,
-    ExecutionRepositoryError,
-    TransactionScope
-  >;
-}
-
-export class FenceStopCheck extends Context.Service<
-  FenceStopCheck,
-  FenceStopCheckService
->()("arbor/FenceStopCheck") {}
-
-export const FenceStopCheckInertLive: Layer.Layer<FenceStopCheck> =
-  Layer.succeed(FenceStopCheck, {
-    check: () => Effect.succeed("Pass"),
-  });
-
-export type CommandGatewayError =
-  | CommandHandlerError
-  | ExecutionRepositoryError
-  | TransactionOperationalFailure;
-
-export interface CommandGatewayService {
-  readonly execute: <C, R>(
-    envelope: GatewayEnvelope<C>,
-    context: CommandSubmissionContext,
-    authority: CommandAuthorityFact,
-  ) => Effect.Effect<CommandReceipt<R, CommandRejection>, CommandGatewayError>;
-}
-
-export class CommandGateway extends Context.Service<
-  CommandGateway,
-  CommandGatewayService
->()("arbor/CommandGateway") {}
-
-const decodeReceipt = <R>(
-  stored: CommandReceipt<unknown, unknown>,
-): CommandReceipt<R, CommandRejection> => ({
-  ...stored,
-  resolution:
-    stored.resolution._tag === "Committed"
-      ? { _tag: "Committed", result: stored.resolution.result as R }
-      : {
-          _tag: "TerminalRejected",
-          error: stored.resolution.error as CommandRejection,
-        },
-});
-
-const makeReceipt = <R>(
-  commandId: CommandId,
-  projectId: ProjectId,
-  fingerprint: SemanticRequestFingerprint,
-  schemaVersion: string,
-  resolution: CommandResolution<R, CommandRejection>,
-  createdAt: string,
-  settledAt: string,
-): CommandReceipt<R, CommandRejection> => ({
-  commandId,
-  projectId,
-  semanticRequestFingerprint: fingerprint,
-  schemaVersion,
-  fingerprintAlgorithmVersion: FINGERPRINT_ALGORITHM_VERSION,
-  resolution,
-  createdAt,
-  settledAt,
-});
-
-export const CommandGatewayLive: Layer.Layer<
+export const makeCommandGatewayLive = (
+  qualificationProbe?: CommandGatewayQualificationProbe,
+): Layer.Layer<
   CommandGateway,
   never,
   | TransactionPort
@@ -206,58 +85,133 @@ export const CommandGatewayLive: Layer.Layer<
   | FenceStopCheck
   | Clock
   | IdGenerator
-> = Layer.effect(
-  CommandGateway,
-  Effect.gen(function* () {
-    const tx = yield* TransactionPort;
-    const store = yield* CommandStore;
-    const journal = yield* DomainEventJournal;
-    const registry = yield* CommandHandlerRegistry;
-    const fence = yield* FenceStopCheck;
-    const clock = yield* Clock;
-    const idGenerator = yield* IdGenerator;
+> =>
+  Layer.effect(
+    CommandGateway,
+    Effect.gen(function* () {
+      const tx = yield* TransactionPort;
+      const store = yield* CommandStore;
+      const journal = yield* DomainEventJournal;
+      const registry = yield* CommandHandlerRegistry;
+      const fence = yield* FenceStopCheck;
+      const projects = yield* Effect.serviceOption(ProjectRepository);
+      const clock = yield* Clock;
+      const idGenerator = yield* IdGenerator;
 
-    const execute = <C, R>(
-      envelope: GatewayEnvelope<C>,
-      context: CommandSubmissionContext,
-      authority: CommandAuthorityFact,
-    ): Effect.Effect<
-      CommandReceipt<R, CommandRejection>,
-      CommandGatewayError
-    > =>
-      Effect.gen(function* () {
-        const handlerOption = registry.lookup(envelope.commandType);
-        if (Option.isNone(handlerOption)) {
-          return yield* Effect.die(
-            new Error(`no command handler for ${envelope.commandType}`),
-          );
-        }
-        const handler = handlerOption.value;
-        const schemaVersion = handler.schemaVersion;
-        const fingerprint = semanticRequestFingerprint({
-          commandType: envelope.commandType,
-          projectId: envelope.projectId,
-          actor: envelope.actor,
-          schemaVersion,
-          payload: envelope.payload,
-        });
-        const startedAt = yield* clock.now();
+      const execute = <C, R>(
+        envelope: GatewayEnvelope<C>,
+        context: CommandSubmissionContext,
+        authority: CommandAuthorityFact,
+      ): Effect.Effect<
+        CommandReceipt<R, CommandRejection>,
+        CommandGatewayError
+      > =>
+        Effect.gen(function* () {
+          const stopExecutionId =
+            envelope.commandType === "StopExecution" &&
+            typeof envelope.payload === "object" &&
+            envelope.payload !== null &&
+            "executionId" in envelope.payload &&
+            typeof envelope.payload.executionId === "string"
+              ? (envelope.payload.executionId as ExecutionId)
+              : undefined;
+          if (
+            qualificationProbe !== undefined &&
+            stopExecutionId !== undefined
+          ) {
+            yield* Effect.promise(() =>
+              qualificationProbe({
+                boundary: "P38StopExecutionBeforeTransaction",
+                commandId: envelope.commandId,
+                projectId: envelope.projectId,
+                executionId: stopExecutionId,
+              }),
+            );
+          }
+          const handlerOption = registry.lookup(envelope.commandType);
+          if (Option.isNone(handlerOption)) {
+            return yield* Effect.die(
+              new Error(`no command handler for ${envelope.commandType}`),
+            );
+          }
+          const handler = handlerOption.value;
 
-        const body = Effect.gen(function* () {
-          const existing = yield* store.findResolution(envelope.commandId);
-          if (Option.isSome(existing)) {
-            const stored = existing.value;
+          if (context._tag !== "External") {
+            const inputContract = CommandInputContractRegistry.lookup(
+              envelope.commandType,
+            );
+            if (inputContract !== undefined) {
+              const validated = inputContract.decodePayload(envelope.payload);
+              if (!validated.ok) {
+                return yield* Effect.fail({
+                  _tag: "InternalCommandContractDefect" as const,
+                  commandType: envelope.commandType,
+                  issues: validated.issues,
+                });
+              }
+            }
+          }
+
+          const schemaVersion = handler.schemaVersion;
+          const fingerprint = semanticRequestFingerprint({
+            commandType: envelope.commandType,
+            projectId: envelope.projectId,
+            actor: envelope.actor,
+            schemaVersion,
+            payload: envelope.payload,
+          });
+          const startedAt = yield* clock.now();
+
+          const replayStored = (
+            stored: StoredCommandResolution,
+          ): Effect.Effect<
+            CommandReceipt<R, CommandRejection>,
+            CommandGatewayError,
+            import("@arbor/ports").TransactionScope
+          > => {
+            const priorVersionAllowed =
+              stored.schemaVersion !== schemaVersion &&
+              (handler.priorReceiptSchemaVersions ?? []).includes(
+                stored.schemaVersion,
+              );
+            const storedFingerprint = priorVersionAllowed
+              ? semanticRequestFingerprint({
+                  commandType: envelope.commandType,
+                  projectId: envelope.projectId,
+                  actor: envelope.actor,
+                  schemaVersion: stored.schemaVersion,
+                  payload: envelope.payload,
+                })
+              : fingerprint;
             if (
-              stored.semanticRequestFingerprint === fingerprint &&
-              stored.schemaVersion === schemaVersion &&
+              stored.semanticRequestFingerprint === storedFingerprint &&
+              (stored.schemaVersion === schemaVersion || priorVersionAllowed) &&
               stored.fingerprintAlgorithmVersion ===
                 FINGERPRINT_ALGORITHM_VERSION
             ) {
-              return decodeReceipt<R>(stored);
+              return decodeRegisteredCommandReceipt<R>(
+                stored,
+                envelope.commandType,
+                stored.schemaVersion,
+              ).pipe(
+                Effect.tap((receipt) =>
+                  handler.validateReceiptReplay === undefined
+                    ? Effect.void
+                    : handler.validateReceiptReplay(
+                        receipt,
+                        envelope.payload,
+                        envelope,
+                        context,
+                      ),
+                ),
+              );
             }
-            return {
-              ...stored,
+            return Effect.succeed({
+              commandId: stored.commandId,
+              projectId: stored.projectId,
               semanticRequestFingerprint: fingerprint,
+              schemaVersion: stored.schemaVersion,
+              fingerprintAlgorithmVersion: stored.fingerprintAlgorithmVersion,
               resolution: {
                 _tag: "TerminalRejected" as const,
                 error: {
@@ -265,13 +219,131 @@ export const CommandGatewayLive: Layer.Layer<
                   commandId: envelope.commandId,
                 } satisfies CommandRejection,
               },
-            } satisfies CommandReceipt<R, CommandRejection>;
+              createdAt: stored.createdAt,
+              settledAt: stored.settledAt,
+            } satisfies CommandReceipt<R, CommandRejection>);
+          };
+
+          let prepared: unknown;
+          if (handler.prepare !== undefined) {
+            const advisory = yield* tx.transact(
+              store.findResolution(envelope.commandId),
+            );
+            if (Option.isNone(advisory)) {
+              const preparation = yield* Effect.match(
+                handler.prepare(envelope, context, authority),
+                {
+                  onFailure: (error) => ({ _tag: "Failure" as const, error }),
+                  onSuccess: (value) => ({ _tag: "Prepared" as const, value }),
+                },
+              );
+              if (preparation._tag === "Failure") {
+                const finalResolution = yield* tx.transact(
+                  store.findResolution(envelope.commandId),
+                );
+                if (Option.isSome(finalResolution)) {
+                  return yield* tx.transact(
+                    replayStored(finalResolution.value),
+                  );
+                }
+                const settledAt = yield* clock.now();
+                yield* tx
+                  .transact(
+                    store.recordRetryableAttempt(
+                      envelope.commandId,
+                      "SandboxPolicyPreparationUnavailable",
+                      startedAt,
+                      settledAt,
+                    ),
+                  )
+                  .pipe(Effect.ignore);
+                return yield* Effect.fail(preparation.error);
+              }
+              prepared = preparation.value;
+            }
           }
 
-          if (context._tag === "ExecutionOrigin") {
-            const outcome = yield* fence.check(context, handler.stopAdmission);
-            if (outcome !== "Pass") {
-              const rejection: CommandRejection = { _tag: outcome };
+          const body = Effect.gen(function* () {
+            const existing = yield* store.findResolution(envelope.commandId);
+            if (Option.isSome(existing)) {
+              return yield* replayStored(existing.value);
+            }
+
+            if (authority._tag === "RetryVerificationReplayOnlyAuthority") {
+              return yield* Effect.fail({
+                _tag: "PersistenceCorruption" as const,
+                repository: "CommandStore" as const,
+                operation: "retry-verification-origin-without-receipt",
+                reason:
+                  "RetryVerification origin exists without its permanent Command receipt",
+              });
+            }
+
+            if (context._tag === "ExecutionOrigin") {
+              const outcome = yield* fence.check(
+                context,
+                handler.stopAdmission,
+              );
+              if (outcome !== "Pass") {
+                const rejection: CommandRejection = { _tag: outcome };
+                const settledAt = yield* clock.now();
+                yield* store.insertTerminalRejected(
+                  envelope.commandId,
+                  envelope.projectId,
+                  fingerprint,
+                  schemaVersion,
+                  FINGERPRINT_ALGORITHM_VERSION,
+                  JSON.stringify(rejection),
+                );
+                yield* store.recordResolvingAttempt(
+                  envelope.commandId,
+                  "TerminalRejected",
+                  startedAt,
+                  settledAt,
+                );
+                if (
+                  qualificationProbe !== undefined &&
+                  outcome === "FencingRejected"
+                ) {
+                  yield* Effect.promise(() =>
+                    qualificationProbe({
+                      boundary: "AH10BeforeFencedReceiptCommit",
+                      commandId: envelope.commandId,
+                      projectId: envelope.projectId,
+                      executionId: context.executionId,
+                      fencingGeneration: context.fencingGeneration,
+                    }),
+                  );
+                }
+                return makeCommandReceipt<R>(
+                  envelope.commandId,
+                  envelope.projectId,
+                  fingerprint,
+                  schemaVersion,
+                  { _tag: "TerminalRejected", error: rejection },
+                  startedAt,
+                  settledAt,
+                );
+              }
+            }
+
+            const authorityMismatch = validateCommandAuthority(
+              authority,
+              handler.authority,
+              {
+                principal: context.principal,
+                commandId: envelope.commandId,
+                projectId: envelope.projectId,
+                semanticRequestFingerprint: fingerprint,
+                submissionOrigin: context._tag,
+                payload: envelope.payload,
+              },
+            );
+            if (Option.isSome(authorityMismatch)) {
+              const rejection: CommandRejection = {
+                _tag: "AuthorityDenied",
+                reason: authorityMismatch.value,
+              };
               const settledAt = yield* clock.now();
               yield* store.insertTerminalRejected(
                 envelope.commandId,
@@ -287,7 +359,7 @@ export const CommandGatewayLive: Layer.Layer<
                 startedAt,
                 settledAt,
               );
-              return makeReceipt<R>(
+              return makeCommandReceipt<R>(
                 envelope.commandId,
                 envelope.projectId,
                 fingerprint,
@@ -297,127 +369,223 @@ export const CommandGatewayLive: Layer.Layer<
                 settledAt,
               );
             }
-          }
 
-          const authorityMismatch = validateCommandAuthority(
-            authority,
-            handler.authority,
-            {
-              principal: context.principal,
-              commandId: envelope.commandId,
-              projectId: envelope.projectId,
-              semanticRequestFingerprint: fingerprint,
-              submissionOrigin: context._tag,
-              payload: envelope.payload,
-            },
-          );
-          if (Option.isSome(authorityMismatch)) {
-            const rejection: CommandRejection = {
-              _tag: "AuthorityDenied",
-              reason: authorityMismatch.value,
-            };
+            if (projectAdmissionOf(envelope.commandType) === "OpenRequired") {
+              const project = Option.isSome(projects)
+                ? yield* projects.value.findById(envelope.projectId)
+                : Option.none();
+              // The lifecycle gate owns the positive Closed fact. Entity
+              // existence remains command-specific (and is backed by canonical
+              // foreign keys); this also keeps isolated handler fixtures useful.
+              if (
+                Option.isSome(project) &&
+                project.value.lifecycle !== "Open"
+              ) {
+                const rejection: CommandRejection = {
+                  _tag: "TerminalLifecycleMutation",
+                  entity: "Project",
+                  lifecycle: project.value.lifecycle,
+                };
+                const settledAt = yield* clock.now();
+                yield* store.insertTerminalRejected(
+                  envelope.commandId,
+                  envelope.projectId,
+                  fingerprint,
+                  schemaVersion,
+                  FINGERPRINT_ALGORITHM_VERSION,
+                  JSON.stringify(rejection),
+                );
+                yield* store.recordResolvingAttempt(
+                  envelope.commandId,
+                  "TerminalRejected",
+                  startedAt,
+                  settledAt,
+                );
+                return makeCommandReceipt<R>(
+                  envelope.commandId,
+                  envelope.projectId,
+                  fingerprint,
+                  schemaVersion,
+                  { _tag: "TerminalRejected", error: rejection },
+                  startedAt,
+                  settledAt,
+                );
+              }
+            }
+
+            const outcome = yield* handler.execute(
+              { ...envelope, resolvedAuthority: authority },
+              context,
+              prepared,
+            );
             const settledAt = yield* clock.now();
-            yield* store.insertTerminalRejected(
+            if (!outcome.ok) {
+              const rejection: CommandRejection = outcome.error;
+              yield* store.insertTerminalRejected(
+                envelope.commandId,
+                envelope.projectId,
+                fingerprint,
+                schemaVersion,
+                FINGERPRINT_ALGORITHM_VERSION,
+                JSON.stringify(rejection),
+              );
+              yield* store.recordResolvingAttempt(
+                envelope.commandId,
+                "TerminalRejected",
+                startedAt,
+                settledAt,
+              );
+              return makeCommandReceipt<R>(
+                envelope.commandId,
+                envelope.projectId,
+                fingerprint,
+                schemaVersion,
+                { _tag: "TerminalRejected", error: rejection },
+                startedAt,
+                settledAt,
+              );
+            }
+            const receiptFirstEvents =
+              envelope.commandType === "GrantPermission" ||
+              envelope.commandType === "DecideSandboxPolicy";
+            if (outcome.value.events.length > 0 && !receiptFirstEvents) {
+              yield* journal.append(outcome.value.events);
+            }
+            yield* store.insertCommitted(
               envelope.commandId,
               envelope.projectId,
               fingerprint,
               schemaVersion,
               FINGERPRINT_ALGORITHM_VERSION,
-              JSON.stringify(rejection),
+              JSON.stringify(outcome.value.result),
             );
+            if (outcome.value.events.length > 0 && receiptFirstEvents) {
+              yield* journal.append(outcome.value.events);
+            }
+            if (
+              qualificationProbe !== undefined &&
+              envelope.commandType === "DecideSandboxPolicy" &&
+              typeof envelope.payload === "object" &&
+              envelope.payload !== null &&
+              "executionId" in envelope.payload &&
+              typeof (envelope.payload as { readonly executionId?: unknown })
+                .executionId === "string"
+            ) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "SandboxPolicyDecisionBeforeCommit",
+                  commandId: envelope.commandId,
+                  projectId: envelope.projectId,
+                  executionId: (
+                    envelope.payload as { readonly executionId: ExecutionId }
+                  ).executionId,
+                }),
+              );
+            }
+            if (outcome.value.afterReceipt !== undefined) {
+              yield* outcome.value.afterReceipt;
+            }
+            if (
+              qualificationProbe !== undefined &&
+              envelope.commandType === "AssignWork" &&
+              envelope.assignWorkEvidence !== undefined &&
+              context._tag === "ExecutionOrigin"
+            ) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "AH10BeforeAssignWorkBindingCommit",
+                  commandId: envelope.commandId,
+                  projectId: envelope.projectId,
+                  executionId: context.executionId,
+                  fencingGeneration: context.fencingGeneration,
+                }),
+              );
+            }
             yield* store.recordResolvingAttempt(
               envelope.commandId,
-              "TerminalRejected",
+              "Committed",
               startedAt,
               settledAt,
             );
-            return makeReceipt<R>(
+            if (
+              qualificationProbe !== undefined &&
+              envelope.commandType === "SettleExecution" &&
+              context._tag === "ExecutionOrigin"
+            ) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "AH12BeforeSettleExecutionCommit",
+                  commandId: envelope.commandId,
+                  projectId: envelope.projectId,
+                  executionId: context.executionId,
+                  fencingGeneration: context.fencingGeneration,
+                }),
+              );
+            }
+            if (
+              qualificationProbe !== undefined &&
+              stopExecutionId !== undefined
+            ) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "P38StopExecutionBeforeCommit",
+                  commandId: envelope.commandId,
+                  projectId: envelope.projectId,
+                  executionId: stopExecutionId,
+                }),
+              );
+            }
+            return makeCommandReceipt<R>(
               envelope.commandId,
               envelope.projectId,
               fingerprint,
               schemaVersion,
-              { _tag: "TerminalRejected", error: rejection },
+              { _tag: "Committed", result: outcome.value.result as R },
               startedAt,
               settledAt,
             );
-          }
+          });
 
-          const outcome = yield* handler.execute(envelope, context);
-          const settledAt = yield* clock.now();
-          if (!outcome.ok) {
-            const rejection: CommandRejection = outcome.error;
-            yield* store.insertTerminalRejected(
-              envelope.commandId,
-              envelope.projectId,
-              fingerprint,
-              schemaVersion,
-              FINGERPRINT_ALGORITHM_VERSION,
-              JSON.stringify(rejection),
-            );
-            yield* store.recordResolvingAttempt(
-              envelope.commandId,
-              "TerminalRejected",
-              startedAt,
-              settledAt,
-            );
-            return makeReceipt<R>(
-              envelope.commandId,
-              envelope.projectId,
-              fingerprint,
-              schemaVersion,
-              { _tag: "TerminalRejected", error: rejection },
-              startedAt,
-              settledAt,
-            );
-          }
-          if (outcome.value.events.length > 0) {
-            yield* journal.append(outcome.value.events);
-          }
-          yield* store.insertCommitted(
-            envelope.commandId,
-            envelope.projectId,
-            fingerprint,
-            schemaVersion,
-            FINGERPRINT_ALGORITHM_VERSION,
-            JSON.stringify(outcome.value.result),
+          return yield* tx.transact(body).pipe(
+            Effect.catchTag("TransactionOperationalFailure", (failure) =>
+              Effect.gen(function* () {
+                const settledAt = yield* clock.now();
+                yield* tx
+                  .transact(
+                    store.recordRetryableAttempt(
+                      envelope.commandId,
+                      "TransactionOperationalFailure",
+                      startedAt,
+                      settledAt,
+                    ),
+                  )
+                  .pipe(Effect.ignore);
+                return yield* Effect.fail(failure);
+              }),
+            ),
+            Effect.catchTag("PersistenceUnavailable", (failure) =>
+              Effect.gen(function* () {
+                if (failure.retryDisposition === "retryable") {
+                  const settledAt = yield* clock.now();
+                  yield* tx
+                    .transact(
+                      store.recordRetryableAttempt(
+                        envelope.commandId,
+                        `PersistenceUnavailable:${failure.repository}:${failure.sourceTag}`,
+                        startedAt,
+                        settledAt,
+                      ),
+                    )
+                    .pipe(Effect.ignore);
+                }
+                return yield* Effect.fail(failure);
+              }),
+            ),
           );
-          yield* store.recordResolvingAttempt(
-            envelope.commandId,
-            "Committed",
-            startedAt,
-            settledAt,
-          );
-          return makeReceipt<R>(
-            envelope.commandId,
-            envelope.projectId,
-            fingerprint,
-            schemaVersion,
-            { _tag: "Committed", result: outcome.value.result as R },
-            startedAt,
-            settledAt,
-          );
-        });
+        }).pipe(Effect.provideService(IdGenerator, idGenerator));
 
-        return yield* tx.transact(body).pipe(
-          Effect.catchTag("TransactionOperationalFailure", (failure) =>
-            Effect.gen(function* () {
-              const settledAt = yield* clock.now();
-              yield* tx
-                .transact(
-                  store.recordRetryableAttempt(
-                    envelope.commandId,
-                    "TransactionOperationalFailure",
-                    startedAt,
-                    settledAt,
-                  ),
-                )
-                .pipe(Effect.orDie);
-              return yield* Effect.fail(failure);
-            }),
-          ),
-        );
-      }).pipe(Effect.provideService(IdGenerator, idGenerator));
+      return CommandGateway.of({ execute });
+    }),
+  );
 
-    return CommandGateway.of({ execute });
-  }),
-);
+export const CommandGatewayLive = makeCommandGatewayLive();

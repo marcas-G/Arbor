@@ -31,8 +31,9 @@ interface ProviderPortService {
 ```ts
 interface PortableModelRequest {
   readonly modelRef: string;
+  readonly operationKind: "Inference" | "CompactionSummary" | "CompactionNative";
   readonly instructions: ReadonlyArray<PortableInstruction>;
-  readonly messages: ReadonlyArray<PortableMessage>;
+  readonly inputItems: ReadonlyArray<PortableInputItem>;
   readonly toolDefinitions: ReadonlyArray<PortableToolDefinition>;
   readonly outputContractRef: string;
   readonly budget: { readonly maxOutputTokens: number };
@@ -43,23 +44,49 @@ interface ProviderExecutionContext {
   readonly providerTurnId: ProviderTurnId;
   readonly attemptNo: number;
   readonly secretRef: SecretRef;
-  readonly timeoutMs: number;
   readonly cancellation: CancellationRef;
+  readonly turnDeadlineAt: string;
 }
+```
+
+```ts
+type PortableInputItem =
+  | PortableMessage
+  | PortableToolCall
+  | PortableToolResult
+  | PortableContextUpdate
+  | PortableCompactionCheckpoint
+  | PortableAttachmentRef;
 ```
 
 `PortableModelRequest` is model-family neutral; the model-family compiler
 (`05` §5) produces it from a `PreparedModelTurn`.
 
+`PortableMessage` remains only the Message variant; it is no longer the
+universal carrier. Adapters preserve `callRef` for ToolCall/ToolResult. An
+unsupported item/operation is a typed capability incompatibility and is never
+silently lowered to text. `CompactionNative` returns its opaque durable ref via
+the existing `ContinuationState`; the CanonicalProviderEvent ADT remains closed.
+
 `SecretRef` is a P3 `ports`-level opaque reference (DID §7.9); the raw
 credential is resolved only inside the ProviderRuntime adapter. `ProviderTurnId`
-is a domain ID (`ptn_`); `CancellationRef` and `CacheHint` are P3 port types.
+uses DID §2.2.1's closed V2 codec; `CancellationRef` and `CacheHint` are P3
+port types.
+
+The AgentRuntime supplies the exact new-write V2 ID in
+`ProviderExecutionContext`. ProviderRuntime preserves it on persisted
+`ProviderTurn`/Manifest records and `CanonicalProviderEvent.TurnStarted`;
+public conversation progress `providerTurnId` fields are the same string, not
+a provider-generated or re-encoded ID. Legacy UUIDv7 IDs are read/replay-only.
+The closed decoder rejects unlisted encodings; provider transport retry never
+allocates a different ProviderTurnId.
 
 ## 3. CanonicalProviderEvent (frozen ADT — C4)
 
 Provider events are **normalized transport/runtime vocabulary**. They must
-**not** directly express an `AgentDirective`; decoding a proposal into a
-validated directive is the AgentRuntime/ModelContext job (`03` §3).
+**not** directly express an `AgentAction`; provider-neutral invocation assembly
+is the AgentRuntime/ModelContext job and control semantics belong to
+`ControlToolRegistry` (`03` §3; DID v1.18 ACR-2…ACR-4).
 
 ```ts
 type CanonicalProviderEvent =
@@ -81,11 +108,18 @@ type ProviderFinishReason =
 ```
 
 - `ToolCallProposed` is a **raw model proposal**, not an authorized invocation
-  and not an `AgentDirective`.
+  and not an `AgentAction`.
 - Streaming deltas (`TextDelta` / `ReasoningDelta`) never enter Session history
   (DID §9.8); only a decoded `ModelOutput` entry does.
 - `ContinuationState` carries provider continuation metadata for multi-turn
   continuity; it is opaque to Model Context.
+
+`inputItems` are a canonical projection, not retained provider wire JSON.
+`Model Context` is the sole semantic compiler of this projection; each
+ProtocolAdapter owns the only provider-message renderer for its family. The
+renderer validates `callRef` pairing and legal provider ordering before network
+dispatch. Qualification clients reuse that renderer rather than maintaining a
+second message-lowering implementation.
 
 ## 4. ProviderRuntime responsibilities
 
@@ -103,6 +137,12 @@ cancellation propagation
 Provider retry never creates a new `ProviderTurn` and never increments the
 Agent `turnNo` (DID §6A.9).
 
+ProviderRuntime exclusively resolves and evaluates connect, first-event,
+stream-idle, Turn-deadline, retry-count and backoff policy. Protocol adapters
+receive the Runtime cancellation signal plus the already-resolved terminal
+`turnDeadlineAt`; they may enforce that terminal upper bound at the transport
+edge but never select policy values or retry.
+
 ## 5. ProviderTurn vs ProviderAttempt
 
 - `ProviderTurn` = one logical model decision, bound to exactly one
@@ -112,6 +152,11 @@ Agent `turnNo` (DID §6A.9).
 - The Turn intent + Manifest are persisted **before** the provider request
   (`04` §3).
 - `UsageReported` aggregates per Turn (sum over attempts).
+- **DID v1.20 AHT-2:** a successful Attempt and ProviderTurn settlement commit
+  atomically through one semantic store operation. `findSettledResult` exposes
+  the validated canonical sequence for local AgentLoopStep replay. Complete success
+  evidence is never sent to the Provider again; legacy split-commit windows are
+  reconciled locally before safe-retry eligibility (P3 `08` §5, P9 `07`).
 
 ## 6. Provider failure model (DID §6A.8)
 
@@ -136,7 +181,8 @@ type ProviderFailureKind =
 - A `StopExecution` (P2) closes admission of new ProviderTurns; an in-flight
   Turn is cancelled through `ProviderExecutionContext.cancellation`.
 - A cancelled Turn ends with `TurnFailed("StreamInterrupted")` or a controlled
-  interruption; it never produces a partial `AgentDirective`.
+  interruption; it never produces an accepted partial ModelOutput/invocation
+  batch.
 - Streaming deltas are transient; only the settled Turn produces Session entries.
 
 ## 8. ModelCapabilityPort
@@ -153,7 +199,9 @@ interface ModelCapabilityPortService {
 
 - Model selection is deterministic Runtime (SD §6.2), not an LLM decision.
 - `ModelCapability` carries `modelRef`, context window, output ceiling,
-  supported tool-call protocol, and model-family tag used by the compiler.
+  supported tool-call protocol, supported portable item kinds, native
+  compaction capability, token-estimation capability, ResolvedModelBinding
+  fingerprint, and model-family tag used by the compiler.
 
 ## 9. SecretStorePort
 
@@ -163,7 +211,7 @@ interface ModelCapabilityPortService {
 
 ## 10. Must Not Decide
 
-- No `AgentDirective` in `CanonicalProviderEvent`.
+- No `AgentAction` or universal control directive in `CanonicalProviderEvent`.
 - No tool authorization/execution (P4 `ToolRuntimePort`).
 - No prompt text (P3 `05` / feature phases).
 - No Session/Epoch/Checkpoint persistence (P2).

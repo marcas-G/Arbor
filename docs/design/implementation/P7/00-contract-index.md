@@ -1,25 +1,51 @@
 # P7 — 00 Contract Index
 
+**RAI-DG-01 amendment (DID v1.37 §8.18A.1):** P7 `03` keeps
+`RunnableWorkSource.classify` as the sole classifier and adds the durable
+exact-Work-revision gate to its same-snapshot inputs. WorkWait and Dependency
+semantics are unchanged; no new runnability port signature is introduced.
+
+> **MAC successor (DID v1.31):** Dependency/Deliverable structural semantics
+> remain, but their model-facing surface is hidden for new turns until MAC-P3
+> ships declare → produce → deliver → deterministic satisfy → exact wake as one
+> reachable path. See `docs/design/implementation/MAC/**`.
+
 **Authority:** DID v1.10 §1.8, §4.2, §5.3, §5.4, §7.1, §8.15, §8.16, §8.18, §8.18A, §11 P7, §12.8, §12.10, §12.11; 治理裁决 v1.7 G3 / v1.9 G2 / v1.10 G1–G6; SD v1.3 §3.7/§3.8, §5.2, §7.2/§7.5/§7.6, §14 No.20/42/49/53/55; S1 步骤 10–11, S3 步骤 3/4/12/14; P2 `02`/`05`, P5 `02`/`03`, P6 `00`–`06`; `planning/results/P6.result.md`.
 **Status:** FROZEN (first draft for contract review) — governs against DID v1.10 (2026-09-21, GQ1–GQ7 decisions).
+
+**Accepted owner amendment (DID v1.36 → v1.37): AH10 DeliverMessage/1
+CommandGateway route and receipt-first recovery.** This is a fenced wrapper for
+the existing Message handover; no Deliverable mutation, MessageSent v1 schema
+version, Message kind, or Inbox kind is added. Accepted proposal SHA-256:
+`75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`.
+
+**Accepted owner addendum (DID v1.38): AH10 Deliver P10 source storage and
+migration order.** The P9 `DeliverReplayEscalated` fact and P10 source-specific
+marker are assigned to proposed cumulative migration 0037 after P36 migration
+0036; migration 0034 remains the accepted P10 Attention materialization. The
+P36 owner contract is integrated in this governance tree, while migration
+implementations/registrations 0036 and 0037 are not integrated in this tree and
+remain separately gated. Accepted
+addendum SHA-256:
+`040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
 
 ## Documents
 
 | Doc | Owns |
 |---|---|
-| `01-dependency-deliverable-commands.md` | 六命令（Declare/Produce/Satisfy/Withdraw/Mark/Revise）载荷、拒绝表、事件、authority facts（含 exact-bound SatisfyDependencyAuthority，G6） |
-| `02-deliver-primitive.md` | Deliver 独立 communication/orchestration primitive（G2）：Message 五 kind、directive、ChildDelivered wake、Deliver≠satisfaction |
+| `01-dependency-deliverable-commands.md` | 六个 Dependency/Deliverable commands（Declare/Produce/Satisfy/Withdraw/Mark/Revise）载荷、拒绝表、事件、authority facts（含 exact-bound SatisfyDependencyAuthority，G6） |
+| `02-deliver-primitive.md` | Deliver Message primitive and accepted `DeliverMessage/1` Gateway contract: payload/ownership, MessageSent v1, Inbox admission, receipt, legacy exact-proof and ChildDelivered source; Deliver≠satisfaction |
 | `03-runnability-classification.md` | classify 单权威（G3）：blocking 判定、P5 inherited evolution 对齐、§8.18A 呈现输入等价性 |
 | `04-coordinator-satisfaction.md` | event-driven P7 coordinator（G5）：触发集、candidate lookup 契约接口（形态不冻结）、单命令面、失败语义 |
 | `05-wait-graph-deadlock.md` | Wait-for graph、确定性 cycle 检测、DeadlockAttentionRequested（G4，零自动 mutation） |
-| `06-wake-integration.md` | DependencyChanged/ChildDelivered wake 生产（同一提交边界）、消费管线补齐、P2 职责三分落位 |
-| `07-acceptance.md` | 验收故事 A–F 与机械断言清单 |
+| `06-wake-integration.md` | DependencyChanged wake production and the MessageSent→ChildDelivered consumer route; consumer pipeline, P2 duty split |
+| `07-acceptance.md` | Acceptance stories and mechanical assertions, including DeliverMessage receipt/effect and sole MessageSent wake-source requirements |
 
 ## Scope (DID v1.10 §11 P7)
 
 ```text
 DeclareDependency / WithdrawDependency / MarkDependencyUnfulfillable / ReviseDependencyContract
-ProduceDeliverable / Deliver (primitive) / SatisfyDependency (single command face)
+ProduceDeliverable / Deliver (primitive, committed via DeliverMessage/1) / SatisfyDependency (single command face)
 Wait-for Graph / Deadlock Attention (fact event, no auto mutation)
 automatic runnable reevaluation (classification is the single authority)
 event-driven P7 coordinator (AnyProducer auto-satisfaction)
@@ -50,7 +76,7 @@ supersedes the P5 provisional RunnableWorkSource (port unchanged)
 
 - Verification / Acceptance / `CompleteWork`（P8；satisfaction 与质量正交——v1.10 G2）。
 - WorkWait/timer 机器与 lost-wake-up 防护（P2）。
-- Message/Inbox 语义修改（P6；Deliver 是 v1.10 授权的 kind 扩张，InboxEntry 枚举不扩）。
+- P6 generic Message/Inbox semantics remain. P7 owns Deliver's v1.10 kind extension and accepted DeliverMessage/1 Gateway route; InboxEntry enumeration is unchanged.
 - Attention 呈现/UI（P10）。
 - Environment/git（P11）；生产 surface（P12）。
 

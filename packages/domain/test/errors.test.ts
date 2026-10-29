@@ -12,6 +12,7 @@ const EXPECTED_ERROR_TAGS = [
   "IdempotencyConflict",
   "AuthorityDenied",
   "RevisionConflict",
+  "InvalidProjectName",
   "WorkNotOpen",
   "TerminalLifecycleMutation",
   "RetirePreconditionFailed",
@@ -19,6 +20,7 @@ const EXPECTED_ERROR_TAGS = [
   "VerificationAcceptanceMismatch",
   "DependencyNotSatisfiable",
   "PermissionRevoked",
+  "WorkPlanInvalid",
 ].sort();
 
 const EXPECTED_DISPOSITIONS = [
@@ -40,6 +42,8 @@ const describeError = (error: DomainError): string => {
       return `authority:${error.reason}`;
     case "RevisionConflict":
       return `revision:${error.expected}/${error.actual}`;
+    case "InvalidProjectName":
+      return `project-name:${error.reason}`;
     case "WorkNotOpen":
       return `work:${error.workId}`;
     case "TerminalLifecycleMutation":
@@ -54,6 +58,8 @@ const describeError = (error: DomainError): string => {
       return `dependency:${error.dependencyId}`;
     case "PermissionRevoked":
       return `permission:${error.permissionGrantId}`;
+    case "WorkPlanInvalid":
+      return `work-plan:${error.reason}`;
     default: {
       const unreachable: never = error;
       return unreachable;

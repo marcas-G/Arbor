@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "arbor-governance-package-manifest-v1",
+  "packageId": "S3_ANY_PRODUCER_SETTLED_WAIT_GOVERNANCE_DRAFT",
+  "status": "DRAFT_UNACCEPTED",
+  "suggestedDecisionToken": "ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1",
+  "acceptanceScope": "design landing only; implementation requires separate explicit authorization",
+  "canonicalization": "Sort member paths by ordinal ascending; concatenate each UTF-8 row as <path> TAB <lowercase-sha256> LF; SHA-256 the concatenated bytes. The manifest itself is not a member.",
+  "packageSha256": "5b558d26b4140631f5c7a14bb743b1e42a9d8992d50feee1a3d2c3c98353b7c8",
+  "review": {
+    "reviewer": "p41_manifest_recovery_order_fix",
+    "semanticReview": "PASS_NO_BLOCKING",
+    "finalManifestHashRevalidation": "PENDING"
+  },
+  "members": [
+    {
+      "path": "planning/proposals/s3-any-producer-settled-wait-governance-draft.md",
+      "sha256": "1fb00a66dda47365028ce9c347a49e2e887a7a9faba101296197bc01e95a8ca4"
+    },
+    {
+      "path": "planning/results/s3-any-producer-settled-wait-gap-20261024.result.md",
+      "sha256": "530086403f8648840b0bcdc92722e1cf0aa1cec9e96bb111379c2842e1864fd0"
+    },
+    {
+      "path": "tests/functional/pending/s3-any-producer-settled-wait-attention.pending.test.ts",
+      "sha256": "62648d2e8a1d50ec3550c11dd08a57726a440223b32a8602eabfcfa240b15ac0"
+    },
+    {
+      "path": "vitest.s3-any-producer-stall-red.config.ts",
+      "sha256": "af82ea7f3f46b44f657c378ab6d10927503c56a8304d6f9cc0b9ee9a9162424a"
+    }
+  ]
+}

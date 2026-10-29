@@ -1,13 +1,378 @@
 # Arbor System Design Specification
 
-**Version:** 1.3  
-**Status:** FROZEN — governance patch  
-**Supersedes:** v1.2  
-**Date:** 2026-09-20  
-**Depends on:** `Arbor Problem Definition & Goals v1.2` + `Arbor Scenarios S1–S4 v1.2`  
-**Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量  
-**Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型  
+**Version:** 1.25
+
+**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, S2-RDG-01, RAI-DG-02, and S3 canonical ownership carve-out governance addenda
+
+**Supersedes:** v1.24
+
+**Date:** 2026-10-26
+
+**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.10`
+**Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
+
+**Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
+
+**Governance changes (v1.24 → v1.25): accepted canonical ownership carve-outs**
+
+Accepted under `ACCEPT_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1` on 2026-10-26;
+fixed supplement SHA-256
+`CEC99E498129189BD166703154A1FFD1E6DDA1CE93BE3C88C8CA9B51C7380B3D`.
+Canonical write ownership is represented as an `OwnershipRegion` containing
+one resolver-produced `allow` region and a finite set of canonical
+`exclusions`; its effective set is `allow` minus those exclusions. An
+exclusion is a strict canonical descendant in the same resource space and
+region kind. The normalized exclusion list is sorted, unique, and an
+antichain. Active claims must have a nonempty effective set. Delegating a
+child scope adds an exact Parent exclusion and creates the Child claim in the
+same atomic ownership change. Effective owned sets, rather than allow
+envelopes, determine global overlap. Exclusions do not confer ownership; the
+Child receives ownership only through its explicit claim. Equality-only region
+kinds allow only exact carve-out/reclaim. Reclaim/Child retirement matches
+the exact delegated canonical region and provenance/revision, removes only
+that Parent exclusion, and preserves every unrelated exclusion in normalized
+antichain form in the full atomic Parent/Child post-image and event. Unprovable
+set operations fail closed; arbitrary geometric subtraction and dynamic
+exclusions are outside v1.
+
+The same accepted contract extends P4 admission to validate effective-set
+containment and global effective-set disjointness. It remains validate-only.
+The proposal fixes schema migration 0053 after schema-52 recheck; existing
+claims receive empty exclusions without inferred child ownership. Exact
+physical field/codec names remain phase-contract details.
+
+**Governance changes (v1.23 → v1.24): accepted S3 child resource ownership and Native OS Sandbox first-release boundary**
+
+- `ACCEPT_S3_CHILD_WORKSPACE_RESOURCE_OWNERSHIP_DELEGATION_V1` (proposal
+  SHA-256
+  `397A56BF13042D32EF0D062146F4A34AF703738A288B4881A5FF48C6DDFE52A2`)
+  freezes explicit Parent delegation as the only source of Child write
+  ownership. Each claim is within both the Child ResourceBoundary and the
+  Parent's active ownership. PermissionGrant cannot widen either limit.
+  Ownership uses resolved canonical regions, preserves global no-overlap,
+  and requires atomic Parent narrowing/splitting when a Child carves a region.
+  Activation/revocation recheck revisions and canonical mapping in one
+  ownership transaction; stale or ambiguous mapping fails closed. Reclaim
+  requires Child quiescence or the existing typed recovery path. P4 remains
+  validate-only. Historical Child ownership is never inferred.
+- `ACCEPT_NATIVE_OS_SANDBOX_FIRST_RELEASE_BOUNDARY_V1` (proposal SHA-256
+  `8A5FC8FED5DCED9B6E944397675738F94B43591B23F85869A2D5FA96D6CB32E8`)
+  freezes the first-release process mode as `Disabled | NativeOsSupportedOnly`.
+  Missing, malformed, unknown-version, unreadable, or contradictory setting
+  means Disabled. The startup snapshot is immutable for that daemon. Disabled
+  removes shell from the model catalog and independently blocks process
+  actions before spawn; bounded in-process Read/List/Patch remain available.
+  Native mode requires the exact currently qualified provider/version/
+  capability/OS-build/profile/network tuple and trust evidence; the Windows
+  candidate is only `ReadOnly × Disabled`. No fallback to TrustedLocal,
+  FullAccess, another provider, or weaker enforcement is permitted. Mode
+  changes require controlled restart; rollback disables new process admission
+  while preserving monotone trust/authority evidence. Approval and sandbox
+  policy remain independent.
+- Both acceptances authorize these owner-document changes only. They do not
+  change Problem & Goals v1.3 or authorize implementation, migration
+  activation, database upgrade, deployment, or release qualification.
+
+**Governance changes (v1.22 → v1.23): accepted RAI-DG-02 terminal Provider failure hold**
+
+Accepted under `ACCEPT_RAI_DG_02_TERMINAL_PROVIDER_FAILURE_HOLD_V2` on
+2026-10-25; fixed proposal raw SHA-256
+`FA1AFC6675E040698F69E5EE29C67DE92EA10D54228D476A6DA27E2A98B8FA93`.
+An exact terminal non-retryable Provider failure
+(`AuthenticationFailed | RequestRejected | ProtocolViolation`) with a complete
+Execution/AgentLoopStep/ProviderTurn/final-Attempt/Manifest chain creates a
+query-derived hold for the exact Open Work revision. Historical repeated
+Executions are valid individually proven sources and deduplicate for
+presentation. The Work remains Open; only authorized revision-advancing
+`SteerWork` resumes execution, while an authorized terminal Work transition
+makes retry-oriented presentation inactive without deleting evidence. P10 is
+read-only and query-derived; no Attention row, ACK, timer, backoff, config
+reload or telemetry becomes scheduler authority. Partial, retryable,
+cross-scope or malformed evidence never produces a guessed hold.
+
+**Governance changes (v1.21 → v1.22): accepted S2-RDG-01 Work contract revision**
+
+Accepted under `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1` on 2026-10-24;
+fixed proposal SHA-256
+`C878BBF615F92ED43125C79EFDC0F021F062FEE97BF740795889B65B44394088`.
+The original responsibility unit remains in place when a human updates a
+Work's normative Goal/Constraint/Outcome contract. Direction guidance is
+non-normative; a contract amendment is an explicit human-authored complete
+replacement bound to the exact current Work revision. Contract revisions have
+immutable, complete history semantics; unavailable legacy history is not
+reconstructed. Verification remains exact-revision-bound. Normal/Critical
+change only interruption timing, not authoring, contract, history, or
+Verification semantics. This acceptance authorizes this owner-contract landing
+only; implementation, DDL, API, UI, migration, and database actions remain
+separately gated.
+
+**Governance changes (v1.18 → v1.19): AH19 Conversation checkpoint owner × P17 Job authority reconciliation**
+
+- Work Session Timeline remains complete and append-only. Before its first
+  typed `CompactionCheckpoint`, the Work provider projection considers only the
+  latest 64 persisted Timeline rows by Session-local sequence; current pinned
+  input and canonical Work/control facts are independent of that row cap.
+  Existing P3 filtering does not refill the window, and a considered row that
+  is skipped is not represented or checkpoint-covered. After a checkpoint,
+  the frontier is that exact checkpoint followed by every unsummarized typed
+  entry; budget pressure invokes explicit compaction.
+- Root Workspace conversation continuity has a distinct owner keyed by exact
+  `RootWorkspaceId`, independent of message, ResponseJob revision, Attempt,
+  Execution, ConversationResponseEpisode and the Work Session. The immutable
+  HumanMessage supplies only message identity, project/root, `created_at`
+  ordering and `bodyRef`; its legacy lifecycle/claim/response columns are not
+  answer or scheduler truth. Coverage is the contiguous FIFO prefix whose
+  exact ResponseJob is `Answered` and whose unique ConversationAttempt and
+  terminal ConversationResponseEpisode Execution prove the same
+  `(messageId, attemptNo, executionId)` successful response with
+  `Completed(ConversationResponseProduced(messageId))`. The exact current
+  `Running` Job is pinned once only with its matching active Attempt, exact
+  Episode/Execution and current lease fence; its immutable HumanMessage body
+  remains uncovered until the Job becomes Answered. Any earlier non-Answered,
+  malformed or other-episode Running Job blocks later coverage. Work
+  history/checkpoints are excluded.
+- ProviderNative Conversation checkpoints cross episodes only under an exact
+  complete `ResolvedModelBinding` fingerprint; otherwise rebuild a portable
+  Summary from the retained owner prefix. HumanMessages and live referenced
+  checkpoint evidence remain durable. No checkpoint ownership is inferred
+  from old Workspace Session checkpoints.
+- Accepted packages and independent landing reviews are recorded separately:
+  Work token `ACCEPT_AH19_WORK_PRECHECKPOINT_BOUNDED_FRONTIER_V1`, raw SHA-256
+  `4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`, and
+  Conversation token `ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1`, raw
+  SHA-256 `9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`;
+  both accepted 2026-10-17. Their P17 authority reconciliation is accepted
+  under `RECONCILE_AH19_CONVERSATION_OWNER_WITH_P17_JOB_AUTHORITY`, proposal
+  raw SHA-256
+  `92EF668AFFBE3A5D1C651107C33006C7CB987E7021FFFC02037B3603FD276B75`, on
+  2026-10-18. See
+  `planning/results/AH19-conversation-owner-p17-authority-reconciliation-acceptance-and-landing.record.md`
+  and the package-specific post-landing review under `planning/results/`.
+- These are design-only decisions. Conversation storage shape and migration
+  ID, and any changes to production behavior or tests, require separate
+  implementation authorization. Existing P2 Session storage is not assigned
+  a new Conversation owner by inference.
+
+**Governance changes (v1.16 → v1.17): Blocked WorkEpisode and explicit verifier-orphan governance**
+
+- `Blocked` is an explicit stable result of a WorkEpisode, not a Work lifecycle
+  status. It requires exact denied-action evidence and an explicit bounded
+  request for human/Parent help; the Work remains Open and cannot be treated
+  as verified, accepted, or complete. Ordinary Manual waiting and Plan state
+  do not imply Blocked.
+- An active blocker is tied to the exact Work revision. The owning Workspace
+  sees Action Required; Work Detail explains the safe failure category and
+  requested resolution; child Work is delivered as actionable input only to
+  its direct Parent. Exact successful action evidence or an authorized Work
+  revision/terminal transition resolves/supersedes it. Viewing Attention does
+  not mutate or resume Work.
+- P8 G8 orphan recovery is reachable only through an explicit authenticated
+  human `RetryVerification`: Root-local human governance for Root Work, or
+  authenticated human governance of the exact Parent Workspace for child
+  Work. The command concludes the old exact Open Verification as
+  `Unknown(Orphaned)` and creates one successor atomically. A later orphan is
+  a new human decision; no scheduler, Agent grant, recovery policy, or
+  Attention projection may retry or dismiss it.
+- These changes preserve the existing Work lifecycle and Verification truth;
+  accepted owner contract and decision provenance are recorded in
+  `planning/results/2026-10-12-combined-governance-acceptance-and-implementation-authorization.record.md`.
+
+**Governance changes (v1.9 → v1.10): FT-DG-02 — Completed Work public view**
+
+- Add a distinct read-only Work Detail inspection surface. It reads canonical
+  Work, Acceptance, and the Acceptance-bound PASS Verification; it does not
+  redefine Work lifecycle, Current Work, or Workspace Detail.
+- Absent and out-of-project/workspace Work identities share the same typed
+  NotFound/404 result and reveal no target existence or contents.
+- Accepted proposal: `ACCEPT_COMPLETED_WORK_PUBLIC_VIEW`, SHA-256
+  `6E9D25F8EFCAB0722456A750F002D88297B21E7B41E4E08AD5D51E6187842BB8`.
+  Supplemental 2026-10-08 decision selects the shared NotFound/404 behavior.
+  Exact landing package SHA-256:
+  `266884FC5B8858CA631DC87EFA1EA29B6BFD7265FB93C324F0A5F65FF8C68433`;
+  audit: `planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
+- This additive view does not change scenarios, lifecycle ownership, commands,
+  events, persistence, authorization, or transport.
+
+**Governance changes (v1.10 → v1.11): AH10 direct-child AssignWork receipt binding**
+
+- System Design §4.11 is the sole semantic owner for exact-target binding,
+  lifecycle-at-commit, and recovery disposition for a direct-child AssignWork
+  whose Command committed before its Action/Observation handoff completed.
+- A proof-complete immutable binding permits receipt-first convergence of the
+  same action without re-resolving a now-stale opaque selector. Missing or
+  inconsistent evidence fails closed and cannot select a sibling, issue a new
+  Command, or append an Observation.
+- Active lifecycle is required at the original effect boundary. Later
+  retirement does not invalidate a proven committed effect; a target already
+  Retired before commit is rejected.
+- Exact CAPA PermissionGrant or ActionApproval evidence is checked at commit;
+  recovery validates the stored evidence without re-authorizing or consuming
+  approval again. CAPA scope and resource boundaries are unchanged.
+- Accepted proposal SHA-256:
+  `E71285B4908DE221D10A3AA7720DEB74ABDFBD99992640AD6152F534666B0DD9`.
+  Landing decision and file audit:
+  `planning/results/AH10-direct-child-assign-work-target-binding-governance.md`.
+
+**Governance changes (v1.11 → v1.12): FT-DG-03 external command input trust**
+
+- System Design §8A.1 establishes that externally supplied command data must
+  pass the strict registered wire-v1 codec before it can be considered by the
+  Authority Resolver or Command Gateway. Malformed input is a data-format
+  failure, not a business rejection, and codec validity grants no authority.
+- Historical malformed branded IDs remain unchanged and do not become valid
+  through replay, reinterpretation, or migration.
+- Accepted proposal `ACCEPT_EXTERNAL_COMMAND_RUNTIME_CODEC`, SHA-256
+  `DD24C9550BFE253D94DE7236255E5E8E710A7E612A57607E474E8A90653529FC`;
+  decision and landing record:
+  `planning/results/FT-DG-03-governance-acceptance-and-landing.md`.
+- This acceptance and landing authorize design only. Runtime implementation
+  requires separate authorization. AH10 §4.11 is unchanged.
+
+**Governance changes (v1.12 → v1.13): FT-DG-01 host resource admission**
+
+- Root Project bootstrap may select only a host-registered FileTree Profile or
+  explicitly choose ConversationOnly. The Profile ref/version is a selection
+  identifier, not authority or a client-supplied path.
+- The server constructs and atomically persists the root Workspace's canonical
+  ResourceBoundary. The persisted boundary is the execution/ownership truth;
+  ownership activation must re-read it and cannot fall back to a new path.
+- Profile selection does not create a GitWorktree and does not alter Child
+  Workspace resource-ceiling semantics.
+- CreateProject's existing ProjectCreated v1 event remains unchanged. Durable
+  source attribution for the selected Profile is OPEN-1; no EventVersion=2 is
+  introduced by this landing. Legacy v1 CreateProject receipts remain
+  preserve-only under F23; OPEN-2 and post-commit activation signal OPEN-3
+  remain explicit.
+- Functional-scope candidate SHA-256:
+  `274885C110E3B277753B49F6BAD023619ADFCF52D866CC86F01F27F7FDA85DD0`.
+  This landing does not claim full FT-DG-01 closure or qualification.
+
+**Governance changes (v1.13 → v1.14): EA-DG-01 — Executable approval handoff**
+
+- Approval-required Executable calls resolve through the shared MAC
+  ActionApproval lifecycle and a route-specific `Executable` human decision
+  path. Pending approval pauses the same active Execution/AgentLoopStep and
+  exact action; it is not a PermissionGrant or a widening of Sandbox or
+  ResourceBoundary.
+- The approval binds the Runtime-owned Step/LogicalAction/callRef/
+  ToolInvocation identity, tool/version, normalized arguments, canonical
+  resources, ControlBasis and first-commit expiry. Approval/rejection/expiry/
+  cancellation never changes current authorization or consumes a Control
+  ActionApproval.
+- Accepted proposal SHA-256:
+  `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+  acceptance record: `planning/results/EA-DG-01-governance-acceptance.md`.
+- This is a design-contract landing only. Production implementation and
+  qualification remain separately gated.
+
+**Governance changes (v1.14 → v1.15): AH7-DG-02 — Reconcilable reality proof**
+
+- Unrestricted `shell@3` is `NonIdempotent`; historical `shell@2` retains its
+  exact stored definition and is never reclassified by a new catalog. Only a
+  version/hash-bound constrained tool with stable effect identity, an
+  authoritative reality source, and proof that stale effects cannot complete
+  late may be `Reconcilable`.
+- Recovery of `MayHaveStarted` first records one of `NotOccurred`, `Occurred`,
+  or `StillUnknown` from the P4-owned reconciliation port. Unknown is not
+  successful reconciliation and never permits replay. `Occurred` settles only
+  with reconstructable canonical result/observation evidence; only a definitive
+  `NotOccurred` can permit one exact-invocation replay after fresh authority,
+  approval, resource, stop and lease checks.
+- P4 owns immutable recovery binding, per-attempt admission, append-only
+  reconciliation facts, selected-fact terminal provenance and P4/P38 approval
+  verification. P3 owns ProviderTurn/Step/Action/callRef identity and sourced
+  ToolResult/Action/cursor convergence. Stop blocks new attempt admission but
+  does not discard known in-flight facts or prevent their settlement under the
+  current full Worker fence.
+- P9 owns the existing `ReconciliationEscalated` fact/event; P10 owns its
+  ActionRequired Attention projection, deduplication, offset and rebuild. The
+  visible Attention guarantee ends at the existing journal retention horizon.
+- P39 (`0039_ah7_reconciliation_attempts`) is ordered after accepted P36,
+  P37 and P38 owner contracts. Those owner contracts are integrated here; their
+  real migration wiring is not. P39 preflight/sidecar durability and affected
+  legacy-database isolation remain release gates, not a blanket readiness
+  claim.
+- Accepted logical proposal SHA-256:
+  `D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+  accepted P39 physical supplement SHA-256:
+  `D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+  Decision, review and landing hashes are recorded in
+  `planning/results/AH7-DG-02-P39-design-landing.result.md`.
+
+**Governance changes (v1.15 → v1.16): AH7-DG-01 — terminal ToolObservation replay**
+
+- A terminal P4 invocation and its exact first-returned bounded
+  `CanonicalToolObservation` form one durable immutable outcome. Same-action
+  re-entry under the same trusted invocation replays that outcome; it never
+  re-runs Executor to reconstruct text or downgrades known Success,
+  ExpectedFailure, RuntimeFailure or P39 `ReconciledNoEffect` to
+  `OutcomeUnknown` because P40 observation evidence is absent.
+- A valid current Worker fence is checked before terminal evidence reads.
+  Missing/conflicting evidence under a valid fence blocks that Action and
+  escalates a source-specific P9 fact/event to P10 Action Required. An
+  expired/superseded fence is ownership loss only: it reads/projects no winner
+  Observation and creates no replay-evidence Attention.
+- DG03 no-effect `Denied/NotAdmitted` keeps its closed reason code and existing
+  deterministic projection, has no DG01/P40 observation envelope or Artifact
+  result ref, and is never translated to ExpectedFailure. Approval consumption
+  and the four `SideEffectSemantics` recovery rules are unchanged.
+- Accepted logical SHA-256 `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+  accepted P40 physical SHA-256
+  `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+  accepted P39/P40 compatibility addendum SHA-256
+  `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830` and
+  matrix SHA-256
+  `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+  Acceptance: `planning/results/AH7-DG-01-P39-P40-compatibility-addendum-acceptance.record.md`.
+- This design landing authorizes no production implementation or migration
+  execution. P36–P40 prefix, serialized migration runner, P39 Windows/sidecar
+  durability and AH7 phase closure remain unqualified.
+
+**Governance changes (v1.8 → v1.9): Minimal Architecture Convergence
+(`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`)**
+
+- MAC-1: active product/domain vocabulary is reduced to Project, Workspace,
+  Work, Artifact, Verification, Acceptance and Permission. Runtime durability
+  records remain internal and do not become user organization concepts.
+- MAC-2: Workspace is the durable responsible identity; Agent is a cognitive
+  execution role. There is no durable Agent entity/AgentId or permanently live
+  Agent process.
+- MAC-3: Plan is optional Workspace-local cognition for one exact Work
+  revision. It has no scheduling, authority, action, formation, dependency,
+  verification or completion edge.
+- MAC-4: Workspace long-term knowledge is a provenance-preserving,
+  deterministic view of accepted outcomes, current decisions, artifacts and
+  canonical responsibility facts. Raw Session/model text is not knowledge
+  truth and cannot self-promote.
+- MAC-5: `Specialist` is superseded as active product/domain vocabulary.
+  Optional temporary parallel cognition is a Runtime `spawn_agent` action
+  backed by child Execution and is never required for core correctness.
+- MAC-6: the model emits one typed ActionCall protocol. Executable, internal
+  control and optional subagent are internal routes sharing visibility,
+  authorization and exact-intent approval semantics while retaining their
+  route-specific safety handlers.
+- MAC-7: standing PermissionGrant stays distinct from one-time ActionApproval;
+  executable/control exact approvals share one semantic lifecycle and binding
+  contract. Physical store convergence is a later forward migration.
+- MAC-8: every asynchronously applied decision separates Decision state,
+  Application fulfillment state and Result state. Approval alone never means
+  applied or completed.
+- MAC-9: delivery order is single Workspace correctness, long-term
+  responsibility, cross-Work deliverables, then optional subagent parallelism.
+  Later phases cannot be correctness dependencies of earlier phases.
+- MAC-10: Dependency may be model-visible only when declare, produce, deliver,
+  deterministic satisfy and exact wake ship as one reachable path.
+- MAC-11: owning Application/consumer/recovery Effect error channels are narrow
+  typed unions; operational failure cannot disappear into `unknown`, `orDie`
+  or console-only handling.
+- MAC-12: historical formats remain readable through migration/archive
+  boundaries but are never advertised or selected for a new write/turn.
+
+Accepted proposal SHA-256:
+`44B549EA81E21B3D4BE5D545EA446B544D50CCA0061C83E6FC40CDC2ADCCA932`.
+Exact implementation contracts:
+`docs/design/implementation/MAC/**`.
 
 **Governance changes (v1.2 → v1.3):**
 
@@ -17,6 +382,148 @@
 
 `Problem & Goals` and `Scenarios` are unchanged: these gaps closed System/DID-level
 semantics only and did not change WHY or user-visible behavior.
+
+**Governance changes (v1.3 → v1.4):**
+
+- SCRC-1/2/12: Session is an append-only durable cognitive/execution timeline;
+  the active model window is a lossy projection. Canonical control state remains
+  outside Session and is freshly snapshotted/reinjected.
+- SCRC-3/4: model/provider interaction preserves typed Message, ToolCall,
+  ToolResult, ContextUpdate, AttachmentRef and CompactionCheckpoint semantics;
+  every ToolResult is paired to a stable callRef.
+- SCRC-5/6: Inbox delivery becomes a one-time durable promotion into Session;
+  Steer and Queue have distinct safe-boundary delivery semantics.
+- SCRC-7: every sampling step captures one consistent AgentStepContext for
+  context/tool visibility/provenance; effect admission still fresh-checks
+  canonical control and authority.
+- SCRC-8/9/10: compaction is an explicit in-loop Provider operation with Summary
+  and binding-bound ProviderNative implementations, same-step resume, and
+  provider-aware budget/overflow evidence.
+- SCRC-11: permission remains a Runtime authority fact and is never recovered
+  from transcript, summary, checkpoint or model text.
+
+`Problem & Goals` and `Scenarios` remain unchanged. The accepted proposal is
+fixed by SHA-256
+`200D9EE0F252915F1816C57FC5FEE470E77D7FB924A95A7474E03DF68BFAFD05`.
+
+**Governance changes (v1.4 → v1.5):**
+
+- CDRC-1: an immutable HumanMessage is separated from its durable
+  ConversationResponseJob delivery lifecycle and append-only attempts.
+- CDRC-2/3: Provider transport retry, Agent output repair and Conversation
+  execution retry are distinct bounded policies; `Execution Failed` alone no
+  longer means immediate re-admission.
+- CDRC-4: deterministic/non-retryable failures and exhausted budgets converge
+  to durable NeedsAttention; retryable failures use durable eligibility time.
+- CDRC-5: recoverable approval, reconciliation, compaction and interruption
+  resume the same run state rather than fabricating a new human turn.
+- CDRC-6: Session projection admits only a causally closed invocation frontier;
+  unresolved or contradictory tool/control history blocks Provider bytes.
+- CDRC-7: one authoritative continuation strategy is used per request;
+  provider-native continuation is binding-scoped and never double-injected
+  with the portable typed timeline.
+- CDRC-8: model-visible tools come from a purpose/readiness/authority-aware
+  TurnProfileResolver; visibility still does not grant invocation authority.
+- CDRC-9: durable failure fingerprints, bounded scheduling and a deployment
+  circuit breaker prevent repeated deterministic/systemic request storms.
+- CDRC-10: retry/attention/cancelled state is user-visible and resumable through
+  explicit human commands, never encoded as an indefinitely processing turn.
+
+The accepted proposal is fixed by SHA-256
+`66FF684CFD71A76C20A6FA32B30C1413BED85F34A694DE06301B122366C121B2`.
+The external implementation comparison is research input only; the frozen
+semantics above remain Arbor-owned.
+
+**Governance changes (v1.5 → v1.6):**
+
+- EGP-1: `ExecutionFocus = Work | Coordination` is superseded. New Workspace
+  main executions carry an exact `ExecutionEpisodeBinding`; absence of a
+  WorkId is never an execution purpose.
+- EGP-2: bindings are closed and durable: WorkEpisode binds exact Work/revision,
+  ConversationResponseEpisode binds exact Message/ResponseJob revision,
+  InboxEpisode binds exact Inbox entry, and DecisionEpisode binds an exact
+  DecisionRequest. No generic Input/General/Coordination catch-all is allowed.
+- EGP-3: Work is the long-lived Goal contract. Execution is a recoverable
+  episode that advances a Goal or handles one exact input. Tool calls are the
+  actions inside an episode.
+- EGP-4: Plan/Todo is optional model-maintained progress state updated through
+  a typed tool. It grants no authority, performs no action, and cannot complete
+  Work or replace Verification/Acceptance.
+- EGP-5: every Episode uses one Agent Loop. Context, visible tools and terminal
+  result are compiled from the exact binding; no Agent mode or missing-field
+  inference selects them.
+- EGP-6: `CoordinationCompleted` and generic `QueryCompleted` are superseded by
+  exact results for conversation response, inbox input and decision requests.
+- EGP-7: when runnable Work selection needs semantic judgment, the Scheduler
+  persists a WorkSelectionDecisionRequest and admits an exact DecisionEpisode;
+  the Agent selects through the `select_current_work` control tool.
+- EGP-8: deterministic workflow consumers remain model-free. A signal creates
+  an Episode only when a persisted typed request requires model judgment.
+- EGP-9: migration 0024 keeps historical Coordination executions auditable. Exact Work and
+  Conversation records migrate mechanically; ambiguous active legacy records
+  fail closed and are never reconstructed from Session text.
+- EGP-10: `coordination` may remain ordinary prose, but is no longer a Domain
+  discriminant, persistence write value, TurnProfile purpose, Context selector
+  or settlement result for new executions.
+
+Accepted proposal SHA-256:
+`66D64809ED103194417BCA29FB0165657AC884EA0A3E0FDC5E5468E03E821C69`.
+Implementation is authorized by
+`ACCEPT_EXECUTION_EPISODE_GOAL_PLAN_CONVERGENCE`.
+
+**Implementation record (2026-10-03):** migration 0025 physically rebuilds
+`executions` without `focus_kind/focus_work_id`; migration 0026 rebuilds
+Agent execution state around exact `episode_json`. Runtime/Profile code has no
+Coordination or generic QueryCompleted production branch. Historical ambiguous
+rows decode as `LegacyAmbiguousEpisode` and fail closed.
+
+**Governance changes (v1.6 → v1.7):**
+
+- CRAC-1: `RootConversation` supersedes the text-only
+  `RootConversationRespond` profile. One exact ConversationResponseEpisode may
+  produce plain text or invoke a frozen conversation-safe control.
+- CRAC-2: the v1 conversation-safe allowlist contains only
+  `propose_workspace`. Root Conversation continues to expose zero executable,
+  Work, communication, specialist and verifier tools.
+- CRAC-3: tool visibility grants no creation authority. The control action may
+  atomically persist only a Pending FormationProposal plus its human
+  Governance Inbox entry; human RecordDecision remains the creation gate, and
+  Agent input promotion must never consume that governance entry. The exact
+  RecordDecision consumes it; settled proposals cannot remain actionable.
+- CRAC-4: a control result re-enters only the same exact conversation
+  execution's next turn. Workspace Work Session history remains excluded.
+- CRAC-5: missing proposal semantics cause a minimal Arbor-native
+  clarification; the Agent must not ask which external platform the user means.
+
+Accepted proposal SHA-256:
+`DEBD13AAB34B7556B221F12B647360E945F95F5D89BD0B03287963DB22B917A8`.
+Implementation is authorized by `ACCEPT_ROOT_CONVERSATION_ACTION_CAPABILITY`.
+
+**Governance changes (v1.7 → v1.8):**
+
+- CAPA-1: tool visibility, action authorization and execution approval are
+  independent decisions. A model-visible control never grants authority.
+- CAPA-2: PermissionGrant is subject-bound (`HumanPrincipal`,
+  `WorkspaceAgent`, or exact `Execution`), capability/target-bound and
+  time-bounded. Legacy grants without a subject authorize nothing.
+- CAPA-3: ControlAction authorization resolves to `Authorized`, `Denied`, or
+  `ApprovalRequired` from exact Execution/action/target/ControlBasis facts.
+- CAPA-4: ApprovalRequired persists an exact action digest and interrupts
+  before the handler. Human approval/rejection resumes the same active
+  Execution and AgentLoopStep; it never creates a replacement user turn.
+- CAPA-5: approval is single-consumed after the canonical handler attempt;
+  restart/replay reuses durable Provider output, action ledger and command
+  identity.
+- CAPA-6: approval never widens ResourceBoundary, Sandbox or executable-tool
+  authority. ToolRuntime approval remains a separate exact-intent surface.
+- CAPA-7: `assign_work` and `spawn_specialist` default to `Ask`; bounded
+  intrinsic actions retain explicit policy entries. A subject-bound standing
+  grant can permit `AllowWithinGrant`; policy can always `Deny`.
+
+Accepted proposal SHA-256:
+`74C0A20BCED0C7800B2EB21933967810AAB73423132D9FE06E86A7E56EA26FB9`.
+Implementation is authorized by
+`ACCEPT_CONTROL_ACTION_PERMISSION_APPROVAL_ARCHITECTURE`.
 
 ---
 
@@ -104,7 +611,8 @@ Arbor 是 **Workspace-centric**，不是 Session-centric 或 Agent-runtime-centr
 
 - **Workspace**：长期责任单元。
 - **Responsibility**：Workspace 为什么存在、长期负责什么、边界在哪里。
-- **Agent**：代表 Workspace 自主行动的长期执行主体。
+- **Agent**：Runtime 在一次 Execution 中代表 Workspace 进行认知与行动的执行角色；
+  不是独立长期 Entity。
 - **Work**：Workspace 在责任范围内需要达成的阶段性具体结果。
 - **Execution**：为了推进 Work 发生的临时计算活动。
 - **Session**：主 Agent 的长期认知与交互载体，不是领域真相。
@@ -118,15 +626,16 @@ Workspace identity > Session identity > Worker identity
 
 ## 2.2 两种 Agent Binding
 
-### Responsibility-bound Agent
+### Responsibility-bound Agent configuration
 
-- 绑定 Workspace；
-- 长期存在；
-- 拥有长期 Primary Session；
+- 配置绑定 Workspace；
+- Runtime 在 Workspace 的主 Execution 中激活该认知角色；
+- 连续性来自 Workspace、Primary Session、WorkspaceKnowledgeView 与 accepted facts，
+  而不是一个长期在线 Agent instance；
 - 在责任边界内拥有执行自治；
-- 进入 Responsibility Tree。
+- 进入 Responsibility Tree 的是 Workspace，不是 Agent entity。
 
-### Execution-bound Agent
+### Execution-bound Agent role
 
 - 绑定某次 Execution；
 - 临时存在；
@@ -134,9 +643,9 @@ Workspace identity > Session identity > Worker identity
 - 用于 Verification、临时专家和临时调查；
 - 不进入长期 Responsibility Tree。
 
-二者共用同一个 Agent Runtime。
+两类角色共用同一个 Agent Runtime。
 
-硬规则：Workspace 的长期 binding 必须是 responsibility-bound；
+硬规则：Workspace 的执行配置 binding 必须是 responsibility-bound；
 execution-bound binding 只能属于临时 Execution context，不得存入 Workspace。
 （DID 将其分别命名为 `ResponsibilityBoundAgentBinding` /
 `ExecutionBoundAgentBinding`，`AgentBinding` 仅作为二者的 umbrella 术语。）
@@ -260,9 +769,42 @@ Open | Completed | Cancelled
 
 Waiting、Blocked、Verifying、Running 等尽量由 Execution、Dependency、Inbox、Verification 等事实推导，不作为复杂 canonical status。
 
+Work 的规范 contract 是 Objective、Why、Constraints、Completion
+Expectations 与 Verification Mission 的完整组合。方向指导只改变方法，
+不得改写该 contract；人类规范性修订必须是一个显式、typed 的
+`ContractAmendment`，并提交完整 replacement snapshot，不能从 guidance
+文字推断或做隐式 patch/merge。每次被接受的 Work revision 都对应完整、
+不可变且可审计的 contract snapshot；历史读取以精确 `(WorkId,
+WorkRevision)` 为准。迁移中只有当前 Work 行可证明的快照可标为 legacy
+current-only；更早 revision 不可证明时必须显示不可用，不得从 Inbox、
+Session、事件、Verification 或模型文本重建。
+
+`DirectionGuidance` 与 `ContractAmendment` 都由人类在精确 Workspace→Work
+权限和当前 `WorkRevision` 上提交；stale revision 不 rebase，Work 保持
+Open。两者都使 WorkRevision 恰增一，且每次接受的方向指导也要为新
+revision 保留相同的完整规范快照。normal/critical 不改变以上语义；Critical
+只在既有 P6/P2 边界上追加 quiescence，永不隐式 CancelWork 或 CompleteWork。
+
+Work-bound `Interrupted(RuntimeSafetyStop)`、本设计冻结的 P9 恢复阻断事实，或
+`OutcomeUnknown(ReconciliationRequired(nonempty refs))` 对其精确绑定的
+`(WorkId, WorkRevision)` 建立持久 readmission hold。Work 仍保持 Open；同一
+revision 不因重启、队列确认或 Attention 投影进度而重新运行。只有获授权的
+`SteerWork` 推进 Work revision 才使旧 revision 的 hold 不再匹配；源事实继续保留
+供审计。该 gate 不取消 Work、不设 same-revision dismiss，也不改变其他 Work 或
+Deliverable 语义（DID §8.18A.1）。
+
+RAI-DG-02 在同一 exact-revision gate 上增加
+`TerminalProviderFailureSettlement`：仅当 WorkEpisode Execution 已结算为
+`Failed(ProviderFailure:<terminal-kind>)`，且结算 Step、失败 Turn、最终
+`TerminalFailure + Stop` Attempt 及 Manifest 精确一致时成立。一个有效源即
+建立 hold；历史多 Execution 只是多个可验证候选，不是基数冲突。
+`RateLimited | ProviderUnavailable | StreamInterrupted` 即使耗尽预算或超时也
+不属于此源。Work 终态化可使 ActionRequired 表达不再活跃，但不删除
+失败证据。
+
 ## 3.5 Execution
 
-Execution 是推进 Work 或完成一次 Coordination mission 的临时执行 episode，可以包含多个 Provider Turn、Tool Call 和短暂停顿。
+Execution 是绑定一个精确 `ExecutionEpisodeBinding` 的临时执行 episode，可以包含多个 Provider Turn、Tool Call 和短暂停顿。Work Episode 推进一个 Work；ConversationResponse、Inbox 与 Decision Episodes 分别处理其 exact durable input。历史 Coordination mission 不再是 new-write execution 类别（DID v1.28）。
 
 ```text
 Turn End != Execution End
@@ -281,19 +823,66 @@ semantic terminal result
 
 一个 Workspace 同时最多拥有一个有效主 Execution。Execution admission 时固定其所使用的 Session；Workspace 后续替换 Primary Session 只影响未来 Execution，不改变已经 admission 的 episode。
 
+**EGP new-write supersession (DID v1.28):** the Work/Coordination focus
+dichotomy and `CoordinationCompleted`/generic `QueryCompleted` are historical
+only. Every new Execution is bound to one exact `ExecutionEpisodeBinding`:
+Work, ConversationResponse, Inbox or Decision. All use the common Agent Loop;
+binding-derived context/tools/results replace a Coordination mode.
+
 ## 3.6 Session
 
 每个 Responsibility-bound Agent 默认拥有一个长期 Primary Session，跨多个 Work 持续存在。Primary Session 是 Workspace 对未来 Execution 的默认认知入口；已经 admission 的 Execution 使用其固定 Session binding，不随 Primary Session replacement 漂移。
 
-Session 负责：
+Session 拥有 append-only durable Timeline，用于保存认知与执行连续性：Human/
+Steer/Inbox input、Assistant output、typed ToolCall/ToolResult、ControlResult、
+ContextUpdate、AttachmentRef 与 CompactionCheckpoint。Timeline 是审计/恢复事实；
+Provider Context 只是从当前 ContextEpoch、checkpoint、recent frontier 和 canonical
+control snapshot 构造出的 active projection。
 
-- 局部认知连续性；
-- 交互历史；
-- Cache affinity；
-- Context Epoch；
-- Continuation checkpoint。
+Session 负责：局部认知连续性、交互历史、tool-call correlation、input promotion
+结果、Cache affinity、ContextEpoch 和 continuation checkpoint。
 
-Session 不是领域真相。必要时可以根据 Workspace State、History、Memory 和 Current Work 重建。
+Session 不是领域真相，也不保存 Responsibility、Current Work、Permission、
+Dependency、Verification 或 Resource Ownership 的权威副本。这些事实在每个 sampling
+step 从 canonical state fresh capture；Compaction 后重新注入。
+
+Session Timeline 可重放但不要求原样全部进入模型；active model window 可以有损压缩，
+durable Timeline、完整 Tool Result 与 Artifact 仍保留。
+
+AH19 Work bounded-frontier policy: before the first typed checkpoint, a Work
+provider projection considers only the latest 64 persisted Session Timeline
+rows by Session-local sequence. The current pinned input and fresh canonical
+Work/control facts do not consume those slots. Existing P3 filters apply to
+that selected row window without backfilling from older rows. Selected but
+skipped content is neither represented in the active context nor claimed by
+checkpoint coverage. After a typed checkpoint, the active frontier is that
+exact checkpoint plus every unsummarized typed row after it; context budget
+pressure triggers explicit compaction. Older rows remain durable, outside
+automatic context and outside any coverage claim.
+
+Root Workspace Conversation continuity has a separate checkpoint owner keyed
+by the exact `RootWorkspaceId`. It is independent of message, ResponseJob
+revision, Attempt, Execution, ConversationResponseEpisode and the Workspace
+Work Session. HumanMessage is the immutable submitted-user source identity and
+ordering/body fact; its legacy lifecycle, claim and response columns are not
+answer or scheduler truth. The frontier advances only over the contiguous FIFO
+prefix of immutable HumanMessages whose exact ResponseJob is Answered and
+whose unique Attempt and terminal ConversationResponseEpisode Execution prove
+the same `(messageId, attemptNo, executionId)` successful response with
+`Completed(ConversationResponseProduced(messageId))`. A current
+message is pinned exactly once from its immutable HumanMessage body only for
+the exact Running ResponseJob, active Attempt, active Episode Execution and
+current lease; it remains uncovered until the Job is Answered. An earlier
+non-Answered, malformed or other-episode Running Job blocks later coverage.
+Conversation context excludes Workspace Work Session entries and checkpoints.
+Existing order is `created_at` with `messageId` tie-break unless a separately
+authorized implementation package selects an explicit owner-local sequence
+preserving the same total order. For each covered HumanMessage, portable
+Conversation Summary preserves its paired authoritative Answered Job response
+in user/assistant order. Existing HumanMessages and live referenced
+Summary/blob or binding-bound Native evidence remain durable. These owner
+semantics are the accepted AH19 design packages; Conversation physical storage
+remains TBD for separate implementation authorization.
 
 ## 3.7 Dependency
 
@@ -360,7 +949,7 @@ Artifact 是代码、文档、测试报告、实验结果、日志等真实产�
 
 # 4. Responsibility 与组织模型
 
-## 4.1 一个 Workspace 一个主 Agent
+## 4.1 一个 Workspace 一个主认知执行角色
 
 正常情况下：
 
@@ -426,6 +1015,103 @@ Responsibility → Resource Ownership
 
 Write ownership 判断针对**规范化后的现实 backing resource**，而不是只比较用户配置中的路径或资源字符串。Environment 必须能够消解 path alias、worktree-to-filesystem mapping 等会让不同语义地址落到同一现实资源的情况；系统设计只冻结这一语义要求，具体 `ResourceAddress` 代数与 resolver contract 由 Detailed Implementation Design 定义。
 
+### 4.5.1 Root Project resource admission (FT-DG-01)
+
+- The host may expose a bounded catalog of registered FileTree Profiles. A
+  Profile is host configuration, not a Project/Workspace/GitWorktree aggregate
+  and not a capability. Its opaque ref/version identifies a host-approved
+  selection; the client never supplies the filesystem path.
+- Root Project creation selects one exact Profile ref/version or the explicit
+  ConversationOnly option. The trusted application constructs the initial
+  ResourceBoundary from the registered Profile; ConversationOnly produces an
+  empty boundary. The effective canonical Workspace boundary is persisted
+  with Project/Workspace/Primary Session creation.
+- A Profile selection never creates a GitWorktree. Child Workspaces remain
+  constrained by the existing ancestor ResourceBoundary ceiling.
+- Resource ownership activation is convergence for the already committed
+  Workspace boundary: it re-reads that durable boundary, resolves the same
+  canonical backing region, and fails closed without rebinding if the host
+  path changed. Profile source attribution after creation remains OPEN-1;
+  this rule does not imply that the Profile ref/version is independently
+  persisted or queryable.
+
+### 4.5.2 Child Workspace write-ownership delegation (accepted S3 contract)
+
+A Child receives formal write ownership only from an explicit durable
+delegation by its direct Parent. The delegation is part of the
+human-governed formation package; absent delegation, formation may succeed but
+the Child has no write claim and P4 resource admission denies the write before
+effect. PermissionGrant authorizes a capability only and never creates or
+widens ownership.
+
+The Environment resolver maps delegated addresses to canonical backing
+regions. Every Child region must be contained by both the Child's persisted
+ResourceBoundary and the Parent's active ownership. The global no-overlap
+invariant applies to effective canonical owned sets; intersecting allow
+envelopes are valid only when finite exclusions prove those effective sets
+disjoint. Carving a Child region from Parent ownership atomically adds the
+exact canonical exclusion and installs the Child claim; if containment,
+overlap, or an unambiguous set operation cannot be proven, the whole change
+fails with typed evidence and no partial state. Activation
+rechecks exact Parent/Child/boundary/ownership revisions, source identity,
+canonical mapping and conflicts in the ownership transaction. Mapping drift
+does not rebind an existing delegation. Reclaim/revoke requires Child
+quiescence or a typed recovery path that preserves in-flight outcomes. It
+matches the Child claim by exact canonical delegated region and provenance
+(delegation source identity and claim revision), and CAS-checks Parent/Child
+Workspace, boundary, and ownership revisions. In the same atomic change it
+releases that Child claim and removes only the exact corresponding region from
+the Parent's exclusions, preserving every unrelated exclusion in normalized,
+sorted, unique antichain form. A missing/multiple/mismatched target or stale
+revision fails closed with no state/event change. The complete Parent/Child
+post-image and ownership event commit together; no intermediate unowned scope
+or overlap is committed.
+
+Retirement of a Child with exact accepted delegation provenance uses this same
+reclaim operation after quiescence/recovery, and marks the Child Retired in
+that same commit. Ordinary retirement and legacy/no-provenance claims retain
+the no-active-claim fail-closed precondition. Boundary edits and grant
+revocation never remove exclusions or transfer ownership. Child onward
+delegation is disabled absent a separate governance change. Historical Child
+claims are not inferred during upgrade.
+
+The Parent remainder uses a finite canonical carve-out rather than path
+enumeration:
+
+```text
+OwnershipRegion = {
+  allow: CanonicalResourceRegion,
+  exclusions: CanonicalResourceRegion[]
+}
+effectiveOwnedSet = allow minus union(exclusions)
+```
+
+Each exclusion is a strict descendant of `allow` in the same resource space
+and canonical region kind. Exclusions are canonical, sorted, unique, and
+prefix-antichain; the effective claim must be nonempty. They are denied to
+that owner and do not implicitly belong to another Workspace. An explicit
+Child claim owns the delegated scope. The effective Parent post-image adds
+the exact delegated region to its exclusions while the Child receives that
+canonical region with empty exclusions.
+
+Containment succeeds only if the resolver-backed comparator proves the whole
+requested scope is in the effective claim: a partial intersection with any
+exclusion is NotContained, and a fully excluded request is also NotContained.
+Two effective claims overlap if their allow regions overlap and neither
+claim's exclusion completely covers the intersection; a partial exclusion is
+not proof of disjointness. Equality-only region kinds support only exact
+delegation/reclaim. Malformed, noncanonical, empty, cross-space, or
+non-antichain exclusions and unprovable set operations fail closed with typed
+ownership-integrity/canonical-conflict evidence.
+
+P4 admission remains validate-only: it reads the exact active claim and
+boundary and proves the full requested canonical effect region is contained
+in its effective ownership set, is within the current boundary, and has no
+overlap with another active effective claim. It rejects missing, stale,
+malformed, overlapping, or out-of-bound ownership; a grant cannot alter the
+claim's exclusions. Admission never creates, repairs, re-resolves, or expands
+a claim or activates an intent.
+
 ## 4.6 Context 隔离
 
 Parent/Child 不复制完整 Context。
@@ -447,6 +1133,10 @@ Parent 默认只消费：
 ```text
 Share facts and results, not entire contexts.
 ```
+
+Within a Root Workspace, Work Session history/checkpoints and Conversation
+history/checkpoints are separate continuity streams. Neither can read, advance
+or satisfy the other's checkpoint frontier.
 
 ## 4.7 Responsibility Unit Formation Test
 
@@ -494,7 +1184,7 @@ Workspace 创建后 Parent 固定；不支持普通 reparent / move / merge 去�
 
 但长期项目允许真正的责任重组。重组统一采用 **replacement, not relocation**：建立新的 Successor Workspace / subtree，显式交接 Responsibility、必要 Context、Open Work 的替代事项、Resource Ownership 与依赖关系，再将旧 Workspace 置为 `Retired`。旧 Workspace 的历史、Session、Memory、Decision、Artifact 与原 parent relation 保持不变。
 
-`WorkspaceLifecycle = Active | Retired`。Retired 是 terminal；Retired Workspace 不再 Assign 新 Work、Admit Execution、创建 Child 或修改 Responsibility。除 Root 外，Workspace 只有在无 Active Main Execution、无 Open Work、无 Active Child、无 active write ownership、且不存在 unresolved incoming Dependency 的 ProducerBinding 指向本 Workspace 或本 Workspace 拥有的 Work（除非在同一治理变更中被解决/替换）后才能 Retire。Root 在 Project Open 时不得 Retire。
+`WorkspaceLifecycle = Active | Retired`。Retired 是 terminal；Retired Workspace 不再 Assign 新 Work、Admit Execution、创建 Child 或修改 Responsibility。除 Root 外，Workspace 只有在无 Active Main Execution、无 Open Work、无 Active Child、无 active write ownership、且不存在 unresolved incoming Dependency 的 ProducerBinding 指向本 Workspace 或本 Workspace 拥有的 Work（除非在同一治理变更中被解决/替换）后才能 Retire。唯一 ownership 例外是具有精确 accepted delegation provenance 的 Child：满足该区域的 quiescence/typed recovery 后，在同一 atomic semantic governance change 中撤销 Child claim、确定 Parent ownership post-image 并将 Child 标记 Retired；不得提交中间重叠状态。普通 RetireWorkspace 与无 provenance 的历史 claim 仍须先无 active write ownership，fail closed。Root 在 Project Open 时不得 Retire。
 
 责任重组可以形成 Supersede / Split / Merge / ResponsibilityTransfer lineage，但 lineage 只记录前后 Identity 的关系，不修改旧 Identity。
 
@@ -518,6 +1208,48 @@ Parent 不重复执行已经委托给 Child 的工作，不持续微观监督；
 - Parent Acceptance。
 
 治理只作用于 Direct Children；Observability 可以覆盖整个 subtree。
+
+## 4.11 Opaque placement target evidence for AssignWork recovery
+
+For a direct-child `AssignWork`, the opaque `targetWorkspaceRef` is a selector
+resolved by Runtime through the current PlacementContext; it is not a canonical
+Workspace identity. At the first effect boundary, Runtime and the Command
+transaction bind that exact selector to the canonical target Workspace and
+revision, current Execution Parent Workspace and Parent Work, project, Work
+identity/provenance, complete pinned action identity, and exact CAPA
+authorization evidence. The successful Work mutation, `WorkAssigned` event,
+Committed Command receipt, and one immutable binding are committed atomically.
+This binding is the only durable proof of which Workspace the selector named;
+recovery must not recompute or enumerate historical `wref_` digests.
+
+When recovering the same pinned `LogicalActionId` with an earlier Committed
+AssignWork receipt, recovery validates the binding against the exact action,
+Command, receipt, Work/provenance, event, project, direct-parent edge, and
+authority facts. A complete match converges that same Action and Observation
+without resolving the now-stale selector again, selecting another child, or
+submitting a new Command. An earlier `TerminalRejected(FencingRejected)` is
+not a successful effect and continues under the existing takeover rules.
+
+Missing, duplicate, malformed, conflicting, foreign, or mismatched evidence,
+including a pre-binding Committed receipt, fails closed: the Action remains
+Pending, no Observation or new Command is produced, and no canonical repair or
+Provider request occurs. P9 records the immutable failure fact and event;
+P10 projects it as `Action Required` at the Execution's owning Parent Workspace
+using the accepted deduplication and subtree-summary behavior. P9/P10 define
+the durable fact and projection details; they do not alter the semantic rule
+owned here.
+
+The target Workspace must be Active in the original Command transaction. A
+later transition to Retired does not invalidate a binding that proves Active
+at commit, so recovery may converge its original Action and Observation.
+A target already Retired at initial commit is rejected before canonical Work
+mutation. All project, direct-parent, Work, provenance, source-action, event,
+and exact-authority checks remain mandatory during replay.
+
+The stored PermissionGrant or ActionApproval proves the exact CAPA
+authorization used for the committed effect; it does not grant or widen
+authority. Receipt replay does not call the authorizer or consume approval
+again. No legacy binding is inferred or backfilled.
 
 ---
 
@@ -593,13 +1325,19 @@ Agent 可以发现新 Work，但不能借此扩大自己的 Responsibility。
 
 ## 5.4 Long-lived Primary Session
 
-Work 完成后 Session 不销毁。Session lifetime 接近 Workspace / Agent lifetime；模型实际看到的 Context 只是 Session 和 System State 的动态投影。
+Work 完成后 Session 不销毁。Session lifetime 接近 Workspace / Agent lifetime；模型实际
+看到的是 durable Session Timeline、canonical state、Knowledge 与当前输入的动态投影。
 
 ```text
-Session History != Provider Context
+Session Timeline != Provider Context != Canonical State
 ```
 
 ## 5.5 Context Construction
+
+每个 sampling step 先捕获一个一致的 AgentStepContext，固定 execution/session/epoch、
+canonical control refs/revisions、model binding、effective tool catalog、instruction
+sources、input frontier 与 budget basis。Context Projector 再从该快照和 active Session
+frontier 生成 provider-neutral typed input items、tool definitions 与 manifest。
 
 一次 Provider Context 按稳定程度分层：
 
@@ -614,6 +1352,19 @@ Session History != Provider Context
 
 硬信息确定性注入；软历史按需检索。
 
+For Work before its first typed checkpoint, the P2-selected input frontier is
+the latest 64 persisted rows by Session-local sequence; the latest user input
+and C0/C1 canonical facts are pinned separately. P3 projects only the selected
+rows using its existing typed branches and filters. Filtering a selected row
+does not cause an older row to be fetched in its place. The frontier records
+the considered row range, not proof that each row was represented. Manifest
+source refs identify only emitted items.
+
+ToolCall/ToolResult 必须保留 callRef；被截断的 ToolResult 必须保留 ArtifactRef 与
+truncation/epistemic status。Effect admission 不信任旧快照作为授权缓存：真正执行
+Tool/Control Action 时仍 fresh re-read ControlBasis、authority、ResourceBoundary 与
+exact resources。
+
 ```text
 State is truth
 History is evidence
@@ -623,13 +1374,40 @@ Context is projection
 
 ## 5.6 Context Compaction
 
-Compaction 只压缩认知历史，不承担保存领域真相。
+Compaction 只替换 active model representation，不删除 durable Timeline，也不承担保存
+领域真相。普通 context pressure 是 Agent Loop 内部控制动作：显式启动 Compaction
+Provider operation，耐久提交 checkpoint + next ContextEpoch，fresh reinject canonical
+control，然后继续同一个 pending logical step。
 
 可 compact：旧 reasoning、旧 conversation、旧 observation、旧 tool trace。
 
 不可依赖 compaction 保存：Responsibility、Boundary、Current Work、Constraint、Verification、Permission 等正式事实。
 
+Compaction 支持 Arbor Summary 与 ProviderNative 两类实现。Provider-native opaque
+checkpoint 必须绑定完整 model/deployment/protocol binding；不兼容时从 durable
+Timeline 走 portable Summary/recent-frontier rebuild。
+
 Compaction 产生 Continuation Checkpoint；Checkpoint 是认知辅助，不是 authority。
+Pinned/Protected fixed control 本身在允许的 model policy 下仍无法装入窗口时，才形成
+ContextUnsatisfiable。普通可压缩历史压力不得停止 Work/Execution 或要求用户手动重试。
+
+For pre-first-checkpoint Work history, checkpoint coverage includes only
+selected rows actually represented by the existing P3 projector; skipped rows
+and rows outside the 64-row input window remain durable but uncovered. Once a
+typed Work checkpoint exists, the frontier is its exact sequence plus all
+unsummarized typed entries after it, without the pre-checkpoint numeric cap.
+Conversation uses a separate RootWorkspaceId owner. HumanMessage supplies
+immutable identity/order/body only; its legacy lifecycle, claim and response
+columns are not answer or scheduler truth. The checkpoint covers only the
+contiguous FIFO prefix with exact Answered ResponseJobs and matching Attempts
+and terminal ConversationResponseEpisode Executions. The current raw message
+is pinned once only for its exact Running Job, active Attempt/Execution and
+current lease; other-episode Running or earlier non-Answered/malformed jobs
+block coverage. Binding mismatch forbids reuse of ProviderNative opaque state
+and requires portable Summary reconstruction from retained HumanMessage
+sources paired with their authoritative Answered Job responses. Compaction
+resumes the same response episode/attempt and never replays settled Provider
+or action work.
 
 ## 5.7 Memory
 
@@ -710,6 +1488,8 @@ Bounded Model Observation
 
 - Success；
 - Expected Tool Failure；
+- ApprovalRequired（durable pause of the same Execution/action, not a terminal Denied）；
+- Denied（actual terminal no-effect authorization/decision result）；
 - Interrupted；
 - Outcome Unknown；
 - Runtime Defect。
@@ -718,9 +1498,31 @@ Bounded Model Observation
 No result != No effect
 ```
 
+For `MayHaveStarted`, P4 does not infer reality from the absence of an
+invocation result: it queries the exact versioned reconciliation profile and
+persists an immutable proof fact. `StillUnknown` preserves the unresolved
+effect gate and escalates; it is not a success-shaped stop. P4 may admit at
+most one exact-invocation replay only after authoritative `NotOccurred`,
+external attempt finality, unchanged authority/approval/resource binding, no
+Stop request, and a current lease. `Occurred` is settled only when its
+canonical bounded result can be reconstructed. Generic shell v3 has no such
+profile and is `NonIdempotent`; historical shell v2 remains exact-version
+replay evidence and is not reinterpreted.
+
+For a terminal invocation, its first-returned bounded observation is P4
+durable outcome evidence paired atomically with settlement. The valid current
+Worker fence is checked before reading it. A same-action invocation replays
+the exact saved observation without invoking Executor; missing/corrupt evidence
+under a valid fence blocks that action and produces replay-evidence Attention,
+while a stale fence produces ownership loss only. P39 `ReconciledNoEffect` is
+the accepted sixth compatibility branch of the same P40 version-1 envelope:
+its bound is the exact selected same-attempt `NotOccurred` P39 fact and its P4
+Artifact/result ref, not an inferred result. DG03 `Denied/NotAdmitted` remains
+the no-envelope exception using its closed reason code and fixed projection.
+
 ## 6.6 Tool Result 与 Observation
 
-完整 Tool Result / Raw Artifact 与模型实际看到的 Bounded Observation 分离。大输出保留 Artifact Reference，模型只看到完成当前推理需要的信息。
+完整 Tool Result / Raw Artifact 与模型实际看到的 Bounded Observation 分离。大输出保留 Artifact Reference，模型只看到完成当前推理需要的信息。所有 P40 envelope 内联且独立于 `result_ref` / Blob / Artifact；P39 `ReconciledNoEffect` 的 P4 ArtifactRef、P39 NotOccurred fact refs 与 P3 bounded-output hash 是不同身份。后来的 Artifact 内容不得替代历史 Observation/truncated 证据。
 
 ## 6.7 Organizational actions
 
@@ -767,15 +1569,27 @@ Command 不是事实；Message 到达不表示 Agent 已经理解；Event 描述
 
 `CancelWork` 是治理事实，`StopExecution` 是运行时控制，二者分离。Cancel Work 可以先成为 Canonical Truth，同时相关 Execution 继续完成 quiescence/reconciliation。
 
+Normal Steer 的普通修正可表达为 `DirectionGuidance`，只影响方法和后续
+Context；凡是改变目标、约束、完成条件或 Verification 判据的调整，必须
+另行明确提交完整、human-authored `ContractAmendment`。旧 SteerWork
+`scope="Constraint"` 仅作方向指导兼容解释，不是规范变更权威。Normal 与
+Critical 共用相同的类型、权限、CAS、revision history、receipt 与
+Verification 语义；Critical 的唯一额外行为仍是此处冻结的精确
+Stop/quiescence 路径。
+
 ## 7.4 Inbox
 
-重要输入持久进入 Workspace Inbox。Inbox 表示“尚未被该 Workspace 认知整合的重要输入”，不是永久历史库。
+重要输入持久进入 Workspace Inbox。Inbox 表示尚未被目标 Workspace 的 durable
+Session/确定性 Runtime 接管的重要输入，不是永久历史库，也不是每轮 Provider
+Context 的直接来源。
 
 ```text
 Inbox != Next Context
 ```
 
-Context Builder 只选择与 Current Work、Interrupt 或高价值事项相关的未消费输入。
+一个需要 Agent 认知的 InboxEntry 在 safe boundary 通过稳定 source key 幂等提升为
+Session Input；Session append 与 Inbox consumed 原子收敛。consumed 只表示 Session
+已经耐久接管并可重放，不表示模型已正确理解、业务已完成或 canonical state 已改变。
 
 ## 7.5 Input Admission / Promotion / Consumption
 
@@ -784,15 +1598,20 @@ Admission → Promotion → Consumption
 ```
 
 - **Admission**：验证来源、Authority、结构并持久化。
-- **Promotion**：Runtime 将确定性后果直接提交为 Canonical State。
-- **Consumption**：Agent 将需要认知判断的输入纳入推理并产生决策。
+- **Deterministic Promotion**：Runtime 将确定性后果直接提交为 Canonical State。
+- **Session Delivery**：需要认知判断的输入一次性提升到 Session Timeline。
+- **Cognitive Consumption**：Agent 在推理中解释输入并产生决策。
 
 ```text
-Receive != Promote != Consume
+Receive != Deterministic Promote != Session Delivery != Business Completion
 Deterministic first; cognitive only when necessary
 ```
 
 例如 Deliverable 到达后，Runtime 可直接满足匹配 Dependency；Parent 是否认为结果足够则需要 Agent 判断。
+
+Steer 在当前 Agent Loop 下一个 safe sampling boundary 提升；Queue 在当前 drain 结束后
+FIFO 提升，并且一次提升一条后重新判断 continuation。普通消息到达不抢占，Critical
+Steer/Stop 继续遵循 quiescence 规则。
 
 ## 7.6 Scheduler、Waiting 与 Current Work Selection
 
@@ -812,7 +1631,11 @@ Scheduler 是确定性 Runtime，不是 LLM Planner。
 
 Open Work 如果暂时无法推进，必须有 durable `WaitSpec` 描述等待的 Dependency / Decision / Approval / Inbox / Environment / Time / Manual 条件；系统不得通过重复模型调用轮询。注册 Wait 与检查“被观察事实是否已经变化”必须处于同一一致性边界，避免 lost wake-up。时间条件必须由持久调度恢复，不能依赖某个 Worker 的内存 timer。
 
-当无 Active Main Execution 时，Scheduler 重新计算 Workspace：Current Work 可运行则继续；Current Work 正在等待且没有其他 runnable Work 则保持静止；只有一个其他 runnable Work 时 Runtime 确定性切换；有多个候选时才 Admit `focus = Coordination` 的 Workspace Execution，让 Agent 进行语义选择。Coordination Execution 可以提交 `SelectCurrentWork`，而正在推进旧 Work 的 Work-focused Execution 不可以边执行边切 Current Work。
+除认知等待外，唯一 runnability classifier 与 authoritative Work admission 还必须
+检查 exact-revision readmission hold。该 hold来自 canonical settlement/P9 source
+facts，不是 WorkWait，不改变 Work 的 Open 状态（DID §8.18A.1）。
+
+当无 Active Main Execution 时，Scheduler 重新计算 Workspace：Current Work 可运行则继续；Current Work 正在等待且没有其他 runnable Work 则保持静止；只有一个其他 runnable Work 时 Runtime 确定性切换；有多个候选且需要模型语义判断时，持久化 exact `WorkSelectionDecisionRequest` 并 admission 一个 `DecisionEpisode`，由其 `select_current_work` 选择。对话响应和 Inbox 输入分别按自己的 exact durable input 建立 `ConversationResponseEpisode` / `InboxEpisode`；不再 admission Coordination-focused Execution。此处历史 focus 表述仅适用于迁移/decoder 证据，new write 以 DID v1.28 EGP 与 §8.18A 为准。
 
 Workspace 数量与实时 Execution concurrency 分离：
 
@@ -900,7 +1723,9 @@ Project Policy 定义最高约束；Workspace / Work / Execution 只能进一步
 
 临时 Permission Grant 必须有 Scope：Execution / Work / Workspace / Project；临时 Grant 默认不可继续递归委托，避免 privilege amplification。
 
-高风险“一次性批准”不使用模糊的 `once tool permission`，而使用 **Exact-Intent Approval**：批准必须绑定具体 Tool definition/version、规范化后的动作/参数摘要、目标 canonical resources、当时有效的 control basis 与 expiry。实际 Invocation 与批准内容不一致、关键控制 revision 已变化或批准已过期时，必须重新审批。批准只能被一个匹配的 ToolInvocation 原子消费。
+高风险“一次性批准”不使用模糊的 `once tool permission`，而使用 **Exact-Intent Approval**：批准必须绑定具体 Tool definition/version、规范化后的动作/参数摘要、目标 canonical resources、当时有效的 control basis、Runtime-owned AgentLoopStep/LogicalAction/callRef/ToolInvocationId 与首写 expiry。实际 Invocation 与批准内容不一致、关键控制 revision 已变化或批准已过期时，必须重新审批。批准只能被它绑定的一个 ToolInvocation 原子消费。
+
+当当前授权成立但该精确 Executable intent 需要人类批准时，Runtime 持久化 Pending ActionApproval 和对应 Governance Inbox 项，并暂停同一 Execution/AgentLoopStep；Action 保持 Pending，Provider 决策不重采样。人类 Approve、Reject，或 Runtime Expire/Stop 后都恢复同一 Action 身份。批准只表示对该 intent 的一次性同意，恢复时仍重新检查 PermissionGrant、资源、ControlBasis、stop 与 lease fence。Reject/Expire/撤权形成类型化无副作用结果；Stop 形成 Interrupted。审批不授予 standing capability，不扩大 Sandbox/ResourceBoundary。
 
 ```text
 Delegation must not amplify authority.
@@ -953,6 +1778,27 @@ Model-derived claim != established fact
 ```
 
 Memory promotion 必须保留 Provenance，并经过独立的 persistence eligibility / merge policy；不可信内容不能通过“让模型记住我”来自行获得长期 Persistence。
+
+## 8A.1 External Command Input Trust
+
+An externally supplied command envelope is untrusted data until the
+authenticated transport boundary and the registered strict external wire v1
+codec have accepted it. Malformed or unsupported input is a data-format
+failure; it is not a domain/business rejection and creates no command
+resolution. Codec acceptance establishes only that the request has the
+registered shape. It does not establish Actor identity, permission, target
+visibility, Grant scope, or any other authority.
+
+External declared `Actor` is bound exactly to the authenticated `Principal`
+before the Authority Resolver is run. The Resolver must authorize the typed
+request against current canonical facts and policy before the Command Gateway
+can reveal a receipt. The Gateway remains the final in-transaction authority,
+precondition, and mutation boundary.
+
+Previously persisted malformed branded identifiers remain byte-for-byte
+historical data. They do not become valid through a current decoder, receipt
+replay, or inferred migration. This rule does not alter the direct-child
+AssignWork recovery contract in §4.11.
 
 ---
 
@@ -1035,6 +1881,17 @@ Mission 来源于：
 - domain/tool-derived defaults。
 
 Producer 可以提出强化或修订建议，但不能单方面降低标准。
+这些来源用于建立 Work 的 canonical VerificationMission；一旦 materialize
+到某个 WorkRevision，该 revision 的完整 mission snapshot 即为新的权威，
+不得在每次 StartVerification 时由提示词、message 或 defaults 再合并/改写。
+人类需要变更 outcome/criteria 时必须提交完整 ContractAmendment。
+
+Work 的 canonical `VerificationMission` 由其当前完整 contract 所有。每次新的
+Verification 必须绑定提交时 exact current `WorkRevision` 并从该 revision 的
+canonical mission 建立不可变快照；提示词、Inbox 或 Agent 不能覆盖它。Work
+revision 前移不改写或自动取消已经运行的 Verification：旧 Open Verification
+继续在自身旧 mission/revision 上收集证据并可结论化，旧结果及旧 revision wake
+保留审计，但不得满足新 revision 的 Acceptance / CompleteWork。
 
 ## 9.5 Requirement 与 Method 分离
 
@@ -1156,6 +2013,14 @@ Side-effect semantics：
 - reconcilable → query external reality；
 - non-idempotent / unreconcilable → UNKNOWN + escalation。
 
+`Reconcilable` is a proof-capability, not a tool-name label. The proof is bound
+to the exact ToolInvocation, effect attempt, tool/profile versions, effect
+identity, authority/approval revisions, and resource version. A query that
+cannot prove that a prior attempt is final and cannot act later is
+`StillUnknown`; it must not be treated as `NotOccurred`. Stop prevents a new
+effect admission but does not erase a known in-flight outcome or forbid
+fenced accounting of it.
+
 ## 10.5 Lease / Fencing
 
 Execution identity 与 Worker identity 分离。
@@ -1261,6 +2126,41 @@ EnvironmentChanged
 
 Verification verdict 必须绑定具体 Artifact / Environment Version。
 
+### 11.6 First-release process execution mode (accepted Native boundary)
+
+The first release has one closed, startup-loaded process mode:
+
+```text
+Disabled | NativeOsSupportedOnly
+```
+
+Missing, unreadable, malformed, unknown-version, or contradictory setting
+resolves to `Disabled`. The mode is immutable during a daemon lifetime; a
+change takes effect only after controlled restart and fresh composition and
+qualification. In Disabled mode, shell is absent from the model-facing tool
+catalog and P4 independently rejects any process-capable action before spawn,
+including stale/replayed actions. The existing same-Execution blocked or
+unavailable path remains visible for already durable actions. Bounded
+in-process Read/List/Patch are unaffected.
+
+NativeOsSupportedOnly is available only for the exact fully qualified
+provider/version/capability revision/OS build/profile/network tuple and its
+matching trust and evidence. The initial Windows candidate is
+`windows-restricted-appcontainer-job`, `ReadOnly × Disabled`; this is not a
+claim for WorkspaceWrite, Restricted, or Enabled. Missing or invalid Native
+materials mean unavailable and no spawn. There is no TrustedLocal, FullAccess,
+alternate provider, or weaker-enforcement fallback in this first-release
+shell path. Human approval remains independent and cannot enable process mode
+or widen sandbox policy.
+
+Rollback stops new process admissions, settles or Stops active trees through
+existing interruption semantics, switches the mode to Disabled, and restarts
+the daemon. Monotone trust/authority high-water state and signed evidence are
+preserved; returning to Native requires a fresh current snapshot and every
+qualification gate. The mode itself adds no database mode state or authority
+source. The accepted durable no-effect V2 supplement's only schema change is
+the P40 Denied-code guard migration specified in DID v1.65.
+
 ---
 
 # 12. Projection 与 UI
@@ -1301,6 +2201,13 @@ UI 可根据事实投影：正在执行、等待、可执行但未 admission、�
 
 深层 Attention 向上冒泡为 subtree summary，但不复制底层上下文。
 
+Work-bound Runtime Safety Envelope、ReconciliationEscalated、AssignWork binding
+failure 与 Deliver replay failure 的 active Attention 仅适用于来源 Execution
+绑定的 Work revision 仍等于 canonical Work revision。查询在同一 read snapshot
+校验来源 Execution、Work Episode 与当前 Work；Steer 推进 revision 后，旧 revision
+的 Attention 离开 active set 和 subtree summary，但 settlement 与 P9 fact/event
+仍留在审计时间线。Attention 投影及其 ACK 不是 readmission gate（DID §8.18A.1）。
+
 典型 Action Required：
 
 - human-required approval；
@@ -1320,6 +2227,21 @@ UI 可根据事实投影：正在执行、等待、可执行但未 admission、�
 6. Decisions / Memory / Artifact / Audit Timeline。
 
 Transcript 作为按需调试视图，不作为 Workspace 首页。
+
+**Work Detail** 是单独的只读检查面，使用精确的 Project / Workspace / Work
+身份读取 canonical Work。它展示 `Open`、`Completed` 或 `Cancelled` 的规范生命周期、
+Work 目标与 revision；只有同一 Work/revision 的 canonical Acceptance 及其精确绑定的
+已结论 PASS Verification 才能作为 accepted result 展示。Acceptance 本身不代表
+Work 已 Completed；accepted-but-open 仍显示为 `Open`。Work Detail 不改变
+Workspace Detail 的 Current/Pending Work，也不改变 Current Work view。
+
+Work Detail 及相关的 Verification / Inbox 展示应能识别当前 contract revision、
+其完整快照是否可用，以及旧 Verification/Acceptance 绑定的 revision；不可证明
+的 legacy 历史必须明确不可用。具体查询路由和 DTO 由 P10/P13/P14 owning contracts
+确定，不从 Session 或事件推测历史 contract。
+
+不存在的 Work 与不属于请求 project/workspace 的 Work 返回同一 typed
+NotFound/404，不泄漏目标是否存在或其任何 Work、Acceptance、Verification 内容。
 
 ## 12.5 User actions
 
@@ -1383,6 +2305,10 @@ One Generic Agent Runtime
 - Tool / Organizational Intent；
 - Completion Claim；
 - Query / Report / Decision Request。
+- safe-boundary input drain 与 Steer/Queue 区分；
+- AgentStepContext capture；
+- typed ToolCall/ToolResult continuation；
+- 同一 pending logical step 内的 Compaction orchestration。
 
 ```text
 One Agent Runtime; many controlled execution contexts.
@@ -1394,7 +2320,7 @@ One Agent Runtime; many controlled execution contexts.
 
 ## 13.5 Communication Runtime
 
-负责 Assign / Query / Report / Deliver / Dependency / Governance command 的可靠路由、Admission、Promotion、Inbox、Correlation 和 Causation。
+负责 Assign / Query / Report / Deliver / Dependency / Governance command 的可靠路由、Admission、Promotion、Inbox、Correlation 和 Causation；与 Application/Session persistence 共同完成 source-key input promotion。
 
 ## 13.6 Tool Runtime
 
@@ -1402,7 +2328,7 @@ One Agent Runtime; many controlled execution contexts.
 
 ## 13.7 Provider Runtime
 
-负责 Model Catalog / Resolution、Provider Adapter、Auth、Streaming、Retry、Timeout、Cancellation、Canonical Provider Event 与 Usage Telemetry。
+负责 Model Catalog / Resolution、Provider Adapter、Auth、Streaming、Retry、Timeout、Cancellation、Canonical Provider Event 与 Usage Telemetry；同时拥有 Inference/Summary/ProviderNative operation lowering、usage/overflow evidence 与 opaque checkpoint binding。
 
 ## 13.8 Verification Runtime
 
@@ -1412,7 +2338,7 @@ One Agent Runtime; many controlled execution contexts.
 
 ## 13.9 Persistence / Projection Runtime
 
-Persistence 保存 Canonical State、Transactions、Event Journal、Artifact metadata、Session、Execution、Lease 与 History。
+Persistence 保存 Canonical State、Transactions、Event Journal、Artifact metadata、完整 Session Timeline、Execution、Lease 与 History。Projection/Context Projector 不删除或反向修改 Timeline。
 
 Projection 消费 State + Events，生成 Agent Tree、Overview、Dependency View、Transcript、Usage、Search、Workspace Summary 和 Attention。
 
@@ -1522,10 +2448,31 @@ Domain Core + Persistence/Event Journal
 54. Stop/Critical Steer 提交后禁止该 Execution 开始新的 effectful action；未解决副作用必须 Reconcile 或使 Execution 进入 OutcomeUnknown。
 55. Dependency 除 Satisfied 外还可终结为 Withdrawn 或 Unfulfillable；不能让已知不可能满足的依赖静默永久等待。
 56. Effectful Model decision 必须绑定 ControlBasis；关键控制 revision 已变化时旧决策不得执行。
-57. 一次性高风险 Approval 必须绑定 exact normalized intent，并原子消费；参数/资源/控制基准变化后必须重新审批。
+57. 一次性高风险 Approval 必须绑定 exact normalized intent 与 Runtime-owned action/invocation identity，并在 fenced claim 中原子消费；参数/资源/控制基准变化后不得复用旧批准。
 58. Runtime Safety Envelope 与用户 Cost Budget 分离；前者始终存在但不得自行 Cancel Work。
 59. CompleteWork/CancelWork 若结束 Current Work，必须在同一事务清除 currentWorkId。
 60. Durability guarantee 以声明的 failure envelope、backup 与 RPO/RTO 为准，不由具体数据库名称隐式推出。
+61. Durable Session Timeline 与 active model window 分离；Compaction/截断只改变后者。
+62. 每个模型 ToolResult 必须稳定关联一个 ToolCall；不得产生无 callRef 的新结果。
+63. 同一 InboxEntry 最多一次提升为目标 Session Input；promotion 与 consumed 原子收敛。
+64. Steer 与 Queue 使用不同 safe-boundary 语义；普通未消费 Inbox 不得每轮重复注入。
+65. NeedsCompaction 不直接 settle Execution；完成 checkpoint 后继续同一 pending logical step。
+66. Provider-native checkpoint 只在兼容 ResolvedModelBinding 下使用；不兼容时 portable rebuild。
+67. Permission/Authority 不从 Session、summary、checkpoint、Tool text 或模型声明恢复。
+68. Provider overflow recovery 有界；任何已产生 durable assistant/tool effect 的 logical step 不得通过全步 replay 恢复。
+69. HumanMessage 是不可变用户事实；回复调度、attempt、retry 与 attention 由独立 ConversationResponseJob 拥有。
+70. 一个 ConversationResponseJob 同时最多一个 Running attempt，且最多提交一个 authoritative Assistant response。
+71. Provider transport retry、Agent output repair、Conversation execution retry 是三个独立有界预算；任何一层不得隐式创建或重置另一层预算。
+72. Failed/OutcomeUnknown 不自动等于重新排队；只有明确 classified transient failure 可进入带 durable nextEligibleAt 的 RetryScheduled。
+73. 任何 Provider inference request 只能包含 causally closed ToolCall/ToolResult 或 ControlResult pair；dangling/contradictory frontier 必须先 reconcile 或进入 Attention。
+74. Approval、reconciliation、compaction 与可恢复 interruption 属于同一 run 的 pause/resume，不得伪装成新 HumanMessage 或新 Conversation attempt。
+75. Model-visible tool surface 必须由 Execution purpose、exact registration readiness、capability 与当前 control facts 解析；静态 catalog 或布尔开关不是最终资格判定。
+76. 同一确定性 failure fingerprint 或 deployment systemic failure 达到 policy 阈值后必须停止 Provider bytes 并形成 durable Attention/circuit state。
+77. ApprovalRequired 是同一 run 的 durable pause，不是 P4 terminal Denied；首写 TTL 不因重放延长，批准后只允许绑定的 ToolInvocation 通过 fenced claim 消费。
+78. `MayHaveStarted` 的外部 reality 只能由绑定确切 attempt/profile/effect identity 的证据建立；`StillUnknown` 不授权重放，`Occurred` 必须可重建 canonical 结果，且 terminal reconciliation settlement 必须指向同 invocation/attempt 的不可变 fact。
+79. Stop 禁止新的 effect-attempt admission，但当前完整且未过期 Worker lease 下的已知事实、settlement 与 escalation 必须能够落账；旧 generation 不得提交。
+80. P4 evidence-bearing terminal settlement 与首次返回的 bounded `CanonicalToolObservation` 必须原子、不可变配对；有效 lease 下重入只回放该事实或 fail closed，不重做 Executor、不降级已知结果。P39 `ReconciledNoEffect` 必须与同 invocation/attempt 的 selected `NotOccurred` fact、P4 ArtifactRef 和精确 Observation 配对。无效 lease 不读/投影赢家证据或写 replay-evidence Attention；DG03 `Denied/NotAdmitted` 保持封闭原因码投影且豁免 P40 evidence fields。
+81. Work-bound RuntimeSafetyStop settlement、封闭 P9 recovery-blocking source，或 `OutcomeUnknown(ReconciliationRequired(nonempty refs))` 必须阻止同一 `(WorkId, WorkRevision)` 的新 Work Execution admission；只有获授权的 revision-advancing Steer 解除旧 revision 的 hold，且不得通过 Attention 投影/ACK 解析。
 
 ---
 
@@ -1559,7 +2506,12 @@ Domain Core + Persistence/Event Journal
 - Query / Steer / Stop / Governance Change；
 - Human Override；
 - Intervention Summary 向治理祖先传播；
-- 干预后 Agent 恢复自治。
+- 人类可分别给出只改变方法的 DirectionGuidance，或显式提交完整
+  ContractAmendment；普通文字与旧 `scope="Constraint"` 不隐式更改 canonical
+  VerificationMission；
+- Normal/Critical 的 Work contract、CAS、revision history 和 Verification 语义相同；
+  Critical 仅追加既有 exact Stop/quiescence 行为；
+- 干预后 Agent 恢复自治；旧 revision Verification 不应用于新 Work revision。
 
 无结构性断链。
 
@@ -1646,3 +2598,89 @@ Implementation
 10. 实施阶段与自举验证计划。
 
 **System Design v1.1 到此冻结。**
+
+## Governance addendum — Native OS Sandbox (v1.20)
+
+The accepted Native OS Sandbox contract separates logical Workspace mounting
+from operating-system process isolation. A Git Worktree or SandboxHandle is
+not itself a security boundary. Untrusted shell/script/build/test/package-
+manager code and its full descendant process tree require the neutral
+execution-scoped `SandboxProcessPort`; executors may not spawn directly.
+In-process Read/List/Patch remain bounded by logical mount/target rules and
+are not claimed as OS isolation. Only the fixed, registered P39 host-probe
+allowlist is outside the ordinary executor spawn path.
+
+The provider enforces the selected profile, exact admitted filesystem mounts,
+process-tree lifecycle, network, environment and resource limits. The
+profiles are `ReadOnly`, `WorkspaceWrite` and explicit `FullAccess`;
+`FullAccess` is never an automatic fallback. Network modes are
+`Disabled`, `Restricted`, and `Enabled`; Restricted/Enabled require exact
+human authority and enforce DNS/IP/redirect/bypass boundaries. If a required
+capability is unavailable or unverifiable, no process starts and the same
+Execution remains blocked and human-visible. A weaker TrustedLocal path is
+only an explicit, accurately disclosed choice.
+
+The threat model treats model output, Workspace content, dependencies and
+executable inputs as hostile; it protects host files, Arbor control data,
+credentials, disallowed network and host resources. Kernel/provider compromise,
+privileged administrator bypass, hardware side channels and deliberate
+out-of-band host disclosure are excluded and must be documented. Approval
+authorizes only the exact action and never widens sandbox policy; a sandbox
+decision never supplies approval. Durable policy decisions bind the exact
+Execution/Episode, monotone policy revision and CAPA-v2 human authority. A
+distinct configured human operator issues only the exact Grant; immutable
+provenance binds Grant, issuer and operator-config revision/digest. Recovery
+never reconstructs authority or policy from model text, current defaults,
+events or Worktree state. P1/P4/P5/P9/P10/P12/P13 own executable contracts.
+
+## Accepted Native OS Sandbox V21 RecoveryBinding projection
+
+For a pending process-capable invocation whose existing immutable P4
+RecoveryBinding proof is missing, corrupt or mismatched, P9 classifies the
+condition read-only from the durable invocation and binding rows. It writes
+no ToolObservationReplay fact, event or marker and does not acquire/renew a
+lease, invoke P4, dispatch a Provider, or admit an effect. The Action remains
+Pending and the AgentLoopStep remains ActionsInProgress. P10 derives the
+ActionRequired SandboxRecoveryBindingFailure Attention directly from those
+rows; this is a non-persisted projection, not a reuse of P40 facts. It has the
+fixed safe summary and immutable occurredAt from tool_invocations.intent_at.
+Missing/invalid timestamps or malformed non-NULL binding hashes fail closed
+through the existing corruption path and produce no derived Attention.
+Binding SHA identity uses JSON null for SQL NULL and the exact stored
+lowercase 64-hex text when syntactically valid, even if its content hash does
+not match. The binding is immutable in v1; only invocation terminality or
+Execution Stop clears the derived Attention. Existing policy-required
+interruption and provider-unavailable fact behavior are unchanged.
+
+
+## Accepted full-chain Native OS Sandbox system contract (V1–V21)
+
+A process-capable action executes only under a committed, human-selected
+Execution/Episode policy. Approval and sandbox policy remain independent.
+ReadOnly/WorkspaceWrite are OS-enforced candidates; FullAccess is only the
+explicit human pair TrustedLocal+FullAccess/Unconfined and is never fallback
+or advertised as isolation. Policy binds exact canonical episode revision,
+Workspace/resource boundary, original targets/mount access, provider/operator
+authority basis and monotone policy revision. It does not depend on ordinary
+workspace content, dirty state, mtime or P11 EnvironmentRevision.
+
+OS-enforced outbound networking is broker-only under the closed Disabled /
+Restricted / Enabled HTTPS-origin policy. Local/private/reserved, loopback,
+raw-IP, direct DNS/network, UDP and bypass routes are denied. Provider support
+is an exact operator-qualified provider/version/capability/OS build/profile×
+network-mode tuple with rule-set and evidence digest; unsupported controls
+mean no spawn. Linux/macOS/Windows primitive sets and T3 qualification remain
+exactly as owned by P4/P12; a Git worktree is not an OS boundary.
+
+Before effect admission, policy absence/staleness parks the same verified
+NotAdmitted invocation on the same active Execution via existing
+HumanIntervention. RecoveryBindingV1 is immutable proof; no re-resolve/rebind,
+new Step state, retry invocation or P40 fact is created. P9 materializes only
+actual provider failures from a durable P4 no-effect observation, atomically
+with the existing fact/queue/wake contract, and never re-probes on restart.
+P10 derives NeedsDecision, provider-Unavailable and V21 binding-integrity
+Attention from their distinct existing sources. V21 binding Attention is
+read-only, sanitized, keyed by exact canonical binding hash/null identity and
+uses immutable intent_at; corrupt identity/time fails closed through the
+existing corruption path. No new persistence/migration is added; 0049/0050,
+complete schema 50 and existing 0043/0044 prefix remain unchanged.

@@ -1,11 +1,11 @@
 {
-  "$comment": "Arbor standard provider configuration. Copy to arbor.config.json and edit. Three secret modes: inline (key value right here — keep the file out of VCS; it is materialized into a process-local SecretStore, never logged), env (ref names the environment variable), file (ref is a key-file path, relative to root). Lookup order: $ARBOR_CONFIG, ./arbor.config.json, ~/.config/arbor/arbor.config.json.",
+  "$comment": "Arbor provider config. Copy to an untracked arbor.config.json and edit the endpoint/model for your OpenAI-compatible service. Keep credentials outside this file: use an env SecretRef or a private key file. Lookup order: ARBOR_CONFIG, ./arbor.config.json, then ~/.config/arbor/arbor.config.json.",
   "provider": {
     "deploymentId": "dep-env",
     "modelRef": "model-openai",
     "endpoint": "https://api.deepseek.com/v1",
     "wireModelName": "deepseek-chat",
-    "secret": { "kind": "inline", "value": "sk-REPLACE-ME" },
+    "secret": { "kind": "env", "ref": "ARBOR_MODEL_API_KEY" },
     "executionPolicyOverrides": {}
   }
 }

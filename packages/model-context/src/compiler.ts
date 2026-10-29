@@ -8,11 +8,13 @@ import type {
   ModelCapability,
   ModelFacingControlToolDefinition,
   ModelFacingToolDefinition,
+  PortableInputItem,
+  PortableLegacyMessage,
   PortableModelRequest,
+  PortableModelRequestV2,
   SkillRef,
 } from "@arbor/ports";
 import type { ContextFragment } from "./context.js";
-import { outputContractSchemaJson } from "./decode.js";
 import type { InstructionFragment } from "./prompt.js";
 import type { ResolvedInstructionSet } from "./resolver.js";
 
@@ -34,6 +36,12 @@ export interface ModelContextPlan {
   readonly context: ReadonlyArray<ContextFragment>;
   readonly tools: ReadonlyArray<ModelFacingToolDefinition>;
   readonly controlTools?: ReadonlyArray<ModelFacingControlToolDefinition>;
+  readonly turnProfile?: {
+    readonly purpose: string;
+    readonly version: string;
+    readonly fingerprint: string;
+    readonly contextPolicyRef: string;
+  };
   readonly skills: ReadonlyArray<SkillRef>;
   readonly outputContract: string;
   /** P14 conversation context (user/assistant turns); absent on Work. */
@@ -41,10 +49,17 @@ export interface ModelContextPlan {
     readonly role: "user" | "assistant";
     readonly text: string;
   }>;
+  /** Generic provider messages assembled by Agent Runtime (including tool
+   * observations). Takes precedence over the P14 compatibility field. */
+  readonly messages?: ReadonlyArray<PortableLegacyMessage>;
+  readonly inputItems?: ReadonlyArray<PortableInputItem>;
   /** P14 conversation refs (human-input:<messageId>) — carried into the
    * manifest contextRefs so the claimed turn is auditable per turn. */
   readonly conversationContextRefs?: ReadonlyArray<string>;
+  readonly messageContextRefs?: ReadonlyArray<string>;
   readonly providerRef?: string;
+  readonly protocolFamily?: string;
+  readonly reasoningAttachmentRefs?: ModelContextManifest["reasoningAttachmentRefs"];
   /** Optional content table: contentRef -> instruction body text. When
    * present, compiled instructions carry the resolved text instead of the
    * bare reference (P3 `05` compile semantics). */
@@ -58,6 +73,7 @@ export interface ModelContextPlan {
 
 export interface ModelContextManifest {
   readonly providerRef?: string;
+  readonly protocolFamily?: string;
   readonly providerTurnId: ProviderTurnId;
   readonly executionId: ExecutionId;
   readonly sessionId: SessionId;
@@ -93,11 +109,37 @@ export interface ModelContextManifest {
   readonly toolRoutes: ReadonlyArray<{
     readonly name: string;
     readonly route: "Executable" | "Control";
+    readonly stableId?: string;
+    readonly version?: string;
+    readonly hash?: string;
   }>;
   readonly outputContractRef: string;
   readonly budgetDecision: { readonly maxOutputTokens: number };
   readonly compiledRequestHash: string;
   readonly controlBasis: ControlBasis;
+  readonly logicalStepNo?: number;
+  readonly repairAttempt?: number;
+  readonly operationKind?: PortableModelRequestV2["operationKind"];
+  readonly inputFrontier?: {
+    readonly firstSequence: number | null;
+    readonly lastSequence: number | null;
+  };
+  readonly typedInputItemRefs?: ReadonlyArray<string>;
+  readonly callRefs?: ReadonlyArray<string>;
+  readonly agentStepContextFingerprint?: string;
+  readonly resolvedModelBindingFingerprint?: string;
+  readonly turnProfile?: {
+    readonly purpose: string;
+    readonly version: string;
+    readonly fingerprint: string;
+    readonly contextPolicyRef: string;
+  };
+  readonly budgetEvidence?: {
+    readonly kind: "CharsPerFourFallback";
+    readonly estimatedTokens: number;
+    readonly observedTokens: number | null;
+    readonly threshold: number;
+  };
 }
 
 export interface PreparedModelTurn {
@@ -106,6 +148,9 @@ export interface PreparedModelTurn {
   readonly toolRoutes: ReadonlyArray<{
     readonly name: string;
     readonly route: "Executable" | "Control";
+    readonly stableId?: string;
+    readonly version?: string;
+    readonly hash?: string;
   }>;
 }
 
@@ -144,30 +189,19 @@ export const compileTurn = (input: {
   readonly sessionId: SessionId;
   readonly contextEpoch: ContextEpochNumber;
   readonly maxOutputTokens: number;
+  readonly stepContext?: {
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly inputFrontier: {
+      readonly firstSequence: number | null;
+      readonly lastSequence: number | null;
+    };
+    readonly fingerprint: string;
+    readonly bindingFingerprint: string;
+  };
+  readonly estimatedInputTokens?: number;
 }): PreparedModelTurn => {
   const controlTools = [...(input.plan.controlTools ?? [])];
-  // F-TS-08 (`05`): the directive tool stays model-facing — `compileTurn`
-  // appends `arbor_directive` for the agent-directive output contract when
-  // no control definition of that name is already supplied.
-  const explicitControlTools =
-    input.plan.controlTools !== undefined && input.plan.controlTools.length > 0;
-  if (
-    input.plan.outputContract === "agent-directive-v1" &&
-    !explicitControlTools &&
-    !controlTools.some((tool) => tool.name === "arbor_directive")
-  ) {
-    const schemaJson = outputContractSchemaJson("agent-directive-v1");
-    if (schemaJson !== null) {
-      controlTools.push({
-        name: "arbor_directive",
-        description: "Emit structured Arbor directives.",
-        schemaJson,
-        version: "1",
-        hash: "arbor-directive-v1",
-        requiredCapability: "agent:directives",
-      });
-    }
-  }
   const names = [
     ...input.plan.tools.map((tool) => tool.name),
     ...controlTools.map((tool) => tool.name),
@@ -179,22 +213,34 @@ export const compileTurn = (input: {
     ...input.plan.tools.map((tool) => ({
       name: tool.name,
       route: "Executable" as const,
+      version: tool.version,
+      hash: tool.hash,
     })),
     ...controlTools.map((tool) => ({
       name: tool.name,
       route: "Control" as const,
+      stableId: tool.stableId,
+      version: tool.version,
+      hash: tool.hash,
     })),
   ];
-  const request: PortableModelRequest = {
+  const request: PortableModelRequestV2 = {
+    requestVersion: 2,
+    operationKind: "Inference",
     modelRef: input.capability.modelRef,
     instructions: compile(
       input.plan.instructions.effective,
       input.plan.instructionContents,
     ),
-    messages: (input.plan.conversationMessages ?? []).map((message) => ({
-      role: message.role,
-      text: message.text,
-    })),
+    inputItems:
+      input.plan.inputItems ??
+      (input.plan.messages ?? input.plan.conversationMessages ?? []).map(
+        (message) => ({
+          _tag: "Message" as const,
+          role: message.role,
+          text: message.text,
+        }),
+      ),
     toolDefinitions: [
       ...input.plan.tools.map((tool) => ({
         name: tool.name,
@@ -218,6 +264,9 @@ export const compileTurn = (input: {
     ...(input.plan.providerRef !== undefined
       ? { providerRef: input.plan.providerRef }
       : {}),
+    ...(input.plan.protocolFamily !== undefined
+      ? { protocolFamily: input.plan.protocolFamily }
+      : {}),
     providerTurnId: input.providerTurnId,
     executionId: input.executionId,
     sessionId: input.sessionId,
@@ -233,7 +282,12 @@ export const compileTurn = (input: {
     contextRefs: [
       ...input.plan.context.map((fragment) => fragment.ref),
       ...(input.plan.conversationContextRefs ?? []),
+      ...(input.plan.messageContextRefs ?? []),
     ],
+    ...(input.plan.reasoningAttachmentRefs !== undefined &&
+    input.plan.reasoningAttachmentRefs.length > 0
+      ? { reasoningAttachmentRefs: input.plan.reasoningAttachmentRefs }
+      : {}),
     skillRefs: input.plan.skills.map((skill) => ({
       skillId: skill.skillId,
       revision: skill.revision,
@@ -243,7 +297,7 @@ export const compileTurn = (input: {
         (tool) => `Executable:${tool.name}@${tool.version}#${tool.hash}`,
       ),
       ...controlTools.map(
-        (tool) => `Control:${tool.name}@${tool.version}#${tool.hash}`,
+        (tool) => `Control:${tool.stableId}@${tool.version}#${tool.hash}`,
       ),
     ],
     toolRoutes,
@@ -251,6 +305,34 @@ export const compileTurn = (input: {
     budgetDecision: { maxOutputTokens: input.maxOutputTokens },
     compiledRequestHash: fnv(JSON.stringify({ request, toolRoutes })),
     controlBasis: input.plan.controlBasis,
+    logicalStepNo: input.stepContext?.logicalStepNo ?? 0,
+    repairAttempt: input.stepContext?.repairAttempt ?? 0,
+    operationKind: request.operationKind,
+    inputFrontier: input.stepContext?.inputFrontier ?? {
+      firstSequence: null,
+      lastSequence: null,
+    },
+    typedInputItemRefs: [...(input.plan.messageContextRefs ?? [])],
+    callRefs: request.inputItems.flatMap((item) =>
+      item._tag === "ToolCall" ||
+      item._tag === "ToolResult" ||
+      item._tag === "ControlResult"
+        ? [item.callRef]
+        : [],
+    ),
+    agentStepContextFingerprint:
+      input.stepContext?.fingerprint ?? "legacy-step-context",
+    resolvedModelBindingFingerprint:
+      input.stepContext?.bindingFingerprint ?? "legacy-binding",
+    ...(input.plan.turnProfile === undefined
+      ? {}
+      : { turnProfile: input.plan.turnProfile }),
+    budgetEvidence: {
+      kind: "CharsPerFourFallback",
+      estimatedTokens: input.estimatedInputTokens ?? 0,
+      observedTokens: null,
+      threshold: input.capability.contextWindow,
+    },
   };
 
   return { request, manifest, toolRoutes };

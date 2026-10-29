@@ -13,6 +13,7 @@ const VIEW_IDS = [
   "responsibility-tree",
   "attention",
   "workspace-detail",
+  "work-detail",
   "current-work",
   "verification",
   "dependency-view",
@@ -92,7 +93,7 @@ describe("D0 view fixture matrix", () => {
     ).toBeUndefined();
   });
 
-  it("preserves literal unknown server labels across all nine views", () => {
+  it("preserves literal unknown server labels across all ten views", () => {
     const fixtures = D0_VIEW_FIXTURES;
     expect(
       fixtures["responsibility-tree"].unknown.nodes.map((node) => node.status),
@@ -103,6 +104,7 @@ describe("D0 view fixture matrix", () => {
     expect(fixtures["workspace-detail"].unknown.currentWork?.status).toBe(
       "weird-state",
     );
+    expect(fixtures["work-detail"].unknown.lifecycle).toBe("Paused");
     expect(fixtures["current-work"].unknown?.status).toBe("weird-state");
     expect(fixtures.verification.unknown.criteriaResults[0]?.verdict).toBe(
       "Banana",

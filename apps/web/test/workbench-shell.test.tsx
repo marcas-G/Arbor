@@ -110,6 +110,17 @@ describe("D3 Root Workbench shell", () => {
     expect(location.pathname).toBe("/");
   });
 
+  it("keeps project-level overview separate from responsibility-tree nodes", async () => {
+    installTree();
+    renderWorkbench();
+    expect(await screen.findByLabelText("项目概览")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
+    expect(screen.getByText("工作空间")).toBeTruthy();
+    expect(screen.getByText("进行中工作")).toBeTruthy();
+    expect(screen.getByText("需要关注")).toBeTruthy();
+    expect(screen.getByText("根责任：平台根工作区")).toBeTruthy();
+  });
+
   it("keeps the composer bound to the unique root when tree inspection changes", async () => {
     const commandCalls = installTree();
     renderWorkbench();

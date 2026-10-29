@@ -211,7 +211,9 @@ const HEADER_KEYS = [
 ] as const;
 
 export const sha256Hex = (text: string): string =>
-  createHash("sha256").update(text, "utf8").digest("hex");
+  createHash("sha256")
+    .update(text.replaceAll("\r\n", "\n").replaceAll("\r", "\n"), "utf8")
+    .digest("hex");
 
 export type ProgramDocumentParseResult =
   | { readonly ok: true; readonly header: ProgramHeader; readonly body: string }
@@ -222,12 +224,18 @@ export type ProgramDocumentParseResult =
 export const parseProgramDocument = (
   content: string,
 ): ProgramDocumentParseResult => {
-  const heading = content.match(/^#[^\n]*$/m);
+  // Prompt programs are text artifacts and their declared hashes use LF.
+  // Normalize checkout-dependent line endings before parsing and returning the
+  // hashed body, so Windows CRLF checkouts behave like CI/Linux.
+  const normalizedContent = content
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n");
+  const heading = normalizedContent.match(/^#[^\n]*$/m);
   if (heading === null || heading.index === undefined) {
     return { ok: false, reason: "no section heading found" };
   }
   const fields = new Map<string, string>();
-  for (const line of content.slice(0, heading.index).split("\n")) {
+  for (const line of normalizedContent.slice(0, heading.index).split("\n")) {
     const field = /^([a-zA-Z]+):\s*(.*)$/.exec(line);
     if (field !== null) {
       fields.set(field[1] ?? "", (field[2] ?? "").trim());
@@ -256,7 +264,7 @@ export const parseProgramDocument = (
       textHash: fields.get("textHash") ?? "",
       changelog: fields.get("changelog") ?? "",
     },
-    body: content.slice(heading.index),
+    body: normalizedContent.slice(heading.index),
   };
 };
 

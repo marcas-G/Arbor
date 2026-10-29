@@ -4,12 +4,9 @@ import type {
   ViewResponseMap,
 } from "@arbor/api-contracts";
 import type {
-  Actor,
-  CommandId,
   CommandSubmissionContext,
   FreshnessRequirement,
   Principal,
-  ProjectId,
   QueryResult,
   ViewId,
 } from "@arbor/domain";
@@ -48,18 +45,8 @@ export interface ViewQueryFace {
     view: V,
     request: ViewRequestMap[V],
     barrier?: FreshnessRequirement,
+    principal?: Principal,
   ) => Effect.Effect<QueryResult<ViewResponseMap[V]>, ProjectionQueryError>;
-}
-
-/** The raw external command as received by a shell: envelope fields only, NO
- * authority fact. The shell forwards this verbatim (`10` §3). */
-export interface ExternalCommandEnvelope {
-  readonly commandType: string;
-  readonly commandId: CommandId;
-  readonly projectId: ProjectId;
-  readonly actor: Actor;
-  readonly issuedAt: string;
-  readonly payload: unknown;
 }
 
 /** The composition-root submission face. It is the ONLY thing a transport
@@ -70,6 +57,6 @@ export interface ExternalSubmissionPort {
   readonly submit: (
     principal: Principal,
     submissionContext: CommandSubmissionContext,
-    envelope: ExternalCommandEnvelope,
+    rawEnvelope: unknown,
   ) => Effect.Effect<TransportResponse<CommandReceiptView>>;
 }

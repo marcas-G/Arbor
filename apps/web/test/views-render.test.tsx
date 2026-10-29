@@ -29,11 +29,17 @@ import {
   verificationMinimal,
   verificationTypical,
   verificationUnknownEnum,
+  workDetailBlocked,
+  workDetailMinimal,
+  workDetailTerminalProviderFailure,
+  workDetailTypical,
+  workDetailUnknownEnum,
 } from "../src/views/fixtures.js";
 import { InboxView } from "../src/views/InboxView.js";
 import { TranscriptView } from "../src/views/TranscriptView.js";
 import { UsageView } from "../src/views/UsageView.js";
 import { VerificationView } from "../src/views/VerificationView.js";
+import { WorkDetailView } from "../src/views/WorkDetailView.js";
 
 const expectMutedBadge = (text: string): void => {
   const el = screen.getByText(text);
@@ -74,7 +80,7 @@ describe("verification", () => {
   it("typical renders criteria table, evidence, acceptance", () => {
     render(<VerificationView view={verificationTypical} />);
     expect(screen.getByText("crit-render")).toBeTruthy();
-    expect(screen.getByText("9 视图 ×3 fixture 全部可渲染")).toBeTruthy();
+    expect(screen.getByText("10 视图 ×3 fixture 全部可渲染")).toBeTruthy();
     expect(screen.getAllByText("required").length).toBeGreaterThan(0);
     expect(screen.getAllByText("optional").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Pass").length).toBe(2);
@@ -104,11 +110,74 @@ describe("verification", () => {
     render(<VerificationView view={verificationTypical} />);
     expect(screen.getByRole("list", { name: "验证条件" })).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
-    expect(screen.getByText("9 视图 ×3 fixture 全部可渲染")).toBeTruthy();
+    expect(screen.getByText("10 视图 ×3 fixture 全部可渲染")).toBeTruthy();
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       value: 1024,
     });
+  });
+});
+
+describe("work-detail", () => {
+  it("typical renders objective, canonical Completed state and accepted PASS binding", () => {
+    render(<WorkDetailView view={workDetailTypical} />);
+    expect(screen.getByText("让完成后的工作仍可查看")).toBeTruthy();
+    expect(screen.getByText("已完成")).toBeTruthy();
+    expect(screen.getByText("修订版本 3")).toBeTruthy();
+    expect(screen.getByText("Pass")).toBeTruthy();
+    expect(screen.getByText("human:root")).toBeTruthy();
+  });
+
+  it("accepted but Open stays distinct from Completed", () => {
+    render(
+      <WorkDetailView view={{ ...workDetailTypical, lifecycle: "Open" }} />,
+    );
+    expect(screen.getByText("已验收、待完成")).toBeTruthy();
+    expect(screen.queryByText("已完成")).toBeNull();
+  });
+
+  it("Cancelled stays canonical and labels any acceptance as history", () => {
+    render(
+      <WorkDetailView
+        view={{ ...workDetailTypical, lifecycle: "Cancelled" }}
+      />,
+    );
+    expect(screen.getByText("已取消")).toBeTruthy();
+    expect(screen.getByText("历史验收")).toBeTruthy();
+    expect(screen.queryByText("已完成")).toBeNull();
+  });
+
+  it("minimal shows missing acceptance, unknown lifecycle is verbatim", () => {
+    const { rerender } = render(<WorkDetailView view={workDetailMinimal} />);
+    expect(screen.getByText("进行中")).toBeTruthy();
+    expect(screen.getByText("尚无本修订版本的验收记录")).toBeTruthy();
+    rerender(<WorkDetailView view={workDetailUnknownEnum} />);
+    expect(screen.getByText("Paused")).toBeTruthy();
+    expectMutedBadge("Paused");
+  });
+
+  it("renders a safe blocked explanation without presenting it as Complete or Accepted", () => {
+    render(<WorkDetailView view={workDetailBlocked} />);
+    expect(screen.getByRole("status", { name: "工作受阻" })).toBeTruthy();
+    expect(screen.getByText("本轮执行已阻断")).toBeTruthy();
+    expect(screen.getByRole("listitem").textContent).toContain(
+      "HandlerRejected",
+    );
+    expect(
+      screen.getByText("检查所需权限后，提供新指导以继续本工作。"),
+    ).toBeTruthy();
+    expect(screen.queryByText("已完成")).toBeNull();
+    expect(screen.queryByText("验收结果")).toBeNull();
+  });
+
+  it("renders terminal Provider failure code, exact occurrence time and Work revision without retry", () => {
+    render(<WorkDetailView view={workDetailTerminalProviderFailure} />);
+    expect(screen.getByRole("status", { name: "模型提供方失败" })).toBeTruthy();
+    expect(screen.getByText("RequestRejected")).toBeTruthy();
+    expect(screen.getAllByText("修订版本 2").length).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: /重新验证|Retry Verification/iu }),
+    ).toBeNull();
   });
 });
 

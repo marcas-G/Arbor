@@ -38,6 +38,7 @@ describe("P4 ports", () => {
     expect(kinds).toHaveLength(4);
     const denied: CanonicalToolObservation = {
       _tag: "Denied",
+      reasonCode: "InvocationAuthorityDenied",
       reason: "no authority",
     };
     expect(denied._tag).toBe("Denied");

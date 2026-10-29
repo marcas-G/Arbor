@@ -2,12 +2,13 @@ import type { ToolInvocation } from "@arbor/model-context";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { makeControlToolRegistry } from "../src/control.js";
+import { fixtureProviderTurnId } from "./fixtures/provider-turn.js";
 
 const invocation = (argumentsJson: string): ToolInvocation => ({
-  providerTurnId: "ptn_test" as never,
+  providerTurnId: fixtureProviderTurnId(),
   outputPosition: 0,
   callRef: "call_test",
-  toolName: "arbor_spawn_specialist",
+  toolName: "spawn_specialist",
   argumentsJson,
 });
 
@@ -21,7 +22,7 @@ const stubHandler = {
     }),
 };
 
-describe("arbor_spawn_specialist codec", () => {
+describe("spawn_specialist codec", () => {
   it("decodes a mission with constraints", async () => {
     const registry = makeControlToolRegistry([stubHandler]);
     const decoded = await Effect.runPromise(
@@ -77,6 +78,6 @@ describe("arbor_spawn_specialist codec", () => {
 
   it("is not exposed without a registered handler", () => {
     const registry = makeControlToolRegistry();
-    expect(registry.classify("arbor_spawn_specialist")).toBe("NotControl");
+    expect(registry.classify("spawn_specialist")).toBe("NotControl");
   });
 });

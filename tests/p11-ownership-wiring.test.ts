@@ -17,6 +17,7 @@ import {
   SessionRepositoryLive,
   TransactionPortLive,
   WorkspaceRepositoryLive,
+  WorkspaceResourceActivationStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
   type CreateChildWorkspacePayload,
@@ -341,6 +342,8 @@ const makeApp = (
     tx,
     Layer.provide(ResourceOwnershipRepositoryLive, infra),
     Layer.provide(EnvironmentRevisionStoreLive, infra),
+    Layer.provide(DomainEventJournalLive, infra),
+    Layer.provide(WorkspaceResourceActivationStoreLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(WorktreeStoreTestLive, base),
@@ -358,7 +361,7 @@ const makeApp = (
   return Layer.mergeAll(
     gatewayDeps,
     stores,
-    Layer.provide(OwnershipWriteServiceLive, stores),
+    Layer.provide(OwnershipWriteServiceLive, Layer.mergeAll(stores, infra)),
     Layer.provide(CommandGatewayLive, gatewayDeps),
   ) as Layer.Layer<AppEnv>;
 };

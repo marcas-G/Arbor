@@ -2,49 +2,46 @@ import {
   type CanonicalResourceRegion,
   type Project,
   parse,
-  type Workspace,
   WorkspaceId,
 } from "@arbor/domain";
 import {
-  ProjectEnvironmentPort,
   ResourceAdmission,
   type ResourceOwnershipClaimRecord,
   ResourceOwnershipRepository,
   TransactionPort,
   TransactionScope,
-  WorkspaceRepository,
 } from "@arbor/ports";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 import { ResourceAdmissionLive } from "../src/index.js";
 
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
-
-const workspace = {
-  workspaceId,
-  projectId: "prj_018f2b3c-4d5e-7abc-8def-0123456789a1",
-  resourceBoundary: {
-    basisResponsibilityRevision: 0,
-    addresses: [{ _tag: "FileTree", path: "/repo" }],
-  },
-} as unknown as Workspace;
+const childWorkspaceId = parse(WorkspaceId)(
+  "ws_018f2b3c-4d5e-7abc-8def-0123456789a2",
+);
 
 const region = (path: string): CanonicalResourceRegion => ({
   resourceSpaceId: "filesystem",
   normalizedRegion: { kind: "FileTree", path },
 });
 
-const claim = (path: string): ResourceOwnershipClaimRecord => ({
-  claimId: "c1",
-  workspaceId,
+const claim = (
+  path: string,
+  owner = workspaceId,
+  claimId = "c1",
+  exclusions: ReadonlyArray<CanonicalResourceRegion> = [],
+): ResourceOwnershipClaimRecord => ({
+  claimId,
+  workspaceId: owner,
   region: region(path),
   sourceAddressSnapshot: { _tag: "FileTree", path },
   resourceBoundaryRevision: 0 as never,
   resolvedAtEnvironmentRevision: "rev",
   createdAt: "t",
   releasedAt: null,
+  exclusions,
 });
 
 const app = (claims: ReadonlyArray<ResourceOwnershipClaimRecord>) => {
@@ -52,38 +49,13 @@ const app = (claims: ReadonlyArray<ResourceOwnershipClaimRecord>) => {
     transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
       Effect.provideService(body, TransactionScope, { session: { id: "t" } }),
   });
-  const workspaces = Layer.succeed(WorkspaceRepository, {
-    findById: () => Effect.succeed(Option.some(workspace)),
-    create: () => Effect.void,
-    changeResponsibilityIfRevision: () => Effect.void,
-    updateResourceBoundaryIfRevision: () => Effect.void,
-    updatePolicyIfRevision: () => Effect.void,
-    selectCurrentWorkIfRevision: () => Effect.void,
-    replacePrimarySessionIfRevision: () => Effect.void,
-    retireIfRevision: () => Effect.void,
-    countActiveChildren: () => Effect.succeed(0),
-    hasOpenWork: () => Effect.succeed(false),
-  } as never);
   const ownership = Layer.succeed(ResourceOwnershipRepository, {
     listActiveByWorkspace: () => Effect.succeed(claims),
-    loadActiveConflicts: () => Effect.succeed([]),
+    loadActiveConflicts: () => Effect.succeed(claims),
     insertClaim: () => Effect.void,
     releaseClaim: () => Effect.void,
   } as never);
-  const environment = Layer.succeed(ProjectEnvironmentPort, {
-    resolve: (_projectId, addresses) =>
-      Effect.succeed({
-        regions: addresses.map((address) => ({
-          resourceSpaceId: "filesystem",
-          normalizedRegion: {
-            kind: "FileTree",
-            path: (address as { path: string }).path,
-          },
-        })),
-        observedEnvironmentRevision: "rev",
-      }),
-  });
-  const deps = Layer.mergeAll(tx, workspaces, ownership, environment);
+  const deps = Layer.mergeAll(tx, ownership);
   return Layer.mergeAll(deps, Layer.provide(ResourceAdmissionLive, deps));
 };
 
@@ -92,6 +64,7 @@ const admit = (
   appLayer: Layer.Layer<any, any, any>,
   regions: ReadonlyArray<CanonicalResourceRegion>,
   write: boolean,
+  owner = workspaceId,
 ) =>
   Effect.runPromise(
     Effect.provide(
@@ -99,7 +72,12 @@ const admit = (
         const admission = yield* ResourceAdmission;
         const tx = yield* TransactionPort;
         return yield* tx.transact(
-          admission.admit({ workspaceId, regions, write }),
+          admission.admit({
+            workspaceId: owner,
+            regions,
+            resolvedBoundaryRegions: [region("/repo")],
+            write,
+          }),
         );
       }),
       appLayer,
@@ -126,6 +104,85 @@ describe("P4 validate-only resource admission", () => {
     ).toBe("Admitted");
   });
 
+  it("keeps the Child unowned when formation has no ownership delegation", async () => {
+    const parent = claim("/repo", workspaceId, "parent");
+    // The Child's ResourceBoundary may include the requested path, but without
+    // an activated delegation there is no Child claim. P4 validates ownership
+    // independently from any fs:write permission grant.
+    expect(
+      (
+        await admit(
+          app([parent]),
+          [region("/repo/child/file")],
+          true,
+          childWorkspaceId,
+        )
+      )._tag,
+    ).toBe("Denied");
+    expect(
+      (await admit(app([parent]), [region("/repo/child/file")], true))._tag,
+    ).toBe("Admitted");
+  });
+
+  it("enforces the activated ownership split: Parent remainder and Child carve-out are disjoint", async () => {
+    const parent = claim("/repo", workspaceId, "parent", [
+      region("/repo/child"),
+    ]);
+    const child = claim("/repo/child", childWorkspaceId, "child");
+    expect(
+      (await admit(app([parent, child]), [region("/repo/child/file")], true))
+        ._tag,
+    ).toBe("Denied");
+    expect(
+      (await admit(app([parent, child]), [region("/repo/other/file")], true))
+        ._tag,
+    ).toBe("Admitted");
+    const childResult = await admit(
+      app([parent, child]),
+      [region("/repo/child/file")],
+      true,
+      childWorkspaceId,
+    );
+    expect(childResult._tag).toBe("Admitted");
+    expect(
+      (
+        await admit(
+          app([parent, child]),
+          [region("/repo/other/file")],
+          true,
+          childWorkspaceId,
+        )
+      )._tag,
+    ).toBe("Denied");
+  });
+
+  it("fails closed when a partial carve-out leaves global effective claims overlapping", async () => {
+    const parent = claim("/repo", workspaceId, "parent", [
+      region("/repo/child/subtree"),
+    ]);
+    const child = claim("/repo/child", childWorkspaceId, "child");
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const admission = yield* ResourceAdmission;
+          const tx = yield* TransactionPort;
+          return yield* tx.transact(
+            admission.admit({
+              workspaceId,
+              regions: [region("/repo/other/file")],
+              resolvedBoundaryRegions: [region("/repo")],
+              write: true,
+            }),
+          );
+        }),
+        app([parent, child]),
+      ),
+    );
+    expect(result).toMatchObject({
+      _tag: "Denied",
+      reason: "active effective ownership claims overlap",
+    });
+  });
+
   void ({} as Project);
-  void Option;
 });

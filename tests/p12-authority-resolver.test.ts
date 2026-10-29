@@ -6,10 +6,13 @@ import { describe, expect, it } from "vitest";
 import {
   layer,
   P12_MIGRATIONS,
+  P29_MIGRATIONS,
   PermissionGrantRepositoryLive,
   runMigrations,
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
+import { resolveCompositionGovernance } from "../apps/single-workspace/src/composition.js";
+import { makeStaticAuthenticator } from "../apps/single-workspace/src/transport/auth.js";
 import { validateCommandAuthority } from "../packages/application/src/authority.js";
 import {
   type AuthorityDecisionInput,
@@ -36,6 +39,8 @@ import {
   ProjectId,
   parse,
   SemanticRequestFingerprint,
+  type VerificationId,
+  type WorkId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
@@ -91,13 +96,22 @@ const ISSUED_AT = "2026-09-22T00:00:00.000Z";
 const makeGrant = (
   scope: string,
   state: PermissionGrantLifecycle = "Active",
-): PermissionGrant => ({
-  permissionGrantId: GRANT,
-  scope,
-  issuer: HUMAN,
-  lifetime: "PT1H",
-  state,
-});
+): PermissionGrant => {
+  const [capability = scope, target] = scope.split("@", 2);
+  return {
+    permissionGrantId: GRANT,
+    scope,
+    issuer: HUMAN,
+    lifetime: "PT1H",
+    subject: { _tag: "WorkspaceAgent", workspaceId: WORKSPACE },
+    capability,
+    target: target ?? null,
+    validFrom: "2026-09-21T00:00:00.000Z",
+    expiresAt: "2026-09-23T00:00:00.000Z",
+    revision: 0,
+    state,
+  };
+};
 
 const externalContext = (principal: Principal): CommandSubmissionContext => ({
   _tag: "External",
@@ -183,7 +197,244 @@ const makeApp = (): Layer.Layer<AppServices> => {
 const run = <A>(program: Effect.Effect<A, unknown, AppServices>): Promise<A> =>
   Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp())));
 
+const retryAuthorityInput = (
+  principal: Principal,
+  ownerWorkspaceId: WorkspaceId,
+  overrides: Partial<AuthorityDecisionInput> = {},
+): AuthorityDecisionInput => ({
+  ...decisionInput(),
+  principal,
+  submissionContext: externalContext(principal),
+  envelope: {
+    commandType: "RetryVerification",
+    commandId: COMMAND,
+    projectId: PROJECT,
+    actor: ACTOR,
+    issuedAt: ISSUED_AT,
+    payload: {
+      workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789b2" as WorkId,
+      verificationId:
+        "ver_018f2b3c-4d5e-7abc-8def-0123456789b3" as VerificationId,
+      expectedWorkRevision: 3,
+      summaryContent: "reason",
+      successorVerificationId:
+        "ver_018f2b3c-4d5e-7abc-8def-0123456789b4" as VerificationId,
+      verifierExecutionId: EXECUTION,
+    },
+  },
+  canonicalFacts: {
+    projectId: PROJECT,
+    project: { rootWorkspaceId: WORKSPACE },
+    work: {
+      workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789b2",
+      projectId: PROJECT,
+      workspaceId: ownerWorkspaceId,
+      lifecycle: "Open",
+      revision: 3,
+    },
+    retryVerification: {
+      verificationId:
+        "ver_018f2b3c-4d5e-7abc-8def-0123456789b3" as VerificationId,
+      workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789b2" as WorkId,
+      targetWorkRevision: 3,
+      state: "Open",
+      ownerWorkspaceId,
+      verifierExecutions: [
+        {
+          executionId: EXECUTION,
+          projectId: PROJECT,
+          workspaceId: ownerWorkspaceId,
+          status: "Settled",
+          executionBound: true,
+          boundToVerification: true,
+        },
+      ],
+    },
+  },
+  ...overrides,
+});
+
 describe("P12-002 authority resolver production plane", () => {
+  it("resolves RetryVerification only for Root-local human or exact child Parent human", async () => {
+    const root = await runResolver(
+      resolveFact(retryAuthorityInput(HUMAN, WORKSPACE)),
+    );
+    expect(root._tag).toBe("RetryVerificationAuthority");
+    expect(root).toMatchObject({
+      targetWorkspaceId: WORKSPACE,
+      currentOwnerId: WORKSPACE,
+      settledVerifierExecutionIds: [EXECUTION],
+    });
+
+    const child = await runResolver(
+      resolveFact(
+        retryAuthorityInput(HUMAN, OTHER_WORKSPACE, {
+          governance: {
+            authenticatedHumans: [HUMAN],
+            directParentOf: [
+              { workspaceId: OTHER_WORKSPACE, parentPrincipal: HUMAN },
+            ],
+          },
+        }),
+      ),
+    );
+    expect(child._tag).toBe("RetryVerificationAuthority");
+  });
+
+  it("ignores Agent grants and rejects child humans without the exact Parent edge", async () => {
+    const parentGrant = makeGrant(`RetryVerification@${OTHER_WORKSPACE}`);
+    const deniedAgent = await runResolver(
+      resolveError(
+        retryAuthorityInput(AGENT, OTHER_WORKSPACE, {
+          grants: [parentGrant],
+          governance: { authenticatedHumans: [], directParentOf: [] },
+        }),
+      ),
+    );
+    // P12's public resolver denial is `NoApplicableGrant`; transport maps it
+    // to the stable external authority-denied problem without exposing why.
+    expect(deniedAgent._tag).toBe("NoApplicableGrant");
+
+    const deniedHuman = await runResolver(
+      resolveError(
+        retryAuthorityInput(HUMAN, OTHER_WORKSPACE, {
+          governance: {
+            authenticatedHumans: [HUMAN],
+            directParentOf: [],
+          },
+        }),
+      ),
+    );
+    expect(deniedHuman._tag).toBe("NoApplicableGrant");
+  });
+
+  it("requires a current Open Work/revision and every exact verifier settled", async () => {
+    const input = retryAuthorityInput(HUMAN, WORKSPACE);
+    const canonicalWork = input.canonicalFacts.work;
+    const retryVerification = input.canonicalFacts.retryVerification;
+    const boundExecution = retryVerification?.verifierExecutions[0];
+    if (
+      canonicalWork === undefined ||
+      retryVerification === undefined ||
+      boundExecution === undefined
+    ) {
+      throw new Error("retry authority test fixture is incomplete");
+    }
+    const stale = await runResolver(
+      resolveError({
+        ...input,
+        canonicalFacts: {
+          ...input.canonicalFacts,
+          work: { ...canonicalWork, revision: 4 },
+        },
+      }),
+    );
+    expect(stale._tag).toBe("NoApplicableGrant");
+
+    const active = await runResolver(
+      resolveError({
+        ...input,
+        canonicalFacts: {
+          ...input.canonicalFacts,
+          retryVerification: {
+            ...retryVerification,
+            verifierExecutions: [
+              {
+                ...boundExecution,
+                status: "Active",
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(active._tag).toBe("NoApplicableGrant");
+  });
+
+  it("does not treat a user: principal as human authority for executable decisions", async () => {
+    const approvalFacts = {
+      projectId: PROJECT,
+      workspace: {
+        workspaceId: WORKSPACE,
+        projectId: PROJECT,
+        parentWorkspaceId: null,
+      },
+      execution: {
+        executionId: EXECUTION,
+        projectId: PROJECT,
+        workspaceId: WORKSPACE,
+        status: "Active" as const,
+      },
+      executableApproval: {
+        approvalId: "eap_p12_authority" as never,
+        projectId: PROJECT,
+        workspaceId: WORKSPACE,
+        executionId: EXECUTION,
+        state: "Pending",
+        revision: 0,
+      },
+    };
+    const envelope = {
+      commandType: "ResolveExecutableApproval",
+      commandId: COMMAND,
+      projectId: PROJECT,
+      actor: parse(Actor)("user:spoofable"),
+      issuedAt: ISSUED_AT,
+      payload: { approvalId: "eap_p12_authority", expectedRevision: 0 },
+    };
+    const untrusted = await runResolver(
+      Effect.flip(
+        resolveFact(
+          decisionInput({
+            principal: parse(Principal)("user:spoofable"),
+            submissionContext: externalContext(
+              parse(Principal)("user:spoofable"),
+            ),
+            envelope,
+            canonicalFacts: approvalFacts,
+          }),
+        ),
+      ),
+    );
+    expect(untrusted._tag).toBe("NoApplicableGrant");
+
+    const localPrincipal = parse(Principal)("user:local");
+    const trusted = await runResolver(
+      resolveFact(
+        decisionInput({
+          principal: localPrincipal,
+          submissionContext: externalContext(localPrincipal),
+          envelope: { ...envelope, actor: parse(Actor)(localPrincipal) },
+          canonicalFacts: approvalFacts,
+          governance: resolveCompositionGovernance({}),
+        }),
+      ),
+    );
+    expect(trusted._tag).toBe("ExecutableApprovalDecisionAuthority");
+
+    const configuredGovernance = resolveCompositionGovernance({
+      authenticator: makeStaticAuthenticator({
+        token: parse(Principal)("user:spoofable"),
+      }),
+    });
+    const configuredOutsider = await runResolver(
+      Effect.flip(
+        resolveFact(
+          decisionInput({
+            principal: parse(Principal)("user:spoofable"),
+            submissionContext: externalContext(
+              parse(Principal)("user:spoofable"),
+            ),
+            envelope,
+            canonicalFacts: approvalFacts,
+            governance: configuredGovernance,
+          }),
+        ),
+      ),
+    );
+    expect(configuredOutsider._tag).toBe("NoApplicableGrant");
+  });
+
   it("resolver produces exact-bound facts; no CommandGateway/mutation/approval/tool path", async () => {
     const fact = await runResolver(
       resolveFact(
@@ -215,7 +466,12 @@ describe("P12-002 authority resolver production plane", () => {
             },
           },
           canonicalFacts: { projectId: PROJECT },
-          grants: [makeGrant("RegisterProjectTool")],
+          grants: [
+            {
+              ...makeGrant("RegisterProjectTool"),
+              subject: { _tag: "HumanPrincipal", principal: AGENT },
+            },
+          ],
         }),
       ),
     );
@@ -276,6 +532,46 @@ describe("P12-002 authority resolver production plane", () => {
     ]) {
       expect(source.includes(forbidden), forbidden).toBe(false);
     }
+  });
+
+  it("gives an exact verifier role a narrow read-and-execute ceiling without a reusable grant", async () => {
+    const verifier = await runResolver(
+      Effect.gen(function* () {
+        const resolver = yield* AuthorityResolverPort;
+        return yield* resolver.resolveInvocation(
+          invocationInput({
+            grants: [],
+            delegationDepth: 1,
+            policy: makeProjectPolicy({ delegationCeiling: 0 }),
+            executionRole: "Verifier",
+            intent: {
+              ...invocationInput().intent,
+              requestedCapabilities: ["fs:read", "shell:exec"],
+            },
+          }),
+        );
+      }),
+    );
+    expect(verifier.allowedCapabilities).toEqual(["fs:read", "shell:exec"]);
+
+    const denied = await runResolver(
+      Effect.flip(
+        Effect.gen(function* () {
+          const resolver = yield* AuthorityResolverPort;
+          return yield* resolver.resolveInvocation(
+            invocationInput({
+              grants: [],
+              executionRole: "Verifier",
+              intent: {
+                ...invocationInput().intent,
+                requestedCapabilities: ["fs:write"],
+              },
+            }),
+          );
+        }),
+      ),
+    );
+    expect(denied._tag).toBe("CapabilityCeilingExceeded");
   });
 
   it("only the exact (principal, commandType, commandId, fingerprint) tuple yields a fact", async () => {
@@ -386,6 +682,39 @@ describe("P12-002 authority resolver production plane", () => {
     expect(revoked._tag).toBe("NoApplicableGrant");
   });
 
+  it("wrong-subject and expired grants are never authority facts", async () => {
+    const wrongSubject = (await runResolver(
+      resolveError(
+        decisionInput({
+          grants: [
+            {
+              ...makeGrant(`AssignWork@${WORKSPACE}`),
+              subject: {
+                _tag: "WorkspaceAgent",
+                workspaceId: OTHER_WORKSPACE,
+              },
+            },
+          ],
+        }),
+      ),
+    )) as { _tag: string };
+    expect(wrongSubject._tag).toBe("NoApplicableGrant");
+
+    const expired = (await runResolver(
+      resolveError(
+        decisionInput({
+          grants: [
+            {
+              ...makeGrant(`AssignWork@${WORKSPACE}`),
+              expiresAt: ISSUED_AT,
+            },
+          ],
+        }),
+      ),
+    )) as { _tag: string };
+    expect(expired._tag).toBe("NoApplicableGrant");
+  });
+
   it("permission_grants migration 12 + repository: only Active grants are loaded; revoke removes the fact", async () => {
     await run(
       Effect.gen(function* () {
@@ -435,7 +764,7 @@ describe("P12-002 authority resolver production plane", () => {
   it("GrantPermission / RevokePermission handlers are the only durable writers (CI-1) and emit PermissionChanged", async () => {
     await run(
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P29_MIGRATIONS);
         const tx = yield* TransactionPort;
         const repo = yield* PermissionGrantRepository;
         const grantHandler = makeGrantPermissionHandler({ grants: repo });
@@ -452,9 +781,11 @@ describe("P12-002 authority resolver production plane", () => {
               issuedAt: ISSUED_AT,
               payload: {
                 permissionGrantId: GRANT,
-                scope: `AssignWork@${WORKSPACE}`,
                 issuer: HUMAN,
-                lifetime: "PT1H",
+                subject: { _tag: "WorkspaceAgent", workspaceId: WORKSPACE },
+                capability: "AssignWork",
+                target: WORKSPACE,
+                expiresAt: "2026-09-23T00:00:00.000Z",
               },
             },
             context,
@@ -465,7 +796,15 @@ describe("P12-002 authority resolver production plane", () => {
           expect(granted.value.events).toHaveLength(1);
           expect(granted.value.events[0]?.eventType).toBe("PermissionChanged");
         }
-        expect((yield* tx.transact(repo.activeGrants(PROJECT))).length).toBe(1);
+        const activeGrant = yield* tx.transact(repo.activeGrants(PROJECT));
+        expect(activeGrant).toHaveLength(1);
+        expect(activeGrant[0]).toMatchObject({
+          subject: { _tag: "WorkspaceAgent", workspaceId: WORKSPACE },
+          capability: "AssignWork",
+          target: WORKSPACE,
+          validFrom: ISSUED_AT,
+          expiresAt: "2026-09-23T00:00:00.000Z",
+        });
 
         const revoked = yield* tx.transact(
           revokeHandler.execute(
@@ -488,4 +827,58 @@ describe("P12-002 authority resolver production plane", () => {
       }),
     );
   });
+
+  it.each([
+    ["null target", { target: null }],
+    ["whitespace target", { target: "   " }],
+    ["null expiry", { expiresAt: null }],
+    ["invalid expiry", { expiresAt: "tomorrow" }],
+    ["expired expiry", { expiresAt: "2026-09-21T23:59:59.999Z" }],
+  ] as const)(
+    "rejects %s before writing a PermissionGrant",
+    async (_caseName, override) => {
+      let writes = 0;
+      const handler = makeGrantPermissionHandler({
+        grants: {
+          put: () =>
+            Effect.sync(() => {
+              writes += 1;
+            }),
+        } as never,
+      });
+      const payload = {
+        permissionGrantId: GRANT,
+        issuer: HUMAN,
+        subject: { _tag: "WorkspaceAgent", workspaceId: WORKSPACE },
+        capability: "fs:write",
+        target: WORKSPACE,
+        expiresAt: "2026-09-23T00:00:00.000Z",
+        ...override,
+      };
+      const result = await run(
+        Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          return yield* tx.transact(
+            handler.execute(
+              {
+                commandType: "GrantPermission",
+                commandId: COMMAND,
+                projectId: PROJECT,
+                actor: ACTOR,
+                issuedAt: ISSUED_AT,
+                payload,
+              } as never,
+              externalContext(HUMAN),
+            ),
+          );
+        }),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AuthorityDenied" },
+      });
+      expect(writes).toBe(0);
+    },
+  );
 });

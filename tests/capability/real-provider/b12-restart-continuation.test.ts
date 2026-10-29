@@ -3,12 +3,16 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe } from "vitest";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
 import { runAndCapture } from "../support/capture.js";
-import { makePublicProject, newCapabilityId } from "../support/public-chat.js";
+import {
+  makePublicProject,
+  newCapabilityId,
+  publicProjectPayload,
+} from "../support/public-chat.js";
 import type { HttpProviderRuntime } from "./http-sdk-client.js";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
@@ -19,17 +23,38 @@ const temporaryDirectories: string[] = [];
 const spawnedChildren: ChildProcess[] = [];
 const startedServers: Server[] = [];
 
-afterEach(() => {
+const terminateChild = async (child: ChildProcess): Promise<void> => {
+  if (child.exitCode !== null) return;
+  const exited = new Promise<void>((resolveExit) => {
+    child.once("exit", () => resolveExit());
+  });
+  child.kill("SIGKILL");
+  await Promise.race([
+    exited,
+    new Promise<void>((resolveTimeout) => setTimeout(resolveTimeout, 5_000)),
+  ]);
+};
+
+afterEach(async () => {
   for (const child of spawnedChildren.splice(0)) {
-    if (child.exitCode === null) {
-      child.kill("SIGKILL");
-    }
+    await terminateChild(child);
   }
   for (const server of startedServers.splice(0)) {
-    server.close();
+    if (server.listening) {
+      server.closeIdleConnections();
+      server.closeAllConnections();
+      await new Promise<void>((resolveClose) =>
+        server.close(() => resolveClose()),
+      );
+    }
   }
   for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
   }
 });
 
@@ -124,6 +149,7 @@ interface DaemonEnv {
 
 const spawnDaemon = (input: DaemonEnv): ChildProcess => {
   const child = spawn(process.execPath, [DAEMON_ENTRY], {
+    cwd: dirname(input.databaseFile),
     env: {
       ...process.env,
       ARBOR_DB: input.databaseFile,
@@ -280,7 +306,7 @@ describe("B12 L3 — daemon process restart continues cognition without replay",
                 projectId: project.projectId,
                 actor: "user:capability-test",
                 issuedAt: new Date().toISOString(),
-                payload: project,
+                payload: publicProjectPayload(project),
               }),
             });
             const payload = (await response.json()) as {
@@ -349,6 +375,7 @@ describe("B12 L3 — daemon process restart continues cognition without replay",
             2,
           );
           daemon2.kill("SIGKILL");
+          await terminateChild(daemon2);
 
           return {
             memoryCode,

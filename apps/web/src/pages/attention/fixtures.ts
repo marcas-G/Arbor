@@ -4,6 +4,7 @@
  * 经 `id()` cast（同 views/fixtures.ts 约定）。
  */
 import type { AttentionRes, Problem } from "@arbor/api-contracts";
+import { workDetailCurrent } from "../work/fixtures.js";
 
 const id = (value: string): never => value as never;
 
@@ -32,6 +33,9 @@ export const attentionPageTypical: AttentionRes = {
       dedupKey: "vo-4",
       summaryRef: "verifier-orphan#4",
       occurredAt: "2026-09-23T08:55:00.000Z",
+      workId: id("wrk_4"),
+      verificationId: id("ver_4"),
+      targetWorkRevision: workDetailCurrent.revision,
     },
     {
       source: "MysterySource" as never,

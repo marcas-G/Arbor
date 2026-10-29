@@ -46,6 +46,12 @@ describe("Grant issuer read-only restriction", () => {
         onSubmitted={vi.fn()}
       />,
     );
+    fireEvent.change(screen.getByLabelText(/target（必填/), {
+      target: { value: "ws_018f1f62-7b3c-7abc-8def-0123456789ab" },
+    });
+    fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
+      target: { value: new Date(Date.now() + 60 * 60_000).toISOString() },
+    });
     fireEvent.click(screen.getByRole("button", { name: "授予" }));
     await waitFor(() => expect(mock.mock.calls.length).toBe(1));
     const body = readBody(mock);

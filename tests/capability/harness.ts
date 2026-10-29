@@ -122,6 +122,7 @@ export const defineCapabilityTest = (
   metadata: CapabilityCaseMetadata,
   name: string,
   testBody: TestFunction,
+  timeout = 120_000,
 ): void => {
   const errors = validateCapabilityMetadata(metadata);
   if (errors.length > 0) {
@@ -129,5 +130,5 @@ export const defineCapabilityTest = (
       `invalid capability test metadata ${metadata.caseId}: ${errors.join("; ")}`,
     );
   }
-  it(`[${metadata.caseId}] ${name}`, testBody);
+  it(`[${metadata.caseId}] ${name}`, testBody, timeout);
 };

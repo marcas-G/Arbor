@@ -1,71 +1,121 @@
+import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type AuthorityResolverPort,
+  type AttentionPollPolicyConfig,
+  type AttentionPollQualificationProbe,
+  AuthorityResolverPort,
   CommandGateway,
   type CommandHandlerRegistry,
   type CompletionConsumerDependencies,
   type ConsumerLoopStores,
+  type DependencyCoordinatorDependencies,
   type EnvironmentDriftDeps,
+  ensureVerifierSpawned,
   type ParentUserGovernanceFacts,
   planSnapshotRetention,
+  pollOnce,
   pruneSnapshots,
   type RetentionPolicy,
-  runConversationSettlementSweep,
-  runConversationTrigger,
+  runAttentionPollOnce,
+  runConversationResponseSettlementSweep,
+  runConversationResponseTrigger,
+  runVerificationConsumer,
+  runVerificationSignalReconciliationSweep,
   type SnapshotPruningResult,
   type SnapshotRetentionError,
   type SnapshotRetentionPlan,
   type VerificationConsumerDependencies,
+  type VerificationSignalReconciliationQualificationProbe,
+  WorkflowSignalConsumer,
 } from "@arbor/application";
 import {
-  ExecutionId,
+  conversationResponseEpisode,
+  type ExecutionId,
   type Principal,
   type ProjectId,
-  parse,
+  type WakeReason,
 } from "@arbor/domain";
 import {
+  type ExecutionLeaseQualificationProbe,
+  type ExecutionSettlementQualificationProbe,
+  preDispatchCheck,
   runExecution,
+  type SubmittedDecisionRecoveryQualificationProbe,
   startupRecovery,
   sweepRecovery,
 } from "@arbor/execution-runtime";
-import { P16_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
+import {
+  CURRENT_MIGRATIONS,
+  makeProjectAttentionProjectionStore,
+  P10_ATTENTION_CONSUMER_ID,
+  runMigrations,
+} from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   type AgentExecutionStateStore,
+  AttentionPollStore,
+  AttentionProjectionStore,
   BlobStorePort,
   Clock,
+  type CommandStore,
+  CommandStore as CommandStoreService,
   ConsumerDeadLetterStore,
   ConsumerOffsetStore,
+  ControlApprovalStore,
+  ConversationAttemptStore,
+  ConversationResponseJobStore,
+  DeliverableRepository,
+  DependencyRepository,
   DomainEventJournal,
   EnvironmentResolverPort,
   EnvironmentRevisionStore,
+  ExecutableApprovalStore,
   type ExecutionDriverPort,
   ExecutionRepository,
-  type ExecutionScheduler,
+  ExecutionScheduler,
+  FormationFulfillmentStore,
   FormationProposalStore,
-  HumanMessageStore,
-  type IdGenerator,
+  IdGenerator,
+  InboxProjectionStore,
   type LeaseService,
+  OwnershipWriteService,
   type PermissionGrantRepository,
+  ProjectEnvironmentPort,
   ProjectionQueryPort,
   ProjectionStore,
   ProjectRepository,
+  ProviderDeploymentBreaker,
   type ReconciliationSource,
   RecordEnvironmentChange,
+  RecoveryAttentionFactStore,
+  type ResourceOwnershipRepository,
+  RetryVerificationOriginRepository,
   type RuntimeSafetyGate,
+  type SandboxPolicyDecisionStore,
+  SandboxProviderUnavailableAttentionQueue,
+  SandboxProviderUnavailableStore,
   type SchedulerTimerStore,
+  ToolObservationReplayAttentionFactStore,
   TransactionPort,
   VerificationRepository,
+  VerificationSignalReconciliationStore,
   type WorkerDispatchPort,
   WorkRepository,
   WorkspaceRepository,
+  WorkspaceResourceActivationStore,
+  WorkWaitStore,
 } from "@arbor/ports";
+import { reconcileProjectActivationAttention } from "@arbor/projection-runtime";
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { T1RecoveryState } from "./health.js";
 import { makeResponseBodyOf } from "./response-body.js";
+import {
+  SandboxAuthoritySnapshot,
+  sandboxIssuerSnapshotOf,
+} from "./sandbox-authority-bundle.js";
 import type { AuthenticatorService } from "./transport/auth.js";
 import {
   publishConversationSettled,
@@ -75,25 +125,29 @@ import {
   type ConsumerLoopDaemon,
   completionConsumerDaemon,
   type DriftWatcherTrigger,
+  dependencyCoordinatorDaemon,
   driftWatcherFromDeps,
   formationConsumerDaemon,
   makeProductionDaemon,
   type ProductionDaemon,
   type RecoveryDaemon,
   verificationConsumerDaemon,
+  workflowSignalConsumerDaemon,
 } from "./transport/daemons.js";
 import {
   type CliShell,
+  type CreateProjectPostCommitBeforeActivationQualificationProbe,
   type ExternalSubmissionPort,
   type HttpShell,
   makeCliShell,
   makeExternalSubmissionFromServices,
   makeHttpShell,
+  makeRepositoryInputsLoader,
   makeTransportCore,
   makeWebShell,
   makeWebSocketShell,
   type TransportCore,
-  viewQueryFaceFromPort,
+  viewQueryFaceWithRetryAvailability,
   type WebShell,
   type WebSocketShell,
 } from "./transport/index.js";
@@ -118,6 +172,9 @@ export interface TransportBoundaryService {
   readonly webSocket: WebSocketShell;
   readonly cli: CliShell;
   readonly web: WebShell;
+  /** Explicit composition fact. The AuthenticatorService itself may be the
+   * local fallback even when no remote authenticator was configured. */
+  readonly authenticatorConfigured: boolean;
   /** The transport-boundary authenticator (P12 `10` §3) — exposed for
    * app-level transport surfaces (conversation-progress SSE ownership). */
   readonly authenticator: AuthenticatorService;
@@ -132,13 +189,23 @@ export type TransportBoundaryServices =
   | ProjectionQueryPort
   | AuthorityResolverPort
   | CommandGateway
+  | CommandStore
   | CommandHandlerRegistry
   | TransactionPort
   | ProjectRepository
   | WorkspaceRepository
+  | WorkspaceResourceActivationStore
   | ExecutionRepository
   | WorkRepository
-  | PermissionGrantRepository;
+  | VerificationRepository
+  | PermissionGrantRepository
+  | Clock
+  | IdGenerator
+  | ExecutionScheduler
+  | ProjectEnvironmentPort
+  | OwnershipWriteService
+  | ResourceOwnershipRepository
+  | SandboxAuthoritySnapshot;
 
 /** The production transport boundary: the composition-root submission face
  * (resolver + canonicalFacts/grants loading) plus the P12 shells bound to the
@@ -146,14 +213,46 @@ export type TransportBoundaryServices =
 export const TransportBoundaryLive = (
   authenticator: AuthenticatorService,
   governance: ParentUserGovernanceFacts,
+  authenticatorConfigured: boolean,
+  postCommitBeforeActivationProbe?: CreateProjectPostCommitBeforeActivationQualificationProbe,
 ): Layer.Layer<TransportBoundary, never, TransportBoundaryServices> =>
   Layer.effect(
     TransportBoundary,
     Effect.gen(function* () {
       const queryPort = yield* ProjectionQueryPort;
-      const submission = yield* makeExternalSubmissionFromServices(governance);
+      const resolver = yield* AuthorityResolverPort;
+      const transaction = yield* TransactionPort;
+      const authoritySnapshot = yield* SandboxAuthoritySnapshot;
+      const sandboxPolicyGrantIssuerConfigSnapshot =
+        sandboxIssuerSnapshotOf(authoritySnapshot);
+      const retryVerificationOrigins = yield* Effect.serviceOption(
+        RetryVerificationOriginRepository,
+      );
+      const loadInputs = yield* makeRepositoryInputsLoader(
+        governance,
+        sandboxPolicyGrantIssuerConfigSnapshot,
+      );
+      const submission = yield* makeExternalSubmissionFromServices(
+        governance,
+        postCommitBeforeActivationProbe,
+        sandboxPolicyGrantIssuerConfigSnapshot,
+      );
       const core = makeTransportCore({
-        views: viewQueryFaceFromPort(queryPort),
+        views: viewQueryFaceWithRetryAvailability(
+          queryPort,
+          resolver,
+          loadInputs,
+          (workspaceId) =>
+            Option.isSome(retryVerificationOrigins)
+              ? transaction
+                  .transact(
+                    retryVerificationOrigins.value.listCurrentUnboundLegacyInbox(
+                      workspaceId,
+                    ),
+                  )
+                  .pipe(Effect.orDie)
+              : Effect.succeed([]),
+        ),
         authenticator,
         submission,
       });
@@ -164,6 +263,7 @@ export const TransportBoundaryLive = (
         webSocket: makeWebSocketShell(core),
         cli: makeCliShell(core),
         authenticator,
+        authenticatorConfigured,
         web: makeWebShell(core),
       });
     }),
@@ -183,20 +283,64 @@ export class ProductionDaemonService extends Context.Service<
   ProductionDaemonServiceShape<ProductionDaemonServices>
 >()("arbor/ProductionDaemonService") {}
 
+/** Test-only process-local pause seam; regular daemon startup leaves it absent. */
+export type ConversationResponseQualificationProbe = (event: {
+  readonly boundary:
+    | "AH13BeforeResponseSweepCommit"
+    | "AH13AfterResponseSweepCommit";
+  readonly messageId: string;
+  readonly executionId: string;
+}) => Promise<void>;
+
+/** Test-only pause seam around the real Executable-approval TTL transaction. */
+export type ExecutableApprovalExpiryQualificationProbe = (
+  event:
+    | {
+        readonly boundary: "P38BeforeExecutableApprovalExpiryTransaction";
+        readonly now: string;
+      }
+    | {
+        readonly boundary: "P38AfterExecutableApprovalExpiryMutationBeforeCommit";
+        readonly now: string;
+        readonly approvalIds: ReadonlyArray<string>;
+      },
+) => Promise<void>;
+
 export interface ProductionDaemonConfig {
   readonly projectId?: ProjectId;
   readonly principal: Principal;
+  /** Test-only startup trace; absent from ordinary production composition. */
+  readonly startupDiagnosticProbe?: (phase: string) => void;
   readonly batchSize?: number;
+  /** P12 v1.43 deployment-pinned Attention poll lease, queue and backoff profile. */
+  readonly attentionPollPolicy?: AttentionPollPolicyConfig;
+  readonly bindingFingerprint: string;
+  readonly configurationRevision: string;
+  readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
+  readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
+  readonly submittedDecisionRecoveryQualificationProbe?: SubmittedDecisionRecoveryQualificationProbe;
+  readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
+  readonly executableApprovalExpiryQualificationProbe?: ExecutableApprovalExpiryQualificationProbe;
+  /** Process-local test seam for the durable Deliver Attention poll boundary. */
+  readonly attentionPollQualificationProbe?: AttentionPollQualificationProbe;
+  readonly verificationSignalReconciliationQualificationProbe?: VerificationSignalReconciliationQualificationProbe;
 }
 
 export type ProductionDaemonServices =
   | SqlClient
   | Clock
   | CommandGateway
+  | CommandStoreService
   | TransactionPort
   | DomainEventJournal
   | ConsumerOffsetStore
   | ConsumerDeadLetterStore
+  | AttentionPollStore
+  | AttentionProjectionStore
+  | RecoveryAttentionFactStore
+  | SandboxPolicyDecisionStore
+  | SandboxProviderUnavailableStore
+  | SandboxProviderUnavailableAttentionQueue
   | ProjectionStore
   | ExecutionRepository
   | LeaseService
@@ -210,16 +354,31 @@ export type ProductionDaemonServices =
   | IdGenerator
   | VerificationRepository
   | AcceptanceRepository
+  | DependencyRepository
+  | DeliverableRepository
   | WorkRepository
+  | WorkWaitStore
   | WorkspaceRepository
+  | WorkspaceResourceActivationStore
   | FormationProposalStore
+  | FormationFulfillmentStore
+  | InboxProjectionStore
+  | ExecutableApprovalStore
+  | WorkflowSignalConsumer
   | EnvironmentResolverPort
+  | ProjectEnvironmentPort
   | RecordEnvironmentChange
   | EnvironmentRevisionStore
   | BlobStorePort
   | T1RecoveryState
-  | HumanMessageStore
-  | ProjectRepository;
+  | OwnershipWriteService
+  | ConversationResponseJobStore
+  | ControlApprovalStore
+  | ConversationAttemptStore
+  | ProviderDeploymentBreaker
+  | ProjectRepository
+  | RetryVerificationOriginRepository
+  | VerificationSignalReconciliationStore;
 
 /** The production daemon assembly. `start` = migrations -> T1 startup recovery
  * -> mark readiness; `recoveryTick` = T2/T3 sweep; `pollConsumers` = one
@@ -231,21 +390,133 @@ export const ProductionDaemonServiceLive = (
     ProductionDaemonService,
     Effect.gen(function* () {
       const tx = yield* TransactionPort;
+      const sql = yield* SqlClient;
+      const clock = yield* Clock;
+      const executableApprovals = yield* ExecutableApprovalStore;
+      const ids = yield* IdGenerator;
+      const attentionPoll = yield* AttentionPollStore;
       const journal = yield* DomainEventJournal;
       const offsets = yield* ConsumerOffsetStore;
       const deadLetters = yield* ConsumerDeadLetterStore;
       const projection = yield* ProjectionStore;
+      const attentionProjection = yield* AttentionProjectionStore;
+      const activationIntents = yield* WorkspaceResourceActivationStore;
+      const ownershipWrite = yield* OwnershipWriteService;
+      const projectEnvironment = yield* ProjectEnvironmentPort;
+      const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
+      const verificationSignalReconciliation = yield* Effect.serviceOption(
+        VerificationSignalReconciliationStore,
+      );
+      const sandboxUnavailableQueue = yield* Effect.serviceOption(
+        SandboxProviderUnavailableAttentionQueue,
+      );
+      const sandboxUnavailableFacts = yield* Effect.serviceOption(
+        SandboxProviderUnavailableStore,
+      );
+      const toolObservationReplayAttentionFacts = yield* Effect.serviceOption(
+        ToolObservationReplayAttentionFactStore,
+      );
       const verifications = yield* VerificationRepository;
       const acceptances = yield* AcceptanceRepository;
+      const dependencies = yield* DependencyRepository;
+      const deliverables = yield* DeliverableRepository;
       const works = yield* WorkRepository;
       const proposals = yield* FormationProposalStore;
+      const formationFulfillments = yield* FormationFulfillmentStore;
+      const controlApprovals = yield* ControlApprovalStore;
+      const inbox = yield* InboxProjectionStore;
       const workspaces = yield* WorkspaceRepository;
+      const executions = yield* ExecutionRepository;
+      const workflowSignals = yield* WorkflowSignalConsumer;
+      const commandStore = yield* CommandStoreService;
+      const retryOrigins = yield* RetryVerificationOriginRepository;
+      const waitStore = yield* WorkWaitStore;
+      const scheduler = yield* ExecutionScheduler;
+      const projectRepository = yield* ProjectRepository;
       const gateway = yield* CommandGateway;
       const t1 = yield* T1RecoveryState;
       const resolver = yield* EnvironmentResolverPort;
       const changes = yield* RecordEnvironmentChange;
       const revisions = yield* EnvironmentRevisionStore;
       const blobs = yield* BlobStorePort;
+
+      const f18ReconciliationLeaseOwner = `f18-reconciliation:${randomUUID()}`;
+      const reconcileVerificationSignals = Effect.gen(function* () {
+        if (Option.isNone(verificationSignalReconciliation)) return;
+        const configuredProjects = yield* sql.unsafe<{
+          readonly project_id: string;
+        }>("SELECT project_id FROM projects ORDER BY project_id");
+        for (const project of configuredProjects) {
+          yield* runVerificationSignalReconciliationSweep(
+            project.project_id as ProjectId,
+            {
+              tx,
+              store: verificationSignalReconciliation.value,
+              journal,
+              commands: commandStore,
+              retryOrigins,
+              verifications,
+              works,
+              workspaces,
+              projects: projectRepository,
+              waits: waitStore,
+              scheduler,
+              inbox,
+              clock,
+              ...(config.verificationSignalReconciliationQualificationProbe ===
+              undefined
+                ? {}
+                : {
+                    qualificationProbe:
+                      config.verificationSignalReconciliationQualificationProbe,
+                  }),
+            },
+            {
+              leaseOwner: f18ReconciliationLeaseOwner,
+              leaseTtlMs: config.attentionPollPolicy?.leaseTtlMs ?? 30_000,
+              batchSize: config.batchSize ?? 50,
+            },
+          );
+        }
+      });
+
+      const expireExecutableApprovals = Effect.gen(function* () {
+        const now = yield* clock.now();
+        if (config.executableApprovalExpiryQualificationProbe !== undefined) {
+          yield* Effect.promise(
+            () =>
+              config.executableApprovalExpiryQualificationProbe?.({
+                boundary: "P38BeforeExecutableApprovalExpiryTransaction",
+                now,
+              }) ?? Promise.resolve(),
+          );
+        }
+        yield* tx.transact(
+          Effect.gen(function* () {
+            const expired = yield* executableApprovals.expireDue({
+              now,
+              expiredBy: config.principal,
+              ...(config.batchSize === undefined
+                ? {}
+                : { batchSize: config.batchSize }),
+            });
+            if (
+              config.executableApprovalExpiryQualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  config.executableApprovalExpiryQualificationProbe?.({
+                    boundary:
+                      "P38AfterExecutableApprovalExpiryMutationBeforeCommit",
+                    now,
+                    approvalIds: expired.map((approval) => approval.approvalId),
+                  }) ?? Promise.resolve(),
+              );
+            }
+            return expired;
+          }),
+        );
+      }).pipe(Effect.orDie);
 
       const stores: ConsumerLoopStores = {
         tx,
@@ -255,12 +526,23 @@ export const ProductionDaemonServiceLive = (
         projection,
       };
 
+      const attentionPollPolicy = {
+        leaseOwner: yield* ids.generate<string>("AttentionPollOwner"),
+        leaseTtlMs: config.attentionPollPolicy?.leaseTtlMs ?? 30_000,
+        eventBatchSize: config.batchSize ?? 50,
+        queueBatchSize: config.attentionPollPolicy?.queueBatchSize ?? 64,
+        baseBackoffMs: config.attentionPollPolicy?.baseBackoffMs ?? 1_000,
+        maxBackoffMs: config.attentionPollPolicy?.maxBackoffMs ?? 60_000,
+        backoffExponentCap: config.attentionPollPolicy?.backoffExponentCap ?? 6,
+      };
+
       const consumers: Array<ConsumerLoopDaemon<ProductionDaemonServices>> = [];
       // Product shape: consumers run for EVERY open project, discovered at
       // TICK time (after migrations), incrementally registered — projects
       // created at runtime get consumers without a daemon restart. The
       // explicit config entry is always included first.
       const seenConsumerProjects = new Set<string>();
+      const reconciledLegacyClaims = new Set<string>();
       const dynamicConsumers: Array<
         ConsumerLoopDaemon<ProductionDaemonServices>
       > = [];
@@ -273,11 +555,16 @@ export const ProductionDaemonServiceLive = (
             ),
           findById: (verificationId) =>
             tx.transact(verifications.findById(verificationId)),
+          listByWork: (workId) => tx.transact(verifications.listByWork(workId)),
         },
         works: { findById: (workId) => tx.transact(works.findById(workId)) },
         workspaces: {
           findById: (workspaceId) =>
             tx.transact(workspaces.findById(workspaceId)),
+        },
+        executions: {
+          findById: (executionId) =>
+            tx.transact(executions.findById(executionId)),
         },
       };
       const completionDeps: CompletionConsumerDependencies = {
@@ -291,6 +578,45 @@ export const ProductionDaemonServiceLive = (
             tx.transact(acceptances.findByWorkRevision(workId, workRevision)),
         },
         works: { findById: (workId) => tx.transact(works.findById(workId)) },
+      };
+      const dependencyDeps: DependencyCoordinatorDependencies<never> = {
+        gateway,
+        dependencies: {
+          listUnsatisfiedByProject: (targetProjectId) =>
+            tx.transact(dependencies.listUnsatisfiedByProject(targetProjectId)),
+        },
+        deliverables: {
+          findById: (deliverableId) =>
+            tx.transact(deliverables.findById(deliverableId)),
+          listArtifactRoles: (deliverableId) =>
+            tx.transact(deliverables.listArtifactRoles(deliverableId)),
+          deliverablesByProject: (targetProjectId) =>
+            Effect.gen(function* () {
+              const rows = yield* tx.transact(
+                deliverables.listByProject(targetProjectId),
+              );
+              return yield* Effect.forEach(
+                rows,
+                (row) =>
+                  Effect.map(
+                    tx.transact(
+                      deliverables.listArtifactRoles(row.deliverableId),
+                    ),
+                    (artifactRoles) => ({
+                      deliverableId: row.deliverableId,
+                      sourceWorkId: row.sourceWorkId,
+                      sourceWorkRevision: row.sourceWorkRevision,
+                      kind: row.kind,
+                      artifactRoles,
+                    }),
+                  ),
+                { concurrency: 1 },
+              );
+            }),
+        },
+        works: {
+          findById: (workId) => tx.transact(works.findById(workId)),
+        },
       };
 
       const registerProjectConsumers = Effect.gen(function* () {
@@ -307,6 +633,34 @@ export const ProductionDaemonServiceLive = (
           seenConsumerProjects.add(row.project_id);
         }
         for (const projectIdValue of seenConsumerProjects) {
+          const projectId = projectIdValue as never;
+          if (!reconciledLegacyClaims.has(projectIdValue)) {
+            let sequence = 0;
+            while (true) {
+              const historical = yield* tx.transact(
+                journal.readAfter(projectId, sequence, 500),
+              );
+              if (historical.length === 0) break;
+              const claimEvents = historical.filter(
+                (event) => event.eventType === "ExecutionSettled",
+              );
+              if (claimEvents.length > 0) {
+                yield* runVerificationConsumer(
+                  claimEvents.map((event) => ({
+                    eventType: event.eventType,
+                    payload: event.payload,
+                    eventId: String(event.eventId),
+                  })),
+                  verificationDeps,
+                  projectId,
+                  config.principal,
+                );
+              }
+              sequence = historical.at(-1)?.sequence ?? sequence;
+              if (historical.length < 500) break;
+            }
+            reconciledLegacyClaims.add(projectIdValue);
+          }
           if (
             dynamicConsumers.some(
               (consumer) => String(consumer.projectId) === projectIdValue,
@@ -314,8 +668,44 @@ export const ProductionDaemonServiceLive = (
           ) {
             continue;
           }
-          const projectId = projectIdValue as never;
           dynamicConsumers.push(
+            {
+              consumerId: P10_ATTENTION_CONSUMER_ID,
+              projectId,
+              batchSize: config.batchSize ?? 50,
+              poll: pollOnce(
+                P10_ATTENTION_CONSUMER_ID,
+                projectId,
+                config.batchSize ?? 50,
+                {
+                  ...stores,
+                  projection: makeProjectAttentionProjectionStore(
+                    projectId,
+                    recoveryAttentionFacts,
+                    attentionProjection,
+                    activationIntents,
+                    Option.isSome(toolObservationReplayAttentionFacts)
+                      ? toolObservationReplayAttentionFacts.value
+                      : undefined,
+                    Option.isSome(sandboxUnavailableFacts)
+                      ? sandboxUnavailableFacts.value
+                      : undefined,
+                    Option.isSome(sandboxUnavailableQueue)
+                      ? sandboxUnavailableQueue.value
+                      : undefined,
+                  ),
+                  handlers: () => Effect.succeed([]),
+                },
+              ),
+            },
+            dependencyCoordinatorDaemon({
+              consumerId: "dependency-coordinator",
+              projectId,
+              principal: config.principal,
+              batchSize: config.batchSize ?? 50,
+              stores,
+              dependencies: dependencyDeps,
+            }),
             formationConsumerDaemon({
               consumerId: "formation",
               projectId,
@@ -331,6 +721,12 @@ export const ProductionDaemonServiceLive = (
                   findById: (proposalId) =>
                     tx.transact(proposals.findById(proposalId)),
                 },
+                fulfillments: {
+                  put: (record) =>
+                    tx.transact(formationFulfillments.put(record)),
+                },
+                ownershipWrite,
+                environment: projectEnvironment,
               },
             }),
             verificationConsumerDaemon({
@@ -349,6 +745,57 @@ export const ProductionDaemonServiceLive = (
               principal: config.principal,
               dependencies: completionDeps,
             }),
+            workflowSignalConsumerDaemon({
+              consumerId: "workflow-signals",
+              projectId,
+              batchSize: config.batchSize ?? 50,
+              stores,
+              consumer: workflowSignals,
+            }),
+          );
+        }
+      }).pipe(Effect.asVoid);
+      const spawnOpenVerifiers = Effect.gen(function* () {
+        const consumerSql = yield* SqlClient;
+        const rows = yield* consumerSql.unsafe<{
+          verification_id: string;
+          project_id: string;
+        }>(
+          "SELECT verification_id, project_id FROM verifications WHERE state = 'Open' ORDER BY created_at, verification_id",
+        );
+        for (const row of rows) {
+          const verification = yield* tx.transact(
+            verifications.findById(row.verification_id as never),
+          );
+          if (Option.isNone(verification)) continue;
+          // P8 G4: execution ownership is frozen on the Verification row.
+          // A later Work/Workspace ownership move must not retarget a pending
+          // verifier spawn to a different owner.
+          const ownerWorkspaceId = verification.value.ownerWorkspaceId;
+          if (ownerWorkspaceId === undefined) continue;
+          const verifierExecutionId =
+            verification.value.verificationExecutionIds[0];
+          if (verifierExecutionId === undefined) continue;
+          const mission = verification.value.missionSnapshot;
+          const required = mission.criteria.filter(
+            (criterion) => criterion.required,
+          ).length;
+          yield* ensureVerifierSpawned(
+            {
+              verification: verification.value,
+              projectId: row.project_id as never,
+              ownerWorkspaceId,
+              verifierExecutionId,
+              missionDigest: `${mission.goal} [criteria=${mission.criteria.length} required=${required}]`,
+            },
+            {
+              gateway,
+              verifications,
+              executions,
+              tx,
+              clock,
+              principal: config.principal,
+            },
           );
         }
       }).pipe(Effect.asVoid);
@@ -357,10 +804,60 @@ export const ProductionDaemonServiceLive = (
         projectId: config.projectId ?? ("" as never),
         batchSize: config.batchSize ?? 50,
         poll: Effect.flatMap(registerProjectConsumers, () =>
-          Effect.forEach(dynamicConsumers, (consumer) => consumer.poll, {
-            concurrency: 1,
-          }),
+          Effect.flatMap(
+            Effect.forEach(dynamicConsumers, (consumer) => consumer.poll, {
+              concurrency: 1,
+            }),
+            () => spawnOpenVerifiers,
+          ),
         ) as never,
+      });
+
+      consumers.push({
+        consumerId: P10_ATTENTION_CONSUMER_ID,
+        batchSize: attentionPollPolicy.eventBatchSize,
+        poll: runAttentionPollOnce(
+          P10_ATTENTION_CONSUMER_ID,
+          attentionPollPolicy,
+          {
+            tx,
+            clock,
+            journal,
+            offsets,
+            deadLetters,
+            pollStore: attentionPoll,
+            recoveryFacts: recoveryAttentionFacts,
+            attentionRows: attentionProjection,
+            ...(Option.isNone(verificationSignalReconciliation)
+              ? {}
+              : {
+                  verificationReconciliationQueue:
+                    verificationSignalReconciliation.value,
+                }),
+            ...(Option.isNone(sandboxUnavailableQueue)
+              ? {}
+              : { sandboxUnavailableQueue: sandboxUnavailableQueue.value }),
+            projectionForProject: (projectId) =>
+              makeProjectAttentionProjectionStore(
+                projectId,
+                recoveryAttentionFacts,
+                attentionProjection,
+                activationIntents,
+                undefined,
+                Option.isSome(sandboxUnavailableFacts)
+                  ? sandboxUnavailableFacts.value
+                  : undefined,
+                Option.isSome(sandboxUnavailableQueue)
+                  ? sandboxUnavailableQueue.value
+                  : undefined,
+              ),
+            ...(config.attentionPollQualificationProbe === undefined
+              ? {}
+              : {
+                  qualificationProbe: config.attentionPollQualificationProbe,
+                }),
+          },
+        ),
       });
 
       const driftDeps: EnvironmentDriftDeps = {
@@ -393,45 +890,197 @@ export const ProductionDaemonServiceLive = (
         },
       };
 
+      const activationAttention = (projectId: ProjectId) =>
+        reconcileProjectActivationAttention(
+          {
+            transactions: tx,
+            activationIntents,
+            attentionProjection,
+          },
+          projectId,
+        );
+      const recoverProjectResourceActivations = Effect.gen(function* () {
+        const intents = yield* tx.transact(activationIntents.listAll());
+        const projectIds = [
+          ...new Set(intents.map((intent) => String(intent.projectId))),
+        ];
+        for (const projectIdValue of projectIds) {
+          yield* activationAttention(projectIdValue as ProjectId);
+        }
+        for (const intent of intents) {
+          if (intent.status !== "Pending") continue;
+          const workspace = yield* tx.transact(
+            workspaces.findById(intent.workspaceId),
+          );
+          if (
+            Option.isNone(workspace) ||
+            workspace.value.projectId !== intent.projectId ||
+            workspace.value.resourceBoundaryRevision !==
+              intent.resourceBoundaryRevision
+          ) {
+            // Keep the durable intent and its path-free Attention visible;
+            // never reconstruct or substitute its boundary.
+            continue;
+          }
+          yield* Effect.match(
+            intent.delegation === null || intent.delegation === undefined
+              ? ownershipWrite.activatePendingWorkspaceResource(
+                  intent.projectId,
+                  intent.workspaceId,
+                  intent.resourceBoundaryRevision,
+                  workspace.value.resourceBoundary.addresses,
+                )
+              : ownershipWrite.activateDelegatedOwnership({
+                  projectId: intent.projectId,
+                  childWorkspaceId: intent.workspaceId,
+                  childResourceBoundaryRevision:
+                    intent.resourceBoundaryRevision,
+                  delegationSourceId: intent.delegation.delegationSourceId,
+                }),
+            {
+              onFailure: () => undefined,
+              onSuccess: () => undefined,
+            },
+          );
+          yield* activationAttention(intent.projectId);
+        }
+      });
+
       const recovery: RecoveryDaemon<ProductionDaemonServices> = {
-        startup: Effect.asVoid(
-          Effect.flatMap(
-            startupRecovery(config.principal),
-            () => t1.markComplete,
-          ),
+        startup: Effect.gen(function* () {
+          yield* expireExecutableApprovals;
+          yield* reconcileVerificationSignals;
+          yield* Effect.sync(() => {
+            try {
+              config.startupDiagnosticProbe?.("daemon.startup-recovery.before");
+            } catch {
+              // Test-only startup diagnostics are non-authoritative.
+            }
+          });
+          yield* startupRecovery(
+            config.principal,
+            config.submittedDecisionRecoveryQualificationProbe,
+          );
+          yield* Effect.sync(() => {
+            try {
+              config.startupDiagnosticProbe?.("daemon.startup-recovery.after");
+            } catch {
+              // Test-only startup diagnostics are non-authoritative.
+            }
+          });
+          yield* recoverProjectResourceActivations;
+          yield* t1.markComplete;
+        }),
+        sweep: Effect.asVoid(
+          Effect.gen(function* () {
+            yield* expireExecutableApprovals;
+            yield* reconcileVerificationSignals;
+            yield* sweepRecovery(
+              config.principal,
+              config.submittedDecisionRecoveryQualificationProbe,
+            );
+          }),
         ),
-        sweep: Effect.asVoid(sweepRecovery(config.principal)),
       };
 
       const conversationTick = Effect.asVoid(
         Effect.gen(function* () {
-          const messages = yield* HumanMessageStore;
+          const jobs = yield* ConversationResponseJobStore;
+          const attempts = yield* ConversationAttemptStore;
+          const breaker = yield* ProviderDeploymentBreaker;
           const projects = yield* ProjectRepository;
           const executions = yield* ExecutionRepository;
           const gateway = yield* CommandGateway;
           const clock = yield* Clock;
           const sql = yield* SqlClient;
           const responseBodyOf = makeResponseBodyOf(sql);
+          const runIfDispatchable = (
+            executionId: ExecutionId,
+            wakeReason: WakeReason,
+          ) =>
+            Effect.gen(function* () {
+              if (!(yield* preDispatchCheck(executionId))) return null;
+              return yield* runExecution(
+                executionId,
+                wakeReason,
+                config.principal,
+                undefined,
+                config.executionSettlementQualificationProbe,
+                config.executionLeaseQualificationProbe,
+              ).pipe(
+                Effect.catchTag("LeaseFencingRejected", () =>
+                  Effect.succeed(null),
+                ),
+              );
+            });
           // Product shape: the daemon drives EVERY project with conversation
           // work (any project a human submits to must be answered — a
           // single-project filter would silently orphan the rest). Per
           // project, the frozen P14 `02` step is unchanged: settle sweep
           // (Claimed → Answered / stale rollback) first, then admit the
           // FIFO-oldest pending message when idle.
-          const activeProjects = yield* tx.transact(
-            messages.projectsWithConversationWork(),
-          );
+          const activeProjects = yield* tx.transact(jobs.projectsWithWork());
           for (const projectId of activeProjects) {
-            yield* tx.transact(
-              runConversationSettlementSweep(
-                { messages, executions, clock, responseBodyOf },
+            const sweepTarget =
+              config.conversationResponseQualificationProbe === undefined
+                ? undefined
+                : (yield* sql.unsafe<{
+                    message_id: string;
+                    active_execution_id: string;
+                  }>(
+                    "SELECT j.message_id, j.active_execution_id FROM conversation_response_jobs j JOIN executions e ON e.execution_id = j.active_execution_id WHERE j.project_id = ? AND j.state = 'Running' AND e.settled_at IS NOT NULL ORDER BY j.created_at LIMIT 1",
+                    [projectId],
+                  ))[0];
+            if (
+              sweepTarget !== undefined &&
+              config.conversationResponseQualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  config.conversationResponseQualificationProbe?.({
+                    boundary: "AH13BeforeResponseSweepCommit",
+                    messageId: sweepTarget.message_id,
+                    executionId: sweepTarget.active_execution_id,
+                  }) ?? Promise.resolve(),
+              );
+            }
+            const sweepRecords = yield* tx.transact(
+              runConversationResponseSettlementSweep(
+                {
+                  jobs,
+                  attempts,
+                  executions,
+                  clock,
+                  responseBodyOf,
+                  breaker,
+                  bindingFingerprint: config.bindingFingerprint,
+                  configurationRevision: config.configurationRevision,
+                },
                 projectId,
               ),
             );
-            yield* runConversationTrigger(
+            if (
+              sweepTarget !== undefined &&
+              sweepRecords.includes(`answered:${sweepTarget.message_id}`) &&
+              config.conversationResponseQualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  config.conversationResponseQualificationProbe?.({
+                    boundary: "AH13AfterResponseSweepCommit",
+                    messageId: sweepTarget.message_id,
+                    executionId: sweepTarget.active_execution_id,
+                  }) ?? Promise.resolve(),
+              );
+            }
+            yield* runConversationResponseTrigger(
               {
                 gateway,
-                messages,
+                jobs,
+                attempts,
+                breaker,
+                bindingFingerprint: config.bindingFingerprint,
+                configurationRevision: config.configurationRevision,
                 projects,
                 executions,
                 clock,
@@ -440,51 +1089,139 @@ export const ProductionDaemonServiceLive = (
               },
               projectId,
             );
-            // The P14 trigger admits a durable Coordination execution;
+            // The trigger admits an exact ConversationResponseEpisode;
             // the local production composition must also hand that
             // execution to the existing fenced P2/P3 runner. Claims are
             // the exact correlation between a human turn and its main
             // execution, so ordinary Work mains are never selected here.
-            const claimed = yield* tx.transact(
-              messages.claimedOrderedByCreated(projectId),
-            );
-            for (const message of claimed) {
-              const claimedExecutionId = message.claimedByExecutionId;
-              if (claimedExecutionId === null) {
+            const runningJobs = yield* tx.transact(jobs.listRunning(projectId));
+            for (const job of runningJobs) {
+              if (job.state._tag !== "Running") {
                 continue;
               }
+              const claimedExecutionId = job.state.executionId;
               const execution = yield* tx.transact(
-                executions.findById(parse(ExecutionId)(claimedExecutionId)),
+                executions.findById(claimedExecutionId),
               );
               if (
                 Option.isSome(execution) &&
                 execution.value.state.status === "Active" &&
-                execution.value.binding._tag === "WorkspaceExecution" &&
-                execution.value.binding.focus._tag === "Coordination"
+                conversationResponseEpisode(execution.value) !== null
               ) {
                 // Conversation streaming bridge: link execution → message for
                 // the presentation tap, publish terminal at settlement.
-                registerExecutionMessageLink(
+                registerExecutionMessageLink(claimedExecutionId, job.messageId);
+                const settlement = yield* runIfDispatchable(
                   claimedExecutionId,
-                  message.messageId,
-                );
-                const settlement = yield* runExecution(
-                  parse(ExecutionId)(claimedExecutionId),
                   { _tag: "Recovery" },
-                  config.principal,
                 );
-                publishConversationSettled(
-                  claimedExecutionId,
-                  settlement as { readonly _tag: string },
+                if (
+                  settlement !== null &&
+                  settlement._tag !== "ApprovalRequired"
+                ) {
+                  publishConversationSettled(
+                    claimedExecutionId,
+                    settlement as { readonly _tag: string },
+                  );
+                }
+              }
+            }
+          }
+
+          // ExecutionBound roles (temporary specialists and exact-bound
+          // verifiers) are already admitted canonical Executions. They do
+          // not participate in Workspace-main scheduling, so the daemon must
+          // hand every still-active bound execution to the same fenced runner
+          // explicitly. Lease acquisition inside runExecution absorbs
+          // concurrent daemon/restart attempts.
+          const unsettled = yield* tx.transact(
+            executions.findUnsettledExecutions(),
+          );
+          for (const execution of unsettled) {
+            if (execution.binding._tag !== "ExecutionBoundAgentBinding") {
+              continue;
+            }
+            yield* runIfDispatchable(execution.executionId, {
+              _tag: "Recovery",
+            });
+          }
+
+          const approvalNow = yield* clock.now();
+          const resolvedControlActions = yield* tx.transact(
+            Effect.gen(function* () {
+              const expired = yield* controlApprovals.expireDue(approvalNow);
+              for (const approval of expired) {
+                yield* inbox.markConsumed(
+                  approval.workspaceId,
+                  `cap:${approval.approvalId}:${approval.revision - 1}`,
                 );
               }
+              return yield* controlApprovals.listResolved();
+            }),
+          );
+          for (const approval of resolvedControlActions) {
+            const execution = yield* tx.transact(
+              executions.findById(approval.executionId),
+            );
+            if (
+              Option.isSome(execution) &&
+              execution.value.state.status === "Active"
+            ) {
+              const approvalWake: WakeReason = { _tag: "HumanIntervention" };
+              yield* runIfDispatchable(approval.executionId, approvalWake);
+            }
+          }
+
+          // P17's resolved-approval recovery source: resolution journal/wake
+          // commits can outlive a process crash before delivery. Expire first,
+          // then re-read terminal truth and replay the exact active Execution.
+          yield* tx.transact(
+            executableApprovals.expireDue({
+              now: approvalNow,
+              expiredBy: config.principal,
+              ...(config.batchSize === undefined
+                ? {}
+                : { batchSize: config.batchSize }),
+            }),
+          );
+          for (const execution of unsettled) {
+            if (execution.state.status !== "Active") continue;
+            const resolvedForExecution = yield* tx.transact(
+              executableApprovals.listResolved(execution.executionId),
+            );
+            if (
+              resolvedForExecution.some(
+                (approval) =>
+                  approval.executionId === execution.executionId &&
+                  approval.projectId === execution.projectId &&
+                  approval.workspaceId === execution.workspaceId,
+              )
+            ) {
+              const approvalWake: WakeReason = { _tag: "HumanIntervention" };
+              yield* runIfDispatchable(execution.executionId, approvalWake);
             }
           }
         }),
       );
 
       const daemon = makeProductionDaemon({
-        migrate: runMigrations(P16_MIGRATIONS),
+        migrate: Effect.gen(function* () {
+          yield* Effect.sync(() => {
+            try {
+              config.startupDiagnosticProbe?.("daemon.migrate.before");
+            } catch {
+              // Test-only startup diagnostics are non-authoritative.
+            }
+          });
+          yield* runMigrations(CURRENT_MIGRATIONS);
+          yield* Effect.sync(() => {
+            try {
+              config.startupDiagnosticProbe?.("daemon.migrate.after");
+            } catch {
+              // Test-only startup diagnostics are non-authoritative.
+            }
+          });
+        }),
         recovery,
         consumers,
         conversationTick,

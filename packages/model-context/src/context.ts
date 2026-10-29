@@ -59,6 +59,22 @@ export const contextFragment = (
   provenance: admitContextTrust(init.provenance),
 });
 
+/** Build a C3/C4 history fragment through the single context boundary factory. */
+export const historicalContextFragment = (
+  ref: string,
+  layer: "C3" | "C4",
+  tokens: number,
+  provenance: InformationTrustMetadata,
+): ContextFragment =>
+  contextFragment({
+    ref,
+    layer,
+    retention: "Compressible",
+    cacheClass: "TurnDynamic",
+    tokens,
+    provenance,
+  });
+
 export interface ContextBudget {
   readonly modelWindow: number;
   readonly outputReserve: number;

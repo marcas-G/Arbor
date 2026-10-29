@@ -1,0 +1,770 @@
+const load = async (specifier) => {
+  try {
+    return await import(specifier);
+  } catch (error) {
+    process.stdout.write(
+      `${JSON.stringify({ tag: "AH19_IMPORT_ERROR", specifier, message: String(error), stack: error?.stack })}\n`,
+    );
+    throw error;
+  }
+};
+
+const [ports, effect, composition, app] = await Promise.all([
+  load("../../../packages/ports/dist/index.js"),
+  load("effect"),
+  load("../../../apps/single-workspace/dist/composition.js"),
+  load("../../../apps/single-workspace/dist/main.js"),
+]);
+const {
+  createAh19StartupDiagnosticProbe,
+  createFunctionalDaemonListenReporter,
+} = await import("./functional-daemon-lifecycle.mjs");
+const onWebTransportListening = createFunctionalDaemonListenReporter();
+const startupDiagnosticProbe = createAh19StartupDiagnosticProbe(
+  process.env.ARBOR_AH19_STARTUP_TRACE !== "0",
+);
+const reportStartupPhase = (phase) => {
+  try {
+    startupDiagnosticProbe(phase);
+  } catch {
+    // Child-side startup observation cannot change control flow.
+  }
+};
+const { ProviderPort } = ports;
+const { resolvedModelBindingFingerprint, resolveModelBinding } = ports;
+const { Effect, Layer, Stream } = effect;
+const { providerRegistry } = composition;
+const { main, runDaemonForever } = app;
+
+process.on("uncaughtException", (error) => {
+  process.stdout.write(
+    `${JSON.stringify({ tag: "AH19_CHILD_ERROR", message: String(error), stack: error?.stack })}\n`,
+  );
+  process.exitCode = 1;
+});
+process.on("unhandledRejection", (error) => {
+  process.stdout.write(
+    `${JSON.stringify({ tag: "AH19_CHILD_ERROR", message: String(error), stack: error?.stack })}\n`,
+  );
+  process.exitCode = 1;
+});
+if (process.env.ARBOR_AH19_CAPTURE_EXIT === "1") {
+  process.on("exit", (exitCode) => {
+    process.stdout.write(
+      `${JSON.stringify({ tag: "AH19_CHILD_EXIT", exitCode })}\n`,
+    );
+  });
+}
+process.stdout.write(
+  `${JSON.stringify({ tag: "AH19_CHILD_START", pid: process.pid })}\n`,
+);
+const modelRef = "model-ah19-native-test";
+const adapterId = "provider-ah19-native-test";
+const variant = process.env.ARBOR_AH19_BINDING_VARIANT ?? "A";
+const endpoint = `test://native-binding-${variant.toLowerCase()}`;
+const reportUrl = process.env.ARBOR_AH19_REPORT_URL;
+const targetBoundary = process.env.ARBOR_AH19_BOUNDARY;
+const secondaryBoundary = process.env.ARBOR_AH19_SECONDARY_BOUNDARY;
+const gateTurnSuffix = process.env.ARBOR_AH19_GATE_TURN_SUFFIX;
+const nestedNativeMode = process.env.ARBOR_AH19_NESTED_NATIVE === "1";
+const terminalConversationMode =
+  process.env.ARBOR_AH19_TERMINAL_CONVERSATION === "1";
+const conversationSeedMode = process.env.ARBOR_AH19_CONVERSATION_SEED === "1";
+const ordinaryWorkMode = process.env.ARBOR_AH19_ORDINARY_WORK === "1";
+const frontierTextOnlyMode = process.env.ARBOR_AH19_FRONTIER_TEXT_ONLY === "1";
+const nativeSourceActionTurnId =
+  process.env.ARBOR_AH19_NATIVE_SOURCE_ACTION_TURN_ID;
+const nativeSourceActionCheckpointRef =
+  process.env.ARBOR_AH19_NATIVE_SOURCE_ACTION_CHECKPOINT_REF;
+const rootWorkSeedJson = process.env.ARBOR_AH19_ROOT_WORK_SEED_JSON;
+let rootWorkAssignmentEmitted =
+  process.env.ARBOR_AH19_ROOT_WORK_ALREADY_ASSIGNED === "1";
+let ah11AfterEffectsCount = 0;
+const boundaries = new Set([
+  "AH17BeforeCheckpointEpochCommit",
+  "AH17AfterCheckpointEpochCommit",
+  "AH19BeforeConversationCheckpointOwnerCommit",
+  "AH19AfterConversationCheckpointOwnerCommit",
+  "AH12BeforeSuccessCommit",
+  "AH11AfterStepEffectsCommit",
+]);
+if (reportUrl === undefined) throw new Error("AH19 report endpoint required");
+if (targetBoundary !== "none" && !boundaries.has(targetBoundary)) {
+  throw new Error("AH19 child needs an exact checkpoint commit boundary");
+}
+
+const report = async (event) => {
+  const response = await fetch(reportUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(event),
+  });
+  if (!response.ok) {
+    throw new Error(`AH19 report endpoint returned ${response.status}`);
+  }
+};
+
+const started = (request, context) => [
+  {
+    _tag: "Observation",
+    delta: { responseStarted: true, externalEffectPossible: false },
+  },
+  {
+    _tag: "Canonical",
+    event: {
+      _tag: "TurnStarted",
+      providerTurnId: context.providerTurnId,
+      attemptNo: context.attemptNo,
+      modelRef: request.modelRef,
+    },
+  },
+];
+
+const nativeAdapter = {
+  adapterId,
+  profile: {
+    protocolFamily: "in-process-deterministic",
+    authMode: { _tag: "None" },
+    capabilityFlags: {
+      reportsCacheTokens: false,
+      supportsContinuation: true,
+      streamsDeltas: true,
+    },
+    failureTaxonomy: "phase1-v2",
+  },
+  layerFor: () =>
+    Layer.succeed(
+      ProviderPort,
+      ProviderPort.of({
+        runTurn: ({ request, context }) => {
+          const operationKind = request.operationKind ?? "Inference";
+          const providerTurnId = String(context.providerTurnId);
+          const continuation = request.inputItems.find(
+            (item) => item._tag === "CompactionCheckpoint",
+          );
+          const requestSummary = {
+            event: "AH19_PROVIDER_REQUEST",
+            operationKind,
+            providerTurnId: context.providerTurnId,
+            bindingVariant: variant,
+            hasPublicWorkInput: request.inputItems.some(
+              (item) =>
+                item._tag === "Message" &&
+                item.role === "user" &&
+                (item.text.includes("AH19 public Work history turn") ||
+                  item.text.includes("AH19 ordinary recovery history")),
+            ),
+            hasWorkToolSurface: request.toolDefinitions.some((tool) =>
+              ["claim_completion", "update_plan"].includes(tool.name),
+            ),
+            toolNames: request.toolDefinitions.map((tool) => tool.name),
+            workActionHistoryCount: request.inputItems.filter(
+              (item) =>
+                item._tag === "ToolCall" ||
+                item._tag === "ToolResult" ||
+                item._tag === "ControlResult",
+            ).length,
+            items: request.inputItems.map((item) =>
+              item._tag === "CompactionCheckpoint"
+                ? {
+                    _tag: item._tag,
+                    implementation: item.implementation,
+                    bindingFingerprint: item.bindingFingerprint,
+                    opaqueItemRef: item.opaqueItemRef,
+                  }
+                : { _tag: item._tag },
+            ),
+          };
+          const beforeStream = Stream.fromEffect(
+            Effect.promise(() => report(requestSummary)),
+          );
+          const availableTools = new Set(
+            request.toolDefinitions.map((tool) => tool.name),
+          );
+          if (
+            availableTools.has("assign_work") &&
+            !availableTools.has("claim_completion") &&
+            rootWorkSeedJson !== undefined
+          ) {
+            if (rootWorkAssignmentEmitted) {
+              return Stream.flatMap(beforeStream, () =>
+                Stream.fromIterable([
+                  ...started(request, context),
+                  {
+                    _tag: "Canonical",
+                    event: {
+                      _tag: "TextDelta",
+                      text: "The approved Work is available to its owner.",
+                    },
+                  },
+                  {
+                    _tag: "Canonical",
+                    event: {
+                      _tag: "TurnCompleted",
+                      finishReason: "Stop",
+                    },
+                  },
+                ]),
+              );
+            }
+            rootWorkAssignmentEmitted = true;
+            const work = JSON.parse(rootWorkSeedJson);
+            const callRef = `call_ah19_root_${String(context.providerTurnId).replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "ToolCallProposed",
+                    callRef,
+                    toolName: "assign_work",
+                    argumentsJson: JSON.stringify({
+                      ...work,
+                      reason: "AH19 bounded frontier process fixture",
+                    }),
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "ToolCalls",
+                  },
+                },
+              ]),
+            );
+          }
+          if (operationKind === "CompactionNative") {
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "ContinuationState",
+                    stateRef: `ah19-opaque:${context.providerTurnId}`,
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "Stop",
+                  },
+                },
+              ]),
+            );
+          }
+          if (
+            frontierTextOnlyMode &&
+            operationKind === "Inference" &&
+            rootWorkSeedJson !== undefined &&
+            rootWorkAssignmentEmitted
+          ) {
+            const callRef = `call_ah19_frontier_${String(context.providerTurnId).replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "ToolCallProposed",
+                    callRef,
+                    toolName: "wait",
+                    argumentsJson: JSON.stringify({
+                      reason: "yield after one bounded-frontier test turn",
+                      waitSpec: {
+                        mode: "Any",
+                        conditions: [{ _tag: "Manual" }],
+                      },
+                    }),
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "ToolCalls",
+                  },
+                },
+              ]),
+            );
+          }
+          const nativeSourceCheckpoint = request.inputItems.find(
+            (item) =>
+              item._tag === "CompactionCheckpoint" &&
+              item.implementation === "ProviderNative",
+          );
+          if (
+            operationKind === "Inference" &&
+            nativeSourceActionTurnId === providerTurnId &&
+            nativeSourceActionCheckpointRef !== undefined &&
+            nativeSourceCheckpoint?.opaqueItemRef ===
+              nativeSourceActionCheckpointRef
+          ) {
+            const callRef = `call_ah19_native_source_${providerTurnId.replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "ToolCallProposed",
+                    callRef,
+                    toolName: "update_plan",
+                    argumentsJson: JSON.stringify({
+                      items: [
+                        {
+                          itemId: "native-source-recovery-applied",
+                          text: "Apply the exact recovered Native source action.",
+                          status: "Pending",
+                        },
+                      ],
+                    }),
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "ToolCalls",
+                  },
+                },
+              ]),
+            );
+          }
+          if (ordinaryWorkMode && operationKind === "Inference") {
+            const isFirstStep = /_0$/u.test(providerTurnId);
+            const callRef = `call_ah19_work_${providerTurnId.replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: isFirstStep
+                    ? {
+                        _tag: "ToolCallProposed",
+                        callRef,
+                        toolName: "update_plan",
+                        argumentsJson: JSON.stringify({
+                          items: [
+                            {
+                              itemId: "ah19-history",
+                              text: `AH19 public Work history ${"durable observation ".repeat(250)}`,
+                              status: "Pending",
+                            },
+                          ],
+                        }),
+                      }
+                    : {
+                        _tag: "ToolCallProposed",
+                        callRef,
+                        toolName: "wait",
+                        argumentsJson: JSON.stringify({
+                          reason: "retain public Work history",
+                          waitSpec: {
+                            mode: "Any",
+                            conditions: [{ _tag: "Manual" }],
+                          },
+                        }),
+                      },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "ToolCalls",
+                  },
+                },
+              ]),
+            );
+          }
+          if (
+            operationKind === "Inference" &&
+            /_0$/u.test(providerTurnId) &&
+            !providerTurnId.includes("_overflow_")
+          ) {
+            if (conversationSeedMode) {
+              return Stream.flatMap(beforeStream, () =>
+                Stream.fromIterable([
+                  ...started(request, context),
+                  {
+                    _tag: "Canonical",
+                    event: {
+                      _tag: "TextDelta",
+                      text: "AH19 answered conversation history source.",
+                    },
+                  },
+                  {
+                    _tag: "Canonical",
+                    event: {
+                      _tag: "TurnCompleted",
+                      finishReason: "Stop",
+                    },
+                  },
+                ]),
+              );
+            }
+            if (terminalConversationMode) {
+              return Stream.flatMap(beforeStream, () =>
+                Stream.concat(
+                  Stream.fromIterable(started(request, context)),
+                  Stream.fail({
+                    _tag: "ProviderFailure",
+                    kind: "ContextLimitExceeded",
+                    taxonomyVersion: "phase1-v2",
+                    safeDiagnostic: "AH19 controlled terminal ContextLimit",
+                  }),
+                ),
+              );
+            }
+            const callRef = `call_ah19_plan_${providerTurnId.replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "ToolCallProposed",
+                    callRef,
+                    toolName: "update_plan",
+                    argumentsJson: JSON.stringify({
+                      items: [
+                        {
+                          itemId: "preserve-portable-frontier",
+                          text: "Preserve the portable Session frontier for AH19.",
+                          status: "Pending",
+                        },
+                      ],
+                    }),
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "ToolCalls",
+                  },
+                },
+              ]),
+            );
+          }
+          if (operationKind === "CompactionSummary") {
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TextDelta",
+                    text: `Portable AH19 continuation ${variant}.`,
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "Stop",
+                  },
+                },
+              ]),
+            );
+          }
+          if (
+            terminalConversationMode &&
+            operationKind === "Inference" &&
+            providerTurnId.includes("_overflow_")
+          ) {
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TextDelta",
+                    text: "AH19 recovered terminal conversation answer.",
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "Stop",
+                  },
+                },
+              ]),
+            );
+          }
+          if (
+            nestedNativeMode &&
+            operationKind === "Inference" &&
+            providerTurnId.includes("_overflow_")
+          ) {
+            const callRef = `call_ah19_plan_${providerTurnId.replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "ToolCallProposed",
+                    callRef,
+                    toolName: "update_plan",
+                    argumentsJson: JSON.stringify({
+                      items: [
+                        {
+                          itemId: "preserve-portable-frontier",
+                          text: "Preserve the portable Session frontier for AH19.",
+                          status: "Pending",
+                        },
+                      ],
+                    }),
+                  },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "ToolCalls",
+                  },
+                },
+              ]),
+            );
+          }
+          if (
+            operationKind === "Inference" &&
+            (/_1$/u.test(providerTurnId) ||
+              (nestedNativeMode && /_2$/u.test(providerTurnId))) &&
+            (continuation === undefined ||
+              (nestedNativeMode && /_2$/u.test(providerTurnId))) &&
+            !request.inputItems.some(
+              (item) =>
+                item._tag === "Message" &&
+                item.text.includes("[Continuation checkpoint]"),
+            )
+          ) {
+            return Stream.flatMap(beforeStream, () =>
+              Stream.concat(
+                Stream.fromIterable(started(request, context)),
+                Stream.fail({
+                  _tag: "ProviderFailure",
+                  kind: "ContextLimitExceeded",
+                  taxonomyVersion: "phase1-v2",
+                  safeDiagnostic: "AH19 controlled initial ContextLimit",
+                }),
+              ),
+            );
+          }
+          const callRef = `call_ah19_${String(context.providerTurnId).replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+          return Stream.flatMap(beforeStream, () =>
+            Stream.fromIterable([
+              ...started(request, context),
+              {
+                _tag: "Canonical",
+                event: {
+                  _tag: "ToolCallProposed",
+                  callRef,
+                  toolName: "wait",
+                  argumentsJson: JSON.stringify({
+                    reason: "complete AH19 process qualification",
+                    waitSpec: {
+                      mode: "Any",
+                      conditions: [{ _tag: "Manual" }],
+                    },
+                  }),
+                },
+              },
+              {
+                _tag: "Canonical",
+                event: {
+                  _tag: "TurnCompleted",
+                  finishReason: "ToolCalls",
+                },
+              },
+            ]),
+          );
+        },
+      }),
+    ),
+};
+
+// This adapter lives only in the isolated test daemon process. The stock
+// OpenAI/fake/testecho registrations and their capability declarations remain
+// untouched.
+providerRegistry.adapters.push(nativeAdapter);
+
+const modelCatalog = {
+  defaultModelRef: modelRef,
+  entries: [
+    {
+      modelRef,
+      adapterId,
+      capability: {
+        modelRef,
+        family: "ah19-native-test",
+        contextWindow: Number(process.env.ARBOR_AH19_CONTEXT_WINDOW ?? "16384"),
+        outputCeiling: 1_024,
+        toolProtocol: "json",
+        capabilities: ["text", "tools"],
+        portableRequestCompatibility: {
+          operationKinds: [
+            "Inference",
+            "CompactionSummary",
+            "CompactionNative",
+          ],
+          inputItemKinds: [
+            "Message",
+            "ToolCall",
+            "ToolResult",
+            "ControlResult",
+            "ContextUpdate",
+            "CompactionCheckpoint",
+          ],
+        },
+      },
+    },
+  ],
+};
+
+const config = {
+  tickIntervalMs: 25,
+  secretRef: undefined,
+  modelCatalog,
+  modelRef,
+  deployment: {
+    deploymentId: "dep-ah19-native-test",
+    modelRef,
+    endpoint,
+  },
+  webTransport: {
+    staticRoot: process.env.ARBOR_WEB_DIST,
+    port: Number(process.env.ARBOR_HTTP_PORT),
+    host: "127.0.0.1",
+  },
+  onWebTransportListening,
+  startupDiagnosticProbe,
+  qualificationProbe: async (event) => {
+    if (event.boundary === "AH19NativeCheckpointRecovery") {
+      process.stdout.write(
+        `${JSON.stringify({ tag: "AH19_PROBE", ...event })}\n`,
+      );
+      return;
+    }
+    const primaryBoundary =
+      targetBoundary !== "none" && event.boundary === targetBoundary;
+    const secondaryBoundaryMatch =
+      secondaryBoundary !== undefined && event.boundary === secondaryBoundary;
+    if (!primaryBoundary && !secondaryBoundaryMatch) {
+      return;
+    }
+    const stepEffectsBoundary = event.boundary === "AH11AfterStepEffectsCommit";
+    if (
+      primaryBoundary &&
+      process.env.ARBOR_AH19_PRIMARY_BOUNDARY_COUNT_ONLY === "1"
+    ) {
+      process.stdout.write(
+        `${JSON.stringify({ tag: "AH19_PROBE", ...event })}\n`,
+      );
+      return;
+    }
+    if (stepEffectsBoundary) {
+      const expectedNativeSourceTurnId =
+        process.env.ARBOR_AH19_AH11_COUNT_ONLY_PROVIDER_TURN_ID;
+      if (
+        expectedNativeSourceTurnId !== undefined &&
+        expectedNativeSourceTurnId !== String(event.providerTurnId)
+      ) {
+        return;
+      }
+      if (
+        process.env.ARBOR_AH19_AH11_SUFFIX_SCOPED_COUNT === "1" &&
+        gateTurnSuffix !== undefined &&
+        !String(event.providerTurnId).endsWith(gateTurnSuffix)
+      ) {
+        return;
+      }
+      ah11AfterEffectsCount += 1;
+      if (process.env.ARBOR_AH19_AH11_COUNT_ONLY === "1") {
+        process.stdout.write(
+          `${JSON.stringify({
+            tag: "AH19_AH11_COUNT",
+            count: ah11AfterEffectsCount,
+            providerTurnId: event.providerTurnId,
+          })}\n`,
+        );
+        if (process.env.ARBOR_AH19_AH11_COUNT_ONLY_HOLD === "1") {
+          await new Promise(() => {});
+        }
+        return;
+      }
+      const gateMatchIndex = Number(
+        process.env.ARBOR_AH19_AH11_MATCH_INDEX ?? "2",
+      );
+      if (ah11AfterEffectsCount !== gateMatchIndex) return;
+    }
+    if (
+      stepEffectsBoundary
+        ? gateTurnSuffix !== undefined &&
+          !String(event.providerTurnId).endsWith(gateTurnSuffix)
+        : !String(event.providerTurnId).includes("_native_compact_") ||
+          (gateTurnSuffix !== undefined &&
+            !String(event.providerTurnId).endsWith(gateTurnSuffix))
+    ) {
+      return;
+    }
+    process.stdout.write(
+      `${JSON.stringify({ tag: "AH19_PROBE", ...event })}\n`,
+    );
+    await new Promise(() => {});
+  },
+  providerQualificationProbe: async (event) => {
+    if (
+      targetBoundary === "none" ||
+      event.boundary !== targetBoundary ||
+      !String(event.providerTurnId).includes("_native_compact_") ||
+      (gateTurnSuffix !== undefined &&
+        !String(event.providerTurnId).endsWith(gateTurnSuffix))
+    ) {
+      return;
+    }
+    process.stdout.write(
+      `${JSON.stringify({ tag: "AH19_PROBE", ...event })}\n`,
+    );
+    await new Promise(() => {});
+  },
+};
+
+const resolvedTestBinding = resolveModelBinding(
+  providerRegistry,
+  modelCatalog,
+  config.deployment,
+);
+if ("_tag" in resolvedTestBinding) {
+  throw new Error(
+    `AH19 test binding resolution failed: ${resolvedTestBinding._tag}`,
+  );
+}
+process.stdout.write(
+  `${JSON.stringify({
+    tag: "AH19_CHILD_BINDING",
+    variant,
+    endpoint,
+    bindingFingerprint: resolvedModelBindingFingerprint(resolvedTestBinding),
+  })}\n`,
+);
+
+try {
+  const daemonProgram = runDaemonForever(config);
+  reportStartupPhase("layer.construction.before");
+  const applicationLayer = main(config);
+  reportStartupPhase("layer.construction.after");
+  await Effect.runPromise(
+    Effect.provide(Effect.scoped(daemonProgram), applicationLayer),
+  );
+} catch (error) {
+  process.stdout.write(
+    `${JSON.stringify({ tag: "AH19_CHILD_ERROR", message: String(error), stack: error?.stack, error: typeof error === "object" && error !== null ? Object.fromEntries(Object.entries(error)) : error })}\n`,
+  );
+  process.exitCode = 1;
+}

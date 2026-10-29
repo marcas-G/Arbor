@@ -52,18 +52,25 @@ const ALLOWED_PROJECTION_RUNTIME_SPECIFIERS =
   /^(\.\/|\.\.\/|effect|@arbor\/domain$|@arbor\/ports$|node:)/;
 
 /** Canonical write faces — must never be called inside projection-runtime
- * (P10 `01` §3 / `02` §3: no view writes anything; GQ3/G8 zero mutation).
- * Read faces (findById, listX, classify, readAfter, lastSequence) are
- * absent from this list on purpose. */
+ * (P10 `01` §3 / `02` §3: no canonical mutation; GQ3/G8). Transaction scope
+ * is intentionally not a write face: P10 owns atomic writes to its own
+ * rebuildable read-model rows, and source-only reconciliation is explicitly
+ * one transaction. Read faces (findById, listX, classify, readAfter,
+ * lastSequence) are absent from this list on purpose. */
 const WRITE_FACE_PATTERNS: ReadonlyArray<{
   readonly pattern: RegExp;
   readonly label: string;
 }> = [
   { pattern: /\.insert\s*\(/, label: "repository insert" },
+  { pattern: /\.insertPending\s*\(/, label: "activation intent insert" },
   { pattern: /\.create\s*\(/, label: "repository create" },
   { pattern: /\.upsert\s*\(/, label: "store upsert" },
   { pattern: /\.append\s*\(/, label: "append" },
   { pattern: /\.update\s*[A-Z]/, label: "repository update CAS" },
+  {
+    pattern: /\.compareAndSetActive\s*\(/,
+    label: "activation intent state change",
+  },
   { pattern: /\.settle\s*\(/, label: "execution settle" },
   { pattern: /\.requestStop\s*\(/, label: "execution stop request" },
   {
@@ -75,12 +82,20 @@ const WRITE_FACE_PATTERNS: ReadonlyArray<{
   { pattern: /\.clear\s*\(/, label: "wait clear" },
   { pattern: /\.schedule\s*\(/, label: "timer schedule" },
   { pattern: /\.cancel\s*\(/, label: "timer cancel" },
-  { pattern: /\.transact\s*\(/, label: "transaction scope" },
   { pattern: /\.appendEntry\s*\(/, label: "session entry append" },
   { pattern: /\.releaseClaim\s*\(/, label: "ownership claim release" },
   { pattern: /\.insertClaim\s*\(/, label: "ownership claim insert" },
   { pattern: /sql\.unsafe\s*\(/, label: "direct SQL" },
 ];
+
+/** `Object.create(null)` constructs a prototype-free in-memory mapping; it is
+ * not a repository write face. Remove only that standard intrinsic from this
+ * source scan so arbitrary receiver `.create(...)` calls remain prohibited. */
+const sourceWithoutPrototypeSafeObjectCreation = (source: string): string =>
+  source.replace(
+    /\bObject\s*\.\s*create\s*\(\s*null\s*\)/g,
+    "Object_create(null)",
+  );
 
 describe("p10-architecture (projection-runtime)", () => {
   it("projection-runtime exists with its contract modules", () => {
@@ -123,19 +138,38 @@ describe("p10-architecture (projection-runtime)", () => {
   it("zero canonical mutation — no write-face call sites in projection-runtime (GQ3/G8; P10 `02` §3)", () => {
     for (const file of projectionRuntimeFiles()) {
       const violations = WRITE_FACE_PATTERNS.filter((entry) =>
-        entry.pattern.test(file.source),
+        entry.pattern.test(
+          sourceWithoutPrototypeSafeObjectCreation(file.source),
+        ),
       ).map((entry) => entry.label);
       expect(violations, file.path).toEqual([]);
     }
   });
 
-  it("the frozen six-source map and dedup identities are present verbatim (P10 `02` §1/§2; GAP-01 non-descopement)", () => {
+  it("allows prototype-safe in-memory object construction but still rejects repository create calls", () => {
+    const safeMapping = sourceWithoutPrototypeSafeObjectCreation(
+      "const mapping = Object.create(null);",
+    );
+    const repositoryWrite = sourceWithoutPrototypeSafeObjectCreation(
+      "approvalRepository.create(record);",
+    );
+    const createPattern = WRITE_FACE_PATTERNS.find(
+      (entry) => entry.label === "repository create",
+    )?.pattern;
+    expect(createPattern).toBeDefined();
+    expect(createPattern?.test(safeMapping)).toBe(false);
+    expect(createPattern?.test(repositoryWrite)).toBe(true);
+  });
+
+  it("the frozen source map and dedup identities are present verbatim (P10 `02` §1/§2; GAP-01 non-descopement)", () => {
     const attention = sourceOf("packages/projection-runtime/src/attention.ts");
     for (const sourceLabel of [
       '"DependencyUnfulfillable"',
       '"Deadlock"',
       '"RuntimeSafetyEnvelope"',
       '"ReconciliationEscalated"',
+      '"AssignWorkTargetBindingFailure"',
+      '"ToolObservationReplayEvidenceFailure"',
       '"VerifierOrphan"',
       '"WaitingOnVacantProducer"',
     ]) {

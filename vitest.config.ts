@@ -2,11 +2,13 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // The architecture suites shell out to `git` and walk/read the whole
-    // source tree; under the containerized multi-worker runner that can exceed
-    // the 5s default under load. A generous bound keeps `pnpm check` reliable
-    // without changing any test semantics.
+    globalSetup: ["./tests/support/p39-windows-global-setup.ts"],
+    setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
     testTimeout: 30_000,
+    // Prefer reliability on the constrained Windows host; performance tuning
+    // is deferred. Functional, architecture, and Web suites use separate
+    // configs and worker budgets.
+    maxWorkers: 1,
     include: [
       "packages/*/test/**/*.test.ts",
       "adapters/*/test/**/*.test.ts",
@@ -20,6 +22,9 @@ export default defineConfig({
       "**/node_modules/**",
       "apps/web/**",
       "tests/capability/real-provider/**",
+      "tests/architecture/**",
+      "tests/capability/black-box/s1-s4-public-api.test.ts",
+      "tests/functional/**",
     ],
   },
 });
